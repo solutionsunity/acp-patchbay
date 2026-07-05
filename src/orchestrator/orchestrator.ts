@@ -1,6 +1,7 @@
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.
+import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -18,6 +19,7 @@ import {
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
+import { resolveAgentAssets, type FsLike } from "./asset-locations";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { CapabilityVerifier } from "./capability-verifier";
 import { ChannelHost } from "./channel";
@@ -404,6 +406,46 @@ export class Orchestrator {
     return Buffer.from(bytes).toString("utf8");
   }
 
+  /** vscode.workspace.fs, shaped to asset-locations.ts's vscode-free FsLike
+   * so the resolution logic itself stays unit-testable (P10). */
+  private readonly assetFs: FsLike = {
+    stat: async (path) => {
+      try {
+        const s = await vscode.workspace.fs.stat(vscode.Uri.file(path));
+        return { isDirectory: (s.type & vscode.FileType.Directory) !== 0 };
+      } catch {
+        return null; // not present in this workspace — an honest outcome, not an error
+      }
+    },
+    readdir: async (path) => {
+      const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(path));
+      return entries.map(([name, type]) => ({ name, isDirectory: (type & vscode.FileType.Directory) !== 0 }));
+    },
+  };
+
+  /** Rules/skills/commands (architecture.md § Rules, skills, commands): v1
+   * is management, not delivery — lists what's on disk per the roster's
+   * mapping, an unmapped agent shown as such, never guessed. Runs on every
+   * connect and on the Settings section's explicit refresh. */
+  private async refreshAgentAssets(agentId: string): Promise<void> {
+    const roster = this.roster.find((a) => a.id === agentId);
+    const assets = await resolveAgentAssets(
+      this.assetFs,
+      this.workspaceRoot ?? process.cwd(),
+      agentId,
+      roster?.assets ?? null,
+    );
+    this.settings.emit({ kind: "agentAssetsChanged", assets });
+  }
+
+  /** Real editing happens in VS Code's own editor, never a webview dialect
+   * (render-only-webview.md) — Settings is a navigational index onto files
+   * that already live in the agent's own native locations. */
+  private openAssetFile(path: string): void {
+    const abs = vscode.Uri.file(join(this.workspaceRoot ?? process.cwd(), path));
+    void vscode.window.showTextDocument(abs);
+  }
+
   /** Native notification mirroring the inline card, shown only when the
    * Agent View isn't visible (features.md § Editor Surface: "impossible to
    * miss when the view is hidden"). `requestId` is the inline card's own
@@ -465,6 +507,7 @@ export class Orchestrator {
     this.agentView.emit(upsert);
     this.settings.emit(upsert);
     await this.pool.connect(spec);
+    void this.refreshAgentAssets(spec.agentId);
   }
 
   launchSpecForRosterAgent(agent: RosterAgent): LaunchSpec {
@@ -637,6 +680,12 @@ export class Orchestrator {
         break;
       case "shareIntegrationConfig":
         void this.shareIntegrationConfig(action.integrationId);
+        break;
+      case "refreshAgentAssets":
+        void this.refreshAgentAssets(action.agentId);
+        break;
+      case "openAssetFile":
+        this.openAssetFile(action.path);
         break;
     }
   }

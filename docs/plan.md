@@ -324,13 +324,22 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     running the Augment live smoke is what actually closes this phase's gate;
     no code change should be needed for that step given the mechanism above.*
 
-### P10 — Rules, skills, commands management ☐
+### P10 — Rules, skills, commands management ☑
 
 - Settings section reading each connected agent's native locations from roster
   mapping; view + edit in place; unmapped agents shown as unmapped. No delivery,
   no symlinks — v1 is management only.
 - **Gate**: Claude Code and Augment file sets listed and editable; an unmapped
   roster agent renders the honest empty state.
+- *"Edit in place" is VS Code's own editor, not a webview text-editor dialect:
+  clicking a listed file sends `openAssetFile`, which the orchestrator resolves
+  to `vscode.window.showTextDocument` — Settings indexes what's on disk (a
+  single rules file, or every file inside a mapped commands/skills directory)
+  and never reimplements editing (render-only-webview.md). Resolution itself
+  (`asset-locations.ts`) is vscode-free behind a structural `FsLike`, unit-
+  tested against a fake in-memory tree rather than requiring a real workspace
+  on disk; the thin real `vscode.workspace.fs` wrapper is a few lines with
+  nothing left to prove beyond what TypeScript already checks.*
 
 ### P11 — Native surfaces + native settings ☐
 

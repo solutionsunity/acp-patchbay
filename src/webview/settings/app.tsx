@@ -4,6 +4,8 @@
 // pretending to be data.
 import { useState } from "preact/hooks";
 import type {
+  AgentAssetsView,
+  AssetCategoryView,
   CapabilityMatrix,
   CapabilityRowId,
   CommandRuleView,
@@ -83,10 +85,10 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
           />
         )}
         {section === "assets" && (
-          <Section
-            title="Rules · skills · commands"
-            sub="Managed in each agent's own native locations — the agent reads its own cwd. Patchbay never passes them down."
-            empty="Per-agent asset cards land with P10."
+          <AssetsSection
+            state={state}
+            onRefresh={(agentId) => channel.sendAction({ kind: "refreshAgentAssets", agentId })}
+            onOpen={(agentId, path) => channel.sendAction({ kind: "openAssetFile", agentId, path })}
           />
         )}
       </main>
@@ -481,6 +483,82 @@ function IntegrationsSection(props: {
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function AssetCategory(props: {
+  label: string;
+  category: AssetCategoryView;
+  onOpen(path: string): void;
+}) {
+  return (
+    <div style="margin-top:8px">
+      <div class="cap">{props.label}</div>
+      {props.category.files === null ? (
+        <div class="note" style="margin:2px 0 0">
+          not mapped
+        </div>
+      ) : props.category.files.length === 0 ? (
+        <div class="note" style="margin:2px 0 0">
+          mapped, nothing found in this workspace
+        </div>
+      ) : (
+        props.category.files.map((f) => (
+          <div key={f.path} class="it" style="padding:2px 0" onClick={() => props.onOpen(f.path)}>
+            <code>{f.path}</code>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function AssetsSection(props: {
+  state: SettingsState;
+  onRefresh(agentId: string): void;
+  onOpen(agentId: string, path: string): void;
+}) {
+  const { state } = props;
+  return (
+    <section class="section">
+      <h1>Rules · skills · commands</h1>
+      <div class="sub">
+        Managed in each agent's own native locations — the agent reads its own cwd. Patchbay never
+        passes them down; opening a file uses VS Code's own editor, never a copy.
+      </div>
+      {state.agents.length === 0 && (
+        <div class="card">
+          <div class="note" style="margin:0">
+            No agents connected yet.
+          </div>
+        </div>
+      )}
+      {state.agents.map((a) => {
+        const assets: AgentAssetsView | undefined = state.assets[a.id];
+        return (
+          <div class="card" key={a.id}>
+            <div class="row">
+              <span class="nm">{a.name}</span>
+              <span style="flex:1" />
+              <button class="btn" onClick={() => props.onRefresh(a.id)}>
+                Refresh
+              </button>
+            </div>
+            {assets === undefined ? (
+              <div class="note" style="margin-top:6px">
+                Not read yet — click Refresh.
+              </div>
+            ) : (
+              <>
+                <AssetCategory label="Rules" category={assets.rules} onOpen={(p) => props.onOpen(a.id, p)} />
+                <AssetCategory label="Commands" category={assets.commands} onOpen={(p) => props.onOpen(a.id, p)} />
+                <AssetCategory label="Skills" category={assets.skills} onOpen={(p) => props.onOpen(a.id, p)} />
+              </>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

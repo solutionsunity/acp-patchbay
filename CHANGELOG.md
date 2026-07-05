@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- P10 rules/skills/commands management: a real Settings section listing each
+  connected agent's rules/commands/skills files, resolved from the roster's
+  location mapping against what's actually on disk in this workspace — a
+  single file for rules, every file inside the directory for commands/skills.
+  An unmapped agent (most of the roster — v1 only maps Claude Code and
+  Augment) renders an honest "not mapped" per category rather than being
+  silently skipped. Clicking a listed file opens it in VS Code's own editor;
+  patchbay never reimplements editing in the webview (v1 is management, not
+  delivery — no symlinks, no supply). Resolution logic
+  (`asset-locations.ts`) is vscode-free behind a small structural `FsLike`,
+  unit-tested against a fake in-memory filesystem.
 - P9 integrations + GitHub (mechanism complete; blocked on the two named
   owner touchpoints — OAuth App creation, Augment live smoke): curated
   (registry) and custom integrations are the same mechanism throughout —

@@ -71,7 +71,9 @@ export type Action =
   | { kind: "disconnectIntegration"; integrationId: string }
   | { kind: "removeIntegration"; integrationId: string }
   | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
-  | { kind: "shareIntegrationConfig"; integrationId: string };
+  | { kind: "shareIntegrationConfig"; integrationId: string }
+  | { kind: "refreshAgentAssets"; agentId: string }
+  | { kind: "openAssetFile"; agentId: string; path: string };
 
 // ── integrations (architecture.md § Integrations) ───────────────────────────
 
@@ -109,6 +111,29 @@ export interface DeviceFlowView {
   expiresIn: number;
   status: "pending" | "failed";
   reason?: string;
+}
+
+// ── rules, skills, commands (architecture.md § Rules, skills, commands) ────
+// v1 is management, not delivery: files live in each agent's own native
+// locations; patchbay lists what's on disk and lets the user jump to it —
+// real editing happens in the normal VS Code editor, never a webview dialect.
+
+export interface AssetFileView {
+  /** Relative to the workspace root. */
+  path: string;
+}
+
+export interface AssetCategoryView {
+  /** null = this category isn't mapped for this agent (roster data) —
+   * shown as unmapped, never guessed. */
+  files: readonly AssetFileView[] | null;
+}
+
+export interface AgentAssetsView {
+  agentId: string;
+  rules: AssetCategoryView;
+  commands: AssetCategoryView;
+  skills: AssetCategoryView;
 }
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
@@ -983,6 +1008,8 @@ export interface SettingsState {
   /** Keyed by registryId while a device-flow connect is in flight or just
    * failed; cleared once `integrationsChanged` reports it connected. */
   deviceFlow: Readonly<Record<string, DeviceFlowView>>;
+  /** Keyed by agentId — populated as each connects (and on-demand refresh). */
+  assets: Readonly<Record<string, AgentAssetsView>>;
 }
 
 export const initialSettingsState: SettingsState = {
@@ -997,6 +1024,7 @@ export const initialSettingsState: SettingsState = {
   integrationRegistry: [],
   integrations: [],
   deviceFlow: {},
+  assets: {},
 };
 
 export type SettingsEvent =
@@ -1016,7 +1044,8 @@ export type SettingsEvent =
       verificationUri: string;
       expiresIn: number;
     }
-  | { kind: "integrationConnectFailed"; registryId: string; reason: string };
+  | { kind: "integrationConnectFailed"; registryId: string; reason: string }
+  | { kind: "agentAssetsChanged"; assets: AgentAssetsView };
 
 export function reduceSettings(
   state: SettingsState,
@@ -1084,6 +1113,8 @@ export function reduceSettings(
         },
       };
     }
+    case "agentAssetsChanged":
+      return { ...state, assets: { ...state.assets, [event.assets.agentId]: event.assets } };
     default:
       return state;
   }
@@ -1096,6 +1127,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "integrationsChanged",
   "integrationDeviceCodeIssued",
   "integrationConnectFailed",
+  "agentAssetsChanged",
 ]);
 
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {
