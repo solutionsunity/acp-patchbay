@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- P7 local MCP server + adapters: a real stdio MCP server
+  (`src/mcp/server-main.ts`, bundled as its own entry) exposing six tools —
+  get_selection, get_current_file, get_diagnostics, get_open_editors,
+  get_workspace_state, request_user_input — passed to every session via
+  `mcpServers`. Since the agent spawns this process (not patchbay), it can't
+  reach vscode APIs directly; a small IPC bridge carries tool calls back to
+  an orchestrator-side host with real editor access, correlated by a token
+  patchbay mints before the real sessionId exists (session/new hasn't
+  returned one yet when `mcpServers` must already be in the request).
+  Tools-only design (no MCP resources) — one uniform path per capability,
+  matching the "every agent sees just another local MCP server" bet.
+  Elicitation ships as the `request_user_input` tool only; native ACP
+  elicitation stays undeclared since the SDK marks it unstable/experimental.
+  Explicit "add selection / current file / diagnostics to context" wired
+  through the composer's adder, injected as their own labeled prompt blocks
+  ahead of the user's message, cleared once sent. Scoped out as separate UI
+  mechanisms rather than silently dropped: image paste, file attach,
+  right-click actions, and context roots (`additionalDirectories`) — real
+  features, not this phase's architectural bet. Recorded in plan.md.
 - P6 permission broker + editor depth (fs/terminal): one broker path
   (`PermissionBroker`) for the agent's own `session/request_permission` calls
   and patchbay's own mandatory gates on `fs/write_text_file` and

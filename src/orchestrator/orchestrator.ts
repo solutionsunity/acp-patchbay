@@ -21,6 +21,7 @@ import { applyFileWrite, PermissionBroker } from "./broker";
 import { CapabilityVerifier } from "./capability-verifier";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
+import { EditorStateHost } from "./editor-state-host";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { SessionManager } from "./session-manager";
 import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
@@ -55,12 +56,20 @@ export class Orchestrator {
   readonly sessionManager: SessionManager;
   readonly capabilityVerifier: CapabilityVerifier;
   readonly broker: PermissionBroker;
+  readonly editorStateHost: EditorStateHost;
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
   private readonly workspaceAgentSpecs = new Map<string, LaunchSpec>();
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
+  private readonly mcpServerScriptPath: string;
+  private readonly contextTokenToSession = new Map<string, string>();
+  private readonly pendingElicitations = new Map<
+    string,
+    { sessionId: string; resolve(values: Record<string, unknown> | null): void }
+  >();
+  private elicitationCounter = 0;
   /** Set by the webview host as the Agent View mounts/unmounts (P11 wires
    * the real visibility signal); defaults to "visible" so native
    * notifications don't fire spuriously before that's connected. */
@@ -69,6 +78,7 @@ export class Orchestrator {
   constructor(context: vscode.ExtensionContext) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     this.workspaceRoot = workspaceRoot;
+    this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
 
     this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
@@ -209,11 +219,33 @@ export class Orchestrator {
         return {};
       },
     });
+    this.editorStateHost = new EditorStateHost(String(process.pid), {
+      requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
+    });
+    this.editorStateHost.start();
+
     this.sessionManager = new SessionManager(
       this.pool,
       this.sessionIndex,
-      { emit: (...events) => this.agentView.emit(...events) },
+      {
+        emit: (...events) => this.agentView.emit(...events),
+        mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
+      },
       () => this.workspaceRoot ?? process.cwd(),
+      (contextToken) => [
+        {
+          // McpServerStdio is the untagged union member (architecture.md's
+          // "uniform stdio presentation" — no discriminant needed since it's
+          // the only variant every agent is guaranteed to accept).
+          name: "patchbay",
+          command: process.execPath,
+          args: [this.mcpServerScriptPath],
+          env: [
+            { name: "ACP_PATCHBAY_IPC", value: this.editorStateHost.socketPath },
+            { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+          ],
+        },
+      ],
     );
     this.capabilityVerifier = new CapabilityVerifier(this.pool, {
       emit: (...events) => {
@@ -235,6 +267,36 @@ export class Orchestrator {
 
     void this.refreshAuditTail();
     void this.loadWorkspaceConfigAgents();
+  }
+
+  /** The local MCP server's `request_user_input` tool (elicitation fallback
+   * — architecture.md's adapter table; native ACP elicitation is still
+   * unstable in the SDK, so this is the only path in v1, see plan.md P7).
+   * `contextToken` is what the MCP server subprocess was spawned with —
+   * translated back to the real sessionId so the form lands in the right
+   * transcript. */
+  private requestUserInput(
+    contextToken: string,
+    params: { message: string; properties: Array<{ name: string; type: string; title?: string; description?: string; required?: boolean }> },
+  ): Promise<Record<string, unknown> | null> {
+    const sessionId = this.contextTokenToSession.get(contextToken) ?? contextToken;
+    const blockId = `elicit-${++this.elicitationCounter}`;
+    this.agentView.emit({
+      kind: "elicitationRequested",
+      sessionId,
+      blockId,
+      message: params.message,
+      fields: params.properties.map((p) => ({
+        name: p.name,
+        type: p.type as "string" | "number" | "integer" | "boolean",
+        title: p.title,
+        description: p.description,
+        required: p.required ?? false,
+      })),
+    });
+    return new Promise((resolve) => {
+      this.pendingElicitations.set(blockId, { sessionId, resolve });
+    });
   }
 
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
@@ -397,6 +459,55 @@ export class Orchestrator {
           .then(() => this.publishRules());
         break;
       }
+      case "resolveElicitation": {
+        const pending = this.pendingElicitations.get(action.requestId);
+        if (pending === undefined) break;
+        this.pendingElicitations.delete(action.requestId);
+        this.agentView.emit({
+          kind: "elicitationResolved",
+          sessionId: pending.sessionId,
+          blockId: action.requestId,
+          cancelled: action.values === null,
+        });
+        pending.resolve(action.values);
+        break;
+      }
+      case "addSelectionContext": {
+        const selection = this.editorStateHost.getSelection();
+        if (selection === null) break;
+        this.sessionManager.addContext(action.sessionId, {
+          id: `chip-${Date.now()}`,
+          kind: "selection",
+          label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
+          content: selection.text,
+        });
+        break;
+      }
+      case "addFileContext": {
+        const file = this.editorStateHost.getCurrentFile();
+        if (file === null) break;
+        this.sessionManager.addContext(action.sessionId, {
+          id: `chip-${Date.now()}`,
+          kind: "file",
+          label: `File: ${file.file}`,
+          content: file.content,
+        });
+        break;
+      }
+      case "addDiagnosticsContext": {
+        const diagnostics = this.editorStateHost.getDiagnostics();
+        if (diagnostics.length === 0) break;
+        this.sessionManager.addContext(action.sessionId, {
+          id: `chip-${Date.now()}`,
+          kind: "diagnostics",
+          label: `Problems (${diagnostics.length})`,
+          content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
+        });
+        break;
+      }
+      case "removeContextChip":
+        this.sessionManager.removeContext(action.sessionId, action.chipId);
+        break;
     }
   }
 
@@ -451,6 +562,7 @@ export class Orchestrator {
   }
 
   dispose(): void {
+    this.editorStateHost.stop();
     void this.pool.disposeAll();
     this.agentView.flushNow();
     this.settings.flushNow();

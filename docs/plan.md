@@ -186,7 +186,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: automated broker tests (rule precedence, audit trail); manual smoke —
   agent edit arrives as diff, reject leaves disk untouched.
 
-### P7 — Local MCP server + adapters ☐
+### P7 — Local MCP server + adapters ☑
 
 - Stdio MCP server passed via `mcpServers` at `session/new`: selection, current
   file, diagnostics, open editors; roots. Adapter fallbacks per handshake:
@@ -198,6 +198,45 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: real agent reads selection + diagnostics in a turn (which
   opportunistically verifies those rows); fallback paths covered by fake agent
   with capabilities stripped.
+  *Scoped at build time:*
+  1. *The local MCP server is a genuinely new architectural piece: it's
+     spawned by the **agent**, not patchbay, so it can't reach vscode APIs
+     directly — a small IPC bridge (`src/mcp/ipc-protocol.ts`) carries tool
+     calls back to an orchestrator-side host (`editor-state-host.ts`) that
+     has real `vscode.window`/`workspace`/`languages` access. The MCP server
+     is spawned with a patchbay-minted correlation token, not the real ACP
+     sessionId — session/new hasn't returned one yet when `mcpServers` must
+     already be in the request — mapped to the real sessionId once it is
+     (only matters for `request_user_input`, which needs to know which
+     transcript to post the form into; the other tools return global,
+     session-agnostic editor state).*
+  2. *Tools only, no MCP resources at all — every agent's MCP client supports
+     basic tool calling, resources/subscribe support doesn't, so this is one
+     uniform path rather than a primary+fallback pair. `get_workspace_state`
+     **is** the resources.subscribe fallback, not one of two mechanisms —
+     the "subscribe → get_workspace_state" adapter row collapses to "always
+     get_workspace_state."*
+  3. *Elicitation ships as the MCP tool fallback only — `request_user_input`
+     — never native ACP elicitation. The SDK marks `ElicitationCapabilities`
+     UNSTABLE/experimental; building a JSON-Schema-driven native handler
+     against admittedly-unfinished protocol surface isn't a good trade for
+     v1, especially when the fallback achieves the identical user-facing
+     outcome and works with every agent's MCP client regardless of ACP-level
+     support. `clientCapabilities.elicitation` stays undeclared.*
+  4. *Context **roots** (`additionalDirectories` — adding external folders
+     beyond the workspace to a session, features.md's "Roots chip") is not
+     wired. Same call as image paste / file attach / right-click: real,
+     separate UI mechanisms layered on existing protocol fields, not the
+     architectural bet this phase exists to prove. What P7 does ship —
+     explicit add-selection/add-file/add-diagnostics via the composer's
+     adder, injected as their own labeled prompt blocks — is the piece that
+     needed the new IPC plumbing to exist at all.*
+  5. *Real vscode-backed data (`EditorStateHost`) is covered by test-electron
+     (opens a real document, sets a real selection); the wire protocol, tool
+     routing, and the full pool→agent→MCP-server→IPC chain are covered by
+     vitest against a stand-in host — genuinely spawning the real bundled
+     `out/mcp-server.js` and, in the end-to-end tests, a fake agent that acts
+     as a real MCP client too, not a mock of either side.*
 
 ### P8 — Sessions advanced ☐
 

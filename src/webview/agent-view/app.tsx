@@ -11,6 +11,7 @@ import type {
   AvailableCommand,
   ChatBlock,
   ConnectAgentSource,
+  ContextChip,
   PlanBlock,
   SessionSummary,
   UsageInfo,
@@ -93,13 +94,25 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         onResolveDiff={(requestId, accept) =>
           channel.sendAction({ kind: "resolveDiff", requestId, accept })
         }
+        onResolveElicitation={(requestId, values) =>
+          channel.sendAction({ kind: "resolveElicitation", requestId, values })
+        }
       />
       <Composer
         agent={activeAgent}
         session={active}
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
+        contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         onSend={(text) => channel.sendAction({ kind: "sendPrompt", sessionId: active!.id, text })}
         onStop={() => channel.sendAction({ kind: "stopTurn", sessionId: active!.id })}
+        onAddSelection={() => channel.sendAction({ kind: "addSelectionContext", sessionId: active!.id })}
+        onAddFile={() => channel.sendAction({ kind: "addFileContext", sessionId: active!.id })}
+        onAddDiagnostics={() =>
+          channel.sendAction({ kind: "addDiagnosticsContext", sessionId: active!.id })
+        }
+        onRemoveChip={(chipId) =>
+          channel.sendAction({ kind: "removeContextChip", sessionId: active!.id, chipId })
+        }
       />
       {drawer !== null && <div class="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (
@@ -471,14 +484,83 @@ function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "terminal" 
   );
 }
 
+function ElicitationCard(props: {
+  block: Extract<ChatBlock, { kind: "elicitation" }>;
+  onResolve(values: Record<string, unknown> | null): void;
+}) {
+  const { block } = props;
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  if (block.resolution !== null) {
+    return (
+      <div class="card perm">
+        <div class="card-hd">❔ {block.message}</div>
+        <div class="resolved">{block.resolution.cancelled ? "✗ cancelled" : "✓ submitted"}</div>
+      </div>
+    );
+  }
+
+  const submit = () => {
+    const out: Record<string, unknown> = {};
+    for (const f of block.fields) {
+      const raw = values[f.name] ?? "";
+      if (f.type === "number" || f.type === "integer") out[f.name] = raw === "" ? undefined : Number(raw);
+      else if (f.type === "boolean") out[f.name] = raw === "true";
+      else out[f.name] = raw;
+    }
+    props.onResolve(out);
+  };
+
+  return (
+    <div class="card perm">
+      <div class="card-hd">❔ {block.message}</div>
+      <div class="connect-form" style="padding:0 10px 10px">
+        {block.fields.map((f) => (
+          <div key={f.name}>
+            <label class="k" style="font-size:11px;color:var(--pb-text-faint)">
+              {f.title ?? f.name}
+              {f.required ? " *" : ""}
+            </label>
+            {f.type === "boolean" ? (
+              <select
+                value={values[f.name] ?? "false"}
+                onChange={(e) => setValues({ ...values, [f.name]: (e.target as HTMLSelectElement).value })}
+              >
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            ) : (
+              <input
+                type={f.type === "number" || f.type === "integer" ? "number" : "text"}
+                value={values[f.name] ?? ""}
+                onInput={(e) => setValues({ ...values, [f.name]: (e.target as HTMLInputElement).value })}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div class="acts">
+        <button class="btn primary" onClick={submit}>
+          Submit
+        </button>
+        <button class="btn danger" onClick={() => props.onResolve(null)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Block({
   block,
   onResolvePermission,
   onResolveDiff,
+  onResolveElicitation,
 }: {
   block: ChatBlock;
   onResolvePermission(requestId: string, optionId: string): void;
   onResolveDiff(requestId: string, accept: boolean): void;
+  onResolveElicitation(requestId: string, values: Record<string, unknown> | null): void;
 }) {
   switch (block.kind) {
     case "user":
@@ -501,6 +583,10 @@ function Block({
       return <DiffCard block={block} onResolve={(accept) => onResolveDiff(block.id, accept)} />;
     case "terminal":
       return <TerminalCard block={block} />;
+    case "elicitation":
+      return (
+        <ElicitationCard block={block} onResolve={(values) => onResolveElicitation(block.id, values)} />
+      );
   }
 }
 
@@ -510,6 +596,7 @@ function Chat(props: {
   onConnectClick(): void;
   onResolvePermission(requestId: string, optionId: string): void;
   onResolveDiff(requestId: string, accept: boolean): void;
+  onResolveElicitation(requestId: string, values: Record<string, unknown> | null): void;
 }) {
   const { agents } = props.state;
   const active = props.activeSession;
@@ -549,6 +636,7 @@ function Chat(props: {
           block={block}
           onResolvePermission={props.onResolvePermission}
           onResolveDiff={props.onResolveDiff}
+          onResolveElicitation={props.onResolveElicitation}
         />
       ))}
     </div>
@@ -581,10 +669,16 @@ function Composer(props: {
   agent: AgentSummary | null;
   session: SessionSummary | null;
   commands: readonly AvailableCommand[];
+  contextChips: readonly ContextChip[];
   onSend(text: string): void;
   onStop(): void;
+  onAddSelection(): void;
+  onAddFile(): void;
+  onAddDiagnostics(): void;
+  onRemoveChip(chipId: string): void;
 }) {
   const [draft, setDraft] = useState("");
+  const [adderOpen, setAdderOpen] = useState(false);
   const enabled = props.session !== null && props.agent?.status === "running";
   const live = props.session?.live ?? false;
   const showSlash = draft.startsWith("/") && !draft.includes(" ");
@@ -602,7 +696,57 @@ function Composer(props: {
 
   return (
     <div class="composer">
-      {/* context row (roots, selection ghost, chips, adder) appears with editor depth (P7) */}
+      {(props.contextChips.length > 0 || enabled) && (
+        <div class="ctx-row">
+          {props.contextChips.map((c) => (
+            <span class="ctx-chip" key={c.id} title={c.content.slice(0, 300)}>
+              {c.kind === "selection" ? "⌖" : c.kind === "file" ? "📄" : "⚠"} {c.label}
+              <span class="x" onClick={() => props.onRemoveChip(c.id)}>
+                ×
+              </span>
+            </span>
+          ))}
+          {enabled && (
+            <span class="ctx-chip ctx-add" onClick={() => setAdderOpen((v) => !v)}>
+              ＋
+            </span>
+          )}
+          {adderOpen && (
+            <div class="pop" style="top:28px;left:0">
+              <div
+                class="it"
+                onClick={() => {
+                  props.onAddSelection();
+                  setAdderOpen(false);
+                }}
+              >
+                <b>⌖ Selection</b>
+                <span class="d">current editor selection</span>
+              </div>
+              <div
+                class="it"
+                onClick={() => {
+                  props.onAddFile();
+                  setAdderOpen(false);
+                }}
+              >
+                <b>📄 Current file</b>
+                <span class="d">active editor</span>
+              </div>
+              <div
+                class="it"
+                onClick={() => {
+                  props.onAddDiagnostics();
+                  setAdderOpen(false);
+                }}
+              >
+                <b>⚠ Problems</b>
+                <span class="d">workspace diagnostics</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div class="input-shell" style="position:relative">
         {showSlash && (
           <SlashMenu

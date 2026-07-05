@@ -50,7 +50,12 @@ export type Action =
   | { kind: "adoptWorkspaceAgent"; agentId: string }
   | { kind: "addCommandRule"; rule: CommandRuleView }
   | { kind: "removeCommandRule"; pattern: string }
-  | { kind: "setFileWriteScope"; scope: FileWriteScopeView };
+  | { kind: "setFileWriteScope"; scope: FileWriteScopeView }
+  | { kind: "resolveElicitation"; requestId: string; values: Record<string, unknown> | null }
+  | { kind: "addSelectionContext"; sessionId: string }
+  | { kind: "addFileContext"; sessionId: string }
+  | { kind: "addDiagnosticsContext"; sessionId: string }
+  | { kind: "removeContextChip"; sessionId: string; chipId: string };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -278,6 +283,26 @@ export interface TerminalBlock {
   exitCode: number | null;
 }
 
+/** The elicitation fallback (architecture.md's adapter table): a local MCP
+ * tool renders this as a small form, universal across agents regardless of
+ * native ACP elicitation support — which the SDK itself marks unstable/
+ * experimental, so v1 uses only this path (plan.md P7 scoping note). */
+export interface ElicitationField {
+  name: string;
+  type: "string" | "number" | "integer" | "boolean";
+  title?: string;
+  description?: string;
+  required: boolean;
+}
+
+export interface ElicitationBlock {
+  kind: "elicitation";
+  id: string;
+  message: string;
+  fields: readonly ElicitationField[];
+  resolution: { cancelled: boolean } | null;
+}
+
 export type ChatBlock =
   | UserBlock
   | TextBlock
@@ -286,7 +311,8 @@ export type ChatBlock =
   | PlanBlock
   | PermissionBlock
   | DiffBlock
-  | TerminalBlock;
+  | TerminalBlock
+  | ElicitationBlock;
 
 export interface AvailableCommand {
   name: string;
@@ -312,12 +338,22 @@ export interface AgentViewState {
   capabilitiesResetAt: Readonly<Record<string, string>>;
   /** Present only once `usage` verifies — absence over fake (ui.md § gauge). */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
+  /** Explicitly attached context, pending inclusion in the next prompt
+   * (features.md § Chat: "explicitly add editor state to the prompt"). */
+  contextChips: Readonly<Record<string, readonly ContextChip[]>>;
 }
 
 export interface UsageInfo {
   used: number;
   size: number;
   cost?: { amount: number; currency: string };
+}
+
+export interface ContextChip {
+  id: string;
+  kind: "selection" | "file" | "diagnostics";
+  label: string;
+  content: string;
 }
 
 export const initialAgentViewState: AgentViewState = {
@@ -331,6 +367,7 @@ export const initialAgentViewState: AgentViewState = {
   capabilities: {},
   capabilitiesResetAt: {},
   sessionUsage: {},
+  contextChips: {},
 };
 
 export type AgentViewEvent =
@@ -385,6 +422,16 @@ export type AgentViewEvent =
   | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
   | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
+  | {
+      kind: "elicitationRequested";
+      sessionId: string;
+      blockId: string;
+      message: string;
+      fields: readonly ElicitationField[];
+    }
+  | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
+  | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
+  | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
   /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
   | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
   | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
@@ -557,6 +604,7 @@ export function reduceAgentView(
         sessions: [...state.sessions, event.session],
         transcripts: { ...state.transcripts, [event.session.id]: [] },
         commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
+        contextChips: { ...state.contextChips, [event.session.id]: [] },
         activeSessionId: event.session.id,
       };
     case "sessionActivated":
@@ -574,12 +622,21 @@ export function reduceAgentView(
       const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
       const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
       const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
+      const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       const activeSessionId =
         state.activeSessionId === event.sessionId
           ? (sessions[sessions.length - 1]?.id ?? null)
           : state.activeSessionId;
-      return { ...state, sessions, transcripts, commandsBySession, activePlan, activeSessionId };
+      return {
+        ...state,
+        sessions,
+        transcripts,
+        commandsBySession,
+        activePlan,
+        contextChips,
+        activeSessionId,
+      };
     }
     case "sessionLiveChanged":
       return {
@@ -679,6 +736,37 @@ export function reduceAgentView(
         running: false,
         exitCode: event.exitCode,
       }));
+    case "elicitationRequested":
+      return appendBlock(state, event.sessionId, {
+        kind: "elicitation",
+        id: event.blockId,
+        message: event.message,
+        fields: event.fields,
+        resolution: null,
+      });
+    case "elicitationResolved":
+      return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        resolution: { cancelled: event.cancelled },
+      }));
+    case "contextChipAdded":
+      return {
+        ...state,
+        contextChips: {
+          ...state.contextChips,
+          [event.sessionId]: [...(state.contextChips[event.sessionId] ?? []), event.chip],
+        },
+      };
+    case "contextChipRemoved":
+      return {
+        ...state,
+        contextChips: {
+          ...state.contextChips,
+          [event.sessionId]: (state.contextChips[event.sessionId] ?? []).filter(
+            (c) => c.id !== event.chipId,
+          ),
+        },
+      };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }

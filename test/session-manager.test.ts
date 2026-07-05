@@ -275,4 +275,55 @@ describe("SessionManager", () => {
     expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, verified: true });
     await h.pool.stop("sm8");
   });
+
+  it("attached context rides in as its own labeled blocks, ahead of the user's words, then clears (P7)", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm9"));
+    const sessionId = await h.sessionManager.createSession("sm9", "Fake Agent", cwd);
+
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-1",
+      kind: "selection",
+      label: "Selection: a.ts:1-2",
+      content: "const x = 1;",
+    });
+    expect(h.state().contextChips[sessionId]).toEqual([
+      { id: "chip-1", kind: "selection", label: "Selection: a.ts:1-2", content: "const x = 1;" },
+    ]);
+
+    await h.sessionManager.sendPrompt(sessionId, "what does this do?");
+
+    // chip cleared from state after being consumed by the prompt
+    expect(h.state().contextChips[sessionId]).toEqual([]);
+
+    const echoed = h
+      .state()
+      .transcripts[sessionId]!.find((b) => b.kind === "text");
+    expect(echoed?.kind === "text" && echoed.text.split("\n---BLOCK---\n")).toEqual([
+      "[Selection: a.ts:1-2]\nconst x = 1;",
+      "what does this do?",
+    ]);
+
+    await h.pool.stop("sm9");
+  });
+
+  it("removeContext drops a chip before it's ever sent", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
+    const sessionId = await h.sessionManager.createSession("sm10", "Fake Agent", cwd);
+
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-1",
+      kind: "file",
+      label: "File: a.ts",
+      content: "export const a = 1;",
+    });
+    h.sessionManager.removeContext(sessionId, "chip-1");
+    expect(h.state().contextChips[sessionId]).toEqual([]);
+
+    await h.sessionManager.sendPrompt(sessionId, "hello");
+    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    expect(echoed?.kind === "text" && echoed.text).toBe("hello"); // the removed chip never appears
+    await h.pool.stop("sm10");
+  });
 });

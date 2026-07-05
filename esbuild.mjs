@@ -1,4 +1,6 @@
-// Three bundles: extension host (node/cjs), agent-view webview, settings webview.
+// Four bundles: extension host (node/cjs), agent-view webview, settings
+// webview, and the standalone local MCP server (spawned by the *agent*, so
+// it must be plain Node with no vscode import at all — see src/mcp/server-main.ts).
 // esbuild by rule (.dotagent/rules/stack.md) — no webpack.
 import esbuild from "esbuild";
 
@@ -38,7 +40,17 @@ const webview = (name) => ({
   jsxImportSource: "preact",
 });
 
-const configs = [extensionHost, webview("agent-view"), webview("settings")];
+/** @type {import("esbuild").BuildOptions} */
+const mcpServer = {
+  ...base,
+  entryPoints: ["src/mcp/server-main.ts"],
+  outfile: "out/mcp-server.js",
+  platform: "node",
+  format: "cjs",
+  target: "node20",
+};
+
+const configs = [extensionHost, webview("agent-view"), webview("settings"), mcpServer];
 
 if (watch) {
   const contexts = await Promise.all(configs.map((c) => esbuild.context(c)));

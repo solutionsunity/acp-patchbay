@@ -5,15 +5,21 @@
 // always wins, never merged).
 import type {
   ContentBlock,
+  McpServer,
   SessionNotification,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import type { AgentViewEvent, PlanEntry, SessionSummary } from "../shared/protocol";
+import type { AgentViewEvent, ContextChip, PlanEntry, SessionSummary } from "../shared/protocol";
 import type { AgentPool } from "./pool";
 import type { SessionIndexStore } from "./stores/session-index";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
+  /** The local MCP server is spawned with `contextToken` as its correlation
+   * id (the real ACP sessionId doesn't exist yet when mcpServers must be
+   * built — session/new hasn't returned). Lets the orchestrator's IPC host
+   * translate that token back to the real session once it's known. */
+  mapContextToken?(token: string, sessionId: string): void;
 }
 
 let blockCounter = 0;
@@ -34,10 +40,12 @@ interface LiveSession {
   titled: boolean;
   activeTextBlockId: string | null;
   activeThoughtBlockId: string | null;
+  pendingContext: ContextChip[];
 }
 
 export class SessionManager {
   private sessions = new Map<string, LiveSession>();
+  private contextTokenCounter = 0;
 
   constructor(
     private readonly pool: AgentPool,
@@ -45,6 +53,10 @@ export class SessionManager {
     private readonly hooks: SessionManagerHooks,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
+    /** Builds the local MCP server's mcpServers entry for a fresh session,
+     * given the correlation token to spawn it with. `[]` (the default) when
+     * no MCP integration is wired — tests mostly don't need it. */
+    private readonly mcpServersFor: (contextToken: string) => McpServer[] = () => [],
   ) {}
 
   isLive(sessionId: string): boolean {
@@ -56,12 +68,15 @@ export class SessionManager {
     agentName: string,
     cwd: string,
   ): Promise<string> {
-    const { sessionId } = await this.pool.newSession(agentId, cwd);
+    const contextToken = `ctx-${++this.contextTokenCounter}`;
+    const { sessionId } = await this.pool.newSession(agentId, cwd, this.mcpServersFor(contextToken));
+    this.hooks.mapContextToken?.(contextToken, sessionId);
     this.sessions.set(sessionId, {
       agentId,
       titled: false,
       activeTextBlockId: null,
       activeThoughtBlockId: null,
+      pendingContext: [],
     });
     const now = new Date().toISOString();
     const title = `${agentName} session`;
@@ -125,6 +140,7 @@ export class SessionManager {
       titled: true, // reopened sessions keep whatever title they already have
       activeTextBlockId: null,
       activeThoughtBlockId: null,
+      pendingContext: [],
     });
     this.hooks.emit({ kind: "transcriptReset", sessionId });
     await this.pool.loadSession(agentId, sessionId, this.cwd());
@@ -150,14 +166,39 @@ export class SessionManager {
       { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), text },
       { kind: "sessionLiveChanged", sessionId, live: true },
     );
+    // Attached context rides in as its own labeled blocks, ahead of the
+    // user's words — distinguishable to the agent, not merged into prose
+    // (features.md § Chat: "explicitly add editor state to the prompt").
+    const chips = session.pendingContext;
+    session.pendingContext = [];
+    for (const chip of chips) {
+      events.push({ kind: "contextChipRemoved", sessionId, chipId: chip.id });
+    }
     this.hooks.emit(...events);
 
-    const prompt: ContentBlock[] = [{ type: "text", text }];
+    const prompt: ContentBlock[] = [
+      ...chips.map((c): ContentBlock => ({ type: "text", text: `[${c.label}]\n${c.content}` })),
+      { type: "text", text },
+    ];
     try {
       await this.pool.prompt(session.agentId, sessionId, prompt);
     } finally {
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
     }
+  }
+
+  addContext(sessionId: string, chip: ContextChip): void {
+    const session = this.sessions.get(sessionId);
+    if (session === undefined) return;
+    session.pendingContext.push(chip);
+    this.hooks.emit({ kind: "contextChipAdded", sessionId, chip });
+  }
+
+  removeContext(sessionId: string, chipId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session === undefined) return;
+    session.pendingContext = session.pendingContext.filter((c) => c.id !== chipId);
+    this.hooks.emit({ kind: "contextChipRemoved", sessionId, chipId });
   }
 
   async stopTurn(sessionId: string): Promise<void> {

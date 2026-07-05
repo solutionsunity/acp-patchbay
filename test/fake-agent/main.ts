@@ -32,7 +32,9 @@ export type TurnStep =
   | { type: "writeFile"; path: string; content: string }
   | { type: "readFile"; path: string }
   | { type: "runCommand"; command: string; args?: string[] }
-  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string };
+  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string }
+  | { type: "echoBlocks" }
+  | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> };
 
 export interface FakeAgentScript {
   name?: string;
@@ -63,6 +65,7 @@ interface FakeSession {
   cwd: string;
   pending: AbortController | null;
   mode: string | null;
+  mcpServers: acp.McpServer[];
 }
 
 const sessions = new Map<string, FakeSession>();
@@ -108,6 +111,7 @@ async function runTurn(
   sessionId: string,
   cwd: string,
   promptText: string,
+  rawPrompt: acp.ContentBlock[],
   signal: AbortSignal,
   cx: acp.AgentContext,
 ): Promise<acp.StopReason> {
@@ -265,6 +269,38 @@ async function runTurn(
         });
         break;
       }
+      case "echoBlocks": {
+        // Proves attached context arrives as its own ContentBlock entries,
+        // not merged into the user's prose (architecture.md's context-
+        // injection contract) — joined with an explicit delimiter here
+        // since consecutive agent_message_chunk notifications properly
+        // flow into one continuous text block in patchbay's own transcript
+        // (real streaming semantics), which would otherwise hide the
+        // original block boundaries from this test.
+        const texts = rawPrompt.filter((b) => b.type === "text").map((b) => b.text);
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: texts.join("\n---BLOCK---\n") },
+        });
+        break;
+      }
+      case "callMcpTool": {
+        let result: string;
+        try {
+          const server = sessions.get(sessionId)?.mcpServers[0];
+          // McpServerStdio is the untagged union member — no "type" field to
+          // discriminate on, so "has a command" is the structural check.
+          if (!server || !("command" in server)) throw new Error("no stdio mcp server configured");
+          result = await callMcpTool(server, step.tool, step.args ?? {});
+        } catch (err) {
+          result = `mcp: rejected (${(err as Error).message})`;
+        }
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: result },
+        });
+        break;
+      }
     }
   }
   return "end_turn";
@@ -274,6 +310,59 @@ function promptText(prompt: acp.ContentBlock[]): string {
   return prompt
     .map((b) => (b.type === "text" ? b.text : ""))
     .join(" ");
+}
+
+// ── minimal MCP client, exactly as a real agent would spawn+speak to
+// whatever mcpServers session/new handed it — proves the wiring end to end,
+// not just the local MCP server in isolation.
+interface McpStdioServer {
+  command: string;
+  args: string[];
+  env: Array<{ name: string; value: string }>;
+}
+
+async function callMcpTool(
+  server: McpStdioServer,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(server.command, server.args, {
+    env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let buffer = "";
+  const waiters = new Map<number, (msg: { result?: unknown; error?: { message: string } }) => void>();
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim() === "") continue;
+      const msg = JSON.parse(line) as { id?: number; result?: unknown; error?: { message: string } };
+      if (msg.id !== undefined) waiters.get(msg.id)?.(msg);
+    }
+  });
+  let nextId = 1;
+  const send = (method: string, params?: unknown) => {
+    const id = nextId++;
+    return new Promise<{ result?: unknown; error?: { message: string } }>((resolve) => {
+      waiters.set(id, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    });
+  };
+  try {
+    await send("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fake-agent", version: "0.0.0" } });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+    const resp = await send("tools/call", { name: tool, arguments: args });
+    if (resp.error !== undefined) throw new Error(resp.error.message);
+    const result = resp.result as { content: { text: string }[]; isError?: boolean };
+    if (result.isError) throw new Error(result.content[0]?.text ?? "tool error");
+    return result.content[0]?.text ?? "";
+  } finally {
+    child.kill();
+  }
 }
 
 const app = acp
@@ -296,6 +385,7 @@ const app = acp
       cwd: ctx.params.cwd,
       pending: null,
       mode: script.modes?.currentModeId ?? null,
+      mcpServers: ctx.params.mcpServers,
     });
     const response: acp.NewSessionResponse = { sessionId: id };
     if (script.modes) response.modes = script.modes;
@@ -311,6 +401,7 @@ const app = acp
       cwd,
       pending: null,
       mode: script.modes?.currentModeId ?? null,
+      mcpServers: ctx.params.mcpServers,
     });
     for (const update of readRecordedUpdates(cwd, sessionId)) {
       await ctx.client.notify(acp.methods.client.session.update, { sessionId, update });
@@ -328,6 +419,7 @@ const app = acp
       ctx.params.sessionId,
       session.cwd,
       promptText(ctx.params.prompt),
+      ctx.params.prompt,
       session.pending.signal,
       ctx.client,
     );
@@ -354,7 +446,13 @@ const app = acp
     const parent = sessions.get(ctx.params.sessionId);
     if (!parent) throw acp.RequestError.invalidRequest("unknown session");
     const id = `${parent.id}-fork-${++sessionCounter}`;
-    sessions.set(id, { id, cwd: parent.cwd, pending: null, mode: parent.mode });
+    sessions.set(id, {
+      id,
+      cwd: parent.cwd,
+      pending: null,
+      mode: parent.mode,
+      mcpServers: parent.mcpServers,
+    });
     return { sessionId: id };
   })
   .onNotification("session/cancel", (ctx) => {
