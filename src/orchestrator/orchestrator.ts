@@ -16,9 +16,11 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { ChannelHost } from "./channel";
+import { AgentPool, type LaunchSpec } from "./pool";
 import { ConfigFileStore, CONFIG_RELATIVE_PATH } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { PermissionRulesStore } from "./stores/permission-rules";
+import { loadRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
 
 export class Orchestrator {
@@ -29,9 +31,15 @@ export class Orchestrator {
   readonly decisionAudit: DecisionAuditStore;
   readonly configFile: ConfigFileStore;
   readonly permissionRules: PermissionRulesStore;
+  readonly roster: RosterAgent[];
+  readonly pool: AgentPool;
+
+  private readonly workspaceRoot: string | null;
+  private readonly agentNames = new Map<string, string>();
 
   constructor(context: vscode.ExtensionContext) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+    this.workspaceRoot = workspaceRoot;
 
     this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
@@ -58,6 +66,44 @@ export class Orchestrator {
       coalesceSettingsEvent,
       onAction,
     );
+
+    this.roster = loadRoster();
+    this.pool = new AgentPool({
+      onStatusChanged: (agentId, status, detail) => {
+        const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
+        this.agentView.emit(event);
+        this.settings.emit(event);
+      },
+      onDeclaredCaptured: () => {
+        // capability tables land in state at P5
+      },
+      onSessionUpdate: () => {
+        // chat streaming lands at P4
+      },
+    });
+  }
+
+  /** Connect an agent from config or roster; upserts it into both channel states. */
+  async connectAgent(spec: LaunchSpec): Promise<void> {
+    this.agentNames.set(spec.agentId, spec.name);
+    const upsert = {
+      kind: "agentUpserted",
+      agent: { id: spec.agentId, name: spec.name, status: "reconnecting" },
+    } as const;
+    this.agentView.emit(upsert);
+    this.settings.emit(upsert);
+    await this.pool.connect(spec);
+  }
+
+  launchSpecForRosterAgent(agent: RosterAgent): LaunchSpec {
+    return {
+      agentId: agent.id,
+      name: agent.name,
+      command: agent.command,
+      args: agent.args,
+      env: agent.env,
+      cwd: this.workspaceRoot ?? process.cwd(),
+    };
   }
 
   private handleAction(action: Action): void {
@@ -69,6 +115,7 @@ export class Orchestrator {
   }
 
   dispose(): void {
+    void this.pool.disposeAll();
     this.agentView.flushNow();
     this.settings.flushNow();
   }

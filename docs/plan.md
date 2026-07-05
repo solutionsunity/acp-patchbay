@@ -27,10 +27,13 @@ checkboxes reflect what is done, phases carry no history.
 Each one buys its keep; each is removable without cascade:
 
 - **`@agentclientprotocol/sdk`** (official ACP TypeScript SDK) for both sides:
-  `ClientSideConnection` in the pool, `AgentSideConnection` in the fake agent.
-  Protocol plumbing is exactly what should not be hand-rolled. Built against
-  schema v2; every RFD-stage assumption in architecture.md is re-verified
-  against the SDK's types at P2.
+  the client app in the pool, the agent app in the fake agent. Protocol
+  plumbing is exactly what should not be hand-rolled. Built against schema v2;
+  every RFD-stage assumption in architecture.md is re-verified against the
+  SDK's types at P2. *Re-verified (P2): SDK 1.x replaced the 0.x
+  `ClientSideConnection`/`AgentSideConnection` classes with the
+  `client()`/`agent()` builder API — same stdio ndjson JSON-RPC, same methods;
+  built on 1.1.0.*
 - **Preact** for both webviews — a component model earns its keep for streaming
   chat; esbuild compiles JSX natively so it costs zero extra toolchain. State is
   pure reducers over patch events; no state library.
@@ -97,7 +100,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: unit tests prove reducer determinism, coalescing, gap-recovery; a
   dummy state round-trips through a real webview (kill/reopen included).
 
-### P2 — ACP client pool + fake agent + roster ☐
+### P2 — ACP client pool + fake agent + roster ☑
 
 - Client pool: `agentId → { process, declared, verified, sessions[] }`; spawn /
   stop / restart; crash detection surfacing as status patches; ACP `initialize`

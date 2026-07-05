@@ -65,6 +65,7 @@
     "vscode:prepublish": "node esbuild.mjs --production"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "^1.1.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.96.0",

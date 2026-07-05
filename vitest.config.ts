@@ -5,5 +5,6 @@ export default defineConfig({
     include: ["test/**/*.test.ts", "src/**/*.test.ts"],
     exclude: ["test/vscode/**"],
     environment: "node",
+    globalSetup: ["test/setup/build-fake-agent.ts"],
   },
 });

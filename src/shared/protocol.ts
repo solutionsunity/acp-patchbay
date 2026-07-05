@@ -72,6 +72,26 @@ export interface AgentSummary {
   id: string;
   name: string;
   status: AgentStatus;
+  /** Human-readable status context, e.g. "exited 1 · 14:07". */
+  detail?: string;
+}
+
+/**
+ * What the agent *claims* at `initialize` — normalized from the handshake,
+ * refreshed on every connect. A claim, not a fact: UI gates on verified.
+ */
+export interface DeclaredCapabilities {
+  loadSession: boolean;
+  sessionFork: boolean;
+  sessionResume: boolean;
+  sessionList: boolean;
+  sessionClose: boolean;
+  promptImage: boolean;
+  promptAudio: boolean;
+  promptEmbeddedContext: boolean;
+  mcpHttp: boolean;
+  mcpSse: boolean;
+  authMethods: string[];
 }
 
 // ── agent-view channel ───────────────────────────────────────────────────────
@@ -85,7 +105,12 @@ export const initialAgentViewState: AgentViewState = { agents: [] };
 export type AgentViewEvent =
   | { kind: "agentUpserted"; agent: AgentSummary }
   | { kind: "agentRemoved"; agentId: string }
-  | { kind: "agentStatusChanged"; agentId: string; status: AgentStatus };
+  | {
+      kind: "agentStatusChanged";
+      agentId: string;
+      status: AgentStatus;
+      detail?: string;
+    };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -101,7 +126,9 @@ function reduceAgents(
       return agents.filter((a) => a.id !== event.agentId);
     case "agentStatusChanged":
       return agents.map((a) =>
-        a.id === event.agentId ? { ...a, status: event.status } : a,
+        a.id === event.agentId
+          ? { ...a, status: event.status, detail: event.detail }
+          : a,
       );
   }
 }
