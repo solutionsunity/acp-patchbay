@@ -22,6 +22,8 @@ const extensionHost = {
   format: "cjs",
   target: "node20",
   external: ["vscode"],
+  // prefer ESM entries: jsonc-parser's UMD main leaves dynamic requires in the bundle
+  mainFields: ["module", "main"],
 };
 
 /** @param {"agent-view" | "settings"} name @returns {import("esbuild").BuildOptions} */

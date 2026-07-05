@@ -85,7 +85,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: Extension Development Host launches; empty Agent View renders;
   `npm test` runs green.
 
-### P1 — Shared protocol + orchestrator core ☐
+### P1 — Shared protocol + orchestrator core ☑
 
 - `src/shared/protocol.ts`: action/snapshot/patch discriminated unions, revision
   scheme.
