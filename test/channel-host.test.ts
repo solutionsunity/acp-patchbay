@@ -55,7 +55,10 @@ describe("ChannelHost", () => {
     expect(view.last()).toEqual({
       kind: "snapshot",
       rev: 1,
-      state: { agents: [{ id: "claude", name: "claude", status: "running" }] },
+      state: {
+        ...initialAgentViewState,
+        agents: [{ id: "claude", name: "claude", status: "running" }],
+      },
     });
   });
 

@@ -12,10 +12,12 @@ import {
   type Action,
   type AgentViewEvent,
   type AgentViewState,
+  type ConnectAgentSource,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
 import { ChannelHost } from "./channel";
+import { parseCommandLine } from "./command-line";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { ConfigFileStore, CONFIG_RELATIVE_PATH } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
@@ -53,9 +55,12 @@ export class Orchestrator {
           ).fsPath,
     );
 
+    this.roster = loadRoster();
+    const rosterEntries = this.roster.map(({ id, name }) => ({ id, name }));
+
     const onAction = (action: Action) => this.handleAction(action);
     this.agentView = new ChannelHost(
-      initialAgentViewState,
+      { ...initialAgentViewState, roster: rosterEntries },
       reduceAgentView,
       coalesceAgentViewEvent,
       onAction,
@@ -66,8 +71,6 @@ export class Orchestrator {
       coalesceSettingsEvent,
       onAction,
     );
-
-    this.roster = loadRoster();
     this.pool = new AgentPool({
       onStatusChanged: (agentId, status, detail) => {
         const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
@@ -111,6 +114,44 @@ export class Orchestrator {
       case "openSettings":
         void vscode.commands.executeCommand("acpPatchbay.openSettings");
         break;
+      case "connectAgent":
+        void this.connectFromSource(action.source);
+        break;
+      case "restartAgent":
+        // failure surfaces as a crashed status patch — no reply channel by design
+        void this.pool.restart(action.agentId).catch(() => {});
+        break;
+      case "stopAgent":
+        void this.pool.stop(action.agentId);
+        break;
+    }
+  }
+
+  private async connectFromSource(source: ConnectAgentSource): Promise<void> {
+    let spec: LaunchSpec | null = null;
+    if ("rosterId" in source) {
+      const entry = this.roster.find((a) => a.id === source.rosterId);
+      if (entry) spec = this.launchSpecForRosterAgent(entry);
+    } else {
+      const parsed = parseCommandLine(source.command);
+      if (parsed) {
+        const id = `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}`;
+        spec = {
+          agentId: id,
+          name: parsed.command,
+          command: parsed.command,
+          args: parsed.args,
+          env: {},
+          cwd: this.workspaceRoot ?? process.cwd(),
+        };
+      }
+    }
+    if (spec === null) return;
+    if (this.pool.get(spec.agentId)?.status === "running") return;
+    try {
+      await this.connectAgent(spec);
+    } catch {
+      // pool already emitted the crashed status with detail
     }
   }
 

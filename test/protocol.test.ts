@@ -23,6 +23,11 @@ function replay(state: AgentViewState, evs: AgentViewEvent[]): AgentViewState {
   return evs.reduce(reduceAgentView, state);
 }
 
+/** State literal helper — tests only care about the agents slice here. */
+function stateWith(agents: AgentSummary[]): AgentViewState {
+  return { ...initialAgentViewState, agents };
+}
+
 describe("reducers", () => {
   it("are deterministic: same events, same result", () => {
     expect(replay(initialAgentViewState, events)).toEqual(
@@ -54,15 +59,15 @@ describe("applyHostMessage", () => {
     const r = applyHostMessage(reduce, null, {
       kind: "snapshot",
       rev: 7,
-      state: { agents: [claude] },
+      state: stateWith([claude]),
     });
-    expect(r).toEqual({ kind: "ok", next: { rev: 7, state: { agents: [claude] } } });
+    expect(r).toEqual({ kind: "ok", next: { rev: 7, state: stateWith([claude]) } });
   });
 
   it("applies a consecutive patch", () => {
     const r = applyHostMessage(
       reduce,
-      { rev: 7, state: { agents: [claude] } },
+      { rev: 7, state: stateWith([claude]) },
       { kind: "patch", rev: 8, events: [{ kind: "agentUpserted", agent: gemini }] },
     );
     expect(r.kind).toBe("ok");
@@ -75,7 +80,7 @@ describe("applyHostMessage", () => {
   it("reports a gap on a revision jump — recovery is resnapshot, never repair", () => {
     const r = applyHostMessage(
       reduce,
-      { rev: 7, state: { agents: [] } },
+      { rev: 7, state: stateWith([]) },
       { kind: "patch", rev: 9, events: [] },
     );
     expect(r.kind).toBe("gap");
@@ -87,12 +92,12 @@ describe("applyHostMessage", () => {
   });
 
   it("ignores stale patches and stale snapshots", () => {
-    const current = { rev: 7, state: { agents: [] } };
+    const current = { rev: 7, state: stateWith([]) };
     expect(
       applyHostMessage(reduce, current, { kind: "patch", rev: 7, events: [] }).kind,
     ).toBe("stale");
     expect(
-      applyHostMessage(reduce, current, { kind: "snapshot", rev: 3, state: { agents: [] } }).kind,
+      applyHostMessage(reduce, current, { kind: "snapshot", rev: 3, state: stateWith([]) }).kind,
     ).toBe("stale");
   });
 });

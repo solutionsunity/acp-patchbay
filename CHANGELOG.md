@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- P3 Agent View + Settings shells from the approved design: header/session
+  row/chat/composer regions, agents + sessions drawers, connect-agent flow
+  (roster or custom command), honest empty states; controls gate on state —
+  no gauge, knobs, or fidelity chips before their data exists.
 - P2 client pool + fake agent + roster: agent subprocess pool over the ACP
   SDK 1.x client API (crash detection, one-action restart, declared-table
   capture per connect, concurrent sessions on one connection); scriptable

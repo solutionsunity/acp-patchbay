@@ -117,7 +117,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: pool tests against fake agent — connect, capture declared, crash →
   visible → one-action restart, two concurrent sessions on one connection.
 
-### P3 — Agent View design + shell ☐
+### P3 — Agent View design + shell ☑
 
 - `docs/design/agent-view-mockup.html` and `docs/design/settings-mockup.html`:
   interactive single-file HTML mockups — visuals and interactions judged in a

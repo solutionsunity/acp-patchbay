@@ -7,23 +7,9 @@ import {
   type SettingsState,
 } from "../../shared/protocol";
 import { createViewChannel } from "../shared/channel";
-import { useChannelState } from "../shared/use-channel";
+import { App } from "./app";
 import "./style.css";
 
 const channel = createViewChannel<SettingsState, SettingsEvent>(reduceSettings);
 
-function App() {
-  const state = useChannelState(channel);
-  if (state === null) return null;
-  return (
-    <div class="empty">
-      <div class="tag">
-        {state.agents.length === 0
-          ? "Patchbay settings — no agents configured yet."
-          : `${state.agents.length} agent(s) configured.`}
-      </div>
-    </div>
-  );
-}
-
-render(<App />, document.getElementById("root")!);
+render(<App channel={channel} />, document.getElementById("root")!);

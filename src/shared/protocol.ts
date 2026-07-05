@@ -29,7 +29,15 @@ export type ViewToHost =
 
 // ── actions (fire-and-forget; results come back as state, never as replies) ──
 
-export type Action = { kind: "openSettings" };
+export type ConnectAgentSource =
+  | { rosterId: string }
+  | { command: string }; // custom command line that speaks ACP
+
+export type Action =
+  | { kind: "openSettings" }
+  | { kind: "connectAgent"; source: ConnectAgentSource }
+  | { kind: "restartAgent"; agentId: string }
+  | { kind: "stopAgent"; agentId: string };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -96,11 +104,37 @@ export interface DeclaredCapabilities {
 
 // ── agent-view channel ───────────────────────────────────────────────────────
 
-export interface AgentViewState {
-  agents: readonly AgentSummary[];
+export interface RosterEntry {
+  id: string;
+  name: string;
 }
 
-export const initialAgentViewState: AgentViewState = { agents: [] };
+export interface SessionSummary {
+  id: string;
+  agentId: string;
+  title: string;
+  /** Turn in flight. */
+  live: boolean;
+  /** Continuation seeded by patchbay, not replayed natively — always labeled. */
+  emulated: boolean;
+  /** Parent session id when this is a branch (⑂ badge names its parent). */
+  branchOf: string | null;
+}
+
+export interface AgentViewState {
+  agents: readonly AgentSummary[];
+  sessions: readonly SessionSummary[];
+  activeSessionId: string | null;
+  /** Known-agents roster (shipped data) for the pickers. */
+  roster: readonly RosterEntry[];
+}
+
+export const initialAgentViewState: AgentViewState = {
+  agents: [],
+  sessions: [],
+  activeSessionId: null,
+  roster: [],
+};
 
 export type AgentViewEvent =
   | { kind: "agentUpserted"; agent: AgentSummary }
