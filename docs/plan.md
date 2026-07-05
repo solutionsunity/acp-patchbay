@@ -116,11 +116,13 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 
 ### P3 — Agent View design + shell ☐
 
-- `docs/design/agent-view-mockup.html`: interactive single-file HTML mockup —
-  visuals and interactions judged in a browser, iterated to verdict. The owner's
-  reference images (workspace root) are the visual starting point.
-- `docs/design/agent-view.md`: the UI requirements distilled from the approved
-  mockup — the durable artifact. The mockup illustrates; the doc binds.
+- `docs/design/agent-view-mockup.html` and `docs/design/settings-mockup.html`:
+  interactive single-file HTML mockups — visuals and interactions judged in a
+  browser, iterated to verdict. The owner's reference images (workspace root)
+  are the visual starting point.
+- `docs/design/ui.md`: the binding inventory — every area, icon, and behavior
+  of both surfaces, kept 1:1 with the mockups. The mockups illustrate; this
+  doc binds.
 - Implement the static shell from the approved design: regions, navigation
   gestures, empty states.
 - **Gate / owner touchpoint**: mockup verdict, then requirements doc.

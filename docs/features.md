@@ -73,6 +73,11 @@ deliverable, owed before implementation.
 - User can attach files by drag-and-drop or picker.
 - User can explicitly add editor state to the prompt: current selection, current
   file, diagnostics.
+- User can add workspace folders as session context roots — the open workspace's
+  folders plus explicitly added external ones (the backend repo while working in
+  the frontend). Shown as a chip, removable; passed to the agent through the
+  protocol. What the agent's engine does with roots is the agent's business —
+  patchbay passes, it does not index.
 - Slash commands the agent advertises are discoverable and invokable in the input.
 - Permission requests appear inline with allow-once / allow-always / reject, and
   are impossible to miss when the view is hidden.

@@ -231,6 +231,11 @@ The differentiator (prd §v1 Scope), shipped complete:
 - **Tools/resources**: active selection, current file, diagnostics (live, not
   stale), open editors. Explicit user gestures ("add selection to context",
   right-click) inject the same data into the prompt directly.
+- **Context roots**: a session's roots are the workspace folders plus user-added
+  external folders (multi-repo work). Delivered protocol-native (`roots` +
+  `roots.listChanged` where declared; adapter fallback otherwise). Patchbay
+  passes roots and never indexes — retrieval depth is the agent's own engine,
+  and the UI never implies otherwise.
 - **File operations go through ACP, not MCP**: the orchestrator advertises the `fs`
   capability, so `fs/read_text_file` serves live unsaved buffers and
   `fs/write_text_file` lands as a native diff the user accepts or rejects before
