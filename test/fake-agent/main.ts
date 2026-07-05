@@ -28,7 +28,11 @@ export type TurnStep =
     }
   | { type: "usage"; used: number; size: number }
   | { type: "commands"; names: string[] }
-  | { type: "crash" };
+  | { type: "crash" }
+  | { type: "writeFile"; path: string; content: string }
+  | { type: "readFile"; path: string }
+  | { type: "runCommand"; command: string; args?: string[] }
+  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string };
 
 export interface FakeAgentScript {
   name?: string;
@@ -173,6 +177,94 @@ async function runTurn(
           })),
         });
         break;
+      case "writeFile": {
+        let result: string;
+        try {
+          await cx.request(acp.methods.client.fs.writeTextFile, {
+            sessionId,
+            path: step.path,
+            content: step.content,
+          });
+          result = "write: ok";
+        } catch (err) {
+          result = `write: rejected (${(err as Error).message})`;
+        }
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: result },
+        });
+        break;
+      }
+      case "readFile": {
+        const response = await cx.request(acp.methods.client.fs.readTextFile, {
+          sessionId,
+          path: step.path,
+        });
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `read: ${response.content}` },
+        });
+        break;
+      }
+      case "runCommand": {
+        let result: string;
+        try {
+          const created = await cx.request(acp.methods.client.terminal.create, {
+            sessionId,
+            command: step.command,
+            args: step.args ?? [],
+          });
+          const exit = await cx.request(acp.methods.client.terminal.waitForExit, {
+            sessionId,
+            terminalId: created.terminalId,
+          });
+          const out = await cx.request(acp.methods.client.terminal.output, {
+            sessionId,
+            terminalId: created.terminalId,
+          });
+          await cx.request(acp.methods.client.terminal.release, {
+            sessionId,
+            terminalId: created.terminalId,
+          });
+          result = `command: exit=${exit.exitCode} output=${out.output.trim()}`;
+        } catch (err) {
+          result = `command: rejected (${(err as Error).message})`;
+        }
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: result },
+        });
+        break;
+      }
+      case "askPermission": {
+        // "edit" carries its path via the standard `locations` field — the
+        // one subject shape ACP actually guarantees. "execute" has no
+        // equivalent standard field for the command string, so a real
+        // agent's own permission ask can't be rule-matched reliably; the
+        // honest broker behavior is to always ask for those (enforcement
+        // happens for real at patchbay's own terminal/create gate instead).
+        const response = await cx.request(acp.methods.client.session.requestPermission, {
+          sessionId,
+          toolCall: {
+            toolCallId: `ask-${sessionId}`,
+            title: step.title,
+            kind: step.kind,
+            locations: step.kind === "edit" ? [{ path: step.subject }] : undefined,
+          },
+          options: [
+            { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+            { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
+            { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+          ],
+        });
+        const outcome =
+          response.outcome.outcome === "cancelled" ? "cancelled" : response.outcome.optionId;
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `permission: ${outcome}` },
+        });
+        break;
+      }
     }
   }
   return "end_turn";

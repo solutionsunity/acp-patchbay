@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { AgentStatus, DeclaredCapabilities } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
+import { stubFsTerminalHooks } from "./support/stub-hooks";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -29,6 +30,7 @@ function makePool(): { pool: AgentPool; rec: Recorded } {
     onStatusChanged: (_id, status, detail) => rec.statuses.push({ status, detail }),
     onDeclaredCaptured: (_id, declared) => rec.declared.push(declared),
     onSessionUpdate: (_id, n) => rec.updates.push(n),
+    ...stubFsTerminalHooks(),
   });
   return { pool, rec };
 }

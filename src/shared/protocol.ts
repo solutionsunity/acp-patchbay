@@ -44,7 +44,13 @@ export type Action =
   | { kind: "closeSession"; sessionId: string }
   | { kind: "sendPrompt"; sessionId: string; text: string }
   | { kind: "stopTurn"; sessionId: string }
-  | { kind: "runDiagnostics"; agentId: string };
+  | { kind: "runDiagnostics"; agentId: string }
+  | { kind: "resolvePermission"; requestId: string; optionId: string }
+  | { kind: "resolveDiff"; requestId: string; accept: boolean }
+  | { kind: "adoptWorkspaceAgent"; agentId: string }
+  | { kind: "addCommandRule"; rule: CommandRuleView }
+  | { kind: "removeCommandRule"; pattern: string }
+  | { kind: "setFileWriteScope"; scope: FileWriteScopeView };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -231,7 +237,56 @@ export interface PlanBlock {
   entries: readonly PlanEntry[];
 }
 
-export type ChatBlock = UserBlock | TextBlock | ThoughtBlock | ToolCallBlock | PlanBlock;
+/** One broker path for every gated action (architecture.md § Permission
+ * broker) — ACP session/request_permission, and patchbay's own fs.write /
+ * terminal handlers, all render the same card shape. */
+export interface PermissionOptionView {
+  optionId: string;
+  label: string;
+  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+}
+
+export interface PermissionBlock {
+  kind: "permission";
+  id: string;
+  title: string;
+  detail: string;
+  options: readonly PermissionOptionView[];
+  /** Set once resolved — by the user or by a rule. Never re-asked in place. */
+  resolution: { label: string; auto: boolean } | null;
+}
+
+export type DiffLineKind = "context" | "add" | "del";
+
+export interface DiffBlock {
+  kind: "diff";
+  id: string;
+  file: string;
+  additions: number;
+  deletions: number;
+  lines: readonly { kind: DiffLineKind; text: string }[];
+  /** null while awaiting the user; auto-accept still shows the diff. */
+  resolution: { accepted: boolean; auto: boolean } | null;
+}
+
+export interface TerminalBlock {
+  kind: "terminal";
+  id: string;
+  command: string;
+  output: string;
+  running: boolean;
+  exitCode: number | null;
+}
+
+export type ChatBlock =
+  | UserBlock
+  | TextBlock
+  | ThoughtBlock
+  | ToolCallBlock
+  | PlanBlock
+  | PermissionBlock
+  | DiffBlock
+  | TerminalBlock;
 
 export interface AvailableCommand {
   name: string;
@@ -308,6 +363,28 @@ export type AgentViewEvent =
   | { kind: "planAppended"; sessionId: string; blockId: string; entries: readonly PlanEntry[] }
   | { kind: "planCleared"; sessionId: string }
   | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
+  | {
+      kind: "permissionRequested";
+      sessionId: string;
+      blockId: string;
+      title: string;
+      detail: string;
+      options: readonly PermissionOptionView[];
+    }
+  | { kind: "permissionResolved"; sessionId: string; blockId: string; label: string; auto: boolean }
+  | {
+      kind: "diffProposed";
+      sessionId: string;
+      blockId: string;
+      file: string;
+      additions: number;
+      deletions: number;
+      lines: readonly { kind: DiffLineKind; text: string }[];
+    }
+  | { kind: "diffResolved"; sessionId: string; blockId: string; accepted: boolean; auto: boolean }
+  | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
+  | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
+  | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
   /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
   | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
   | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
@@ -317,7 +394,19 @@ export type AgentViewEvent =
       used: number;
       size: number;
       cost?: { amount: number; currency: string };
-    };
+    }
+  /** Settings-only (shared union — AgentView's reducer no-ops on these). */
+  | { kind: "workspaceAgentPending"; agent: WorkspaceAgentPending }
+  | { kind: "workspaceAgentAdopted"; agentId: string };
+
+/** A repo-defined agent (from `.vscode/acp-patchbay.json`) awaiting the
+ * one-time, workspace-trust-gated adoption architecture.md requires before
+ * its launch command runs — shown in full, never silently trusted. */
+export interface WorkspaceAgentPending {
+  agentId: string;
+  name: string;
+  command: string;
+}
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -433,6 +522,26 @@ function upsertToolCall(
   );
 }
 
+/** Finds a block by id and replaces it with `patch(existing)`'s result — a
+ * no-op if the block doesn't exist (e.g. a stale event after a transcript
+ * reset). Used by every block that's created once and updated in place. */
+function patchBlock<B extends ChatBlock>(
+  state: AgentViewState,
+  sessionId: string,
+  blockId: string,
+  patch: (existing: B) => B,
+): AgentViewState {
+  const blocks = state.transcripts[sessionId] ?? [];
+  const i = blocks.findIndex((b) => b.id === blockId);
+  if (i === -1) return state;
+  const updated = patch(blocks[i] as B);
+  return withTranscript(
+    state,
+    sessionId,
+    blocks.map((b, j) => (j === i ? updated : b)),
+  );
+}
+
 export function reduceAgentView(
   state: AgentViewState,
   event: AgentViewEvent,
@@ -521,6 +630,57 @@ export function reduceAgentView(
           [event.sessionId]: { used: event.used, size: event.size, cost: event.cost },
         },
       };
+    case "permissionRequested":
+      return appendBlock(state, event.sessionId, {
+        kind: "permission",
+        id: event.blockId,
+        title: event.title,
+        detail: event.detail,
+        options: event.options,
+        resolution: null,
+      });
+    case "permissionResolved":
+      return patchBlock<PermissionBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        resolution: { label: event.label, auto: event.auto },
+      }));
+    case "diffProposed":
+      return appendBlock(state, event.sessionId, {
+        kind: "diff",
+        id: event.blockId,
+        file: event.file,
+        additions: event.additions,
+        deletions: event.deletions,
+        lines: event.lines,
+        resolution: null,
+      });
+    case "diffResolved":
+      return patchBlock<DiffBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        resolution: { accepted: event.accepted, auto: event.auto },
+      }));
+    case "terminalStarted":
+      return appendBlock(state, event.sessionId, {
+        kind: "terminal",
+        id: event.blockId,
+        command: event.command,
+        output: "",
+        running: true,
+        exitCode: null,
+      });
+    case "terminalOutputAppended":
+      return patchBlock<TerminalBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        output: b.output + event.chunk,
+      }));
+    case "terminalExited":
+      return patchBlock<TerminalBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        running: false,
+        exitCode: event.exitCode,
+      }));
+    default:
+      return state; // events belonging only to the settings channel (same shared union)
   }
 }
 
@@ -551,16 +711,42 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   ) {
     return next;
   }
+  // Terminal output streams in small chunks — concatenate per block, same as text.
+  if (
+    prev.kind === "terminalOutputAppended" &&
+    next.kind === "terminalOutputAppended" &&
+    prev.sessionId === next.sessionId &&
+    prev.blockId === next.blockId
+  ) {
+    return { ...next, chunk: prev.chunk + next.chunk };
+  }
   return null;
 };
 
 // ── settings channel ─────────────────────────────────────────────────────────
+
+export interface CommandRuleView {
+  pattern: string;
+  verdict: "allow" | "ask" | "deny";
+}
+
+export type FileWriteScopeView = "workspace" | "workspace+temp" | "always-ask";
+
+export interface AuditEntryView {
+  ts: string;
+  kind: string;
+  [key: string]: unknown;
+}
 
 export interface SettingsState {
   agents: readonly AgentSummary[];
   roster: readonly RosterEntry[];
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   capabilitiesResetAt: Readonly<Record<string, string>>;
+  commandRules: readonly CommandRuleView[];
+  fileWriteScope: FileWriteScopeView;
+  auditTail: readonly AuditEntryView[];
+  pendingAdoptions: readonly WorkspaceAgentPending[];
 }
 
 export const initialSettingsState: SettingsState = {
@@ -568,9 +754,20 @@ export const initialSettingsState: SettingsState = {
   roster: [],
   capabilities: {},
   capabilitiesResetAt: {},
+  commandRules: [],
+  fileWriteScope: "workspace",
+  auditTail: [],
+  pendingAdoptions: [],
 };
 
-export type SettingsEvent = AgentViewEvent;
+export type SettingsEvent =
+  | AgentViewEvent
+  | {
+      kind: "permissionRulesChanged";
+      commandRules: readonly CommandRuleView[];
+      fileWriteScope: FileWriteScopeView;
+    }
+  | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] };
 
 export function reduceSettings(
   state: SettingsState,
@@ -589,9 +786,26 @@ export function reduceSettings(
       };
     case "capabilityVerified":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
+    case "permissionRulesChanged":
+      return { ...state, commandRules: event.commandRules, fileWriteScope: event.fileWriteScope };
+    case "auditTailChanged":
+      return { ...state, auditTail: event.entries };
+    case "workspaceAgentPending":
+      return state.pendingAdoptions.some((a) => a.agentId === event.agent.agentId)
+        ? state
+        : { ...state, pendingAdoptions: [...state.pendingAdoptions, event.agent] };
+    case "workspaceAgentAdopted":
+      return {
+        ...state,
+        pendingAdoptions: state.pendingAdoptions.filter((a) => a.agentId !== event.agentId),
+      };
     default:
       return state;
   }
 }
 
-export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = coalesceAgentViewEvent;
+export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {
+  if (prev.kind === "permissionRulesChanged" || prev.kind === "auditTailChanged") return null;
+  if (next.kind === "permissionRulesChanged" || next.kind === "auditTailChanged") return null;
+  return coalesceAgentViewEvent(prev, next);
+};

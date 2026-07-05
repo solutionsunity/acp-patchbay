@@ -13,19 +13,33 @@ import {
   type AgentViewEvent,
   type AgentViewState,
   type ConnectAgentSource,
+  type PermissionOptionView,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
+import { applyFileWrite, PermissionBroker } from "./broker";
 import { CapabilityVerifier } from "./capability-verifier";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { SessionManager } from "./session-manager";
-import { ConfigFileStore, CONFIG_RELATIVE_PATH } from "./stores/config-file";
+import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
+import { ConfigFileStore, CONFIG_RELATIVE_PATH, type AgentConfig } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { PermissionRulesStore } from "./stores/permission-rules";
 import { loadRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
+import { type TerminalHandle } from "./terminal-runner";
+
+function optionViewsFromAcp(
+  options: readonly { optionId: string; name: string; kind: string }[],
+): PermissionOptionView[] {
+  return options.map((o) => ({
+    optionId: o.optionId,
+    label: o.name,
+    kind: o.kind as PermissionOptionView["kind"],
+  }));
+}
 
 export class Orchestrator {
   readonly agentView: ChannelHost<AgentViewState, AgentViewEvent>;
@@ -35,13 +49,22 @@ export class Orchestrator {
   readonly decisionAudit: DecisionAuditStore;
   readonly configFile: ConfigFileStore;
   readonly permissionRules: PermissionRulesStore;
+  readonly adoption: WorkspaceAgentAdoptionStore;
   readonly roster: RosterAgent[];
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
   readonly capabilityVerifier: CapabilityVerifier;
+  readonly broker: PermissionBroker;
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
+  private readonly workspaceAgentSpecs = new Map<string, LaunchSpec>();
+  private readonly terminals = new Map<string, TerminalHandle>();
+  private terminalCounter = 0;
+  /** Set by the webview host as the Agent View mounts/unmounts (P11 wires
+   * the real visibility signal); defaults to "visible" so native
+   * notifications don't fire spuriously before that's connected. */
+  isAgentViewVisible: () => boolean = () => true;
 
   constructor(context: vscode.ExtensionContext) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
@@ -49,6 +72,7 @@ export class Orchestrator {
 
     this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
+    this.adoption = new WorkspaceAgentAdoptionStore(context.workspaceState);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.configFile = new ConfigFileStore(
       workspaceRoot === null
@@ -74,16 +98,22 @@ export class Orchestrator {
       coalesceAgentViewEvent,
       onAction,
     );
+    const rules = this.permissionRules.get();
     this.settings = new ChannelHost(
-      { ...initialSettingsState, roster: rosterEntries },
+      {
+        ...initialSettingsState,
+        roster: rosterEntries,
+        commandRules: rules.commandRules,
+        fileWriteScope: rules.fileWriteScope,
+      },
       reduceSettings,
       coalesceSettingsEvent,
       onAction,
     );
     // Pool hooks close over `this` and only fire once the pool is actually
     // used (after the constructor returns), so referencing sessionManager /
-    // capabilityVerifier here — before they're assigned below — is safe;
-    // this is the same lazy-closure pattern both use themselves.
+    // capabilityVerifier / broker here — before they're assigned below — is
+    // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
       onStatusChanged: (agentId, status, detail) => {
         const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
@@ -100,6 +130,84 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification),
       onConcurrentSessionsVerified: (agentId) =>
         this.capabilityVerifier.markVerified(agentId, "concurrentSessions"),
+      onPermissionRequest: async (_agentId, params) => {
+        const subject =
+          params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
+        const result = await this.broker.resolveAgentPermissionRequest(
+          params.sessionId,
+          params.toolCall.title ?? "Permission request",
+          params.toolCall.kind ?? "other",
+          subject,
+          optionViewsFromAcp(params.options),
+        );
+        return "cancelled" in result
+          ? { outcome: { outcome: "cancelled" } }
+          : { outcome: { outcome: "selected", optionId: result.optionId } };
+      },
+      onReadTextFile: async (_agentId, params) => ({ content: await this.readTextFileLive(params.path) }),
+      onWriteTextFile: async (_agentId, params) => {
+        const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
+        if (accepted) await applyFileWrite(params.path, params.content);
+        return {};
+      },
+      onCreateTerminal: async (_agentId, params) => {
+        const command = [params.command, ...(params.args ?? [])].join(" ");
+        const { accepted } = await this.broker.gateCommand(params.sessionId, command);
+        if (!accepted) throw new Error("command rejected by permission rules");
+
+        const handle = this.broker.runner.create({
+          command: params.command,
+          args: params.args ?? [],
+          env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
+          cwd: params.cwd ?? null,
+          outputByteLimit: params.outputByteLimit ?? null,
+        });
+        const terminalId = `term-${++this.terminalCounter}`;
+        this.terminals.set(terminalId, handle);
+        const blockId = `term-block-${terminalId}`;
+        this.agentView.emit({ kind: "terminalStarted", sessionId: params.sessionId, blockId, command });
+        handle.onData((chunk) =>
+          this.agentView.emit({
+            kind: "terminalOutputAppended",
+            sessionId: params.sessionId,
+            blockId,
+            chunk,
+          }),
+        );
+        handle.onExit((status) =>
+          this.agentView.emit({
+            kind: "terminalExited",
+            sessionId: params.sessionId,
+            blockId,
+            exitCode: status.exitCode,
+          }),
+        );
+        return { terminalId };
+      },
+      onTerminalOutput: async (_agentId, params) => {
+        const handle = this.terminals.get(params.terminalId);
+        if (!handle) throw new Error(`unknown terminal ${params.terminalId}`);
+        const { output, truncated } = handle.currentOutput();
+        const exit = handle.exitStatus();
+        return {
+          output,
+          truncated,
+          exitStatus: exit ? { exitCode: exit.exitCode, signal: exit.signal } : null,
+        };
+      },
+      onWaitForTerminalExit: async (_agentId, params) => {
+        const handle = this.terminals.get(params.terminalId);
+        if (!handle) throw new Error(`unknown terminal ${params.terminalId}`);
+        return handle.waitForExit();
+      },
+      onKillTerminal: async (_agentId, params) => {
+        this.terminals.get(params.terminalId)?.kill();
+        return {};
+      },
+      onReleaseTerminal: async (_agentId, params) => {
+        this.terminals.delete(params.terminalId);
+        return {};
+      },
     });
     this.sessionManager = new SessionManager(
       this.pool,
@@ -113,6 +221,80 @@ export class Orchestrator {
         this.settings.emit(...events);
       },
     });
+    this.broker = new PermissionBroker(
+      this.permissionRules,
+      this.decisionAudit,
+      {
+        emit: (...events) => this.agentView.emit(...events),
+        onAuditWritten: () => void this.refreshAuditTail(),
+        notifyPending: (requestId, title, detail, options) =>
+          this.notifyIfHidden(requestId, title, detail, options),
+      },
+      () => this.workspaceRoot,
+    );
+
+    void this.refreshAuditTail();
+    void this.loadWorkspaceConfigAgents();
+  }
+
+  /** Live-buffer read: an open, possibly-unsaved editor wins over disk
+   * (architecture.md § Local MCP server — "the agent sees what the user
+   * sees"). Falls back to disk for files with no open editor. */
+  private async readTextFileLive(path: string): Promise<string> {
+    const uri = vscode.Uri.file(path);
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === path);
+    if (open !== undefined) return open.getText();
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return Buffer.from(bytes).toString("utf8");
+  }
+
+  /** Native notification mirroring the inline card, shown only when the
+   * Agent View isn't visible (features.md § Editor Surface: "impossible to
+   * miss when the view is hidden"). `requestId` is the inline card's own
+   * blockId — resolving through it is the same call the card's buttons make,
+   * so whichever surface the user acts on first wins. */
+  private notifyIfHidden(
+    requestId: string,
+    title: string,
+    detail: string,
+    options: readonly PermissionOptionView[],
+  ): void {
+    if (this.isAgentViewVisible()) return;
+    const labels = options.map((o) => o.label);
+    void vscode.window.showWarningMessage(`${title}: ${detail}`, ...labels).then((picked) => {
+      if (picked === undefined) return;
+      const option = options.find((o) => o.label === picked);
+      if (option !== undefined) this.broker.resolve(requestId, option.optionId);
+    });
+  }
+
+  private async refreshAuditTail(): Promise<void> {
+    const entries = await this.decisionAudit.tail(20);
+    this.settings.emit({ kind: "auditTailChanged", entries });
+  }
+
+  private async loadWorkspaceConfigAgents(): Promise<void> {
+    const result = await this.configFile.read();
+    if (!result.ok) return;
+    for (const agent of result.config.agents) {
+      const spec: LaunchSpec = {
+        agentId: agent.id,
+        name: agent.name,
+        command: agent.command,
+        args: agent.args,
+        env: agent.env,
+        cwd: this.workspaceRoot ?? process.cwd(),
+      };
+      this.workspaceAgentSpecs.set(agent.id, spec);
+      if (this.adoption.isAdopted(agent.id)) {
+        this.agentNames.set(agent.id, agent.name);
+        continue; // already adopted in an earlier session — connect stays a user action, not automatic
+      }
+      this.settings.emit({
+        kind: "workspaceAgentPending",
+        agent: { agentId: agent.id, name: agent.name, command: launchCommandText(agent) },
+      });
+    }
   }
 
   /** Connect an agent from config or roster; upserts it into both channel states. */
@@ -182,6 +364,61 @@ export class Orchestrator {
       case "runDiagnostics":
         void this.capabilityVerifier.runDiagnostics(action.agentId);
         break;
+      case "resolvePermission":
+        this.broker.resolve(action.requestId, action.optionId);
+        break;
+      case "resolveDiff":
+        this.broker.resolve(action.requestId, action.accept ? "accept" : "reject");
+        break;
+      case "adoptWorkspaceAgent":
+        void this.adoptWorkspaceAgent(action.agentId);
+        break;
+      case "addCommandRule": {
+        const rules = this.permissionRules.get();
+        void this.permissionRules
+          .set({ ...rules, commandRules: [...rules.commandRules, action.rule] })
+          .then(() => this.publishRules());
+        break;
+      }
+      case "removeCommandRule": {
+        const rules = this.permissionRules.get();
+        void this.permissionRules
+          .set({
+            ...rules,
+            commandRules: rules.commandRules.filter((r) => r.pattern !== action.pattern),
+          })
+          .then(() => this.publishRules());
+        break;
+      }
+      case "setFileWriteScope": {
+        const rules = this.permissionRules.get();
+        void this.permissionRules
+          .set({ ...rules, fileWriteScope: action.scope })
+          .then(() => this.publishRules());
+        break;
+      }
+    }
+  }
+
+  private publishRules(): void {
+    const rules = this.permissionRules.get();
+    this.settings.emit({
+      kind: "permissionRulesChanged",
+      commandRules: rules.commandRules,
+      fileWriteScope: rules.fileWriteScope,
+    });
+  }
+
+  private async adoptWorkspaceAgent(agentId: string): Promise<void> {
+    if (!vscode.workspace.isTrusted) return; // adoption requires workspace trust, no exceptions
+    const spec = this.workspaceAgentSpecs.get(agentId);
+    if (spec === undefined) return;
+    await this.adoption.adopt(agentId);
+    this.settings.emit({ kind: "workspaceAgentAdopted", agentId });
+    try {
+      await this.connectAgent(spec);
+    } catch {
+      // pool already emitted the crashed status with detail
     }
   }
 
@@ -218,4 +455,8 @@ export class Orchestrator {
     this.agentView.flushNow();
     this.settings.flushNow();
   }
+}
+
+function launchCommandText(agent: AgentConfig): string {
+  return [agent.command, ...agent.args].join(" ");
 }

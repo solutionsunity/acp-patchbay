@@ -320,3 +320,59 @@ tr.sep td {
   color: var(--pb-text-dim);
   margin: 8px 0 14px;
 }
+
+/* permission rules list */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--pb-border);
+}
+
+.rule:last-child {
+  border-bottom: none;
+}
+
+.rule code {
+  font-family: var(--pb-mono);
+  font-size: 12px;
+  flex: 1;
+}
+
+.rule .e {
+  color: var(--pb-text-faint);
+  cursor: pointer;
+}
+
+.rule .e:hover {
+  color: var(--pb-err);
+}
+
+.verdict {
+  font-size: 11px;
+  padding: 1px 9px;
+  border-radius: 8px;
+}
+
+.verdict.allow {
+  color: var(--pb-ok);
+  border: 1px solid #2a4a39;
+}
+
+.verdict.ask {
+  color: var(--pb-warn);
+  border: 1px solid #4c4023;
+}
+
+.verdict.deny {
+  color: var(--pb-err);
+  border: 1px solid #5c3335;
+}
+
+.audit {
+  font-family: var(--pb-mono);
+  font-size: 11px;
+  color: var(--pb-text-faint);
+  line-height: 1.7;
+}

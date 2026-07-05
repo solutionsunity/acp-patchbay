@@ -162,7 +162,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: fake agent scripted to lie shows declared-but-unverified; branch
   affordance lights only after verified fork; reconnect drops verified.
 
-### P6 — Permission broker + editor depth (fs/terminal) ☐
+### P6 — Permission broker + editor depth (fs/terminal) ☑
 
 - One broker path for ACP `session/request_permission`, MCP tool calls, and
   terminal execution; allow-once / allow-always / reject; rules evaluated from
@@ -171,6 +171,18 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - `fs/read_text_file` serves live buffers; `fs/write_text_file` → pre-gated
   native diff (rules can auto-accept; diff stays visible); terminal in a visible
   pseudoterminal, same gating.
+  *Scoped at build time: "MCP tool calls" has nothing to gate yet — the local
+  MCP server doesn't exist until P7; the broker's mechanism is ready and P7
+  routes tool calls through the same `evaluateCommand`/`evaluateFileWrite`
+  path, no new broker surface needed. The agent's own `session/request_permission`
+  for an `execute`-kind tool can't be rule-matched reliably — ACP has no
+  standard field carrying the command string for that call (only `edit`-kind
+  gets one, via `toolCall.locations`), so that path honestly always asks;
+  real enforcement is patchbay's own mandatory `terminal/create` gate, which
+  does have the real command string. "Visible pseudoterminal" is ui.md's chat
+  terminal card (▣, live-streaming, exit status) — the binding UI spec never
+  calls for a second, separate native VS Code terminal panel, so building one
+  would be additive scope beyond what's specified.*
 - **Gate**: automated broker tests (rule precedence, audit trail); manual smoke —
   agent edit arrives as diff, reject leaves disk untouched.
 

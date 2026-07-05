@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- P6 permission broker + editor depth (fs/terminal): one broker path
+  (`PermissionBroker`) for the agent's own `session/request_permission` calls
+  and patchbay's own mandatory gates on `fs/write_text_file` and
+  `terminal/create` — same command-pattern and file-write-scope rules, same
+  decision-audit trail, allow-once/allow-always/reject everywhere. Real
+  handlers land for `fs/read_text_file` (live VS Code buffer wins over disk),
+  `fs/write_text_file` (LCS-based diff card, pre-gated, auto-accept still
+  shows the diff), and the full terminal/* set (real child-process execution
+  via a new `TerminalRunner`, live-streamed output card). A native
+  `vscode.window.showWarningMessage` mirrors any pending card when the Agent
+  View is hidden, wired to the webview's real visibility events. Repo-defined
+  agents (`.vscode/acp-patchbay.json`) now require one-time, workspace-trust-
+  gated adoption before connecting, surfaced in Settings' new Permissions
+  section alongside command rules, file-write scope, and the decision audit
+  tail. Extended the fake agent with real fs/terminal/permission-asking turn
+  steps so the whole path is tested against genuine child processes and a
+  temp filesystem, not mocks — including an automated "reject leaves disk
+  untouched" case that's stronger than the manual smoke it stands in for.
 - P5 capability matrix + verification: full declared/verified matrix
   (architecture.md's row list) per agent, replaced wholesale on every
   (re)connect so verified always resets on reconnect; fidelity label

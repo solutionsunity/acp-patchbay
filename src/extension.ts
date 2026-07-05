@@ -21,7 +21,9 @@ export function activate(context: vscode.ExtensionContext): {
     orchestrator,
     vscode.window.registerWebviewViewProvider(
       "acpPatchbay.agentView",
-      new AgentViewProvider(context.extensionUri, orchestrator.agentView),
+      new AgentViewProvider(context.extensionUri, orchestrator.agentView, (visible) => {
+        orchestrator.isAgentViewVisible = () => visible;
+      }),
     ),
     vscode.commands.registerCommand("acpPatchbay.openSettings", () =>
       settingsPanelHost.openOrReveal(),

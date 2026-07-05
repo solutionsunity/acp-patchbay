@@ -87,6 +87,12 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         state={state}
         activeSession={active}
         onConnectClick={() => setDrawer("agents")}
+        onResolvePermission={(requestId, optionId) =>
+          channel.sendAction({ kind: "resolvePermission", requestId, optionId })
+        }
+        onResolveDiff={(requestId, accept) =>
+          channel.sendAction({ kind: "resolveDiff", requestId, accept })
+        }
       />
       <Composer
         agent={activeAgent}
@@ -372,7 +378,108 @@ function PlanCard({ block }: { block: PlanBlock }) {
   );
 }
 
-function Block({ block }: { block: ChatBlock }) {
+function PermissionCard(props: {
+  block: Extract<ChatBlock, { kind: "permission" }>;
+  onResolve(optionId: string): void;
+}) {
+  const { block } = props;
+  return (
+    <div class="card perm">
+      <div class="card-hd">🛡 {block.title} — one broker, one rule set</div>
+      <div class="q">
+        <code>{block.detail}</code>
+      </div>
+      {block.resolution === null ? (
+        <div class="acts">
+          {block.options.map((o) => (
+            <button
+              key={o.optionId}
+              class={`btn ${o.kind === "allow_once" ? "primary" : o.kind.startsWith("reject") ? "danger" : ""}`}
+              onClick={() => props.onResolve(o.optionId)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div class="resolved">
+          ✓ {block.resolution.label}
+          {block.resolution.auto ? " (rule)" : ""} · written to decision audit
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiffCard(props: {
+  block: Extract<ChatBlock, { kind: "diff" }>;
+  onResolve(accept: boolean): void;
+}) {
+  const { block } = props;
+  return (
+    <div class="card">
+      <div class="diff-file">
+        📝 <code>{block.file}</code>
+        <span class="plus">+{block.additions}</span>
+        <span class="minus">−{block.deletions}</span>
+        <span class="st" style="margin-left:auto">
+          {block.resolution !== null
+            ? block.resolution.accepted
+              ? `✓ ${block.resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
+              : "✗ rejected — disk untouched"
+            : ""}
+        </span>
+      </div>
+      <div class="diff-body">
+        {block.lines.slice(0, 40).map((line, i) => (
+          <div key={i} class={line.kind === "add" ? "add" : line.kind === "del" ? "del" : ""}>
+            {line.text}
+          </div>
+        ))}
+      </div>
+      {block.resolution === null && (
+        <div class="acts">
+          <button class="btn primary" onClick={() => props.onResolve(true)}>
+            Accept
+          </button>
+          <button class="btn danger" onClick={() => props.onResolve(false)}>
+            Reject
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "terminal" }> }) {
+  return (
+    <div class="card">
+      <div class="card-hd">
+        ▣ {block.command}
+        <span class="st">
+          {block.running ? (
+            <>
+              <span class="spin" /> live
+            </>
+          ) : (
+            `✓ exit ${block.exitCode ?? "?"}`
+          )}
+        </span>
+      </div>
+      <div class="term">{block.output || " "}</div>
+    </div>
+  );
+}
+
+function Block({
+  block,
+  onResolvePermission,
+  onResolveDiff,
+}: {
+  block: ChatBlock;
+  onResolvePermission(requestId: string, optionId: string): void;
+  onResolveDiff(requestId: string, accept: boolean): void;
+}) {
   switch (block.kind) {
     case "user":
       return <div class="msg-user">{block.text}</div>;
@@ -388,6 +495,12 @@ function Block({ block }: { block: ChatBlock }) {
       return <ToolCallCard title={block.title} status={block.status} />;
     case "plan":
       return <PlanCard block={block} />;
+    case "permission":
+      return <PermissionCard block={block} onResolve={(optionId) => onResolvePermission(block.id, optionId)} />;
+    case "diff":
+      return <DiffCard block={block} onResolve={(accept) => onResolveDiff(block.id, accept)} />;
+    case "terminal":
+      return <TerminalCard block={block} />;
   }
 }
 
@@ -395,6 +508,8 @@ function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
   onConnectClick(): void;
+  onResolvePermission(requestId: string, optionId: string): void;
+  onResolveDiff(requestId: string, accept: boolean): void;
 }) {
   const { agents } = props.state;
   const active = props.activeSession;
@@ -429,7 +544,12 @@ function Chat(props: {
   return (
     <div class="chat" ref={chatRef}>
       {blocks.map((block) => (
-        <Block key={block.id} block={block} />
+        <Block
+          key={block.id}
+          block={block}
+          onResolvePermission={props.onResolvePermission}
+          onResolveDiff={props.onResolveDiff}
+        />
       ))}
     </div>
   );

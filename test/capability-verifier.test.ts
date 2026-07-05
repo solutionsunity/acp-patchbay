@@ -13,6 +13,7 @@ import {
   type AgentViewEvent,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
+import { stubFsTerminalHooks } from "./support/stub-hooks";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -41,6 +42,7 @@ function harness(): { pool: AgentPool; verifier: CapabilityVerifier; state(): Re
     onDeclaredCaptured: (agentId, declared) => verifier.onDeclared(agentId, declared),
     onSessionUpdate: () => {},
     onConcurrentSessionsVerified: (agentId) => verifier.markVerified(agentId, "concurrentSessions"),
+    ...stubFsTerminalHooks(),
   });
   verifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
   return {

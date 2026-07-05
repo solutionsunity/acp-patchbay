@@ -66,13 +66,20 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly channel: ChannelEndpoint,
+    /** Fires on mount and every visibility flip — the source of truth for
+     * "is the Agent View hidden right now" (native permission notifications
+     * gate on this; features.md § Editor Surface). */
+    private readonly onVisibilityChanged?: (visible: boolean) => void,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     const disposables: vscode.Disposable[] = [];
     const webview = view.webview; // .webview throws once disposed — capture now
     bind(webview, this.channel, this.extensionUri, "agent-view", disposables);
+    this.onVisibilityChanged?.(view.visible);
+    disposables.push(view.onDidChangeVisibility(() => this.onVisibilityChanged?.(view.visible)));
     view.onDidDispose(() => {
+      this.onVisibilityChanged?.(false);
       this.channel.detach(webview);
       for (const d of disposables) d.dispose();
     });

@@ -36,6 +36,26 @@ export interface PoolHooks {
   /** A second session succeeded on a connection already serving one — the
    * one opportunistic signal for concurrent-session behavior (P5 matrix). */
   onConcurrentSessionsVerified?(agentId: string): void;
+  /** Patchbay declares fs+terminal unconditionally (P2), so these are
+   * required — a declared-but-unhandled method would be exactly the kind of
+   * lie bet #2 exists to prevent. Live-buffer reads and pre-gated writes
+   * (P6) live behind these hooks so the pool itself stays vscode-free. */
+  onReadTextFile(agentId: string, params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse>;
+  onWriteTextFile(agentId: string, params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse>;
+  onCreateTerminal(agentId: string, params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse>;
+  onTerminalOutput(
+    agentId: string,
+    params: acp.TerminalOutputRequest,
+  ): Promise<acp.TerminalOutputResponse>;
+  onWaitForTerminalExit(
+    agentId: string,
+    params: acp.WaitForTerminalExitRequest,
+  ): Promise<acp.WaitForTerminalExitResponse>;
+  onKillTerminal(agentId: string, params: acp.KillTerminalRequest): Promise<acp.KillTerminalResponse>;
+  onReleaseTerminal(
+    agentId: string,
+    params: acp.ReleaseTerminalRequest,
+  ): Promise<acp.ReleaseTerminalResponse>;
 }
 
 interface Entry {
@@ -159,6 +179,27 @@ export class AgentPool {
       .onNotification(acp.methods.client.session.update, (ctx) => {
         this.hooks.onSessionUpdate(spec.agentId, ctx.params);
       })
+      .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
+        this.hooks.onReadTextFile(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
+        this.hooks.onWriteTextFile(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.terminal.create, (ctx) =>
+        this.hooks.onCreateTerminal(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.terminal.output, (ctx) =>
+        this.hooks.onTerminalOutput(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.terminal.waitForExit, (ctx) =>
+        this.hooks.onWaitForTerminalExit(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.terminal.kill, (ctx) =>
+        this.hooks.onKillTerminal(spec.agentId, ctx.params),
+      )
+      .onRequest(acp.methods.client.terminal.release, (ctx) =>
+        this.hooks.onReleaseTerminal(spec.agentId, ctx.params),
+      )
       .connect(stream);
     entry.connection = connection;
 

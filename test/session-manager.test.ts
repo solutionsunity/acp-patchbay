@@ -18,6 +18,7 @@ import {
   type ChatBlock,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
+import { stubFsTerminalHooks } from "./support/stub-hooks";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -61,6 +62,7 @@ function harness(): {
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onConcurrentSessionsVerified: (agentId) =>
       capabilityVerifier.markVerified(agentId, "concurrentSessions"),
+    ...stubFsTerminalHooks(),
   });
   capabilityVerifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
   const sessionIndex = new SessionIndexStore(new MemoryKV());

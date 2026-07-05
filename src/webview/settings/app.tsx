@@ -6,6 +6,8 @@ import { useState } from "preact/hooks";
 import type {
   CapabilityMatrix,
   CapabilityRowId,
+  CommandRuleView,
+  FileWriteScopeView,
   SettingsState,
 } from "../../shared/protocol";
 import { capabilityState, computeFidelity } from "../../shared/protocol";
@@ -62,10 +64,12 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
           />
         )}
         {section === "permissions" && (
-          <Section
-            title="Permissions"
-            sub="One rule set for everything — agent permission requests, MCP tools, terminal. No second surface."
-            empty="Rules UI lands with P6. Defaults apply meanwhile: nothing pre-allowed."
+          <PermissionsSection
+            state={state}
+            onAddRule={(rule) => channel.sendAction({ kind: "addCommandRule", rule })}
+            onRemoveRule={(pattern) => channel.sendAction({ kind: "removeCommandRule", pattern })}
+            onSetScope={(scope) => channel.sendAction({ kind: "setFileWriteScope", scope })}
+            onAdopt={(agentId) => channel.sendAction({ kind: "adoptWorkspaceAgent", agentId })}
           />
         )}
         {section === "assets" && (
@@ -259,6 +263,151 @@ function MatrixSection({ state }: { state: SettingsState }) {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+const SCOPE_LABEL: Record<FileWriteScopeView, string> = {
+  workspace: "workspace only",
+  "workspace+temp": "workspace + temp",
+  "always-ask": "always ask",
+};
+
+function PermissionsSection(props: {
+  state: SettingsState;
+  onAddRule(rule: CommandRuleView): void;
+  onRemoveRule(pattern: string): void;
+  onSetScope(scope: FileWriteScopeView): void;
+  onAdopt(agentId: string): void;
+}) {
+  const { state } = props;
+  const [pattern, setPattern] = useState("");
+  const [verdict, setVerdict] = useState<CommandRuleView["verdict"]>("allow");
+
+  return (
+    <section class="section">
+      <h1>Permissions</h1>
+      <div class="sub">
+        One rule set for everything — agent permission requests, MCP tools, terminal. No second
+        surface.
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Command rules</h2>
+        {state.commandRules.length === 0 && (
+          <div class="note" style="margin:0 0 8px">
+            No rules yet — every command asks.
+          </div>
+        )}
+        {state.commandRules.map((r) => (
+          <div class="rule" key={r.pattern}>
+            <code>{r.pattern}</code>
+            <span class={`verdict ${r.verdict}`}>{r.verdict}</span>
+            <span class="e" onClick={() => props.onRemoveRule(r.pattern)}>
+              ✕
+            </span>
+          </div>
+        ))}
+        <div class="row" style="margin-top:10px">
+          <input
+            type="text"
+            placeholder="command pattern…"
+            style="flex:1"
+            value={pattern}
+            onInput={(e) => setPattern((e.target as HTMLInputElement).value)}
+          />
+          <select
+            value={verdict}
+            onChange={(e) => setVerdict((e.target as HTMLSelectElement).value as CommandRuleView["verdict"])}
+          >
+            <option value="allow">allow</option>
+            <option value="ask">ask</option>
+            <option value="deny">deny</option>
+          </select>
+          <button
+            class="btn primary"
+            disabled={pattern.trim() === ""}
+            onClick={() => {
+              props.onAddRule({ pattern: pattern.trim(), verdict });
+              setPattern("");
+            }}
+          >
+            Add rule
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">File writes</h2>
+        <div class="row" style="gap:18px">
+          {(["workspace", "workspace+temp", "always-ask"] as const).map((scope) => (
+            <label key={scope}>
+              <input
+                type="radio"
+                name="fw"
+                checked={state.fileWriteScope === scope}
+                onChange={() => props.onSetScope(scope)}
+              />{" "}
+              {SCOPE_LABEL[scope]}
+            </label>
+          ))}
+        </div>
+        <div class="note">
+          writes surface as diffs either way — auto-accept only changes who clicks, not what is
+          visible
+        </div>
+      </div>
+
+      <div class="note good">
+        Rules live in workspaceState — per user, per workspace, never in the repo. A cloned
+        repository cannot arrive pre-authorized.
+      </div>
+
+      {state.pendingAdoptions.length > 0 && (
+        <div class="card" style="margin-top:12px">
+          <h2 style="margin-top:0">Workspace-defined agents</h2>
+          {state.pendingAdoptions.map((a) => (
+            <div class="row" key={a.agentId} style="margin-bottom:6px">
+              <span>
+                this repo defines agent <b>{a.name}</b>
+              </span>
+              <span class="mono" style="flex:1">
+                {a.command}
+              </span>
+              <button class="btn primary" onClick={() => props.onAdopt(a.agentId)}>
+                Adopt…
+              </button>
+            </div>
+          ))}
+          <div class="note">
+            repo-defined launch commands need one-time adoption (full command shown) behind
+            workspace trust
+          </div>
+        </div>
+      )}
+
+      <div class="card" style="margin-top:12px">
+        <h2 style="margin-top:0">Decision audit — recent</h2>
+        {state.auditTail.length === 0 ? (
+          <div class="note" style="margin:0">
+            No decisions recorded yet.
+          </div>
+        ) : (
+          <div class="audit">
+            {state.auditTail.map((entry, i) => {
+              const { ts, kind, ...rest } = entry;
+              const detail = Object.entries(rest)
+                .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                .join(" ");
+              return (
+                <div key={i}>
+                  {new Date(ts).toLocaleTimeString()} {kind} {detail}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
