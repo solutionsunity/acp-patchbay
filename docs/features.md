@@ -59,8 +59,9 @@ deliverable, owed before implementation.
   and continuation means a new session seeded from it, labeled emulated. A
   fallback, not a competing truth. This view is also what seeds branch-emulation
   for these agents.
-- User can see and change the session's mode/model when the agent offers options,
-  and the result reflects what actually happened — not what was requested.
+- User can see and change the session's model, mode, and effort when the agent
+  offers them, and the result reflects what actually happened — not what was
+  requested.
 
 ### Chat
 
@@ -91,6 +92,10 @@ deliverable, owed before implementation.
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
 - User can set per-agent process policy: auto / shared / isolated.
+- User can set per-agent defaults for model, mode, and effort — each only where
+  the agent offers it (model is the common must; mode and effort are per-agent
+  reality). Applied at session creation; the session shows what actually applied,
+  not what was requested.
 
 ### Integrations
 
@@ -104,6 +109,14 @@ deliverable, owed before implementation.
   repo is never silently available in another. Sharing one across workspaces is an
   explicit act, made visibly. (This rule exists because of a real incident — a
   production-access MCP server followed a user from one repo into another.)
+
+### Rules, skills, commands
+
+- User can see and edit each agent's rules, skills, and commands from Settings —
+  the files stay in the agent's own native locations, and the agent reads them
+  from the workspace itself; patchbay never passes them down.
+- v1 maps Claude Code and Augment locations; an unmapped agent is shown as such —
+  never silently skipped.
 
 ### Permissions
 
@@ -159,5 +172,9 @@ Deliberately near-empty — flat toggles only, searchable in the standard Settin
   and every change is applied back as a pre-gated diff. The only true gating for
   uncooperative agents; heavy on paths, terminals, and UX, so it earns its way in
   later.
+- Shared source for rules/skills/commands — one base directory with compatibility
+  symlinks into each agent's native locations (the
+  [dotagent](https://github.com/solutionsunity/dotagent) pattern) or full supply
+  by patchbay. v1 proves the management surface first.
 - Anything not listed above that emerges during architecture — it lands here first,
   not in v1 by momentum.

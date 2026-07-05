@@ -1,9 +1,9 @@
 # acp-patchbay — Architecture
 
-How the frozen product surface becomes a VS Code extension. Inputs: [prd.md](prd.md)
-(why) and [features.md](features.md) (what) — both frozen; on any conflict, they win.
-This document decides mechanisms and records the reasoning. Stack is fixed by rule:
-TypeScript for all extension-host code, esbuild, npm.
+How the product surface becomes a VS Code extension. Inputs: [prd.md](prd.md) (why)
+and [features.md](features.md) (what); on any conflict, they win. This document
+decides mechanisms and records the reasoning. Stack is fixed by rule: TypeScript
+for all extension-host code, esbuild, npm.
 
 ---
 
@@ -25,6 +25,9 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Brokered** — routed through the permission broker. Fidelity labels: fully
   brokered / partially brokered / acts outside the permission flow.
 - **Integration** — an MCP server made reachable to agents (curated or custom).
+- **Branch** — the user-level concept: continue an alternate path from a session.
+  `session/fork` is one mechanism that implements it; emulated seeding is the
+  other. "Fork" only ever names the protocol method.
 - **Routing** — the user's per-agent selection of which integrations that agent
   receives.
 
@@ -81,9 +84,13 @@ Two webviews and one near-empty native settings page:
 3. **VS Code native settings** — flat scalars only (default agent, telemetry
    opt-in). Never credentials: `settings.json` syncs.
 
-> Supersedes the pre-freeze stance of three separate UI surfaces. Agents, sessions,
-> and chat are one surface — frozen in features §1. Settings remains its own webview
-> because it genuinely is a different activity, not because panels are cheap.
+Native surfaces — the status bar item (active session, connection health, usage),
+permission notifications, and command palette entries — are direct orchestrator
+consumers: same state, no webview in the path.
+
+> Agents, sessions, and chat are one surface (features §1). Settings remains its
+> own webview because it is genuinely a different activity, not because panels
+> are cheap.
 
 ### Snapshot + patch protocol — decided
 
@@ -103,8 +110,8 @@ import. No diffing library, no CRDT, no partial hydration:
   chunks and flushes one patch per short fixed interval (~30 ms) or turn boundary,
   concatenating text chunks per message. One knob, no adaptive machinery.
 
-This closes both former open questions (protocol design, coalescing) with one
-mechanism sized to the actual problem: webviews die and must resurrect cheaply.
+One mechanism sized to the actual problem: webviews die and must resurrect
+cheaply.
 
 ## State — three honest stores, no co-equal copy
 
@@ -117,7 +124,8 @@ each with different truth semantics, so each gets different placement:
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |
-| Workspace config | Agents, integrations, routing, permission rules | `.vscode/acp-patchbay.json` | Inspectable, repo-shareable (features §2); no credentials ever |
+| Workspace config | Agents (launch config, defaults), integrations, routing | `.vscode/acp-patchbay.json` | Inspectable, repo-shareable (features §2); no credentials ever |
+| Permission rules | Command allowlists, file-write scopes | `workspaceState` + built-in defaults | Per-user, per-workspace, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Secrets | OAuth tokens, API keys | `SecretStorage` | The only place. Never settings, never state stores, never logs |
 
 Integrations are workspace-scoped because the config file is workspace-scoped —
@@ -154,7 +162,9 @@ verified-working.
 Rows: `fs.readTextFile` / `writeTextFile`, `terminal`, `elicitation`,
 `roots.listChanged`, `resources.subscribe`, `promptCapabilities.image` / `audio` /
 `embeddedContext`, `session.fork` / `load` / `resume`, `mcp.http` / `sse`,
-usage/context reporting, concurrent-session behavior.
+usage/context reporting, concurrent-session behavior. One patchbay-side row rides
+along: rules/skills/commands locations (mapped / not mapped), sourced from roster
+data rather than the handshake.
 
 Verification cost splits the triggers:
 
@@ -175,6 +185,23 @@ Synthetic behavior probes run in an **ephemeral session scoped to a temp directo
 - Either path is a node in the orchestrator's session graph (parent → branches). The
   UI never knows which mechanism produced a branch; the capability matrix is where
   native-vs-emulated honesty lives.
+
+## Session model, mode, effort
+
+Three knobs, each existing only if the agent offers it — model is the only one
+observed everywhere; mode and effort are frequent but optional. The knob set is
+per-agent reality, not a patchbay form to fill.
+
+- Options come only from the agent — session config options at create, list
+  updates after. Patchbay never invents entries, never renders a knob the agent
+  didn't offer.
+- Per-agent defaults (one per offered knob, part of the agent's config record) are
+  applied at session creation by issuing the corresponding set requests after
+  `session/new`; absent options, there is nothing to default.
+- Displayed values update only from the agent's subsequent state notifications,
+  never from the set-request's success response — bridges have returned success
+  for rejected mode changes. What the user sees is the last agent-confirmed
+  state, which is the honest one.
 
 ## Local MCP server — editor depth
 
@@ -204,15 +231,22 @@ The differentiator (prd §v1 Scope), shipped complete:
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a
   `ResourceLink`. Same data, best form the agent accepts (features §1).
+- **File attach** (drag-drop or picker): inline `ContentBlock::Resource` when
+  `promptCapabilities.embeddedContext` is declared, `ResourceLink` otherwise.
 
 ## Integrations
 
 Curated and custom are the same mechanism — MCP servers routed to agents:
 
-- **v1 registry is code, not data.** One curated entry (GitHub, OAuth one-click). A
-  registry schema abstracted from a single entry would be invented, not extracted —
-  the schema is owed when the second curated entry arrives (v2). Deliberate scope
-  decision.
+- **The registry is shipped data from day one.** prd decides this: GitHub ships
+  "proving the registry pattern," and a hardcoded integration proves no pattern.
+  One data file, one entry; every field earned by what GitHub demonstrably needs —
+  `id`, `name`, transport, auth type, scopes, bridge launch — nothing speculative.
+  Adding a curated integration in v2 is a data change, not code.
+- **Same pattern for the agent roster**: the known-agents list (name, launch
+  command, install hint, asset-convention mapping, known quirks such as bypass
+  bridges) ships as data. Roster and registry are the two shipped-data files —
+  patchbay-side knowledge lives there, never scattered in code.
 - **Custom escape hatch**: add any MCP server (command or URL, with auth).
 - **Uniform stdio presentation**: agents vary in declared MCP transports, so the
   orchestrator always hands agents a local stdio server; for remote OAuth services
@@ -222,13 +256,43 @@ Curated and custom are the same mechanism — MCP servers routed to agents:
   only to *fully brokered* agents; anything less requires an explicit plug-in
   (features §2).
 
+## Rules, skills, commands
+
+v1 is management, not delivery: the files live in each agent's **own native
+locations** (`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them from
+`cwd` itself — patchbay never passes them down. Settings is where the user sees and
+edits them, per agent, in place. No patchbay dialect (prd: not a new protocol), no
+injection machinery.
+
+- The per-agent location mapping lives in the roster data; v1 ships Claude Code
+  and Augment mappings — the agents in real use. An unmapped agent is shown as
+  such — never silently skipped, never guessed.
+- Commands the agent advertises back (`available_commands_update`) appear in the
+  chat input as autocomplete and are sent as ordinary prompts. This is also the
+  only compaction lever besides a fresh session: an advertised `/compact` is just
+  one of these commands.
+- Parked (v2), stated as a scope decision: a shared base with compatibility
+  symlinks into each agent's locations (the
+  [dotagent](https://github.com/solutionsunity/dotagent) pattern) or full supply
+  by patchbay. v1 proves the management surface first.
+
 ## Permission broker
 
 - **One rule set, one approval path** — ACP `session/request_permission`, local MCP
   tool calls, and terminal execution all route through the same broker evaluating
-  the same command allowlists and file-write scopes from the workspace config.
+  the same command allowlists and file-write scopes from `workspaceState`.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target.
+- **Rules never ride the repo.** The shareable config file carries agents,
+  integrations, and routing — exactly features §2's list — and nothing
+  privilege-granting. The residual vector is a repo-defined agent launch command:
+  first connect of a workspace-defined agent requires one-time explicit adoption
+  (command line shown in full), behind VS Code workspace trust.
+- **Fidelity label is a pure function of the matrix (v1):** `fs` and `terminal`
+  declared *and verified* → fully brokered; a proper subset → partially brokered;
+  neither, or a known-bypass bridge (roster data) → acts outside the permission
+  flow. Observed-violation downgrades arrive only with v2 post-hoc change
+  detection (parked).
 - Protocol fact, load-bearing: an agent can route around `fs/write_text_file` via a
   shell command, and at least one bridge does file I/O invisibly regardless of
   client capabilities. `fs/*` is therefore **not a security boundary** — terminal
@@ -263,13 +327,6 @@ src/
 
 - GitHub integration: thin own bridge vs. wrapping an existing GitHub MCP server —
   pick when building, against the broker's routing requirements.
-
-## Supersedes
-
-Full rewrite (2026-07-05) of the pre-freeze draft, re-derived from frozen prd.md +
-features.md. Recorded reversals: **three separate UI surfaces → single-blend Agent
-View + Settings** (forced by features §1); **open questions closed** — snapshot +
-patch protocol and coalescing decided (§ UI layer), integrations registry schema
-resolved as registry-as-code until N > 1. Protocol facts from the draft (client-
-executed `fs`, fork pinned to its connection, unstable usage reporting) carry
-forward as facts, not as inherited decisions.
+- GitHub OAuth grant flow: device flow vs. URI-handler callback — an extension
+  cannot hold an OAuth client secret, which rules options in or out. The
+  registry's auth field carries the outcome.
