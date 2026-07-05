@@ -121,7 +121,7 @@ export class SessionManager {
     /** Builds the local MCP server's mcpServers entry for a fresh session,
      * given the correlation token to spawn it with. `[]` (the default) when
      * no MCP integration is wired — tests mostly don't need it. */
-    private readonly mcpServersFor: (contextToken: string) => McpServer[] = () => [],
+    private readonly mcpServersFor: (contextToken: string, agentId: string) => Promise<McpServer[]> = async () => [],
   ) {}
 
   isLive(sessionId: string): boolean {
@@ -138,7 +138,7 @@ export class SessionManager {
     const { sessionId, modes, configOptions } = await this.pool.newSession(
       poolKey,
       cwd,
-      this.mcpServersFor(contextToken),
+      await this.mcpServersFor(contextToken, agentId),
     );
     this.hooks.mapContextToken?.(contextToken, sessionId);
     this.sessions.set(sessionId, {
@@ -281,7 +281,7 @@ export class SessionManager {
     const { sessionId, modes, configOptions } = await this.pool.newSession(
       poolKey,
       this.cwd(),
-      this.mcpServersFor(contextToken),
+      await this.mcpServersFor(contextToken, agentId),
     );
     this.hooks.mapContextToken?.(contextToken, sessionId);
     this.sessions.set(sessionId, {
@@ -332,7 +332,7 @@ export class SessionManager {
     await this.reopen(sessionId, agentId);
     const poolKey = this.sessions.get(sessionId)!.poolKey;
     const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const response = await this.pool.fork(poolKey, sessionId, this.cwd(), this.mcpServersFor(contextToken));
+    const response = await this.pool.fork(poolKey, sessionId, this.cwd(), await this.mcpServersFor(contextToken, agentId));
     this.hooks.mapContextToken?.(contextToken, response.sessionId);
     this.sessions.set(response.sessionId, {
       agentId,

@@ -283,7 +283,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     transcript in the other). One private helper serves both; the only
     difference is where the seed blocks come from.*
 
-### P9 — Integrations + GitHub ☐
+### P9 — Integrations + GitHub ☐ (mechanism complete, blocked on owner touchpoints)
 
 - `data/registry.json` (GitHub entry: id, name, transport, auth, scopes, bridge
   launch); custom MCP add (command/URL + auth); stdio-to-HTTP bridge process
@@ -292,11 +292,37 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   command that copies config and reattaches credentials only on confirm.
 - OAuth grant: decide at phase start — default call is GitHub Device Flow (no
   client secret in an extension, works in remote/WSL); URI-handler callback only
-  if device flow proves hostile in practice.
+  if device flow proves hostile in practice. *Decided: Device Flow, built as such.*
 - **Gate**: GitHub connect → routed agent lists issues via MCP; disconnect
   revokes; token never appears outside `SecretStorage` (test greps logs/state).
 - **Owner touchpoints**: create the GitHub OAuth app under the org; live smoke
   with Augment on the owner's machine.
+- *Status: everything autonomously buildable is built and tested — real Device
+  Flow client (`oauth-device-flow.ts`, RFC 8628, tested against a fake local
+  HTTP provider), real stdio-to-HTTP bridge subprocess (`integration-bridge.js`,
+  a 5th esbuild bundle) proven end-to-end with a real fake-agent process calling
+  a fake remote MCP server's `list_issues` tool through it (including the 401
+  retry-once path), registry + custom-integration + routing + share mechanism,
+  `IntegrationTokenStore` (SecretStorage-only, `SecretsLike` structural
+  interface so it's fakeable), and the Settings Integrations section. What
+  remains is exactly the two named owner touchpoints, both genuinely
+  account-bound and unreachable from this sandbox:*
+  - *`data/registry.json`'s GitHub entry ships with `deviceCodeUrl`/`tokenUrl`
+    filled in (GitHub's own stable, public Device Flow endpoints — the same
+    for every OAuth App, safe to ship as data) but `clientId` and `url` left
+    empty. Both are bound to the specific OAuth App this project registers —
+    `url` because which remote MCP endpoint that app is authorized against is
+    a property of how it's registered (personal-access-style vs. a GitHub App,
+    which product surface, which scopes), not a public constant I can respond
+    to instead of guessing. `isConnectable()` gates on both being non-empty, so
+    Connect is inert, not silently wrong, until they're filled in.*
+  - *The gate's "routed agent lists issues via MCP" is verified automatically
+    (`test/integration-bridge.test.ts`) against a fake remote server standing
+    in for whatever GitHub's is — that fake is honest about what it replaces
+    (no network access, no real client_id here) but is not a live GitHub
+    smoke test. Once the OAuth App exists, filling in `clientId`/`url` and
+    running the Augment live smoke is what actually closes this phase's gate;
+    no code change should be needed for that step given the mechanism above.*
 
 ### P10 — Rules, skills, commands management ☐
 

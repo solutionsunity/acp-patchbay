@@ -7,6 +7,10 @@
 // which session's editor context / elicitation card a call belongs to.
 export interface IpcRequest {
   id: number;
+  /** Disambiguates which session an editor-state/elicitation call belongs
+   * to; for the integration-bridge methods (P9) there is no session, so the
+   * bridge passes its integrationId here instead — same field, same "which
+   * caller" role, just a different kind of caller. */
   sessionId: string;
   method:
     | "getSelection"
@@ -14,8 +18,16 @@ export interface IpcRequest {
     | "getDiagnostics"
     | "getOpenEditors"
     | "getWorkspaceState"
-    | "requestUserInput";
+    | "requestUserInput"
+    | "getIntegrationToken";
   params?: unknown;
+}
+
+/** Result of `getIntegrationToken` — null when the integration isn't
+ * connected in this workspace (never silently substitutes another one's
+ * credential, never partially connects). */
+export interface IntegrationTokenResult {
+  accessToken: string;
 }
 
 export interface IpcResponse {

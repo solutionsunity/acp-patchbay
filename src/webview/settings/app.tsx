@@ -8,6 +8,8 @@ import type {
   CapabilityRowId,
   CommandRuleView,
   FileWriteScopeView,
+  IntegrationRoutingView,
+  IntegrationSourceView,
   SettingsState,
 } from "../../shared/protocol";
 import { capabilityState, computeFidelity } from "../../shared/protocol";
@@ -57,10 +59,18 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
         {section === "agents" && <AgentsSection state={state} onDiagnostics={runDiagnostics} />}
         {section === "matrix" && <MatrixSection state={state} />}
         {section === "integrations" && (
-          <Section
-            title="Integrations"
-            sub="Curated and custom are the same mechanism — MCP servers, routed per agent. Workspace-scoped by default."
-            empty="No integrations yet. (Lands with P9.)"
+          <IntegrationsSection
+            state={state}
+            onConnect={(registryId) => channel.sendAction({ kind: "connectRegistryIntegration", registryId })}
+            onAddCustom={(id, name, source, routing) =>
+              channel.sendAction({ kind: "addCustomIntegration", id, name, source, routing })
+            }
+            onDisconnect={(integrationId) => channel.sendAction({ kind: "disconnectIntegration", integrationId })}
+            onRemove={(integrationId) => channel.sendAction({ kind: "removeIntegration", integrationId })}
+            onSetRouting={(integrationId, routing) =>
+              channel.sendAction({ kind: "setIntegrationRouting", integrationId, routing })
+            }
+            onShare={(integrationId) => channel.sendAction({ kind: "shareIntegrationConfig", integrationId })}
           />
         )}
         {section === "permissions" && (
@@ -263,6 +273,214 @@ function MatrixSection({ state }: { state: SettingsState }) {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+/** Per-agent checkboxes for an integration's routing — "auto" (default,
+ * fully-brokered agents only) or an explicit pinned list, never
+ * all-or-nothing (features.md § Integrations). */
+function RoutingEditor(props: {
+  agents: SettingsState["agents"];
+  routing: IntegrationRoutingView;
+  onChange(routing: IntegrationRoutingView): void;
+}) {
+  const explicit = props.routing !== "auto";
+  return (
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <label>
+        <input type="radio" checked={!explicit} onChange={() => props.onChange("auto")} /> auto (fully brokered
+        only)
+      </label>
+      <label>
+        <input
+          type="radio"
+          checked={explicit}
+          onChange={() => props.onChange(explicit ? props.routing : [])}
+        />{" "}
+        pinned:
+      </label>
+      {explicit &&
+        props.agents.map((a) => {
+          const list = props.routing as readonly string[];
+          const checked = list.includes(a.id);
+          return (
+            <label key={a.id}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() =>
+                  props.onChange(checked ? list.filter((id) => id !== a.id) : [...list, a.id])
+                }
+              />{" "}
+              {a.name}
+            </label>
+          );
+        })}
+    </div>
+  );
+}
+
+function IntegrationsSection(props: {
+  state: SettingsState;
+  onConnect(registryId: string): void;
+  onAddCustom(id: string, name: string, source: IntegrationSourceView, routing: IntegrationRoutingView): void;
+  onDisconnect(integrationId: string): void;
+  onRemove(integrationId: string): void;
+  onSetRouting(integrationId: string, routing: IntegrationRoutingView): void;
+  onShare(integrationId: string): void;
+}) {
+  const { state } = props;
+  const [adding, setAdding] = useState<"stdio" | "http" | null>(null);
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
+  const [url, setUrl] = useState("");
+  const [authType, setAuthType] = useState<"none" | "bearer-token">("none");
+  const [token, setToken] = useState("");
+
+  const submitCustom = () => {
+    if (id.trim() === "" || name.trim() === "") return;
+    const source: IntegrationSourceView =
+      adding === "stdio"
+        ? { kind: "custom-stdio", command: command.trim(), args: [], env: {} }
+        : { kind: "custom-http", url: url.trim(), authType, token: authType === "bearer-token" ? token : undefined };
+    props.onAddCustom(id.trim(), name.trim(), source, "auto");
+    setAdding(null);
+    setId("");
+    setName("");
+    setCommand("");
+    setUrl("");
+    setToken("");
+  };
+
+  return (
+    <section class="section">
+      <h1>Integrations</h1>
+      <div class="sub">
+        Curated and custom are the same mechanism — MCP servers, routed per agent. Workspace-scoped:
+        connecting here never makes it available in another repo.
+      </div>
+
+      {state.integrationRegistry.map((entry) => {
+        const view = state.integrations.find((i) => i.registryId === entry.id);
+        const flow = state.deviceFlow[entry.id];
+        if (view !== undefined) return null; // already added below, in the configured list
+        return (
+          <div class="card" key={entry.id}>
+            <div class="row">
+              <span class="nm">{entry.name}</span>
+              <span style="flex:1" />
+              <button
+                class="btn primary"
+                disabled={!entry.connectable || flow?.status === "pending"}
+                title={entry.connectable ? undefined : "not configured yet — pending an owner-created OAuth App"}
+                onClick={() => props.onConnect(entry.id)}
+              >
+                Connect
+              </button>
+            </div>
+            {!entry.connectable && (
+              <div class="note" style="margin-top:6px">
+                Not connectable yet — the OAuth App this entry needs hasn't been created.
+              </div>
+            )}
+            {flow?.status === "pending" && (
+              <div class="note" style="margin-top:6px">
+                Go to <b>{flow.verificationUri}</b> and enter code <code>{flow.userCode}</code>. Waiting…
+              </div>
+            )}
+            {flow?.status === "failed" && (
+              <div class="note" style="margin-top:6px">
+                Connect failed: {flow.reason}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {state.integrations.map((integration) => (
+        <div class="card" key={integration.id}>
+          <div class="row">
+            <span class={`dot ${integration.connected ? "running" : "stopped"}`} />
+            <span class="nm">{integration.name}</span>
+            <span class="chip">{integration.sourceKind}</span>
+            <span style="flex:1" />
+            <button class="btn" onClick={() => props.onShare(integration.id)}>
+              Share config…
+            </button>
+            {integration.connected && integration.sourceKind !== "custom-stdio" && (
+              <button class="btn" onClick={() => props.onDisconnect(integration.id)}>
+                Disconnect
+              </button>
+            )}
+            <button class="btn" onClick={() => props.onRemove(integration.id)}>
+              Remove
+            </button>
+          </div>
+          {!integration.connected && (
+            <div class="note" style="margin-top:6px">
+              Configured, not connected in this workspace — credentials never follow a shared config.
+            </div>
+          )}
+          <div style="margin-top:8px">
+            <RoutingEditor
+              agents={state.agents}
+              routing={integration.routing}
+              onChange={(routing) => props.onSetRouting(integration.id, routing)}
+            />
+          </div>
+        </div>
+      ))}
+
+      <div class="card">
+        <h2 style="margin-top:0">Add a custom MCP server</h2>
+        {adding === null ? (
+          <div class="row" style="gap:10px">
+            <button class="btn" onClick={() => setAdding("stdio")}>
+              + Command (stdio)
+            </button>
+            <button class="btn" onClick={() => setAdding("http")}>
+              + URL (with auth)
+            </button>
+          </div>
+        ) : (
+          <div class="connect-form">
+            <input type="text" placeholder="id (unique)" value={id} onInput={(e) => setId((e.target as HTMLInputElement).value)} />
+            <input type="text" placeholder="display name" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+            {adding === "stdio" ? (
+              <input
+                type="text"
+                placeholder="command…"
+                value={command}
+                onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
+              />
+            ) : (
+              <>
+                <input type="text" placeholder="https://…" value={url} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
+                <select value={authType} onChange={(e) => setAuthType((e.target as HTMLSelectElement).value as "none" | "bearer-token")}>
+                  <option value="none">no auth</option>
+                  <option value="bearer-token">bearer token</option>
+                </select>
+                {authType === "bearer-token" && (
+                  <input
+                    type="password"
+                    placeholder="token…"
+                    value={token}
+                    onInput={(e) => setToken((e.target as HTMLInputElement).value)}
+                  />
+                )}
+              </>
+            )}
+            <button class="btn primary row-btn" onClick={submitCustom}>
+              Add
+            </button>
+            <button class="btn row-btn" onClick={() => setAdding(null)}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

@@ -1,0 +1,18 @@
+{
+  "$comment": "Curated integrations registry (architecture.md § Integrations) — GitHub proves the pattern, one entry, every field earned by what it demonstrably needs. deviceCodeUrl/tokenUrl are GitHub's own stable, public OAuth Device Flow endpoints (github.com/login/device/code, github.com/login/oauth/access_token) — the same for every GitHub OAuth App, so they're safe to ship as data. clientId and url are deliberately empty: both are bound to the specific GitHub OAuth App this project registers (plan.md P9 owner touchpoint — 'create the GitHub OAuth app under the org'), which also decides which MCP endpoint that app is authorized against. Connecting is a no-op until both are filled in; nothing in this file is guessed.",
+  "integrations": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "transport": "http",
+      "url": "",
+      "auth": {
+        "type": "oauth-device",
+        "scopes": ["repo", "read:org"],
+        "deviceCodeUrl": "https://github.com/login/device/code",
+        "tokenUrl": "https://github.com/login/oauth/access_token",
+        "clientId": ""
+      }
+    }
+  ]
+}

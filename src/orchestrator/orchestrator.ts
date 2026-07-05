@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
   coalesceSettingsEvent,
+  computeFidelity,
   initialAgentViewState,
   initialSettingsState,
   reduceAgentView,
@@ -22,13 +23,16 @@ import { CapabilityVerifier } from "./capability-verifier";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
+import { IntegrationsManager } from "./integrations";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { SessionManager } from "./session-manager";
 import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
 import { ConfigFileStore, CONFIG_RELATIVE_PATH, type AgentConfig } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
+import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastKnownViewStore } from "./stores/last-known-view";
 import { PermissionRulesStore } from "./stores/permission-rules";
+import { loadRegistry } from "./stores/registry";
 import { loadRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
 import { type TerminalHandle } from "./terminal-runner";
@@ -59,6 +63,8 @@ export class Orchestrator {
   readonly capabilityVerifier: CapabilityVerifier;
   readonly broker: PermissionBroker;
   readonly editorStateHost: EditorStateHost;
+  readonly integrationTokens: IntegrationTokenStore;
+  readonly integrations: IntegrationsManager;
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
@@ -66,6 +72,7 @@ export class Orchestrator {
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
   private readonly mcpServerScriptPath: string;
+  private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
   private readonly pendingElicitations = new Map<
     string,
@@ -82,6 +89,11 @@ export class Orchestrator {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     this.workspaceRoot = workspaceRoot;
     this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
+    this.integrationBridgeScriptPath = vscode.Uri.joinPath(
+      context.extensionUri,
+      "out",
+      "integration-bridge.js",
+    ).fsPath;
 
     this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
@@ -96,6 +108,10 @@ export class Orchestrator {
             CONFIG_RELATIVE_PATH,
           ).fsPath,
     );
+    this.integrationTokens = new IntegrationTokenStore(context.secrets);
+    this.integrations = new IntegrationsManager(loadRegistry(), this.configFile, this.integrationTokens, {
+      emit: (...events) => this.settings.emit(...events),
+    });
 
     this.roster = loadRoster();
     const rosterEntries = this.roster.map((a) => ({
@@ -119,6 +135,7 @@ export class Orchestrator {
         roster: rosterEntries,
         commandRules: rules.commandRules,
         fileWriteScope: rules.fileWriteScope,
+        integrationRegistry: this.integrations.registryViews(),
       },
       reduceSettings,
       coalesceSettingsEvent,
@@ -233,6 +250,7 @@ export class Orchestrator {
     });
     this.editorStateHost = new EditorStateHost(String(process.pid), {
       requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
+      getIntegrationToken: (integrationId) => this.integrations.getToken(integrationId),
     });
     this.editorStateHost.start();
 
@@ -252,11 +270,11 @@ export class Orchestrator {
         lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
       },
       () => this.workspaceRoot ?? process.cwd(),
-      (contextToken) => [
-        {
-          // McpServerStdio is the untagged union member (architecture.md's
-          // "uniform stdio presentation" — no discriminant needed since it's
-          // the only variant every agent is guaranteed to accept).
+      async (contextToken, agentId) => {
+        // McpServerStdio is the untagged union member (architecture.md's
+        // "uniform stdio presentation" — no discriminant needed since it's
+        // the only variant every agent is guaranteed to accept).
+        const editorServer = {
           name: "patchbay",
           command: process.execPath,
           args: [this.mcpServerScriptPath],
@@ -264,8 +282,20 @@ export class Orchestrator {
             { name: "ACP_PATCHBAY_IPC", value: this.editorStateHost.socketPath },
             { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
           ],
-        },
-      ],
+        };
+        const matrix = this.agentView.current.capabilities[agentId];
+        const roster = this.roster.find((a) => a.id === agentId);
+        const isFullyBrokered =
+          matrix !== undefined &&
+          computeFidelity(matrix, roster?.knownBypassBridge ?? false) === "fully-brokered";
+        const integrationServers = await this.integrations.mcpServersFor(
+          agentId,
+          isFullyBrokered,
+          this.integrationBridgeScriptPath,
+          this.editorStateHost.socketPath,
+        );
+        return [editorServer, ...integrationServers];
+      },
     );
     this.capabilityVerifier = new CapabilityVerifier(this.pool, {
       emit: (...events) => {
@@ -287,6 +317,7 @@ export class Orchestrator {
 
     void this.refreshAuditTail();
     void this.loadWorkspaceConfigAgents();
+    void this.integrations.refresh();
   }
 
   /** The local MCP server's `request_user_input` tool (elicitation fallback
@@ -589,7 +620,41 @@ export class Orchestrator {
       case "removeContextChip":
         this.sessionManager.removeContext(action.sessionId, action.chipId);
         break;
+      case "connectRegistryIntegration":
+        void this.integrations.connectRegistry(action.registryId);
+        break;
+      case "addCustomIntegration":
+        void this.integrations.addCustom(action.id, action.name, action.source, action.routing);
+        break;
+      case "disconnectIntegration":
+        void this.integrations.disconnect(action.integrationId);
+        break;
+      case "removeIntegration":
+        void this.integrations.remove(action.integrationId);
+        break;
+      case "setIntegrationRouting":
+        void this.integrations.setRouting(action.integrationId, action.routing);
+        break;
+      case "shareIntegrationConfig":
+        void this.shareIntegrationConfig(action.integrationId);
+        break;
     }
+  }
+
+  /** "Explicit share command that copies config and reattaches credentials
+   * only on confirm" (plan.md P9): the sanitized config entry (no
+   * credential — none exists here by construction, see config-file.ts) goes
+   * to the clipboard for the user to paste into another workspace's config
+   * file. Reattaching a credential is never automatic: a pasted entry's
+   * `id` has no token in that workspace's own SecretStorage until its user
+   * explicitly connects there — workspace-scoped storage makes "following"
+   * impossible without extra machinery (features.md's incident-driven rule). */
+  private async shareIntegrationConfig(integrationId: string): Promise<void> {
+    const result = await this.configFile.read();
+    if (!result.ok) return;
+    const integration = result.config.integrations.find((i) => i.id === integrationId);
+    if (integration === undefined) return;
+    await vscode.env.clipboard.writeText(JSON.stringify(integration, null, 2));
   }
 
   private publishRules(): void {

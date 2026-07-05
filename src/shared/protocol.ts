@@ -59,7 +59,57 @@ export type Action =
   | { kind: "branchSession"; sessionId: string }
   | { kind: "reloadSession"; sessionId: string }
   | { kind: "setSessionMode"; sessionId: string; modeId: string }
-  | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean };
+  | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean }
+  | { kind: "connectRegistryIntegration"; registryId: string }
+  | {
+      kind: "addCustomIntegration";
+      id: string;
+      name: string;
+      source: IntegrationSourceView;
+      routing: IntegrationRoutingView;
+    }
+  | { kind: "disconnectIntegration"; integrationId: string }
+  | { kind: "removeIntegration"; integrationId: string }
+  | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
+  | { kind: "shareIntegrationConfig"; integrationId: string };
+
+// ── integrations (architecture.md § Integrations) ───────────────────────────
+
+export type IntegrationRoutingView = "auto" | readonly string[];
+
+/** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
+ * with auth" escape hatch (features.md § Integrations). Registry-backed
+ * integrations go through `connectRegistryIntegration` instead, since that
+ * path drives an OAuth flow rather than taking a source directly. */
+export type IntegrationSourceView =
+  | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
+  | { kind: "custom-http"; url: string; authType: "none" | "bearer-token"; token?: string };
+
+export interface IntegrationView {
+  id: string;
+  name: string;
+  sourceKind: "registry" | "custom-stdio" | "custom-http";
+  registryId?: string;
+  /** A token exists in this workspace's SecretStorage — never assumes one
+   * followed from another workspace (features.md's incident-driven rule). */
+  connected: boolean;
+  routing: IntegrationRoutingView;
+}
+
+export interface RegistryEntryView {
+  id: string;
+  name: string;
+  /** False until the owner-supplied clientId/url exist (plan.md P9 touchpoint). */
+  connectable: boolean;
+}
+
+export interface DeviceFlowView {
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  status: "pending" | "failed";
+  reason?: string;
+}
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -928,6 +978,11 @@ export interface SettingsState {
   fileWriteScope: FileWriteScopeView;
   auditTail: readonly AuditEntryView[];
   pendingAdoptions: readonly WorkspaceAgentPending[];
+  integrationRegistry: readonly RegistryEntryView[];
+  integrations: readonly IntegrationView[];
+  /** Keyed by registryId while a device-flow connect is in flight or just
+   * failed; cleared once `integrationsChanged` reports it connected. */
+  deviceFlow: Readonly<Record<string, DeviceFlowView>>;
 }
 
 export const initialSettingsState: SettingsState = {
@@ -939,6 +994,9 @@ export const initialSettingsState: SettingsState = {
   fileWriteScope: "workspace",
   auditTail: [],
   pendingAdoptions: [],
+  integrationRegistry: [],
+  integrations: [],
+  deviceFlow: {},
 };
 
 export type SettingsEvent =
@@ -948,7 +1006,17 @@ export type SettingsEvent =
       commandRules: readonly CommandRuleView[];
       fileWriteScope: FileWriteScopeView;
     }
-  | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] };
+  | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
+  | { kind: "integrationRegistryLoaded"; entries: readonly RegistryEntryView[] }
+  | { kind: "integrationsChanged"; integrations: readonly IntegrationView[] }
+  | {
+      kind: "integrationDeviceCodeIssued";
+      registryId: string;
+      userCode: string;
+      verificationUri: string;
+      expiresIn: number;
+    }
+  | { kind: "integrationConnectFailed"; registryId: string; reason: string };
 
 export function reduceSettings(
   state: SettingsState,
@@ -980,13 +1048,57 @@ export function reduceSettings(
         ...state,
         pendingAdoptions: state.pendingAdoptions.filter((a) => a.agentId !== event.agentId),
       };
+    case "integrationRegistryLoaded":
+      return { ...state, integrationRegistry: event.entries };
+    case "integrationsChanged": {
+      // A connected registry-backed integration retires its device-flow card.
+      const connectedRegistryIds = new Set(
+        event.integrations.filter((i) => i.connected && i.registryId).map((i) => i.registryId!),
+      );
+      const deviceFlow = Object.fromEntries(
+        Object.entries(state.deviceFlow).filter(([registryId]) => !connectedRegistryIds.has(registryId)),
+      );
+      return { ...state, integrations: event.integrations, deviceFlow };
+    }
+    case "integrationDeviceCodeIssued":
+      return {
+        ...state,
+        deviceFlow: {
+          ...state.deviceFlow,
+          [event.registryId]: {
+            userCode: event.userCode,
+            verificationUri: event.verificationUri,
+            expiresIn: event.expiresIn,
+            status: "pending",
+          },
+        },
+      };
+    case "integrationConnectFailed": {
+      const existing = state.deviceFlow[event.registryId];
+      if (!existing) return state;
+      return {
+        ...state,
+        deviceFlow: {
+          ...state.deviceFlow,
+          [event.registryId]: { ...existing, status: "failed", reason: event.reason },
+        },
+      };
+    }
     default:
       return state;
   }
 }
 
+const SETTINGS_ONLY_KINDS = new Set([
+  "permissionRulesChanged",
+  "auditTailChanged",
+  "integrationRegistryLoaded",
+  "integrationsChanged",
+  "integrationDeviceCodeIssued",
+  "integrationConnectFailed",
+]);
+
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {
-  if (prev.kind === "permissionRulesChanged" || prev.kind === "auditTailChanged") return null;
-  if (next.kind === "permissionRulesChanged" || next.kind === "auditTailChanged") return null;
-  return coalesceAgentViewEvent(prev, next);
+  if (SETTINGS_ONLY_KINDS.has(prev.kind) || SETTINGS_ONLY_KINDS.has(next.kind)) return null;
+  return coalesceAgentViewEvent(prev as AgentViewEvent, next as AgentViewEvent);
 };

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- P9 integrations + GitHub (mechanism complete; blocked on the two named
+  owner touchpoints — OAuth App creation, Augment live smoke): curated
+  (registry) and custom integrations are the same mechanism throughout —
+  MCP servers routed per agent, "auto" (fully-brokered only) or an explicit
+  pinned list. A real OAuth Device Flow client (RFC 8628 — device code
+  request, poll with authorization_pending/slow_down/access_denied/
+  expired_token handling, refresh) against `data/registry.json`'s GitHub
+  entry, whose `deviceCodeUrl`/`tokenUrl` are GitHub's own stable public
+  endpoints but whose `clientId`/`url` stay empty — both bound to the OAuth
+  App the owner touchpoint creates, so connecting is inert, never guessed,
+  until then. A real stdio-to-HTTP bridge subprocess (`integration-bridge.js`,
+  a 5th esbuild bundle) is the "just another local MCP server" presentation
+  for both registry and custom-http integrations — a transparent JSON-RPC
+  proxy that fetches a current token from the orchestrator over the same
+  IPC channel P7 built (extended, not duplicated) and retries once on a 401.
+  Proven end-to-end with a real subprocess chain: fake ACP agent → real
+  bundled bridge → fake remote MCP server's `list_issues` tool, including the
+  retry path — the automated stand-in for the gate's "routed agent lists
+  issues via MCP," honestly short of the real GitHub connection the owner
+  touchpoint alone can exercise. Custom-stdio integrations skip the bridge
+  entirely (handed straight through, no auth concept). Credentials live only
+  in a new `IntegrationTokenStore` (SecretStorage, `SecretsLike` structural
+  interface so it's fakeable in tests) — routing and source config live in
+  `.vscode/acp-patchbay.json` (workspace-scoped by construction), and the
+  config schema carries no credential field at all. "Share" is a clipboard
+  copy of the sanitized config entry; a pasted entry shows as configured-but-
+  disconnected until its own workspace explicitly connects it — workspace-
+  scoped SecretStorage makes credential-following impossible without extra
+  machinery, per the incident features.md records. Settings gained a real
+  Integrations section (registry connect card with live device-code/
+  verification-URL display, per-integration routing checkboxes, custom-add
+  form, disconnect/remove/share).
 - P8 sessions advanced: a real session graph — branching produces a native
   `session/fork` when the capability is *verified*, otherwise an emulated
   continuation seeded from the parent's current transcript, either way a

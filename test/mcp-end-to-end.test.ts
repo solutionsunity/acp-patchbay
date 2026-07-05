@@ -112,7 +112,7 @@ function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
 
 /** Builds the exact mcpServers entry Orchestrator builds — same shape,
  * pointed at the fake IPC host instead of a real EditorStateHost. */
-function mcpServersFor(contextToken: string): McpServer[] {
+async function mcpServersFor(contextToken: string): Promise<McpServer[]> {
   return [
     {
       name: "patchbay",

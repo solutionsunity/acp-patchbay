@@ -33,13 +33,51 @@ export const agentConfigSchema = z.object({
 
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 
+// Integrations (architecture.md § Integrations, § State — workspace-scoped,
+// in the config file, never credentials). "Curated and custom are the same
+// mechanism": a registry-backed source or a custom stdio/http one, each
+// producing an mcpServers entry the same way. No credential field exists
+// here by construction — those live only in SecretStorage
+// (integration-tokens.ts), keyed by `id`.
+export const integrationSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("registry"), registryId: z.string().min(1) }),
+  z.object({
+    kind: z.literal("custom-stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+  }),
+  z.object({
+    kind: z.literal("custom-http"),
+    url: z.string().min(1),
+    /** "none" needs no secret at all; "bearer-token" sends whatever's
+     * stored for this integration's id as `Authorization: Bearer <token>`. */
+    authType: z.enum(["none", "bearer-token"]).default("none"),
+  }),
+]);
+
+export type IntegrationSource = z.infer<typeof integrationSourceSchema>;
+
+export const integrationConfigSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  source: integrationSourceSchema,
+  /** "auto" (default) attaches only to agents whose fidelity is fully
+   * brokered (features.md § Integrations); an explicit id list pins exactly
+   * which agents receive it — the user's routing, never all-or-nothing. */
+  routing: z.union([z.literal("auto"), z.array(z.string())]).default("auto"),
+});
+
+export type IntegrationConfig = z.infer<typeof integrationConfigSchema>;
+
 export const workspaceConfigSchema = z.object({
   agents: z.array(agentConfigSchema).default([]),
+  integrations: z.array(integrationConfigSchema).default([]),
 });
 
 export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
 
-export const emptyWorkspaceConfig: WorkspaceConfig = { agents: [] };
+export const emptyWorkspaceConfig: WorkspaceConfig = { agents: [], integrations: [] };
 
 export type ConfigReadResult =
   | { ok: true; config: WorkspaceConfig }
@@ -64,6 +102,20 @@ export function parseWorkspaceConfig(text: string): ConfigReadResult {
   return { ok: true, config: result.data };
 }
 
+function arrayField(existing: unknown, field: string): unknown[] {
+  return typeof existing === "object" &&
+    existing !== null &&
+    Array.isArray((existing as Record<string, unknown>)[field])
+    ? ((existing as Record<string, unknown>)[field] as unknown[])
+    : [];
+}
+
+function indexOfId(items: unknown[], id: string): number {
+  return items.findIndex(
+    (item) => typeof item === "object" && item !== null && (item as Record<string, unknown>).id === id,
+  );
+}
+
 export class ConfigFileStore {
   /** file: absolute path to .vscode/acp-patchbay.json, or null when no workspace. */
   constructor(private readonly file: string | null) {}
@@ -79,7 +131,9 @@ export class ConfigFileStore {
     return parseWorkspaceConfig(text);
   }
 
-  async upsertAgent(agent: AgentConfig): Promise<void> {
+  /** Upserts `value` at `[field, id]` by matching id, appending if absent —
+   * shared by agents and integrations, both id-keyed arrays in the same file. */
+  private async upsertInArray(field: string, id: string, value: unknown): Promise<void> {
     if (this.file === null) throw new Error("no workspace open");
     let text: string;
     try {
@@ -88,29 +142,15 @@ export class ConfigFileStore {
       await mkdir(dirname(this.file), { recursive: true });
       text = "{\n}\n";
     }
-    const existing: unknown = parseJsonc(text, [], { allowTrailingComma: true });
-    const agents: unknown[] =
-      typeof existing === "object" &&
-      existing !== null &&
-      Array.isArray((existing as Record<string, unknown>).agents)
-        ? ((existing as Record<string, unknown>).agents as unknown[])
-        : [];
-    const index = agents.findIndex(
-      (a) =>
-        typeof a === "object" &&
-        a !== null &&
-        (a as Record<string, unknown>).id === agent.id,
-    );
-    const edits = modify(
-      text,
-      ["agents", index === -1 ? agents.length : index],
-      agent,
-      { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-    );
+    const items = arrayField(parseJsonc(text, [], { allowTrailingComma: true }), field);
+    const index = indexOfId(items, id);
+    const edits = modify(text, [field, index === -1 ? items.length : index], value, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+    });
     await writeFile(this.file, applyEdits(text, edits), "utf8");
   }
 
-  async removeAgent(agentId: string): Promise<void> {
+  private async removeFromArray(field: string, id: string): Promise<void> {
     if (this.file === null) throw new Error("no workspace open");
     let text: string;
     try {
@@ -118,23 +158,36 @@ export class ConfigFileStore {
     } catch {
       return;
     }
-    const existing: unknown = parseJsonc(text, [], { allowTrailingComma: true });
-    const agents: unknown[] =
-      typeof existing === "object" &&
-      existing !== null &&
-      Array.isArray((existing as Record<string, unknown>).agents)
-        ? ((existing as Record<string, unknown>).agents as unknown[])
-        : [];
-    const index = agents.findIndex(
-      (a) =>
-        typeof a === "object" &&
-        a !== null &&
-        (a as Record<string, unknown>).id === agentId,
-    );
+    const items = arrayField(parseJsonc(text, [], { allowTrailingComma: true }), field);
+    const index = indexOfId(items, id);
     if (index === -1) return;
-    const edits = modify(text, ["agents", index], undefined, {
+    const edits = modify(text, [field, index], undefined, {
       formattingOptions: { insertSpaces: true, tabSize: 2 },
     });
     await writeFile(this.file, applyEdits(text, edits), "utf8");
+  }
+
+  upsertAgent(agent: AgentConfig): Promise<void> {
+    return this.upsertInArray("agents", agent.id, agent);
+  }
+
+  removeAgent(agentId: string): Promise<void> {
+    return this.removeFromArray("agents", agentId);
+  }
+
+  upsertIntegration(integration: IntegrationConfig): Promise<void> {
+    return this.upsertInArray("integrations", integration.id, integration);
+  }
+
+  removeIntegration(integrationId: string): Promise<void> {
+    return this.removeFromArray("integrations", integrationId);
+  }
+
+  async setIntegrationRouting(integrationId: string, routing: IntegrationConfig["routing"]): Promise<void> {
+    const result = await this.read();
+    if (!result.ok) return;
+    const integration = result.config.integrations.find((i) => i.id === integrationId);
+    if (integration === undefined) return;
+    await this.upsertIntegration({ ...integration, routing });
   }
 }

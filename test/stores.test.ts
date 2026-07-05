@@ -106,7 +106,7 @@ describe("workspace config", () => {
   it("absent file reads as empty config", async () => {
     const store = new ConfigFileStore(join(dir, "acp-patchbay.json"));
     const r = await store.read();
-    expect(r).toEqual({ ok: true, config: { agents: [] } });
+    expect(r).toEqual({ ok: true, config: { agents: [], integrations: [] } });
   });
 
   it("upsert preserves comments and unknown keys (surgical JSONC edits)", async () => {

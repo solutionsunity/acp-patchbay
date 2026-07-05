@@ -12,6 +12,7 @@ import {
   parseLines,
   type CurrentFileInfo,
   type DiagnosticInfo,
+  type IntegrationTokenResult,
   type IpcRequest,
   type IpcResponse,
   type OpenEditorInfo,
@@ -27,6 +28,12 @@ export interface EditorStateHostHooks {
     sessionId: string,
     params: RequestUserInputParams,
   ): Promise<Record<string, unknown> | null>;
+  /** The one other thing spawned subprocesses need from the extension host
+   * that isn't editor state (P9): a currently-valid token for a connected
+   * integration, refreshed transparently server-side if needed. This host is
+   * the same "subprocess ↔ orchestrator" trust boundary either way — one
+   * socket, one bridge, two kinds of callers. */
+  getIntegrationToken(integrationId: string): Promise<IntegrationTokenResult | null>;
 }
 
 function severityName(sev: vscode.DiagnosticSeverity): DiagnosticInfo["severity"] {
@@ -106,6 +113,8 @@ export class EditorStateHost {
           request.sessionId,
           request.params as RequestUserInputParams,
         );
+      case "getIntegrationToken":
+        return this.hooks.getIntegrationToken(request.sessionId);
     }
   }
 
