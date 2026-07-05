@@ -341,7 +341,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   on disk; the thin real `vscode.workspace.fs` wrapper is a few lines with
   nothing left to prove beyond what TypeScript already checks.*
 
-### P11 — Native surfaces + native settings ☐
+### P11 — Native surfaces + native settings ☑
 
 - Status bar (active session, health, usage when reported — absent when not);
   command palette: new/switch session, connect agent, open settings; permission
@@ -349,6 +349,26 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   default agent + telemetry opt-in, nothing else.
 - **Gate**: every features §3 command palette item works; status bar click jumps
   to session.
+- *Permission notification coverage verified by inspection, not new code: all
+  three ask-paths (`broker.resolveAgentPermissionRequest`, `gateFileWrite`,
+  `gateCommand`) already call the same `notifyPending` hook since P6 — one
+  surface, confirmed, nothing to add.*
+- *Scope call: "telemetry opt-in" is dropped, not built as a dead toggle. This
+  project collects no telemetry anywhere in the codebase — no event ever
+  leaves the extension host. A settings toggle that gates nothing is worse
+  than no toggle (the "no half-finished implementations" rule): if telemetry
+  is ever added, the opt-in ships alongside the first thing it actually
+  controls, not years ahead of it as an inert checkbox. `defaultAgent` ships
+  for real — connects once, only when nothing is connected yet, never
+  overriding a user's own choice; this is the user's configured pick, not
+  patchbay routing among agents (prd.md's routing scope decision is about
+  choosing an agent for a given task, a different question).*
+- *Status bar / command palette logic (`status-bar.ts`) is vscode-free and
+  unit-tested, same shape as every other native-surface-adjacent module in
+  this codebase; `ChannelHost` gained a small `onChange` subscription (used
+  by nothing else yet) so native surfaces can react to canonical state
+  without being a webview, per architecture.md's "direct orchestrator
+  consumers: same state, no webview in the path."*
 
 ### P12 — Marketplace pack ☐
 

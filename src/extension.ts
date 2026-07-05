@@ -28,6 +28,9 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.openSettings", () =>
       settingsPanelHost.openOrReveal(),
     ),
+    vscode.commands.registerCommand("acpPatchbay.newSession", () => orchestrator.newSessionCommand()),
+    vscode.commands.registerCommand("acpPatchbay.switchSession", () => orchestrator.switchSessionCommand()),
+    vscode.commands.registerCommand("acpPatchbay.connectAgent", () => orchestrator.connectAgentCommand()),
   );
 
   return { internal: { orchestrator, settingsPanelHost } };

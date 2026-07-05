@@ -37,6 +37,7 @@ import { PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
 import { loadRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
+import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
 
 function optionViewsFromAcp(
@@ -82,10 +83,12 @@ export class Orchestrator {
   >();
   private elicitationCounter = 0;
   private isolationCounter = 0;
-  /** Set by the webview host as the Agent View mounts/unmounts (P11 wires
-   * the real visibility signal); defaults to "visible" so native
-   * notifications don't fire spuriously before that's connected. */
+  /** Set by the webview host as the Agent View mounts/unmounts (wired in
+   * extension.ts to `AgentViewProvider`'s real `onDidChangeVisibility`
+   * signal, P6); defaults to "visible" so native notifications don't fire
+   * spuriously before that's connected. */
   isAgentViewVisible: () => boolean = () => true;
+  private statusBarItem!: vscode.StatusBarItem;
 
   constructor(context: vscode.ExtensionContext) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
@@ -320,6 +323,99 @@ export class Orchestrator {
     void this.refreshAuditTail();
     void this.loadWorkspaceConfigAgents();
     void this.integrations.refresh();
+
+    // Native surfaces (P11): the status bar mirrors canonical state via
+    // ChannelHost.onChange — no webview in the path (architecture.md § UI
+    // layer: "direct orchestrator consumers: same state, no webview").
+    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    this.statusBarItem.command = "acpPatchbay.agentView.focus";
+    this.statusBarItem.show();
+    this.agentView.onChange(() => this.refreshStatusBar());
+    this.refreshStatusBar();
+
+    void this.connectDefaultAgent();
+  }
+
+  /** "Default agent" (VS Code native settings, architecture.md § UI layer —
+   * deliberately near-empty, flat scalars only): connects it once, only if
+   * nothing is connected yet. The user's own configured choice, not patchbay
+   * picking an agent for them (prd.md's routing scope decision is about
+   * choosing among agents for a given task, not this). */
+  private async connectDefaultAgent(): Promise<void> {
+    const defaultAgentId = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
+    if (defaultAgentId === "" || this.pool.list().length > 0) return;
+    const entry = this.roster.find((a) => a.id === defaultAgentId);
+    if (entry === undefined) return;
+    await this.connectFromSource({ rosterId: defaultAgentId });
+  }
+
+  /** Active session · agent health · usage when reported (features.md § 3) —
+   * click jumps to the Agent View, which already shows that same session. */
+  private refreshStatusBar(): void {
+    const { text, tooltip } = statusBarContent(this.agentView.current);
+    this.statusBarItem.text = text;
+    this.statusBarItem.tooltip = tooltip;
+  }
+
+  /** Command palette (features.md § 3): "new session" — pick a running
+   * agent, create, and focus the Agent View on it. */
+  async newSessionCommand(): Promise<void> {
+    const running = this.pool.list().filter((a) => a.status === "running");
+    if (running.length === 0) {
+      void vscode.window.showInformationMessage("Connect an agent first.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      running.map((a) => ({
+        label: this.agentNames.get(a.spec.agentId) ?? a.spec.agentId,
+        agentId: a.spec.agentId,
+      })),
+      { placeHolder: "New session with…" },
+    );
+    if (picked === undefined) return;
+    const agentName = this.agentNames.get(picked.agentId);
+    if (agentName === undefined) return;
+    await this.sessionManager.createSession(picked.agentId, agentName, this.workspaceRoot ?? process.cwd());
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+  }
+
+  /** "Switch session." */
+  async switchSessionCommand(): Promise<void> {
+    const sessions = this.agentView.current.sessions;
+    if (sessions.length === 0) {
+      void vscode.window.showInformationMessage("No sessions yet.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      sessions.map((s) => ({
+        label: s.title,
+        description: this.agentNames.get(s.agentId) ?? s.agentId,
+        sessionId: s.id,
+      })),
+      { placeHolder: "Switch to session…" },
+    );
+    if (picked === undefined) return;
+    this.sessionManager.activate(picked.sessionId);
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+  }
+
+  /** "Connect agent" — the same roster-or-custom-command choice the Agent
+   * View's Agents drawer offers, reachable without opening it first. */
+  async connectAgentCommand(): Promise<void> {
+    const items = [
+      ...this.roster.map((a) => ({ label: a.name, rosterId: a.id as string | undefined })),
+      { label: "Custom command…", rosterId: undefined as string | undefined },
+    ];
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: "Connect agent…" });
+    if (picked === undefined) return;
+    if (picked.rosterId === undefined) {
+      const command = await vscode.window.showInputBox({ placeHolder: "command that speaks ACP…" });
+      if (command === undefined || command.trim() === "") return;
+      await this.connectFromSource({ command });
+    } else {
+      await this.connectFromSource({ rosterId: picked.rosterId });
+    }
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
   /** The local MCP server's `request_user_input` tool (elicitation fallback
@@ -761,6 +857,7 @@ export class Orchestrator {
     void this.pool.disposeAll();
     this.agentView.flushNow();
     this.settings.flushNow();
+    this.statusBarItem.dispose();
   }
 }
 

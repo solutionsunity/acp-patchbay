@@ -148,4 +148,16 @@ describe("ChannelHost", () => {
     host.handleViewMessage({ kind: "applied", rev: 1 });
     await expect(wait).resolves.toBe(1);
   });
+
+  it("onChange fires on every emit, independent of any webview attachment (P11 native surfaces)", () => {
+    const { host } = makeHost();
+    let calls = 0;
+    const unsubscribe = host.onChange(() => calls++);
+    host.emit(upsert("a"));
+    host.emit(upsert("b"));
+    expect(calls).toBe(2);
+    unsubscribe();
+    host.emit(upsert("c"));
+    expect(calls).toBe(2);
+  });
 });

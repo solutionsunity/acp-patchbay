@@ -27,6 +27,7 @@ export class ChannelHost<S, E> {
   private lastAckedRev = -1;
   private readonly bus: CoalescingBus<E>;
   private ackWaiters: Array<{ rev: number; resolve: (rev: number) => void }> = [];
+  private changeListeners = new Set<() => void>();
 
   constructor(
     initial: S,
@@ -58,6 +59,15 @@ export class ChannelHost<S, E> {
       this.state = this.reduce(this.state, event);
       this.bus.emit(event);
     }
+    for (const listener of this.changeListeners) listener();
+  }
+
+  /** Native surfaces (status bar, P11) need to react to canonical state
+   * without being a webview — independent of the single `view` attachment
+   * above, and of the coalesced patch stream. */
+  onChange(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
   }
 
   flushNow(): void {

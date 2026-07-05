@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- P11 native surfaces + native settings: a status bar item mirroring the
+  active session's title, agent health glyph, and usage percentage once
+  reported (absent, never a fake 0%, until then) — click focuses the Agent
+  View. Command palette gained New Session, Switch Session, and Connect
+  Agent (QuickPicks over running agents / all sessions / roster + custom
+  command), alongside the existing Open Settings. `acpPatchbay.defaultAgent`
+  (VS Code native settings) connects a configured agent once, only when
+  nothing is connected yet — the user's own choice, never patchbay routing.
+  Verified (by inspection, no new code needed) that all three permission-ask
+  paths already share one native-notification hook since P6. Deliberately
+  dropped "telemetry opt-in": this project sends no telemetry anywhere, so a
+  toggle for it would gate nothing — recorded as a scope call in plan.md,
+  not silently skipped. `ChannelHost` gained a small `onChange` subscription
+  so native surfaces (just the status bar today) can react to canonical
+  state without being a webview; the status bar's own text/tooltip
+  formatting (`status-bar.ts`) is vscode-free and unit-tested.
 - P10 rules/skills/commands management: a real Settings section listing each
   connected agent's rules/commands/skills files, resolved from the roster's
   location mapping against what's actually on disk in this workspace — a

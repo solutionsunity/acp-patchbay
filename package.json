@@ -52,8 +52,33 @@
         "title": "Open Settings",
         "category": "Patchbay",
         "icon": "$(gear)"
+      },
+      {
+        "command": "acpPatchbay.newSession",
+        "title": "New Session",
+        "category": "Patchbay"
+      },
+      {
+        "command": "acpPatchbay.switchSession",
+        "title": "Switch Session",
+        "category": "Patchbay"
+      },
+      {
+        "command": "acpPatchbay.connectAgent",
+        "title": "Connect Agent",
+        "category": "Patchbay"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Patchbay",
+      "properties": {
+        "acpPatchbay.defaultAgent": {
+          "type": "string",
+          "default": "",
+          "description": "Roster id of the agent to connect automatically when a workspace opens with none connected yet. Empty — never auto-connects — until set."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
