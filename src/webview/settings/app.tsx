@@ -3,7 +3,13 @@
 // rules·skills·commands (P10). Empty states are honest, never placeholders
 // pretending to be data.
 import { useState } from "preact/hooks";
-import type { SettingsState } from "../../shared/protocol";
+import type {
+  CapabilityMatrix,
+  CapabilityRowId,
+  SettingsState,
+} from "../../shared/protocol";
+import { capabilityState, computeFidelity } from "../../shared/protocol";
+import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
 import type { ViewChannel } from "../shared/channel";
 
 const SECTIONS = [
@@ -21,6 +27,9 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
   const [section, setSection] = useState<SectionId>("agents");
 
   if (state === null) return null;
+
+  const runDiagnostics = (agentId: string) =>
+    channel.sendAction({ kind: "runDiagnostics", agentId });
 
   return (
     <div class="layout">
@@ -43,14 +52,8 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
         </div>
       </nav>
       <main class="main">
-        {section === "agents" && <AgentsSection state={state} />}
-        {section === "matrix" && (
-          <Section
-            title="Capability matrix"
-            sub="Declared is a claim; verified is what happened on the wire. UI features gate on verified."
-            empty="The matrix appears once an agent has connected. (Lands with P5.)"
-          />
-        )}
+        {section === "agents" && <AgentsSection state={state} onDiagnostics={runDiagnostics} />}
+        {section === "matrix" && <MatrixSection state={state} />}
         {section === "integrations" && (
           <Section
             title="Integrations"
@@ -91,7 +94,16 @@ function Section(props: { title: string; sub: string; empty: string }) {
   );
 }
 
-function AgentsSection({ state }: { state: SettingsState }) {
+function FidelityChip({ matrix, knownBypassBridge }: { matrix: CapabilityMatrix; knownBypassBridge: boolean }) {
+  const label = computeFidelity(matrix, knownBypassBridge);
+  return <span class={`fid ${FIDELITY_CLASS[label]}`}>{FIDELITY_TEXT[label]}</span>;
+}
+
+function AgentsSection(props: {
+  state: SettingsState;
+  onDiagnostics(agentId: string): void;
+}) {
+  const { state } = props;
   return (
     <section class="section">
       <h1>Agents</h1>
@@ -106,16 +118,147 @@ function AgentsSection({ state }: { state: SettingsState }) {
           </div>
         </div>
       )}
-      {state.agents.map((a) => (
-        <div class="card" key={a.id}>
-          <div class="row">
-            <span class={`dot ${a.status}`} />
-            <span class="nm">{a.name}</span>
-            <span style="flex:1" />
-            {a.detail !== undefined && <span class="note" style="margin:0">{a.detail}</span>}
+      {state.agents.map((a) => {
+        const matrix = state.capabilities[a.id];
+        const roster = state.roster.find((r) => r.id === a.id);
+        return (
+          <div class="card" key={a.id}>
+            <div class="row">
+              <span class={`dot ${a.status}`} />
+              <span class="nm">{a.name}</span>
+              {matrix !== undefined && (
+                <FidelityChip matrix={matrix} knownBypassBridge={roster?.knownBypassBridge ?? false} />
+              )}
+              <span style="flex:1" />
+              {a.status === "running" && (
+                <button class="btn" onClick={() => props.onDiagnostics(a.id)}>
+                  Diagnostics…
+                </button>
+              )}
+            </div>
+            {a.detail !== undefined && (
+              <div class="note" style="margin-top:6px">
+                {a.detail}
+              </div>
+            )}
+            {matrix !== undefined && (
+              <div class="note" style="margin-top:6px">
+                {capabilityOneLiner(matrix)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
+  { id: "fs.readTextFile", label: "fs.readTextFile" },
+  { id: "fs.writeTextFile", label: "fs.writeTextFile" },
+  { id: "terminal", label: "terminal" },
+  { id: "elicitation", label: "elicitation" },
+  { id: "roots.listChanged", label: "roots.listChanged" },
+  { id: "resources.subscribe", label: "resources.subscribe" },
+  { id: "prompt.image", label: "prompt.image" },
+  { id: "prompt.audio", label: "prompt.audio" },
+  { id: "prompt.embeddedContext", label: "prompt.embeddedContext" },
+  { id: "session.fork", label: "session.fork" },
+  { id: "session.load", label: "session.load" },
+  { id: "session.resume", label: "session.resume" },
+  { id: "mcp.http", label: "mcp.http" },
+  { id: "mcp.sse", label: "mcp.sse" },
+  { id: "usage", label: "usage reporting" },
+  { id: "concurrentSessions", label: "concurrent sessions" },
+];
+
+const STATE_GLYPH = { verified: "●", declared: "◌", "not-declared": "—" } as const;
+const STATE_CLASS = { verified: "st-v", declared: "st-d", "not-declared": "st-n" } as const;
+
+function MatrixSection({ state }: { state: SettingsState }) {
+  const agents = state.agents;
+  return (
+    <section class="section">
+      <h1>Capability matrix</h1>
+      <div class="sub">
+        Declared is a claim; verified is what happened on the wire. UI features gate on verified.
+      </div>
+      {agents.length === 0 ? (
+        <div class="card">
+          <div class="note" style="margin:0">
+            The matrix appears once an agent has connected.
           </div>
         </div>
-      ))}
+      ) : (
+        <>
+          <div class="legend">
+            <span>
+              <span class="st-v">●</span> verified working
+            </span>
+            <span>
+              <span class="st-d">◌</span> declared, unverified
+            </span>
+            <span>
+              <span class="st-n">—</span> not declared
+            </span>
+          </div>
+          <table>
+            <tr>
+              <th style="text-align:left">capability</th>
+              {agents.map((a) => {
+                const resetAt = state.capabilitiesResetAt[a.id];
+                return (
+                  <th key={a.id}>
+                    {a.name}
+                    {resetAt !== undefined && (
+                      <span
+                        class="chip"
+                        style="margin-left:6px"
+                        title="verified resets on every reconnect"
+                      >
+                        reset {new Date(resetAt).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+            {MATRIX_ROWS.map((row) => (
+              <tr key={row.id}>
+                <td class="cap">{row.label}</td>
+                {agents.map((a) => {
+                  const cell = state.capabilities[a.id]?.[row.id];
+                  const st = capabilityState(cell);
+                  return (
+                    <td key={a.id}>
+                      <span class={STATE_CLASS[st]}>{STATE_GLYPH[st]}</span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr class="sep">
+              <td colSpan={agents.length + 1}>patchbay-side — from roster data, not the handshake</td>
+            </tr>
+            <tr>
+              <td class="cap">rules/skills/commands locations</td>
+              {agents.map((a) => {
+                const mapped = state.roster.find((r) => r.id === a.id)?.assetsMapped ?? false;
+                return (
+                  <td key={a.id} class={mapped ? "" : "st-n"}>
+                    {mapped ? "mapped" : "not mapped"}
+                  </td>
+                );
+              })}
+            </tr>
+          </table>
+          <div class="note">
+            Behavior-level rows verify opportunistically during real use — free. Synthetic probes
+            only via Diagnostics, cost disclosed, in an ephemeral temp-dir session. Never on a
+            schedule.
+          </div>
+        </>
+      )}
     </section>
   );
 }

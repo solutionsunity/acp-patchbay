@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CapabilityVerifier } from "../src/orchestrator/capability-verifier";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
@@ -49,15 +50,19 @@ function harness(): {
 } {
   const events: AgentViewEvent[] = [];
   let sessionManager!: SessionManager;
+  let capabilityVerifier!: CapabilityVerifier;
   const pool = new AgentPool({
     onStatusChanged: (agentId, status) => {
       if (status === "crashed" || status === "reconnecting") {
         sessionManager.invalidateAgent(agentId);
       }
     },
-    onDeclaredCaptured: () => {},
+    onDeclaredCaptured: (agentId, declared) => capabilityVerifier.onDeclared(agentId, declared),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+    onConcurrentSessionsVerified: (agentId) =>
+      capabilityVerifier.markVerified(agentId, "concurrentSessions"),
   });
+  capabilityVerifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
   const sessionIndex = new SessionIndexStore(new MemoryKV());
   sessionManager = new SessionManager(
     pool,
@@ -235,5 +240,37 @@ describe("SessionManager", () => {
     expect(h.state().transcripts[sessionId]).toEqual(before);
 
     await h.pool.stop("sm6");
+  });
+
+  it("usage reporting verifies opportunistically the moment it's first observed (P5)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ turn: [{ type: "usage", used: 42, size: 200 }, { type: "chunk", text: "hi" }] }, "sm7"),
+    );
+    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: false, verified: false });
+
+    const sessionId = await h.sessionManager.createSession("sm7", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+
+    expect(h.state().sessionUsage[sessionId]).toEqual({ used: 42, size: 200, cost: undefined });
+    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: true, verified: true });
+
+    await h.pool.stop("sm7");
+  });
+
+  it("session.load reopening verifies the session.load row (P5)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sm8"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm8", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "first");
+    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, verified: false });
+
+    await h.pool.restart("sm8");
+    await h.sessionManager.sendPrompt(sessionId, "second");
+
+    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, verified: true });
+    await h.pool.stop("sm8");
   });
 });

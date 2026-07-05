@@ -33,6 +33,9 @@ export interface PoolHooks {
     agentId: string,
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
+  /** A second session succeeded on a connection already serving one — the
+   * one opportunistic signal for concurrent-session behavior (P5 matrix). */
+  onConcurrentSessionsVerified?(agentId: string): void;
 }
 
 interface Entry {
@@ -221,9 +224,27 @@ export class AgentPool {
     mcpServers: acp.McpServer[] = [],
   ): Promise<acp.NewSessionResponse> {
     const entry = this.running(agentId);
+    const hadOtherSessions = entry.sessions.size > 0;
     const response = await entry.connection!.agent.request(
       acp.methods.agent.session.new,
       { cwd, mcpServers },
+    );
+    entry.sessions.add(response.sessionId);
+    if (hadOtherSessions) this.hooks.onConcurrentSessionsVerified?.(agentId);
+    return response;
+  }
+
+  /** Ephemeral protocol-level check, not user-facing session creation —
+   * P5's automatic fork-verification round-trip runs through this too. */
+  async fork(
+    agentId: string,
+    sessionId: string,
+    cwd: string,
+  ): Promise<acp.ForkSessionResponse> {
+    const entry = this.running(agentId);
+    const response = await entry.connection!.agent.request(
+      acp.methods.agent.session.fork,
+      { sessionId, cwd },
     );
     entry.sessions.add(response.sessionId);
     return response;

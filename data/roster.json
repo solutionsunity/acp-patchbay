@@ -1,5 +1,5 @@
 {
-  "$comment": "Known-agents roster — patchbay-side knowledge as shipped data (architecture.md § Integrations). Launch commands extracted from vscode-acp's shipped defaults (MIT, formulahendry/vscode-acp) — credited per plan.md P2. assets: rules/skills/commands locations relative to the workspace; null = not mapped, shown honestly, never guessed (v1 maps Claude Code and Augment). metaExtensions: observed _meta conventions per architecture.md § Protocol extensions. quirks: earned by observation only — empty until observed.",
+  "$comment": "Known-agents roster — patchbay-side knowledge as shipped data (architecture.md § Integrations). Launch commands extracted from vscode-acp's shipped defaults (MIT, formulahendry/vscode-acp) — credited per plan.md P2. assets: rules/skills/commands locations relative to the workspace; null = not mapped, shown honestly, never guessed (v1 maps Claude Code and Augment). metaExtensions: observed _meta conventions per architecture.md § Protocol extensions. quirks: earned by observation only — empty until observed. knownBypassBridge: forces the fidelity label to 'acts outside' regardless of the capability matrix (architecture.md § Permission broker) — defaults false, none observed yet.",
   "agents": [
     {
       "id": "claude-code",

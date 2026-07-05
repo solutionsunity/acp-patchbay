@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- P5 capability matrix + verification: full declared/verified matrix
+  (architecture.md's row list) per agent, replaced wholesale on every
+  (re)connect so verified always resets on reconnect; fidelity label
+  (fully/partially brokered, acts outside) as a pure function of the matrix
+  plus roster-sourced known-bypass data; Settings' matrix table with legend,
+  reset-time chip, and the patchbay-side asset-location row; fidelity chip +
+  capability one-liner in the Agent View's Agents drawer; a usage gauge that
+  appears only once usage reporting verifies. Verification triggers wired to
+  what's actually buildable today: an automatic, free session/fork round-trip
+  in an ephemeral temp-dir session on every connect, plus opportunistic marks
+  on first `usage_update`, first successful `session/load`, and a second
+  concurrent `session/new`. fs/terminal/elicitation/MCP-transport
+  verification stay honestly declared-but-unverified until P6/P7/P9 give them
+  real handlers to exercise — scoping note added to plan.md rather than
+  faking the remaining rows. Diagnostics action re-runs the free check on
+  demand; behavior-level probes activate once there's something real to run.
+  Pulled the verification logic into a standalone `CapabilityVerifier`
+  (mirrors `SessionManager`'s vscode-free, dependency-injected shape) so it's
+  unit-testable against the fake agent.
 - P4 chat vertical slice: session/new → prompt → streamed session/update →
   live transcript (text, thoughts, tool calls, plan cards, plan strip); stop
   turn; session index switch/rename/close (first prompt auto-titles an

@@ -43,7 +43,8 @@ export type Action =
   | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }
   | { kind: "sendPrompt"; sessionId: string; text: string }
-  | { kind: "stopTurn"; sessionId: string };
+  | { kind: "stopTurn"; sessionId: string }
+  | { kind: "runDiagnostics"; agentId: string };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -113,6 +114,68 @@ export interface DeclaredCapabilities {
 export interface RosterEntry {
   id: string;
   name: string;
+  /** rules/skills/commands locations known for this agent (roster data). */
+  assetsMapped: boolean;
+  /** A bridge observed to act on fs/terminal regardless of client capabilities. */
+  knownBypassBridge: boolean;
+}
+
+// ── capability matrix (architecture.md § Agent capability matrix) ──────────
+// Two states per capability: declared (the handshake's claim, refreshed every
+// connect) and verified (set only once the path succeeds on the wire).
+// A row with declared=false is "not declared" regardless of verified (which
+// cannot be true without declared — enforced by construction: every writer
+// below only ever sets verified on a row that was declared).
+
+export type CapabilityRowId =
+  | "fs.readTextFile"
+  | "fs.writeTextFile"
+  | "terminal"
+  | "elicitation"
+  | "roots.listChanged"
+  | "resources.subscribe"
+  | "prompt.image"
+  | "prompt.audio"
+  | "prompt.embeddedContext"
+  | "session.fork"
+  | "session.load"
+  | "session.resume"
+  | "mcp.http"
+  | "mcp.sse"
+  | "usage"
+  | "concurrentSessions";
+
+export interface CapabilityCell {
+  declared: boolean;
+  verified: boolean;
+}
+
+export type CapabilityMatrix = Readonly<Record<CapabilityRowId, CapabilityCell>>;
+
+export type CapabilityState = "not-declared" | "declared" | "verified";
+
+export function capabilityState(cell: CapabilityCell | undefined): CapabilityState {
+  if (cell === undefined || !cell.declared) return "not-declared";
+  return cell.verified ? "verified" : "declared";
+}
+
+export type FidelityLabel = "fully-brokered" | "partially-brokered" | "acts-outside";
+
+/**
+ * Pure function of the matrix (architecture.md § Permission broker): fs and
+ * terminal declared *and* verified → fully brokered; a proper subset →
+ * partially brokered; neither, or a known-bypass bridge → acts outside.
+ * Never hand-assigned.
+ */
+export function computeFidelity(
+  matrix: CapabilityMatrix,
+  knownBypassBridge: boolean,
+): FidelityLabel {
+  if (knownBypassBridge) return "acts-outside";
+  const brokered = (row: CapabilityRowId) => matrix[row].declared && matrix[row].verified;
+  const rows = [brokered("fs.readTextFile"), brokered("fs.writeTextFile"), brokered("terminal")];
+  if (rows.every(Boolean)) return "fully-brokered";
+  return rows.some(Boolean) ? "partially-brokered" : "acts-outside";
 }
 
 export interface SessionSummary {
@@ -188,6 +251,18 @@ export interface AgentViewState {
    * live one"). */
   activePlan: Readonly<Record<string, PlanBlock | null>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
+  /** Declared/verified per agent — replaced wholesale on every (re)connect. */
+  capabilities: Readonly<Record<string, CapabilityMatrix>>;
+  /** ISO time of the last capabilitiesDeclared — powers the "reset <time>" chip. */
+  capabilitiesResetAt: Readonly<Record<string, string>>;
+  /** Present only once `usage` verifies — absence over fake (ui.md § gauge). */
+  sessionUsage: Readonly<Record<string, UsageInfo>>;
+}
+
+export interface UsageInfo {
+  used: number;
+  size: number;
+  cost?: { amount: number; currency: string };
 }
 
 export const initialAgentViewState: AgentViewState = {
@@ -198,6 +273,9 @@ export const initialAgentViewState: AgentViewState = {
   transcripts: {},
   activePlan: {},
   commandsBySession: {},
+  capabilities: {},
+  capabilitiesResetAt: {},
+  sessionUsage: {},
 };
 
 export type AgentViewEvent =
@@ -229,7 +307,17 @@ export type AgentViewEvent =
     }
   | { kind: "planAppended"; sessionId: string; blockId: string; entries: readonly PlanEntry[] }
   | { kind: "planCleared"; sessionId: string }
-  | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] };
+  | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
+  /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
+  | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
+  | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
+  | {
+      kind: "usageReported";
+      sessionId: string;
+      used: number;
+      size: number;
+      cost?: { amount: number; currency: string };
+    };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -252,6 +340,38 @@ function reduceAgents(
     default:
       return agents;
   }
+}
+
+function reduceCapabilities(
+  capabilities: Readonly<Record<string, CapabilityMatrix>>,
+  event: AgentViewEvent,
+): Readonly<Record<string, CapabilityMatrix>> {
+  switch (event.kind) {
+    case "capabilitiesDeclared":
+      return { ...capabilities, [event.agentId]: event.matrix };
+    case "capabilityVerified": {
+      // Verified always implies declared — the single write path for both,
+      // which is what lets rows with no initialize-time claim (usage,
+      // concurrentSessions) go straight from not-declared to verified.
+      const matrix = capabilities[event.agentId];
+      if (matrix === undefined) return capabilities;
+      return {
+        ...capabilities,
+        [event.agentId]: { ...matrix, [event.row]: { declared: true, verified: true } },
+      };
+    }
+    default:
+      return capabilities;
+  }
+}
+
+function reduceCapabilitiesResetAt(
+  resetAt: Readonly<Record<string, string>>,
+  event: AgentViewEvent,
+): Readonly<Record<string, string>> {
+  return event.kind === "capabilitiesDeclared"
+    ? { ...resetAt, [event.agentId]: event.at }
+    : resetAt;
 }
 
 function withTranscript(
@@ -385,6 +505,22 @@ export function reduceAgentView(
         ...state,
         commandsBySession: { ...state.commandsBySession, [event.sessionId]: event.commands },
       };
+    case "capabilitiesDeclared":
+      return {
+        ...state,
+        capabilities: reduceCapabilities(state.capabilities, event),
+        capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
+      };
+    case "capabilityVerified":
+      return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
+    case "usageReported":
+      return {
+        ...state,
+        sessionUsage: {
+          ...state.sessionUsage,
+          [event.sessionId]: { used: event.used, size: event.size, cost: event.cost },
+        },
+      };
   }
 }
 
@@ -407,6 +543,14 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   ) {
     return { ...next, title: next.title || prev.title };
   }
+  // Usage can report mid-stream (claude-agent-acp does) — only the latest matters.
+  if (
+    prev.kind === "usageReported" &&
+    next.kind === "usageReported" &&
+    prev.sessionId === next.sessionId
+  ) {
+    return next;
+  }
   return null;
 };
 
@@ -414,9 +558,17 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
 
 export interface SettingsState {
   agents: readonly AgentSummary[];
+  roster: readonly RosterEntry[];
+  capabilities: Readonly<Record<string, CapabilityMatrix>>;
+  capabilitiesResetAt: Readonly<Record<string, string>>;
 }
 
-export const initialSettingsState: SettingsState = { agents: [] };
+export const initialSettingsState: SettingsState = {
+  agents: [],
+  roster: [],
+  capabilities: {},
+  capabilitiesResetAt: {},
+};
 
 export type SettingsEvent = AgentViewEvent;
 
@@ -429,6 +581,14 @@ export function reduceSettings(
     case "agentRemoved":
     case "agentStatusChanged":
       return { ...state, agents: reduceAgents(state.agents, event) };
+    case "capabilitiesDeclared":
+      return {
+        ...state,
+        capabilities: reduceCapabilities(state.capabilities, event),
+        capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
+      };
+    case "capabilityVerified":
+      return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     default:
       return state;
   }

@@ -16,6 +16,7 @@ import {
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
+import { CapabilityVerifier } from "./capability-verifier";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { AgentPool, type LaunchSpec } from "./pool";
@@ -37,6 +38,7 @@ export class Orchestrator {
   readonly roster: RosterAgent[];
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
+  readonly capabilityVerifier: CapabilityVerifier;
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
@@ -58,7 +60,12 @@ export class Orchestrator {
     );
 
     this.roster = loadRoster();
-    const rosterEntries = this.roster.map(({ id, name }) => ({ id, name }));
+    const rosterEntries = this.roster.map((a) => ({
+      id: a.id,
+      name: a.name,
+      assetsMapped: a.assets !== null,
+      knownBypassBridge: a.knownBypassBridge,
+    }));
 
     const onAction = (action: Action) => this.handleAction(action);
     this.agentView = new ChannelHost(
@@ -68,11 +75,15 @@ export class Orchestrator {
       onAction,
     );
     this.settings = new ChannelHost(
-      initialSettingsState,
+      { ...initialSettingsState, roster: rosterEntries },
       reduceSettings,
       coalesceSettingsEvent,
       onAction,
     );
+    // Pool hooks close over `this` and only fire once the pool is actually
+    // used (after the constructor returns), so referencing sessionManager /
+    // capabilityVerifier here — before they're assigned below — is safe;
+    // this is the same lazy-closure pattern both use themselves.
     this.pool = new AgentPool({
       onStatusChanged: (agentId, status, detail) => {
         const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
@@ -84,11 +95,11 @@ export class Orchestrator {
           this.sessionManager.invalidateAgent(agentId);
         }
       },
-      onDeclaredCaptured: () => {
-        // capability tables land in state at P5
-      },
+      onDeclaredCaptured: (agentId, declared) => this.capabilityVerifier.onDeclared(agentId, declared),
       onSessionUpdate: (agentId, notification) =>
         this.sessionManager.handleUpdate(agentId, notification),
+      onConcurrentSessionsVerified: (agentId) =>
+        this.capabilityVerifier.markVerified(agentId, "concurrentSessions"),
     });
     this.sessionManager = new SessionManager(
       this.pool,
@@ -96,6 +107,12 @@ export class Orchestrator {
       { emit: (...events) => this.agentView.emit(...events) },
       () => this.workspaceRoot ?? process.cwd(),
     );
+    this.capabilityVerifier = new CapabilityVerifier(this.pool, {
+      emit: (...events) => {
+        this.agentView.emit(...events);
+        this.settings.emit(...events);
+      },
+    });
   }
 
   /** Connect an agent from config or roster; upserts it into both channel states. */
@@ -161,6 +178,9 @@ export class Orchestrator {
         break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
+        break;
+      case "runDiagnostics":
+        void this.capabilityVerifier.runDiagnostics(action.agentId);
         break;
     }
   }

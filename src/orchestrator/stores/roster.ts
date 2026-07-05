@@ -20,8 +20,13 @@ export const rosterAgentSchema = z.object({
   assets: assetLocationsSchema.nullable(),
   /** Observed _meta extension conventions — adapter knowledge, not spec. */
   metaExtensions: z.array(z.string()),
-  /** Earned by observation only (e.g. known-bypass bridges). */
+  /** Earned by observation only — free-text notes beyond the structured fields below. */
   quirks: z.array(z.string()),
+  /** A bridge observed to act on fs/terminal regardless of client capabilities
+   * — forces the fidelity label to "acts outside" (architecture.md § broker).
+   * Defaults false: none observed yet, per the roster's own "earned by
+   * observation" rule. */
+  knownBypassBridge: z.boolean().default(false),
 });
 
 export type RosterAgent = z.infer<typeof rosterAgentSchema>;

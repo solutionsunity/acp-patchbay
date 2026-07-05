@@ -680,8 +680,27 @@ body {
   color: var(--pb-text-faint);
 }
 
-.a-act {
-  margin-left: auto;
+/* fidelity chip — pure function of the verified capability matrix */
+.fid {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.fid.full {
+  color: var(--pb-ok);
+  border: 1px solid #2a4a39;
+}
+
+.fid.partial {
+  color: var(--pb-warn);
+  border: 1px solid #4c4023;
+}
+
+.fid.outside {
+  color: var(--pb-err);
+  border: 1px solid #5c3335;
 }
 
 .drawer .foot {

@@ -140,13 +140,23 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 - **Gate**: full turn streams end-to-end against fake agent (automated) and
   Claude Code via ACP (manual smoke); webview kill/reopen mid-turn recovers.
 
-### P5 — Capability matrix + verification ☐
+### P5 — Capability matrix + verification ☑
 
 - Declared/verified tables per agent; verified resets on reconnect;
   protocol-level auto-verification on connect (fork round-trip, MCP transports);
   opportunistic behavior-level marking hooks (first fs success, first
   elicitation, first usage report); explicit diagnostics path — cost disclosed,
   ephemeral session in a temp dir, never workspace roots.
+  *Scoped at build time: fs success, elicitation, and MCP-transport
+  verification need handlers that don't exist until P6 (broker + fs/terminal),
+  P7 (local MCP server, elicitation adapter), and P9 (real http/sse MCP
+  connections) respectively — wiring a "verified" path for them now would
+  have nothing honest behind it. What P5 actually wires: the fork round-trip
+  (automatic, free), and three opportunistic signals buildable today — first
+  `usage_update`, first successful `session/load`, and a second concurrent
+  `session/new` on one connection. The remaining rows sit at declared or
+  not-declared until their phase lands, which is the correct state for them
+  to be in right now.*
 - Matrix UI in Settings (three states per row); fidelity label as the pure
   function from architecture; roster-sourced asset-location row.
 - **Gate**: fake agent scripted to lie shows declared-but-unverified; branch

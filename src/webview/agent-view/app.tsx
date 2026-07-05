@@ -13,7 +13,10 @@ import type {
   ConnectAgentSource,
   PlanBlock,
   SessionSummary,
+  UsageInfo,
 } from "../../shared/protocol";
+import { computeFidelity } from "../../shared/protocol";
+import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
 import type { ViewChannel } from "../shared/channel";
 import { Markdown } from "./markdown";
 
@@ -65,6 +68,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
     <div class="sidebar">
       <Header
         agent={activeAgent}
+        usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
         onAgents={() => setDrawer("agents")}
         onSessions={() => setDrawer("sessions")}
         onNew={() => setDrawer("agents")}
@@ -96,6 +100,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         <AgentsDrawer
           agents={state.agents}
           roster={state.roster}
+          capabilities={state.capabilities}
           onConnect={connect}
           onStartSession={startSession}
           onRestart={(agentId) => {
@@ -123,8 +128,35 @@ function Dot({ status }: { status: AgentStatus | "none" }) {
   return <span class={`dot ${status === "none" ? "stopped" : status}`} />;
 }
 
+function UsageGauge({ usage }: { usage: UsageInfo }) {
+  const frac = Math.max(0, Math.min(1, usage.used / usage.size));
+  const circumference = 62.8;
+  const tip = `${usage.used.toLocaleString()} / ${usage.size.toLocaleString()} tokens${
+    usage.cost !== undefined ? ` · ${usage.cost.amount.toFixed(2)} ${usage.cost.currency}` : ""
+  }`;
+  return (
+    <div class="gauge" title={tip}>
+      <svg width="26" height="26" viewBox="0 0 26 26">
+        <circle cx="13" cy="13" r="10" fill="none" stroke="var(--pb-border)" stroke-width="3" />
+        <circle
+          cx="13"
+          cy="13"
+          r="10"
+          fill="none"
+          stroke="var(--pb-consumed)"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-dasharray={`${(frac * circumference).toFixed(1)} ${circumference}`}
+        />
+      </svg>
+      <div class="tip">{tip}</div>
+    </div>
+  );
+}
+
 function Header(props: {
   agent: AgentSummary | null;
+  usage: UsageInfo | null;
   onAgents(): void;
   onSessions(): void;
   onNew(): void;
@@ -138,7 +170,10 @@ function Header(props: {
         <span class="caret">▾</span>
       </div>
       <div class="spacer" />
-      {/* usage gauge renders only where usage reporting is verified — absent, not grayed (P5) */}
+      {/* sessionUsage only ever gets an entry alongside marking "usage"
+          verified (SessionManager emits both atomically), so presence here
+          already means verified — absent, never grayed, until then. */}
+      {props.usage !== null && <UsageGauge usage={props.usage} />}
       <button class="icon-btn" title="Sessions" onClick={props.onSessions}>
         🕘
       </button>
@@ -493,6 +528,7 @@ function Composer(props: {
 function AgentsDrawer(props: {
   agents: readonly AgentSummary[];
   roster: AgentViewState["roster"];
+  capabilities: AgentViewState["capabilities"];
   onConnect(source: ConnectAgentSource): void;
   onStartSession(agentId: string): void;
   onRestart(agentId: string): void;
@@ -509,32 +545,36 @@ function AgentsDrawer(props: {
           <span class="sub">No agents connected.</span>
         </div>
       )}
-      {props.agents.map((a) => (
-        <div class="a-row" key={a.id} style="cursor:default">
-          <Dot status={a.status} />
-          <div>
-            <div class="nm">{a.name}</div>
-            {a.detail !== undefined && <div class="sub">{a.detail}</div>}
+      {props.agents.map((a) => {
+        const matrix = props.capabilities[a.id];
+        const roster = props.roster.find((r) => r.id === a.id);
+        const fidelity =
+          matrix !== undefined ? computeFidelity(matrix, roster?.knownBypassBridge ?? false) : null;
+        return (
+          <div class="a-row" key={a.id} style="cursor:default">
+            <Dot status={a.status} />
+            <div style="flex:1; min-width:0">
+              <div class="nm">{a.name}</div>
+              <div class="sub">
+                {a.detail ?? (matrix !== undefined ? capabilityOneLiner(matrix) : "")}
+              </div>
+            </div>
+            {fidelity !== null && (
+              <span class={`fid ${FIDELITY_CLASS[fidelity]}`}>{FIDELITY_TEXT[fidelity]}</span>
+            )}
+            {a.status === "running" && (
+              <button class="btn row-btn primary" onClick={() => props.onStartSession(a.id)}>
+                Start session
+              </button>
+            )}
+            {a.status === "crashed" && (
+              <button class="btn row-btn primary" onClick={() => props.onRestart(a.id)}>
+                Restart
+              </button>
+            )}
           </div>
-          {/* fidelity chip appears once the capability matrix exists (P5) */}
-          {a.status === "running" && (
-            <button
-              class="btn row-btn primary a-act"
-              onClick={() => props.onStartSession(a.id)}
-            >
-              Start session
-            </button>
-          )}
-          {a.status === "crashed" && (
-            <button
-              class="btn row-btn primary a-act"
-              onClick={() => props.onRestart(a.id)}
-            >
-              Restart
-            </button>
-          )}
-        </div>
-      ))}
+        );
+      })}
       {connecting ? (
         <div class="connect-form">
           <div class="row">

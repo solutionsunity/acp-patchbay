@@ -243,3 +243,80 @@ input[type="text"] {
   font: inherit;
   font-size: 12px;
 }
+
+/* fidelity chip — pure function of the verified capability matrix */
+.fid {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+
+.fid.full {
+  color: var(--pb-ok);
+  border: 1px solid #2a4a39;
+}
+
+.fid.partial {
+  color: var(--pb-warn);
+  border: 1px solid #4c4023;
+}
+
+.fid.outside {
+  color: var(--pb-err);
+  border: 1px solid #5c3335;
+}
+
+/* capability matrix table */
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border: 1px solid var(--pb-border);
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: center;
+}
+
+th {
+  background: var(--pb-panel);
+  font-weight: 600;
+}
+
+td.cap {
+  text-align: left;
+  font-family: var(--pb-mono);
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+}
+
+.st-v {
+  color: var(--pb-ok);
+}
+
+.st-d {
+  color: var(--pb-warn);
+}
+
+.st-n {
+  color: var(--pb-text-faint);
+}
+
+tr.sep td {
+  background: var(--pb-panel);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pb-text-faint);
+  text-align: left;
+}
+
+.legend {
+  display: flex;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--pb-text-dim);
+  margin: 8px 0 14px;
+}

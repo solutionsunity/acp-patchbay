@@ -128,6 +128,7 @@ export class SessionManager {
     });
     this.hooks.emit({ kind: "transcriptReset", sessionId });
     await this.pool.loadSession(agentId, sessionId, this.cwd());
+    this.hooks.emit({ kind: "capabilityVerified", agentId, row: "session.load" });
   }
 
   async sendPrompt(sessionId: string, text: string): Promise<void> {
@@ -167,7 +168,7 @@ export class SessionManager {
 
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
-  handleUpdate(_agentId: string, notification: SessionNotification): void {
+  handleUpdate(agentId: string, notification: SessionNotification): void {
     const { sessionId, update } = notification;
     const session = this.sessions.get(sessionId);
     if (!session) return; // update for a session patchbay isn't tracking
@@ -231,6 +232,20 @@ export class SessionManager {
             description: c.description,
           })),
         });
+        break;
+      case "usage_update":
+        // No initialize-time claim exists for usage reporting — declared
+        // and verified arrive together, the moment it's first observed.
+        this.hooks.emit(
+          {
+            kind: "usageReported",
+            sessionId,
+            used: update.used,
+            size: update.size,
+            cost: update.cost ?? undefined,
+          },
+          { kind: "capabilityVerified", agentId, row: "usage" },
+        );
         break;
       default:
         break; // unconsumed schema surface — a future capability row, not silently guessed at
