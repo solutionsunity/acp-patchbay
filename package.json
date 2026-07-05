@@ -1,0 +1,79 @@
+{
+  "name": "acp-patchbay",
+  "displayName": "acp-patchbay",
+  "description": "Any ACP agent. Every integration it can accept. Shown exactly as it is.",
+  "version": "0.0.1",
+  "publisher": "solutionsunity",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solutionsunity/acp-patchbay"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "acp",
+    "agent",
+    "mcp",
+    "agent-client-protocol",
+    "ai"
+  ],
+  "icon": "media/icon.png",
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "acp-patchbay",
+          "title": "Patchbay",
+          "icon": "media/patchbay.svg"
+        }
+      ]
+    },
+    "views": {
+      "acp-patchbay": [
+        {
+          "id": "acpPatchbay.agentView",
+          "name": "Agent View",
+          "type": "webview",
+          "icon": "media/patchbay.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "acpPatchbay.openSettings",
+        "title": "Open Settings",
+        "category": "Patchbay",
+        "icon": "$(gear)"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pretest:vscode": "npm run build && tsc -p tsconfig.test.json",
+    "test:vscode": "vscode-test",
+    "vscode:prepublish": "node esbuild.mjs --production"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.96.0",
+    "@types/vscode-webview": "^1.57.5",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.28.1",
+    "preact": "^10.29.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.9"
+  }
+}

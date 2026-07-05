@@ -1,0 +1,35 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+}
+
+.empty .glyph {
+  font-size: 34px;
+  letter-spacing: 4px;
+  color: var(--vscode-charts-green);
+}
+
+.empty .tag {
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+}

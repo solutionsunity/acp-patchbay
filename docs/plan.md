@@ -73,7 +73,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 
 ## Phases
 
-### P0 — Scaffold ☐
+### P0 — Scaffold ☑
 
 - `package.json` (contributes: Agent View container/view, Settings command,
   activation events; `engines.vscode` pinned), `tsconfig.json`, `esbuild.mjs`
