@@ -19,6 +19,7 @@ import {
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { AgentPool, type LaunchSpec } from "./pool";
+import { SessionManager } from "./session-manager";
 import { ConfigFileStore, CONFIG_RELATIVE_PATH } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { PermissionRulesStore } from "./stores/permission-rules";
@@ -35,6 +36,7 @@ export class Orchestrator {
   readonly permissionRules: PermissionRulesStore;
   readonly roster: RosterAgent[];
   readonly pool: AgentPool;
+  readonly sessionManager: SessionManager;
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
@@ -76,14 +78,24 @@ export class Orchestrator {
         const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
         this.agentView.emit(event);
         this.settings.emit(event);
+        // A dead or reconnecting connection invalidates every sessionId that
+        // rode it — they must reopen (possibly via session/load) before reuse.
+        if (status === "crashed" || status === "reconnecting") {
+          this.sessionManager.invalidateAgent(agentId);
+        }
       },
       onDeclaredCaptured: () => {
         // capability tables land in state at P5
       },
-      onSessionUpdate: () => {
-        // chat streaming lands at P4
-      },
+      onSessionUpdate: (agentId, notification) =>
+        this.sessionManager.handleUpdate(agentId, notification),
     });
+    this.sessionManager = new SessionManager(
+      this.pool,
+      this.sessionIndex,
+      { emit: (...events) => this.agentView.emit(...events) },
+      () => this.workspaceRoot ?? process.cwd(),
+    );
   }
 
   /** Connect an agent from config or roster; upserts it into both channel states. */
@@ -123,6 +135,32 @@ export class Orchestrator {
         break;
       case "stopAgent":
         void this.pool.stop(action.agentId);
+        break;
+      case "newSession": {
+        const agentName = this.agentNames.get(action.agentId);
+        if (agentName === undefined) break; // unknown agent — nothing to create
+        void this.sessionManager.createSession(
+          action.agentId,
+          agentName,
+          this.workspaceRoot ?? process.cwd(),
+        );
+        break;
+      }
+      case "switchSession":
+        this.sessionManager.activate(action.sessionId);
+        break;
+      case "renameSession":
+        void this.sessionManager.rename(action.sessionId, action.title);
+        break;
+      case "closeSession":
+        void this.sessionManager.close(action.sessionId);
+        break;
+      case "sendPrompt":
+        // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
+        void this.sessionManager.sendPrompt(action.sessionId, action.text).catch(() => {});
+        break;
+      case "stopTurn":
+        void this.sessionManager.stopTurn(action.sessionId);
         break;
     }
   }

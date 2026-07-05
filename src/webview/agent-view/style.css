@@ -281,6 +281,124 @@ body {
   text-align: center;
 }
 
+/* ── chat blocks ────────────────────────────────────────────────────── */
+.msg-user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--vscode-badge-background, var(--pb-panel-2));
+  border-radius: 10px 10px 3px 10px;
+  padding: 7px 11px;
+  white-space: pre-wrap;
+}
+
+.msg-agent {
+  max-width: 100%;
+}
+
+.msg-agent p + p {
+  margin-top: 6px;
+}
+
+.msg-agent code,
+.msg-agent pre {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+
+.msg-agent code {
+  background: var(--pb-panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.msg-agent pre {
+  background: var(--pb-panel-2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.msg-agent pre code {
+  background: none;
+  padding: 0;
+}
+
+.thought {
+  color: var(--pb-text-faint);
+  font-style: italic;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.thought .body {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--pb-border);
+  font-style: normal;
+  color: var(--pb-text-dim);
+}
+
+.card {
+  background: var(--pb-panel);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  overflow: hidden;
+}
+
+.card-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+
+.card-hd .st {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--pb-text-dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.spin {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--pb-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: rot 0.8s linear infinite;
+}
+
+@keyframes rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.plan-card {
+  padding-bottom: 6px;
+}
+
+.plan-card .row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  align-items: baseline;
+}
+
+.plan-card .row.completed {
+  color: var(--pb-text-faint);
+  text-decoration: line-through;
+}
+
+.plan-card .row.in_progress {
+  color: var(--pb-accent);
+}
+
 .empty .pick {
   display: flex;
   gap: 8px;

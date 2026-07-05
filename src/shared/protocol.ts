@@ -37,7 +37,13 @@ export type Action =
   | { kind: "openSettings" }
   | { kind: "connectAgent"; source: ConnectAgentSource }
   | { kind: "restartAgent"; agentId: string }
-  | { kind: "stopAgent"; agentId: string };
+  | { kind: "stopAgent"; agentId: string }
+  | { kind: "newSession"; agentId: string }
+  | { kind: "switchSession"; sessionId: string }
+  | { kind: "renameSession"; sessionId: string; title: string }
+  | { kind: "closeSession"; sessionId: string }
+  | { kind: "sendPrompt"; sessionId: string; text: string }
+  | { kind: "stopTurn"; sessionId: string };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -121,12 +127,67 @@ export interface SessionSummary {
   branchOf: string | null;
 }
 
+// ── chat / transcript (render cache — rebuilt wholesale, never merged) ──────
+
+export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export interface UserBlock {
+  kind: "user";
+  id: string;
+  text: string;
+}
+
+export interface TextBlock {
+  kind: "text";
+  id: string;
+  text: string;
+}
+
+export interface ThoughtBlock {
+  kind: "thought";
+  id: string;
+  text: string;
+}
+
+export interface ToolCallBlock {
+  kind: "toolCall";
+  /** == the ACP toolCallId — one block, updated in place as status changes. */
+  id: string;
+  title: string;
+  status: ToolCallStatus;
+}
+
+export interface PlanEntry {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface PlanBlock {
+  kind: "plan";
+  id: string;
+  entries: readonly PlanEntry[];
+}
+
+export type ChatBlock = UserBlock | TextBlock | ThoughtBlock | ToolCallBlock | PlanBlock;
+
+export interface AvailableCommand {
+  name: string;
+  description?: string;
+}
+
 export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
   activeSessionId: string | null;
   /** Known-agents roster (shipped data) for the pickers. */
   roster: readonly RosterEntry[];
+  /** Render cache, per session — rebuilt wholesale from session/load replay. */
+  transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
+  /** The plan strip's source: the most recent plan snapshot, or none. Distinct
+   * from the inline plan cards in the transcript (ui.md: "the strip is the
+   * live one"). */
+  activePlan: Readonly<Record<string, PlanBlock | null>>;
+  commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
 }
 
 export const initialAgentViewState: AgentViewState = {
@@ -134,6 +195,9 @@ export const initialAgentViewState: AgentViewState = {
   sessions: [],
   activeSessionId: null,
   roster: [],
+  transcripts: {},
+  activePlan: {},
+  commandsBySession: {},
 };
 
 export type AgentViewEvent =
@@ -144,7 +208,28 @@ export type AgentViewEvent =
       agentId: string;
       status: AgentStatus;
       detail?: string;
-    };
+    }
+  | { kind: "sessionCreated"; session: SessionSummary }
+  | { kind: "sessionActivated"; sessionId: string }
+  | { kind: "sessionRenamed"; sessionId: string; title: string }
+  | { kind: "sessionClosed"; sessionId: string }
+  | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
+  /** Replay always wins — the transcript is discarded, never merged. */
+  | { kind: "transcriptReset"; sessionId: string }
+  | { kind: "userMessageAppended"; sessionId: string; blockId: string; text: string }
+  | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
+  | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
+  | {
+      kind: "toolCallUpserted";
+      sessionId: string;
+      blockId: string;
+      /** Empty string = unspecified; reducer keeps the existing title. */
+      title: string;
+      status: ToolCallStatus;
+    }
+  | { kind: "planAppended"; sessionId: string; blockId: string; entries: readonly PlanEntry[] }
+  | { kind: "planCleared"; sessionId: string }
+  | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -164,17 +249,166 @@ function reduceAgents(
           ? { ...a, status: event.status, detail: event.detail }
           : a,
       );
+    default:
+      return agents;
   }
+}
+
+function withTranscript(
+  state: AgentViewState,
+  sessionId: string,
+  blocks: readonly ChatBlock[],
+): AgentViewState {
+  return { ...state, transcripts: { ...state.transcripts, [sessionId]: blocks } };
+}
+
+function appendBlock(
+  state: AgentViewState,
+  sessionId: string,
+  block: ChatBlock,
+): AgentViewState {
+  const blocks = state.transcripts[sessionId] ?? [];
+  return withTranscript(state, sessionId, [...blocks, block]);
+}
+
+function upsertTextBlock(
+  state: AgentViewState,
+  sessionId: string,
+  blockId: string,
+  kind: "text" | "thought",
+  delta: string,
+): AgentViewState {
+  const blocks = state.transcripts[sessionId] ?? [];
+  const i = blocks.findIndex((b) => b.id === blockId);
+  if (i === -1) {
+    return appendBlock(state, sessionId, { kind, id: blockId, text: delta });
+  }
+  const existing = blocks[i] as TextBlock | ThoughtBlock;
+  const updated = { ...existing, text: existing.text + delta };
+  return withTranscript(
+    state,
+    sessionId,
+    blocks.map((b, j) => (j === i ? updated : b)),
+  );
+}
+
+function upsertToolCall(
+  state: AgentViewState,
+  sessionId: string,
+  blockId: string,
+  title: string,
+  status: ToolCallStatus,
+): AgentViewState {
+  const blocks = state.transcripts[sessionId] ?? [];
+  const i = blocks.findIndex((b) => b.id === blockId);
+  if (i === -1) {
+    return appendBlock(state, sessionId, { kind: "toolCall", id: blockId, title, status });
+  }
+  const existing = blocks[i] as ToolCallBlock;
+  const updated: ToolCallBlock = { ...existing, status, title: title || existing.title };
+  return withTranscript(
+    state,
+    sessionId,
+    blocks.map((b, j) => (j === i ? updated : b)),
+  );
 }
 
 export function reduceAgentView(
   state: AgentViewState,
   event: AgentViewEvent,
 ): AgentViewState {
-  return { ...state, agents: reduceAgents(state.agents, event) };
+  switch (event.kind) {
+    case "agentUpserted":
+    case "agentRemoved":
+    case "agentStatusChanged":
+      return { ...state, agents: reduceAgents(state.agents, event) };
+    case "sessionCreated":
+      return {
+        ...state,
+        sessions: [...state.sessions, event.session],
+        transcripts: { ...state.transcripts, [event.session.id]: [] },
+        commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
+        activeSessionId: event.session.id,
+      };
+    case "sessionActivated":
+      return state.sessions.some((s) => s.id === event.sessionId)
+        ? { ...state, activeSessionId: event.sessionId }
+        : state;
+    case "sessionRenamed":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === event.sessionId ? { ...s, title: event.title } : s,
+        ),
+      };
+    case "sessionClosed": {
+      const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
+      const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
+      const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
+      const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
+      const activeSessionId =
+        state.activeSessionId === event.sessionId
+          ? (sessions[sessions.length - 1]?.id ?? null)
+          : state.activeSessionId;
+      return { ...state, sessions, transcripts, commandsBySession, activePlan, activeSessionId };
+    }
+    case "sessionLiveChanged":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === event.sessionId ? { ...s, live: event.live } : s,
+        ),
+      };
+    case "transcriptReset":
+      return withTranscript(state, event.sessionId, []);
+    case "userMessageAppended":
+      return appendBlock(state, event.sessionId, {
+        kind: "user",
+        id: event.blockId,
+        text: event.text,
+      });
+    case "agentTextDelta":
+      return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
+    case "agentThoughtDelta":
+      return upsertTextBlock(state, event.sessionId, event.blockId, "thought", event.text);
+    case "toolCallUpserted":
+      return upsertToolCall(state, event.sessionId, event.blockId, event.title, event.status);
+    case "planAppended": {
+      const block: PlanBlock = { kind: "plan", id: event.blockId, entries: event.entries };
+      const withBlock = appendBlock(state, event.sessionId, block);
+      return { ...withBlock, activePlan: { ...withBlock.activePlan, [event.sessionId]: block } };
+    }
+    case "planCleared":
+      return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: null } };
+    case "commandsAdvertised":
+      return {
+        ...state,
+        commandsBySession: { ...state.commandsBySession, [event.sessionId]: event.commands },
+      };
+  }
 }
 
-export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = () => null; // no mergeable events yet (P4: text deltas)
+export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next) => {
+  // Concatenate text chunks per message (architecture.md § coalescing).
+  if (
+    (prev.kind === "agentTextDelta" && next.kind === "agentTextDelta") ||
+    (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta")
+  ) {
+    if (prev.sessionId === next.sessionId && prev.blockId === next.blockId) {
+      return { ...next, text: prev.text + next.text } as AgentViewEvent;
+    }
+  }
+  // Rapid-fire status updates on the same tool call: only the latest matters.
+  if (
+    prev.kind === "toolCallUpserted" &&
+    next.kind === "toolCallUpserted" &&
+    prev.sessionId === next.sessionId &&
+    prev.blockId === next.blockId
+  ) {
+    return { ...next, title: next.title || prev.title };
+  }
+  return null;
+};
 
 // ── settings channel ─────────────────────────────────────────────────────────
 
@@ -190,7 +424,14 @@ export function reduceSettings(
   state: SettingsState,
   event: SettingsEvent,
 ): SettingsState {
-  return { ...state, agents: reduceAgents(state.agents, event) };
+  switch (event.kind) {
+    case "agentUpserted":
+    case "agentRemoved":
+    case "agentStatusChanged":
+      return { ...state, agents: reduceAgents(state.agents, event) };
+    default:
+      return state;
+  }
 }
 
-export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = () => null;
+export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = coalesceAgentViewEvent;

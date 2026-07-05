@@ -5,7 +5,6 @@
 import { useState } from "preact/hooks";
 import type { SettingsState } from "../../shared/protocol";
 import type { ViewChannel } from "../shared/channel";
-import { useChannelState } from "../shared/use-channel";
 
 const SECTIONS = [
   { id: "agents", icon: "🔌", label: "Agents" },
@@ -18,7 +17,7 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
-  const state = useChannelState(channel);
+  const state = channel.getState()?.state ?? null;
   const [section, setSection] = useState<SectionId>("agents");
 
   if (state === null) return null;

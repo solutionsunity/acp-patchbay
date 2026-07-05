@@ -248,6 +248,24 @@ export class AgentPool {
     });
   }
 
+  /** Re-attaches to a session on a fresh connection; the agent replays its
+   * own history as session/update notifications before this resolves. Only
+   * meaningful when declared.loadSession is true — callers check first. */
+  async loadSession(
+    agentId: string,
+    sessionId: string,
+    cwd: string,
+    mcpServers: acp.McpServer[] = [],
+  ): Promise<acp.LoadSessionResponse> {
+    const entry = this.running(agentId);
+    const response = await entry.connection!.agent.request(
+      acp.methods.agent.session.load,
+      { sessionId, cwd, mcpServers },
+    );
+    entry.sessions.add(sessionId);
+    return response;
+  }
+
   async disposeAll(): Promise<void> {
     await Promise.allSettled([...this.entries.keys()].map((id) => this.stop(id)));
   }

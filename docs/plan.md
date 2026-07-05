@@ -130,7 +130,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   gestures, empty states.
 - **Gate / owner touchpoint**: mockup verdict, then requirements doc.
 
-### P4 — Chat vertical slice ☐
+### P4 — Chat vertical slice ☑
 
 - `session/new` → prompt → streamed `session/update` → patches → chat renders
   live: text, tool calls, thoughts, plans. Stop turn (`session/cancel`). Session

@@ -5,7 +5,15 @@
 // mode change, crash on demand. Lying is the only way to test
 // declared-vs-verified honesty deterministically.
 //
+// Every update sent during a turn is also durably recorded per session under
+// `<cwd>/.fake-agent-sessions/` — simulating what a real agent's own storage
+// does — so `session/load` can replay it verbatim after this process is
+// killed and a fresh one spawned in its place (a real crash/restart, not an
+// in-memory shortcut).
+//
 // Script arrives as JSON in the FAKE_AGENT_SCRIPT env var.
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 
@@ -48,12 +56,44 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface FakeSession {
   id: string;
+  cwd: string;
   pending: AbortController | null;
   mode: string | null;
 }
 
 const sessions = new Map<string, FakeSession>();
 let sessionCounter = 0;
+
+// ── durable per-session record, so session/load survives this process dying ─
+
+function storeFile(cwd: string, sessionId: string): string {
+  return join(cwd, ".fake-agent-sessions", `${sessionId}.jsonl`);
+}
+
+function recordUpdate(cwd: string, sessionId: string, update: acp.SessionUpdate): void {
+  const file = storeFile(cwd, sessionId);
+  mkdirSync(join(file, ".."), { recursive: true });
+  appendFileSync(file, JSON.stringify(update) + "\n", "utf8");
+}
+
+function readRecordedUpdates(cwd: string, sessionId: string): acp.SessionUpdate[] {
+  const file = storeFile(cwd, sessionId);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as acp.SessionUpdate);
+}
+
+async function emitUpdate(
+  cx: acp.AgentContext,
+  sessionId: string,
+  cwd: string,
+  update: acp.SessionUpdate,
+): Promise<void> {
+  recordUpdate(cwd, sessionId, update);
+  await cx.notify(acp.methods.client.session.update, { sessionId, update });
+}
 
 const defaultTurn: TurnStep[] = [
   { type: "chunk", text: "Hello from the fake agent. " },
@@ -62,6 +102,7 @@ const defaultTurn: TurnStep[] = [
 
 async function runTurn(
   sessionId: string,
+  cwd: string,
   promptText: string,
   signal: AbortSignal,
   cx: acp.AgentContext,
@@ -79,78 +120,57 @@ async function runTurn(
         process.exit(1);
         break;
       case "chunk":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: step.text },
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: step.text },
         });
         break;
       case "thought":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "agent_thought_chunk",
-            content: { type: "text", text: step.text },
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: step.text },
         });
         break;
       case "toolCall":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "tool_call",
-            toolCallId: step.id,
-            title: step.title,
-            kind: "other",
-            status: "in_progress",
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "tool_call",
+          toolCallId: step.id,
+          title: step.title,
+          kind: "other",
+          status: "in_progress",
         });
         break;
       case "toolDone":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId: step.id,
-            status: "completed",
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: step.id,
+          status: "completed",
         });
         break;
       case "plan":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "plan",
-            entries: step.entries.map((e) => ({
-              content: e.content,
-              status: e.status,
-              priority: "medium" as const,
-            })),
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "plan",
+          entries: step.entries.map((e) => ({
+            content: e.content,
+            status: e.status,
+            priority: "medium" as const,
+          })),
         });
         break;
       case "usage":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "usage_update",
-            used: step.used,
-            size: step.size,
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "usage_update",
+          used: step.used,
+          size: step.size,
         });
         break;
       case "commands":
-        await cx.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: {
-            sessionUpdate: "available_commands_update",
-            availableCommands: step.names.map((name) => ({
-              name,
-              description: `fake ${name}`,
-            })),
-          },
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "available_commands_update",
+          availableCommands: step.names.map((name) => ({
+            name,
+            description: `fake ${name}`,
+          })),
         });
         break;
     }
@@ -174,13 +194,36 @@ const app = acp
       agentInfo: { name: script.name ?? "fake-agent", version: "0.0.0" },
     };
   })
-  .onRequest("session/new", (): acp.NewSessionResponse => {
+  .onRequest("session/new", (ctx): acp.NewSessionResponse => {
     if (script.concurrent === "fail" && sessions.size > 0) {
       throw acp.RequestError.invalidRequest("concurrent sessions unsupported");
     }
     const id = `fake-${++sessionCounter}`;
-    sessions.set(id, { id, pending: null, mode: script.modes?.currentModeId ?? null });
+    sessions.set(id, {
+      id,
+      cwd: ctx.params.cwd,
+      pending: null,
+      mode: script.modes?.currentModeId ?? null,
+    });
     const response: acp.NewSessionResponse = { sessionId: id };
+    if (script.modes) response.modes = script.modes;
+    return response;
+  })
+  .onRequest("session/load", async (ctx): Promise<acp.LoadSessionResponse> => {
+    if (script.declare?.loadSession !== true) {
+      throw acp.RequestError.methodNotFound("session/load");
+    }
+    const { sessionId, cwd } = ctx.params;
+    sessions.set(sessionId, {
+      id: sessionId,
+      cwd,
+      pending: null,
+      mode: script.modes?.currentModeId ?? null,
+    });
+    for (const update of readRecordedUpdates(cwd, sessionId)) {
+      await ctx.client.notify(acp.methods.client.session.update, { sessionId, update });
+    }
+    const response: acp.LoadSessionResponse = {};
     if (script.modes) response.modes = script.modes;
     return response;
   })
@@ -191,6 +234,7 @@ const app = acp
     session.pending = new AbortController();
     const stopReason = await runTurn(
       ctx.params.sessionId,
+      session.cwd,
       promptText(ctx.params.prompt),
       session.pending.signal,
       ctx.client,
@@ -218,7 +262,7 @@ const app = acp
     const parent = sessions.get(ctx.params.sessionId);
     if (!parent) throw acp.RequestError.invalidRequest("unknown session");
     const id = `${parent.id}-fork-${++sessionCounter}`;
-    sessions.set(id, { id, pending: null, mode: parent.mode });
+    sessions.set(id, { id, cwd: parent.cwd, pending: null, mode: parent.mode });
     return { sessionId: id };
   })
   .onNotification("session/cancel", (ctx) => {
