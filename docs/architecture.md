@@ -177,6 +177,27 @@ Verification cost splits the triggers:
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.
 
+## Protocol extensions (`_meta`)
+
+ACP reserves `_meta` fields on every type and underscore-prefixed methods for
+implementation extensions — a spec-sanctioned mechanism, not a dialect. Adapters
+carry real surface there beyond core protocol; observed in `claude-agent-acp`:
+`_claude/sdkMessage` (tunnel of the raw Claude Agent SDK stream),
+`_claude/rateLimit` (subscription rate-limit windows), `_claude/askUserQuestionOption`
+(richer permission options), and a terminal-output `_meta` channel shared as a
+convention with `codex-acp` for live command output. The observed pattern:
+extensions enrich standard updates in place — `_claude/rateLimit` rides the
+standard `usage_update` notification's `_meta` while `used`/`size` stay
+protocol-shaped — they don't fork the stream. Token and context reporting is
+standard; only the vendor-specific remainder is extension.
+
+Stance: **core ACP is the floor; extensions are per-agent adapter knowledge**,
+recorded in roster data and consumed only when a features bullet requires what
+core ACP cannot carry. A consumed extension becomes a capability row — present by
+observation, verified like everything else. Vendor depth that never reaches the
+wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
+commands surface is its channel, no protocol involved.
+
 ## Branching
 
 - Agent declares `session/fork` *and it's verified* → native fork.
@@ -305,11 +326,14 @@ injection machinery.
 
 ## Context usage
 
-Visibility only, not control — ACP's usage reporting is unstable and unevenly
-populated; compaction is internal to each agent. Show the number when reported, omit
-it cleanly when not, never fake it. The only guaranteed reset lever is a new or
-branched session — which is why concurrent sessions are load-bearing (prd §v1
-Scope), not a luxury.
+Visibility only, not control — compaction is internal to each agent. `usage_update`
+is **stable in schema v2**: `used` (tokens currently in context) and `size` (window
+size) required, `cost` optional — the numerator and denominator of a context gauge.
+Emitting it remains optional per agent, so population is uneven in practice: show
+what is reported, omit cleanly when absent, never fake it. claude-agent-acp emits
+it live mid-stream, so the gauge is a real-time affordance there, not per-turn.
+The only guaranteed reset lever is a new or branched session — which is why
+concurrent sessions are load-bearing (prd §v1 Scope), not a luxury.
 
 ## Code layout
 

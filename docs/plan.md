@@ -1,0 +1,241 @@
+# acp-patchbay — Implementation Plan
+
+Execution contract: Claude implements every phase; the owner's part is the named
+touchpoints and gap clarifications — nothing else. Inputs: [prd.md](prd.md),
+[features.md](features.md), [architecture.md](architecture.md); on conflict they
+win and the conflict is raised, not silently resolved. This document is state:
+checkboxes reflect what is done, phases carry no history.
+
+## Ground rules
+
+- Stack is fixed: TypeScript everywhere in the extension host, esbuild, npm.
+  No webpack, no second language, no framework beyond what is named below.
+- The three architecture invariants hold in every phase: webviews are render-only;
+  UI gates on verified, not declared; secrets touch `SecretStorage` and nothing
+  else.
+- One scoped commit per phase gate, message carrying what changed and why.
+  Publishing to the Marketplace is manual, always.
+- When `vscode-acp` already solves a subsystem (connection handling, chat
+  rendering), its approach is checked first and credited where borrowed (MIT).
+- Reference checkouts live at the workspace root, outside this repo, read-only:
+  `vscode-acp` (baseline client + roster data source), `agent-client-protocol`
+  (schema v1/v2 + protocol docs), `typescript-sdk` (SDK source + example agent
+  and client).
+
+## Toolchain calls
+
+Each one buys its keep; each is removable without cascade:
+
+- **`@agentclientprotocol/sdk`** (official ACP TypeScript SDK) for both sides:
+  `ClientSideConnection` in the pool, `AgentSideConnection` in the fake agent.
+  Protocol plumbing is exactly what should not be hand-rolled. Built against
+  schema v2; every RFD-stage assumption in architecture.md is re-verified
+  against the SDK's types at P2.
+- **Preact** for both webviews — a component model earns its keep for streaming
+  chat; esbuild compiles JSX natively so it costs zero extra toolchain. State is
+  pure reducers over patch events; no state library.
+- **zod** for parsing everything that crosses a trust boundary: config file,
+  roster, registry, agent `initialize` responses. One runtime dependency that
+  converts malformed input into typed errors instead of undefined behavior.
+- **vitest** for unit tests; **@vscode/test-electron** for a minimal activation
+  suite; a **fake ACP agent** as the real test bed — the SDK's example agent
+  (`typescript-sdk/src/examples/agent.ts`) as skeleton plus a scriptable
+  behavior table: it can be told to lie (declare a capability, drop the calls;
+  confirm a rejected mode change), which is the only way to test
+  declared-vs-verified honesty deterministically.
+- Config file `.vscode/acp-patchbay.json` is parsed as JSONC — humans edit it.
+
+## Dependency graph
+
+```mermaid
+flowchart LR
+    P0[P0 scaffold] --> P1[P1 protocol + orchestrator core]
+    P1 --> P2[P2 client pool + fake agent + roster]
+    P1 --> P3[P3 Agent View design + shell]
+    P2 --> P4[P4 chat vertical slice]
+    P3 --> P4
+    P4 --> P5[P5 capability matrix + verification]
+    P5 --> P6[P6 permission broker + fs/terminal]
+    P6 --> P7[P7 local MCP server + adapters]
+    P4 --> P8[P8 sessions: branch, reload, knobs, policy]
+    P6 --> P9[P9 integrations + GitHub]
+    P2 --> P10[P10 rules/skills/commands management]
+    P4 --> P11[P11 native surfaces + native settings]
+    P9 --> P12[P12 marketplace pack]
+    P8 --> P12
+    P10 --> P12
+    P11 --> P12
+```
+
+Solo execution order is P0→P12 numerically; the graph exists for stall handling —
+when a phase blocks on a touchpoint, the next node with satisfied dependencies
+proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
+
+## Phases
+
+### P0 — Scaffold ☐
+
+- `package.json` (contributes: Agent View container/view, Settings command,
+  activation events; `engines.vscode` pinned), `tsconfig.json`, `esbuild.mjs`
+  (three bundles: extension host, agent-view webview, settings webview),
+  `.vscodeignore`, `.gitignore`, vitest wiring, `LICENSE` (MIT), stub
+  `README.md`/`CHANGELOG.md`, placeholder icon.
+- Layout: `src/extension.ts`, `src/orchestrator/`, `src/mcp/`,
+  `src/webview/{agent-view,settings}/`, `src/shared/`, `data/`, `test/`.
+- **Gate**: Extension Development Host launches; empty Agent View renders;
+  `npm test` runs green.
+
+### P1 — Shared protocol + orchestrator core ☐
+
+- `src/shared/protocol.ts`: action/snapshot/patch discriminated unions, revision
+  scheme.
+- Orchestrator state container; stores: session index (`workspaceState`),
+  decision audit (JSONL appender in workspace storage), config reader/writer
+  (JSONC + zod), permission-rules store (`workspaceState` + built-in defaults).
+- Webview host plumbing: mount → hydrate → snapshot; patch bus with ~30 ms
+  coalescing; revision gap → resnapshot. Same plumbing serves both webviews.
+- **Gate**: unit tests prove reducer determinism, coalescing, gap-recovery; a
+  dummy state round-trips through a real webview (kill/reopen included).
+
+### P2 — ACP client pool + fake agent + roster ☐
+
+- Client pool: `agentId → { process, declared, verified, sessions[] }`; spawn /
+  stop / restart; crash detection surfacing as status patches; ACP `initialize`
+  with `fs` + `terminal` advertised; declared table captured per connect.
+- `test/fake-agent/`: scriptable fixture — declared capabilities, streamed
+  turns, deliberate lies (declares fs, never calls it; reports mode change
+  success while ignoring it), crash on demand, concurrent-session behavior knob.
+- `data/roster.json`: known agents as data — name, launch command, install hint,
+  rules/skills/commands location mapping, known quirks and observed `_meta`
+  extension conventions (`_claude/*`, codex-acp terminal channel). Extracted from
+  vscode-acp's shipped defaults (credited) — Copilot, Claude Code, Gemini, Qwen,
+  Auggie, Qoder, Codex, and the rest — with location mappings completed for
+  Claude Code and Augment.
+- **Gate**: pool tests against fake agent — connect, capture declared, crash →
+  visible → one-action restart, two concurrent sessions on one connection.
+
+### P3 — Agent View design + shell ☐
+
+- `docs/design/agent-view-mockup.html`: interactive single-file HTML mockup —
+  visuals and interactions judged in a browser, iterated to verdict. The owner's
+  reference images (workspace root) are the visual starting point.
+- `docs/design/agent-view.md`: the UI requirements distilled from the approved
+  mockup — the durable artifact. The mockup illustrates; the doc binds.
+- Implement the static shell from the approved design: regions, navigation
+  gestures, empty states.
+- **Gate / owner touchpoint**: mockup verdict, then requirements doc.
+
+### P4 — Chat vertical slice ☐
+
+- `session/new` → prompt → streamed `session/update` → patches → chat renders
+  live: text, tool calls, thoughts, plans. Stop turn (`session/cancel`). Session
+  index entries; switch / rename / close. Slash-command autocomplete from
+  `available_commands_update`. Render cache rebuilt from `session/load` replay
+  on reopen.
+- **Gate**: full turn streams end-to-end against fake agent (automated) and
+  Claude Code via ACP (manual smoke); webview kill/reopen mid-turn recovers.
+
+### P5 — Capability matrix + verification ☐
+
+- Declared/verified tables per agent; verified resets on reconnect;
+  protocol-level auto-verification on connect (fork round-trip, MCP transports);
+  opportunistic behavior-level marking hooks (first fs success, first
+  elicitation, first usage report); explicit diagnostics path — cost disclosed,
+  ephemeral session in a temp dir, never workspace roots.
+- Matrix UI in Settings (three states per row); fidelity label as the pure
+  function from architecture; roster-sourced asset-location row.
+- **Gate**: fake agent scripted to lie shows declared-but-unverified; branch
+  affordance lights only after verified fork; reconnect drops verified.
+
+### P6 — Permission broker + editor depth (fs/terminal) ☐
+
+- One broker path for ACP `session/request_permission`, MCP tool calls, and
+  terminal execution; allow-once / allow-always / reject; rules evaluated from
+  `workspaceState`; decision audit writes; native notification when the view is
+  hidden; repo-defined agent → one-time adoption prompt behind workspace trust.
+- `fs/read_text_file` serves live buffers; `fs/write_text_file` → pre-gated
+  native diff (rules can auto-accept; diff stays visible); terminal in a visible
+  pseudoterminal, same gating.
+- **Gate**: automated broker tests (rule precedence, audit trail); manual smoke —
+  agent edit arrives as diff, reject leaves disk untouched.
+
+### P7 — Local MCP server + adapters ☐
+
+- Stdio MCP server passed via `mcpServers` at `session/new`: selection, current
+  file, diagnostics, open editors; roots. Adapter fallbacks per handshake:
+  elicitation → `request_user_input` tool, roots → prompt injection,
+  subscribe → `get_workspace_state`.
+- Prompt enrichment: image paste (`ContentBlock::Image` vs temp-file
+  `ResourceLink` — never disabled), file attach (`embeddedContext` gate),
+  explicit add-selection/file/diagnostics, right-click actions.
+- **Gate**: real agent reads selection + diagnostics in a turn (which
+  opportunistically verifies those rows); fallback paths covered by fake agent
+  with capabilities stripped.
+
+### P8 — Sessions advanced ☐
+
+- Session graph (parent → branches); native `session/fork` when verified, else
+  emulated seed — labeled; one-click reload (re-`load` replay); last-known view
+  files + emulated continuation for non-replay agents; model/mode/effort knobs
+  from agent options with per-agent defaults applied post-create, display from
+  confirmed state only; process policy auto/shared/isolated with fork pinned to
+  parent, shown.
+- **Gate**: branch on fake agent with and without fork capability produces
+  correctly labeled graph nodes; policy `isolated` isolates `session/new` only.
+
+### P9 — Integrations + GitHub ☐
+
+- `data/registry.json` (GitHub entry: id, name, transport, auth, scopes, bridge
+  launch); custom MCP add (command/URL + auth); stdio-to-HTTP bridge process
+  with token refresh; routing UI — per-agent attach, default auto-attach only
+  fully-brokered; workspace-scoped storage in the config file; explicit share
+  command that copies config and reattaches credentials only on confirm.
+- OAuth grant: decide at phase start — default call is GitHub Device Flow (no
+  client secret in an extension, works in remote/WSL); URI-handler callback only
+  if device flow proves hostile in practice.
+- **Gate**: GitHub connect → routed agent lists issues via MCP; disconnect
+  revokes; token never appears outside `SecretStorage` (test greps logs/state).
+- **Owner touchpoints**: create the GitHub OAuth app under the org; live smoke
+  with Augment on the owner's machine.
+
+### P10 — Rules, skills, commands management ☐
+
+- Settings section reading each connected agent's native locations from roster
+  mapping; view + edit in place; unmapped agents shown as unmapped. No delivery,
+  no symlinks — v1 is management only.
+- **Gate**: Claude Code and Augment file sets listed and editable; an unmapped
+  roster agent renders the honest empty state.
+
+### P11 — Native surfaces + native settings ☐
+
+- Status bar (active session, health, usage when reported — absent when not);
+  command palette: new/switch session, connect agent, open settings; permission
+  notification already landed in P6 — verify coverage; VS Code native settings:
+  default agent + telemetry opt-in, nothing else.
+- **Gate**: every features §3 command palette item works; status bar click jumps
+  to session.
+
+### P12 — Marketplace pack ☐
+
+- Real `README.md` (with vscode-acp credit), `CHANGELOG.md`, icon, `repository`
+  field, categories/keywords, `vsce package` dry-run clean; final pass of the
+  features inventory — every v1 bullet has a working path or a raised gap.
+- **Gate / owner touchpoints**: publisher identity; the publish click itself —
+  manual by rule.
+
+## Owner touchpoints, complete list
+
+1. **P3**: Agent View design verdict.
+2. **P9**: GitHub OAuth app creation; Augment live smoke on your machine.
+3. **P12**: publisher identity; manual publish.
+4. Ad hoc: gap clarifications when a doc conflict or protocol surprise is hit —
+   raised immediately with a proposed call, never silently resolved.
+
+## Verification strategy
+
+Automated per phase: vitest units (orchestrator, reducers, broker, stores),
+fake-agent integration (pool, sessions, verification honesty), minimal
+test-electron suite (activation, view registration, commands). Manual smoke per
+phase against Claude Code over ACP in the dev host; Augment smoke at P9. The
+fake agent's lying modes are the standing regression bed for bet #2 — every
+honesty feature gets a test where the agent lies and the UI tells the truth.
