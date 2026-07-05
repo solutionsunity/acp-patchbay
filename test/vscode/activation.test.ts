@@ -30,5 +30,6 @@ suite("activation", () => {
     assert.ok(commands.includes("acpPatchbay.newSession"));
     assert.ok(commands.includes("acpPatchbay.switchSession"));
     assert.ok(commands.includes("acpPatchbay.connectAgent"));
+    assert.ok(commands.includes("acpPatchbay.addSelectionToContext"));
   });
 });

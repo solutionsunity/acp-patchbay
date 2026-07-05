@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- P12 marketplace pack: a real README (was a 9-line stub); `vsce package`
+  dry run is clean (145.96 KB, 15 files, no warnings) — the rest of the
+  Marketplace checklist (repository, categories, keywords, icon, license,
+  publisher) was already in place from P0. A final features-inventory pass
+  found and closed real gaps: a Stop button for running agents and a full
+  add/edit/remove form for workspace agent launch config in Settings (both
+  reusing backend methods that existed since P1/P2 but were never wired to
+  a control), a right-click "Add Selection to Patchbay Context" editor
+  command, and three features.md bullets — image paste, file attach, and
+  context roots — that were explicitly deferred at P7 but never assigned a
+  landing phase since. All three now real: image paste and file-picker
+  attach ride the existing context-chip mechanism (a new "image" chip kind
+  sent as a genuine `ImageContent` block; file attach reuses the same shape
+  as "add current file"); context roots plug into ACP's own
+  `additionalDirectories` field on `session/new`/`/load`/`/fork`, tracked
+  per session, honestly reaching the agent only on the next reload/branch
+  since the protocol has no live-update request for it. Fixed a real
+  pre-existing bug surfaced while wiring roots through `reopen()`:
+  reconnecting a crashed session via `session/load` never re-attached the
+  local MCP server or any integrations at all — silently regressing P7/P9's
+  depth story after every crash+reload.
 - P11 native surfaces + native settings: a status bar item mirroring the
   active session's title, agent health glyph, and usage percentage once
   reported (absent, never a fake 0%, until then) — click focuses the Agent

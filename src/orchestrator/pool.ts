@@ -308,12 +308,13 @@ export class AgentPool {
     poolKey: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
+    additionalDirectories: string[] = [],
   ): Promise<acp.NewSessionResponse> {
     const entry = this.running(poolKey);
     const hadOtherSessions = entry.sessions.size > 0;
     const response = await entry.connection!.agent.request(
       acp.methods.agent.session.new,
-      { cwd, mcpServers },
+      { cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
     if (hadOtherSessions) this.hooks.onConcurrentSessionsVerified?.(entry.reportAs);
@@ -330,11 +331,12 @@ export class AgentPool {
     sessionId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
+    additionalDirectories: string[] = [],
   ): Promise<acp.ForkSessionResponse> {
     const entry = this.running(poolKey);
     const response = await entry.connection!.agent.request(
       acp.methods.agent.session.fork,
-      { sessionId, cwd, mcpServers },
+      { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
     // The parent was already on `entry.sessions` — a fork always proves this
@@ -373,11 +375,12 @@ export class AgentPool {
     sessionId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
+    additionalDirectories: string[] = [],
   ): Promise<acp.LoadSessionResponse> {
     const entry = this.running(poolKey);
     const response = await entry.connection!.agent.request(
       acp.methods.agent.session.load,
-      { sessionId, cwd, mcpServers },
+      { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(sessionId);
     return response;

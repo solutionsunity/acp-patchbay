@@ -31,7 +31,8 @@ export type ViewToHost =
 
 export type ConnectAgentSource =
   | { rosterId: string }
-  | { command: string }; // custom command line that speaks ACP
+  | { command: string } // custom command line that speaks ACP
+  | { configuredId: string }; // a saved workspace agent config (Settings § Agents)
 
 export type Action =
   | { kind: "openSettings" }
@@ -73,7 +74,26 @@ export type Action =
   | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
   | { kind: "shareIntegrationConfig"; integrationId: string }
   | { kind: "refreshAgentAssets"; agentId: string }
-  | { kind: "openAssetFile"; agentId: string; path: string };
+  | { kind: "openAssetFile"; agentId: string; path: string }
+  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView }
+  | { kind: "removeAgentConfig"; agentId: string }
+  | { kind: "addContextRoot"; sessionId: string }
+  | { kind: "removeContextRoot"; sessionId: string; path: string }
+  | { kind: "addImageContext"; sessionId: string; dataUrl: string; mimeType: string; label: string }
+  | { kind: "addFilePickerContext"; sessionId: string };
+
+// ── Settings § Agents — workspace agent launch config (features.md: "add,
+// edit, and remove agents, including launch configuration per agent") ─────
+
+export interface AgentConfigView {
+  id: string;
+  name: string;
+  command: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string>>;
+  processPolicy: "auto" | "shared" | "isolated";
+  defaults: { model?: string; mode?: string; effort?: string };
+}
 
 // ── integrations (architecture.md § Integrations) ───────────────────────────
 
@@ -471,6 +491,12 @@ export interface AgentViewState {
   sessionModes: Readonly<Record<string, SessionModesView | null>>;
   /** Model/effort/etc. knobs — empty when the agent offers none. */
   sessionConfigOptions: Readonly<Record<string, readonly SessionConfigOptionView[]>>;
+  /** User-added external context roots, per session (features.md § Chat —
+   * workspace folders are always active and need no chip; these are the
+   * removable, explicit ones). Passed to the agent as `additionalDirectories`
+   * on the next create/reload/fork — ACP has no live-update request, so
+   * patchbay never claims one. */
+  contextRoots: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface UsageInfo {
@@ -481,9 +507,14 @@ export interface UsageInfo {
 
 export interface ContextChip {
   id: string;
-  kind: "selection" | "file" | "diagnostics";
+  kind: "selection" | "file" | "diagnostics" | "image";
   label: string;
+  /** Text content for selection/file/diagnostics; raw base64 payload for image. */
   content: string;
+  /** Set only for kind "image" — paste is never disabled (features.md § Chat),
+   * so this rides the same chip mechanism as every other explicit context add,
+   * sent as a real ImageContent block regardless of what the agent declares. */
+  mimeType?: string;
 }
 
 export const initialAgentViewState: AgentViewState = {
@@ -500,6 +531,7 @@ export const initialAgentViewState: AgentViewState = {
   contextChips: {},
   sessionModes: {},
   sessionConfigOptions: {},
+  contextRoots: {},
 };
 
 export type AgentViewEvent =
@@ -574,6 +606,8 @@ export type AgentViewEvent =
    * seeding its transcript wholesale — never merged, same "replay always
    * wins" rule as transcriptReset (architecture.md § Last-known view). */
   | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
+  /** Full replace — the current external-root list for a session. */
+  | { kind: "contextRootsChanged"; sessionId: string; roots: readonly string[] }
   /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
   | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
   | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
@@ -749,6 +783,7 @@ export function reduceAgentView(
         contextChips: { ...state.contextChips, [event.session.id]: [] },
         sessionModes: { ...state.sessionModes, [event.session.id]: null },
         sessionConfigOptions: { ...state.sessionConfigOptions, [event.session.id]: [] },
+        contextRoots: { ...state.contextRoots, [event.session.id]: [] },
         activeSessionId: event.session.id,
       };
     case "sessionActivated":
@@ -769,6 +804,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
       const { [event.sessionId]: _m, ...sessionModes } = state.sessionModes;
       const { [event.sessionId]: _o, ...sessionConfigOptions } = state.sessionConfigOptions;
+      const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       const activeSessionId =
         state.activeSessionId === event.sessionId
@@ -783,6 +819,7 @@ export function reduceAgentView(
         contextChips,
         sessionModes,
         sessionConfigOptions,
+        contextRoots,
         activeSessionId,
       };
     }
@@ -935,6 +972,8 @@ export function reduceAgentView(
       };
     case "transcriptSeeded":
       return withTranscript(state, event.sessionId, event.blocks);
+    case "contextRootsChanged":
+      return { ...state, contextRoots: { ...state.contextRoots, [event.sessionId]: event.roots } };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -1010,6 +1049,10 @@ export interface SettingsState {
   deviceFlow: Readonly<Record<string, DeviceFlowView>>;
   /** Keyed by agentId — populated as each connects (and on-demand refresh). */
   assets: Readonly<Record<string, AgentAssetsView>>;
+  /** Workspace-config agents (`.vscode/acp-patchbay.json`) — addable, editable,
+   * removable from Settings; connecting one goes through the same
+   * `connectAgent` action as roster/custom (`{ configuredId }`). */
+  agentConfigs: readonly AgentConfigView[];
 }
 
 export const initialSettingsState: SettingsState = {
@@ -1025,6 +1068,7 @@ export const initialSettingsState: SettingsState = {
   integrations: [],
   deviceFlow: {},
   assets: {},
+  agentConfigs: [],
 };
 
 export type SettingsEvent =
@@ -1045,7 +1089,8 @@ export type SettingsEvent =
       expiresIn: number;
     }
   | { kind: "integrationConnectFailed"; registryId: string; reason: string }
-  | { kind: "agentAssetsChanged"; assets: AgentAssetsView };
+  | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
+  | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] };
 
 export function reduceSettings(
   state: SettingsState,
@@ -1115,6 +1160,8 @@ export function reduceSettings(
     }
     case "agentAssetsChanged":
       return { ...state, assets: { ...state.assets, [event.assets.agentId]: event.assets } };
+    case "agentConfigsChanged":
+      return { ...state, agentConfigs: event.configs };
     default:
       return state;
   }
@@ -1128,6 +1175,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "integrationDeviceCodeIssued",
   "integrationConnectFailed",
   "agentAssetsChanged",
+  "agentConfigsChanged",
 ]);
 
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {

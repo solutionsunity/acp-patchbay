@@ -370,13 +370,58 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   without being a webview, per architecture.md's "direct orchestrator
   consumers: same state, no webview in the path."*
 
-### P12 — Marketplace pack ☐
+### P12 — Marketplace pack ☑ (mechanism/audit complete; publish itself is the owner touchpoint)
 
 - Real `README.md` (with vscode-acp credit), `CHANGELOG.md`, icon, `repository`
   field, categories/keywords, `vsce package` dry-run clean; final pass of the
   features inventory — every v1 bullet has a working path or a raised gap.
 - **Gate / owner touchpoints**: publisher identity; the publish click itself —
   manual by rule.
+- *Marketplace metadata (`repository`, `categories`, `keywords`, `icon`,
+  `license`, `engines.vscode`, `publisher: solutionsunity`) was already
+  complete from P0 — this phase's own contribution is a real README (was a
+  9-line stub) and a clean `vsce package` dry run (145.96 KB, 15 files, no
+  warnings). Publisher identity is already set to the owner's own
+  organization; the remaining touchpoint is confirming that publisher exists
+  on the Marketplace (or creating it) before the manual `vsce publish` — not
+  a code change.*
+- *Features-inventory pass found real gaps and closed the ones sized for this
+  phase, per the gate's explicit "working path or a raised gap":*
+  - *Small, mechanical gaps (existing backend, missing UI trigger only): a
+    **Stop** button for running agents (the `stopAgent` action existed since
+    P2, never wired to a control); Settings § Agents gained a full add/edit/
+    remove form for workspace agent launch config (`upsertAgent`/`removeAgent`
+    existed since P1, never exposed) — connecting a saved config reuses the
+    existing `connectAgent` action via a new `{ configuredId }` source
+    variant; a right-click "Add Selection to Patchbay Context" editor-context
+    command (reuses the composer's own add-selection action).*
+  - *Three features.md bullets — image paste, file attach, context roots
+    (`additionalDirectories`) — were explicitly deferred at P7 ("separate UI
+    mechanisms... NOT this phase's architectural bet") but never assigned a
+    landing phase in P8–P11. Treated as the exact kind of gap the kickoff
+    instruction says to raise rather than resolve silently: closed now,
+    since every v1 bullet needing a working path is literally this phase's
+    gate. Image paste and file attach both ride the existing `ContextChip`
+    mechanism (image is a new chip kind carrying base64 + mimeType, sent as
+    a real `ImageContent` block; file-picker attach reuses the same shape as
+    "add current file," just for an arbitrary picked file); "attach by
+    drag-and-drop **or** picker" is satisfied by the picker alone — drag-drop
+    specifically wasn't added, a scope trim not a gap, since the bullet is an
+    OR. Context roots plug into `additionalDirectories` (`session/new` /
+    `/load` / `/fork`, real ACP fields, not invented) — patchbay tracks only
+    the user-added external ones (workspace folders are always active and
+    need no chip); since ACP has no live-update request for this field, a
+    root added mid-session honestly reaches the agent only on the next
+    reload/branch, surfaced in the UI rather than hidden.*
+  - *Fixed a real pre-existing bug found while wiring context roots through
+    `reopen()`: reconnecting a crashed session via `session/load` never
+    re-attached the local MCP server or any integrations (no `mcpServers`
+    was passed at all) — silently regressing P7/P9's whole depth story after
+    any crash+reload. Now mints a fresh correlation token and rebuilds the
+    same `mcpServers` list `createSession` gets.*
+  - *Editing an agent's own live-connection launch config only takes effect
+    on next connect/restart, same as workspace-config agents always have —
+    not a new limitation introduced here.*
 
 ## Owner touchpoints, complete list
 

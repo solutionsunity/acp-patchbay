@@ -31,6 +31,9 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.newSession", () => orchestrator.newSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.switchSession", () => orchestrator.switchSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.connectAgent", () => orchestrator.connectAgentCommand()),
+    vscode.commands.registerCommand("acpPatchbay.addSelectionToContext", () =>
+      orchestrator.addSelectionToContextCommand(),
+    ),
   );
 
   return { internal: { orchestrator, settingsPanelHost } };

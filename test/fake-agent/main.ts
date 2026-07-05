@@ -34,6 +34,7 @@ export type TurnStep =
   | { type: "runCommand"; command: string; args?: string[] }
   | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string }
   | { type: "echoBlocks" }
+  | { type: "echoRoots" }
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> };
 
 export interface FakeAgentScript {
@@ -69,6 +70,7 @@ interface FakeSession {
   mode: string | null;
   configOptions: acp.SessionConfigOption[] | null;
   mcpServers: acp.McpServer[];
+  additionalDirectories: string[];
 }
 
 const sessions = new Map<string, FakeSession>();
@@ -272,6 +274,16 @@ async function runTurn(
         });
         break;
       }
+      case "echoRoots": {
+        // Proves additionalDirectories actually reached session/new|load|fork
+        // on the wire (P12) — the fake agent stored whatever it was given.
+        const roots = sessions.get(sessionId)?.additionalDirectories ?? [];
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: JSON.stringify(roots) },
+        });
+        break;
+      }
       case "echoBlocks": {
         // Proves attached context arrives as its own ContentBlock entries,
         // not merged into the user's prose (architecture.md's context-
@@ -394,6 +406,7 @@ const app = acp
       mode: script.modes?.currentModeId ?? null,
       configOptions: script.configOptions ? structuredClone(script.configOptions) : null,
       mcpServers: ctx.params.mcpServers,
+      additionalDirectories: ctx.params.additionalDirectories ?? [],
     });
     const response: acp.NewSessionResponse = { sessionId: id };
     if (script.modes) response.modes = script.modes;
@@ -412,6 +425,7 @@ const app = acp
       mode: script.modes?.currentModeId ?? null,
       configOptions: script.configOptions ? structuredClone(script.configOptions) : null,
       mcpServers: ctx.params.mcpServers,
+      additionalDirectories: ctx.params.additionalDirectories ?? [],
     });
     for (const update of readRecordedUpdates(cwd, sessionId)) {
       await ctx.client.notify(acp.methods.client.session.update, { sessionId, update });
@@ -476,6 +490,7 @@ const app = acp
       mode: parent.mode,
       configOptions: parent.configOptions ? structuredClone(parent.configOptions) : null,
       mcpServers: parent.mcpServers,
+      additionalDirectories: ctx.params.additionalDirectories ?? parent.additionalDirectories,
     });
     const response: acp.ForkSessionResponse = { sessionId: id };
     if (script.modes) response.modes = { ...script.modes, currentModeId: parent.mode ?? script.modes.currentModeId };

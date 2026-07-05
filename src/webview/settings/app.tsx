@@ -5,6 +5,7 @@
 import { useState } from "preact/hooks";
 import type {
   AgentAssetsView,
+  AgentConfigView,
   AssetCategoryView,
   CapabilityMatrix,
   CapabilityRowId,
@@ -58,7 +59,17 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
         </div>
       </nav>
       <main class="main">
-        {section === "agents" && <AgentsSection state={state} onDiagnostics={runDiagnostics} />}
+        {section === "agents" && (
+          <AgentsSection
+            state={state}
+            onDiagnostics={runDiagnostics}
+            onConnectConfigured={(agentId) =>
+              channel.sendAction({ kind: "connectAgent", source: { configuredId: agentId } })
+            }
+            onSave={(config) => channel.sendAction({ kind: "addOrUpdateAgentConfig", config })}
+            onRemove={(agentId) => channel.sendAction({ kind: "removeAgentConfig", agentId })}
+          />
+        )}
         {section === "matrix" && <MatrixSection state={state} />}
         {section === "integrations" && (
           <IntegrationsSection
@@ -115,11 +126,84 @@ function FidelityChip({ matrix, knownBypassBridge }: { matrix: CapabilityMatrix;
   return <span class={`fid ${FIDELITY_CLASS[label]}`}>{FIDELITY_TEXT[label]}</span>;
 }
 
+const EMPTY_AGENT_CONFIG: AgentConfigView = {
+  id: "",
+  name: "",
+  command: "",
+  args: [],
+  env: {},
+  processPolicy: "auto",
+  defaults: {},
+};
+
+function AgentConfigForm(props: {
+  initial: AgentConfigView;
+  onSave(config: AgentConfigView): void;
+  onCancel(): void;
+}) {
+  const [id, setId] = useState(props.initial.id);
+  const [name, setName] = useState(props.initial.name);
+  const [command, setCommand] = useState([props.initial.command, ...props.initial.args].join(" "));
+  const [processPolicy, setProcessPolicy] = useState(props.initial.processPolicy);
+  const [model, setModel] = useState(props.initial.defaults.model ?? "");
+  const [mode, setMode] = useState(props.initial.defaults.mode ?? "");
+  const [effort, setEffort] = useState(props.initial.defaults.effort ?? "");
+
+  const save = () => {
+    const parts = command.trim().split(/\s+/).filter(Boolean);
+    if (id.trim() === "" || name.trim() === "" || parts.length === 0) return;
+    props.onSave({
+      id: id.trim(),
+      name: name.trim(),
+      command: parts[0]!,
+      args: parts.slice(1),
+      env: props.initial.env,
+      processPolicy,
+      defaults: {
+        model: model.trim() || undefined,
+        mode: mode.trim() || undefined,
+        effort: effort.trim() || undefined,
+      },
+    });
+  };
+
+  return (
+    <div class="connect-form">
+      <input type="text" placeholder="id (unique)" value={id} disabled={props.initial.id !== ""} onInput={(e) => setId((e.target as HTMLInputElement).value)} />
+      <input type="text" placeholder="display name" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+      <input
+        type="text"
+        placeholder="command and args…"
+        value={command}
+        onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
+      />
+      <select value={processPolicy} onChange={(e) => setProcessPolicy((e.target as HTMLSelectElement).value as AgentConfigView["processPolicy"])}>
+        <option value="auto">process: auto</option>
+        <option value="shared">process: shared</option>
+        <option value="isolated">process: isolated</option>
+      </select>
+      <input type="text" placeholder="default model…" value={model} onInput={(e) => setModel((e.target as HTMLInputElement).value)} />
+      <input type="text" placeholder="default mode…" value={mode} onInput={(e) => setMode((e.target as HTMLInputElement).value)} />
+      <input type="text" placeholder="default effort…" value={effort} onInput={(e) => setEffort((e.target as HTMLInputElement).value)} />
+      <button class="btn primary row-btn" onClick={save}>
+        Save
+      </button>
+      <button class="btn row-btn" onClick={props.onCancel}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function AgentsSection(props: {
   state: SettingsState;
   onDiagnostics(agentId: string): void;
+  onConnectConfigured(agentId: string): void;
+  onSave(config: AgentConfigView): void;
+  onRemove(agentId: string): void;
 }) {
   const { state } = props;
+  const [editing, setEditing] = useState<string | null>(null); // agentId being edited, or "" for a new one
   return (
     <section class="section">
       <h1>Agents</h1>
@@ -165,6 +249,63 @@ function AgentsSection(props: {
           </div>
         );
       })}
+
+      <div class="card">
+        <h2 style="margin-top:0">Workspace agent configs</h2>
+        <div class="note" style="margin:0 0 8px">
+          Saved to <code>.vscode/acp-patchbay.json</code> — repo-shareable, never a credential.
+        </div>
+        {state.agentConfigs.length === 0 && editing === null && (
+          <div class="note" style="margin:0 0 8px">
+            None saved yet.
+          </div>
+        )}
+        {state.agentConfigs.map((c) =>
+          editing === c.id ? (
+            <AgentConfigForm
+              key={c.id}
+              initial={c}
+              onSave={(config) => {
+                props.onSave(config);
+                setEditing(null);
+              }}
+              onCancel={() => setEditing(null)}
+            />
+          ) : (
+            <div class="row" key={c.id} style="margin-bottom:6px">
+              <span class="nm">{c.name}</span>
+              <span class="mono" style="flex:1">
+                {[c.command, ...c.args].join(" ")}
+              </span>
+              {!state.agents.some((a) => a.id === c.id && a.status === "running") && (
+                <button class="btn" onClick={() => props.onConnectConfigured(c.id)}>
+                  Connect
+                </button>
+              )}
+              <button class="btn" onClick={() => setEditing(c.id)}>
+                Edit
+              </button>
+              <button class="btn" onClick={() => props.onRemove(c.id)}>
+                Remove
+              </button>
+            </div>
+          ),
+        )}
+        {editing === "" ? (
+          <AgentConfigForm
+            initial={EMPTY_AGENT_CONFIG}
+            onSave={(config) => {
+              props.onSave(config);
+              setEditing(null);
+            }}
+            onCancel={() => setEditing(null)}
+          />
+        ) : (
+          <button class="btn" onClick={() => setEditing("")}>
+            + Add agent config
+          </button>
+        )}
+      </div>
     </section>
   );
 }

@@ -81,6 +81,8 @@ function harness(opts?: {
     {
       emit: (...evs) => events.push(...evs),
       lastKnownView: async (sessionId) => opts?.lastKnownView?.(sessionId) ?? null,
+      contextRootsFor: (sessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
     },
     () => cwd,
   );
@@ -350,5 +352,50 @@ describe("SessionManager", () => {
     const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(echoed?.kind === "text" && echoed.text).toBe("hello"); // the removed chip never appears
     await h.pool.stop("sm10");
+  });
+
+  it("context roots (P12): added mid-session reach the wire only after a reload — ACP has no live-update request", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, turn: [{ type: "echoRoots" }] }, "sm11"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm11", "Fake Agent", cwd);
+
+    h.sessionManager.addRoot(sessionId, "/repo/backend");
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+
+    await h.sessionManager.reload(sessionId);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
+
+    h.sessionManager.removeRoot(sessionId, "/repo/backend");
+    expect(h.state().contextRoots[sessionId]).toEqual([]);
+
+    await h.pool.stop("sm11");
+  });
+
+  it("a fork inherits its parent's context roots, verified on the wire", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { sessionCapabilities: { fork: {} } }, turn: [{ type: "echoRoots" }] }, "sm12"),
+    );
+    const cell = () => h.state().capabilities.sm12?.["session.fork"];
+    const start = Date.now();
+    while (!cell()?.verified) {
+      if (Date.now() - start > 3000) throw new Error("fork never verified");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const parentId = await h.sessionManager.createSession("sm12", "Fake Agent", cwd);
+    h.sessionManager.addRoot(parentId, "/repo/shared");
+
+    const branchId = await h.sessionManager.branch(parentId, []);
+    expect(h.state().contextRoots[branchId]).toEqual(["/repo/shared"]);
+
+    await h.sessionManager.sendPrompt(branchId, "roots?");
+    const echoed = h.state().transcripts[branchId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/shared"]);
+
+    await h.pool.stop("sm12");
   });
 });

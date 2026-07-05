@@ -50,6 +50,11 @@ export interface SessionManagerHooks {
    * continuation available for a dead session whose agent never declared
    * `session/load`. */
   lastKnownView?(sessionId: string): Promise<{ at: string; blocks: readonly ChatBlock[] } | null>;
+  /** Canonical (AgentViewState-held) external context roots for a session —
+   * read back on reopen/branch since ACP has no live-update request for
+   * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
+   * not a SessionManager-local one that would vanish with it. */
+  contextRootsFor?(sessionId: string): readonly string[];
 }
 
 let blockCounter = 0;
@@ -245,7 +250,16 @@ export class SessionManager {
       pendingContext: [],
     });
     this.hooks.emit({ kind: "transcriptReset", sessionId });
-    const { modes, configOptions } = await this.pool.loadSession(poolKey, sessionId, this.cwd());
+    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
+    const contextToken = `ctx-${++this.contextTokenCounter}`;
+    this.hooks.mapContextToken?.(contextToken, sessionId);
+    const { modes, configOptions } = await this.pool.loadSession(
+      poolKey,
+      sessionId,
+      this.cwd(),
+      await this.mcpServersFor(contextToken, agentId),
+      [...roots],
+    );
     this.hooks.emit({ kind: "capabilityVerified", agentId, row: "session.load" });
     this.emitModeAndConfig(sessionId, modes, configOptions);
   }
@@ -278,10 +292,12 @@ export class SessionManager {
   ): Promise<string> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     const contextToken = `ctx-${++this.contextTokenCounter}`;
+    const roots = this.hooks.contextRootsFor?.(parentSessionId) ?? [];
     const { sessionId, modes, configOptions } = await this.pool.newSession(
       poolKey,
       this.cwd(),
       await this.mcpServersFor(contextToken, agentId),
+      [...roots],
     );
     this.hooks.mapContextToken?.(contextToken, sessionId);
     this.sessions.set(sessionId, {
@@ -305,6 +321,7 @@ export class SessionManager {
       branchOf: parentSessionId,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
+    if (roots.length > 0) this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots });
     if (seedBlocks.length > 0) {
       this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: seedBlocks });
     }
@@ -332,7 +349,14 @@ export class SessionManager {
     await this.reopen(sessionId, agentId);
     const poolKey = this.sessions.get(sessionId)!.poolKey;
     const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const response = await this.pool.fork(poolKey, sessionId, this.cwd(), await this.mcpServersFor(contextToken, agentId));
+    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
+    const response = await this.pool.fork(
+      poolKey,
+      sessionId,
+      this.cwd(),
+      await this.mcpServersFor(contextToken, agentId),
+      [...roots],
+    );
     this.hooks.mapContextToken?.(contextToken, response.sessionId);
     this.sessions.set(response.sessionId, {
       agentId,
@@ -361,6 +385,9 @@ export class SessionManager {
       branchOf: sessionId,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
+    if (roots.length > 0) {
+      this.hooks.emit({ kind: "contextRootsChanged", sessionId: response.sessionId, roots });
+    }
     // Native fork: the agent itself decides how much history to replay as
     // session/update notifications, if any — nothing else to seed here.
     this.emitModeAndConfig(response.sessionId, response.modes, response.configOptions);
@@ -438,6 +465,27 @@ export class SessionManager {
     this.hooks.emit({ kind: "contextChipRemoved", sessionId, chipId });
   }
 
+  /** External context roots (features.md § Chat): patchbay holds no local
+   * copy — the canonical list lives in AgentViewState, read back via
+   * `contextRootsFor` so this stays a pure "append/remove and republish."
+   * ACP has no live-update request for `additionalDirectories`, so a change
+   * here only reaches the agent on the next reload/branch — honest, not
+   * hidden (the same "reload to rejoin truth" pattern P8 already has). */
+  addRoot(sessionId: string, path: string): void {
+    const current = this.hooks.contextRootsFor?.(sessionId) ?? [];
+    if (current.includes(path)) return;
+    this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: [...current, path] });
+  }
+
+  removeRoot(sessionId: string, path: string): void {
+    const current = this.hooks.contextRootsFor?.(sessionId) ?? [];
+    this.hooks.emit({
+      kind: "contextRootsChanged",
+      sessionId,
+      roots: current.filter((p) => p !== path),
+    });
+  }
+
   async sendPrompt(sessionId: string, text: string): Promise<void> {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
@@ -469,7 +517,12 @@ export class SessionManager {
     this.hooks.emit(...events);
 
     const prompt: ContentBlock[] = [
-      ...chips.map((c): ContentBlock => ({ type: "text", text: `[${c.label}]\n${c.content}` })),
+      ...chips.map(
+        (c): ContentBlock =>
+          c.kind === "image"
+            ? { type: "image", data: c.content, mimeType: c.mimeType ?? "image/png" }
+            : { type: "text", text: `[${c.label}]\n${c.content}` },
+      ),
       { type: "text", text },
     ];
     try {

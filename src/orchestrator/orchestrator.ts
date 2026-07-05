@@ -12,6 +12,7 @@ import {
   reduceAgentView,
   reduceSettings,
   type Action,
+  type AgentConfigView,
   type AgentViewEvent,
   type AgentViewState,
   type ConnectAgentSource,
@@ -273,6 +274,7 @@ export class Orchestrator {
           this.agentView.current.capabilities[agentId]?.["session.fork"]?.verified ?? false,
         defaultsFor: (agentId) => this.pool.get(agentId)?.spec.defaults,
         lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
+        contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
       },
       () => this.workspaceRoot ?? process.cwd(),
       async (contextToken, agentId) => {
@@ -415,6 +417,21 @@ export class Orchestrator {
     } else {
       await this.connectFromSource({ rosterId: picked.rosterId });
     }
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+  }
+
+  /** Editor right-click (features.md § 3: "add to context / ask the agent
+   * about it") — reuses the composer's own add-selection action so there's
+   * one path for "a selection became context," native gesture or button
+   * alike; focusing the Agent View afterward is what lets the user ask
+   * about it, the same composer flow either way. */
+  async addSelectionToContextCommand(): Promise<void> {
+    const sessionId = this.agentView.current.activeSessionId;
+    if (sessionId === null) {
+      void vscode.window.showInformationMessage("Start a Patchbay session first, then add a selection.");
+      return;
+    }
+    this.handleAction({ kind: "addSelectionContext", sessionId });
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -591,6 +608,60 @@ export class Orchestrator {
         agent: { agentId: agent.id, name: agent.name, command: launchCommandText(agent) },
       });
     }
+    await this.refreshAgentConfigs();
+  }
+
+  /** Settings § Agents (features.md: "add, edit, and remove agents,
+   * including launch configuration per agent") — persists to the same
+   * workspace config file repo-defined agents already use. Adoption is
+   * marked immediately: the user just typed this command themselves, right
+   * now, which is exactly the trust the one-time adoption gate exists to
+   * establish for a config file someone else might have authored. */
+  private async addOrUpdateAgentConfig(config: AgentConfigView): Promise<void> {
+    await this.configFile.upsertAgent({
+      id: config.id,
+      name: config.name,
+      command: config.command,
+      args: [...config.args],
+      env: { ...config.env },
+      processPolicy: config.processPolicy,
+      defaults: { ...config.defaults },
+    });
+    await this.adoption.adopt(config.id);
+    this.workspaceAgentSpecs.set(config.id, {
+      agentId: config.id,
+      name: config.name,
+      command: config.command,
+      args: [...config.args],
+      env: { ...config.env },
+      cwd: this.workspaceRoot ?? process.cwd(),
+      processPolicy: config.processPolicy,
+      defaults: config.defaults,
+    });
+    this.agentNames.set(config.id, config.name);
+    await this.refreshAgentConfigs();
+  }
+
+  private async removeAgentConfig(agentId: string): Promise<void> {
+    await this.configFile.removeAgent(agentId);
+    this.workspaceAgentSpecs.delete(agentId);
+    await this.refreshAgentConfigs();
+  }
+
+  private async refreshAgentConfigs(): Promise<void> {
+    const result = await this.configFile.read();
+    const configs: AgentConfigView[] = result.ok
+      ? result.config.agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          command: a.command,
+          args: a.args,
+          env: a.env,
+          processPolicy: a.processPolicy,
+          defaults: a.defaults,
+        }))
+      : [];
+    this.settings.emit({ kind: "agentConfigsChanged", configs });
   }
 
   /** Connect an agent from config or roster; upserts it into both channel states. */
@@ -783,7 +854,69 @@ export class Orchestrator {
       case "openAssetFile":
         this.openAssetFile(action.path);
         break;
+      case "addOrUpdateAgentConfig":
+        void this.addOrUpdateAgentConfig(action.config);
+        break;
+      case "removeAgentConfig":
+        void this.removeAgentConfig(action.agentId);
+        break;
+      case "addContextRoot":
+        void this.addContextRoot(action.sessionId);
+        break;
+      case "removeContextRoot":
+        this.sessionManager.removeRoot(action.sessionId, action.path);
+        break;
+      case "addImageContext":
+        this.sessionManager.addContext(action.sessionId, {
+          id: `chip-${Date.now()}`,
+          kind: "image",
+          label: action.label,
+          content: action.dataUrl,
+          mimeType: action.mimeType,
+        });
+        break;
+      case "addFilePickerContext":
+        void this.addFilePickerContext(action.sessionId);
+        break;
     }
+  }
+
+  /** "Add workspace folders as session context roots" (features.md § Chat) —
+   * a native folder picker, since only the extension host can browse the
+   * real filesystem; the result is just another context-root path,
+   * patchbay never indexes what's inside it. */
+  private async addContextRoot(sessionId: string): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      openLabel: "Add as context root",
+    });
+    const uri = picked?.[0];
+    if (uri === undefined) return;
+    this.sessionManager.addRoot(sessionId, uri.fsPath);
+  }
+
+  /** "Attach files by... picker" (features.md § Chat) — reuses the same
+   * context-chip mechanism the composer's "current file" adder already
+   * uses, just for an arbitrary file the user picks rather than the active
+   * editor. */
+  private async addFilePickerContext(sessionId: string): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: false,
+      canSelectFiles: true,
+      canSelectMany: false,
+      openLabel: "Attach to context",
+    });
+    const uri = picked?.[0];
+    if (uri === undefined) return;
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    this.sessionManager.addContext(sessionId, {
+      id: `chip-${Date.now()}`,
+      kind: "file",
+      label: `File: ${uri.fsPath}`,
+      content: Buffer.from(bytes).toString("utf8"),
+    });
   }
 
   /** "Explicit share command that copies config and reattaches credentials
@@ -829,6 +962,8 @@ export class Orchestrator {
     if ("rosterId" in source) {
       const entry = this.roster.find((a) => a.id === source.rosterId);
       if (entry) spec = this.launchSpecForRosterAgent(entry);
+    } else if ("configuredId" in source) {
+      spec = this.workspaceAgentSpecs.get(source.configuredId) ?? null;
     } else {
       const parsed = parseCommandLine(source.command);
       if (parsed) {

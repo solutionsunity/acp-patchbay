@@ -108,6 +108,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         session={active}
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
+        contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         modes={active !== null ? (state.sessionModes[active.id] ?? null) : null}
         configOptions={active !== null ? (state.sessionConfigOptions[active.id] ?? []) : []}
         onSetMode={(modeId) =>
@@ -122,6 +123,20 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         onAddFile={() => channel.sendAction({ kind: "addFileContext", sessionId: active!.id })}
         onAddDiagnostics={() =>
           channel.sendAction({ kind: "addDiagnosticsContext", sessionId: active!.id })
+        }
+        onAddFilePicker={() => channel.sendAction({ kind: "addFilePickerContext", sessionId: active!.id })}
+        onAddImage={(dataUrl, mimeType) =>
+          channel.sendAction({
+            kind: "addImageContext",
+            sessionId: active!.id,
+            dataUrl,
+            mimeType,
+            label: `Image (${mimeType})`,
+          })
+        }
+        onAddRoot={() => channel.sendAction({ kind: "addContextRoot", sessionId: active!.id })}
+        onRemoveRoot={(path) =>
+          channel.sendAction({ kind: "removeContextRoot", sessionId: active!.id, path })
         }
         onRemoveChip={(chipId) =>
           channel.sendAction({ kind: "removeContextChip", sessionId: active!.id, chipId })
@@ -138,6 +153,10 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
           onRestart={(agentId) => {
             channel.sendAction({ kind: "restartAgent", agentId });
             showToast("restarting…");
+          }}
+          onStop={(agentId) => {
+            channel.sendAction({ kind: "stopAgent", agentId });
+            showToast("stopped");
           }}
         />
       )}
@@ -797,11 +816,56 @@ function Knobs(props: {
   );
 }
 
+/** ⧉ n — external context roots (features.md § Chat): workspace folders are
+ * always active and need no chip; this is the removable, user-added set,
+ * passed to the agent as `additionalDirectories` on the next
+ * create/reload/fork (ACP has no live-update request, so a note says so). */
+function RootsChip(props: {
+  roots: readonly string[];
+  onAdd(): void;
+  onRemove(path: string): void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span class="ctx-chip" style="position:relative" onClick={() => setOpen((v) => !v)}>
+      ⧉ {props.roots.length} root{props.roots.length === 1 ? "" : "s"}
+      {open && (
+        <div class="pop" style="bottom:28px;left:0" onClick={(e) => e.stopPropagation()}>
+          {props.roots.length === 0 && (
+            <div class="it" style="cursor:default">
+              <span class="d">no external roots added</span>
+            </div>
+          )}
+          {props.roots.map((r) => (
+            <div class="it" key={r}>
+              <code>{r}</code>
+              <span class="d" onClick={() => props.onRemove(r)}>
+                remove
+              </span>
+            </div>
+          ))}
+          <div
+            class="it"
+            onClick={() => {
+              props.onAdd();
+              setOpen(false);
+            }}
+          >
+            <b>+ Add folder…</b>
+            <span class="d">takes effect next reload/branch</span>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function Composer(props: {
   agent: AgentSummary | null;
   session: SessionSummary | null;
   commands: readonly AvailableCommand[];
   contextChips: readonly ContextChip[];
+  contextRoots: readonly string[];
   modes: SessionModesView | null;
   configOptions: readonly SessionConfigOptionView[];
   onSetMode(modeId: string): void;
@@ -811,6 +875,10 @@ function Composer(props: {
   onAddSelection(): void;
   onAddFile(): void;
   onAddDiagnostics(): void;
+  onAddFilePicker(): void;
+  onAddImage(dataUrl: string, mimeType: string): void;
+  onAddRoot(): void;
+  onRemoveRoot(path: string): void;
   onRemoveChip(chipId: string): void;
 }) {
   const [draft, setDraft] = useState("");
@@ -818,6 +886,25 @@ function Composer(props: {
   const enabled = props.session !== null && props.agent?.status === "running";
   const live = props.session?.live ?? false;
   const showSlash = draft.startsWith("/") && !draft.includes(" ");
+
+  const handlePaste = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result); // "data:image/png;base64,...."
+        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        props.onAddImage(base64, item.type);
+      };
+      reader.readAsDataURL(file);
+      return; // one image per paste — never disabled, never ambiguous
+    }
+  };
 
   const submit = () => {
     if (live) {
@@ -832,11 +919,15 @@ function Composer(props: {
 
   return (
     <div class="composer">
-      {(props.contextChips.length > 0 || enabled) && (
+      {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
         <div class="ctx-row">
+          {enabled && (
+            <RootsChip roots={props.contextRoots} onAdd={props.onAddRoot} onRemove={props.onRemoveRoot} />
+          )}
           {props.contextChips.map((c) => (
-            <span class="ctx-chip" key={c.id} title={c.content.slice(0, 300)}>
-              {c.kind === "selection" ? "⌖" : c.kind === "file" ? "📄" : "⚠"} {c.label}
+            <span class="ctx-chip" key={c.id} title={c.kind === "image" ? c.label : c.content.slice(0, 300)}>
+              {c.kind === "selection" ? "⌖" : c.kind === "file" ? "📄" : c.kind === "image" ? "🖼" : "⚠"}{" "}
+              {c.label}
               <span class="x" onClick={() => props.onRemoveChip(c.id)}>
                 ×
               </span>
@@ -848,7 +939,7 @@ function Composer(props: {
             </span>
           )}
           {adderOpen && (
-            <div class="pop" style="top:28px;left:0">
+            <div class="pop" style="bottom:28px;left:0">
               <div
                 class="it"
                 onClick={() => {
@@ -879,6 +970,16 @@ function Composer(props: {
                 <b>⚠ Problems</b>
                 <span class="d">workspace diagnostics</span>
               </div>
+              <div
+                class="it"
+                onClick={() => {
+                  props.onAddFilePicker();
+                  setAdderOpen(false);
+                }}
+              >
+                <b>📎 Attach file…</b>
+                <span class="d">pick any file</span>
+              </div>
             </div>
           )}
         </div>
@@ -895,6 +996,7 @@ function Composer(props: {
           rows={1}
           disabled={!enabled}
           value={draft}
+          onPaste={handlePaste}
           onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -937,6 +1039,7 @@ function AgentsDrawer(props: {
   onConnect(source: ConnectAgentSource): void;
   onStartSession(agentId: string): void;
   onRestart(agentId: string): void;
+  onStop(agentId: string): void;
 }) {
   const [connecting, setConnecting] = useState(false);
   const [rosterId, setRosterId] = useState("");
@@ -968,9 +1071,14 @@ function AgentsDrawer(props: {
               <span class={`fid ${FIDELITY_CLASS[fidelity]}`}>{FIDELITY_TEXT[fidelity]}</span>
             )}
             {a.status === "running" && (
-              <button class="btn row-btn primary" onClick={() => props.onStartSession(a.id)}>
-                Start session
-              </button>
+              <>
+                <button class="btn row-btn primary" onClick={() => props.onStartSession(a.id)}>
+                  Start session
+                </button>
+                <button class="btn row-btn" onClick={() => props.onStop(a.id)}>
+                  Stop
+                </button>
+              </>
             )}
             {a.status === "crashed" && (
               <button class="btn row-btn primary" onClick={() => props.onRestart(a.id)}>
