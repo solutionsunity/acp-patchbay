@@ -48,6 +48,8 @@ export interface FakeAgentScript {
   concurrent?: "ok" | "fail";
   /** Modes offered at session/new (P8 knobs). */
   modes?: acp.SessionModeState | null;
+  /** model/effort/etc. config options offered at session/new (P8 knobs). */
+  configOptions?: acp.SessionConfigOption[] | null;
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -65,6 +67,7 @@ interface FakeSession {
   cwd: string;
   pending: AbortController | null;
   mode: string | null;
+  configOptions: acp.SessionConfigOption[] | null;
   mcpServers: acp.McpServer[];
 }
 
@@ -379,16 +382,22 @@ const app = acp
     if (script.concurrent === "fail" && sessions.size > 0) {
       throw acp.RequestError.invalidRequest("concurrent sessions unsupported");
     }
-    const id = `fake-${++sessionCounter}`;
+    // pid-qualified: a restarted process's own counter restarts at 1 too,
+    // and a *reused* id would silently merge an emulated continuation's
+    // transcript into its dead parent's (P8) — real agents hand out
+    // collision-resistant ids (uuids); this fixture must too.
+    const id = `fake-${process.pid}-${++sessionCounter}`;
     sessions.set(id, {
       id,
       cwd: ctx.params.cwd,
       pending: null,
       mode: script.modes?.currentModeId ?? null,
+      configOptions: script.configOptions ? structuredClone(script.configOptions) : null,
       mcpServers: ctx.params.mcpServers,
     });
     const response: acp.NewSessionResponse = { sessionId: id };
     if (script.modes) response.modes = script.modes;
+    if (script.configOptions) response.configOptions = sessions.get(id)!.configOptions;
     return response;
   })
   .onRequest("session/load", async (ctx): Promise<acp.LoadSessionResponse> => {
@@ -401,6 +410,7 @@ const app = acp
       cwd,
       pending: null,
       mode: script.modes?.currentModeId ?? null,
+      configOptions: script.configOptions ? structuredClone(script.configOptions) : null,
       mcpServers: ctx.params.mcpServers,
     });
     for (const update of readRecordedUpdates(cwd, sessionId)) {
@@ -408,6 +418,7 @@ const app = acp
     }
     const response: acp.LoadSessionResponse = {};
     if (script.modes) response.modes = script.modes;
+    if (script.configOptions) response.configOptions = sessions.get(sessionId)!.configOptions;
     return response;
   })
   .onRequest("session/prompt", async (ctx): Promise<acp.PromptResponse> => {
@@ -439,6 +450,18 @@ const app = acp
     });
     return {};
   })
+  .onRequest("session/set_config_option", async (ctx): Promise<acp.SetSessionConfigOptionResponse> => {
+    const session = sessions.get(ctx.params.sessionId);
+    if (!session) throw acp.RequestError.invalidRequest("unknown session");
+    const option = session.configOptions?.find((o) => o.id === ctx.params.configId);
+    if (!option) throw acp.RequestError.invalidRequest(`unknown config option ${ctx.params.configId}`);
+    option.currentValue = ctx.params.value as never;
+    await ctx.client.notify(acp.methods.client.session.update, {
+      sessionId: session.id,
+      update: { sessionUpdate: "config_option_update", configOptions: session.configOptions! },
+    });
+    return { configOptions: session.configOptions! };
+  })
   .onRequest("session/fork", (ctx): acp.ForkSessionResponse => {
     if (script.lies?.forkBroken || script.declare?.sessionCapabilities?.fork == null) {
       throw acp.RequestError.methodNotFound("session/fork");
@@ -451,9 +474,13 @@ const app = acp
       cwd: parent.cwd,
       pending: null,
       mode: parent.mode,
+      configOptions: parent.configOptions ? structuredClone(parent.configOptions) : null,
       mcpServers: parent.mcpServers,
     });
-    return { sessionId: id };
+    const response: acp.ForkSessionResponse = { sessionId: id };
+    if (script.modes) response.modes = { ...script.modes, currentModeId: parent.mode ?? script.modes.currentModeId };
+    if (parent.configOptions) response.configOptions = parent.configOptions;
+    return response;
   })
   .onNotification("session/cancel", (ctx) => {
     sessions.get(ctx.params.sessionId)?.pending?.abort();

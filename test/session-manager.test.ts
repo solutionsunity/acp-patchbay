@@ -42,8 +42,12 @@ function spec(script: FakeAgentScript, agentId = "fake"): LaunchSpec {
   };
 }
 
-/** Wires a pool + session manager the way Orchestrator does, minus vscode. */
-function harness(): {
+/** Wires a pool + session manager the way Orchestrator does, minus vscode.
+ * `lastKnownView`, when supplied, stands in for the persisted-to-disk store
+ * a real Orchestrator would read from (P8's emulated dead-end fallback). */
+function harness(opts?: {
+  lastKnownView?(sessionId: string): { at: string; blocks: readonly ChatBlock[] } | null;
+}): {
   pool: AgentPool;
   sessionManager: SessionManager;
   events: AgentViewEvent[];
@@ -58,6 +62,11 @@ function harness(): {
         sessionManager.invalidateAgent(agentId);
       }
     },
+    onIsolatedStatusChanged: (poolKey, _agentId, status) => {
+      if (status === "crashed" || status === "reconnecting") {
+        sessionManager.invalidatePoolKey(poolKey);
+      }
+    },
     onDeclaredCaptured: (agentId, declared) => capabilityVerifier.onDeclared(agentId, declared),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onConcurrentSessionsVerified: (agentId) =>
@@ -69,7 +78,10 @@ function harness(): {
   sessionManager = new SessionManager(
     pool,
     sessionIndex,
-    { emit: (...evs) => events.push(...evs) },
+    {
+      emit: (...evs) => events.push(...evs),
+      lastKnownView: async (sessionId) => opts?.lastKnownView?.(sessionId) ?? null,
+    },
     () => cwd,
   );
   return {
@@ -220,26 +232,39 @@ describe("SessionManager", () => {
     await h.pool.stop("sm5");
   });
 
-  it("without loadSession declared, a crash leaves the last-known view standing but refuses to reuse the dead sessionId", async () => {
+  it("without loadSession declared, a crash falls back to an emulated continuation seeded from the last-known view (P8)", async () => {
     // A sessionId is connection-scoped; without replay there is no
-    // protocol-legal way to resume it on the new connection. Seeding a
-    // fresh, labeled continuation from the last-known view is P8 (session
-    // graph, emulated branching) — out of scope for the P4 vertical slice.
-    const h = harness();
+    // protocol-legal way to resume it on the new connection. The only
+    // continuation left is emulated: a fresh session/new, its transcript
+    // seeded from patchbay's persisted last-known view, clearly labeled —
+    // never presented as the agent's own memory (architecture.md § State).
+    let persisted: readonly ChatBlock[] | null = null;
+    const h = harness({
+      lastKnownView: (sessionId) =>
+        persisted && sessionId === deadSessionId ? { at: "2026-01-01T00:00:00.000Z", blocks: persisted } : null,
+    });
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "only turn" }] }, "sm6"));
-    const sessionId = await h.sessionManager.createSession("sm6", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(sessionId, "hello");
-    const before = h.state().transcripts[sessionId]!;
+    const deadSessionId = await h.sessionManager.createSession("sm6", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(deadSessionId, "hello");
+    const before = h.state().transcripts[deadSessionId]!;
     expect(before.length).toBeGreaterThan(0);
+    persisted = before; // what a real orchestrator would have written to disk by now
 
     await h.pool.restart("sm6");
     expect(h.pool.get("sm6")?.declared?.loadSession).toBe(false);
 
-    await expect(h.sessionManager.sendPrompt(sessionId, "after restart")).rejects.toThrow(
-      /does not support session\/load/,
-    );
-    // the last-known view is untouched by the failed reopen attempt
-    expect(h.state().transcripts[sessionId]).toEqual(before);
+    await h.sessionManager.sendPrompt(deadSessionId, "after restart");
+
+    // the dead session's last-known view is untouched
+    expect(h.state().transcripts[deadSessionId]).toEqual(before);
+    // a new, labeled continuation exists, branched from the dead session and
+    // seeded from its persisted view
+    const branch = h.state().sessions.find((s) => s.branchOf === deadSessionId);
+    expect(branch?.emulated).toBe(true);
+    expect(h.state().activeSessionId).toBe(branch!.id);
+    const continued = h.state().transcripts[branch!.id]!;
+    expect(continued.slice(0, before.length)).toEqual(before);
+    expect(continued.some((b) => b.kind === "user" && b.text === "after restart")).toBe(true);
 
     await h.pool.stop("sm6");
   });

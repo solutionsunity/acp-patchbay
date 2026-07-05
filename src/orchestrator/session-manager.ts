@@ -6,12 +6,27 @@
 import type {
   ContentBlock,
   McpServer,
+  SessionConfigOption,
+  SessionModeState,
   SessionNotification,
-  SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import type { AgentViewEvent, ContextChip, PlanEntry, SessionSummary } from "../shared/protocol";
+import type {
+  AgentViewEvent,
+  ChatBlock,
+  ContextChip,
+  PlanEntry,
+  SessionConfigOptionView,
+  SessionModesView,
+  SessionSummary,
+} from "../shared/protocol";
 import type { AgentPool } from "./pool";
 import type { SessionIndexStore } from "./stores/session-index";
+
+export interface AgentDefaults {
+  model?: string;
+  mode?: string;
+  effort?: string;
+}
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -20,6 +35,21 @@ export interface SessionManagerHooks {
    * built — session/new hasn't returned). Lets the orchestrator's IPC host
    * translate that token back to the real session once it's known. */
   mapContextToken?(token: string, sessionId: string): void;
+  /** Process-policy decision for a *new top-level* session (architecture.md
+   * § process model): returns the poolKey to create it on — the agentId
+   * itself when sharing, or a fresh isolated poolKey (having already
+   * connected a dedicated subprocess for it) when isolating. Absent → always
+   * share (pre-P8 behavior — fine for tests that don't exercise policy). */
+  resolveProcessFor?(agentId: string): Promise<string>;
+  /** Whether `session.fork` is declared *and verified* for this agent — the
+   * one signal that decides native fork vs. emulated seeding (P8). */
+  isForkVerified?(agentId: string): boolean;
+  /** Per-agent knob defaults from workspace config, applied once, post-create. */
+  defaultsFor?(agentId: string): AgentDefaults | undefined;
+  /** The persisted last-known view (architecture.md § State) — the only
+   * continuation available for a dead session whose agent never declared
+   * `session/load`. */
+  lastKnownView?(sessionId: string): Promise<{ at: string; blocks: readonly ChatBlock[] } | null>;
 }
 
 let blockCounter = 0;
@@ -35,12 +65,47 @@ function deriveTitle(promptText: string): string {
 
 interface LiveSession {
   agentId: string;
+  /** Which pool connection this session's requests ride — the agentId
+   * itself when sharing, a synthetic instance id when process-policy
+   * isolated it (P8). Forks always inherit their parent's poolKey. */
+  poolKey: string;
   /** True once auto-derived from the first prompt, or explicitly renamed —
    * either way, later auto-titling must not clobber it again. */
   titled: boolean;
   activeTextBlockId: string | null;
   activeThoughtBlockId: string | null;
   pendingContext: ContextChip[];
+}
+
+function toSelectValue(o: { value: string; name: string; description?: string | null }) {
+  return { value: o.value, name: o.name, description: o.description ?? undefined };
+}
+
+function toConfigOptionView(opt: SessionConfigOption): SessionConfigOptionView {
+  const base = {
+    id: opt.id,
+    name: opt.name,
+    description: opt.description ?? undefined,
+    category: opt.category ?? undefined,
+  };
+  if (opt.type === "boolean") return { ...base, type: "boolean", currentValue: opt.currentValue };
+  const options = opt.options.map((o) =>
+    "group" in o
+      ? { group: o.group, name: o.name, options: o.options.map(toSelectValue) }
+      : toSelectValue(o),
+  );
+  return { ...base, type: "select", currentValue: opt.currentValue, options } as SessionConfigOptionView;
+}
+
+function toModesView(modes: SessionModeState): SessionModesView {
+  return {
+    currentModeId: modes.currentModeId,
+    available: modes.availableModes.map((m) => ({
+      id: m.id,
+      name: m.name,
+      description: m.description ?? undefined,
+    })),
+  };
 }
 
 export class SessionManager {
@@ -68,11 +133,17 @@ export class SessionManager {
     agentName: string,
     cwd: string,
   ): Promise<string> {
+    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const { sessionId } = await this.pool.newSession(agentId, cwd, this.mcpServersFor(contextToken));
+    const { sessionId, modes, configOptions } = await this.pool.newSession(
+      poolKey,
+      cwd,
+      this.mcpServersFor(contextToken),
+    );
     this.hooks.mapContextToken?.(contextToken, sessionId);
     this.sessions.set(sessionId, {
       agentId,
+      poolKey,
       titled: false,
       activeTextBlockId: null,
       activeThoughtBlockId: null,
@@ -90,6 +161,8 @@ export class SessionManager {
       branchOf: null,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
+    this.emitModeAndConfig(sessionId, modes, configOptions);
+    await this.applyDefaults(agentId, sessionId, modes, configOptions);
     return sessionId;
   }
 
@@ -105,9 +178,17 @@ export class SessionManager {
   }
 
   async close(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     await this.sessionIndex.remove(sessionId);
     this.hooks.emit({ kind: "sessionClosed", sessionId });
+    if (session === undefined || session.poolKey === session.agentId) return;
+    // An isolated instance's dedicated subprocess is only worth keeping
+    // alive while it still hosts a session (its own, or a fork of it).
+    this.pool.forgetSession(session.poolKey, sessionId);
+    if ((this.pool.get(session.poolKey)?.sessions.length ?? 0) === 0) {
+      await this.pool.stop(session.poolKey);
+    }
   }
 
   /** Drops bookkeeping for sessions whose connection just died — a stale
@@ -120,13 +201,32 @@ export class SessionManager {
     }
   }
 
+  /** Same as `invalidateAgent`, scoped to one process-policy isolated
+   * instance (P8) — its subprocess dying must not touch any other session
+   * of the same agent living elsewhere. */
+  invalidatePoolKey(poolKey: string): void {
+    for (const [sessionId, session] of this.sessions) {
+      if (session.poolKey !== poolKey) continue;
+      this.sessions.delete(sessionId);
+      this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
+    }
+  }
+
+  /** One-click reload (P8): re-`load` replay on demand, even when the
+   * session isn't currently invalidated — distinct from the automatic
+   * reopen-on-crash path, which only fires when a session isn't live. */
+  async reload(sessionId: string): Promise<void> {
+    this.sessions.delete(sessionId);
+    const agentId = this.sessionIndex.get(sessionId)?.agentId;
+    if (agentId === undefined) return;
+    await this.reopen(sessionId, agentId);
+  }
+
   /** Re-attaches a session after its connection died, via `session/load`
    * replay — the render cache is discarded and rebuilt wholesale, never
    * merged with what patchbay had. A sessionId is connection-scoped: without
    * replay there is no protocol-legal way to resume it on the new
-   * connection. The render cache still stands as a last-known view for
-   * display; seeding a fresh, labeled continuation from it is P8 (session
-   * graph, emulated branching) — out of scope here. */
+   * connection. */
   private async reopen(sessionId: string, agentId: string): Promise<void> {
     if (this.sessions.has(sessionId)) return;
     const declared = this.pool.get(agentId)?.declared;
@@ -135,55 +235,192 @@ export class SessionManager {
         `session ${sessionId} is no longer live and ${agentId} does not support session/load`,
       );
     }
+    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     this.sessions.set(sessionId, {
       agentId,
+      poolKey,
       titled: true, // reopened sessions keep whatever title they already have
       activeTextBlockId: null,
       activeThoughtBlockId: null,
       pendingContext: [],
     });
     this.hooks.emit({ kind: "transcriptReset", sessionId });
-    await this.pool.loadSession(agentId, sessionId, this.cwd());
+    const { modes, configOptions } = await this.pool.loadSession(poolKey, sessionId, this.cwd());
     this.hooks.emit({ kind: "capabilityVerified", agentId, row: "session.load" });
+    this.emitModeAndConfig(sessionId, modes, configOptions);
   }
 
-  async sendPrompt(sessionId: string, text: string): Promise<void> {
+  /** Reopens where possible; otherwise the only continuation left for an
+   * agent without `session/load` is an emulated one, seeded from the
+   * persisted last-known view (architecture.md § State) — a genuinely fresh
+   * session, clearly labeled, never presented as the agent's own memory.
+   * Returns the sessionId that's actually live and ready for a prompt: the
+   * same id on success, a new one when it had to emulate. */
+  private async reopenOrEmulate(sessionId: string, agentId: string): Promise<string> {
+    if (this.sessions.has(sessionId)) return sessionId;
+    if (this.pool.get(agentId)?.declared?.loadSession) {
+      await this.reopen(sessionId, agentId);
+      return sessionId;
+    }
+    const view = await this.hooks.lastKnownView?.(sessionId);
+    return this.createEmulatedContinuation(sessionId, agentId, view?.blocks ?? []);
+  }
+
+  /** Shared by the dead-end auto-continuation above and by `branch`'s
+   * emulated path: a fresh top-level session (its own process-policy
+   * decision — an emulated branch is not a real fork, so nothing pins it to
+   * the parent's process), with its transcript seeded wholesale from
+   * `seedBlocks` and labeled `emulated`. */
+  private async createEmulatedContinuation(
+    parentSessionId: string,
+    agentId: string,
+    seedBlocks: readonly ChatBlock[],
+  ): Promise<string> {
+    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
+    const contextToken = `ctx-${++this.contextTokenCounter}`;
+    const { sessionId, modes, configOptions } = await this.pool.newSession(
+      poolKey,
+      this.cwd(),
+      this.mcpServersFor(contextToken),
+    );
+    this.hooks.mapContextToken?.(contextToken, sessionId);
+    this.sessions.set(sessionId, {
+      agentId,
+      poolKey,
+      titled: true,
+      activeTextBlockId: null,
+      activeThoughtBlockId: null,
+      pendingContext: [],
+    });
+    const now = new Date().toISOString();
+    const parentTitle = this.sessionIndex.get(parentSessionId)?.title ?? "session";
+    const title = `Branch of ${parentTitle}`;
+    await this.sessionIndex.upsert({ id: sessionId, agentId, title, createdAt: now, updatedAt: now });
+    const summary: SessionSummary = {
+      id: sessionId,
+      agentId,
+      title,
+      live: false,
+      emulated: true,
+      branchOf: parentSessionId,
+    };
+    this.hooks.emit({ kind: "sessionCreated", session: summary });
+    if (seedBlocks.length > 0) {
+      this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: seedBlocks });
+    }
+    this.emitModeAndConfig(sessionId, modes, configOptions);
+    await this.applyDefaults(agentId, sessionId, modes, configOptions);
+    return sessionId;
+  }
+
+  /** Branch (P8): native `session/fork` when the agent's `session.fork`
+   * capability is declared *and verified*, else an emulated continuation
+   * seeded from the parent's current transcript — either way, a node in the
+   * session graph (`branchOf`); the UI never has to know which mechanism
+   * produced it (architecture.md § Branching). */
+  async branch(sessionId: string, parentTranscript: readonly ChatBlock[]): Promise<string> {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
+
+    if (!(this.hooks.isForkVerified?.(agentId) ?? false)) {
+      return this.createEmulatedContinuation(sessionId, agentId, parentTranscript);
+    }
+
+    // Native fork must address the connection holding the parent's live
+    // context — reopen first (throws, rather than silently downgrading to
+    // emulated, if a *verified* capability turns out not to hold up).
     await this.reopen(sessionId, agentId);
-    const session = this.sessions.get(sessionId)!;
-    session.activeTextBlockId = null;
-    session.activeThoughtBlockId = null;
+    const poolKey = this.sessions.get(sessionId)!.poolKey;
+    const contextToken = `ctx-${++this.contextTokenCounter}`;
+    const response = await this.pool.fork(poolKey, sessionId, this.cwd(), this.mcpServersFor(contextToken));
+    this.hooks.mapContextToken?.(contextToken, response.sessionId);
+    this.sessions.set(response.sessionId, {
+      agentId,
+      poolKey,
+      titled: true,
+      activeTextBlockId: null,
+      activeThoughtBlockId: null,
+      pendingContext: [],
+    });
+    const now = new Date().toISOString();
+    const parentTitle = this.sessionIndex.get(sessionId)?.title ?? "session";
+    const title = `Branch of ${parentTitle}`;
+    await this.sessionIndex.upsert({
+      id: response.sessionId,
+      agentId,
+      title,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const summary: SessionSummary = {
+      id: response.sessionId,
+      agentId,
+      title,
+      live: false,
+      emulated: false,
+      branchOf: sessionId,
+    };
+    this.hooks.emit({ kind: "sessionCreated", session: summary });
+    // Native fork: the agent itself decides how much history to replay as
+    // session/update notifications, if any — nothing else to seed here.
+    this.emitModeAndConfig(response.sessionId, response.modes, response.configOptions);
+    return response.sessionId;
+  }
 
-    const events: AgentViewEvent[] = [];
-    if (!session.titled) {
-      session.titled = true;
-      const title = deriveTitle(text);
-      await this.sessionIndex.rename(sessionId, title);
-      events.push({ kind: "sessionRenamed", sessionId, title });
-    }
-    events.push(
-      { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), text },
-      { kind: "sessionLiveChanged", sessionId, live: true },
-    );
-    // Attached context rides in as its own labeled blocks, ahead of the
-    // user's words — distinguishable to the agent, not merged into prose
-    // (features.md § Chat: "explicitly add editor state to the prompt").
-    const chips = session.pendingContext;
-    session.pendingContext = [];
-    for (const chip of chips) {
-      events.push({ kind: "contextChipRemoved", sessionId, chipId: chip.id });
-    }
-    this.hooks.emit(...events);
+  async setMode(sessionId: string, modeId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    // Display updates only from the agent's own current_mode_update
+    // notification (architecture.md) — the response here is deliberately unused.
+    await this.pool.setSessionMode(session.poolKey, sessionId, modeId);
+  }
 
-    const prompt: ContentBlock[] = [
-      ...chips.map((c): ContentBlock => ({ type: "text", text: `[${c.label}]\n${c.content}` })),
-      { type: "text", text },
-    ];
-    try {
-      await this.pool.prompt(session.agentId, sessionId, prompt);
-    } finally {
-      this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
+  async setConfigOption(sessionId: string, configId: string, value: string | boolean): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    await this.pool.setSessionConfigOption(session.poolKey, sessionId, configId, value);
+  }
+
+  private emitModeAndConfig(
+    sessionId: string,
+    modes: SessionModeState | null | undefined,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): void {
+    if (modes) this.hooks.emit({ kind: "sessionModesSet", sessionId, modes: toModesView(modes) });
+    if (configOptions && configOptions.length > 0) {
+      this.hooks.emit({
+        kind: "sessionConfigOptionsChanged",
+        sessionId,
+        options: configOptions.map(toConfigOptionView),
+      });
+    }
+  }
+
+  /** Per-agent defaults (architecture.md § Session model, mode, effort):
+   * applied once, post-create, by issuing the corresponding set requests —
+   * never on reopen/reload/fork, which must show the agent's own resumed
+   * state rather than re-forcing a default over it. Absent options: nothing
+   * to default, silently skipped (patchbay never invents a knob). */
+  private async applyDefaults(
+    agentId: string,
+    sessionId: string,
+    modes: SessionModeState | null | undefined,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): Promise<void> {
+    const defaults = this.hooks.defaultsFor?.(agentId);
+    if (!defaults) return;
+    const poolKey = this.sessions.get(sessionId)!.poolKey;
+    if (defaults.mode && modes?.availableModes.some((m) => m.id === defaults.mode)) {
+      await this.pool.setSessionMode(poolKey, sessionId, defaults.mode).catch(() => {});
+    }
+    const byCategory = (category: string) => configOptions?.find((o) => o.category === category);
+    if (defaults.model !== undefined) {
+      const option = byCategory("model");
+      if (option) await this.pool.setSessionConfigOption(poolKey, sessionId, option.id, defaults.model).catch(() => {});
+    }
+    if (defaults.effort !== undefined) {
+      const option = byCategory("thought_level");
+      if (option) await this.pool.setSessionConfigOption(poolKey, sessionId, option.id, defaults.effort).catch(() => {});
     }
   }
 
@@ -201,10 +438,51 @@ export class SessionManager {
     this.hooks.emit({ kind: "contextChipRemoved", sessionId, chipId });
   }
 
+  async sendPrompt(sessionId: string, text: string): Promise<void> {
+    const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
+    if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
+    const targetId = await this.reopenOrEmulate(sessionId, agentId);
+    if (targetId !== sessionId) this.hooks.emit({ kind: "sessionActivated", sessionId: targetId });
+    const session = this.sessions.get(targetId)!;
+    session.activeTextBlockId = null;
+    session.activeThoughtBlockId = null;
+
+    const events: AgentViewEvent[] = [];
+    if (!session.titled) {
+      session.titled = true;
+      const title = deriveTitle(text);
+      await this.sessionIndex.rename(targetId, title);
+      events.push({ kind: "sessionRenamed", sessionId: targetId, title });
+    }
+    events.push(
+      { kind: "userMessageAppended", sessionId: targetId, blockId: newBlockId("user"), text },
+      { kind: "sessionLiveChanged", sessionId: targetId, live: true },
+    );
+    // Attached context rides in as its own labeled blocks, ahead of the
+    // user's words — distinguishable to the agent, not merged into prose
+    // (features.md § Chat: "explicitly add editor state to the prompt").
+    const chips = session.pendingContext;
+    session.pendingContext = [];
+    for (const chip of chips) {
+      events.push({ kind: "contextChipRemoved", sessionId: targetId, chipId: chip.id });
+    }
+    this.hooks.emit(...events);
+
+    const prompt: ContentBlock[] = [
+      ...chips.map((c): ContentBlock => ({ type: "text", text: `[${c.label}]\n${c.content}` })),
+      { type: "text", text },
+    ];
+    try {
+      await this.pool.prompt(session.poolKey, targetId, prompt);
+    } finally {
+      this.hooks.emit({ kind: "sessionLiveChanged", sessionId: targetId, live: false });
+    }
+  }
+
   async stopTurn(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    await this.pool.cancel(session.agentId, sessionId);
+    await this.pool.cancel(session.poolKey, sessionId);
   }
 
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
@@ -272,6 +550,16 @@ export class SessionManager {
             name: c.name,
             description: c.description,
           })),
+        });
+        break;
+      case "current_mode_update":
+        this.hooks.emit({ kind: "sessionModeChanged", sessionId, modeId: update.currentModeId });
+        break;
+      case "config_option_update":
+        this.hooks.emit({
+          kind: "sessionConfigOptionsChanged",
+          sessionId,
+          options: update.configOptions.map(toConfigOptionView),
         });
         break;
       case "usage_update":

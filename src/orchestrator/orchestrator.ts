@@ -27,6 +27,7 @@ import { SessionManager } from "./session-manager";
 import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
 import { ConfigFileStore, CONFIG_RELATIVE_PATH, type AgentConfig } from "./stores/config-file";
 import { DecisionAuditStore } from "./stores/decision-audit";
+import { LastKnownViewStore } from "./stores/last-known-view";
 import { PermissionRulesStore } from "./stores/permission-rules";
 import { loadRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
@@ -48,6 +49,7 @@ export class Orchestrator {
 
   readonly sessionIndex: SessionIndexStore;
   readonly decisionAudit: DecisionAuditStore;
+  readonly lastKnownView: LastKnownViewStore;
   readonly configFile: ConfigFileStore;
   readonly permissionRules: PermissionRulesStore;
   readonly adoption: WorkspaceAgentAdoptionStore;
@@ -70,6 +72,7 @@ export class Orchestrator {
     { sessionId: string; resolve(values: Record<string, unknown> | null): void }
   >();
   private elicitationCounter = 0;
+  private isolationCounter = 0;
   /** Set by the webview host as the Agent View mounts/unmounts (P11 wires
    * the real visibility signal); defaults to "visible" so native
    * notifications don't fire spuriously before that's connected. */
@@ -84,6 +87,7 @@ export class Orchestrator {
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
     this.adoption = new WorkspaceAgentAdoptionStore(context.workspaceState);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
+    this.lastKnownView = new LastKnownViewStore(context.storageUri?.fsPath ?? null);
     this.configFile = new ConfigFileStore(
       workspaceRoot === null
         ? null
@@ -133,6 +137,14 @@ export class Orchestrator {
         // rode it — they must reopen (possibly via session/load) before reuse.
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidateAgent(agentId);
+        }
+      },
+      onIsolatedStatusChanged: (poolKey, _agentId, status) => {
+        // Not surfaced in the Agents list (P8: isolated instances are an
+        // implementation detail) — only the sessions riding this specific
+        // poolKey need to know their process is gone.
+        if (status === "crashed" || status === "reconnecting") {
+          this.sessionManager.invalidatePoolKey(poolKey);
         }
       },
       onDeclaredCaptured: (agentId, declared) => this.capabilityVerifier.onDeclared(agentId, declared),
@@ -228,8 +240,16 @@ export class Orchestrator {
       this.pool,
       this.sessionIndex,
       {
-        emit: (...events) => this.agentView.emit(...events),
+        emit: (...events) => {
+          this.agentView.emit(...events);
+          this.persistLastKnownViewIfNeeded(events);
+        },
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
+        resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
+        isForkVerified: (agentId) =>
+          this.agentView.current.capabilities[agentId]?.["session.fork"]?.verified ?? false,
+        defaultsFor: (agentId) => this.pool.get(agentId)?.spec.defaults,
+        lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
       },
       () => this.workspaceRoot ?? process.cwd(),
       (contextToken) => [
@@ -299,6 +319,49 @@ export class Orchestrator {
     });
   }
 
+  /** Process-policy decision for a new top-level session (architecture.md §
+   * process model): `isolated` always isolates; `shared` always shares;
+   * `auto` (default) shares only once concurrent-session behavior is
+   * *verified* on the primary connection, isolating every session before
+   * that — a fork always rides its parent's poolKey regardless (SessionManager
+   * never calls this for a fork), so verification bootstraps organically the
+   * first time a branch shares a connection with an existing session. */
+  private async resolveProcessFor(agentId: string): Promise<string> {
+    const primary = this.pool.get(agentId);
+    if (primary === undefined) return agentId;
+    const policy = primary.spec.processPolicy ?? "auto";
+    const hasExisting = primary.sessions.length > 0;
+    const verified = this.agentView.current.capabilities[agentId]?.concurrentSessions?.verified ?? false;
+    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !verified);
+    if (!isolate) return agentId;
+    const poolKey = `${agentId}::iso::${++this.isolationCounter}`;
+    await this.pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
+    return poolKey;
+  }
+
+  /** Persists the render cache to workspace storage for agents that never
+   * declared `session/load` — the only continuation available for them once
+   * their connection dies is the emulated one seeded from this file
+   * (architecture.md § State: "Last-known view... a labeled fallback, not a
+   * competing truth"). Cheap and coarse on purpose: the whole transcript,
+   * rewritten on every event touching a tracked session — same trade P1's
+   * stores already make for workspaceState-sized data. */
+  private persistLastKnownViewIfNeeded(events: readonly AgentViewEvent[]): void {
+    const sessionIds = new Set<string>();
+    for (const event of events) {
+      const sessionId = (event as { sessionId?: string }).sessionId;
+      if (sessionId !== undefined) sessionIds.add(sessionId);
+    }
+    for (const sessionId of sessionIds) {
+      const agentId = this.sessionIndex.get(sessionId)?.agentId;
+      if (agentId === undefined) continue;
+      if (this.pool.get(agentId)?.declared?.loadSession) continue; // real replay exists — no fallback needed
+      const blocks = this.agentView.current.transcripts[sessionId];
+      if (blocks === undefined) continue;
+      void this.lastKnownView.save(sessionId, blocks, new Date().toISOString());
+    }
+  }
+
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
    * (architecture.md § Local MCP server — "the agent sees what the user
    * sees"). Falls back to disk for files with no open editor. */
@@ -346,6 +409,8 @@ export class Orchestrator {
         args: agent.args,
         env: agent.env,
         cwd: this.workspaceRoot ?? process.cwd(),
+        processPolicy: agent.processPolicy,
+        defaults: agent.defaults,
       };
       this.workspaceAgentSpecs.set(agent.id, spec);
       if (this.adoption.isAdopted(agent.id)) {
@@ -414,7 +479,23 @@ export class Orchestrator {
         void this.sessionManager.rename(action.sessionId, action.title);
         break;
       case "closeSession":
-        void this.sessionManager.close(action.sessionId);
+        void this.sessionManager
+          .close(action.sessionId)
+          .then(() => this.lastKnownView.remove(action.sessionId));
+        break;
+      case "branchSession": {
+        const transcript = this.agentView.current.transcripts[action.sessionId] ?? [];
+        void this.sessionManager.branch(action.sessionId, transcript).catch(() => {});
+        break;
+      }
+      case "reloadSession":
+        void this.sessionManager.reload(action.sessionId).catch(() => {});
+        break;
+      case "setSessionMode":
+        void this.sessionManager.setMode(action.sessionId, action.modeId);
+        break;
+      case "setSessionConfigOption":
+        void this.sessionManager.setConfigOption(action.sessionId, action.configId, action.value);
         break;
       case "sendPrompt":
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design

@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- P8 sessions advanced: a real session graph — branching produces a native
+  `session/fork` when the capability is *verified*, otherwise an emulated
+  continuation seeded from the parent's current transcript, either way a
+  labeled node (`branchOf`/`emulated`) the UI never has to reason about
+  mechanism-wise. One-click reload re-runs `session/load` replay on demand,
+  distinct from the automatic reopen-on-crash path. Agents without
+  `session/load` get a persisted last-known view (JSON per session in
+  workspace storage) as the seed for an automatic emulated continuation when
+  their connection dies — previously a hard failure, now the fallback
+  architecture.md always intended. Model/mode/effort knobs render only the
+  options an agent actually offers (`session/new`/`load`/`fork` responses,
+  refreshed by `current_mode_update`/`config_option_update` notifications),
+  display only ever updated from the agent's own confirmation — never a
+  set-request's response, matching the same distrust-the-response rule P6
+  and P5 already established. Per-agent defaults (already-scaffolded config
+  file fields since P1) apply once, post-create. Process policy
+  auto/shared/isolated is real: `AgentPool` gained a second, invisible
+  connection kind for isolated instances, and `concurrentSessions`
+  verification now also fires from a successful fork (a fork's parent is
+  always already on the connection, so it's the same proof by construction)
+  — which is what lets "auto" bootstrap toward sharing without ever risking
+  an unverified `session/new`. A fork always rides its parent's connection
+  regardless of policy (protocol fact, not a choice). Five scoping calls
+  recorded in plan.md. Kebab menu gained Branch/Reload (labeled
+  `native fork ✓`/`emulated`); composer gained the knob pills — both caught a
+  pre-existing popover-positioning bug via visual verification, fixed
+  alongside since it directly affects the menu this phase extends.
 - P7 local MCP server + adapters: a real stdio MCP server
   (`src/mcp/server-main.ts`, bundled as its own entry) exposing six tools —
   get_selection, get_current_file, get_diagnostics, get_open_editors,

@@ -55,7 +55,11 @@ export type Action =
   | { kind: "addSelectionContext"; sessionId: string }
   | { kind: "addFileContext"; sessionId: string }
   | { kind: "addDiagnosticsContext"; sessionId: string }
-  | { kind: "removeContextChip"; sessionId: string; chipId: string };
+  | { kind: "removeContextChip"; sessionId: string; chipId: string }
+  | { kind: "branchSession"; sessionId: string }
+  | { kind: "reloadSession"; sessionId: string }
+  | { kind: "setSessionMode"; sessionId: string; modeId: string }
+  | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean };
 
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
@@ -201,6 +205,53 @@ export interface SessionSummary {
   branchOf: string | null;
 }
 
+// ── session model/mode/effort knobs (architecture.md § Session model, mode,
+// effort) — three optional knobs, each existing only if the agent offers it.
+// Display comes only from the agent's own state notifications, never from a
+// set-request's response (bridges have returned success for rejected
+// changes) — reducer cases below only ever apply *Set/*Changed events.
+
+export interface SessionModeOptionView {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface SessionModesView {
+  currentModeId: string;
+  available: readonly SessionModeOptionView[];
+}
+
+export interface SessionConfigSelectValueView {
+  value: string;
+  name: string;
+  description?: string;
+}
+
+export interface SessionConfigSelectGroupView {
+  group: string;
+  name: string;
+  options: readonly SessionConfigSelectValueView[];
+}
+
+interface SessionConfigOptionBase {
+  id: string;
+  name: string;
+  description?: string;
+  /** "model" | "mode" | "thought_level" | ... — agent-declared, UX-only. */
+  category?: string;
+}
+
+export type SessionConfigOptionView = SessionConfigOptionBase &
+  (
+    | {
+        type: "select";
+        currentValue: string;
+        options: readonly SessionConfigSelectValueView[] | readonly SessionConfigSelectGroupView[];
+      }
+    | { type: "boolean"; currentValue: boolean }
+  );
+
 // ── chat / transcript (render cache — rebuilt wholesale, never merged) ──────
 
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
@@ -341,6 +392,10 @@ export interface AgentViewState {
   /** Explicitly attached context, pending inclusion in the next prompt
    * (features.md § Chat: "explicitly add editor state to the prompt"). */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
+  /** Mode knob — absent (null) when the agent doesn't offer session modes. */
+  sessionModes: Readonly<Record<string, SessionModesView | null>>;
+  /** Model/effort/etc. knobs — empty when the agent offers none. */
+  sessionConfigOptions: Readonly<Record<string, readonly SessionConfigOptionView[]>>;
 }
 
 export interface UsageInfo {
@@ -368,6 +423,8 @@ export const initialAgentViewState: AgentViewState = {
   capabilitiesResetAt: {},
   sessionUsage: {},
   contextChips: {},
+  sessionModes: {},
+  sessionConfigOptions: {},
 };
 
 export type AgentViewEvent =
@@ -432,6 +489,16 @@ export type AgentViewEvent =
   | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
+  /** Full replace — from a session/new, /load, or /fork response. */
+  | { kind: "sessionModesSet"; sessionId: string; modes: SessionModesView | null }
+  /** Partial — from a `current_mode_update` notification; a no-op if no modes state exists yet. */
+  | { kind: "sessionModeChanged"; sessionId: string; modeId: string }
+  /** Full replace — from a create/load/fork response or a `config_option_update` notification. */
+  | { kind: "sessionConfigOptionsChanged"; sessionId: string; options: readonly SessionConfigOptionView[] }
+  /** A branch (native or emulated) or an emulated dead-end continuation
+   * seeding its transcript wholesale — never merged, same "replay always
+   * wins" rule as transcriptReset (architecture.md § Last-known view). */
+  | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
   /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
   | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
   | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
@@ -605,6 +672,8 @@ export function reduceAgentView(
         transcripts: { ...state.transcripts, [event.session.id]: [] },
         commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
         contextChips: { ...state.contextChips, [event.session.id]: [] },
+        sessionModes: { ...state.sessionModes, [event.session.id]: null },
+        sessionConfigOptions: { ...state.sessionConfigOptions, [event.session.id]: [] },
         activeSessionId: event.session.id,
       };
     case "sessionActivated":
@@ -623,6 +692,8 @@ export function reduceAgentView(
       const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
       const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
       const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
+      const { [event.sessionId]: _m, ...sessionModes } = state.sessionModes;
+      const { [event.sessionId]: _o, ...sessionConfigOptions } = state.sessionConfigOptions;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       const activeSessionId =
         state.activeSessionId === event.sessionId
@@ -635,6 +706,8 @@ export function reduceAgentView(
         commandsBySession,
         activePlan,
         contextChips,
+        sessionModes,
+        sessionConfigOptions,
         activeSessionId,
       };
     }
@@ -767,6 +840,26 @@ export function reduceAgentView(
           ),
         },
       };
+    case "sessionModesSet":
+      return { ...state, sessionModes: { ...state.sessionModes, [event.sessionId]: event.modes } };
+    case "sessionModeChanged": {
+      const existing = state.sessionModes[event.sessionId];
+      if (!existing) return state; // no modes state to update — stale or unsupported
+      return {
+        ...state,
+        sessionModes: {
+          ...state.sessionModes,
+          [event.sessionId]: { ...existing, currentModeId: event.modeId },
+        },
+      };
+    }
+    case "sessionConfigOptionsChanged":
+      return {
+        ...state,
+        sessionConfigOptions: { ...state.sessionConfigOptions, [event.sessionId]: event.options },
+      };
+    case "transcriptSeeded":
+      return withTranscript(state, event.sessionId, event.blocks);
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }

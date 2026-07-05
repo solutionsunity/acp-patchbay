@@ -13,6 +13,8 @@ import type {
   ConnectAgentSource,
   ContextChip,
   PlanBlock,
+  SessionConfigOptionView,
+  SessionModesView,
   SessionSummary,
   UsageInfo,
 } from "../../shared/protocol";
@@ -78,9 +80,12 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
       {active !== null && (
         <SessionRow
           session={active}
+          forkVerified={state.capabilities[active.agentId]?.["session.fork"]?.verified ?? false}
           onTitle={() => setDrawer("sessions")}
           onRename={(title) => renameSession(active.id, title)}
           onClose={() => closeSession(active.id)}
+          onBranch={() => channel.sendAction({ kind: "branchSession", sessionId: active.id })}
+          onReload={() => channel.sendAction({ kind: "reloadSession", sessionId: active.id })}
         />
       )}
       {active !== null && <PlanStrip plan={state.activePlan[active.id] ?? null} />}
@@ -103,6 +108,14 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         session={active}
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
+        modes={active !== null ? (state.sessionModes[active.id] ?? null) : null}
+        configOptions={active !== null ? (state.sessionConfigOptions[active.id] ?? []) : []}
+        onSetMode={(modeId) =>
+          channel.sendAction({ kind: "setSessionMode", sessionId: active!.id, modeId })
+        }
+        onSetConfigOption={(configId, value) =>
+          channel.sendAction({ kind: "setSessionConfigOption", sessionId: active!.id, configId, value })
+        }
         onSend={(text) => channel.sendAction({ kind: "sendPrompt", sessionId: active!.id, text })}
         onStop={() => channel.sendAction({ kind: "stopTurn", sessionId: active!.id })}
         onAddSelection={() => channel.sendAction({ kind: "addSelectionContext", sessionId: active!.id })}
@@ -132,10 +145,13 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
+          forkVerified={(agentId) => state.capabilities[agentId]?.["session.fork"]?.verified ?? false}
           onNew={() => setDrawer("agents")}
           onSwitch={switchSession}
           onRename={renameSession}
           onClose={closeSession}
+          onBranch={(sessionId) => channel.sendAction({ kind: "branchSession", sessionId })}
+          onReload={(sessionId) => channel.sendAction({ kind: "reloadSession", sessionId })}
         />
       )}
       {toast !== null && <div class="toast">{toast}</div>}
@@ -233,8 +249,11 @@ function Badges({ session }: { session: SessionSummary }) {
 /** Small popover shared by the session row and sessions-drawer rows. */
 function SessionActions(props: {
   title: string;
+  forkVerified: boolean;
   onRename(title: string): void;
   onClose(): void;
+  onBranch(): void;
+  onReload(): void;
   onDone(): void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -252,7 +271,7 @@ function SessionActions(props: {
       props.onDone();
     };
     return (
-      <div class="pop" onClick={(e) => e.stopPropagation()}>
+      <div class="pop" style="top:22px;right:0" onClick={(e) => e.stopPropagation()}>
         <div class="connect-form">
           <input
             ref={inputRef}
@@ -273,9 +292,27 @@ function SessionActions(props: {
   }
 
   return (
-    <div class="pop" onClick={(e) => e.stopPropagation()}>
+    <div class="pop" style="top:22px;right:0" onClick={(e) => e.stopPropagation()}>
       <div class="it" onClick={() => setRenaming(true)}>
         Rename…
+      </div>
+      <div
+        class="it"
+        onClick={() => {
+          props.onBranch();
+          props.onDone();
+        }}
+      >
+        Branch <span class="d">{props.forkVerified ? "native fork ✓" : "emulated"}</span>
+      </div>
+      <div
+        class="it"
+        onClick={() => {
+          props.onReload();
+          props.onDone();
+        }}
+      >
+        Reload from agent
       </div>
       <div
         class="it"
@@ -292,9 +329,12 @@ function SessionActions(props: {
 
 function SessionRow(props: {
   session: SessionSummary;
+  forkVerified: boolean;
   onTitle(): void;
   onRename(title: string): void;
   onClose(): void;
+  onBranch(): void;
+  onReload(): void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
@@ -314,8 +354,11 @@ function SessionRow(props: {
       {menuOpen && (
         <SessionActions
           title={props.session.title}
+          forkVerified={props.forkVerified}
           onRename={props.onRename}
           onClose={props.onClose}
+          onBranch={props.onBranch}
+          onReload={props.onReload}
           onDone={() => setMenuOpen(false)}
         />
       )}
@@ -665,11 +708,104 @@ function SlashMenu(props: {
   );
 }
 
+/** ◈ model · ⚙ default · ⚡ effort — one pill per agent-offered knob only; an
+ * unoffered knob renders nothing (ui.md § Composer action row). Requested ≠
+ * confirmed: a just-changed pill shows ⏳ until the agent's own state
+ * notification lands, never optimistically. */
+function Knobs(props: {
+  modes: SessionModesView | null;
+  configOptions: readonly SessionConfigOptionView[];
+  onSetMode(modeId: string): void;
+  onSetConfigOption(configId: string, value: string | boolean): void;
+}) {
+  const [pendingMode, setPendingMode] = useState(false);
+  useEffect(() => setPendingMode(false), [props.modes?.currentModeId]);
+  const [pendingConfig, setPendingConfig] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setPendingConfig((cur) => {
+      const next = { ...cur };
+      for (const o of props.configOptions) delete next[o.id];
+      return next;
+    });
+  }, [props.configOptions.map((o) => String(o.currentValue)).join("|")]);
+
+  const glyphFor = (category: string | undefined) =>
+    category === "model" ? "◈" : category === "thought_level" ? "⚡" : "⚙";
+
+  return (
+    <>
+      {props.modes && (
+        <span class="knob" title="Session mode">
+          ⚙
+          <select
+            value={props.modes.currentModeId}
+            onChange={(e) => {
+              setPendingMode(true);
+              props.onSetMode((e.target as HTMLSelectElement).value);
+            }}
+          >
+            {props.modes.available.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          {pendingMode && <span class="knob-pending">⏳</span>}
+        </span>
+      )}
+      {props.configOptions.map((o) => (
+        <span class="knob" key={o.id} title={o.name}>
+          {glyphFor(o.category)}
+          {o.type === "boolean" ? (
+            <input
+              type="checkbox"
+              checked={o.currentValue}
+              onChange={(e) => {
+                setPendingConfig((cur) => ({ ...cur, [o.id]: true }));
+                props.onSetConfigOption(o.id, (e.target as HTMLInputElement).checked);
+              }}
+            />
+          ) : (
+            <select
+              value={o.currentValue}
+              onChange={(e) => {
+                setPendingConfig((cur) => ({ ...cur, [o.id]: true }));
+                props.onSetConfigOption(o.id, (e.target as HTMLSelectElement).value);
+              }}
+            >
+              {o.options.map((entry) =>
+                "group" in entry ? (
+                  <optgroup key={entry.group} label={entry.name}>
+                    {entry.options.map((v) => (
+                      <option key={v.value} value={v.value}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.name}
+                  </option>
+                ),
+              )}
+            </select>
+          )}
+          {pendingConfig[o.id] && <span class="knob-pending">⏳</span>}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Composer(props: {
   agent: AgentSummary | null;
   session: SessionSummary | null;
   commands: readonly AvailableCommand[];
   contextChips: readonly ContextChip[];
+  modes: SessionModesView | null;
+  configOptions: readonly SessionConfigOptionView[];
+  onSetMode(modeId: string): void;
+  onSetConfigOption(configId: string, value: string | boolean): void;
   onSend(text: string): void;
   onStop(): void;
   onAddSelection(): void;
@@ -773,8 +909,13 @@ function Composer(props: {
           }
         />
         <div class="input-foot">
+          <Knobs
+            modes={props.modes}
+            configOptions={props.configOptions}
+            onSetMode={props.onSetMode}
+            onSetConfigOption={props.onSetConfigOption}
+          />
           <span style="flex:1" />
-          {/* model/mode/effort knobs render only when the agent offers them (P8) */}
           <button
             class={`send ${live ? "stop" : ""}`}
             disabled={!enabled}
@@ -889,10 +1030,13 @@ function AgentsDrawer(props: {
 function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
+  forkVerified(agentId: string): boolean;
   onNew(): void;
   onSwitch(sessionId: string): void;
   onRename(sessionId: string, title: string): void;
   onClose(sessionId: string): void;
+  onBranch(sessionId: string): void;
+  onReload(sessionId: string): void;
 }) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
@@ -933,8 +1077,11 @@ function SessionsDrawer(props: {
             {menuFor === s.id && (
               <SessionActions
                 title={s.title}
+                forkVerified={props.forkVerified(s.agentId)}
                 onRename={(title) => props.onRename(s.id, title)}
                 onClose={() => props.onClose(s.id)}
+                onBranch={() => props.onBranch(s.id)}
+                onReload={() => props.onReload(s.id)}
                 onDone={() => setMenuFor(null)}
               />
             )}

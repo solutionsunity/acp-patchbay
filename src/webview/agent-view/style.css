@@ -635,6 +635,19 @@ body {
   color: var(--pb-text);
 }
 
+.knob select {
+  font-size: 11px;
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.knob-pending {
+  font-size: 10px;
+}
+
 .send {
   margin-left: auto;
   width: 26px;

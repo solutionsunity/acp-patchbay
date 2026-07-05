@@ -238,7 +238,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
      `out/mcp-server.js` and, in the end-to-end tests, a fake agent that acts
      as a real MCP client too, not a mock of either side.*
 
-### P8 — Sessions advanced ☐
+### P8 — Sessions advanced ☑
 
 - Session graph (parent → branches); native `session/fork` when verified, else
   emulated seed — labeled; one-click reload (re-`load` replay); last-known view
@@ -248,6 +248,40 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   parent, shown.
 - **Gate**: branch on fake agent with and without fork capability produces
   correctly labeled graph nodes; policy `isolated` isolates `session/new` only.
+- *Five scoping calls, each identified while implementing rather than assumed
+  upfront:*
+  - *`AgentPool` gained a second, invisible-to-`list()` connection kind
+    ("isolated instances", keyed separately from the real agentId, reported
+    back to hooks via a `reportAs` field) rather than a parallel pool class —
+    every existing call site (newSession/fork/prompt/cancel/loadSession/stop/
+    restart) already took a connection key, so the change is additive: same
+    methods, a second kind of key.*
+  - *`concurrentSessions` verification now fires from `AgentPool.fork()` too,
+    not only `newSession()`'s second-session case — a fork's parent is always
+    already on the connection, so any successful fork is structurally the same
+    proof (2+ sessionIds live on one connection) the row claims to measure.
+    This is what lets "auto" policy bootstrap toward sharing without patchbay
+    ever risking an unverified top-level `session/new` to find out — the first
+    branch a user makes (on any policy) verifies it for every later decision.*
+  - *Model/mode/effort have no row in the capability matrix — architecture.md's
+    fixed row list has none, and unlike fs/terminal/fork these aren't
+    "capabilities" in the declared/verified sense: presence alone (does the
+    agent offer this knob at all) is the only honesty question, answered fresh
+    from every session/new, /load, and /fork response plus `current_mode_update`
+    / `config_option_update` notifications — never the set-request's own
+    response, which bridges have been known to report as success regardless.*
+  - *Per-agent defaults (`AgentConfig.defaults` / `processPolicy`) were already
+    scaffolded in `config-file.ts` since P1 but never consumed — P8 is what
+    reads them. Applied once, post-create only (never on reopen/reload/fork,
+    which must show the agent's own resumed state, not re-force a default over
+    a mid-conversation switch); matched to an offered config option by
+    `category` (`"model"` / `"thought_level"`), never invented.*
+  - *An emulated dead-end continuation (no `session/load`, connection died) and
+    an emulated branch turned out to be the same mechanism — a fresh
+    `session/new` with the transcript seeded wholesale from a source blocks
+    array (the persisted last-known view in one case, the live parent
+    transcript in the other). One private helper serves both; the only
+    difference is where the seed blocks come from.*
 
 ### P9 — Integrations + GitHub ☐
 
