@@ -3,6 +3,10 @@
 // cache itself lives in AgentViewState, updated only through the shared
 // reducer (architecture.md § State: render cache is disposable, replay
 // always wins, never merged).
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   ContentBlock,
   McpServer,
@@ -516,15 +520,23 @@ export class SessionManager {
     }
     this.hooks.emit(...events);
 
-    const prompt: ContentBlock[] = [
-      ...chips.map(
-        (c): ContentBlock =>
-          c.kind === "image"
-            ? { type: "image", data: c.content, mimeType: c.mimeType ?? "image/png" }
-            : { type: "text", text: `[${c.label}]\n${c.content}` },
-      ),
-      { type: "text", text },
-    ];
+    // Image chips ride in the best form the agent accepts (architecture.md §
+    // Local MCP server — "paste is never disabled"): a real ImageContent
+    // block where `promptCapabilities.image` is declared, else the bytes go
+    // to a temp file sent as a ResourceLink — the baseline every agent MUST
+    // support per the ACP prompt contract.
+    const acceptsImages = this.pool.get(session.poolKey)?.declared?.promptImage ?? false;
+    const prompt: ContentBlock[] = [];
+    for (const c of chips) {
+      if (c.kind !== "image") {
+        prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
+      } else if (acceptsImages) {
+        prompt.push({ type: "image", data: c.content, mimeType: c.mimeType ?? "image/png" });
+      } else {
+        prompt.push(await imageAsResourceLink(c));
+      }
+    }
+    prompt.push({ type: "text", text });
     try {
       await this.pool.prompt(session.poolKey, targetId, prompt);
     } finally {
@@ -633,6 +645,27 @@ export class SessionManager {
         break; // unconsumed schema surface — a future capability row, not silently guessed at
     }
   }
+}
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+
+/** The image-paste fallback for agents that never declared
+ * `promptCapabilities.image`: bytes to a temp file, sent as a ResourceLink
+ * (with ContentBlock::Text, the baseline every agent must accept). */
+async function imageAsResourceLink(chip: ContextChip): Promise<ContentBlock> {
+  const mimeType = chip.mimeType ?? "image/png";
+  const dir = join(tmpdir(), "acp-patchbay-attachments");
+  await mkdir(dir, { recursive: true });
+  const name = `${chip.id}.${IMAGE_EXTENSIONS[mimeType] ?? "img"}`;
+  const file = join(dir, name);
+  await writeFile(file, Buffer.from(chip.content, "base64"));
+  return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType };
 }
 
 function toPlanEntries(

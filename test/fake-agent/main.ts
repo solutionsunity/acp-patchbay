@@ -34,6 +34,7 @@ export type TurnStep =
   | { type: "runCommand"; command: string; args?: string[] }
   | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string }
   | { type: "echoBlocks" }
+  | { type: "echoBlockKinds" }
   | { type: "echoRoots" }
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> };
 
@@ -296,6 +297,23 @@ async function runTurn(
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: texts.join("\n---BLOCK---\n") },
+        });
+        break;
+      }
+      case "echoBlockKinds": {
+        // Proves each prompt block's wire *shape* (image vs resource_link
+        // fallback — the "best form the agent accepts" contract), which
+        // echoBlocks' text-only view can't see.
+        const kinds = rawPrompt.map((b) =>
+          b.type === "image"
+            ? { type: b.type, mimeType: b.mimeType }
+            : b.type === "resource_link"
+              ? { type: b.type, uri: b.uri, name: b.name, mimeType: b.mimeType }
+              : { type: b.type },
+        );
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: JSON.stringify(kinds) },
         });
         break;
       }

@@ -1,7 +1,7 @@
 // P4 gate: session/new → prompt → streamed session/update → transcript;
 // stop turn; session index rename/close; slash-command advertisement;
 // render cache rebuilt wholesale from session/load replay after a crash.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -332,6 +332,56 @@ describe("SessionManager", () => {
     ]);
 
     await h.pool.stop("sm9");
+  });
+
+  it("image chips ride as ImageContent when promptCapabilities.image is declared", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { declare: { promptCapabilities: { image: true } }, turn: [{ type: "echoBlockKinds" }] },
+        "img1",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("img1", "Fake Agent", cwd);
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-img",
+      kind: "image",
+      label: "Image (image/png)",
+      content: Buffer.from("fake-png-bytes").toString("base64"),
+      mimeType: "image/png",
+    });
+    await h.sessionManager.sendPrompt(sessionId, "what is this?");
+
+    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
+    expect(kinds).toEqual([{ type: "image", mimeType: "image/png" }, { type: "text" }]);
+    await h.pool.stop("img1");
+  });
+
+  it("image chips fall back to a temp-file ResourceLink when image support is undeclared — paste is never disabled", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "img2"));
+    const sessionId = await h.sessionManager.createSession("img2", "Fake Agent", cwd);
+    const bytes = Buffer.from("fake-jpeg-bytes");
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-img-fb",
+      kind: "image",
+      label: "Image (image/jpeg)",
+      content: bytes.toString("base64"),
+      mimeType: "image/jpeg",
+    });
+    await h.sessionManager.sendPrompt(sessionId, "and this?");
+
+    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
+    expect(kinds).toHaveLength(2);
+    expect(kinds[0]).toMatchObject({ type: "resource_link", mimeType: "image/jpeg" });
+    expect(kinds[0]!.uri).toMatch(/^file:\/\/.*chip-img-fb\.jpg$/);
+    // the link points at real bytes on disk, not a dangling uri
+    const { fileURLToPath } = await import("node:url");
+    const written = await readFile(fileURLToPath(kinds[0]!.uri!), null);
+    expect(Buffer.from(written).equals(bytes)).toBe(true);
+    await h.pool.stop("img2");
   });
 
   it("removeContext drops a chip before it's ever sent", async () => {
