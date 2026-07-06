@@ -12,6 +12,8 @@ import type {
   ChatBlock,
   ConnectAgentSource,
   ContextChip,
+  LiveSelectionView,
+  OpenEditorView,
   PlanBlock,
   SessionConfigOptionView,
   SessionModesView,
@@ -88,6 +90,20 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
           onReload={() => channel.sendAction({ kind: "reloadSession", sessionId: active.id })}
         />
       )}
+      {activeAgent !== null && activeAgent.status === "crashed" && (
+        <div class="crash-banner">
+          ⚠ {activeAgent.name} crashed{activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}
+          <button
+            class="btn danger row-btn"
+            onClick={() => {
+              channel.sendAction({ kind: "restartAgent", agentId: activeAgent.id });
+              showToast("restarting…");
+            }}
+          >
+            Restart
+          </button>
+        </div>
+      )}
       {active !== null && <PlanStrip plan={state.activePlan[active.id] ?? null} />}
       <Chat
         state={state}
@@ -109,6 +125,8 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
+        liveSelection={state.liveSelection}
+        openEditors={state.openEditors}
         modes={active !== null ? (state.sessionModes[active.id] ?? null) : null}
         configOptions={active !== null ? (state.sessionConfigOptions[active.id] ?? []) : []}
         onSetMode={(modeId) =>
@@ -125,6 +143,9 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
           channel.sendAction({ kind: "addDiagnosticsContext", sessionId: active!.id })
         }
         onAddFilePicker={() => channel.sendAction({ kind: "addFilePickerContext", sessionId: active!.id })}
+        onAddOpenEditor={(path) =>
+          channel.sendAction({ kind: "addOpenEditorContext", sessionId: active!.id, path })
+        }
         onAddImage={(dataUrl, mimeType) =>
           channel.sendAction({
             kind: "addImageContext",
@@ -727,6 +748,56 @@ function SlashMenu(props: {
   );
 }
 
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+/** The `@` context mention picker (ui.md § Composer): open editors plus the
+ * adder's own entries — every pick resolves to standard content blocks, so
+ * it works for every agent. */
+function MentionMenu(props: {
+  filter: string;
+  openEditors: readonly OpenEditorView[];
+  hasSelection: boolean;
+  onPickEditor(path: string): void;
+  onPickSelection(): void;
+  onPickProblems(): void;
+  onPickAttach(): void;
+}) {
+  const filter = props.filter.toLowerCase();
+  const editors = props.openEditors.filter((e) =>
+    basename(e.file).toLowerCase().includes(filter),
+  );
+  return (
+    <div class="pop" style="bottom:44px;left:0;right:0">
+      {editors.slice(0, 8).map((e) => (
+        <div class="it" key={e.file} onClick={() => props.onPickEditor(e.file)}>
+          <b>📄 {basename(e.file)}</b>
+          <span class="d">
+            {e.dirty ? "● unsaved · " : ""}
+            {e.file}
+          </span>
+        </div>
+      ))}
+      {props.hasSelection && (
+        <div class="it" onClick={props.onPickSelection}>
+          <b>⌖ Selection</b>
+          <span class="d">current editor selection</span>
+        </div>
+      )}
+      <div class="it" onClick={props.onPickProblems}>
+        <b>⚠ Problems</b>
+        <span class="d">workspace diagnostics</span>
+      </div>
+      <div class="it" onClick={props.onPickAttach}>
+        <b>📎 Attach file…</b>
+        <span class="d">pick any file</span>
+      </div>
+      <div class="src">resolves to standard content blocks — works for every agent</div>
+    </div>
+  );
+}
+
 /** ◈ model · ⚙ default · ⚡ effort — one pill per agent-offered knob only; an
  * unoffered knob renders nothing (ui.md § Composer action row). Requested ≠
  * confirmed: a just-changed pill shows ⏳ until the agent's own state
@@ -866,6 +937,8 @@ function Composer(props: {
   commands: readonly AvailableCommand[];
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
+  liveSelection: LiveSelectionView | null;
+  openEditors: readonly OpenEditorView[];
   modes: SessionModesView | null;
   configOptions: readonly SessionConfigOptionView[];
   onSetMode(modeId: string): void;
@@ -880,12 +953,24 @@ function Composer(props: {
   onAddRoot(): void;
   onRemoveRoot(path: string): void;
   onRemoveChip(chipId: string): void;
+  onAddOpenEditor(path: string): void;
 }) {
   const [draft, setDraft] = useState("");
   const [adderOpen, setAdderOpen] = useState(false);
   const enabled = props.session !== null && props.agent?.status === "running";
   const live = props.session?.live ?? false;
   const showSlash = draft.startsWith("/") && !draft.includes(" ");
+  // The second typed trigger (ui.md § Composer): the caret word starting
+  // with "@" opens the context mention picker.
+  const mentionToken = (() => {
+    if (showSlash) return null;
+    const last = draft.split(/\s/).pop() ?? "";
+    return last.startsWith("@") ? last : null;
+  })();
+  const mentionPick = (action: () => void) => {
+    setDraft(draft.slice(0, draft.length - mentionToken!.length).trimEnd());
+    action();
+  };
 
   const handlePaste = (e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -923,6 +1008,18 @@ function Composer(props: {
         <div class="ctx-row">
           {enabled && (
             <RootsChip roots={props.contextRoots} onAdd={props.onAddRoot} onRemove={props.onRemoveRoot} />
+          )}
+          {enabled && props.liveSelection !== null && (
+            <span
+              class="ctx-chip ghost"
+              title="Live IDE selection — click to add it to context"
+              onClick={props.onAddSelection}
+            >
+              ⌖ {basename(props.liveSelection.file)}:{props.liveSelection.startLine}
+              {props.liveSelection.endLine !== props.liveSelection.startLine
+                ? `-${props.liveSelection.endLine}`
+                : ""}
+            </span>
           )}
           {props.contextChips.map((c) => (
             <span class="ctx-chip" key={c.id} title={c.kind === "image" ? c.label : c.content.slice(0, 300)}>
@@ -992,6 +1089,17 @@ function Composer(props: {
             onPick={(name) => setDraft(`/${name} `)}
           />
         )}
+        {enabled && mentionToken !== null && (
+          <MentionMenu
+            filter={mentionToken.slice(1)}
+            openEditors={props.openEditors}
+            hasSelection={props.liveSelection !== null}
+            onPickEditor={(path) => mentionPick(() => props.onAddOpenEditor(path))}
+            onPickSelection={() => mentionPick(props.onAddSelection)}
+            onPickProblems={() => mentionPick(props.onAddDiagnostics)}
+            onPickAttach={() => mentionPick(props.onAddFilePicker)}
+          />
+        )}
         <textarea
           rows={1}
           disabled={!enabled}
@@ -1006,7 +1114,7 @@ function Composer(props: {
           }}
           placeholder={
             enabled
-              ? `Message ${props.agent!.name} — / for commands`
+              ? `Message ${props.agent!.name} — / commands · @ context`
               : "Connect an agent to start"
           }
         />

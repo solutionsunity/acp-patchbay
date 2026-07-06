@@ -2,8 +2,11 @@
 import { describe, expect, it } from "vitest";
 import {
   applyHostMessage,
+  coalesceAgentViewEvent,
   initialAgentViewState,
+  initialSettingsState,
   reduceAgentView,
+  reduceSettings,
   type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
@@ -49,6 +52,68 @@ describe("reducers", () => {
     ]);
     expect(s1.agents.map((a) => a.id)).toEqual(["claude", "gemini"]);
     expect(s1.agents[0]?.status).toBe("crashed");
+  });
+});
+
+describe("live editor context (ui.md — ghost chip / @ mention sources)", () => {
+  it("editorContextChanged replaces selection and open editors wholesale", () => {
+    const s = replay(initialAgentViewState, [
+      {
+        kind: "editorContextChanged",
+        selection: { file: "/ws/a.ts", startLine: 3, endLine: 9 },
+        openEditors: [{ file: "/ws/a.ts", dirty: true }],
+      },
+      { kind: "editorContextChanged", selection: null, openEditors: [] },
+    ]);
+    expect(s.liveSelection).toBeNull();
+    expect(s.openEditors).toEqual([]);
+  });
+
+  it("coalesces to the latest — cursor moves must not queue up", () => {
+    const a: AgentViewEvent = {
+      kind: "editorContextChanged",
+      selection: { file: "/ws/a.ts", startLine: 1, endLine: 1 },
+      openEditors: [],
+    };
+    const b: AgentViewEvent = { kind: "editorContextChanged", selection: null, openEditors: [] };
+    expect(coalesceAgentViewEvent(a, b)).toBe(b);
+  });
+});
+
+describe("plan strip mirrors only what the agent reports", () => {
+  it("transcriptReset clears the live plan — replay rebuilds it or it stays absent", () => {
+    const s = replay(initialAgentViewState, [
+      {
+        kind: "planAppended",
+        sessionId: "s1",
+        blockId: "p1",
+        entries: [{ content: "step", status: "in_progress" }],
+      },
+      { kind: "transcriptReset", sessionId: "s1" },
+    ]);
+    expect(s.activePlan.s1).toBeNull();
+    expect(s.transcripts.s1).toEqual([]);
+  });
+});
+
+describe("settings projections (ui.md § Settings Agents)", () => {
+  it("sessionStatsChanged and agentKnobsObserved land in settings state", () => {
+    const s = [
+      { kind: "sessionStatsChanged", sessionsToday: 3 } as const,
+      {
+        kind: "agentKnobsObserved",
+        agentId: "claude",
+        knobs: {
+          modes: [{ id: "code", name: "Code" }],
+          options: [
+            { id: "model", name: "Model", category: "model", values: [{ value: "s", name: "Sonnet" }] },
+          ],
+        },
+      } as const,
+    ].reduce(reduceSettings, initialSettingsState);
+    expect(s.sessionsToday).toBe(3);
+    expect(s.agentKnobs.claude!.modes).toEqual([{ id: "code", name: "Code" }]);
+    expect(s.agentKnobs.claude!.options[0]!.category).toBe("model");
   });
 });
 

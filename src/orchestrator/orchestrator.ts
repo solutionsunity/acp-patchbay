@@ -13,6 +13,7 @@ import {
   reduceSettings,
   type Action,
   type AgentConfigView,
+  type AgentKnobsView,
   type AgentViewEvent,
   type AgentViewState,
   type CapabilityRowId,
@@ -88,6 +89,11 @@ export class Orchestrator {
   >();
   private elicitationCounter = 0;
   private isolationCounter = 0;
+  private readonly editorSubscriptions: vscode.Disposable[] = [];
+  /** Orchestrator-side merge of knob offerings per agent (modes and config
+   * options arrive as separate events) — the settings channel gets the
+   * merged record on every observation. */
+  private readonly observedKnobs = new Map<string, { modes: AgentKnobsView["modes"]; options: AgentKnobsView["options"] }>();
   /** Set by the webview host as the Agent View mounts/unmounts (wired in
    * extension.ts to `AgentViewProvider`'s real `onDidChangeVisibility`
    * signal, P6); defaults to "visible" so native notifications don't fire
@@ -294,6 +300,28 @@ export class Orchestrator {
     });
     this.editorStateHost.start();
 
+    // Live editor context for the composer (ui.md § Composer: the selection
+    // ghost chip appears only while the IDE has a selection; the @ mention
+    // picker lists open editors). Position/paths only — the selection text
+    // is read host-side at the moment the user solidifies it. High-frequency
+    // sources; the channel's coalescing keeps only the latest.
+    const pushEditorContext = () => {
+      const s = this.editorStateHost.getSelection();
+      this.agentView.emit({
+        kind: "editorContextChanged",
+        selection: s === null ? null : { file: s.file, startLine: s.startLine, endLine: s.endLine },
+        openEditors: this.editorStateHost.getOpenEditors(),
+      });
+    };
+    this.editorSubscriptions.push(
+      vscode.window.onDidChangeTextEditorSelection(pushEditorContext),
+      vscode.window.onDidChangeActiveTextEditor(pushEditorContext),
+      vscode.workspace.onDidOpenTextDocument(pushEditorContext),
+      vscode.workspace.onDidCloseTextDocument(pushEditorContext),
+      vscode.workspace.onDidChangeTextDocument(pushEditorContext), // dirty-flag flips
+      vscode.workspace.onDidSaveTextDocument(pushEditorContext),
+    );
+
     this.sessionManager = new SessionManager(
       this.pool,
       this.sessionIndex,
@@ -301,6 +329,7 @@ export class Orchestrator {
         emit: (...events) => {
           this.agentView.emit(...events);
           this.persistLastKnownViewIfNeeded(events);
+          this.relaySettingsDerived(events);
         },
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
@@ -359,6 +388,7 @@ export class Orchestrator {
     void this.refreshAuditTail();
     void this.loadWorkspaceConfigAgents();
     void this.integrations.refresh();
+    this.publishSessionStats();
 
     // Native surfaces (P11): the status bar mirrors canonical state via
     // ChannelHost.onChange — no webview in the path (architecture.md § UI
@@ -527,6 +557,47 @@ export class Orchestrator {
   private verifyObserved(agentId: string, row: CapabilityRowId): void {
     if (this.agentView.current.capabilities[agentId]?.[row]?.verified) return;
     this.capabilityVerifier.markVerified(agentId, row);
+  }
+
+  /** Settings-side projections of session-manager events (ui.md § Settings
+   * Agents): the sessions-today stat tile, and per-agent knob offerings so
+   * default knobs render only where the agent actually offers them. */
+  private relaySettingsDerived(events: readonly AgentViewEvent[]): void {
+    for (const event of events) {
+      if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
+        this.publishSessionStats();
+      } else if (event.kind === "sessionModesSet" || event.kind === "sessionConfigOptionsChanged") {
+        const agentId = this.sessionIndex.get(event.sessionId)?.agentId;
+        if (agentId === undefined) continue;
+        const merged = this.observedKnobs.get(agentId) ?? { modes: null, options: [] };
+        if (event.kind === "sessionModesSet") {
+          merged.modes = event.modes?.available ?? null;
+        } else {
+          merged.options = event.options
+            .filter((o) => o.type === "select")
+            .map((o) => ({
+              id: o.id,
+              name: o.name,
+              category: o.category,
+              values: o.options.flatMap((entry) =>
+                "group" in entry
+                  ? entry.options.map((v) => ({ value: v.value, name: v.name }))
+                  : [{ value: entry.value, name: entry.name }],
+              ),
+            }));
+        }
+        this.observedKnobs.set(agentId, merged);
+        this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { ...merged } });
+      }
+    }
+  }
+
+  private publishSessionStats(): void {
+    const today = new Date().toDateString();
+    const sessionsToday = this.sessionIndex
+      .list()
+      .filter((e) => new Date(e.createdAt).toDateString() === today).length;
+    this.settings.emit({ kind: "sessionStatsChanged", sessionsToday });
   }
 
   /** Persists the render cache to workspace storage for agents that never
@@ -713,7 +784,12 @@ export class Orchestrator {
     this.agentNames.set(spec.agentId, spec.name);
     const upsert = {
       kind: "agentUpserted",
-      agent: { id: spec.agentId, name: spec.name, status: "reconnecting" },
+      agent: {
+        id: spec.agentId,
+        name: spec.name,
+        status: "reconnecting",
+        command: [spec.command, ...spec.args].join(" "),
+      },
     } as const;
     this.agentView.emit(upsert);
     this.settings.emit(upsert);
@@ -925,6 +1001,16 @@ export class Orchestrator {
       case "addFilePickerContext":
         void this.addFilePickerContext(action.sessionId);
         break;
+      case "addOpenEditorContext":
+        void this.readTextFileLive(action.path).then((content) =>
+          this.sessionManager.addContext(action.sessionId, {
+            id: `chip-${Date.now()}`,
+            kind: "file",
+            label: `File: ${action.path}`,
+            content,
+          }),
+        );
+        break;
     }
   }
 
@@ -1035,6 +1121,7 @@ export class Orchestrator {
   }
 
   dispose(): void {
+    for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
     void this.pool.disposeAll();
     this.agentView.flushNow();

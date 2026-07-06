@@ -376,3 +376,72 @@ tr.sep td {
   color: var(--pb-text-faint);
   line-height: 1.7;
 }
+
+/* ── stat tiles (ui.md § Settings Agents) ─────────────────────────────── */
+.tiles {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tile {
+  flex: 1;
+  max-width: 160px;
+  background: var(--pb-panel);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  padding: 10px 14px;
+}
+
+.tile .n {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.tile .l {
+  font-size: 11px;
+  color: var(--pb-text-dim);
+}
+
+/* ── default knobs on the per-agent card — enabled only where offered ── */
+.knob-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--pb-text-dim);
+}
+
+.knob-default.off {
+  opacity: 0.55;
+}
+
+.crashed-note {
+  color: var(--pb-err);
+}
+
+/* ── diagnostics cost-disclosure modal (ui.md: cost before running) ──── */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.modal {
+  background: var(--pb-panel);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  padding: 16px 18px;
+  max-width: 440px;
+}
+
+/* ── explicit plug-in confirmation (routing onto < fully brokered) ───── */
+.plug-in-confirm {
+  flex-basis: 100%;
+  color: var(--pb-warn);
+  margin: 4px 0 0;
+}

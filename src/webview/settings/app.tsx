@@ -6,10 +6,12 @@ import { useState } from "preact/hooks";
 import type {
   AgentAssetsView,
   AgentConfigView,
+  AgentSummary,
   AssetCategoryView,
   CapabilityMatrix,
   CapabilityRowId,
   CommandRuleView,
+  FidelityLabel,
   FileWriteScopeView,
   IntegrationRoutingView,
   IntegrationSourceView,
@@ -68,6 +70,8 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
             }
             onSave={(config) => channel.sendAction({ kind: "addOrUpdateAgentConfig", config })}
             onRemove={(agentId) => channel.sendAction({ kind: "removeAgentConfig", agentId })}
+            onStop={(agentId) => channel.sendAction({ kind: "stopAgent", agentId })}
+            onRestart={(agentId) => channel.sendAction({ kind: "restartAgent", agentId })}
           />
         )}
         {section === "matrix" && <MatrixSection state={state} />}
@@ -200,15 +204,94 @@ function AgentConfigForm(props: {
   );
 }
 
+/** Existing workspace config for this agent, or one synthesized from its
+ * live launch command — editing/policy/defaults on a roster-launched agent
+ * creates its config record on first save, the same file repo-defined
+ * agents already use. */
+function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
+  const existing = state.agentConfigs.find((c) => c.id === agent.id);
+  if (existing !== undefined) return existing;
+  const parts = (agent.command ?? "").trim().split(/\s+/).filter(Boolean);
+  return {
+    id: agent.id,
+    name: agent.name,
+    command: parts[0] ?? "",
+    args: parts.slice(1),
+    env: {},
+    processPolicy: "auto",
+    defaults: {},
+  };
+}
+
+function StatTiles({ state }: { state: SettingsState }) {
+  const running = state.agents.filter((a) => a.status === "running").length;
+  const tiles = [
+    { n: state.agents.length, label: "connected" },
+    { n: running, label: "running" },
+    { n: state.sessionsToday, label: "sessions today" },
+  ];
+  return (
+    <div class="tiles">
+      {tiles.map((t) => (
+        <div class="tile" key={t.label}>
+          <div class="n">{t.n}</div>
+          <div class="l">{t.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** One default-knob select — rendered enabled only where the agent has been
+ * observed to offer that knob (ui.md: unoffered renders disabled
+ * "— not offered"; patchbay never invents an option). */
+function DefaultKnob(props: {
+  glyph: string;
+  label: string;
+  offered: readonly { value: string; name: string }[] | null;
+  value: string;
+  onChange(value: string): void;
+}) {
+  if (props.offered === null || props.offered.length === 0) {
+    return (
+      <label class="knob-default off" title={`${props.label} — this agent has not offered this knob`}>
+        {props.glyph} {props.label}
+        <select disabled>
+          <option>— not offered</option>
+        </select>
+      </label>
+    );
+  }
+  return (
+    <label class="knob-default">
+      {props.glyph} {props.label}
+      <select
+        value={props.value}
+        onChange={(e) => props.onChange((e.target as HTMLSelectElement).value)}
+      >
+        <option value="">(agent default)</option>
+        {props.offered.map((v) => (
+          <option key={v.value} value={v.value}>
+            {v.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function AgentsSection(props: {
   state: SettingsState;
   onDiagnostics(agentId: string): void;
   onConnectConfigured(agentId: string): void;
   onSave(config: AgentConfigView): void;
   onRemove(agentId: string): void;
+  onStop(agentId: string): void;
+  onRestart(agentId: string): void;
 }) {
   const { state } = props;
   const [editing, setEditing] = useState<string | null>(null); // agentId being edited, or "" for a new one
+  const [diagFor, setDiagFor] = useState<string | null>(null);
   return (
     <section class="section">
       <h1>Agents</h1>
@@ -216,6 +299,7 @@ function AgentsSection(props: {
         Any command line that speaks ACP. Status is live; capabilities are
         claimed until exercised.
       </div>
+      <StatTiles state={state} />
       {state.agents.length === 0 && (
         <div class="card">
           <div class="note" style="margin:0">
@@ -226,6 +310,14 @@ function AgentsSection(props: {
       {state.agents.map((a) => {
         const matrix = state.capabilities[a.id];
         const roster = state.roster.find((r) => r.id === a.id);
+        const config = configFor(state, a);
+        const knobs = state.agentKnobs[a.id];
+        const concurrencyVerified = matrix?.concurrentSessions?.verified ?? false;
+        const saveConfig = (patch: Partial<AgentConfigView>) =>
+          props.onSave({ ...config, ...patch });
+        const modelValues = knobs?.options.find((o) => o.category === "model")?.values ?? null;
+        const effortValues = knobs?.options.find((o) => o.category === "thought_level")?.values ?? null;
+        const modeValues = knobs?.modes?.map((m) => ({ value: m.id, name: m.name })) ?? null;
         return (
           <div class="card" key={a.id}>
             <div class="row">
@@ -236,14 +328,35 @@ function AgentsSection(props: {
               )}
               <span style="flex:1" />
               {a.status === "running" && (
-                <button class="btn" onClick={() => props.onDiagnostics(a.id)}>
-                  Diagnostics…
+                <>
+                  <button class="btn" onClick={() => props.onStop(a.id)}>
+                    Stop
+                  </button>
+                  <button class="btn" onClick={() => setDiagFor(a.id)}>
+                    Diagnostics…
+                  </button>
+                </>
+              )}
+              <button class="btn" onClick={() => setEditing(a.id)}>
+                ✎ Edit
+              </button>
+              {state.agentConfigs.some((c) => c.id === a.id) && (
+                <button class="btn" onClick={() => props.onRemove(a.id)}>
+                  Remove
                 </button>
               )}
             </div>
-            {a.detail !== undefined && (
-              <div class="note" style="margin-top:6px">
-                {a.detail}
+            {a.command !== undefined && (
+              <div class="mono" style="margin-top:6px">
+                {a.command}
+              </div>
+            )}
+            {a.status === "crashed" && (
+              <div class="note crashed-note" style="margin-top:6px">
+                ⚠ crashed{a.detail !== undefined ? ` — ${a.detail}` : ""}
+                <button class="btn" style="margin-left:8px" onClick={() => props.onRestart(a.id)}>
+                  Restart
+                </button>
               </div>
             )}
             {matrix !== undefined && (
@@ -251,9 +364,89 @@ function AgentsSection(props: {
                 {capabilityOneLiner(matrix)}
               </div>
             )}
+            {editing === a.id ? (
+              <AgentConfigForm
+                initial={config}
+                onSave={(c) => {
+                  props.onSave(c);
+                  setEditing(null);
+                }}
+                onCancel={() => setEditing(null)}
+              />
+            ) : (
+              <div class="row" style="margin-top:8px;gap:14px;flex-wrap:wrap">
+                <label class="knob-default">
+                  process
+                  <select
+                    value={config.processPolicy}
+                    onChange={(e) =>
+                      saveConfig({
+                        processPolicy: (e.target as HTMLSelectElement)
+                          .value as AgentConfigView["processPolicy"],
+                      })
+                    }
+                  >
+                    <option value="auto">
+                      auto — {concurrencyVerified ? "shared, concurrency verified ✓" : "isolated, unverified"}
+                    </option>
+                    <option value="shared">shared</option>
+                    <option value="isolated">isolated</option>
+                  </select>
+                </label>
+                <DefaultKnob
+                  glyph="◈"
+                  label="model"
+                  offered={modelValues}
+                  value={config.defaults.model ?? ""}
+                  onChange={(v) => saveConfig({ defaults: { ...config.defaults, model: v || undefined } })}
+                />
+                <DefaultKnob
+                  glyph="⚙"
+                  label="mode"
+                  offered={modeValues}
+                  value={config.defaults.mode ?? ""}
+                  onChange={(v) => saveConfig({ defaults: { ...config.defaults, mode: v || undefined } })}
+                />
+                <DefaultKnob
+                  glyph="⚡"
+                  label="effort"
+                  offered={effortValues}
+                  value={config.defaults.effort ?? ""}
+                  onChange={(v) => saveConfig({ defaults: { ...config.defaults, effort: v || undefined } })}
+                />
+              </div>
+            )}
           </div>
         );
       })}
+      {diagFor !== null && (
+        <div class="modal-scrim" onClick={() => setDiagFor(null)}>
+          <div class="modal" onClick={(e) => e.stopPropagation()}>
+            <h2 style="margin-top:0">Diagnostics — cost disclosed first</h2>
+            <div class="note" style="margin:0 0 10px">
+              Re-runs the free protocol checks (a session/fork round-trip in an
+              ephemeral temp-directory session — never your workspace). Today
+              this consumes <b>no agent turns</b>. Behavior-level probes that
+              would spend real turns don't exist yet; when they ship, their
+              cost appears here before anything runs.
+            </div>
+            <div class="row" style="gap:8px">
+              <button
+                class="btn primary"
+                onClick={() => {
+                  props.onDiagnostics(diagFor);
+                  setDiagFor(null);
+                }}
+              >
+                Run
+              </button>
+              <button class="btn" onClick={() => setDiagFor(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div class="card">
         <h2 style="margin-top:0">Workspace agent configs</h2>
@@ -265,7 +458,7 @@ function AgentsSection(props: {
             None saved yet.
           </div>
         )}
-        {state.agentConfigs.map((c) =>
+        {state.agentConfigs.filter((c) => !state.agents.some((a) => a.id === c.id)).map((c) =>
           editing === c.id ? (
             <AgentConfigForm
               key={c.id}
@@ -431,9 +624,19 @@ function MatrixSection({ state }: { state: SettingsState }) {
 function RoutingEditor(props: {
   agents: SettingsState["agents"];
   routing: IntegrationRoutingView;
+  fidelityOf(agentId: string): FidelityLabel | null;
   onChange(routing: IntegrationRoutingView): void;
 }) {
   const explicit = props.routing !== "auto";
+  // ui.md § Integrations: toggling onto a less-than-fully-brokered agent
+  // interrupts with the explicit plug-in confirmation — auto-attach covers
+  // fully-brokered only, so anything less is a deliberate act.
+  const [pendingPlugIn, setPendingPlugIn] = useState<{ agentId: string; name: string; label: FidelityLabel | null } | null>(null);
+  const plugIn = (agentId: string) => {
+    const list = props.routing === "auto" ? [] : props.routing;
+    props.onChange([...list, agentId]);
+    setPendingPlugIn(null);
+  };
   return (
     <div class="row" style="gap:10px;flex-wrap:wrap">
       <label>
@@ -452,19 +655,39 @@ function RoutingEditor(props: {
         props.agents.map((a) => {
           const list = props.routing as readonly string[];
           const checked = list.includes(a.id);
+          const fidelity = props.fidelityOf(a.id);
           return (
             <label key={a.id}>
               <input
                 type="checkbox"
                 checked={checked}
-                onChange={() =>
-                  props.onChange(checked ? list.filter((id) => id !== a.id) : [...list, a.id])
-                }
+                onChange={() => {
+                  if (checked) {
+                    props.onChange(list.filter((id) => id !== a.id));
+                  } else if (fidelity === "fully-brokered") {
+                    props.onChange([...list, a.id]);
+                  } else {
+                    setPendingPlugIn({ agentId: a.id, name: a.name, label: fidelity });
+                  }
+                }}
               />{" "}
               {a.name}
             </label>
           );
         })}
+      {pendingPlugIn !== null && (
+        <div class="note plug-in-confirm">
+          ⚠ <b>{pendingPlugIn.name}</b> is{" "}
+          {pendingPlugIn.label === null ? "not yet verified" : FIDELITY_TEXT[pendingPlugIn.label]} — tools
+          this integration exposes may be used outside patchbay's permission flow. Plug in anyway?
+          <button class="btn" style="margin-left:8px" onClick={() => plugIn(pendingPlugIn.agentId)}>
+            Plug in
+          </button>
+          <button class="btn" onClick={() => setPendingPlugIn(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -567,6 +790,11 @@ function IntegrationsSection(props: {
   onShare(integrationId: string): void;
 }) {
   const { state } = props;
+  const fidelityOf = (agentId: string): FidelityLabel | null => {
+    const matrix = state.capabilities[agentId];
+    if (matrix === undefined) return null;
+    return computeFidelity(matrix, state.roster.find((r) => r.id === agentId)?.knownBypassBridge ?? false);
+  };
   const [adding, setAdding] = useState<"stdio" | "http" | null>(null);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -660,6 +888,7 @@ function IntegrationsSection(props: {
             <RoutingEditor
               agents={state.agents}
               routing={integration.routing}
+              fidelityOf={fidelityOf}
               onChange={(routing) => props.onSetRouting(integration.id, routing)}
             />
           </div>

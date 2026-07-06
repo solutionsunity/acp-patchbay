@@ -150,7 +150,7 @@ export class EditorStateHost {
     return out;
   }
 
-  private getOpenEditors(): OpenEditorInfo[] {
+  getOpenEditors(): OpenEditorInfo[] {
     return vscode.workspace.textDocuments
       .filter((d) => d.uri.scheme === "file")
       .map((d) => ({ file: d.uri.fsPath, dirty: d.isDirty }));

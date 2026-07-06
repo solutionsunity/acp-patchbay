@@ -241,6 +241,23 @@ body {
   color: var(--pb-accent);
 }
 
+/* ── crash banner (ui.md § Chat blocks: shown the moment the agent dies;
+   Restart is the one action) ─────────────────────────────────────────── */
+.crash-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--pb-err);
+  background: color-mix(in srgb, var(--pb-err) 12%, transparent);
+  border-bottom: 1px solid var(--pb-err);
+}
+
+.crash-banner .btn {
+  margin-left: auto;
+}
+
 /* ── chat ───────────────────────────────────────────────────────────── */
 .chat {
   flex: 1;

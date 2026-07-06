@@ -81,7 +81,10 @@ export type Action =
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
   | { kind: "addImageContext"; sessionId: string; dataUrl: string; mimeType: string; label: string }
-  | { kind: "addFilePickerContext"; sessionId: string };
+  | { kind: "addFilePickerContext"; sessionId: string }
+  /** From the composer's `@` mention picker — attach an open editor's live
+   * content (ui.md § Composer: "@ → context mention picker"). */
+  | { kind: "addOpenEditorContext"; sessionId: string; path: string };
 
 // ── Settings § Agents — workspace agent launch config (features.md: "add,
 // edit, and remove agents, including launch configuration per agent") ─────
@@ -220,6 +223,22 @@ export interface AgentSummary {
   status: AgentStatus;
   /** Human-readable status context, e.g. "exited 1 · 14:07". */
   detail?: string;
+  /** Launch command line as spawned (ui.md § Settings Agents — shown mono). */
+  command?: string;
+}
+
+/** The live-selection indicator's data (ui.md § Composer — the ghost chip):
+ * position only, never the text — the text is read host-side at the moment
+ * the user solidifies it, not streamed on every cursor move. */
+export interface LiveSelectionView {
+  file: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface OpenEditorView {
+  file: string;
+  dirty: boolean;
 }
 
 /**
@@ -518,6 +537,11 @@ export interface AgentViewState {
    * on the next create/reload/fork — ACP has no live-update request, so
    * patchbay never claims one. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
+  /** Live IDE selection — the ghost chip's presence signal (ui.md: appears
+   * only while the IDE has a selection). Position only; never the text. */
+  liveSelection: LiveSelectionView | null;
+  /** Currently open editor tabs — the `@` mention picker's source. */
+  openEditors: readonly OpenEditorView[];
 }
 
 export interface UsageInfo {
@@ -553,6 +577,8 @@ export const initialAgentViewState: AgentViewState = {
   sessionModes: {},
   sessionConfigOptions: {},
   contextRoots: {},
+  liveSelection: null,
+  openEditors: [],
 };
 
 export type AgentViewEvent =
@@ -583,7 +609,6 @@ export type AgentViewEvent =
       status: ToolCallStatus;
     }
   | { kind: "planAppended"; sessionId: string; blockId: string; entries: readonly PlanEntry[] }
-  | { kind: "planCleared"; sessionId: string }
   | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
   | {
       kind: "permissionRequested";
@@ -629,6 +654,12 @@ export type AgentViewEvent =
   | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
   /** Full replace — the current external-root list for a session. */
   | { kind: "contextRootsChanged"; sessionId: string; roots: readonly string[] }
+  /** Full replace — live selection + open editors, coalesced to the latest. */
+  | {
+      kind: "editorContextChanged";
+      selection: LiveSelectionView | null;
+      openEditors: readonly OpenEditorView[];
+    }
   /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
   | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
   | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
@@ -852,7 +883,13 @@ export function reduceAgentView(
         ),
       };
     case "transcriptReset":
-      return withTranscript(state, event.sessionId, []);
+      // The strip mirrors only what the agent reports: a reset means replay
+      // is about to rebuild the transcript, and the live plan rebuilds from
+      // the same replay — a stale strip must not outlive its source.
+      return {
+        ...withTranscript(state, event.sessionId, []),
+        activePlan: { ...state.activePlan, [event.sessionId]: null },
+      };
     case "userMessageAppended":
       return appendBlock(state, event.sessionId, {
         kind: "user",
@@ -870,8 +907,6 @@ export function reduceAgentView(
       const withBlock = appendBlock(state, event.sessionId, block);
       return { ...withBlock, activePlan: { ...withBlock.activePlan, [event.sessionId]: block } };
     }
-    case "planCleared":
-      return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: null } };
     case "commandsAdvertised":
       return {
         ...state,
@@ -995,6 +1030,8 @@ export function reduceAgentView(
       return withTranscript(state, event.sessionId, event.blocks);
     case "contextRootsChanged":
       return { ...state, contextRoots: { ...state.contextRoots, [event.sessionId]: event.roots } };
+    case "editorContextChanged":
+      return { ...state, liveSelection: event.selection, openEditors: event.openEditors };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -1027,6 +1064,10 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   ) {
     return next;
   }
+  // Editor context changes on every cursor move — only the latest matters.
+  if (prev.kind === "editorContextChanged" && next.kind === "editorContextChanged") {
+    return next;
+  }
   // Terminal output streams in small chunks — concatenate per block, same as text.
   if (
     prev.kind === "terminalOutputAppended" &&
@@ -1054,6 +1095,23 @@ export interface AuditEntryView {
   [key: string]: unknown;
 }
 
+/** What an agent has been observed to offer, knob-wise, across its sessions
+ * (ui.md § Settings Agents: default knobs render "only where offered" —
+ * an unoffered knob is a disabled "— not offered", never a free-text guess).
+ * Sourced from real session/new|load|fork responses and update
+ * notifications; empty until the agent's first session ever offers one. */
+export interface AgentKnobsView {
+  /** null until modes have ever been offered. */
+  modes: readonly SessionModeOptionView[] | null;
+  /** Select-type config options only — the shapes defaults can name. */
+  options: readonly {
+    id: string;
+    name: string;
+    category?: string;
+    values: readonly { value: string; name: string }[];
+  }[];
+}
+
 export interface SettingsState {
   agents: readonly AgentSummary[];
   roster: readonly RosterEntry[];
@@ -1075,6 +1133,10 @@ export interface SettingsState {
    * removable from Settings; connecting one goes through the same
    * `connectAgent` action as roster/custom (`{ configuredId }`). */
   agentConfigs: readonly AgentConfigView[];
+  /** Stat tile: sessions created today (from the session index). */
+  sessionsToday: number;
+  /** Keyed by agentId — observed knob offerings (see AgentKnobsView). */
+  agentKnobs: Readonly<Record<string, AgentKnobsView>>;
 }
 
 export const initialSettingsState: SettingsState = {
@@ -1091,6 +1153,8 @@ export const initialSettingsState: SettingsState = {
   connectFlow: {},
   assets: {},
   agentConfigs: [],
+  sessionsToday: 0,
+  agentKnobs: {},
 };
 
 export type SettingsEvent =
@@ -1107,7 +1171,9 @@ export type SettingsEvent =
   | { kind: "integrationConnectStarted"; registryId: string }
   | { kind: "integrationConnectFailed"; registryId: string; reason: string }
   | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
-  | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] };
+  | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
+  | { kind: "sessionStatsChanged"; sessionsToday: number }
+  | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView };
 
 export function reduceSettings(
   state: SettingsState,
@@ -1170,6 +1236,10 @@ export function reduceSettings(
       return { ...state, assets: { ...state.assets, [event.assets.agentId]: event.assets } };
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };
+    case "sessionStatsChanged":
+      return { ...state, sessionsToday: event.sessionsToday };
+    case "agentKnobsObserved":
+      return { ...state, agentKnobs: { ...state.agentKnobs, [event.agentId]: event.knobs } };
     default:
       return state;
   }
@@ -1184,6 +1254,8 @@ const SETTINGS_ONLY_KINDS = new Set([
   "integrationConnectFailed",
   "agentAssetsChanged",
   "agentConfigsChanged",
+  "sessionStatsChanged",
+  "agentKnobsObserved",
 ]);
 
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {
