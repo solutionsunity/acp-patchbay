@@ -76,6 +76,27 @@ describe("CapabilityVerifier", () => {
     await pool.stop("honest");
   });
 
+  it("the fork probe's throwaway sessions never linger in the connection's session set", async () => {
+    const { pool, state } = harness();
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "tidy"));
+    await waitFor(() => (state().capabilities.tidy?.["session.fork"]?.verified ? true : undefined));
+    // Lingering probe sessions would read as real concurrent sessions to
+    // process-policy "auto" (hasExisting) — the set must be empty again.
+    expect(pool.get("tidy")!.sessions).toEqual([]);
+    await pool.stop("tidy");
+  });
+
+  it("a failed fork probe also cleans up its throwaway parent session", async () => {
+    const { pool, state } = harness();
+    await pool.connect(
+      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "tidy2"),
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    expect(state().capabilities.tidy2!["session.fork"].verified).toBe(false);
+    expect(pool.get("tidy2")!.sessions).toEqual([]);
+    await pool.stop("tidy2");
+  });
+
   it("a lying agent (declares fork, breaks it) shows declared-but-unverified — never verified", async () => {
     const { pool, state } = harness();
     await pool.connect(

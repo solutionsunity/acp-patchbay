@@ -51,13 +51,21 @@ export class CapabilityVerifier {
    * honestly at declared-but-unverified. */
   private async verifyForkRoundTrip(agentId: string): Promise<void> {
     const dir = await mkdtemp(join(tmpdir(), "acp-patchbay-verify-"));
+    const probeSessionIds: string[] = [];
     try {
       const { sessionId } = await this.pool.newSession(agentId, dir);
-      await this.pool.fork(agentId, sessionId, dir);
+      probeSessionIds.push(sessionId);
+      const forked = await this.pool.fork(agentId, sessionId, dir);
+      probeSessionIds.push(forked.sessionId);
       this.markVerified(agentId, "session.fork");
     } catch {
       // declared but the round-trip failed — an honest state, not an error to surface
     } finally {
+      // Probe sessions must not linger in the connection's session set:
+      // process-policy "auto" reads that set as real concurrent sessions
+      // (hasExisting) and would needlessly isolate the user's first
+      // top-level session whenever the fork half of the probe failed.
+      for (const id of probeSessionIds) this.pool.forgetSession(agentId, id);
       await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
