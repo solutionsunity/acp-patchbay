@@ -251,6 +251,14 @@ body {
   gap: 12px;
 }
 
+/* Blocks must never flex-shrink: .card's overflow:hidden zeroes its
+ * automatic minimum size, so a taller-than-viewport transcript would
+ * compress cards and clip their content (permission buttons, terminal
+ * output) instead of letting the chat scroll. */
+.chat > * {
+  flex-shrink: 0;
+}
+
 .chat::-webkit-scrollbar {
   width: 8px;
 }
