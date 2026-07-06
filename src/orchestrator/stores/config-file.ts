@@ -38,9 +38,21 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 // mechanism": a registry-backed source or a custom stdio/http one, each
 // producing an mcpServers entry the same way. No credential field exists
 // here by construction — those live only in SecretStorage
-// (integration-tokens.ts), keyed by `id`.
+// (integration-tokens.ts), keyed by `id`. Auth shapes per
+// docs/reference-mcp-oauth.md: a static key in a configurable header, or
+// MCP-spec OAuth 2.1 (URL-only; client id and endpoints are discovered and
+// live with the token in SecretStorage, not here).
 export const integrationSourceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("registry"), registryId: z.string().min(1) }),
+  z.object({
+    kind: z.literal("registry"),
+    registryId: z.string().min(1),
+    /** User-supplied endpoint, for registry entries with per-account URLs
+     * (Supabase, Augment). Absent when the entry ships a fixed URL. */
+    url: z.string().optional(),
+    /** Which of the entry's offered mechanisms this connection used —
+     * decides how the bridge formats the auth header. */
+    authMode: z.enum(["header", "oauth"]).default("header"),
+  }),
   z.object({
     kind: z.literal("custom-stdio"),
     command: z.string().min(1),
@@ -50,9 +62,12 @@ export const integrationSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("custom-http"),
     url: z.string().min(1),
-    /** "none" needs no secret at all; "bearer-token" sends whatever's
-     * stored for this integration's id as `Authorization: Bearer <token>`. */
-    authType: z.enum(["none", "bearer-token"]).default("none"),
+    /** "none" needs no secret; "header" sends the stored key as
+     * `{headerName}: {valuePrefix}{key}`; "oauth" runs the MCP-spec OAuth
+     * flow against the URL and sends `Authorization: Bearer <token>`. */
+    authType: z.enum(["none", "header", "oauth"]).default("none"),
+    headerName: z.string().default("Authorization"),
+    valuePrefix: z.string().default("Bearer "),
   }),
 ]);
 

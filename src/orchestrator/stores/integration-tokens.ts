@@ -29,6 +29,12 @@ export interface StoredToken {
   refreshToken?: string;
   /** ISO — absent means the provider reported no expiry. */
   expiresAt?: string;
+  /** OAuth refresh context, captured at connect time (the endpoints/client
+   * were *discovered*, per docs/reference-mcp-oauth.md — nothing static to
+   * re-derive them from later). Present only for OAuth-connected
+   * integrations; static-key tokens never expire on our side. */
+  tokenEndpoint?: string;
+  clientId?: string;
 }
 
 export class IntegrationTokenStore {

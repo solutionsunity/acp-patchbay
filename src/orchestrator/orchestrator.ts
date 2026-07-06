@@ -27,6 +27,7 @@ import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
+import { OAuthCallbackRegistry } from "./oauth-callback";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { SessionManager } from "./session-manager";
 import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
@@ -69,6 +70,8 @@ export class Orchestrator {
   readonly editorStateHost: EditorStateHost;
   readonly integrationTokens: IntegrationTokenStore;
   readonly integrations: IntegrationsManager;
+  /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
+  readonly oauthCallbacks = new OAuthCallbackRegistry();
 
   private readonly workspaceRoot: string | null;
   private readonly agentNames = new Map<string, string>();
@@ -115,9 +118,31 @@ export class Orchestrator {
           ).fsPath,
     );
     this.integrationTokens = new IntegrationTokenStore(context.secrets);
-    this.integrations = new IntegrationsManager(loadRegistry(), this.configFile, this.integrationTokens, {
-      emit: (...events) => this.settings.emit(...events),
-    });
+    // OAuth browser/redirect step (docs/reference-mcp-oauth.md, pitfall §1):
+    // the redirect target is this extension's own vscode:// URI, passed
+    // through asExternalUri so VS Code resolves it correctly under SSH
+    // remote / WSL / Codespaces — never a hand-rolled 127.0.0.1 server.
+    // extension.ts's registerUriHandler feeds callbacks into oauthCallbacks.
+    const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
+    this.integrations = new IntegrationsManager(
+      loadRegistry(),
+      this.configFile,
+      this.integrationTokens,
+      { emit: (...events) => this.settings.emit(...events) },
+      {
+        redirectUri: async () => {
+          const callback = await vscode.env.asExternalUri(
+            vscode.Uri.parse(`${vscode.env.uriScheme}://${extensionId}/oauth-callback`),
+          );
+          return callback.toString(true);
+        },
+        authorize: async (authorizationUrl, state) => {
+          const pending = this.oauthCallbacks.wait(state);
+          await vscode.env.openExternal(vscode.Uri.parse(authorizationUrl));
+          return pending;
+        },
+      },
+    );
 
     this.roster = loadRoster();
     const rosterEntries = this.roster.map((a) => ({
@@ -830,8 +855,11 @@ export class Orchestrator {
       case "removeContextChip":
         this.sessionManager.removeContext(action.sessionId, action.chipId);
         break;
-      case "connectRegistryIntegration":
-        void this.integrations.connectRegistry(action.registryId);
+      case "connectRegistryKey":
+        void this.integrations.connectRegistryWithKey(action.registryId, action.token, action.url);
+        break;
+      case "connectRegistryOAuth":
+        void this.integrations.connectRegistryOAuth(action.registryId, action.url);
         break;
       case "addCustomIntegration":
         void this.integrations.addCustom(action.id, action.name, action.source, action.routing);

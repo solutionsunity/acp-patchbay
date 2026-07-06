@@ -61,7 +61,8 @@ export type Action =
   | { kind: "reloadSession"; sessionId: string }
   | { kind: "setSessionMode"; sessionId: string; modeId: string }
   | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean }
-  | { kind: "connectRegistryIntegration"; registryId: string }
+  | { kind: "connectRegistryKey"; registryId: string; token: string; url?: string }
+  | { kind: "connectRegistryOAuth"; registryId: string; url?: string }
   | {
       kind: "addCustomIntegration";
       id: string;
@@ -101,11 +102,21 @@ export type IntegrationRoutingView = "auto" | readonly string[];
 
 /** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
  * with auth" escape hatch (features.md § Integrations). Registry-backed
- * integrations go through `connectRegistryIntegration` instead, since that
- * path drives an OAuth flow rather than taking a source directly. */
+ * integrations go through `connectRegistryKey`/`connectRegistryOAuth`
+ * instead, since those drive a connect flow rather than taking a source
+ * directly. Auth shapes per docs/reference-mcp-oauth.md: "header" is a
+ * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
+ * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
 export type IntegrationSourceView =
   | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
-  | { kind: "custom-http"; url: string; authType: "none" | "bearer-token"; token?: string };
+  | {
+      kind: "custom-http";
+      url: string;
+      authType: "none" | "header" | "oauth";
+      headerName?: string;
+      valuePrefix?: string;
+      token?: string;
+    };
 
 export interface IntegrationView {
   id: string;
@@ -121,14 +132,24 @@ export interface IntegrationView {
 export interface RegistryEntryView {
   id: string;
   name: string;
-  /** False until the owner-supplied clientId/url exist (plan.md P9 touchpoint). */
+  /** At least one auth mechanism is open to us and an endpoint can exist
+   * (fixed or user-supplied). Figma remote is the honest false today. */
   connectable: boolean;
+  /** Per-entry honesty, shown on the card (gated DCR, vendor prerequisites). */
+  note: string;
+  docsUrl: string;
+  /** The user pastes their account's endpoint at connect (Supabase, Augment). */
+  userUrl: boolean;
+  /** Static-key mode offered — hint says where to get a key. Null = none. */
+  headerAuth: { hint: string } | null;
+  /** MCP-spec OAuth with open DCR verified for this vendor. */
+  oauth: boolean;
 }
 
-export interface DeviceFlowView {
-  userCode: string;
-  verificationUri: string;
-  expiresIn: number;
+/** Connect-in-flight state per registryId — "pending" while the browser
+ * authorization is out, "failed" with the labeled reason; cleared by
+ * `integrationsChanged` once connected. */
+export interface ConnectFlowView {
   status: "pending" | "failed";
   reason?: string;
 }
@@ -1044,9 +1065,10 @@ export interface SettingsState {
   pendingAdoptions: readonly WorkspaceAgentPending[];
   integrationRegistry: readonly RegistryEntryView[];
   integrations: readonly IntegrationView[];
-  /** Keyed by registryId while a device-flow connect is in flight or just
-   * failed; cleared once `integrationsChanged` reports it connected. */
-  deviceFlow: Readonly<Record<string, DeviceFlowView>>;
+  /** Keyed by registryId (or custom integration id) while a connect is in
+   * flight or just failed; cleared once `integrationsChanged` reports it
+   * connected. */
+  connectFlow: Readonly<Record<string, ConnectFlowView>>;
   /** Keyed by agentId — populated as each connects (and on-demand refresh). */
   assets: Readonly<Record<string, AgentAssetsView>>;
   /** Workspace-config agents (`.vscode/acp-patchbay.json`) — addable, editable,
@@ -1066,7 +1088,7 @@ export const initialSettingsState: SettingsState = {
   pendingAdoptions: [],
   integrationRegistry: [],
   integrations: [],
-  deviceFlow: {},
+  connectFlow: {},
   assets: {},
   agentConfigs: [],
 };
@@ -1081,13 +1103,8 @@ export type SettingsEvent =
   | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
   | { kind: "integrationRegistryLoaded"; entries: readonly RegistryEntryView[] }
   | { kind: "integrationsChanged"; integrations: readonly IntegrationView[] }
-  | {
-      kind: "integrationDeviceCodeIssued";
-      registryId: string;
-      userCode: string;
-      verificationUri: string;
-      expiresIn: number;
-    }
+  /** A browser-authorization connect is out — the card shows waiting state. */
+  | { kind: "integrationConnectStarted"; registryId: string }
   | { kind: "integrationConnectFailed"; registryId: string; reason: string }
   | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] };
@@ -1125,39 +1142,30 @@ export function reduceSettings(
     case "integrationRegistryLoaded":
       return { ...state, integrationRegistry: event.entries };
     case "integrationsChanged": {
-      // A connected registry-backed integration retires its device-flow card.
-      const connectedRegistryIds = new Set(
-        event.integrations.filter((i) => i.connected && i.registryId).map((i) => i.registryId!),
+      // A connected integration retires its in-flight/failed connect card
+      // (keyed by registryId for curated entries, by the integration's own
+      // id for custom-http OAuth — currentViews reports both as connected).
+      const connectedIds = new Set(
+        event.integrations.filter((i) => i.connected).flatMap((i) => [i.id, i.registryId ?? i.id]),
       );
-      const deviceFlow = Object.fromEntries(
-        Object.entries(state.deviceFlow).filter(([registryId]) => !connectedRegistryIds.has(registryId)),
+      const connectFlow = Object.fromEntries(
+        Object.entries(state.connectFlow).filter(([id]) => !connectedIds.has(id)),
       );
-      return { ...state, integrations: event.integrations, deviceFlow };
+      return { ...state, integrations: event.integrations, connectFlow };
     }
-    case "integrationDeviceCodeIssued":
+    case "integrationConnectStarted":
       return {
         ...state,
-        deviceFlow: {
-          ...state.deviceFlow,
-          [event.registryId]: {
-            userCode: event.userCode,
-            verificationUri: event.verificationUri,
-            expiresIn: event.expiresIn,
-            status: "pending",
-          },
-        },
+        connectFlow: { ...state.connectFlow, [event.registryId]: { status: "pending" } },
       };
-    case "integrationConnectFailed": {
-      const existing = state.deviceFlow[event.registryId];
-      if (!existing) return state;
+    case "integrationConnectFailed":
       return {
         ...state,
-        deviceFlow: {
-          ...state.deviceFlow,
-          [event.registryId]: { ...existing, status: "failed", reason: event.reason },
+        connectFlow: {
+          ...state.connectFlow,
+          [event.registryId]: { status: "failed", reason: event.reason },
         },
       };
-    }
     case "agentAssetsChanged":
       return { ...state, assets: { ...state.assets, [event.assets.agentId]: event.assets } };
     case "agentConfigsChanged":
@@ -1172,7 +1180,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "auditTailChanged",
   "integrationRegistryLoaded",
   "integrationsChanged",
-  "integrationDeviceCodeIssued",
+  "integrationConnectStarted",
   "integrationConnectFailed",
   "agentAssetsChanged",
   "agentConfigsChanged",

@@ -34,6 +34,15 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.addSelectionToContext", () =>
       orchestrator.addSelectionToContextCommand(),
     ),
+    // OAuth redirect target (docs/reference-mcp-oauth.md): integrations'
+    // browser flows come back as vscode://solutionsunity.acp-patchbay/...
+    // URIs — resolved correctly in every environment by asExternalUri,
+    // unlike a loopback HTTP server.
+    vscode.window.registerUriHandler({
+      handleUri: (uri) => {
+        orchestrator.oauthCallbacks.handle(uri.query);
+      },
+    }),
   );
 
   return { internal: { orchestrator, settingsPanelHost } };

@@ -283,46 +283,51 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     transcript in the other). One private helper serves both; the only
     difference is where the seed blocks come from.*
 
-### P9 — Integrations + GitHub ☐ (mechanism complete, blocked on owner touchpoints)
+### P9 — Integrations + GitHub ☑ (mechanism + curated registry; live smoke remains)
 
-- `data/registry.json` (GitHub entry: id, name, transport, auth, scopes, bridge
-  launch); custom MCP add (command/URL + auth); stdio-to-HTTP bridge process
-  with token refresh; routing UI — per-agent attach, default auto-attach only
-  fully-brokered; workspace-scoped storage in the config file; explicit share
-  command that copies config and reattaches credentials only on confirm.
+- `data/registry.json` (curated entries: id, name, endpoint, auth shapes,
+  docs link, honest per-entry note); custom MCP add (command/URL + auth);
+  stdio-to-HTTP bridge process with token refresh; routing UI — per-agent
+  attach, default auto-attach only fully-brokered; workspace-scoped storage
+  in the config file; explicit share command that copies config and
+  reattaches credentials only on confirm.
 - OAuth grant: decide at phase start — default call is GitHub Device Flow (no
   client secret in an extension, works in remote/WSL); URI-handler callback only
-  if device flow proves hostile in practice. *Decided: Device Flow, built as such.*
-- **Gate**: GitHub connect → routed agent lists issues via MCP; disconnect
-  revokes; token never appears outside `SecretStorage` (test greps logs/state).
-- **Owner touchpoints**: create the GitHub OAuth app under the org; live smoke
-  with Augment on the owner's machine.
-- *Status: everything autonomously buildable is built and tested — real Device
-  Flow client (`oauth-device-flow.ts`, RFC 8628, tested against a fake local
-  HTTP provider), real stdio-to-HTTP bridge subprocess (`integration-bridge.js`,
-  a 5th esbuild bundle) proven end-to-end with a real fake-agent process calling
-  a fake remote MCP server's `list_issues` tool through it (including the 401
-  retry-once path), registry + custom-integration + routing + share mechanism,
-  `IntegrationTokenStore` (SecretStorage-only, `SecretsLike` structural
-  interface so it's fakeable), and the Settings Integrations section. What
-  remains is exactly the two named owner touchpoints, both genuinely
-  account-bound and unreachable from this sandbox:*
-  - *`data/registry.json`'s GitHub entry ships with `deviceCodeUrl`/`tokenUrl`
-    filled in (GitHub's own stable, public Device Flow endpoints — the same
-    for every OAuth App, safe to ship as data) but `clientId` and `url` left
-    empty. Both are bound to the specific OAuth App this project registers —
-    `url` because which remote MCP endpoint that app is authorized against is
-    a property of how it's registered (personal-access-style vs. a GitHub App,
-    which product surface, which scopes), not a public constant I can respond
-    to instead of guessing. `isConnectable()` gates on both being non-empty, so
-    Connect is inert, not silently wrong, until they're filled in.*
-  - *The gate's "routed agent lists issues via MCP" is verified automatically
-    (`test/integration-bridge.test.ts`) against a fake remote server standing
-    in for whatever GitHub's is — that fake is honest about what it replaces
-    (no network access, no real client_id here) but is not a live GitHub
-    smoke test. Once the OAuth App exists, filling in `clientId`/`url` and
-    running the Augment live smoke is what actually closes this phase's gate;
-    no code change should be needed for that step given the mechanism above.*
+  if device flow proves hostile in practice. *Decided at phase start as Device
+  Flow, built as such — then **superseded** after owner-directed research
+  (docs/reference-mcp-oauth.md, the standing auth reference): the per-service
+  OAuth-App route is dropped entirely. What ships instead: (1) a static key in
+  a configurable header (`{headerName}: {valuePrefix}{key}`) as the v1 floor
+  for every integration — covers GitHub-via-PAT, Stitch's `X-Goog-Api-Key`,
+  Postman, and every other vendor's documented key path with zero OAuth
+  surface and zero remote-environment failure modes; (2) MCP-spec OAuth 2.1
+  (`mcp-oauth.ts`: RFC 9728 → 8414 discovery, RFC 7591 dynamic client
+  registration, Authorization Code + PKCE) for vendors whose DCR is verified
+  open (Stripe, Sentry, Postman-US, Supabase, Augment) — URL-only, no
+  pre-provisioned credentials, refresh context captured with the token since
+  the endpoints were discovered, not static. The redirect is the URI-handler
+  route the original call reserved as fallback (`registerUriHandler` +
+  `asExternalUri`), adopted deliberately because raw-loopback redirects are
+  the *documented* remote-environment failure (reference doc, pitfall §1) —
+  Device Flow's original justification. `oauth-device-flow.ts` removed. This
+  also **removed the "create a GitHub OAuth App" owner touchpoint** — nothing
+  to create; GitHub connects with a pasted PAT today.*
+- **Gate**: connect (key paste, and OAuth against a fake spec-compliant
+  provider with real DCR + PKCE verification) → routed agent lists issues via
+  MCP through the real bridge subprocess; disconnect revokes; token never
+  appears outside `SecretStorage`; gated DCR (Figma-style `client_name`
+  allowlist) fails immediately and labeled, never a hang. All automated
+  (`test/mcp-oauth.test.ts`, `test/integrations.test.ts`,
+  `test/integration-bridge.test.ts`).
+- **Owner touchpoint remaining**: live smoke on the owner's machine — a real
+  vendor connect (GitHub PAT is the zero-setup candidate) and the Augment
+  agent end-to-end. No code is expected to change for it.
+- *The curated eight (GitHub, Figma, Stitch, Stripe, Sentry, Postman,
+  Supabase, Augment Context Engine) ship as data with per-entry honesty:
+  Figma remote is visible-but-not-connectable (no key mode, allowlisted DCR —
+  its note names the Figma-Desktop `custom-stdio` alternative); Supabase and
+  Augment take a user-pasted per-account endpoint. Full facts and binding
+  implementation constraints live in docs/reference-mcp-oauth.md.*
 
 ### P10 — Rules, skills, commands management ☑
 
@@ -426,7 +431,10 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 ## Owner touchpoints, complete list
 
 1. **P3**: Agent View design verdict.
-2. **P9**: GitHub OAuth app creation; Augment live smoke on your machine.
+2. **P9**: live smoke on your machine — a real vendor connect (GitHub PAT) and
+   Augment end-to-end. *(The original "create a GitHub OAuth App" touchpoint
+   was removed by the superseding auth decision — see P9 and
+   docs/reference-mcp-oauth.md.)*
 3. **P12**: publisher identity; manual publish.
 4. Ad hoc: gap clarifications when a doc conflict or protocol surprise is hit —
    raised immediately with a proposed call, never silently resolved.

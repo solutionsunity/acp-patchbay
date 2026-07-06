@@ -171,6 +171,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
         { name: "ACP_PATCHBAY_IPC", value: tokenHost.socketPath },
         { name: "ACP_PATCHBAY_INTEGRATION_ID", value: "github" },
         { name: "ACP_PATCHBAY_INTEGRATION_URL", value: remote.url },
+        { name: "ACP_PATCHBAY_AUTH_HEADER", value: "Authorization" },
+        { name: "ACP_PATCHBAY_AUTH_PREFIX", value: "Bearer " },
       ],
     };
     const h = harness([bridgeEntry]);
@@ -201,6 +203,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
         { name: "ACP_PATCHBAY_IPC", value: tokenHost.socketPath },
         { name: "ACP_PATCHBAY_INTEGRATION_ID", value: "github" },
         { name: "ACP_PATCHBAY_INTEGRATION_URL", value: remote.url },
+        { name: "ACP_PATCHBAY_AUTH_HEADER", value: "Authorization" },
+        { name: "ACP_PATCHBAY_AUTH_PREFIX", value: "Bearer " },
       ],
     };
     const h = harness([bridgeEntry]);

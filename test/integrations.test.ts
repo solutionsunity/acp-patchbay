@@ -1,124 +1,143 @@
-// P9 gate (non-live half): registry + custom integrations, routing, and
-// mcpServers construction, all against a real fake OAuth provider (same
-// fixture philosophy as oauth-device-flow.test.ts) and a real temp-dir
-// config file — no mocks of IntegrationsManager's own collaborators. The
-// live half (a real agent calling list_issues through the real bridge
-// subprocess) is test/integration-bridge.test.ts; the *actually* live half
-// (real GitHub, real Augment) is the P9 owner touchpoint.
+// Integrations manager: registry key/OAuth connects, custom escape hatch,
+// routing, and mcpServers construction — against a real fake MCP-spec OAuth
+// provider (test/support/fake-oauth-provider.ts) and a real temp-dir config
+// file. No mocks of IntegrationsManager's own collaborators. The live half
+// (a real agent calling tools through the real bridge subprocess) is
+// test/integration-bridge.test.ts.
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IntegrationsManager } from "../src/orchestrator/integrations";
 import { ConfigFileStore } from "../src/orchestrator/stores/config-file";
 import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import type { RegistryEntry } from "../src/orchestrator/stores/registry";
-import { IntegrationsManager } from "../src/orchestrator/integrations";
 import type { SettingsEvent } from "../src/shared/protocol";
+import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 
 let dir: string;
 let configPath: string;
-let server: Server;
-let baseUrl: string;
-let tokenResponses: Record<string, unknown>[];
-let tokenCallIndex: number;
+let provider: FakeOAuthProvider;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "patchbay-integrations-"));
   configPath = join(dir, ".vscode", "acp-patchbay.json");
-  tokenResponses = [{ access_token: "gh-token-1", refresh_token: "gh-refresh-1", expires_in: 3600 }];
-  tokenCallIndex = 0;
-  server = createServer((req, res) => {
-    void (async () => {
-      for await (const _chunk of req) void _chunk;
-      res.setHeader("content-type", "application/json");
-      if (req.url === "/device/code") {
-        res.end(
-          JSON.stringify({
-            user_code: "ABCD-1234",
-            device_code: "dev-1",
-            verification_uri: "https://example.test/activate",
-            expires_in: 30,
-            interval: 0,
-          }),
-        );
-        return;
-      }
-      const body = tokenResponses[Math.min(tokenCallIndex, tokenResponses.length - 1)];
-      tokenCallIndex++;
-      res.end(JSON.stringify(body));
-    })();
-  });
-  await new Promise<void>((r) => server.listen(0, r));
-  baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  provider = new FakeOAuthProvider();
+  await provider.listen();
 });
 afterEach(async () => {
-  await new Promise((r) => server.close(r));
+  await provider.close();
   await rm(dir, { recursive: true, force: true });
 });
 
-function registryEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
+function entry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
   return {
-    id: "github",
-    name: "GitHub",
-    transport: "http",
-    url: `${baseUrl}/mcp`,
+    id: "svc",
+    name: "Service",
+    url: provider.mcpUrl,
+    userUrl: false,
+    docsUrl: "https://example.test/docs",
+    note: "",
     auth: {
-      type: "oauth-device",
-      scopes: ["repo"],
-      deviceCodeUrl: `${baseUrl}/device/code`,
-      tokenUrl: `${baseUrl}/token`,
-      clientId: "client-1",
+      header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "a key" },
+      oauth: true,
     },
     ...overrides,
   };
+}
+
+function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<string, string> {
+  if (!("command" in server)) throw new Error("expected a stdio server entry");
+  return Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value]));
 }
 
 function harness(registry: RegistryEntry[]) {
   const events: SettingsEvent[] = [];
   const configFile = new ConfigFileStore(configPath);
   const tokens = new IntegrationTokenStore(new MemorySecrets());
-  const manager = new IntegrationsManager(registry, configFile, tokens, {
-    emit: (...evs) => events.push(...evs),
-  });
+  const manager = new IntegrationsManager(
+    registry,
+    configFile,
+    tokens,
+    { emit: (...evs) => events.push(...evs) },
+    fakeUserAgent(),
+  );
   return { manager, configFile, tokens, events };
 }
 
-describe("IntegrationsManager — registry connect (Device Flow)", () => {
-  it("connect issues a device code, then stores the token and upserts config once approved", async () => {
-    const h = harness([registryEntry()]);
-    await h.manager.connectRegistry("github");
+describe("IntegrationsManager — key connect (the v1 floor)", () => {
+  it("stores the pasted key and upserts the config entry with authMode header", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryWithKey("svc", "pasted-key-1");
 
-    const issued = h.events.find((e) => e.kind === "integrationDeviceCodeIssued");
-    expect(issued).toMatchObject({ userCode: "ABCD-1234", verificationUri: "https://example.test/activate" });
-
+    expect((await h.tokens.get("svc"))?.accessToken).toBe("pasted-key-1");
     const changed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
     expect(changed?.kind === "integrationsChanged" && changed.integrations).toEqual([
-      { id: "github", name: "GitHub", sourceKind: "registry", registryId: "github", connected: true, routing: "auto" },
+      { id: "svc", name: "Service", sourceKind: "registry", registryId: "svc", connected: true, routing: "auto" },
     ]);
 
-    const stored = await h.tokens.get("github");
-    expect(stored?.accessToken).toBe("gh-token-1");
-
-    // the raw token never touches the config file on disk
+    const result = await h.configFile.read();
+    expect(result.ok && result.config.integrations[0]?.source).toMatchObject({
+      kind: "registry",
+      registryId: "svc",
+      authMode: "header",
+    });
+    // the raw key never touches the config file on disk
     const raw = await readFile(configPath, "utf8");
-    expect(raw).not.toContain("gh-token-1");
+    expect(raw).not.toContain("pasted-key-1");
   });
 
-  it("a denied device flow reports failure and stores nothing", async () => {
-    tokenResponses = [{ error: "access_denied" }];
-    const h = harness([registryEntry()]);
-    await h.manager.connectRegistry("github");
+  it("a per-account entry (userUrl) requires the user's endpoint and persists it", async () => {
+    const h = harness([entry({ url: "", userUrl: true })]);
+    await h.manager.connectRegistryWithKey("svc", "k");
+    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /endpoint URL/ });
 
-    const failed = h.events.find((e) => e.kind === "integrationConnectFailed");
-    expect(failed).toMatchObject({ registryId: "github", reason: "denied" });
-    expect(await h.tokens.get("github")).toBeNull();
+    await h.manager.connectRegistryWithKey("svc", "k", "https://mine.example.test/mcp");
+    const result = await h.configFile.read();
+    expect(result.ok && result.config.integrations[0]?.source).toMatchObject({
+      url: "https://mine.example.test/mcp",
+    });
   });
 
-  it("refuses to connect a registry entry that isn't owner-configured yet (empty clientId/url)", async () => {
-    const h = harness([registryEntry({ url: "", auth: { ...registryEntry().auth, clientId: "" } })]);
-    await h.manager.connectRegistry("github");
-    expect(h.events).toEqual([{ kind: "integrationConnectFailed", registryId: "github", reason: "not connectable yet" }]);
+  it("refuses on an entry with no key mode", async () => {
+    const h = harness([entry({ auth: { header: null, oauth: false } })]);
+    await h.manager.connectRegistryWithKey("svc", "k");
+    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /no API-key mode/ });
+    expect(await h.tokens.get("svc")).toBeNull();
+  });
+});
+
+describe("IntegrationsManager — OAuth connect (MCP-spec, discovery + DCR + PKCE)", () => {
+  it("connects with only the entry's URL and captures refresh context alongside the token", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryOAuth("svc");
+
+    expect(h.events.some((e) => e.kind === "integrationConnectStarted")).toBe(true);
+    const stored = await h.tokens.get("svc");
+    expect(stored).toMatchObject({
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      tokenEndpoint: provider.tokenEndpoint,
+      clientId: "dcr-client-1",
+    });
+    const result = await h.configFile.read();
+    expect(result.ok && result.config.integrations[0]?.source).toMatchObject({ authMode: "oauth" });
+  });
+
+  it("gated DCR fails labeled — pitfall §2, pointing at the key path", async () => {
+    provider.gateDcr = true;
+    const h = harness([entry()]);
+    await h.manager.connectRegistryOAuth("svc");
+    const failed = h.events.at(-1);
+    expect(failed).toMatchObject({ kind: "integrationConnectFailed", registryId: "svc" });
+    expect(failed?.kind === "integrationConnectFailed" && failed.reason).toMatch(/API-key path/);
+    expect(await h.tokens.get("svc")).toBeNull();
+  });
+
+  it("refuses on an entry without an OAuth mode", async () => {
+    const h = harness([entry({ auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "" }, oauth: false } })]);
+    await h.manager.connectRegistryOAuth("svc");
+    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /no OAuth mode/ });
   });
 });
 
@@ -139,17 +158,36 @@ describe("IntegrationsManager — custom escape hatch", () => {
     });
   });
 
-  it("custom-http with a bearer token stores it in SecretStorage, never in config", async () => {
+  it("custom-http header auth stores the key in SecretStorage, never in config — custom header names included", async () => {
     const h = harness([]);
     await h.manager.addCustom(
-      "my-api",
-      "My API",
-      { kind: "custom-http", url: "https://example.test/mcp", authType: "bearer-token", token: "secret-abc" },
+      "stitch-like",
+      "Stitch-like",
+      {
+        kind: "custom-http",
+        url: "https://example.test/mcp",
+        authType: "header",
+        headerName: "X-Goog-Api-Key",
+        valuePrefix: "",
+        token: "secret-abc",
+      },
       "auto",
     );
-    expect((await h.tokens.get("my-api"))?.accessToken).toBe("secret-abc");
+    expect((await h.tokens.get("stitch-like"))?.accessToken).toBe("secret-abc");
     const raw = await readFile(configPath, "utf8");
     expect(raw).not.toContain("secret-abc");
+    expect(raw).toContain("X-Goog-Api-Key");
+  });
+
+  it("custom-http OAuth runs the same MCP-spec flow as registry entries", async () => {
+    const h = harness([]);
+    await h.manager.addCustom(
+      "my-oauth",
+      "My OAuth",
+      { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" },
+      "auto",
+    );
+    expect((await h.tokens.get("my-oauth"))?.accessToken).toBe("access-1");
   });
 
   it("disconnect revokes the token but keeps the config entry for reconnecting", async () => {
@@ -157,7 +195,7 @@ describe("IntegrationsManager — custom escape hatch", () => {
     await h.manager.addCustom(
       "my-api",
       "My API",
-      { kind: "custom-http", url: "https://example.test/mcp", authType: "bearer-token", token: "secret-abc" },
+      { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
       "auto",
     );
     await h.manager.disconnect("my-api");
@@ -175,7 +213,7 @@ describe("IntegrationsManager — custom escape hatch", () => {
   });
 });
 
-describe("IntegrationsManager — routing", () => {
+describe("IntegrationsManager — routing and mcpServers", () => {
   it("auto routing attaches only to fully-brokered agents; explicit routing attaches regardless", async () => {
     const h = harness([]);
     await h.manager.addCustom("auto-tool", "Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
@@ -193,11 +231,56 @@ describe("IntegrationsManager — routing", () => {
     expect(pinnedAgentServers.map((s) => s.name)).toEqual(["Pinned Tool"]);
   });
 
-  it("a routed-but-unconnected registry integration contributes no server (nothing to route to)", async () => {
-    const h = harness([registryEntry()]);
-    // upsert the config entry directly, without ever connecting — simulates
-    // a shared config pasted into a workspace with no token of its own yet
-    await h.configFile.upsertIntegration({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github" }, routing: "auto" });
+  it("the bridge env carries the integration's own header shape — Stitch-style custom headers included", async () => {
+    const h = harness([
+      entry({
+        id: "stitch",
+        name: "Stitch",
+        auth: { header: { headerName: "X-Goog-Api-Key", valuePrefix: "", hint: "" }, oauth: false },
+      }),
+    ]);
+    await h.manager.connectRegistryWithKey("stitch", "goog-key");
+
+    const servers = await h.manager.mcpServersFor("agent-a", true, "/bridge.js", "/sock");
+    expect(servers).toHaveLength(1);
+    const env = envOf(servers[0]!);
+    expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("X-Goog-Api-Key");
+    expect(env.ACP_PATCHBAY_AUTH_PREFIX).toBe("");
+    expect(env.ACP_PATCHBAY_INTEGRATION_URL).toBe(provider.mcpUrl);
+  });
+
+  it("an OAuth-connected integration rides Authorization: Bearer regardless of the entry's key-header shape", async () => {
+    const h = harness([
+      entry({
+        id: "svc",
+        auth: { header: { headerName: "X-Custom", valuePrefix: "", hint: "" }, oauth: true },
+      }),
+    ]);
+    await h.manager.connectRegistryOAuth("svc");
+
+    const servers = await h.manager.mcpServersFor("agent-a", true, "/bridge.js", "/sock");
+    const env = envOf(servers[0]!);
+    expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("Authorization");
+    expect(env.ACP_PATCHBAY_AUTH_PREFIX).toBe("Bearer ");
+  });
+
+  it("a per-account entry's user-supplied URL is what reaches the bridge", async () => {
+    const h = harness([entry({ id: "acct", url: "", userUrl: true })]);
+    await h.manager.connectRegistryWithKey("acct", "k", "https://mine.example.test/mcp");
+    const servers = await h.manager.mcpServersFor("agent-a", true, "/bridge.js", "/sock");
+    const env = envOf(servers[0]!);
+    expect(env.ACP_PATCHBAY_INTEGRATION_URL).toBe("https://mine.example.test/mcp");
+  });
+
+  it("a routed-but-unconnected integration contributes no server (nothing to route to)", async () => {
+    const h = harness([entry()]);
+    // config entry exists (e.g. pasted from a shared config), no token here
+    await h.configFile.upsertIntegration({
+      id: "svc",
+      name: "Service",
+      source: { kind: "registry", registryId: "svc", authMode: "header" },
+      routing: "auto",
+    });
     const servers = await h.manager.mcpServersFor("agent-a", true, "/bridge.js", "/sock");
     expect(servers).toEqual([]);
   });
@@ -212,28 +295,26 @@ describe("IntegrationsManager — routing", () => {
 });
 
 describe("IntegrationsManager — token refresh", () => {
-  it("getToken refreshes a near-expiry token transparently, using the refresh token, never exposing it to the caller", async () => {
-    const h = harness([registryEntry()]);
-    await h.tokens.set("github", {
-      accessToken: "stale",
-      refreshToken: "gh-refresh-1",
-      expiresAt: new Date(Date.now() + 1000).toISOString(), // inside the 60s margin
-    });
-    tokenResponses = [{ access_token: "fresh-token", expires_in: 3600 }];
-    const result = await h.manager.getToken("github");
-    expect(result?.accessToken).toBe("fresh-token");
-    expect((await h.tokens.get("github"))?.accessToken).toBe("fresh-token");
+  it("getToken refreshes a near-expiry OAuth token with the captured context", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryOAuth("svc");
+    // age the token into the refresh margin
+    const stored = (await h.tokens.get("svc"))!;
+    await h.tokens.set("svc", { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
+
+    const result = await h.manager.getToken("svc");
+    expect(result?.accessToken).toBe("refreshed-2");
+    expect((await h.tokens.get("svc"))?.accessToken).toBe("refreshed-2");
   });
 
-  it("getToken returns the stored token as-is when not near expiry", async () => {
-    const h = harness([registryEntry()]);
-    await h.tokens.set("github", { accessToken: "still-good", expiresAt: new Date(Date.now() + 3600_000).toISOString() });
-    const result = await h.manager.getToken("github");
-    expect(result?.accessToken).toBe("still-good");
+  it("getToken returns a static key as-is — nothing to refresh, no expiry on our side", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryWithKey("svc", "static-key");
+    expect((await h.manager.getToken("svc"))?.accessToken).toBe("static-key");
   });
 
   it("getToken returns null for a disconnected integration", async () => {
-    const h = harness([registryEntry()]);
-    expect(await h.manager.getToken("github")).toBeNull();
+    const h = harness([entry()]);
+    expect(await h.manager.getToken("svc")).toBeNull();
   });
 });

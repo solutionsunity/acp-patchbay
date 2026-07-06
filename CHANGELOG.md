@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- P9v2 integrations auth, per docs/reference-mcp-oauth.md (supersedes the
+  Device Flow design): two mechanisms replace the per-service OAuth-App
+  route entirely. (1) Static key in a configurable header — the v1 floor
+  for every integration; `headerName`/`valuePrefix` are per-integration
+  data (GitHub PAT rides `Authorization: Bearer`, Stitch's key rides
+  `X-Goog-Api-Key` raw), and the bridge receives the shape via env.
+  (2) MCP-spec OAuth 2.1 (`mcp-oauth.ts`): RFC 9728 protected-resource
+  discovery → RFC 8414 auth-server metadata → RFC 7591 dynamic client
+  registration → Authorization Code + PKCE — URL-only, no pre-provisioned
+  credentials; refresh context (discovered token endpoint + issued client
+  id) travels with the token in SecretStorage. The browser redirect uses
+  registerUriHandler + asExternalUri — resolved correctly under SSH
+  remote/WSL/Codespaces by construction, never a raw loopback server (the
+  documented failure mode that motivated Device Flow originally). Gated
+  DCR (Figma-style client_name allowlists) fails immediately with a
+  labeled error pointing at the key path — never a hang.
+  `oauth-device-flow.ts` removed; the "create a GitHub OAuth App" owner
+  touchpoint is gone with it. data/registry.json now ships the curated
+  eight — GitHub, Figma, Stitch, Stripe, Sentry, Postman, Supabase,
+  Augment Context Engine — each with only the mechanisms its vendor
+  actually opens (Figma remote is visible-but-not-connectable, with its
+  Desktop-MCP stdio alternative named; Supabase/Augment take a user-pasted
+  per-account endpoint). Settings' registry cards grew key-paste and
+  OAuth connect paths, docs links, and per-entry honesty notes. Tested
+  against a fake spec-compliant OAuth provider that genuinely verifies
+  S256 PKCE and can gate DCR (test/support/fake-oauth-provider.ts).
 - P12 marketplace pack: a real README (was a 9-line stub); `vsce package`
   dry run is clean (145.96 KB, 15 files, no warnings) — the rest of the
   Marketplace checklist (repository, categories, keywords, icon, license,

@@ -1,34 +1,63 @@
 // Registry data validates at the trust boundary (architecture.md §
-// Integrations — "the registry is shipped data from day one"). The GitHub
-// entry's clientId/url are deliberately empty pending the P9 owner
-// touchpoint (creating the OAuth App) — isConnectable() must say so honestly.
+// Integrations — "the registry is shipped data from day one"). The curated
+// eight and their auth shapes come from docs/reference-mcp-oauth.md —
+// endpoints and mechanisms verified against each vendor's docs, never
+// guessed. These tests pin the honest states: Figma not connectable,
+// per-account entries needing a user URL, Stitch's custom header name.
 import { describe, expect, it } from "vitest";
 import { isConnectable, loadRegistry } from "../src/orchestrator/stores/registry";
 
 describe("registry", () => {
-  it("loads and validates the shipped data/registry.json", () => {
-    const entries = loadRegistry();
-    expect(entries.length).toBeGreaterThan(0);
-    const github = entries.find((e) => e.id === "github");
-    expect(github).toBeDefined();
-    expect(github!.transport).toBe("http");
-    expect(github!.auth.type).toBe("oauth-device");
-    expect(github!.auth.scopes.length).toBeGreaterThan(0);
-    // GitHub's own stable, public Device Flow endpoints — same for every OAuth App
-    expect(github!.auth.deviceCodeUrl).toBe("https://github.com/login/device/code");
-    expect(github!.auth.tokenUrl).toBe("https://github.com/login/oauth/access_token");
+  it("ships the curated eight, all validating against the schema", () => {
+    const ids = loadRegistry().map((e) => e.id);
+    expect(ids).toEqual([
+      "github",
+      "figma",
+      "stitch",
+      "stripe",
+      "sentry",
+      "postman",
+      "supabase",
+      "augment-context-engine",
+    ]);
   });
 
-  it("the GitHub entry is not connectable until the owner touchpoint fills in clientId/url", () => {
+  it("GitHub is key-only (PAT) with its documented endpoint — no OAuth claimed where DCR isn't open", () => {
     const github = loadRegistry().find((e) => e.id === "github")!;
-    expect(github.auth.clientId).toBe("");
-    expect(github.url).toBe("");
-    expect(isConnectable(github)).toBe(false);
+    expect(github.url).toBe("https://api.githubcopilot.com/mcp/");
+    expect(github.auth.header).not.toBeNull();
+    expect(github.auth.oauth).toBe(false);
+    expect(isConnectable(github)).toBe(true);
   });
 
-  it("a hypothetical fully-configured entry is connectable", () => {
-    const entries = loadRegistry();
-    const fake = { ...entries[0]!, url: "https://example.test/mcp", auth: { ...entries[0]!.auth, clientId: "abc" } };
-    expect(isConnectable(fake)).toBe(true);
+  it("Figma remote is honestly not connectable: no key mode, allowlist-gated DCR", () => {
+    const figma = loadRegistry().find((e) => e.id === "figma")!;
+    expect(figma.auth.header).toBeNull();
+    expect(figma.auth.oauth).toBe(false);
+    expect(isConnectable(figma)).toBe(false);
+    expect(figma.note).toMatch(/custom stdio/i); // the Desktop-MCP alternative is named, not buried
+  });
+
+  it("Stitch carries the custom header name that forced headerName into the schema", () => {
+    const stitch = loadRegistry().find((e) => e.id === "stitch")!;
+    expect(stitch.auth.header).toMatchObject({ headerName: "X-Goog-Api-Key", valuePrefix: "" });
+    expect(stitch.auth.oauth).toBe(false);
+  });
+
+  it("open-DCR vendors offer OAuth; per-account vendors require a user URL yet stay connectable", () => {
+    const byId = new Map(loadRegistry().map((e) => [e.id, e]));
+    for (const id of ["stripe", "sentry", "postman", "supabase", "augment-context-engine"]) {
+      expect(byId.get(id)!.auth.oauth, id).toBe(true);
+    }
+    for (const id of ["supabase", "augment-context-engine"]) {
+      const e = byId.get(id)!;
+      expect(e.userUrl, id).toBe(true);
+      expect(e.url, id).toBe("");
+      expect(isConnectable(e), id).toBe(true);
+    }
+  });
+
+  it("every entry has vendor docs to point at", () => {
+    for (const e of loadRegistry()) expect(e.docsUrl, e.id).toMatch(/^https:\/\//);
   });
 });

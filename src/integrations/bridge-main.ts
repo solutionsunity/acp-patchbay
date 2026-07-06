@@ -18,10 +18,17 @@ import { IpcClient } from "../mcp/ipc-client";
 const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
 const integrationId = process.env.ACP_PATCHBAY_INTEGRATION_ID ?? "";
 const url = process.env.ACP_PATCHBAY_INTEGRATION_URL ?? "";
+// How the credential rides the request — per-integration data, since not
+// every service takes `Authorization: Bearer` (Stitch wants a raw key in
+// `X-Goog-Api-Key`; see docs/reference-mcp-oauth.md). Absent header name =
+// this integration sends no credential at all (authType "none").
+const authHeader = process.env.ACP_PATCHBAY_AUTH_HEADER ?? "";
+const authPrefix = process.env.ACP_PATCHBAY_AUTH_PREFIX ?? "";
 
 const ipc = new IpcClient(socketPath, integrationId);
 
 async function currentToken(): Promise<string | null> {
+  if (authHeader === "") return null;
   const result = (await ipc.request("getIntegrationToken")) as { accessToken: string } | null;
   return result?.accessToken ?? null;
 }
@@ -32,7 +39,7 @@ async function postJson(body: unknown, token: string | null): Promise<Response> 
     headers: {
       "content-type": "application/json",
       accept: "application/json",
-      ...(token !== null ? { authorization: `Bearer ${token}` } : {}),
+      ...(token !== null ? { [authHeader]: `${authPrefix}${token}` } : {}),
     },
     body: JSON.stringify(body),
   });
@@ -45,7 +52,7 @@ function hasId(message: unknown): boolean {
 async function forward(message: unknown): Promise<void> {
   const token = await currentToken();
   let response = await postJson(message, token);
-  if (response.status === 401) {
+  if (response.status === 401 && authHeader !== "") {
     // The orchestrator refreshes transparently on every getIntegrationToken
     // call — a second 401 right after a fresh token means the integration
     // itself rejected it, not that patchbay was holding a stale one.

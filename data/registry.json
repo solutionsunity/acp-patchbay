@@ -1,17 +1,110 @@
 {
-  "$comment": "Curated integrations registry (architecture.md § Integrations) — GitHub proves the pattern, one entry, every field earned by what it demonstrably needs. deviceCodeUrl/tokenUrl are GitHub's own stable, public OAuth Device Flow endpoints (github.com/login/device/code, github.com/login/oauth/access_token) — the same for every GitHub OAuth App, so they're safe to ship as data. clientId and url are deliberately empty: both are bound to the specific GitHub OAuth App this project registers (plan.md P9 owner touchpoint — 'create the GitHub OAuth app under the org'), which also decides which MCP endpoint that app is authorized against. Connecting is a no-op until both are filled in; nothing in this file is guessed.",
+  "$comment": "Curated integrations registry (architecture.md § Integrations; auth model per docs/reference-mcp-oauth.md). Every entry offers a static-key header mode (the v1 floor) and/or MCP-spec OAuth 2.1 where the vendor's Dynamic Client Registration is verified open. userUrl entries (Supabase, Augment) have per-account endpoints the user pastes at connect. Figma remote is deliberately not connectable: no key mode, and its DCR allowlists client_name — the note says so; Figma Desktop's local MCP fits the custom-stdio escape hatch instead. Endpoints/auth facts re-verified against each vendor's docs at ship time — nothing here is guessed.",
   "integrations": [
     {
       "id": "github",
       "name": "GitHub",
-      "transport": "http",
-      "url": "",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "docsUrl": "https://github.com/github/github-mcp-server",
+      "note": "GitHub's official remote MCP server. Uses a Personal Access Token — its OAuth is not open to third-party clients (no dynamic client registration).",
       "auth": {
-        "type": "oauth-device",
-        "scopes": ["repo", "read:org"],
-        "deviceCodeUrl": "https://github.com/login/device/code",
-        "tokenUrl": "https://github.com/login/oauth/access_token",
-        "clientId": ""
+        "header": {
+          "hint": "Personal Access Token from github.com/settings/tokens (repo + read:org for full tool coverage)"
+        },
+        "oauth": false
+      }
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "url": "https://mcp.figma.com/mcp",
+      "docsUrl": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/",
+      "note": "Not connectable yet: Figma's remote server has no API-key mode and its OAuth client registration is allowlisted to approved clients. Alternative: Figma Desktop's local MCP server (Dev Mode) — add it as a custom stdio integration.",
+      "auth": {
+        "header": null,
+        "oauth": false
+      }
+    },
+    {
+      "id": "stitch",
+      "name": "Stitch",
+      "url": "https://stitch.googleapis.com/mcp",
+      "docsUrl": "https://stitch.withgoogle.com/docs/mcp/setup/",
+      "note": "Google Labs' Stitch UI-design server. Key-only, sent as a Google API header.",
+      "auth": {
+        "header": {
+          "headerName": "X-Goog-Api-Key",
+          "valuePrefix": "",
+          "hint": "API key from stitch.withgoogle.com settings"
+        },
+        "oauth": false
+      }
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "url": "https://mcp.stripe.com",
+      "docsUrl": "https://docs.stripe.com/mcp",
+      "note": "Connect with OAuth (recommended) or paste a restricted API key.",
+      "auth": {
+        "header": {
+          "hint": "Restricted API key from dashboard.stripe.com/apikeys"
+        },
+        "oauth": true
+      }
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "url": "https://mcp.sentry.dev/mcp",
+      "docsUrl": "https://docs.sentry.io/ai/mcp/",
+      "note": "Connect with OAuth, or paste a personal token — Sentry's own recommended fallback for remote-IDE setups.",
+      "auth": {
+        "header": {
+          "hint": "User Auth Token from sentry.io settings (org:read, project:read)"
+        },
+        "oauth": true
+      }
+    },
+    {
+      "id": "postman",
+      "name": "Postman",
+      "url": "https://mcp.postman.com/mcp",
+      "docsUrl": "https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server",
+      "note": "US endpoint. EU accounts: use https://mcp.eu.postman.com as a custom integration (key-only there).",
+      "auth": {
+        "header": {
+          "hint": "API key from postman.com account settings"
+        },
+        "oauth": true
+      }
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "url": "",
+      "userUrl": true,
+      "docsUrl": "https://supabase.com/docs/guides/ai-tools/mcp",
+      "note": "Endpoint is per-project — paste your project's MCP URL. OAuth works when the project's OAuth server has dynamic client registration enabled.",
+      "auth": {
+        "header": {
+          "hint": "Project API key from your Supabase dashboard"
+        },
+        "oauth": true
+      }
+    },
+    {
+      "id": "augment-context-engine",
+      "name": "Augment Context Engine",
+      "url": "",
+      "userUrl": true,
+      "docsUrl": "https://docs.augmentcode.com/context-services/mcp/overview",
+      "note": "Semantic codebase retrieval. Endpoint and credentials come from app.augmentcode.com/mcp/configuration; remote indexing additionally needs Augment's GitHub App on the repo.",
+      "auth": {
+        "header": {
+          "hint": "API key from app.augmentcode.com/mcp/configuration"
+        },
+        "oauth": true
       }
     }
   ]

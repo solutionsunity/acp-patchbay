@@ -74,7 +74,12 @@ export function App({ channel }: { channel: ViewChannel<SettingsState> }) {
         {section === "integrations" && (
           <IntegrationsSection
             state={state}
-            onConnect={(registryId) => channel.sendAction({ kind: "connectRegistryIntegration", registryId })}
+            onConnectKey={(registryId, token, url) =>
+              channel.sendAction({ kind: "connectRegistryKey", registryId, token, url })
+            }
+            onConnectOAuth={(registryId, url) =>
+              channel.sendAction({ kind: "connectRegistryOAuth", registryId, url })
+            }
             onAddCustom={(id, name, source, routing) =>
               channel.sendAction({ kind: "addCustomIntegration", id, name, source, routing })
             }
@@ -464,9 +469,97 @@ function RoutingEditor(props: {
   );
 }
 
+/** One curated-registry card: docs link, honest note, and the connect
+ * mechanisms this vendor actually offers — OAuth button where DCR is open,
+ * key-paste where a static key works, URL field where the endpoint is
+ * per-account (docs/reference-mcp-oauth.md). */
+function RegistryConnectCard(props: {
+  entry: SettingsState["integrationRegistry"][number];
+  flow: SettingsState["connectFlow"][string] | undefined;
+  onConnectKey(token: string, url?: string): void;
+  onConnectOAuth(url?: string): void;
+}) {
+  const { entry, flow } = props;
+  const [key, setKey] = useState("");
+  const [url, setUrl] = useState("");
+  const pending = flow?.status === "pending";
+  const userUrlValue = entry.userUrl ? url.trim() : undefined;
+  const urlMissing = entry.userUrl && url.trim() === "";
+
+  return (
+    <div class="card">
+      <div class="row">
+        <span class="nm">{entry.name}</span>
+        <span style="flex:1" />
+        <a class="btn" href={entry.docsUrl}>
+          Docs
+        </a>
+      </div>
+      {entry.note !== "" && (
+        <div class="note" style="margin-top:6px">
+          {entry.note}
+        </div>
+      )}
+      {entry.connectable && (
+        <div class="connect-form" style="margin-top:8px">
+          {entry.userUrl && (
+            <input
+              type="text"
+              placeholder="your endpoint URL…"
+              value={url}
+              onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
+            />
+          )}
+          {entry.headerAuth !== null && (
+            <>
+              <input
+                type="password"
+                placeholder={entry.headerAuth.hint || "API key…"}
+                title={entry.headerAuth.hint}
+                value={key}
+                onInput={(e) => setKey((e.target as HTMLInputElement).value)}
+              />
+              <button
+                class="btn primary row-btn"
+                disabled={pending || key.trim() === "" || urlMissing}
+                onClick={() => {
+                  props.onConnectKey(key.trim(), userUrlValue);
+                  setKey("");
+                }}
+              >
+                Connect with key
+              </button>
+            </>
+          )}
+          {entry.oauth && (
+            <button
+              class="btn row-btn"
+              disabled={pending || urlMissing}
+              onClick={() => props.onConnectOAuth(userUrlValue)}
+            >
+              Connect with OAuth…
+            </button>
+          )}
+        </div>
+      )}
+      {pending && (
+        <div class="note" style="margin-top:6px">
+          Waiting for authorization in your browser…
+        </div>
+      )}
+      {flow?.status === "failed" && (
+        <div class="note" style="margin-top:6px">
+          Connect failed: {flow.reason}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IntegrationsSection(props: {
   state: SettingsState;
-  onConnect(registryId: string): void;
+  onConnectKey(registryId: string, token: string, url?: string): void;
+  onConnectOAuth(registryId: string, url?: string): void;
   onAddCustom(id: string, name: string, source: IntegrationSourceView, routing: IntegrationRoutingView): void;
   onDisconnect(integrationId: string): void;
   onRemove(integrationId: string): void;
@@ -479,15 +572,26 @@ function IntegrationsSection(props: {
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [url, setUrl] = useState("");
-  const [authType, setAuthType] = useState<"none" | "bearer-token">("none");
+  const [authType, setAuthType] = useState<"none" | "header" | "oauth">("none");
+  const [headerName, setHeaderName] = useState("Authorization");
   const [token, setToken] = useState("");
 
   const submitCustom = () => {
     if (id.trim() === "" || name.trim() === "") return;
+    // "Bearer " prefix only makes sense on an Authorization header; a
+    // custom header name (X-Goog-Api-Key style) carries the raw key.
+    const isAuthorization = headerName.trim().toLowerCase() === "authorization";
     const source: IntegrationSourceView =
       adding === "stdio"
         ? { kind: "custom-stdio", command: command.trim(), args: [], env: {} }
-        : { kind: "custom-http", url: url.trim(), authType, token: authType === "bearer-token" ? token : undefined };
+        : {
+            kind: "custom-http",
+            url: url.trim(),
+            authType,
+            headerName: authType === "header" ? headerName.trim() : undefined,
+            valuePrefix: authType === "header" ? (isAuthorization ? "Bearer " : "") : undefined,
+            token: authType === "header" ? token : undefined,
+          };
     props.onAddCustom(id.trim(), name.trim(), source, "auto");
     setAdding(null);
     setId("");
@@ -495,6 +599,7 @@ function IntegrationsSection(props: {
     setCommand("");
     setUrl("");
     setToken("");
+    setHeaderName("Authorization");
   };
 
   return (
@@ -507,38 +612,15 @@ function IntegrationsSection(props: {
 
       {state.integrationRegistry.map((entry) => {
         const view = state.integrations.find((i) => i.registryId === entry.id);
-        const flow = state.deviceFlow[entry.id];
         if (view !== undefined) return null; // already added below, in the configured list
         return (
-          <div class="card" key={entry.id}>
-            <div class="row">
-              <span class="nm">{entry.name}</span>
-              <span style="flex:1" />
-              <button
-                class="btn primary"
-                disabled={!entry.connectable || flow?.status === "pending"}
-                title={entry.connectable ? undefined : "not configured yet — pending an owner-created OAuth App"}
-                onClick={() => props.onConnect(entry.id)}
-              >
-                Connect
-              </button>
-            </div>
-            {!entry.connectable && (
-              <div class="note" style="margin-top:6px">
-                Not connectable yet — the OAuth App this entry needs hasn't been created.
-              </div>
-            )}
-            {flow?.status === "pending" && (
-              <div class="note" style="margin-top:6px">
-                Go to <b>{flow.verificationUri}</b> and enter code <code>{flow.userCode}</code>. Waiting…
-              </div>
-            )}
-            {flow?.status === "failed" && (
-              <div class="note" style="margin-top:6px">
-                Connect failed: {flow.reason}
-              </div>
-            )}
-          </div>
+          <RegistryConnectCard
+            key={entry.id}
+            entry={entry}
+            flow={state.connectFlow[entry.id]}
+            onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
+            onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
+          />
         );
       })}
 
@@ -561,11 +643,19 @@ function IntegrationsSection(props: {
               Remove
             </button>
           </div>
-          {!integration.connected && (
+          {state.connectFlow[integration.id]?.status === "pending" ? (
+            <div class="note" style="margin-top:6px">
+              Waiting for authorization in your browser…
+            </div>
+          ) : state.connectFlow[integration.id]?.status === "failed" ? (
+            <div class="note" style="margin-top:6px">
+              Connect failed: {state.connectFlow[integration.id]?.reason}
+            </div>
+          ) : !integration.connected ? (
             <div class="note" style="margin-top:6px">
               Configured, not connected in this workspace — credentials never follow a shared config.
             </div>
-          )}
+          ) : null}
           <div style="margin-top:8px">
             <RoutingEditor
               agents={state.agents}
@@ -601,17 +691,30 @@ function IntegrationsSection(props: {
             ) : (
               <>
                 <input type="text" placeholder="https://…" value={url} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-                <select value={authType} onChange={(e) => setAuthType((e.target as HTMLSelectElement).value as "none" | "bearer-token")}>
+                <select
+                  value={authType}
+                  onChange={(e) => setAuthType((e.target as HTMLSelectElement).value as "none" | "header" | "oauth")}
+                >
                   <option value="none">no auth</option>
-                  <option value="bearer-token">bearer token</option>
+                  <option value="header">API key (header)</option>
+                  <option value="oauth">OAuth (browser)</option>
                 </select>
-                {authType === "bearer-token" && (
-                  <input
-                    type="password"
-                    placeholder="token…"
-                    value={token}
-                    onInput={(e) => setToken((e.target as HTMLInputElement).value)}
-                  />
+                {authType === "header" && (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="header name"
+                      title='header carrying the key — "Authorization" sends it as Bearer, any other name sends the raw key'
+                      value={headerName}
+                      onInput={(e) => setHeaderName((e.target as HTMLInputElement).value)}
+                    />
+                    <input
+                      type="password"
+                      placeholder="key…"
+                      value={token}
+                      onInput={(e) => setToken((e.target as HTMLInputElement).value)}
+                    />
+                  </>
                 )}
               </>
             )}

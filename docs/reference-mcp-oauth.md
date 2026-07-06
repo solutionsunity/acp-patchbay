@@ -150,22 +150,25 @@ Notes:
    9728), then the authorization server's metadata — the reverse (what VS
    Code currently does, see §3) breaks against spec-correct servers.
 
-## Implementation deltas (the to-do this reference implies)
+## Implementation (done — where each piece lives)
 
-1. Generalize header auth: `authType: "header"` with `headerName`
-   (default `Authorization`) and a raw-vs-`Bearer {token}` value shape,
-   replacing `bearer-token` as the general case. Registry and
-   custom-integration schemas both.
-2. Build `mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
-   Authorization Code + PKCE, redirect via
-   `registerUriHandler`/`asExternalUri`. Clean labeled failure on gated
-   DCR. Tested against a fake OAuth-2.1 provider (same fixture philosophy
-   as the existing fake agent / fake device-flow provider).
-3. Remove `oauth-device-flow.ts` and the `oauth-device` registry shape.
-4. Ship `data/registry.json` with the eight entries above (Figma marked
-   not-connectable-remote; Supabase/Augment with user-supplied URLs).
-5. Support user-supplied endpoint URLs for registry entries that are
-   per-account (`url: ""` + prompt at connect).
+1. Header auth generalized: `headerName` + `valuePrefix` in both the
+   registry schema (`stores/registry.ts`) and the custom-http config shape
+   (`stores/config-file.ts`); the bridge reads them from
+   `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`integrations/bridge-main.ts`).
+2. `src/orchestrator/mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC
+   7591) → Authorization Code + PKCE; redirect via an injected
+   `OAuthUserAgent` — the orchestrator implements it with
+   `registerUriHandler` (extension.ts) + `asExternalUri`, pending callbacks
+   keyed by `state` in `oauth-callback.ts`. Gated DCR throws
+   `DcrRejectedError`, labeled, immediately. Tested against a fake
+   spec-compliant provider that genuinely verifies S256 PKCE
+   (`test/support/fake-oauth-provider.ts`, `test/mcp-oauth.test.ts`).
+3. `oauth-device-flow.ts` and the `oauth-device` registry shape removed.
+4. `data/registry.json` ships the eight entries (Figma
+   visible-but-not-connectable; Supabase/Augment with user-supplied URLs).
+5. Per-account endpoints: registry source persists the pasted `url`;
+   `IntegrationsManager.resolveEndpoint` refuses labeled when missing.
 
 ## Decision record
 
