@@ -1,143 +1,181 @@
-# Reference: authenticating remote MCP servers (GitHub, Figma, Stitch, Stripe, Sentry, Postman, Supabase)
+# Remote MCP integrations — auth reference
 
-Research for plan.md's P9 owner touchpoint ("create the GitHub OAuth app")
-and the wider integrations list under consideration: GitHub, Figma, Stitch,
-Stripe, Sentry, Postman, Supabase. Gathered from each vendor's own public
-docs/repos (web search + fetch, current as of this session) and from public
-VS Code extension-API docs and issue tracker reports. Read through an AI
-summarizer, not the primary text in every case — verify anything
-load-bearing against the linked pages directly before final implementation.
+Status: **decided** (supersedes P9's original GitHub-Device-Flow call — see
+Decision record at the bottom). This is the reference for how patchbay
+authenticates to remote MCP servers: which mechanisms exist, which one each
+curated integration uses, and the failure modes the implementation must
+avoid. Facts were gathered from each vendor's own docs/repos and public
+issue trackers; links inline. Anything load-bearing should be re-verified
+against the linked page at implementation time — vendors move.
 
-## Per-integration reality, as of this research
+## Scope and roles
 
-| Integration | Remote MCP endpoint | Auth reality | Notes |
+- Patchbay is always the **OAuth client / credential holder** in every flow
+  here. The ACP agent downstream never sees a credential and never
+  participates in an auth handshake: it talks to patchbay's stdio-to-HTTP
+  bridge (`integration-bridge.js`), which fetches a current token from the
+  orchestrator over IPC and attaches it to outbound requests. That
+  architecture (P9) is unchanged by anything in this document — this
+  document only decides *how the orchestrator obtains tokens*.
+- Patchbay orchestrates ACP agents; it is not itself an AI agent. MCP is
+  the attachment language agents understand, so **every curated
+  integration is a remote MCP server** — no bespoke per-service API
+  clients, ever.
+
+## The two mechanisms (and the one we dropped)
+
+### 1 · Static key in a header — `authType: "header"`
+
+The user pastes a token (PAT / API key) from the vendor's own settings
+page; patchbay stores it in `IntegrationTokenStore` (SecretStorage,
+per-workspace) and the bridge sends it on every request.
+
+- **Header name is per-integration data, not hardcoded**: most services
+  take `Authorization: Bearer <key>`, but Stitch requires
+  `X-Goog-Api-Key: <key>`. Today's P9 `bearer-token` implementation is the
+  special case; the registry/custom schema needs a `headerName` field
+  (default `Authorization`, value template `Bearer {token}` vs raw).
+- Zero OAuth surface: no popups, no redirects, no browser, no
+  remote-environment failure modes. Works identically in local VS Code,
+  SSH remote, WSL, code-server, Codespaces.
+- This is the **v1 floor for every integration**: each of the eight below
+  has a documented static-key path. OAuth is an upgrade where open, never
+  a prerequisite.
+
+### 2 · MCP-spec OAuth 2.1 with Dynamic Client Registration — `authType: "oauth"`
+
+The MCP Authorization spec's own flow, for servers whose DCR is genuinely
+open (no pre-provisioned credentials of any kind):
+
+1. Discover protected-resource metadata:
+   `{origin}/.well-known/oauth-protected-resource{/path}` (RFC 9728), or
+   the `resource_metadata` URL from a 401's `WWW-Authenticate` header.
+2. Discover the authorization server's metadata from its
+   `authorization_servers[0]`: `/.well-known/oauth-authorization-server`
+   and OIDC-configuration variants (RFC 8414), path-aware first, origin
+   fallback.
+3. Dynamic Client Registration (RFC 7591) against
+   `registration_endpoint`: `POST { client_name, client_uri,
+   redirect_uris, grant_types: ["authorization_code","refresh_token"],
+   response_types: ["code"] }` → server-issued `client_id`.
+4. Authorization Code + PKCE (RFC 7636, S256).
+5. Redirect handled via **`vscode.window.registerUriHandler` +
+   `vscode.env.asExternalUri`** — never a raw loopback HTTP server (see
+   Pitfalls §1).
+6. Tokens (access + refresh) into `IntegrationTokenStore`; the existing
+   refresh-on-expiry logic in `IntegrationsManager.getToken` carries over.
+
+A registry entry for an OAuth integration needs **only a URL** — every
+other parameter is discovered. This is architecture.md's "adding a curated
+integration is a data change, not code" at its most literal.
+
+### Dropped: per-service OAuth Apps (Device Flow / fixed client_id)
+
+No pre-registered vendor apps, no Device Flow, no owner-created OAuth App
+touchpoint. Reasons: it multiplies per-service maintenance (an app owned
+by this project per vendor, subject to each platform's review/suspension
+policies); the services that would need it (GitHub, Figma) all have a
+static-key path that works today with no vendor dependency; and the
+static-key path is strictly more reliable (§ Pitfalls). If a vendor later
+opens DCR, that integration upgrades to mechanism 2 by changing its
+registry entry — data, not code.
+
+`oauth-device-flow.ts` and the registry's `oauth-device` auth shape
+(`deviceCodeUrl`/`tokenUrl`/`clientId`) are to be removed in the
+implementation pass; RFC 8628 support returns only if some future vendor
+offers Device Flow as its *open* mechanism, which none of the eight do.
+
+## The curated eight
+
+| Integration | Endpoint | v1 auth (`header`) | OAuth upgrade (`oauth`) |
 |---|---|---|---|
-| **GitHub** | `https://api.githubcopilot.com/mcp/` ([github/github-mcp-server](https://github.com/github/github-mcp-server)) | **No Dynamic Client Registration.** A generic client needs its own pre-registered GitHub OAuth App/GitHub App, **or** a Personal Access Token (`Authorization: Bearer <PAT>`) works with zero OAuth at all. | The one-click OAuth GitHub's own docs mention only works because the *IDE itself* (VS Code, JetBrains) already has a GitHub-registered app baked in — not something a generic client gets for free. |
-| **Figma** | `https://mcp.figma.com/mcp` | Advertises DCR, but **the registration endpoint allowlists `client_name`** and returns `403` for anything not on Figma's approved list (VS Code, Cursor, Claude Code, …), confirmed on [Figma's own forum](https://forum.figma.com/ask-the-community-7/understanding-oauth-requirements-for-mcp-clients-connecting-to-figma-mcp-server-52216) and a [reported client-library bug](https://github.com/steipete/mcporter/issues/115) where an unhandled rejection makes the auth flow hang forever instead of failing cleanly. | A real, gated allowlist wearing DCR's clothes — functionally the same "ask the vendor to approve you" step as an App route, just phrased as a client-registration rejection instead of a missing API key field. Figma's Desktop MCP server (local, Dev Mode) sidesteps this entirely by not needing remote OAuth. |
-| **Stitch** (Google Labs) | `https://stitch.googleapis.com/mcp` | Static API key in a **custom header**, `X-Goog-Api-Key` — not `Authorization: Bearer`. | Confirms patchbay's `custom-http` auth model needs a configurable header *name*, not just a hardcoded `Authorization: Bearer` — today's `authType: "bearer-token"` (P9) is one specific case of a more general "static header" shape. |
-| **Stripe** | `https://mcp.stripe.com` | Real, open OAuth 2.1 + DCR — no allowlist reported. Restricted API key also accepted as a simpler alternative. | Matches the generic MCP OAuth flow cleanly. |
-| **Sentry** | `https://mcp.sentry.dev/mcp` | Real, open OAuth 2.1 + DCR ("you typically do not need to create an OAuth app"). | Also documents a PAT fallback (`--access-token`) specifically because the OAuth redirect **fails in remote VS Code** (SSH/code-server) — see the reliability section below. |
-| **Postman** | `https://mcp.postman.com/mcp` (US) / `https://mcp.eu.postman.com` | OAuth on the US server; **the EU server only supports a Postman API key as `Authorization: Bearer <key>`.** | Already exactly patchbay's existing `custom-http` + `bearer-token` path — nothing new needed for this one. |
-| **Supabase** | Project-specific, via Supabase's own OAuth 2.1 Server product | Real OAuth 2.1, DCR optional (dashboard toggle) or manual client pre-registration. | Supabase is itself an OAuth-server *product* others build on — same shape as Stripe/Sentry from a connecting client's perspective. |
+| **GitHub** | `https://api.githubcopilot.com/mcp/` | PAT as `Authorization: Bearer` | ✗ — no DCR; one-click OAuth exists only for IDE-registered apps ([github/github-mcp-server](https://github.com/github/github-mcp-server)) |
+| **Figma** | `https://mcp.figma.com/mcp` | ✗ remote (no key mode) — but Figma **Desktop** MCP (local, Dev Mode) fits `custom-stdio` with no auth | ✗ for now — DCR allowlists `client_name`, 403s unknown clients ([forum](https://forum.figma.com/ask-the-community-7/understanding-oauth-requirements-for-mcp-clients-connecting-to-figma-mcp-server-52216)); flips to ✓ only if patchbay gets allowlisted |
+| **Stitch** (Google Labs) | `https://stitch.googleapis.com/mcp` | API key as `X-Goog-Api-Key` (custom header name — the case that forces `headerName` into the schema) | ✗ — key-only ([stitch.withgoogle.com/docs/mcp](https://stitch.withgoogle.com/docs/mcp/setup/)) |
+| **Stripe** | `https://mcp.stripe.com` | Restricted API key as bearer | ✓ open DCR ([docs.stripe.com/mcp](https://docs.stripe.com/mcp)) |
+| **Sentry** | `https://mcp.sentry.dev/mcp` | PAT (their own recommended fallback for remote-IDE setups) | ✓ open DCR ([docs.sentry.io/ai/mcp](https://docs.sentry.io/ai/mcp/)) |
+| **Postman** | `https://mcp.postman.com/mcp` (US), `https://mcp.eu.postman.com` (EU) | API key as bearer (EU is key-only) | ✓ US server ([Postman docs](https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server)) |
+| **Supabase** | Per-project URL (Supabase OAuth 2.1 Server product) | Project API key | ✓ when the project enables DCR ([supabase docs](https://supabase.com/docs/guides/auth/oauth-server/mcp-authentication)) |
+| **Augment Context Engine** | Per-account URL from `app.augmentcode.com/mcp/configuration` | API key (documented "non-interactive" mode) | ✓ documented OAuth mode ([docs.augmentcode.com](https://docs.augmentcode.com/context-services/mcp/overview)) — DCR openness unverified, check at implementation |
 
-**Headline: DCR is not a uniform escape hatch.** Three of seven genuinely
-support it in the open (Stripe, Sentry, Supabase). One advertises it but
-gates it behind an approval allowlist that behaves like a silent rejection
-to anyone not on the list (Figma). Two don't do OAuth at all — a static key
-in a header is the real mechanism (Stitch, Postman-EU). One requires a
-pre-registered app with no DCR alternative, but also accepts a plain PAT
-with zero OAuth machinery (GitHub).
+Notes:
 
-## "MCP route" vs "App route" — what's actually being traded
+- Per-account/per-project URLs (Supabase, Augment) mean the registry entry
+  ships with `url: ""` and the user pastes their own endpoint at connect
+  time — the entry contributes name, auth shape, and a docs link.
+- Augment's remote indexing additionally requires their GitHub App on the
+  repo — Augment's own onboarding, outside patchbay.
+- Figma remote is the one entry with no self-serve path at all today; it
+  ships as visible-but-not-connectable (same honest pattern as the current
+  GitHub placeholder), with the Desktop-MCP `custom-stdio` route named in
+  its description.
 
-**MCP route** = the MCP Authorization spec's own OAuth 2.1 flow: discover
-`.well-known/oauth-protected-resource` → discover the authorization
-server's `.well-known/oauth-authorization-server` (or OIDC equivalent) →
-Dynamic Client Registration if `registration_endpoint` exists → standard
-Authorization Code + PKCE.
+## Pitfalls the implementation must respect (evidence-backed)
 
-- **Gain**: zero pre-provisioned credentials for any server that supports
-  open DCR (Stripe, Sentry, Supabase confirmed) — a registry entry needs
-  only a URL, matching architecture.md's "adding a curated integration is a
-  data change, not code" as literally as possible. One implementation
-  covers every present and future compliant server.
-- **Lose**: doesn't help at all for GitHub (no DCR) or Figma (DCR present
-  but allowlist-gated) — those need a fallback regardless. Requires a
-  redirect-callback mechanism, which is the actual source of the
-  reliability complaints (next section) if built the way most
-  reference implementations build it.
+1. **Never bind a raw `http://127.0.0.1:{port}` server as the OAuth
+   redirect target.** Under SSH remote, WSL, code-server, and Codespaces
+   the browser is not on the machine that bound the port; the callback
+   dies before reaching the extension. Real-world: Sentry documents this
+   exact failure and recommends PAT to route around it
+   ([write-up](https://www.darwinbiler.com/sentry-mcp-stdio-fix/)); a
+   hardcoded-localhost redirect bug is reported against Roo-Code
+   ([Roo-Code#10531](https://github.com/RooCodeInc/Roo-Code/issues/10531)).
+   Correct mechanism: `vscode.window.registerUriHandler` (a
+   `vscode://solutionsunity.acp-patchbay/...` callback) with the redirect
+   URI built by `vscode.env.asExternalUri` — VS Code resolves it correctly
+   in every environment by construction
+   ([remote-extensions guide](https://code.visualstudio.com/api/advanced-topics/remote-extensions)).
+2. **Treat DCR rejection as an immediate, labeled failure.** Figma 403s
+   unknown `client_name`s with no hint that an allowlist exists; a known
+   client library hangs forever on it
+   ([mcporter#115](https://github.com/steipete/mcporter/issues/115)).
+   Patchbay must surface "this server rejected client registration —
+   likely gated; use its API-key path" and stop. No retry, no hang.
+3. **Do not delegate to VS Code's native MCP-client OAuth**
+   (`contributes.mcpServerDefinitionProviders`). It has open bugs as of
+   this research — wrong discovery order (skips
+   `oauth-protected-resource`), no audience config, mis-keyed credential
+   cache — reported against the GitHub endpoint specifically
+   ([vscode#273655](https://github.com/microsoft/vscode/issues/273655)).
+   It also registers servers for *VS Code's own* MCP client, not for
+   patchbay's agent-facing bridge, so it's the wrong layer regardless.
+4. **`vscode.authentication.getSession('github', …)` stays unused for
+   integrations.** It would grant a GitHub token with zero setup, but the
+   session is account/profile-scoped — the same credential silently
+   available in every workspace — which violates features.md's
+   workspace-scoping rule (born of a real incident: a production-access
+   MCP server following a user between repos). PAT-per-workspace keeps
+   the blast radius the design promises.
+5. **Discovery order matters**: `oauth-protected-resource` first (RFC
+   9728), then the authorization server's metadata — the reverse (what VS
+   Code currently does, see §3) breaks against spec-correct servers.
 
-**App route** = a manually pre-registered OAuth App/GitHub App per service,
-with its own `client_id` (Device Flow, as P9 originally built for GitHub,
-or Authorization Code with a fixed app identity).
+## Implementation deltas (the to-do this reference implies)
 
-- **Gain**: works for services without DCR (GitHub) or with a gated one
-  (Figma, if patchbay ever gets onto their allowlist — an external,
-  non-technical dependency). Device Flow specifically has **no redirect
-  URI at all**, so it's immune to the whole callback-reliability problem
-  class below.
-- **Lose**: real ongoing maintenance per service (an app registered and
-  owned by this project, subject to each platform's review/rate-limit/
-  suspension policies) — the thing plan.md's P9 already flagged as an
-  owner touchpoint, multiplied by however many services end up needing it.
+1. Generalize header auth: `authType: "header"` with `headerName`
+   (default `Authorization`) and a raw-vs-`Bearer {token}` value shape,
+   replacing `bearer-token` as the general case. Registry and
+   custom-integration schemas both.
+2. Build `mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
+   Authorization Code + PKCE, redirect via
+   `registerUriHandler`/`asExternalUri`. Clean labeled failure on gated
+   DCR. Tested against a fake OAuth-2.1 provider (same fixture philosophy
+   as the existing fake agent / fake device-flow provider).
+3. Remove `oauth-device-flow.ts` and the `oauth-device` registry shape.
+4. Ship `data/registry.json` with the eight entries above (Figma marked
+   not-connectable-remote; Supabase/Augment with user-supplied URLs).
+5. Support user-supplied endpoint URLs for registry entries that are
+   per-account (`url: ""` + prompt at connect).
 
-**Do we need both?** Yes, on the evidence above — no single mechanism
-covers all seven services honestly. A third shape, **static key in a
-header**, is also load-bearing (Stitch, Postman-EU) and already fully
-built (`custom-http`, P9) modulo the header-name generalization noted
-above.
+## Decision record
 
-One thing the "we orchestrate ACP agents, not build one" framing does
-settle: patchbay itself is the OAuth *client* in every one of these flows
-(it holds the token, the bridge attaches it to outbound requests) — the ACP
-agent downstream never sees a credential or participates in the auth
-handshake at all. That's already how P9 is built (`IntegrationTokenStore` +
-the stdio-to-HTTP bridge) and none of this research changes it; it only
-changes *how patchbay itself gets the token* for a given service.
-
-## Known-problematic patterns to avoid, with evidence
-
-1. **A raw `http://127.0.0.1:{port}/callback` HTTP server as the OAuth
-   redirect URI breaks under SSH remote, code-server, WSL, and Codespaces**,
-   because the browser doing the redirect may not be on the same machine as
-   the process that bound that port. Confirmed real-world: Sentry's own
-   docs describe exactly this failure for their MCP server in remote VS
-   Code and recommend a PAT specifically to route around it
-   ([darwinbiler.com](https://www.darwinbiler.com/sentry-mcp-stdio-fix/));
-   a similar hardcoded-localhost redirect bug is reported against another
-   extension ([RooCodeInc/Roo-Code#10531](https://github.com/RooCodeInc/Roo-Code/issues/10531)).
-   **The fix VS Code itself provides**: `vscode.window.registerUriHandler`
-   (a `vscode://<publisher>.<extension>/...` callback) plus
-   `vscode.env.asExternalUri()` to build the redirect URI — VS Code
-   resolves this correctly in every environment (local, SSH remote, WSL,
-   Codespaces, tunnels) by construction, unlike a hand-rolled loopback
-   server. This is the one change worth making regardless of which
-   integration ships first.
-2. **DCR that's allowlisted, not open, and rejected silently** — Figma
-   returns a plain `403` to an unrecognized `client_name` with nothing
-   telling the caller "you need approval." A known MCP client library hangs
-   indefinitely instead of surfacing this
-   ([steipete/mcporter#115](https://github.com/steipete/mcporter/issues/115)).
-   Any generic OAuth-2.1 client patchbay builds must treat a DCR rejection
-   as a clean, immediate, labeled failure — never a silent retry or hang.
-3. **VS Code's own built-in MCP OAuth support has open, unresolved bugs**
-   as of this research — wrong discovery order (tries
-   `/.well-known/oauth-authorization-server` before the spec-correct
-   `/.well-known/oauth-protected-resource`, with no fallback), missing
-   audience configuration, and credential caching keyed wrong
-   ([microsoft/vscode#273655](https://github.com/microsoft/vscode/issues/273655)),
-   reported specifically against the GitHub MCP endpoint. Leaning on VS
-   Code's native `contributes.mcpServerDefinitionProviders` OAuth handling
-   today would inherit these bugs — another reason patchbay's own bridge +
-   token store (already built, P9) stays the right layer to own this,
-   rather than delegating to VS Code's in-progress MCP client machinery.
-4. **`vscode.authentication.getSession('github', scopes)`** (VS Code's
-   built-in GitHub auth provider) sidesteps 1–3 entirely for GitHub
-   specifically — no app, no redirect, no DCR — but trades away workspace
-   scoping (previously flagged): the session is account/profile-wide, not
-   per-workspace, in tension with features.md's stated "a credential
-   connected in one repo is never silently available in another" rule.
-
-## What this suggests for v1 (not decided — laid out for the call)
-
-- **Static-header auth (already built) is the most reliable path and
-  covers real cases today**: Postman (EU), Stitch, and GitHub-via-PAT all
-  reduce to "paste a token, send it as a header" — zero OAuth surface,
-  zero popups, zero remote-environment failure modes, works identically
-  everywhere. Only gap: the header *name* needs to be configurable
-  (`Authorization: Bearer` today; Stitch needs `X-Goog-Api-Key`).
-- **A generic OAuth 2.1 + open-DCR + PKCE flow, redirecting through
-  `registerUriHandler`/`asExternalUri` (never a raw loopback server),
-  covers Stripe/Sentry/Supabase** cleanly and would cover any future
-  compliant server the same way, no code change, matching the registry's
-  "data file, not code" principle.
-- **Figma and GitHub both need an explicit fallback decision** because
-  neither has an open, unauthenticated path to full OAuth: Figma's DCR is
-  allowlist-gated (an external approval this project doesn't control);
-  GitHub's isn't open at all. For both, the PAT/static-key path above is
-  available today with no vendor dependency; full one-click OAuth for
-  either is a real "create/get approved for an app" step layered on later,
-  not a blocker for shipping the integration itself.
-
-No implementation change has been made from this research — it's the
-input to a decision, not the decision.
+- **Superseded**: P9's phase-start call "GitHub Device Flow with an
+  owner-created OAuth App" (plan.md P9, built as
+  `oauth-device-flow.ts`). Rationale at the time was sound (no client
+  secret in an extension, works in remote/WSL); superseded because (a)
+  GitHub's remote MCP server accepts a plain PAT, making the app
+  unnecessary, (b) Device Flow generalizes to none of the other seven
+  integrations, and (c) the MCP-spec OAuth flow + static-header pair
+  covers all eight with less machinery and no owner touchpoint.
+- **Active**: mechanisms 1 + 2 above; the curated-eight table; pitfalls
+  1–5 as binding implementation constraints.
