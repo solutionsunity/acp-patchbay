@@ -407,8 +407,10 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     instruction says to raise rather than resolve silently: closed now,
     since every v1 bullet needing a working path is literally this phase's
     gate. Image paste and file attach both ride the existing `ContextChip`
-    mechanism (image is a new chip kind carrying base64 + mimeType, sent as
-    a real `ImageContent` block; file-picker attach reuses the same shape as
+    mechanism (image is a new chip kind carrying base64 + mimeType, sent in
+    the best form the agent accepts — see the final-audit entry, which
+    superseded this bullet's original "ImageContent regardless" call;
+    file-picker attach reuses the same shape as
     "add current file," just for an arbitrary picked file); "attach by
     drag-and-drop **or** picker" is satisfied by the picker alone — drag-drop
     specifically wasn't added, a scope trim not a gap, since the bullet is an
@@ -455,19 +457,40 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     recorded P9v2 decision (features.md's GitHub bullet, ui.md § Integrations
     — supersession noted in place, not erased). The two mockup HTML files
     still illustrate the old device-flow modal — mockups lag, ui.md binds.*
-- *Raised, not fixed (each needs an owner call — see the audit verdict):
-  image-paste fallback (architecture.md's temp-file `ResourceLink` path for
-  non-image agents isn't built; P12 sends `ContentBlock::Image` regardless),
-  integration-bridge MCP tool calls run ungated by the broker (v1 relies on
-  the agent's own brokered `session/request_permission` plus explicit
-  routing consent), registry ships Augment `oauth: true` while
-  reference-mcp-oauth.md marks its DCR openness unverified, `planCleared`
-  exists in the protocol but nothing emits it (a finished plan's strip stays
-  up), custom-stdio `env` in the repo-shareable config file is a user-side
-  secret channel, and a set of ui.md-bound controls not present in the
-  implementation (selection ghost chip, `@` mention picker, chat crash
-  banner, Settings stat tiles / per-agent card controls / diagnostics
-  cost-disclosure modal / routing plug-in confirmation).*
+- *Resolved by owner direction (post-audit round):*
+  - *Image paste now honors the declared capability: `promptCapabilities.image`
+    → real `ContentBlock::Image`; undeclared → bytes to a temp file, sent as
+    a `ResourceLink` (the baseline every agent must accept) — code and
+    architecture.md now agree; P12's "ImageContent regardless" call is
+    superseded.*
+  - *Plan strip mirrors only what the agent reports (owner: "whatever the
+    agent reports for plan we need to reflect"): the last reported plan
+    stays up — no invented clearing signal, since ACP has none — and a
+    transcript reset (reload/replay) clears it so replay alone rebuilds it.
+    The never-emitted `planCleared` event is removed as dead protocol
+    surface.*
+  - *The ui.md-bound controls are built: composer selection ghost chip (live
+    IDE selection, position streamed — text read only on solidify) and `@`
+    context mention picker (open editors + the adder's entries); chat crash
+    banner with one-action Restart; Settings stat tiles, full per-agent
+    cards (launch command mono, Stop, crashed note + Restart, process-policy
+    select with its auto reason, default knobs enabled only where the agent
+    has actually offered them — observed via a new settings-side knob
+    projection), the diagnostics cost-disclosure modal, and the explicit
+    plug-in confirmation when routing onto a less-than-fully-brokered
+    agent.*
+- *Still raised (owner calls pending):
+  integration MCP tool calls run ungated by the broker — one mechanism
+  across both transports; the bridge (registry/custom-http) path is
+  gateable since patchbay owns that proxy, custom-stdio would need the same
+  proxy inserted (v1 relies on the agent's own brokered
+  `session/request_permission` plus explicit routing consent); registry
+  ships Augment `oauth: true` while reference-mcp-oauth.md marks its DCR
+  openness unverified (owner is live-testing); custom-stdio `env` in the
+  repo-shareable config file is a user-side secret channel (hand-edit only —
+  the UI never writes env; a warning note is the proposed fix). The two
+  mockup HTML files still lag ui.md (device-flow modal, new controls) —
+  mockups illustrate, ui.md binds.*
 
 ## Owner touchpoints, complete list
 

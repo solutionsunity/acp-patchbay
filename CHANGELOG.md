@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Post-audit round (owner-directed): image paste now sends a real
+  `ContentBlock::Image` only where `promptCapabilities.image` is declared
+  and otherwise falls back to a temp-file `ResourceLink` — the baseline
+  every agent must accept, so paste is never disabled *and* never sends a
+  block the agent didn't sign up for (architecture.md's original contract,
+  now honored by code). The plan strip strictly mirrors agent reports: a
+  transcript reset clears it so `session/load` replay alone rebuilds it,
+  and the never-emitted `planCleared` event is gone. The remaining
+  ui.md-bound controls are built: composer selection ghost chip (appears
+  only while the IDE has a live selection; click solidifies it) and the
+  `@` context mention picker (open editors + selection/problems/attach —
+  standard content blocks, every agent); a chat crash banner with
+  one-action Restart; Settings stat tiles (connected/running/sessions
+  today), full per-agent cards — launch command, Stop, crashed note +
+  Restart, process-policy select stating auto's reason, and default knobs
+  enabled only where that agent has actually offered the knob (a new
+  settings-side projection of observed session options); the diagnostics
+  cost-disclosure modal (today's honest cost: zero agent turns); and the
+  explicit plug-in confirmation when routing an integration onto a
+  less-than-fully-brokered agent.
 - Final pre-publish audit: wired the opportunistic fs/terminal capability
   verification that P5 deferred to P6's handlers but was never actually
   connected — without it no agent could ever reach "fully brokered" (every
