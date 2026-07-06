@@ -15,6 +15,7 @@ import {
   type AgentConfigView,
   type AgentViewEvent,
   type AgentViewState,
+  type CapabilityRowId,
   type ConnectAgentSource,
   type PermissionOptionView,
   type SettingsEvent,
@@ -214,13 +215,20 @@ export class Orchestrator {
           ? { outcome: { outcome: "cancelled" } }
           : { outcome: { outcome: "selected", optionId: result.optionId } };
       },
-      onReadTextFile: async (_agentId, params) => ({ content: await this.readTextFileLive(params.path) }),
-      onWriteTextFile: async (_agentId, params) => {
+      onReadTextFile: async (agentId, params) => {
+        const content = await this.readTextFileLive(params.path);
+        this.verifyObserved(agentId, "fs.readTextFile");
+        return { content };
+      },
+      onWriteTextFile: async (agentId, params) => {
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
         if (accepted) await applyFileWrite(params.path, params.content);
+        // A rejected write still verifies: "brokered" means the agent routes
+        // writes through patchbay's gate, and a rejection is the gate working.
+        this.verifyObserved(agentId, "fs.writeTextFile");
         return {};
       },
-      onCreateTerminal: async (_agentId, params) => {
+      onCreateTerminal: async (agentId, params) => {
         const command = [params.command, ...(params.args ?? [])].join(" ");
         const { accepted } = await this.broker.gateCommand(params.sessionId, command);
         if (!accepted) throw new Error("command rejected by permission rules");
@@ -232,6 +240,7 @@ export class Orchestrator {
           cwd: params.cwd ?? null,
           outputByteLimit: params.outputByteLimit ?? null,
         });
+        this.verifyObserved(agentId, "terminal");
         const terminalId = `term-${++this.terminalCounter}`;
         this.terminals.set(terminalId, handle);
         const blockId = `term-block-${terminalId}`;
@@ -508,6 +517,16 @@ export class Orchestrator {
     const poolKey = `${agentId}::iso::${++this.isolationCounter}`;
     await this.pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
     return poolKey;
+  }
+
+  /** Opportunistic behavior-level verification (architecture.md § capability
+   * matrix; plan.md P5's "first fs success / first terminal" hooks): marks a
+   * row verified the first time its path is genuinely exercised on the wire.
+   * Guarded on current state so a chatty agent (many reads per turn) doesn't
+   * flood the patch stream with idempotent events. */
+  private verifyObserved(agentId: string, row: CapabilityRowId): void {
+    if (this.agentView.current.capabilities[agentId]?.[row]?.verified) return;
+    this.capabilityVerifier.markVerified(agentId, row);
   }
 
   /** Persists the render cache to workspace storage for agents that never
