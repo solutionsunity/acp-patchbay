@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Final pre-publish audit: wired the opportunistic fs/terminal capability
+  verification that P5 deferred to P6's handlers but was never actually
+  connected — without it no agent could ever reach "fully brokered" (every
+  agent showed "acts outside", and `auto` integration routing could never
+  attach to anything). First live-buffer read, first gated write (rejected
+  counts — a rejection is the broker working), and first accepted terminal
+  now verify their rows, covered by a new end-to-end test-electron case.
+  The automatic fork probe no longer leaves its two throwaway sessions in
+  the connection's session set (they read as real concurrent sessions to
+  process-policy `auto` and could force needless isolation of the first
+  real session). Chat blocks no longer clip when the transcript outgrows
+  the view (`.card`'s `overflow: hidden` let flex compress them —
+  permission buttons rendered half-visible; caught by the screenshot
+  pass). Stale device-flow references in features.md/ui.md aligned to the
+  recorded P9v2 auth decision.
 - P9v2 integrations auth, per docs/reference-mcp-oauth.md (supersedes the
   Device Flow design): two mechanisms replace the per-service OAuth-App
   route entirely. (1) Static key in a configurable header — the v1 floor

@@ -132,9 +132,13 @@ real use; synthetic probes only via Diagnostics; never on a schedule.
 
 ### Integrations
 
-Curated card (GitHub): `Connect` → **device-flow modal** (code to enter at
-github.com/login/device; no client secret; token → SecretStorage, revocable).
-Custom card: command shown mono, `Remove`. Add row: command/URL + auth type.
+Curated cards: each registry entry offers exactly the connect mechanisms its
+vendor opens (docs/reference-mcp-oauth.md — the device-flow modal this section
+originally specified is superseded by that decision): **key paste** (hint
+names where the key comes from; per-account services take an endpoint URL
+first) and/or **`Connect with OAuth…`** (browser; MCP-spec OAuth where DCR is
+open — a gated-DCR rejection surfaces as an immediate labeled failure).
+Token → SecretStorage, revocable. Custom card: command shown mono, `Remove`. Add row: command/URL + auth type.
 **Routing table**: integrations × agents as toggles; toggling onto a
 less-than-fully-brokered agent interrupts with the **explicit plug-in
 confirmation** (auto-attach covers fully-brokered only). Per-integration

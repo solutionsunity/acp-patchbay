@@ -428,6 +428,47 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     on next connect/restart, same as workspace-config agents always have —
     not a new limitation introduced here.*
 
+### Final pre-publish audit ☑ (2026-07-06 — full-codebase review against the docs)
+
+- *Fixed (mechanical, doc-backed):*
+  - *`fs.readTextFile` / `fs.writeTextFile` / `terminal` had **no verification
+    path at all** — P5's scoping note deferred their opportunistic hooks to
+    P6's real handlers, P6 built the handlers but the marking never landed.
+    Consequence in production: no agent could ever reach fully-brokered (every
+    agent wore "acts outside" permanently, even fully-gated ones) and `auto`
+    integration routing could never attach anything. Now wired in the
+    orchestrator's pool hooks (first read / first gated write — a rejected
+    write still counts, rejection is the broker working / first accepted
+    terminal), guarded against event spam; covered by a new test-electron
+    case driving all three through the real orchestrator.*
+  - *The automatic fork probe left its two throwaway sessions in the
+    connection's session set forever — process-policy `auto` read them as
+    real concurrent sessions (`hasExisting`) and, whenever the fork half of
+    the probe failed, needlessly isolated the user's first top-level session.
+    Probe sessions are now forgotten in the probe's `finally`.*
+  - *Chat blocks clipped instead of scrolling once a transcript outgrew the
+    view: `.chat` is a flex column and `.card`'s `overflow: hidden` zeroes
+    its automatic minimum size, so cards compressed — permission buttons
+    half-visible, terminal output cut. Caught by the headless-screenshot
+    pass; fixed with `flex-shrink: 0` on chat blocks.*
+  - *Stale doc references to the superseded Device Flow aligned to the
+    recorded P9v2 decision (features.md's GitHub bullet, ui.md § Integrations
+    — supersession noted in place, not erased). The two mockup HTML files
+    still illustrate the old device-flow modal — mockups lag, ui.md binds.*
+- *Raised, not fixed (each needs an owner call — see the audit verdict):
+  image-paste fallback (architecture.md's temp-file `ResourceLink` path for
+  non-image agents isn't built; P12 sends `ContentBlock::Image` regardless),
+  integration-bridge MCP tool calls run ungated by the broker (v1 relies on
+  the agent's own brokered `session/request_permission` plus explicit
+  routing consent), registry ships Augment `oauth: true` while
+  reference-mcp-oauth.md marks its DCR openness unverified, `planCleared`
+  exists in the protocol but nothing emits it (a finished plan's strip stays
+  up), custom-stdio `env` in the repo-shareable config file is a user-side
+  secret channel, and a set of ui.md-bound controls not present in the
+  implementation (selection ghost chip, `@` mention picker, chat crash
+  banner, Settings stat tiles / per-agent card controls / diagnostics
+  cost-disclosure modal / routing plug-in confirmation).*
+
 ## Owner touchpoints, complete list
 
 1. **P3**: Agent View design verdict.

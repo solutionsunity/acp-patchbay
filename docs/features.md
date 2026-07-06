@@ -104,7 +104,11 @@ deliverable, owed before implementation.
 
 ### Integrations
 
-- User can connect GitHub in one click (OAuth), and disconnect as easily.
+- User can connect GitHub by pasting a token — one field, no app setup — and
+  disconnect as easily. *(Originally "one click (OAuth)"; superseded by the
+  standing auth decision in [reference-mcp-oauth.md](reference-mcp-oauth.md):
+  GitHub's OAuth is closed to third-party clients. MCP-spec OAuth remains the
+  one-click path for curated integrations whose registration is open.)*
 - User can add any MCP server — command or URL, with auth — as a custom integration.
 - User owns the routing: which integrations each agent receives is the user's
   choice, per agent, not all-or-nothing. Default: a new integration auto-attaches
