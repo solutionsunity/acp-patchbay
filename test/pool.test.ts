@@ -229,4 +229,59 @@ describe("AgentPool", () => {
     expect(response.stopReason).toBe("cancelled");
     await pool.stop("cancelly");
   });
+
+  // P16: a failure's reason is readable inline — the crashed status carries
+  // the process's own last words (stderr tail), and only crash carries them.
+  it("crash carries the stderr tail on the status hook", async () => {
+    const recorded: Array<{ status: AgentStatus; stderr?: readonly string[] }> = [];
+    const pool = new AgentPool({
+      onStatusChanged: (_id, status, _detail, stderr) => recorded.push({ status, stderr }),
+      onDeclaredCaptured: () => {},
+      onSessionUpdate: () => {},
+      ...stubFsTerminalHooks(),
+    });
+    await expect(
+      pool.connect({
+        agentId: "doomed",
+        name: "Doomed",
+        command: process.execPath,
+        // write-callback → exit: the last words are flushed before death,
+        // so the tail is deterministic here
+        args: ["-e", 'process.stderr.write("boom: config missing\\n", () => process.exit(1));'],
+        env: {},
+        cwd,
+      }),
+    ).rejects.toThrow();
+    const crashed = recorded.find((r) => r.status === "crashed");
+    expect(crashed?.stderr?.join("\n")).toContain("boom: config missing");
+  });
+
+  // P16: the classic silent hang — a CLI doing first-run setup against a
+  // TTY it doesn't have — is named, not reported as a bare timeout.
+  it("initialize timeout names interactive first-run setup as the likely cause", async () => {
+    const details: Array<string | undefined> = [];
+    const pool = new AgentPool(
+      {
+        onStatusChanged: (_id, status, detail) => {
+          if (status === "crashed") details.push(detail);
+        },
+        onDeclaredCaptured: () => {},
+        onSessionUpdate: () => {},
+        ...stubFsTerminalHooks(),
+      },
+      undefined,
+      { initializeTimeoutMs: 250 },
+    );
+    await expect(
+      pool.connect({
+        agentId: "mute",
+        name: "Mute",
+        command: process.execPath,
+        args: ["-e", "process.stdin.resume(); setInterval(() => {}, 1 << 30);"],
+        env: {},
+        cwd,
+      }),
+    ).rejects.toThrow();
+    expect(details[0]).toContain("interactive first-run setup");
+  });
 });

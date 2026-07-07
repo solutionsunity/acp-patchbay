@@ -242,8 +242,8 @@ export class Orchestrator {
     // capabilityTracker / broker here — before they're assigned below — is
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
-      onStatusChanged: (agentId, status, detail) => {
-        const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
+      onStatusChanged: (agentId, status, detail, stderr) => {
+        const event = { kind: "agentStatusChanged", agentId, status, detail, stderr } as const;
         this.agentView.emit(event);
         this.settings.emit(event);
         const suffix = detail !== undefined ? ` — ${detail}` : "";
@@ -930,7 +930,12 @@ export class Orchestrator {
   /** Loads globally-stored agent configs — replaces the old workspace-file
    * bootstrap (and the one-time-adoption gate that existed only because
    * that file could be repo-authored by someone else; a global,
-   * developer-owned record needs no such gate). */
+   * developer-owned record needs no such gate). Every config is upserted
+   * into both channels' agent lists right here (P16): the Agent View knows
+   * every configured agent from the first frame, with an honest status —
+   * `untested` (never initialized successfully at any version) or `stopped`
+   * (has connected before; `lastSeenVersion` is the durable marker) —
+   * instead of agents existing only once connected in-window. */
   private loadAgentConfigs(): void {
     for (const agent of this.agentConfigs.list()) {
       // env deliberately empty here: values live in SecretStorage and are
@@ -947,6 +952,18 @@ export class Orchestrator {
         defaults: agent.defaults,
       });
       this.agentNames.set(agent.id, agent.name);
+      const upsert = {
+        kind: "agentUpserted",
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          status: agent.lastSeenVersion === null ? "untested" : "stopped",
+          command: [agent.command, ...agent.args].join(" "),
+          needsAuth: false,
+        },
+      } as const;
+      this.agentView.emit(upsert);
+      this.settings.emit(upsert);
     }
     void this.refreshAgentConfigs();
   }

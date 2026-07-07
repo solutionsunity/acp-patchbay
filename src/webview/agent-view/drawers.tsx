@@ -49,7 +49,12 @@ export function AgentsDrawer(props: {
             <div className="min-w-0 flex-1">
               <div className="nm">{a.name}</div>
               <div className="sub">
-                {a.detail ?? (matrix !== undefined ? capabilityOneLiner(matrix) : "")}
+                {a.detail ??
+                  (matrix !== undefined
+                    ? capabilityOneLiner(matrix)
+                    : a.status === "untested"
+                      ? "never connected"
+                      : "")}
               </div>
             </div>
             {fidelity !== null && (
@@ -87,6 +92,17 @@ export function AgentsDrawer(props: {
                 }}
               >
                 Restart
+              </Button>
+            )}
+            {(a.status === "untested" || a.status === "stopped") && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  send({ kind: "connectAgent", source: { configuredId: a.id } });
+                  props.onDone("connecting…");
+                }}
+              >
+                Connect
               </Button>
             )}
           </div>

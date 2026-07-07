@@ -29,7 +29,9 @@ export interface LaunchSpec {
 }
 
 export interface PoolHooks {
-  onStatusChanged(agentId: string, status: AgentStatus, detail?: string): void;
+  /** `stderr` rides crash statuses only — the process's own last words
+   * (P16), so a failure's reason is readable without the Output panel. */
+  onStatusChanged(agentId: string, status: AgentStatus, detail?: string, stderr?: readonly string[]): void;
   onDeclaredCaptured(
     agentId: string,
     declared: DeclaredCapabilities,
@@ -154,12 +156,19 @@ function timeOfDay(): string {
 
 export class AgentPool {
   private entries = new Map<string, Entry>();
+  private readonly initializeTimeoutMs: number;
 
   constructor(
     private readonly hooks: PoolHooks,
     /** Output-channel seam (logger.ts) — argv and env values never logged. */
     private readonly log: Logger = nullLogger,
-  ) {}
+    /** The default is generous on purpose: cold `npx`/`uvx` first runs
+     * download whole packages (P16 — a short fuse would false-fail them).
+     * Tests inject a short one to exercise the timeout path itself. */
+    opts?: { initializeTimeoutMs?: number },
+  ) {
+    this.initializeTimeoutMs = opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS;
+  }
 
   get(poolKey: string): PooledAgentView | undefined {
     const e = this.entries.get(poolKey);
@@ -319,12 +328,19 @@ export class AgentPool {
             terminal: true,
           },
         }),
-        INITIALIZE_TIMEOUT_MS,
-        "initialize timed out",
+        this.initializeTimeoutMs,
+        // The classic silent hang is a CLI doing first-run setup against a
+        // TTY it doesn't have (P16) — name that instead of a bare timeout.
+        // Reads as "initialize failed: timed out — …" through markDead.
+        "timed out — the CLI may need interactive first-run setup; run it once manually",
       );
     } catch (err) {
-      entry.stopping = true;
-      connection.close(err);
+      // Crash with the reason, never a silent "stopped": the stopping flag
+      // used to be set here first, routing markDead to "stopped" and
+      // swallowing the detail — the exact silent failure P16 exists to
+      // kill. markDead runs before the kill so the 'exit' handler can't
+      // relabel it "exited N" either.
+      this.markDead(entry, `initialize failed: ${(err as Error).message}`);
       if (child.pid !== undefined) {
         const pid = child.pid;
         killTree(pid, "SIGTERM");
@@ -332,7 +348,6 @@ export class AgentPool {
         // sweep a moment later; unref'd so it never holds the host open.
         setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
       }
-      this.markDead(entry, `initialize failed: ${(err as Error).message}`);
       throw err;
     }
 
@@ -556,8 +571,12 @@ export class AgentPool {
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {
     entry.status = status;
     entry.detail = detail;
+    // Crash carries the process's own last words (P16); every other status
+    // clears them — stale stderr on a running agent would be a lie.
+    const stderr =
+      status === "crashed" && entry.stderrTail.length > 0 ? [...entry.stderrTail] : undefined;
     if (entry.isolated) this.hooks.onIsolatedStatusChanged?.(entry.poolKey, entry.reportAs, status, detail);
-    else this.hooks.onStatusChanged(entry.reportAs, status, detail);
+    else this.hooks.onStatusChanged(entry.reportAs, status, detail, stderr);
   }
 
   private markDead(entry: Entry, detail: string): void {

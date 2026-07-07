@@ -64,6 +64,9 @@ export function App({ state }: { state: AgentViewState }) {
           >
             Restart
           </Button>
+          {activeAgent.stderr !== undefined && activeAgent.stderr.length > 0 && (
+            <pre className="stderr-tail">{activeAgent.stderr.join("\n")}</pre>
+          )}
         </div>
       )}
       {active !== null && <PlanStrip entries={state.activePlan[active.id] ?? null} />}

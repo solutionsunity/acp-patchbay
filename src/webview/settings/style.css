@@ -205,6 +205,12 @@ h2 {
   background: var(--pb-text-faint);
 }
 
+/* never connected — visibly hollow, not just another gray (P16) */
+.dot.untested {
+  background: transparent;
+  border: 1px solid var(--pb-text-faint);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.3;
@@ -443,6 +449,22 @@ tr.sep td {
 
 .crashed-note {
   color: var(--pb-err);
+}
+
+/* the process's own last words, inline with the crash (P16) */
+.stderr-tail {
+  margin: 4px 0 0;
+  padding: 5px 8px;
+  max-height: 96px;
+  overflow-y: auto;
+  font-family: var(--vscode-editor-font-family), monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--pb-text-faint);
+  background: color-mix(in srgb, var(--pb-err) 7%, transparent);
+  border-radius: 3px;
 }
 
 /* ── connect/add forms — one layout for every form on the page: a column

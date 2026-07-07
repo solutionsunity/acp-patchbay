@@ -307,7 +307,13 @@ export type CoalesceHook<E> = (prev: E, next: E) => E | null;
 
 // ── shared domain vocabulary ─────────────────────────────────────────────────
 
-export type AgentStatus = "running" | "stopped" | "crashed" | "reconnecting";
+/** `untested` = config exists, never initialized successfully at any
+ * version (P16) — the arm `stopped` used to lie about. Connection status
+ * lives here, NOT in the capability matrix: a `CapabilityCell` has no error
+ * arm and its used-state is version-keyed persisted — a "connection" row
+ * would light up for a dead process. This is live process state; the matrix
+ * is durable proven-ness of the declared surface. */
+export type AgentStatus = "untested" | "running" | "stopped" | "crashed" | "reconnecting";
 
 export interface AgentSummary {
   id: string;
@@ -315,6 +321,9 @@ export interface AgentSummary {
   status: AgentStatus;
   /** Human-readable status context, e.g. "exited 1 · 14:07". */
   detail?: string;
+  /** The process's own last words (stderr tail), present on crash — the
+   * reason readable inline, no Output panel required (P16). */
+  stderr?: readonly string[];
   /** Launch command line as spawned (ui.md § Settings Agents — shown mono). */
   command?: string;
   /** True once a real call has hit ACP's `auth_required` for this
@@ -795,6 +804,8 @@ export type AgentViewEvent =
       agentId: string;
       status: AgentStatus;
       detail?: string;
+      /** stderr tail, riding crash statuses only. */
+      stderr?: readonly string[];
     }
   | { kind: "sessionCreated"; session: SessionSummary }
   | { kind: "sessionActivated"; sessionId: string }
@@ -929,9 +940,10 @@ function reduceAgents(
     case "agentRemoved":
       return agents.filter((a) => a.id !== event.agentId);
     case "agentStatusChanged":
+      // stderr is overwritten, never merged — a recovery clears stale last words.
       return agents.map((a) =>
         a.id === event.agentId
-          ? { ...a, status: event.status, detail: event.detail }
+          ? { ...a, status: event.status, detail: event.detail, stderr: event.stderr }
           : a,
       );
     case "agentAuthRequired":

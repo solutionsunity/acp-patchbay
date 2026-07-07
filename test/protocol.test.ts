@@ -54,6 +54,21 @@ describe("reducers", () => {
     expect(s1.agents.map((a) => a.id)).toEqual(["claude", "gemini"]);
     expect(s1.agents[0]?.status).toBe("crashed");
   });
+
+  // P16: crash carries the process's last words; recovery clears them —
+  // stale stderr on a running agent would be a lie.
+  it("status change carries stderr on crash and clears it on recovery", () => {
+    const crashed = replay(stateWith([claude]), [
+      { kind: "agentStatusChanged", agentId: "claude", status: "crashed", detail: "exited 1", stderr: ["boom"] },
+    ]);
+    expect(crashed.agents[0]?.stderr).toEqual(["boom"]);
+
+    const recovered = replay(crashed, [
+      { kind: "agentStatusChanged", agentId: "claude", status: "running" },
+    ]);
+    expect(recovered.agents[0]?.stderr).toBeUndefined();
+    expect(recovered.agents[0]?.detail).toBeUndefined();
+  });
 });
 
 describe("live editor context (ui.md — ghost chip / @ mention sources)", () => {

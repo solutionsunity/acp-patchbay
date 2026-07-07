@@ -585,7 +585,9 @@ export function AgentsSection(props: {
         const roster = state.roster.find((r) => r.id === id);
         const knobs = state.agentKnobs[id];
         const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
-        const status = a?.status ?? "stopped";
+        // No summary at all = the orchestrator never saw this config — the
+        // honest unknown is "untested", never a claimed "stopped" (P16).
+        const status = a?.status ?? "untested";
         const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
         const upgrade = updateAvailable(state, config);
         // Same predicate the orchestrator's own automatic post-connect/
@@ -683,6 +685,9 @@ export function AgentsSection(props: {
                 <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(id)}>
                   Restart
                 </Button>
+                {a?.stderr !== undefined && a.stderr.length > 0 && (
+                  <pre className="stderr-tail">{a.stderr.join("\n")}</pre>
+                )}
               </div>
             )}
             {matrix !== undefined && (
