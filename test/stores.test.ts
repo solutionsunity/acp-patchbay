@@ -16,6 +16,28 @@ import {
   PermissionRulesStore,
 } from "../src/orchestrator/stores/permission-rules";
 import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
+import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
+
+describe("SpawnRegistryStore", () => {
+  it("records spawns keyed by pid and clears them on observed exit", async () => {
+    const store = new SpawnRegistryStore(new MemoryKV());
+    await store.add(1234, "node agent.js", "agent");
+    await store.add(5678, "npm test", "terminal");
+    expect(store.list().map((r) => r.pid)).toEqual([1234, 5678]);
+    expect(store.get("1234")?.kind).toBe("agent");
+
+    await store.removePid(1234);
+    expect(store.list().map((r) => r.pid)).toEqual([5678]);
+  });
+
+  it("a re-spawned pid replaces the stale record — one machine, one live pid", async () => {
+    const store = new SpawnRegistryStore(new MemoryKV());
+    await store.add(1234, "node old-agent.js", "agent");
+    await store.add(1234, "npm run stress", "terminal");
+    expect(store.list()).toHaveLength(1);
+    expect(store.get("1234")?.command).toBe("npm run stress");
+  });
+});
 
 describe("SessionIndexStore", () => {
   it("upserts, renames, removes", async () => {

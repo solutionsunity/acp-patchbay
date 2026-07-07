@@ -3,6 +3,7 @@
 // visibility in a real VS Code terminal is a thin wrapper layered on top in
 // the extension host (orchestrator.ts), not this module's concern.
 import { spawn } from "node:child_process";
+import { killTree, treeSpawnOptions } from "./process-tree";
 
 export interface ExitStatus {
   exitCode: number | null;
@@ -10,6 +11,9 @@ export interface ExitStatus {
 }
 
 export interface TerminalHandle {
+  /** The spawned root's pid (null when spawn itself failed) — what the
+   * spawn registry records and what shutdown's sweep tree-kills. */
+  pid: number | null;
   /** Output captured so far (stdout+stderr interleaved, ACP doesn't distinguish). */
   currentOutput(): { output: string; truncated: boolean };
   exitStatus(): ExitStatus | null;
@@ -49,6 +53,10 @@ export class NodeTerminalRunner implements TerminalRunner {
       cwd: params.cwd ?? undefined,
       env: { ...process.env, ...params.env },
       stdio: ["ignore", "pipe", "pipe"],
+      // Group leader on POSIX (process-tree.ts): terminal/kill must end the
+      // whole tree — build tools fork, and ACP's contract is "the command
+      // stops", not "its top process stops".
+      ...treeSpawnOptions,
     });
 
     const append = (chunk: string) => {
@@ -72,11 +80,19 @@ export class NodeTerminalRunner implements TerminalRunner {
     child.on("error", () => finish({ exitCode: null, signal: null }));
 
     return {
+      pid: child.pid ?? null,
       currentOutput: () => ({ output, truncated }),
       exitStatus: () => exited,
       waitForExit: () =>
         exited !== null ? Promise.resolve(exited) : new Promise((resolve) => exitWaiters.push(resolve)),
-      kill: () => child.kill(),
+      kill: () => {
+        if (child.pid === undefined) return;
+        const pid = child.pid;
+        killTree(pid, "SIGTERM");
+        // Escalation for trees that ignore SIGTERM; unref'd — never holds
+        // the host open, and SIGKILL on an already-dead tree is a no-op.
+        setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
+      },
       onData: (listener) => {
         dataListeners.add(listener);
         return () => dataListeners.delete(listener);

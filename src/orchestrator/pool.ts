@@ -11,6 +11,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
 import { declaredFromInitialize } from "./capabilities";
+import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
 export interface LaunchSpec {
   agentId: string;
@@ -58,6 +59,12 @@ export interface PoolHooks {
     status: AgentStatus,
     detail?: string,
   ): void;
+  /** Spawn-registry taps (P15c) — `onProcessSpawned` fires with the command
+   * line read back from the OS shortly after spawn (skipped when the process
+   * is already gone by then: a record that would only be stale), and
+   * `onProcessEnded` when the exit is observed. */
+  onProcessSpawned?(pid: number, command: string): void;
+  onProcessEnded?(pid: number): void;
   /** Patchbay declares fs+terminal unconditionally (P2), so these are
    * required — a declared-but-unhandled method would be exactly the kind of
    * lie bet #2 exists to prevent. Live-buffer reads and pre-gated writes
@@ -115,6 +122,23 @@ export interface PooledAgentView {
 
 const INITIALIZE_TIMEOUT_MS = 15_000;
 const STDERR_TAIL_LINES = 40;
+
+/** Grace budgets for `stop`'s ladder (plan.md P15b): EOF → SIGTERM →
+ * SIGKILL, each rung waited on only as long as the budget allows. */
+export interface StopBudget {
+  /** After stdin EOF — a well-behaved agent exits on its own here. */
+  eofMs: number;
+  /** After SIGTERM, before escalating. */
+  termMs: number;
+  /** After SIGKILL — un-ignorable, this only bounds observing the exit. */
+  killMs: number;
+}
+
+/** Interactive Stop can afford patience. */
+const INTERACTIVE_STOP: StopBudget = { eofMs: 500, termMs: 2000, killMs: 500 };
+/** deactivate's whole window is ~2s — every rung tightens, in parallel
+ * across agents (disposeAll). */
+const SHUTDOWN_STOP: StopBudget = { eofMs: 200, termMs: 700, killMs: 300 };
 
 function resolveCommand(command: string): string {
   // npx/npm are .cmd shims on Windows; spawn without a shell needs the suffix
@@ -201,6 +225,9 @@ export class AgentPool {
       env: { ...process.env, ...spec.env },
       cwd: spec.cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      // Process-group leader on POSIX (process-tree.ts) — what lets stop()
+      // reach grandchildren (the agent's own mcp-server/bridge children).
+      ...treeSpawnOptions,
     });
     entry.process = child;
 
@@ -216,10 +243,20 @@ export class AgentPool {
       }
     });
 
+    if (child.pid !== undefined) {
+      const pid = child.pid;
+      void commandOf(pid).then((command) => {
+        // Already exited (fast crash) → the record would only be stale.
+        if (command !== "" && child.exitCode === null && child.signalCode === null) {
+          this.hooks.onProcessSpawned?.(pid, command);
+        }
+      });
+    }
     child.on("error", (err) => {
       this.markDead(entry, `spawn failed: ${err.message}`);
     });
     child.on("exit", (code, signal) => {
+      if (child.pid !== undefined) this.hooks.onProcessEnded?.(child.pid);
       if (entry.stopping) this.setStatus(entry, "stopped");
       else this.markDead(entry, `exited ${code ?? String(signal)} · ${timeOfDay()}`);
     });
@@ -288,7 +325,13 @@ export class AgentPool {
     } catch (err) {
       entry.stopping = true;
       connection.close(err);
-      child.kill();
+      if (child.pid !== undefined) {
+        const pid = child.pid;
+        killTree(pid, "SIGTERM");
+        // Stragglers of a half-started launch (npx → node → …) get the
+        // sweep a moment later; unref'd so it never holds the host open.
+        setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
+      }
       this.markDead(entry, `initialize failed: ${(err as Error).message}`);
       throw err;
     }
@@ -305,20 +348,41 @@ export class AgentPool {
     return entry.declared;
   }
 
-  /** Intentional stop — reads as "stopped", never "crashed". */
-  async stop(poolKey: string): Promise<void> {
+  /** Intentional stop — reads as "stopped", never "crashed". The graceful
+   * ladder (plan.md P15b): protocol close, stdin EOF (a well-behaved agent
+   * exits on its own — `connection.close()` never ends the pipe), grace,
+   * SIGTERM the tree, grace, SIGKILL the tree — then a final group sweep,
+   * because a leader that exited cleanly can still leave grandchildren
+   * behind. */
+  async stop(poolKey: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
     const entry = this.entries.get(poolKey);
     if (!entry || entry.process === null) return;
     entry.stopping = true;
     entry.connection?.close();
     const proc = entry.process;
-    if (proc.exitCode === null && !proc.killed) {
-      const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
-      proc.kill();
-      await this.withTimeout(exited, 3_000, "kill timed out").catch(() => {
-        proc.kill("SIGKILL");
+    if (proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        if (proc.exitCode !== null || proc.signalCode !== null) resolve();
+        else proc.once("exit", () => resolve());
       });
+      const exitedWithin = (ms: number) =>
+        this.withTimeout(exited, ms, "still alive").then(
+          () => true,
+          () => false,
+        );
+      // EOF may hit a pipe whose far end is already gone — that's an EPIPE
+      // on the stream, not a reason to crash the host.
+      proc.stdin?.once("error", () => {});
+      proc.stdin?.end();
+      if (!(await exitedWithin(budget.eofMs))) {
+        killTree(proc.pid, "SIGTERM");
+        if (!(await exitedWithin(budget.termMs))) {
+          killTree(proc.pid, "SIGKILL");
+          await exitedWithin(budget.killMs);
+        }
+      }
     }
+    if (proc.pid !== undefined) killTree(proc.pid, "SIGKILL"); // group sweep — ESRCH is success
     entry.sessions.clear();
     this.setStatus(entry, "stopped");
   }
@@ -475,8 +539,10 @@ export class AgentPool {
     await Promise.allSettled(keys.map((key) => this.stop(key)));
   }
 
-  async disposeAll(): Promise<void> {
-    await Promise.allSettled([...this.entries.keys()].map((id) => this.stop(id)));
+  /** The deactivate path: every connection down on the tight budget, in
+   * parallel — the whole sweep has to fit VS Code's ~2s shutdown window. */
+  async disposeAll(budget: StopBudget = SHUTDOWN_STOP): Promise<void> {
+    await Promise.allSettled([...this.entries.keys()].map((id) => this.stop(id, budget)));
   }
 
   private running(poolKey: string): Entry {
