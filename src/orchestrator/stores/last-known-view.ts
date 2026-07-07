@@ -48,4 +48,10 @@ export class LastKnownViewStore {
     if (file === null) return;
     await rm(file, { force: true });
   }
+
+  /** "Disconnect & erase all data" (plan.md P18): every persisted view goes. */
+  async wipe(): Promise<void> {
+    if (this.dir === null) return;
+    await rm(this.dir, { recursive: true, force: true });
+  }
 }

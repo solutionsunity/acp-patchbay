@@ -214,6 +214,15 @@ export class SessionManager {
     }
   }
 
+  /** "Disconnect & erase all data" (P18): every session's bookkeeping goes
+   * at once — the processes are already down and the session index is wiped
+   * by the erase sweep itself; the UI rows leave via the orchestrator's
+   * sessionClosed events. */
+  reset(): void {
+    this.sessions.clear();
+    this.toolDiffs.clear();
+  }
+
   /** Drops bookkeeping for sessions whose connection just died — a stale
    * sessionId cannot be used on a new connection until reopened. */
   invalidateAgent(agentId: string): void {

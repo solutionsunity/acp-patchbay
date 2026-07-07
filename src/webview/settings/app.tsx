@@ -130,6 +130,7 @@ export function App({ state }: { state: SettingsState }) {
             onAddRule={(rule, layer) => send({ kind: "addCommandRule", rule, layer })}
             onRemoveRule={(pattern, layer) => send({ kind: "removeCommandRule", pattern, layer })}
             onSetScope={(scope) => send({ kind: "setFileWriteScope", scope })}
+            onEraseAll={() => send({ kind: "eraseAllData" })}
           />
         )}
         {section === "assets" && (

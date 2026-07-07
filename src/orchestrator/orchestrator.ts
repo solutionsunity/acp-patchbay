@@ -28,6 +28,7 @@ import {
 } from "../shared/protocol";
 import { resolveAgentAssets, type FsLike } from "./asset-locations";
 import { applyFileWrite, PermissionBroker } from "./broker";
+import { eraseAllData } from "./erase-all";
 import { CapabilityTracker } from "./capability-tracker";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
@@ -529,6 +530,57 @@ export class Orchestrator {
     for (const record of spared) {
       this.log.debug(`spared pid ${record.pid} — command line changed, pid was reused`);
     }
+  }
+
+  /** "Disconnect & erase all data" (plan.md P18): stop reality first —
+   * every agent process (graceful ladder) and terminal tree — then the
+   * erase sweep (erase-all.ts owns the ordering constraint), then both
+   * channels catch up through ordinary events: agents and sessions leave
+   * row by row, configs/integrations/rules/audit republish empty. Never
+   * automatic; the Settings action is the only caller. */
+  private async eraseEverything(): Promise<void> {
+    this.log.info("erase all data: stopping every process");
+    for (const handle of this.terminals.values()) {
+      if (handle.pid !== null && handle.exitStatus() === null) killTree(handle.pid, "SIGKILL");
+    }
+    this.terminals.clear();
+    await this.pool.disposeAll();
+    this.sessionManager.reset();
+
+    await eraseAllData({
+      agentConfigs: this.agentConfigs,
+      integrationConfigs: this.integrationConfigs,
+      usedCapabilities: this.usedCapabilities,
+      agentKnobs: this.agentKnobsCache,
+      spawnRegistry: this.spawnRegistry,
+      sessionIndex: this.sessionIndex,
+      agentEnv: this.agentEnv,
+      integrationEnv: this.integrationEnv,
+      integrationTokens: this.integrationTokens,
+      permissionRules: this.permissionRules,
+      machineRules: this.machinePermissionRules,
+      decisionAudit: this.decisionAudit,
+      lastKnownView: this.lastKnownView,
+    });
+
+    this.configuredAgentSpecs.clear();
+    this.agentNames.clear();
+    this.observedKnobs.clear();
+
+    for (const session of this.agentView.current.sessions) {
+      this.agentView.emit({ kind: "sessionClosed", sessionId: session.id });
+    }
+    for (const agent of this.agentView.current.agents) {
+      const removed = { kind: "agentRemoved", agentId: agent.id } as const;
+      this.agentView.emit(removed);
+      this.settings.emit(removed);
+    }
+    this.agentView.emit({ kind: "chatConnectResolved" });
+    await this.refreshAgentConfigs();
+    await this.integrations.refresh();
+    this.publishRules();
+    await this.refreshAuditTail();
+    this.log.info("erase all data: complete — factory state");
   }
 
   /** deactivate's bounded best-effort (plan.md P15): terminal trees get a
@@ -1243,6 +1295,9 @@ export class Orchestrator {
         break;
       case "dismissChatConnect":
         this.agentView.emit({ kind: "chatConnectResolved" });
+        break;
+      case "eraseAllData":
+        void this.eraseEverything().catch(this.logCatch("eraseAllData"));
         break;
       case "switchSession":
         this.sessionManager.activate(action.sessionId);

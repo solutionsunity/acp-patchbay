@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { CommandRuleView, FileWriteScopeView, SettingsState } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
+import { ConfirmButton } from "./controls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -89,6 +90,7 @@ export function PermissionsSection(props: {
   onAddRule(rule: CommandRuleView, layer: "workspace" | "machine"): void;
   onRemoveRule(pattern: string, layer: "workspace" | "machine"): void;
   onSetScope(scope: FileWriteScopeView): void;
+  onEraseAll(): void;
 }) {
   const { state } = props;
 
@@ -165,6 +167,27 @@ export function PermissionsSection(props: {
             })}
           </div>
         )}
+      </div>
+
+      {/* P18: the platform gives no uninstall hook (deactivate can't tell
+          uninstall from reload) and secrets outlive uninstalling — so a
+          clean slate is an explicit act here, never a lifecycle side
+          effect. */}
+      <div className="card mt-3">
+        <h2 className="mt-0">Disconnect &amp; erase all data</h2>
+        <div className="note mx-0 mt-0">
+          Stops every agent, then deletes everything patchbay stored on this machine: agent and
+          MCP-server configs, every credential and env value in SecretStorage, capability and knob
+          caches, permission rules, this workspace's session index, the decision audit, and
+          persisted session views. Run it before uninstalling — VS Code has no hook that lets
+          patchbay do this for you.
+        </div>
+        <ConfirmButton
+          label="Erase all data"
+          confirmLabel="Erase everything patchbay stored?"
+          title="Every agent stops now. Configs, credentials, caches, rules, and session records are deleted permanently. Other workspaces' session indexes are out of this window's reach — reopen them and erase again if needed."
+          onConfirm={props.onEraseAll}
+        />
       </div>
     </section>
   );

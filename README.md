@@ -54,14 +54,34 @@ the same way for every agent that speaks ACP, not just one vendor's.
 ## Getting started
 
 1. Open the **Patchbay** icon in the activity bar.
-2. Connect an agent — pick one from the built-in roster or paste any command
-   line that speaks ACP.
-3. Start a session and go. The composer's `/` opens the agent's own advertised
-   commands; the context adder attaches your selection, current file,
-   diagnostics, or any other file; pasting an image just works.
+2. Add an agent in Settings § Agents — search the built-in roster or paste any
+   command line that speaks ACP. Adding connects and verifies it in one step.
+3. Hit **+** and go — one agent starts directly, several offer a picker, and a
+   not-yet-running agent connects right in the chat pane. The composer's `/`
+   opens the agent's own advertised commands; the context adder attaches your
+   selection, current file, diagnostics, or any other file; pasting an image
+   just works.
 
 Settings (gear icon) is where the capability matrix, integrations, permission
 rules, and agent/session/rules-skills-commands management live.
+
+## Uninstalling cleanly
+
+VS Code gives extensions no uninstall hook, and what an extension stores does
+not reliably vanish with it — secrets in particular are
+[known to survive uninstall](https://github.com/microsoft/vscode/issues/123817).
+So a clean slate is an explicit act, deliberately never automatic:
+
+**Settings → Permissions → "Disconnect & erase all data"** stops every agent
+and deletes everything patchbay stored on this machine — agent and MCP-server
+configs, every credential and env value in SecretStorage, capability and knob
+caches, permission rules, the session index, the decision audit, and persisted
+session views. Run it *before* uninstalling.
+
+Two honest limits: it reaches only the current window's workspace records
+(other workspaces' session indexes and workspace rules — reopen and erase
+there too if you used patchbay in several), and it deletes by the current
+config lists — the same reason it must run while those configs still exist.
 
 ## Credits
 

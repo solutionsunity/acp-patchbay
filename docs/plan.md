@@ -702,7 +702,7 @@ stands; P14d centralizes only its derivation).
   ui-gate (assertion checks are catching the real regressions; goldens add
   maintenance with no demonstrated miss).
 
-### P15 — Process lifecycle: bounded shutdown, tree-wide kill, orphan reaping
+### P15 — Process lifecycle: bounded shutdown, tree-wide kill, orphan reaping ☑ (mechanics + reap proven in tests; live kill-window smoke remains)
 
 From the connection-flow study (2026-07-08, owner-approved plan): `deactivate()`
 was empty and `dispose()` fire-and-forgot `pool.disposeAll()`, so on window
@@ -753,7 +753,7 @@ PIDs survived a crash, so nothing could reap orphans afterward.
   reused); the stop ladder proven against a SIGTERM-ignoring fake agent;
   bridge exits on stdin EOF in the real-subprocess bridge test.
 
-### P16 — Connection status honesty: configs first-class, "untested", visible stderr
+### P16 — Connection status honesty: configs first-class, "untested", visible stderr ☑
 
 From the study: configured agents were invisible in the Agent View until
 connected in-window (`state.agents` fed only by `agentUpserted` at connect),
@@ -785,7 +785,7 @@ lines) but never reached any UI, leaving "initialize timed out" unexplained.
   in drawer + Settings with honest state; a spawn failure and an initialize
   timeout each show reason + stderr inline.
 
-### P17 — New-chat flow: one intent, one click
+### P17 — New-chat flow: one intent, one click ☑ (live smoke against a real agent remains)
 
 Replaces the double-click ("+" → drawer → Start session) and the
 picker-of-nothing:
@@ -809,7 +809,7 @@ picker-of-nothing:
 - **Gate**: single-agent install — "+" → connecting → composer, zero drawer
   interactions; failure path shows the reason inline with a working Retry.
 
-### P18 — "Disconnect & erase all data" + storage honesty docs
+### P18 — "Disconnect & erase all data" + storage honesty docs ☑
 
 No platform hook distinguishes uninstall from reload (vscode#45474), secrets
 survive uninstall (vscode#123817, open/Backlog), and Memento deletion on

@@ -49,6 +49,10 @@ export type Action =
    * single-agent "+" both land here. */
   | { kind: "startChat"; agentId: string }
   | { kind: "dismissChatConnect" }
+  /** "Disconnect & erase all data" (P18) — explicit and user-triggered,
+   * never a lifecycle side effect: the platform has no uninstall hook, so
+   * a clean slate before uninstalling is the user's own deliberate act. */
+  | { kind: "eraseAllData" }
   | { kind: "switchSession"; sessionId: string }
   | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }

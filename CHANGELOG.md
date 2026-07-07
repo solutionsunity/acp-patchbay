@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- P18 — "Disconnect & erase all data" (Settings → Permissions): stops every
+  agent and deletes everything patchbay stored — configs, every SecretStorage
+  credential and env value, capability/knob caches, rules, session index,
+  decision audit, persisted views. Explicit and user-triggered, never a
+  lifecycle side effect: the platform has no uninstall hook and secrets
+  survive uninstalling (vscode#123817). README documents running it before
+  uninstall, and the two honest limits (current workspace's records; deletion
+  keyed by the config lists, since SecretStorage can't be enumerated).
+- P17 — New-chat flow: "+" with one configured agent starts it directly —
+  connecting first, inside the chat pane, when needed; several agents get a
+  picker with readiness inline; failures land in-pane with the specific
+  reason and a Retry. Adding agents now lives in Settings only (the drawer's
+  duplicate connect form is gone); the palette's New Session lists every
+  configured agent and shares the same connect-on-demand path.
+- P16 — Connection status honesty: configured agents are visible from the
+  first frame with a real "untested" state (never-connected no longer
+  masquerades as "stopped"); crashes carry the process's own stderr tail
+  inline in the crash banner and the Settings card; an initialize timeout
+  names the classic cause — interactive first-run setup — instead of a bare
+  timeout. Also fixes initialize failures being reported as a detail-less
+  "stopped": they now read crashed, with the reason.
+- P15 — Process lifecycle: agents and brokered terminals spawn as
+  process-group leaders and die tree-wide (grandchildren included);
+  `stop` is a graceful ladder (EOF → SIGTERM → SIGKILL → group sweep);
+  `deactivate` runs a bounded ~2s sweep instead of nothing; every spawn is
+  recorded so the next activate reaps orphans from crashed sessions
+  (command-line match guards against PID reuse); the integration bridge
+  exits on stdin EOF instead of lingering when its agent dies; releasing a
+  running ACP terminal now kills it, per spec, instead of leaking it.
 - P14h — test-correctness addendum (from the test-code audit): `npm run
   check` is now THE phase gate — typecheck, lint, vitest, build, ui-gate,
   and the electron suite where the environment allows (skipping loudly,
