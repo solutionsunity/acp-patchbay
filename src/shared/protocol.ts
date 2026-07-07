@@ -43,10 +43,10 @@ export type Action =
   | { kind: "connectAgent"; source: ConnectAgentSource; verifyAfterConnect?: boolean }
   | { kind: "restartAgent"; agentId: string }
   | { kind: "stopAgent"; agentId: string }
-  | { kind: "newSession"; agentId: string }
   /** One intent, one click (P17): connect if needed — inside the chat pane
-   * — then create and activate the session. The picker and the
-   * single-agent "+" both land here. */
+   * — then create and activate the session. The picker, the single-agent
+   * "+", and the palette's New Session all land here. (Replaced
+   * `newSession`, which assumed an already-running agent.) */
   | { kind: "startChat"; agentId: string }
   | { kind: "dismissChatConnect" }
   /** "Disconnect & erase all data" (P18) — explicit and user-triggered,
@@ -449,6 +449,17 @@ export type CapabilityState = "not-declared" | "declared" | "used";
 export function capabilityState(cell: CapabilityCell | undefined): CapabilityState {
   if (cell === undefined || !cell.declared) return "not-declared";
   return cell.used ? "used" : "declared";
+}
+
+/** Removes one key from a keyed map, referentially lazily — the reducers'
+ * agentRemoved cases use it so per-agent facts leave with their agent
+ * instead of lingering as ghost entries (invisible — every renderer keys
+ * off the agents list — but a snapshot should not carry state for an agent
+ * that no longer exists). */
+function dropKey<V>(record: Readonly<Record<string, V>>, key: string): Readonly<Record<string, V>> {
+  if (!(key in record)) return record;
+  const { [key]: _dropped, ...rest } = record;
+  return rest;
 }
 
 export type FidelityLabel = "fully-brokered" | "partially-brokered" | "acts-outside";
@@ -1127,11 +1138,19 @@ export function reduceAgentView(
 ): AgentViewState {
   switch (event.kind) {
     case "agentUpserted":
-    case "agentRemoved":
     case "agentStatusChanged":
     case "agentAuthRequired":
     case "agentAuthResolved":
       return { ...state, agents: reduceAgents(state.agents, event) };
+    case "agentRemoved":
+      // Per-agent facts leave with their agent — no ghost entries.
+      return {
+        ...state,
+        agents: reduceAgents(state.agents, event),
+        capabilities: dropKey(state.capabilities, event.agentId),
+        capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
+        authMethods: dropKey(state.authMethods, event.agentId),
+      };
     case "rosterChanged":
       return { ...state, roster: event.roster };
     case "chatConnectStarted":
@@ -1175,6 +1194,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _m, ...sessionModes } = state.sessionModes;
       const { [event.sessionId]: _o, ...sessionConfigOptions } = state.sessionConfigOptions;
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
+      const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       const activeSessionId =
         state.activeSessionId === event.sessionId
@@ -1191,6 +1211,7 @@ export function reduceAgentView(
         sessionModes,
         sessionConfigOptions,
         contextRoots,
+        sessionUsage,
         activeSessionId,
       };
     }
@@ -1586,11 +1607,22 @@ export function reduceSettings(
 ): SettingsState {
   switch (event.kind) {
     case "agentUpserted":
-    case "agentRemoved":
     case "agentStatusChanged":
     case "agentAuthRequired":
     case "agentAuthResolved":
       return { ...state, agents: reduceAgents(state.agents, event) };
+    case "agentRemoved":
+      // Per-agent facts leave with their agent — no ghost entries.
+      return {
+        ...state,
+        agents: reduceAgents(state.agents, event),
+        capabilities: dropKey(state.capabilities, event.agentId),
+        capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
+        authMethods: dropKey(state.authMethods, event.agentId),
+        assets: dropKey(state.assets, event.agentId),
+        agentKnobs: dropKey(state.agentKnobs, event.agentId),
+        verifyingAgents: dropKey(state.verifyingAgents, event.agentId),
+      };
     case "rosterChanged":
       return { ...state, roster: event.roster };
     case "capabilitiesDeclared":

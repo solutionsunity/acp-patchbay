@@ -55,6 +55,38 @@ describe("reducers", () => {
     expect(s1.agents[0]?.status).toBe("crashed");
   });
 
+  // QC (post-P18): per-agent facts leave with their agent — a snapshot must
+  // not carry capability/auth/knob entries for an agent that no longer
+  // exists (invisible to renderers, which key off the agents list, but a
+  // ghost all the same — and erase-to-factory-state made it matter).
+  it("agentRemoved takes the agent's per-agent facts with it", () => {
+    const declared = {
+      kind: "capabilitiesDeclared",
+      agentId: "claude",
+      matrix: {} as never,
+      authMethods: [],
+      at: "2026-01-01T00:00:00Z",
+    } as const;
+
+    const view = replay(stateWith([claude]), [declared, { kind: "agentRemoved", agentId: "claude" }]);
+    expect(view.agents).toEqual([]);
+    expect(view.capabilities).toEqual({});
+    expect(view.authMethods).toEqual({});
+
+    const settings = [
+      { kind: "agentUpserted", agent: claude } as const,
+      declared,
+      { kind: "agentVerifyStarted", agentId: "claude" } as const,
+      { kind: "agentKnobsObserved", agentId: "claude", knobs: { modes: null, options: [] } } as const,
+      { kind: "agentRemoved", agentId: "claude" } as const,
+    ].reduce(reduceSettings, initialSettingsState);
+    expect(settings.agents).toEqual([]);
+    expect(settings.capabilities).toEqual({});
+    expect(settings.authMethods).toEqual({});
+    expect(settings.agentKnobs).toEqual({});
+    expect(settings.verifyingAgents).toEqual({});
+  });
+
   // P17: the in-pane connect lifecycle — started → connecting pane,
   // failed → reason + retry, and the session arriving clears it (reducer-
   // level, so it can't desync from reality); dismiss clears a failure.

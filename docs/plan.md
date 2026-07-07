@@ -107,7 +107,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
 
 ### P2 — ACP client pool + fake agent + roster ☑
 
-- Client pool: `agentId → { process, declared, verified, sessions[] }`; spawn /
+- Client pool: `agentId → { process, declared, used, sessions[] }`; spawn /
   stop / restart; crash detection surfacing as status patches; ACP `initialize`
   with `fs` + `terminal` advertised; declared table captured per connect.
 - `test/fake-agent/`: scriptable fixture — declared capabilities, streamed

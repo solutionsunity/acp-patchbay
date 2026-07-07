@@ -667,8 +667,9 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** "Connect agent" — the same roster-or-custom-command choice the Agent
-   * View's Agents drawer offers, reachable without opening it first. */
+  /** "Connect agent" — the palette shortcut into the one add path (Settings
+   * § Agents' persist-connect-verify flow, P17): roster or custom command,
+   * same `connectFromSource` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
       ...this.roster
@@ -1280,16 +1281,6 @@ export class Orchestrator {
       case "stopAgent":
         void this.pool.stop(action.agentId);
         break;
-      case "newSession": {
-        const agentName = this.agentNames.get(action.agentId);
-        if (agentName === undefined) break; // unknown agent — nothing to create
-        void this.sessionManager.createSession(
-          action.agentId,
-          agentName,
-          this.workspaceRoot ?? process.cwd(),
-        );
-        break;
-      }
       case "startChat":
         void this.startChat(action.agentId);
         break;

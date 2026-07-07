@@ -14,7 +14,7 @@ this file says what each surface does; that one says what it's made of.
 
 | Element | Appearance | Meaning |
 |---|---|---|
-| Status dot | ● green (glow) / red / amber (pulsing) / gray | agent running / crashed / reconnecting / stopped |
+| Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected — P16) |
 | Fidelity chip | `fully brokered` green · `partially brokered` amber · `acts outside` red | pure function of the used capability matrix — never hand-assigned |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
@@ -42,7 +42,7 @@ are one gesture away — drawers, never split panels.
 | Agent chip | ● dot + name + ▾ | live status of the session's agent; click → **Agents drawer** |
 | Usage gauge | ring, orange arc | arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet |
 | Sessions | 🕘 | click → **Sessions drawer** |
-| New session | ＋ | agent picker (roster + custom command), then empty session |
+| New chat | ＋ | one intent, one click (P17): zero agents → Settings; exactly one → starts it directly, connecting in-pane if needed; several → Agents drawer as the picker |
 | Settings | ⚙ | opens the Settings editor tab **directly** — no menu until a menu earns it |
 
 ### 2 · Session row
@@ -102,11 +102,26 @@ Action row (below):
 
 ### 6 · Drawers
 
-**Agents drawer** — per agent: status dot · name · capability one-liner ·
-fidelity chip · `Restart` button inline when crashed. Footer: `＋ Connect agent`
-(roster or custom command). **Sessions drawer** — per session: live-dot (turn in
-flight) · title · agent + state subtitle · badges · kebab (same actions as
-session row). Footer: `＋ New session`.
+**Agents drawer** — the picker (P17): one row per **configured** agent —
+status dot · name · readiness sub-line (crash reason when crashed; else
+`ready` / `never connected` / capability one-liner) · fidelity chip; clicking
+the row starts a chat with it, connecting in-pane when it isn't running.
+Footer: `＋ Add or manage agents — Settings…` — adding lives in Settings only
+(the in-view connect form is gone, superseded 2026-07-08, features.md §1);
+stop/restart are Settings troubleshooting controls plus the crash banner's
+`Restart`. **Sessions drawer** — per session: live-dot (turn in flight) ·
+title · agent + state subtitle · badges · kebab (same actions as session
+row). Footer: `＋ New chat` (the same smart ＋).
+
+### 7 · Chat pane states
+
+Empty (zero agents → `Set up an agent…` → Settings; otherwise `New chat` →
+the smart ＋) · connecting takeover (`Connecting {agent}…`, spinner) ·
+connect-failed takeover (the specific reason + `Retry` / `Settings` /
+`Dismiss`) — a failure never bounces silently back to the empty state, and a
+session arriving clears the takeover (P17). The crash banner carries the
+process's stderr tail inline (P16) — the reason readable without the Output
+panel.
 
 ---
 
@@ -148,7 +163,10 @@ and observed-but-absent are different facts); an agent that offered nothing
 reads `this agent offered no session knobs` · Stop · `Diagnostics…` → modal that
 **discloses cost before running** (behavior probes consume real turns; ephemeral
 session in a temp directory — never the workspace). Crashed card: red note with
-time + one `Restart`.
+time + one `Restart` + the process's stderr tail (mono, scrolling — P16); an
+initialize timeout names interactive first-run setup as the likely cause. A
+never-connected config shows the hollow `untested` dot with a `Connect`
+button, never a claimed `stopped`.
 
 `Diagnostics…`'s card-level trigger (`Verify…`) shows only while
 `hasUnusedProbe` (protocol.ts) says a checkable row is still outstanding
@@ -233,7 +251,11 @@ never in the repo either way; a cloned repository cannot arrive
 pre-authorized.** Decision audit: recent entries, mono, append-only. *(The
 adoption row this section once specified is gone with the workspace config
 file it guarded — agent configs are global and developer-owned now, so no
-repo-authored launch command exists to adopt.)*
+repo-authored launch command exists to adopt.)* Last card: **Disconnect &
+erase all data** (P18) — AlertDialog-confirmed; states what dies (every
+process now; configs, credentials, caches, rules, session records
+permanently) and the reach limit (other workspaces' records need their own
+window). Explicit and user-triggered, never a lifecycle side effect.
 
 ### Rules · skills · commands
 
