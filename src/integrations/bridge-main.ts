@@ -71,3 +71,8 @@ process.stdin.on("data", (chunk: string) => {
   buffer = rest;
   for (const message of messages) void forward(message);
 });
+// The agent that spawned this bridge owns its lifetime: stdin EOF means that
+// agent is gone (clean exit or kill), so exit instead of lingering as an
+// orphan — same rule as server-main.ts, and the defense that still works
+// when patchbay itself died without running any cleanup (plan.md P15a).
+process.stdin.on("end", () => process.exit(0));

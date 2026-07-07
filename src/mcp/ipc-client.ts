@@ -30,6 +30,22 @@ export class IpcClient {
         this.buffer = rest;
         for (const message of messages) this.handleResponse(message as IpcResponse);
       });
+      // A post-connect socket error must not crash the process as an
+      // unhandled 'error' event (the `once` above is consumed by then) —
+      // 'close' always follows and carries the cleanup.
+      socket.on("error", () => {});
+      // A dying socket must not leave callers hanging forever: every
+      // in-flight request rejects, and the client resets so a later
+      // request may retry a fresh connect (plan.md P15a).
+      socket.on("close", () => {
+        if (this.socket === socket) {
+          this.socket = null;
+          this.connectPromise = null;
+        }
+        const gone = new Error("ipc socket closed");
+        for (const waiter of this.pending.values()) waiter.reject(gone);
+        this.pending.clear();
+      });
       this.socket = socket;
     });
     return this.connectPromise;
@@ -45,11 +61,13 @@ export class IpcClient {
 
   async request(method: IpcRequest["method"], params?: unknown): Promise<unknown> {
     await this.ensureConnected();
+    const socket = this.socket;
+    if (socket === null) throw new Error("ipc socket closed");
     const id = this.nextId++;
     const request: IpcRequest = { id, sessionId: this.sessionId, method, params };
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.socket!.write(encodeLine(request));
+      socket.write(encodeLine(request));
     });
   }
 

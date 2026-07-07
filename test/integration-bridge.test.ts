@@ -8,13 +8,15 @@
 // EditorStateHost. Only two things are stood in for: the remote provider
 // (no network access here) and the token source (needs real vscode
 // SecretStorage) — the wire protocol and the bridge process itself are real.
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
-import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IpcClient } from "../src/mcp/ipc-client";
 import { encodeLine, parseLines, type IpcRequest, type IpcResponse } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
@@ -223,5 +225,46 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
     await h.pool.stop("e2");
     tokenHost.close();
     remote.close();
+  });
+
+  // P15a: the agent that spawned the bridge owns its lifetime — stdin EOF
+  // (agent exited or was killed) must end the bridge, never leave an orphan.
+  it("bridge exits on stdin EOF", async () => {
+    const bridge = spawn(process.execPath, [BRIDGE], {
+      env: {
+        ...process.env,
+        ACP_PATCHBAY_IPC: join(tmpdir(), "patchbay-bridge-eof-none.sock"),
+        ACP_PATCHBAY_INTEGRATION_ID: "github",
+        ACP_PATCHBAY_INTEGRATION_URL: "http://127.0.0.1:9/never",
+        ACP_PATCHBAY_AUTH_HEADER: "",
+        ACP_PATCHBAY_AUTH_PREFIX: "",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const exited = new Promise<number | null>((resolve) => bridge.once("exit", (code) => resolve(code)));
+    bridge.stdin.end();
+    const code = await Promise.race([
+      exited,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("bridge outlived stdin EOF")), 5000)),
+    ]);
+    expect(code).toBe(0);
+  });
+
+  // P15a: a dead IPC socket rejects every in-flight request instead of
+  // hanging the caller (and, through it, the agent's tool call) forever.
+  it("IpcClient rejects in-flight requests when the socket dies", async () => {
+    const socketPath = join(tmpdir(), `patchbay-ipc-dies-${process.pid}.sock`);
+    const sockets: Socket[] = [];
+    const server = createNetServer((socket) => sockets.push(socket)); // accepts, never replies
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+
+    const client = new IpcClient(socketPath, "github");
+    const inFlight = client.request("getIntegrationToken");
+    // Wait until the server has the connection, then drop it mid-request.
+    for (let i = 0; sockets.length === 0 && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
+    for (const socket of sockets) socket.destroy();
+
+    await expect(inFlight).rejects.toThrow("ipc socket closed");
+    server.close();
   });
 });
