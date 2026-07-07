@@ -11,7 +11,7 @@ checkboxes reflect what is done, phases carry no history.
 - Stack is fixed: TypeScript everywhere in the extension host, esbuild, npm.
   No webpack, no second language, no framework beyond what is named below.
 - The three architecture invariants hold in every phase: webviews are render-only;
-  UI gates on verified, not declared; secrets touch `SecretStorage` and nothing
+  UI gates on used, not declared; secrets touch `SecretStorage` and nothing
   else.
 - One scoped commit per phase gate, message carrying what changed and why.
   Publishing to the Marketplace is manual, always.
@@ -37,6 +37,11 @@ Each one buys its keep; each is removable without cascade:
 - **Preact** for both webviews — a component model earns its keep for streaming
   chat; esbuild compiles JSX natively so it costs zero extra toolchain. State is
   pure reducers over patch events; no state library.
+  *Amended (P13, ui-rendering-strategy.md): webviews move to **React** — the
+  strategy's cornerstone dependencies (Streamdown, Radix) are React libraries,
+  and the "zero extra toolchain" rationale that justified Preact evaporates
+  once Tailwind/shadcn enter anyway; a decision re-derived after the pivot,
+  not carried. Reducer-over-patch-events state model unchanged.*
 - **zod** for parsing everything that crosses a trust boundary: config file,
   roster, registry, agent `initialize` responses. One runtime dependency that
   converts malformed input into typed errors instead of undefined behavior.
@@ -45,7 +50,7 @@ Each one buys its keep; each is removable without cascade:
   (`typescript-sdk/src/examples/agent.ts`) as skeleton plus a scriptable
   behavior table: it can be told to lie (declare a capability, drop the calls;
   confirm a rejected mode change), which is the only way to test
-  declared-vs-verified honesty deterministically.
+  declared-vs-used honesty deterministically.
 - Config file `.vscode/acp-patchbay.json` is parsed as JSONC — humans edit it.
 
 ## Dependency graph
@@ -157,10 +162,20 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   `session/new` on one connection. The remaining rows sit at declared or
   not-declared until their phase lands, which is the correct state for them
   to be in right now.*
+  *Amended post-P5: the "verified" state renamed to "used" — a single
+  successful round-trip proves a path fired, not that it's certified
+  correct, and "verified" overclaimed the latter. Marking a row used, which
+  had been split between capability-verifier.ts's probe and separate direct
+  emits in session-manager.ts, is now fully centralized in pool.ts (the sole
+  channel that talks to an agent on the wire) via one `onCapabilityUsed`
+  hook, called at the exact point each RPC succeeds or a notification's kind
+  tag arrives. `capability-verifier.ts` was renamed `capability-tracker.ts`
+  and no longer marks anything itself — only decides when to run the
+  synthetic probe and persists what pool.ts reports.*
 - Matrix UI in Settings (three states per row); fidelity label as the pure
   function from architecture; roster-sourced asset-location row.
-- **Gate**: fake agent scripted to lie shows declared-but-unverified; branch
-  affordance lights only after verified fork; reconnect drops verified.
+- **Gate**: fake agent scripted to lie shows declared-but-not-used; branch
+  affordance lights only after the fork is used; reconnect drops used.
 
 ### P6 — Permission broker + editor depth (fs/terminal) ☑
 
@@ -491,6 +506,37 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   the UI never writes env; a warning note is the proposed fix). The two
   mockup HTML files still lag ui.md (device-flow modal, new controls) —
   mockups illustrate, ui.md binds.*
+
+### P13 — UI rendering strategy (ui-rendering-strategy.md) ☐
+
+One shared component layer (shadcn/Radix, Codicons, one VS Code-theme bridge)
+across both webviews, and the chat transcript pipeline (Streamdown markdown +
+block components) on the block model P4/P8 already built. Forces two recorded
+stack decisions: webviews Preact→React (amended above) and Tailwind alongside
+esbuild. Four sub-phases, each shipped and installed before the next:
+
+- **P13a — foundation**: React swap; Tailwind v4 into the esbuild pipeline;
+  shadcn init (source-copied components, never a black-box dep); the theme
+  bridge written once (VS Code CSS vars → shadcn tokens — the strategy doc's
+  single-bridge rule); Codicons re-pointed. CSP decision made explicitly at
+  this step (Radix inline styles already allowed; Shiki = `wasm-unsafe-eval`
+  or JS engine — never widened silently). Gate: one small surface converted
+  and visually theme-correct in dark + light; all 216+ tests green.
+- **P13b — chat view**: Streamdown for `agent_message_chunk`/`agent_thought_chunk`
+  only (tool calls/diffs/plans never enter the markdown parser); tool-call
+  cards (kind icons, collapsed default, permission-denied visually distinct
+  from failed); thought auto-collapse; streaming caret; sequential tool-call
+  grouping. Gate: fake-agent turn with interleaved text/thought/tool updates
+  renders ordered, merged, and updated-in-place.
+- **P13c — per-turn metadata + plan widget**: client-side duration (live
+  ticker), completion-time tooltip, usage-when-reported (absence over fake),
+  stop-reason chip only when not `end_turn`; plan pinned per session, manual
+  expand only.
+- **P13d — settings conversion**: `Field`/`Toggle`/`ConfirmButton` →
+  shadcn `Form`/`Switch`/`AlertDialog`; the 3-group nav and every honesty
+  behavior (write-only env, two-step destructive confirm semantics, unobserved
+  vs offered-nothing knob states) preserved exactly; hand CSS retires
+  incrementally.
 
 ## Owner touchpoints, complete list
 

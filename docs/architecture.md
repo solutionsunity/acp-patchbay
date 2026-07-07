@@ -20,11 +20,19 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   permissions granted, tools approved, routing chosen.
 - **Render cache** — disposable render state, rebuilt wholesale from `session/load`
   replay. Never merged, never reconciled.
-- **Declared / verified** — the two capability states: claimed at `initialize` vs.
-  observed working on the wire.
+- **Declared / used** — the two capability states: claimed at `initialize` vs.
+  observed firing on the wire.
 - **Brokered** — routed through the permission broker. Fidelity labels: fully
   brokered / partially brokered / acts outside the permission flow.
-- **Integration** — an MCP server made reachable to agents (curated or custom).
+- **Integration** — the *record*: a configured MCP-server connection (curated or
+  custom) with its credential, env, routing, and active state. The UI calls the
+  surface "MCP Servers" (that's what they are); the internal type keeps the name
+  `integration` because the ACP SDK owns `McpServer` for the *wire config* an
+  integration produces into a session — two different things, two names, held.
+  Lifecycle is two-state: active/inactive (the mute switch — everything kept,
+  nothing routed) and disconnect = full clear (credential + env + config; a
+  curated entry reverts to the catalog). Nothing is stored until it can work —
+  a cancelled OAuth consent adds nothing.
 - **Branch** — the user-level concept: continue an alternate path from a session.
   `session/fork` is one mechanism that implements it; emulated seeding is the
   other. "Fork" only ever names the protocol method.
@@ -92,6 +100,13 @@ consumers: same state, no webview in the path.
 > own webview because it is genuinely a different activity, not because panels
 > are cheap.
 
+How both webviews are *built* — one shared component layer (shadcn/Radix on
+React, Codicons, a single VS Code-theme bridge) and the chat transcript
+rendering pipeline (Streamdown markdown, the ordered block model, tool-call
+cards) — is decided in
+[design/ui-rendering-strategy.md](design/ui-rendering-strategy.md); the split
+above is about state and lifecycle, never visual identity.
+
 ### Snapshot + patch protocol — decided
 
 One protocol, one shared TypeScript module (`src/shared/protocol.ts`) both sides
@@ -124,23 +139,27 @@ each with different truth semantics, so each gets different placement:
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |
-| Workspace config | Agents (launch config, defaults), integrations, routing | `.vscode/acp-patchbay.json` | Inspectable, repo-shareable (features §2); no credentials ever |
-| Permission rules | Command allowlists, file-write scopes | `workspaceState` + built-in defaults | Per-user, per-workspace, never repo-shipped — a cloned repo must not arrive pre-authorized |
-| Secrets | OAuth tokens, API keys | `SecretStorage` | The only place. Never settings, never state stores, never logs |
+| Agent + integration configs | Agents (launch config, defaults), integrations, routing | `globalState` stores | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
+| Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + `globalState` (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
+| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials never ride agent-visible config at all — the bridge IPC-fetches its token at runtime |
 
-Integrations are workspace-scoped because the config file is workspace-scoped —
-scoping falls out of placement rather than being enforced by extra code. Sharing an
-integration into another workspace is an explicit command that copies the config
-entry; the credential is reattached only on user confirmation during that act.
+Agents and integrations are deliberately global-only. (This supersedes the
+earlier `.vscode/acp-patchbay.json` workspace-config design and the
+workspace-scoping that fell out of it.) The MCP incident that shaped the old
+rule — a production-access MCP server silently following a user between repos —
+is guarded where the risk actually lives: a shared/pasted config never carries
+its credential; the token reattaches only when its recipient explicitly
+connects. Binding configs to workspaces (workspaces, not repos) may return
+later as an opt-in; the extension point is visible, deliberately unfilled.
 
 ## ACP client pool & process model
 
-- Registry: `agentId → { process, declared, verified, sessions[] }`.
+- Registry: `agentId → { process, declared, used, sessions[] }`.
 - Different agents are always separate subprocesses. Sessions with the *same* agent
   multiplex over one connection by default — that is the protocol's own model
   (`session/new`/`load`/`close` are session-ID-scoped on one connection).
 - **Per-agent process policy** (Settings): `auto` (default — share if concurrent
-  behavior is *verified*, isolate otherwise), `shared` (force, user accepts risk),
+  behavior is *used*, isolate otherwise), `shared` (force, user accepts risk),
   `isolated` (one process per top-level session).
 - Protocol fact: `session/fork` is addressed to the connection holding the parent's
   context — no cross-process handoff exists. A branched session therefore rides its
@@ -152,27 +171,56 @@ entry; the credential is reattached only on user confirmation during that act.
 ## Agent capability matrix
 
 Two states per capability, per agent — **declared** (from `initialize`, refreshed
-every connect) and **verified** (set only after the path succeeds on the wire;
-resets on reconnect, since agent versions change). UI affordances gate on
-*verified*, not declared: real bridges have been observed silently dropping
-`mcpServers`, collapsing stop reasons, and reporting rejected mode changes as
-succeeded. Three honest states per row: not declared / declared-but-unverified /
-verified-working.
+every connect) and **used** (set only after the path actually fires on the wire —
+whether that's real usage or patchbay's own free connectivity probe; "used" over
+"verified" because a single success proves the path fired, not that it's
+certified correct). Used is **version-keyed**, not connect-keyed
+(`stores/used-capabilities.ts`): a reconnect at the *same* `agentInfo.version`
+restores what was already proven immediately, from the persisted cache — it does
+not re-run the check. Only an actual version change earns a fresh,
+honestly-unused matrix. (This supersedes an earlier "resets on every reconnect"
+design — used to reset as a side effect of always rebuilding the matrix fresh on
+connect; it's now seeded from the cache first.) UI affordances gate on *used*,
+not declared: real bridges have been observed silently dropping `mcpServers`,
+collapsing stop reasons, and reporting rejected mode changes as succeeded.
+Three honest states per row: not declared / declared-but-not-used / used.
 
-Rows: `fs.readTextFile` / `writeTextFile`, `terminal`, `elicitation`,
-`roots.listChanged`, `resources.subscribe`, `promptCapabilities.image` / `audio` /
-`embeddedContext`, `session.fork` / `load` / `resume`, `mcp.http` / `sse`,
-usage/context reporting, concurrent-session behavior. One patchbay-side row rides
-along: rules/skills/commands locations (mapped / not mapped), sourced from roster
-data rather than the handshake.
+Marking a row used is centralized in `pool.ts` — the sole channel that talks to
+an agent on the wire — at the exact point each RPC succeeds (`newSession` →
+`auth`, `fork` → `session.fork`, `loadSession` → `session.load`) or a
+notification's kind tag arrives (`usage_update` → `usage`), plus the existing
+`hadOtherSessions` check (→ `concurrentSessions`). One `onCapabilityUsed` hook
+carries all five, called synchronously and never awaited so it can't block the
+RPC it's reporting on. `capability-tracker.ts` only decides *when* to run the
+synthetic probe below and persists whatever pool.ts reports — it does not mark
+anything itself. session-manager.ts, which decodes `session/update` payloads for
+rendering, marks nothing either; the wire-level fact and the render-level
+interpretation are two different concerns living at two different layers.
+
+Rows (`CapabilityRowId`, protocol.ts) are **hand-picked** against the ACP spec's
+declared capability surface, not derived automatically: `fs.readTextFile` /
+`writeTextFile`, `terminal`, `elicitation`, `roots.listChanged`,
+`resources.subscribe`, `promptCapabilities.image` / `audio` / `embeddedContext`,
+`session.fork` / `load` / `resume`, `mcp.http` / `sse`, usage/context reporting,
+concurrent-session behavior. One patchbay-side row rides along: rules/skills/
+commands locations (mapped / not mapped), sourced from roster data rather than
+the handshake. A new ACP capability needs a row added here before it can show up
+at all — a deliberate scope decision (ACP's capability surface is still
+settling, and rows need human-curated meaning and a check strategy anyway, so a
+schema-driven dynamic list wouldn't remove the manual step), not a limitation.
 
 Verification cost splits the triggers:
 
 | Trigger | Protocol-level (free RPC) | Behavior-level (costs real LLM turns) |
 |---|---|---|
-| First connect | Automatic | Opportunistic only — verified when naturally exercised |
-| User-run diagnostics | Instant | Allowed; cost disclosed first |
+| Connect/reconnect, only while a checkable row (`session.fork`, `auth`) is still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
+| User-run diagnostics (Settings § Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
 | Background schedule | Fine, cheap | Never |
+
+`hasUnusedProbe` (protocol.ts) is the single predicate for "a checkable row
+is still outstanding" — both the automatic connect/reconnect retry
+(`capability-tracker.ts`'s `onDeclared`) and the manual `Verify…` control's
+visibility gate on it, so the two can't drift on what still needs a check.
 
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.
@@ -194,13 +242,13 @@ standard; only the vendor-specific remainder is extension.
 Stance: **core ACP is the floor; extensions are per-agent adapter knowledge**,
 recorded in roster data and consumed only when a features bullet requires what
 core ACP cannot carry. A consumed extension becomes a capability row — present by
-observation, verified like everything else. Vendor depth that never reaches the
+observation, used like everything else. Vendor depth that never reaches the
 wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
 commands surface is its channel, no protocol involved.
 
 ## Branching
 
-- Agent declares `session/fork` *and it's verified* → native fork.
+- Agent declares `session/fork` *and it's used* → native fork.
 - Otherwise → emulated: fresh `session/new` seeded from the parent's replay (or
   last-known view for non-replay agents), labeled emulated.
 - Either path is a node in the orchestrator's session graph (parent → branches). The
@@ -309,13 +357,13 @@ injection machinery.
   the same command allowlists and file-write scopes from `workspaceState`.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target.
-- **Rules never ride the repo.** The shareable config file carries agents,
-  integrations, and routing — exactly features §2's list — and nothing
-  privilege-granting. The residual vector is a repo-defined agent launch command:
-  first connect of a workspace-defined agent requires one-time explicit adoption
-  (command line shown in full), behind VS Code workspace trust.
+- **Rules never ride the repo.** Agent and integration configs are global,
+  developer-owned stores — nothing config-shaped lives in the repo at all, so
+  no repo-authored launch command exists to adopt. (This supersedes the
+  workspace-config-file design and its one-time adoption gate, which existed
+  only because that file could be repo-authored by someone else.)
 - **Fidelity label is a pure function of the matrix (v1):** `fs` and `terminal`
-  declared *and verified* → fully brokered; a proper subset → partially brokered;
+  declared *and used* → fully brokered; a proper subset → partially brokered;
   neither, or a known-bypass bridge (roster data) → acts outside the permission
   flow. Observed-violation downgrades arrive only with v2 post-hoc change
   detection (parked).

@@ -42,7 +42,7 @@ better ships without losing their working environment.
    ACP clients is a buildable generic layer. Patchbay is that layer.
 2. **Honesty is a feature.** Agents are not equal, and pretending they are is how
    every multi-agent product disappoints. Patchbay shows what each agent can
-   *actually* do — verified in practice, not claimed in a handshake — and the UI
+   *actually* do — used in practice, not claimed in a handshake — and the UI
    never offers what won't work. Trust through candor is the differentiator.
 3. **One trust surface.** You grant permissions to patchbay, once, with one set of
    rules — not to N agents with N different security personalities.
@@ -65,7 +65,7 @@ product does not hide that; displaying it *is* bet #2.
 - **Editor depth, in full.** The agent sees active selection, diagnostics, open
   editors, and unsaved buffer state; edits surface as native diffs; images paste and
   files drop into the chat. This is the differentiator and it ships complete.
-- **All-agent connection** with per-agent capability matrix (claimed vs. verified,
+- **All-agent connection** with per-agent capability matrix (claimed vs. used,
   visible to the user).
 - **Concurrent sessions** — multiple sessions at once, same agent or different
   agents, side by side. Also the only guaranteed context-reset lever, so it is

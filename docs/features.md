@@ -31,7 +31,7 @@ deliverable, owed before implementation.
 - Multiple sessions run concurrently — same agent or different agents, side by side.
 - Sessions are cheap to create and never a process-management chore: whether
   concurrent sessions share one agent process or get isolated ones is per-agent
-  policy (Settings), decided by verified concurrent-session behavior in `auto` mode.
+  policy (Settings), decided by used concurrent-session behavior in `auto` mode.
   One protocol-imposed exception: a branched session rides its parent's process —
   shown, not hidden.
 - User can switch, rename, and close sessions.
@@ -91,33 +91,44 @@ deliverable, owed before implementation.
 
 - User can add, edit, and remove agents, including launch configuration per agent.
 - Capability matrix: every agent × every capability, three honest states — not
-  declared / declared but unverified / verified working. Refreshes on every connect.
+  declared / declared but not used / used. Refreshes on every connect. Rows are
+  hand-picked against the ACP spec's declared capability surface, not derived
+  automatically.
 - Each agent carries a permission-fidelity label: fully brokered / partially
   brokered / acts outside the permission flow. Never silently trusted.
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
 - User can set per-agent process policy: auto / shared / isolated.
-- User can set per-agent defaults for model, mode, and effort — each only where
-  the agent offers it (model is the common must; mode and effort are per-agent
-  reality). Applied at session creation; the session shows what actually applied,
-  not what was requested.
+- User can set per-agent defaults for the session mode and for every config
+  option the agent actually offers (model and effort being the common ones) —
+  keyed by the agent's own option id, since ACP defines the semantic category
+  as UX-only, never a correctness dependency. Applied at session creation; the
+  session shows what actually applied, not what was requested.
 
-### Integrations
+### MCP servers (integrations)
 
 - User can connect GitHub by pasting a token — one field, no app setup — and
   disconnect as easily. *(Originally "one click (OAuth)"; superseded by the
   standing auth decision in [reference-mcp-oauth.md](reference-mcp-oauth.md):
   GitHub's OAuth is closed to third-party clients. MCP-spec OAuth remains the
-  one-click path for curated integrations whose registration is open.)*
-- User can add any MCP server — command or URL, with auth — as a custom integration.
-- User owns the routing: which integrations each agent receives is the user's
-  choice, per agent, not all-or-nothing. Default: a new integration auto-attaches
+  one-click path for curated entries whose registration is open.)*
+- User can add any MCP server — command or URL, with auth — as a custom entry.
+- Two-state lifecycle: **active/inactive** toggles routing without touching the
+  credential (the mute switch); **disconnect is the full clear** — credential,
+  env, and config — identical to removing a custom server, with a curated entry
+  simply returning to the catalog ready for a fresh connect. Nothing is stored
+  until it can actually work: a cancelled OAuth consent means nothing was added.
+- User owns the routing: which servers each agent receives is the user's
+  choice, per agent, not all-or-nothing. Default: a new server auto-attaches
   only to fully-brokered agents; anything less than fully-brokered requires an
   explicit plug-in.
-- Integrations are workspace-scoped by default: an integration connected in one
-  repo is never silently available in another. Sharing one across workspaces is an
-  explicit act, made visibly. (This rule exists because of a real incident — a
-  production-access MCP server followed a user from one repo into another.)
+- Servers are global to this machine, and a shared config never carries its
+  credential — connecting is always the user's own explicit, visible act. (The
+  real incident behind this rule — a production-access MCP server silently
+  followed a user from one repo into another — is guarded by the
+  credential-never-travels rule. Binding integrations to specific workspaces —
+  workspaces, not repos — may return later as an opt-in feature; deliberately
+  not built until the need is demonstrated.)
 
 ### Rules, skills, commands
 
@@ -131,13 +142,19 @@ deliverable, owed before implementation.
 
 - User can define permission rules once — command allowlists, file-write scope —
   and they apply identically to every agent and every integration.
-- Rules can differ per workspace, with sane defaults.
+- Command rules layer: machine-level defaults (every workspace on this machine)
+  with per-workspace rules evaluated first — a workspace can tighten or loosen
+  its own floor, and no rule anywhere means ask. Neither layer ever rides the
+  repo.
 
-### Configuration as files
+### Configuration placement
 
-- Workspace-level configuration (agents, integrations, routing) is inspectable and
-  repo-shareable as files. Credentials are never in those files, never displayed,
-  and revocable at any time.
+- Configuration (agents, integrations, routing) lives in developer-owned stores,
+  global to this machine — never a repo-committed file. Sharing a config entry is
+  an explicit copy (Share…); credentials are never in what's shared, never
+  displayed, and revocable at any time. *(Supersedes the earlier
+  "configuration as repo-shareable files" design — the workspace config file is
+  gone, and with it the possibility of a repo arriving pre-configured.)*
 
 ## 3. Editor Surface
 

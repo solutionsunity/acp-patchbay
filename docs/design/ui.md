@@ -6,19 +6,23 @@ binds.** Anything visible in a mockup but absent here is a mockup artifact (demo
 bar, canned data), not a requirement. Kept 1:1 with the mockups — a control that
 appears in one and not the other is a bug in whichever lags.
 
+*How* these surfaces are built (component layer, chat transcript rendering
+pipeline, theme bridge) is [ui-rendering-strategy.md](ui-rendering-strategy.md) —
+this file says what each surface does; that one says what it's made of.
+
 ## Shared vocabulary
 
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray | agent running / crashed / reconnecting / stopped |
-| Fidelity chip | `fully brokered` green · `partially brokered` amber · `acts outside` red | pure function of the verified capability matrix — never hand-assigned |
-| Matrix states | ● / ◌ / — | verified working / declared but unverified / not declared |
+| Fidelity chip | `fully brokered` green · `partially brokered` amber · `acts outside` red | pure function of the used capability matrix — never hand-assigned |
+| Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | `emulated` badge | amber outline | continuation or branch seeded by patchbay, not replayed natively — always labeled |
 | `⑂ branch` badge | teal outline | branched session; names its parent |
 | Toast | transient strip, bottom-center | confirmation of an action; never the only record (audit holds the durable one) |
 
-Interaction principles that bind everywhere: UI gates on **verified**, not declared ·
+Interaction principles that bind everywhere: UI gates on **used**, not declared ·
 absence over fake (a gauge that can't be trusted is not rendered) · requested ≠
 confirmed (displays update from agent state, never optimistically) · one approval
 surface · a crash is visible the moment it happens and recovery is one action.
@@ -36,7 +40,7 @@ are one gesture away — drawers, never split panels.
 | Control | Glyph | Behavior |
 |---|---|---|
 | Agent chip | ● dot + name + ▾ | live status of the session's agent; click → **Agents drawer** |
-| Usage gauge | ring, orange arc | arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting is unverified |
+| Usage gauge | ring, orange arc | arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet |
 | Sessions | 🕘 | click → **Sessions drawer** |
 | New session | ＋ | agent picker (roster + custom command), then empty session |
 | Settings | ⚙ | opens the Settings editor tab **directly** — no menu until a menu earns it |
@@ -47,7 +51,7 @@ are one gesture away — drawers, never split panels.
 |---|---|
 | Title | click → Sessions drawer; rename via kebab |
 | Badges | `emulated` / `⑂ branch` per Shared vocabulary — always visible, never hover-only |
-| Kebab ⋯ | rename · branch (labeled `native fork ✓` or `emulated` per verified matrix) · reload from agent (re-`load` replay — rejoin truth) · close |
+| Kebab ⋯ | rename · branch (labeled `native fork ✓` or `emulated` per used matrix) · reload from agent (re-`load` replay — rejoin truth) · close |
 
 ### 3 · Plan strip
 
@@ -108,54 +112,128 @@ session row). Footer: `＋ New session`.
 
 ## Settings (editor tab)
 
-Left nav + cards. Nav footer pins the placement contract: workspace config is
-`.vscode/acp-patchbay.json`, credentials in SecretStorage only — never in the file.
+Left nav + cards, grouped in three non-collapsing headers that *are* the
+placement contract: **This machine** (Agents · Capability matrix ·
+Integrations — globalState/SecretStorage wiring), **Trust** (Permissions —
+spans the machine floor and this workspace's rules), **This workspace**
+(Rules · skills · commands — files in the workspace itself). Groups don't
+collapse: five items don't earn the interaction. Nav footer restates the
+credential rule: SecretStorage only. *(Supersedes the earlier
+`.vscode/acp-patchbay.json` workspace-config design — binding to workspaces,
+not repos, may return later as an opt-in.)*
 
 ### Agents
 
-Stat tiles (connected / running / sessions today). Per-agent card: launch command
-(mono) · `✎ Edit` (launch config + defaults) · `Remove` · process policy select — `auto` states its reason (`shared, concurrency
-verified ✓` vs `isolated, unverified`) · default knobs **only where offered**
-(unoffered renders disabled `— not offered`) · Stop · `Diagnostics…` → modal that
+Stat tiles (agents / running / sessions today), auto-width, with an
+`add agent` tile-button riding the same row — same box as the counters, but
+it reads as an action (accent ＋, hover lift). Collapsed by default once any
+agent exists, open by default on first run (nothing to collapse to yet).
+Toggling reveals the Add Agent card; adding one collapses it back.
+
+Add Agent card: one mode at a time behind a toggle, never a roster field and a
+command field half-filled together — a searchable combobox (type to filter,
+click to pick, ✕ to clear) or a custom command line. Buttons in order: `Add`
+(submits whichever mode is active) · the mode toggle itself (`Add custom…` in
+roster mode, `Add from list` in custom mode) · `Verify after add` checkbox.
+
+Per-agent card: launch command (mono) · `✎ Edit` (launch config + env) ·
+`Remove` · process policy select — `auto` states its reason (`shared, concurrency
+used ✓` vs `isolated, not yet used`) · default knobs render **exactly what the
+agent offered**: the mode selector (when modes exist) plus one select per
+offered config option, keyed by the option's own id — category is UX-only in
+ACP ("MUST NOT be required for correctness"), so it only decorates with an
+icon when reported. Before the first session the card says so honestly
+(`session knobs appear after the first session with this agent` — never-observed
+and observed-but-absent are different facts); an agent that offered nothing
+reads `this agent offered no session knobs` · Stop · `Diagnostics…` → modal that
 **discloses cost before running** (behavior probes consume real turns; ephemeral
 session in a temp directory — never the workspace). Crashed card: red note with
-time + one `Restart`. Add-agent row: roster select or custom command.
+time + one `Restart`.
+
+`Diagnostics…`'s card-level trigger (`Verify…`) shows only while
+`hasUnusedProbe` (protocol.ts) says a checkable row is still outstanding
+for the current `agentInfo.version`, or the agent needs auth — the same
+predicate the connect/reconnect auto-retry gates on (architecture.md § Agent
+capability matrix), so the manual control can't drift from what the automatic
+one already covers. Once a version is fully used, reconnecting restores
+that instantly from the persisted cache and the button stays hidden — nothing
+to do. While a Verify round-trip (manual or "Verify after add") is in flight,
+the trigger dims and reads `Verifying…` — no separate status line, the button
+itself is the state.
 
 ### Capability matrix
 
 Legend ● ◌ — · one column per agent · a reconnected agent wears a `reset <time>`
-chip (verified resets on every reconnect). Protocol rows from the handshake;
+chip (used resets on every reconnect). Protocol rows from the handshake;
 separated **patchbay-side** row (`rules/skills/commands locations`) sourced from
-roster data. Cell tooltips explain consequences ("not declared — branching is
-emulated, labeled"). Footer note: behavior rows verify opportunistically during
-real use; synthetic probes only via Diagnostics; never on a schedule.
+roster data. Rows are hand-picked against the ACP spec's declared capability
+surface, not derived automatically — noted above the table. Cell tooltips
+explain consequences ("not declared — branching is emulated, labeled"). Footer
+note: behavior rows get marked used opportunistically during real use;
+synthetic probes only via Diagnostics; never on a schedule.
 
-### Integrations
+### MCP Servers
 
-Curated cards: each registry entry offers exactly the connect mechanisms its
-vendor opens (docs/reference-mcp-oauth.md — the device-flow modal this section
-originally specified is superseded by that decision): **key paste** (hint
-names where the key comes from; per-account services take an endpoint URL
-first) and/or **`Connect with OAuth…`** (browser; MCP-spec OAuth where DCR is
-open — a gated-DCR rejection surfaces as an immediate labeled failure).
-Token → SecretStorage, revocable. Custom card: command shown mono, `Remove`. Add row: command/URL + auth type.
-**Routing table**: integrations × agents as toggles; toggling onto a
+*(Renamed from "Integrations" — they are MCP servers, say so. Internally the
+record type stays `integration` because the ACP SDK owns the name `McpServer`
+for the wire config we hand agents — two different things, two names, the
+contract recorded in architecture.md § Terms.)*
+
+Order is the working set first: **Connected servers** on top (dot ·
+name · `curated`/`custom-*` chip · **active toggle** · `Share config…` ·
+`Disconnect` for curated / `Remove` for custom · mono command/URL · routing ·
+`Edit JSON…` for custom entries — the mcpServers-fragment, env values
+write-only: `""` keeps, filled overwrites, removed deletes), then **Add
+custom** (structured fields: display name, command, args one-per-line, env
+`KEY=value` lines — the id is generated, a slug of the name, never
+user-typed; or `Import JSON…` accepting the well-known
+`{"mcpServers": {...}}` shape, per-entry failures labeled), then the
+**Curated catalog** last: compact one-line rows (name · `key`/`OAuth`/`local`
+chips · Docs · `Connect…`), one row expanding at a time into its connect
+form — key paste (with a `Get a key ↗` link to the issuing page) `— or —`
+OAuth `— or run it locally —` (verified official local stdio servers —
+GitHub, Stripe, Sentry, Supabase, Augment — prefill the custom form; nothing
+runs until the user adds it). Per-account services label the URL field as
+what it is: the account's MCP endpoint, used by both connect paths. A
+pending browser flow shows `Cancel` (an abandoned tab must not mean
+forever-pending — cancel clears with no outcome invented, and a 10-minute
+timeout backstops it); failed notes carry `Dismiss`.
+
+Lifecycle, two-state: **active/inactive** is the mute switch (config and
+credential intact, the server reaches no agent until toggled back);
+**Disconnect is the full clear** (credential + env + config — identical to
+removing a custom server; a curated entry simply reappears in the catalog,
+ready for a fresh connect). No third state: a custom OAuth add runs the
+browser flow *before* storing anything, so cancelled consent means nothing
+was added — never a stranded credential-less record.
+
+**Routing table**: servers × agents as toggles; toggling onto a
 less-than-fully-brokered agent interrupts with the **explicit plug-in
-confirmation** (auto-attach covers fully-brokered only). Per-integration
-`Share…` — the explicit, visible act of copying its config into another
-workspace; the credential reattaches only on confirm. Workspace-scope warning
-cites the real incident (a production-access MCP server following a user between
-repos).
+confirmation** (auto-attach covers fully-brokered only). Per-server
+`Share…` — the explicit, visible act of copying its config for someone else;
+the credential never travels with it, reattaching only when its recipient
+explicitly connects. Servers are global to this machine. *(The real
+incident that shaped this — a production-access MCP server silently following
+a user between repos — is guarded by the credential-never-travels rule, not by
+workspace-scoping the config; binding to workspaces, not repos, may return
+later as an opt-in feature.)*
 
 ### Permissions
 
-Command rules list (`pattern → allow / ask / deny`) + add row. File-write scope
-radios (workspace only / + temp / always ask) with the note that writes surface
-as diffs regardless. The placement statement in green: **rules live in
-workspaceState — per user, per workspace, never in the repo; a cloned repository
-cannot arrive pre-authorized.** Workspace-defined agents: adoption row showing
-the full launch command with one-time `Adopt…` behind workspace trust. Decision
-audit: recent entries, mono, append-only.
+Command rules in **two layers**, one card each, identical shape (`pattern →
+allow / ask / deny` + add row): *this workspace* (workspaceState, evaluated
+first — the repo's own tightening or loosening) and *this machine*
+(globalState, the fallback floor for every workspace — consulted only where
+the workspace layer stays silent; no rule anywhere means ask). File-write
+scope radios (workspace only / + temp / always ask) with the note that writes
+surface as diffs regardless — file-write scope has no machine layer, it's
+defined relative to the current workspace root. The placement statement in
+green: **workspace rules in workspaceState, machine rules in global storage —
+never in the repo either way; a cloned repository cannot arrive
+pre-authorized.** Decision audit: recent entries, mono, append-only. *(The
+adoption row this section once specified is gone with the workspace config
+file it guarded — agent configs are global and developer-owned now, so no
+repo-authored launch command exists to adopt.)*
 
 ### Rules · skills · commands
 

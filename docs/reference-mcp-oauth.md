@@ -90,7 +90,7 @@ offers Device Flow as its *open* mechanism, which none of the eight do.
 | Integration | Endpoint | v1 auth (`header`) | OAuth upgrade (`oauth`) |
 |---|---|---|---|
 | **GitHub** | `https://api.githubcopilot.com/mcp/` | PAT as `Authorization: Bearer` | ✗ — no DCR; one-click OAuth exists only for IDE-registered apps ([github/github-mcp-server](https://github.com/github/github-mcp-server)) |
-| **Figma** | `https://mcp.figma.com/mcp` | ✗ remote (no key mode) — but Figma **Desktop** MCP (local, Dev Mode) fits `custom-stdio` with no auth | ✗ for now — DCR allowlists `client_name`, 403s unknown clients ([forum](https://forum.figma.com/ask-the-community-7/understanding-oauth-requirements-for-mcp-clients-connecting-to-figma-mcp-server-52216)); flips to ✓ only if patchbay gets allowlisted |
+| **Figma** | `https://mcp.figma.com/mcp` | ✗ remote (no key mode) — but the **Desktop** Dev Mode server is a local *HTTP* endpoint (`http://127.0.0.1:3845/mcp`, no auth; enabled in the desktop app) carried by the registry's `local` field | ✗ for now — remote access is gated on Figma's MCP client **catalog**: "only clients listed... can connect", new clients join a waitlist ([official docs](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/), re-verified after owner review). VS Code being listed covers *VS Code's own OAuth client* only — patchbay is its own MCP client and doesn't inherit the listing by running inside VS Code. Flips to ✓ if patchbay gets catalog-listed; the waitlist form is an owner touchpoint |
 | **Stitch** (Google Labs) | `https://stitch.googleapis.com/mcp` | API key as `X-Goog-Api-Key` (custom header name — the case that forces `headerName` into the schema) | ✗ — key-only ([stitch.withgoogle.com/docs/mcp](https://stitch.withgoogle.com/docs/mcp/setup/)) |
 | **Stripe** | `https://mcp.stripe.com` | Restricted API key as bearer | ✓ open DCR ([docs.stripe.com/mcp](https://docs.stripe.com/mcp)) |
 | **Sentry** | `https://mcp.sentry.dev/mcp` | PAT (their own recommended fallback for remote-IDE setups) | ✓ open DCR ([docs.sentry.io/ai/mcp](https://docs.sentry.io/ai/mcp/)) |
@@ -105,10 +105,10 @@ Notes:
   time — the entry contributes name, auth shape, and a docs link.
 - Augment's remote indexing additionally requires their GitHub App on the
   repo — Augment's own onboarding, outside patchbay.
-- Figma remote is the one entry with no self-serve path at all today; it
-  ships as visible-but-not-connectable (same honest pattern as the current
-  GitHub placeholder), with the Desktop-MCP `custom-stdio` route named in
-  its description.
+- Figma remote is the one entry with no self-serve path today; it ships as
+  visible with the remote honestly gated, and the desktop Dev Mode server
+  (local HTTP, no auth) offered as its "run it locally" path — the catalog
+  row's Connect leads there.
 
 ## Pitfalls the implementation must respect (evidence-backed)
 
