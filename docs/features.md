@@ -15,11 +15,23 @@ deliverable, owed before implementation.
 
 ### Agents
 
-- User can connect an agent by picking from the known ACP roster or supplying any
-  command line that speaks ACP.
-- User can see each agent's live status: running, stopped, crashed, reconnecting.
-- User can start, stop, and restart an agent; a crash is visible the moment it
-  happens and recovery is one action.
+- Starting a chat is one intent, one click (P17): "+" with a single configured
+  agent goes straight to it — connecting first, inside the chat pane, when it
+  isn't running; with several, a picker lists every configured agent with its
+  readiness inline. A connection failure surfaces in that same pane with the
+  specific reason and a Retry — never a silent bounce to the empty state.
+- Adding agents lives in Settings § Agents only — the one rich form (roster
+  search or any command line that speaks ACP, Verify toggle, binary confirm).
+  The view's picker and empty state route there. *(Supersedes the earlier
+  in-view connect form — owner-approved 2026-07-08: two half-featured add
+  paths collapsed into the featured one.)*
+- User can see each agent's live status: untested (configured, never
+  connected), running, stopped, crashed, reconnecting — every configured
+  agent is visible from the first frame, not only once connected.
+- A crash is visible the moment it happens, with its reason and the process's
+  own stderr inline; recovery is one action (the crash banner's Restart).
+  Stop/restart beyond that are Settings troubleshooting controls — the
+  process is normally managed implicitly by session lifecycle.
 - After reconnect, a session continues natively where the agent supports session
   restore; where it doesn't, patchbay seeds a fresh session from its last-known
   view. Either way the user continues — which kind of continuation they got is
@@ -27,7 +39,8 @@ deliverable, owed before implementation.
 
 ### Sessions
 
-- User can create a session with any connected agent.
+- User can create a session with any configured agent — connection is the
+  flow's job, not a prerequisite the user manages.
 - Multiple sessions run concurrently — same agent or different agents, side by side.
 - Sessions are cheap to create and never a process-management chore: whether
   concurrent sessions share one agent process or get isolated ones is per-agent

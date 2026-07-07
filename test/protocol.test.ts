@@ -55,6 +55,34 @@ describe("reducers", () => {
     expect(s1.agents[0]?.status).toBe("crashed");
   });
 
+  // P17: the in-pane connect lifecycle — started → connecting pane,
+  // failed → reason + retry, and the session arriving clears it (reducer-
+  // level, so it can't desync from reality); dismiss clears a failure.
+  it("chatConnect: connecting → failed → cleared by sessionCreated or dismissal", () => {
+    const connecting = replay(initialAgentViewState, [
+      { kind: "chatConnectStarted", agentId: "claude" },
+    ]);
+    expect(connecting.chatConnect).toEqual({ agentId: "claude", status: "connecting" });
+
+    const failed = replay(connecting, [
+      { kind: "chatConnectFailed", agentId: "claude", reason: "spawn failed: ENOENT" },
+    ]);
+    expect(failed.chatConnect?.status).toBe("failed");
+    expect(failed.chatConnect?.reason).toBe("spawn failed: ENOENT");
+
+    const dismissed = replay(failed, [{ kind: "chatConnectResolved" }]);
+    expect(dismissed.chatConnect).toBeNull();
+
+    const succeeded = replay(connecting, [
+      {
+        kind: "sessionCreated",
+        session: { id: "s1", agentId: "claude", title: "t", live: false, emulated: false, branchOf: null },
+      },
+    ]);
+    expect(succeeded.chatConnect).toBeNull();
+    expect(succeeded.activeSessionId).toBe("s1");
+  });
+
   // P16: crash carries the process's last words; recovery clears them —
   // stale stderr on a running agent would be a lie.
   it("status change carries stderr on crash and clears it on recovery", () => {

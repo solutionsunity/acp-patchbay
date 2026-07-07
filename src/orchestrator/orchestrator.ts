@@ -4,6 +4,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -566,25 +567,31 @@ export class Orchestrator {
     this.statusBarItem.tooltip = tooltip;
   }
 
-  /** Command palette (features.md § 3): "new session" — pick a running
-   * agent, create, and focus the Agent View on it. */
+  /** Command palette (features.md § 3): "new session" — every configured
+   * agent with its readiness inline, single agent skips the pick, and a
+   * not-running choice connects on demand (P17: the same startChat path as
+   * the view's "+"). */
   async newSessionCommand(): Promise<void> {
-    const running = this.pool.list().filter((a) => a.status === "running");
-    if (running.length === 0) {
-      void vscode.window.showInformationMessage("Connect an agent first.");
+    const agents = this.agentView.current.agents;
+    if (agents.length === 0) {
+      void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings § Agents.");
+      await vscode.commands.executeCommand("acpPatchbay.openSettings");
       return;
     }
-    const picked = await vscode.window.showQuickPick(
-      running.map((a) => ({
-        label: this.agentNames.get(a.spec.agentId) ?? a.spec.agentId,
-        agentId: a.spec.agentId,
-      })),
-      { placeHolder: "New session with…" },
-    );
-    if (picked === undefined) return;
-    const agentName = this.agentNames.get(picked.agentId);
-    if (agentName === undefined) return;
-    await this.sessionManager.createSession(picked.agentId, agentName, this.workspaceRoot ?? process.cwd());
+    let agentId = agents[0]!.id;
+    if (agents.length > 1) {
+      const picked = await vscode.window.showQuickPick(
+        agents.map((a) => ({
+          label: a.name,
+          description: a.detail ?? (a.status === "running" ? "ready" : a.status === "untested" ? "never connected" : a.status),
+          agentId: a.id,
+        })),
+        { placeHolder: "New session with…" },
+      );
+      if (picked === undefined) return;
+      agentId = picked.agentId;
+    }
+    await this.startChat(agentId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -1231,6 +1238,12 @@ export class Orchestrator {
         );
         break;
       }
+      case "startChat":
+        void this.startChat(action.agentId);
+        break;
+      case "dismissChatConnect":
+        this.agentView.emit({ kind: "chatConnectResolved" });
+        break;
       case "switchSession":
         this.sessionManager.activate(action.sessionId);
         break;
@@ -1554,6 +1567,40 @@ export class Orchestrator {
     if (config === undefined || config.registrySource === null) return;
     if (this.pool.get(agentId)?.status === "running") await this.pool.stop(agentId);
     await this.connectFromSource({ rosterId: agentId });
+  }
+
+  /** One intent, one click (P17): connect if needed, then create and
+   * activate the session — all inside the chat pane. Uses the saved config
+   * path (env injected from SecretStorage at spawn, process policy
+   * respected), never a bare pool.connect. Failure lands inline with the
+   * specific reason and a Retry — never a silent bounce to the empty
+   * state. */
+  private async startChat(agentId: string): Promise<void> {
+    const agentName = this.agentNames.get(agentId);
+    if (agentName === undefined) return; // unknown agent — nothing to start
+    if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
+    this.agentView.emit({ kind: "chatConnectStarted", agentId });
+    try {
+      if (this.pool.get(agentId)?.status !== "running") {
+        const spec = this.configuredAgentSpecs.get(agentId);
+        if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
+        await this.connectAgent(spec);
+      }
+      // sessionCreated itself clears the connect pane (reducer) — success
+      // needs no extra event.
+      await this.sessionManager.createSession(agentId, agentName, this.workspaceRoot ?? process.cwd());
+    } catch (err) {
+      // Prefer the pool's own crash detail (spawn failed / initialize
+      // failed with the interactive-setup hint) over a raw wire error; map
+      // auth_required to the action that actually unblocks it.
+      const raw = err instanceof Error ? err.message : String(err);
+      const reason =
+        err instanceof RequestError && err.code === -32000
+          ? "needs login first — use Log in on this agent in Settings § Agents"
+          : (this.pool.get(agentId)?.detail ?? raw);
+      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason });
+      this.log.error(`startChat ${agentId}: ${raw}`);
+    }
   }
 
   private async connectFromSource(

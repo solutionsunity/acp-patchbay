@@ -33,6 +33,15 @@ export function App({ state }: { state: AgentViewState }) {
     setDrawer(null);
     if (msg !== undefined) showToast(msg);
   };
+  // One intent, one click (P17): a single configured agent starts directly
+  // — the single-agent case never pays the multi-agent picker tax; zero
+  // routes to Settings (where adding lives); only real choice opens the picker.
+  const newChat = () => {
+    setDrawer(null);
+    if (state.agents.length === 0) send({ kind: "openSettings" });
+    else if (state.agents.length === 1) send({ kind: "startChat", agentId: state.agents[0]!.id });
+    else setDrawer("agents");
+  };
 
   return (
     <div className="sidebar">
@@ -41,7 +50,7 @@ export function App({ state }: { state: AgentViewState }) {
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
         onAgents={() => setDrawer("agents")}
         onSessions={() => setDrawer("sessions")}
-        onNew={() => setDrawer("agents")}
+        onNew={newChat}
       />
       {active !== null && (
         <SessionRow
@@ -70,7 +79,7 @@ export function App({ state }: { state: AgentViewState }) {
         </div>
       )}
       {active !== null && <PlanStrip entries={state.activePlan[active.id] ?? null} />}
-      <Chat state={state} activeSession={active} onConnectClick={() => setDrawer("agents")} />
+      <Chat state={state} activeSession={active} onNewChat={newChat} />
       <Composer
         agent={activeAgent}
         session={active}
@@ -96,7 +105,7 @@ export function App({ state }: { state: AgentViewState }) {
           sessions={state.sessions}
           agents={state.agents}
           forkUsed={(agentId) => state.capabilities[agentId]?.["session.fork"]?.used ?? false}
-          onNew={() => setDrawer("agents")}
+          onNew={newChat}
           onDone={() => setDrawer(null)}
         />
       )}

@@ -44,6 +44,11 @@ export type Action =
   | { kind: "restartAgent"; agentId: string }
   | { kind: "stopAgent"; agentId: string }
   | { kind: "newSession"; agentId: string }
+  /** One intent, one click (P17): connect if needed — inside the chat pane
+   * — then create and activate the session. The picker and the
+   * single-agent "+" both land here. */
+  | { kind: "startChat"; agentId: string }
+  | { kind: "dismissChatConnect" }
   | { kind: "switchSession"; sessionId: string }
   | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }
@@ -710,10 +715,23 @@ export interface AvailableCommand {
   description?: string;
 }
 
+/** The in-pane connect state for a chat being started (P17): "+" on a
+ * not-yet-running agent connects inside the chat pane itself — a
+ * lightweight "Connecting…" resolving into the session, or a failure with
+ * the specific reason and a Retry, never a bounce back to the empty state. */
+export interface ChatConnectView {
+  agentId: string;
+  status: "connecting" | "failed";
+  reason?: string;
+}
+
 export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
   activeSessionId: string | null;
+  /** Non-null while a "+"-initiated chat is connecting or has failed —
+   * cleared by success (the session activates), retry, or dismissal. */
+  chatConnect: ChatConnectView | null;
   /** Known-agents roster (shipped data) for the pickers. */
   roster: readonly RosterEntry[];
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
@@ -779,6 +797,7 @@ export const initialAgentViewState: AgentViewState = {
   agents: [],
   sessions: [],
   activeSessionId: null,
+  chatConnect: null,
   roster: [],
   transcripts: {},
   activePlan: {},
@@ -807,6 +826,9 @@ export type AgentViewEvent =
       /** stderr tail, riding crash statuses only. */
       stderr?: readonly string[];
     }
+  | { kind: "chatConnectStarted"; agentId: string }
+  | { kind: "chatConnectFailed"; agentId: string; reason: string }
+  | { kind: "chatConnectResolved" }
   | { kind: "sessionCreated"; session: SessionSummary }
   | { kind: "sessionActivated"; sessionId: string }
   | { kind: "sessionRenamed"; sessionId: string; title: string }
@@ -1108,6 +1130,12 @@ export function reduceAgentView(
       return { ...state, agents: reduceAgents(state.agents, event) };
     case "rosterChanged":
       return { ...state, roster: event.roster };
+    case "chatConnectStarted":
+      return { ...state, chatConnect: { agentId: event.agentId, status: "connecting" } };
+    case "chatConnectFailed":
+      return { ...state, chatConnect: { agentId: event.agentId, status: "failed", reason: event.reason } };
+    case "chatConnectResolved":
+      return { ...state, chatConnect: null };
     case "sessionCreated":
       return {
         ...state,
@@ -1119,6 +1147,9 @@ export function reduceAgentView(
         sessionConfigOptions: { ...state.sessionConfigOptions, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
         activeSessionId: event.session.id,
+        // A session arriving ends any in-pane connect, success or stale
+        // failure alike — cleared here so it can't desync from reality.
+        chatConnect: null,
       };
     case "sessionActivated":
       return state.sessions.some((s) => s.id === event.sessionId)

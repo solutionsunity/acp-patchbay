@@ -3,6 +3,7 @@
 // metadata line, and the live elapsed ticker.
 import { useEffect, useRef, useState } from "react";
 import type { AgentViewState, ChatBlock, SessionSummary, TurnEndBlock } from "../../../shared/protocol";
+import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { deriveTranscript, formatDuration, type TurnRollup } from "./view-model";
 import { Thought, ToolCallCard, ToolRunCard } from "./blocks";
@@ -102,8 +103,11 @@ function Block({ block, live, sessionId }: { block: ChatBlock; live: boolean; se
 export function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
-  onConnectClick(): void;
+  /** The shell's smart "+" (P17): zero agents → Settings, one → straight
+   * to it, several → the picker. */
+  onNewChat(): void;
 }) {
+  const send = useActions();
   const { agents } = props.state;
   const active = props.activeSession;
   const chatRef = useRef<HTMLDivElement>(null);
@@ -114,6 +118,50 @@ export function Chat(props: {
     if (el) el.scrollTop = el.scrollHeight;
   }, [blocks.length, blocks[blocks.length - 1]]);
 
+  // The in-pane connect state (P17): a chat being started takes over the
+  // pane — "Connecting…" resolving into the session, or the failure with
+  // its specific reason and a Retry, never a bounce to the empty state.
+  // `?? null` guards snapshots minted before this field existed (persisted
+  // last-known views survive extension upgrades).
+  const connect = props.state.chatConnect ?? null;
+  if (connect !== null) {
+    const name = agents.find((a) => a.id === connect.agentId)?.name ?? connect.agentId;
+    return (
+      <div className="chat">
+        <div className="empty">
+          {connect.status === "connecting" ? (
+            <>
+              <div className="glyph">
+                <Icon name="loading" spin />
+              </div>
+              <div className="tag">Connecting {name}…</div>
+            </>
+          ) : (
+            <>
+              <div className="glyph">
+                <Icon name="warning" />
+              </div>
+              <div className="tag">
+                {name} couldn't start{connect.reason !== undefined ? ` — ${connect.reason}` : ""}
+              </div>
+              <div className="pick">
+                <Button size="sm" onClick={() => send({ kind: "startChat", agentId: connect.agentId })}>
+                  Retry
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings" })}>
+                  Settings
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>
+                  Dismiss
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (active === null) {
     return (
       <div className="chat">
@@ -123,16 +171,16 @@ export function Chat(props: {
           </div>
           <div className="tag">
             {agents.length === 0
-              ? "Any ACP agent, resident in your editor. Connect one to begin."
+              ? "Any ACP agent, resident in your editor. Set one up to begin."
               : "No session yet — start one with +."}
           </div>
           <div className="pick">
-            <Button size="sm" onClick={props.onConnectClick}>
+            <Button size="sm" onClick={props.onNewChat}>
               {agents.length === 0 ? (
-                "Connect agent…"
+                "Set up an agent…"
               ) : (
                 <>
-                  <Icon name="add" /> New session
+                  <Icon name="add" /> New chat
                 </>
               )}
             </Button>

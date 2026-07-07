@@ -47,6 +47,7 @@ export function agentViewState({ live }) {
     agents: [{ id: "fake", name: "Claude Code", status: "running", needsAuth: false }],
     sessions: [{ id: "s1", agentId: "fake", title: "find foo", live, emulated: false, branchOf: null }],
     activeSessionId: "s1",
+    chatConnect: null,
     roster: [],
     transcripts: { s1: chatTranscript },
     activePlan: { s1: chatPlan },
