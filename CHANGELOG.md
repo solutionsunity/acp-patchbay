@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The Patchbay Output channel now shows the extension's actual life (owner:
+  "we don't have much showing at OUTPUT"): a vscode-free `Logger` seam
+  (src/orchestrator/logger.ts, no-op in tests) injected into the pool,
+  session manager, capability tracker, and integrations manager. Info level:
+  agent spawn/initialize (name, version, protocol), session lifecycle
+  (created/reopened), non-`end_turn` stop reasons, integration connects/
+  removals, probe auth_required. Debug level (Output panel's own level
+  switch): the agent's stderr live (previously invisible until a crash),
+  session/new-fork-load ids, cache seeding, probe failures, mcpServers
+  served per agent. no-secret-exposure applies to logs: argv contents and
+  env values are never logged (users embed keys in args and URLs) —
+  executables, env key names, hosts, ids, and counts only.
 - Form layout rebuilt as proper label|control rows (owner: "layout is way
   broken"): every form — custom MCP add, JSON import, JSON edit, catalog
   connects, agent ✎ Edit — is now a column of grid rows (140px label column,

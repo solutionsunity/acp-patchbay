@@ -33,6 +33,7 @@ import {
   type DeclaredCapabilities,
 } from "../shared/protocol";
 import { matrixFromDeclared } from "./capabilities";
+import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
 
@@ -53,6 +54,8 @@ export class CapabilityTracker {
     private readonly pool: AgentPool,
     private readonly usedCache: UsedCapabilityStore,
     private readonly hooks: CapabilityTrackerHooks,
+    /** Output-channel seam (logger.ts). */
+    private readonly log: Logger = nullLogger,
   ) {}
 
   /** Call on every connect (including reconnects). `version` is the fresh
@@ -71,7 +74,13 @@ export class CapabilityTracker {
       authMethods: declared.authMethods,
       at: new Date().toISOString(),
     });
-    if (hasUnusedProbe(seeded, declared.authMethods)) void this.probe(agentId);
+    if (version !== null && seeded !== fresh) {
+      this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
+    }
+    if (hasUnusedProbe(seeded, declared.authMethods)) {
+      this.log.debug(`${agentId}: free connectivity probe starting (session/new + fork where declared)`);
+      void this.probe(agentId);
+    }
   }
 
   markUsed(agentId: string, row: CapabilityRowId): void {
@@ -110,9 +119,12 @@ export class CapabilityTracker {
       }
     } catch (err) {
       if (err instanceof RequestError && err.code === -32000) {
+        this.log.info(`${agentId}: probe hit auth_required — Log in to proceed`);
         this.hooks.emit({ kind: "agentAuthRequired", agentId });
+      } else {
+        // declared but the round-trip failed — an honest state, not an error to surface
+        this.log.debug(`${agentId}: probe round-trip failed — ${(err as Error).message}`);
       }
-      // else: declared but the round-trip failed — an honest state, not an error to surface
     } finally {
       // Probe sessions must not linger in the connection's session set:
       // process-policy "auto" reads that set as real concurrent sessions

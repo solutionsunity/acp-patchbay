@@ -9,6 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
+import { nullLogger, type Logger } from "./logger";
 import { declaredFromInitialize } from "./capabilities";
 
 export interface LaunchSpec {
@@ -130,7 +131,11 @@ function timeOfDay(): string {
 export class AgentPool {
   private entries = new Map<string, Entry>();
 
-  constructor(private readonly hooks: PoolHooks) {}
+  constructor(
+    private readonly hooks: PoolHooks,
+    /** Output-channel seam (logger.ts) — argv and env values never logged. */
+    private readonly log: Logger = nullLogger,
+  ) {}
 
   get(poolKey: string): PooledAgentView | undefined {
     const e = this.entries.get(poolKey);
@@ -189,6 +194,9 @@ export class AgentPool {
     this.entries.set(poolKey, entry);
     this.setStatus(entry, "reconnecting");
 
+    this.log.info(
+      `${poolKey}: spawning ${spec.command} (${spec.args.length} args${isolated ? ", isolated" : ""})`,
+    );
     const child = spawn(resolveCommand(spec.command), spec.args, {
       env: { ...process.env, ...spec.env },
       cwd: spec.cwd,
@@ -202,6 +210,9 @@ export class AgentPool {
         if (line.trim() === "") continue;
         entry.stderrTail.push(line);
         if (entry.stderrTail.length > STDERR_TAIL_LINES) entry.stderrTail.shift();
+        // The agent's own stderr, otherwise invisible until a crash —
+        // debug level so the Output panel's level switch controls the noise.
+        this.log.debug(`${poolKey} stderr: ${line}`);
       }
     });
 
@@ -284,6 +295,11 @@ export class AgentPool {
 
     entry.initializeRaw = init;
     entry.declared = declaredFromInitialize(init);
+    this.log.info(
+      `${poolKey}: initialized — ${init.agentInfo?.name ?? "unnamed"}` +
+        `${init.agentInfo?.version !== undefined ? ` v${init.agentInfo.version}` : ""}` +
+        `, protocol ${init.protocolVersion}`,
+    );
     if (!isolated) this.hooks.onDeclaredCaptured(reportAs, entry.declared, init);
     this.setStatus(entry, "running");
     return entry.declared;
@@ -330,6 +346,7 @@ export class AgentPool {
       { cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
+    this.log.debug(`${poolKey}: session/new -> ${response.sessionId}`);
     // A working session/new is the proof: whoever called this (a real
     // session, or capability-tracker.ts's throwaway probe) got a session out
     // of it, so auth — if this agent even declares any — actually works.
@@ -366,6 +383,7 @@ export class AgentPool {
       { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
+    this.log.debug(`${poolKey}: session/fork ${sessionId} -> ${response.sessionId}`);
     this.hooks.onCapabilityUsed?.(entry.reportAs, "session.fork");
     // The parent was already on `entry.sessions` — a fork always proves this
     // connection sustains 2+ concurrent sessions, the same signal newSession's
@@ -411,6 +429,7 @@ export class AgentPool {
       { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(sessionId);
+    this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
     this.hooks.onCapabilityUsed?.(entry.reportAs, "session.load");
     return response;
   }

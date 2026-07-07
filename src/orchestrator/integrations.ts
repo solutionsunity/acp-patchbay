@@ -17,6 +17,7 @@ import type {
   SettingsEvent,
 } from "../shared/protocol";
 import { parseCommandLine } from "./command-line";
+import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { IntegrationTokenStore, type StoredToken } from "./stores/integration-tokens";
 import { IntegrationConfigStore, type IntegrationSource } from "./stores/integration-configs";
@@ -114,6 +115,9 @@ export class IntegrationsManager {
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
     private readonly oauthUserAgent: OAuthUserAgent | null = null,
+    /** Output-channel seam (logger.ts) — hosts and key *names* only, never
+     * tokens, env values, or full URLs (query strings can embed secrets). */
+    private readonly log: Logger = nullLogger,
   ) {}
 
   /** In-flight browser flows by integration id — each holds its own
@@ -155,8 +159,10 @@ export class IntegrationsManager {
    * labeled failure. */
   private emitFlowOutcome(id: string, err: unknown): void {
     if (err instanceof ConnectCancelled) {
+      this.log.info(`${id}: browser OAuth cancelled — nothing stored`);
       this.hooks.emit({ kind: "integrationConnectResolved", registryId: id });
     } else {
+      this.log.error(`${id}: connect failed — ${(err as Error).message}`);
       this.hooks.emit({ kind: "integrationConnectFailed", registryId: id, reason: (err as Error).message });
     }
   }
@@ -295,6 +301,7 @@ export class IntegrationsManager {
       return;
     }
     await this.tokens.set(registryId, { accessToken: token.trim() });
+    this.log.info(`${registryId}: connected with key (endpoint ${loggableUrl(endpoint.url)})`);
     await this.integrationStore.upsert({
       id: registryId,
       name: entry.name,
@@ -330,6 +337,7 @@ export class IntegrationsManager {
       return;
     }
     this.hooks.emit({ kind: "integrationConnectStarted", registryId });
+    this.log.info(`${registryId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
     try {
       const result = await this.raceBrowserFlow(
         registryId,
@@ -354,6 +362,7 @@ export class IntegrationsManager {
         routing: "auto",
         active: true,
       });
+      this.log.info(`${registryId}: connected via OAuth`);
       await this.refresh();
     } catch (err) {
       this.emitFlowOutcome(registryId, err);
@@ -431,6 +440,7 @@ export class IntegrationsManager {
       routing: routing === "auto" ? "auto" : [...routing],
       active: true,
     });
+    this.log.info(`${id}: custom ${configSource.kind} added`);
     await this.refresh();
     return id;
   }
@@ -563,6 +573,7 @@ export class IntegrationsManager {
     await this.tokens.remove(id);
     await this.envStore.remove(id);
     await this.integrationStore.remove(id);
+    this.log.info(`${id}: removed — credential, env, and config cleared`);
     await this.refresh();
   }
 
@@ -670,6 +681,10 @@ export class IntegrationsManager {
         ],
       });
     }
+    this.log.debug(
+      `mcpServersFor ${agentId}: serving ${servers.length} server(s)` +
+        (servers.length > 0 ? ` — ${servers.map((sv) => sv.name).join(", ")}` : ""),
+    );
     return servers;
   }
 }

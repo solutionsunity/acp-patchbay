@@ -194,6 +194,7 @@ export class Orchestrator {
           return pending;
         },
       },
+      log,
     );
 
     // Roster = the official ACP registry (fetched below) merged with our own
@@ -351,7 +352,7 @@ export class Orchestrator {
         this.terminals.delete(params.terminalId);
         return {};
       },
-    });
+    }, log);
     this.editorStateHost = new EditorStateHost(String(process.pid), {
       requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
       getIntegrationToken: (integrationId) => this.integrations.getToken(integrationId),
@@ -424,14 +425,20 @@ export class Orchestrator {
         );
         return [editorServer, ...integrationServers];
       },
+      log,
     );
-    this.capabilityTracker = new CapabilityTracker(this.pool, this.usedCapabilities, {
-      emit: (...events) => {
-        this.agentView.emit(...events);
-        this.settings.emit(...events);
+    this.capabilityTracker = new CapabilityTracker(
+      this.pool,
+      this.usedCapabilities,
+      {
+        emit: (...events) => {
+          this.agentView.emit(...events);
+          this.settings.emit(...events);
+        },
+        currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
       },
-      currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
-    });
+      log,
+    );
     this.broker = new PermissionBroker(
       this.permissionRules,
       this.decisionAudit,

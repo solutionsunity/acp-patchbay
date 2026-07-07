@@ -23,6 +23,7 @@ import type {
   SessionModesView,
   SessionSummary,
 } from "../shared/protocol";
+import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { SessionIndexStore } from "./stores/session-index";
 
@@ -133,6 +134,8 @@ export class SessionManager {
      * given the correlation token to spawn it with. `[]` (the default) when
      * no MCP integration is wired — tests mostly don't need it. */
     private readonly mcpServersFor: (contextToken: string, agentId: string) => Promise<McpServer[]> = async () => [],
+    /** Output-channel seam (logger.ts). */
+    private readonly log: Logger = nullLogger,
   ) {}
 
   isLive(sessionId: string): boolean {
@@ -172,6 +175,7 @@ export class SessionManager {
       branchOf: null,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
+    this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
     this.emitModeAndConfig(sessionId, modes, configOptions);
     await this.applyDefaults(agentId, sessionId, modes, configOptions);
     return sessionId;
@@ -268,6 +272,7 @@ export class SessionManager {
     );
     // pool.ts's loadSession already marked "session.load" used the instant
     // the RPC succeeded — this only has to update the render state.
+    this.log.info(`session ${sessionId} reopened via session/load on ${agentId}`);
     this.emitModeAndConfig(sessionId, modes, configOptions);
   }
 
@@ -539,7 +544,13 @@ export class SessionManager {
     }
     prompt.push({ type: "text", text });
     try {
-      await this.pool.prompt(session.poolKey, targetId, prompt);
+      const response = await this.pool.prompt(session.poolKey, targetId, prompt);
+      // end_turn is the unremarkable outcome; anything else is worth a line.
+      if (response.stopReason === "end_turn") {
+        this.log.debug(`session ${targetId}: turn ended`);
+      } else {
+        this.log.info(`session ${targetId}: turn stopped — ${response.stopReason}`);
+      }
     } finally {
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId: targetId, live: false });
     }
