@@ -1,6 +1,10 @@
 /* Settings shell — ported from docs/design/settings-mockup.html (binding
  * inventory: docs/design/ui.md § Settings). Left nav + cards. */
 :root {
+  /* the actual mechanism browsers use to theme native form-control chrome
+   * (checkbox/radio/select popup) — without it Chromium falls back to its
+   * light-UA default regardless of the vscode-* tokens above. */
+  color-scheme: light dark;
   --pb-accent: #45c4a8;
   --pb-accent-dim: #2c6f61;
   --pb-ok: #4cc38a;
@@ -52,6 +56,23 @@ body {
   flex: none;
   display: flex;
   flex-direction: column;
+}
+
+/* Non-collapsing group headers — visual structure only; five items don't
+   earn collapse interaction. */
+.nav .grp {
+  padding: 4px 12px 3px;
+  margin-top: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pb-text-dim);
+  opacity: 0.7;
+}
+
+.nav > div:first-child .grp {
+  margin-top: 0;
 }
 
 .nav .it {
@@ -185,7 +206,7 @@ h2 {
   font-family: var(--pb-mono);
   font-size: 11.5px;
   color: var(--pb-text-dim);
-  background: var(--vscode-textCodeBlock-background, #16171b);
+  background: var(--vscode-textCodeBlock-background, var(--pb-panel-2));
   border-radius: 5px;
   padding: 5px 9px;
 }
@@ -210,9 +231,24 @@ h2 {
   border-color: var(--pb-accent);
 }
 
+.btn.primary.on {
+  background: var(--pb-panel-2);
+  color: var(--pb-text-dim);
+  border-color: var(--pb-border);
+}
+
 .btn.danger:hover {
   border-color: var(--pb-err);
   color: var(--pb-err);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  border-color: var(--pb-border);
 }
 
 .note {
@@ -233,18 +269,127 @@ h2 {
   color: var(--pb-text-dim);
 }
 
+/* VS Code's own input variables — password fields and textareas included
+   (they used to fall back to browser defaults: light/yellowish on dark
+   themes). Autofill gets the same treatment: Chromium paints it yellow
+   unless the background is forced through an inset shadow. */
 select,
-input[type="text"] {
-  background: var(--pb-panel-2);
-  border: 1px solid var(--pb-border);
-  color: var(--pb-text);
+textarea,
+input[type="text"],
+input[type="password"] {
+  background: var(--vscode-input-background, var(--pb-panel-2));
+  border: 1px solid var(--vscode-input-border, var(--pb-border));
+  color: var(--vscode-input-foreground, var(--pb-text));
   border-radius: 6px;
   padding: 4px 8px;
   font: inherit;
   font-size: 12px;
 }
 
-/* fidelity chip — pure function of the verified capability matrix */
+textarea::placeholder,
+input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--pb-text-dim));
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 100px var(--vscode-input-background, var(--pb-panel-2)) inset;
+  -webkit-text-fill-color: var(--vscode-input-foreground, var(--pb-text));
+}
+
+select:focus,
+textarea:focus,
+input:focus {
+  outline: 1px solid var(--vscode-focusBorder, var(--pb-accent));
+  outline-offset: -1px;
+}
+
+/* ── labeled form fields — one row each: label column | control column ── */
+.field {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.field > .lbl {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--pb-text-dim);
+  text-align: right;
+  padding-top: 6px;
+  line-height: 1.2;
+}
+
+.field > input,
+.field > select,
+.field > textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.field > select {
+  width: auto;
+  justify-self: start;
+}
+
+/* ── toggle switch (the active/inactive mute control) ─────────────────── */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--pb-text-dim);
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch .track {
+  width: 28px;
+  height: 15px;
+  border-radius: 8px;
+  background: var(--pb-panel-2);
+  border: 1px solid var(--pb-border);
+  position: relative;
+  transition: background 0.15s ease;
+  flex: none;
+}
+
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--pb-text-dim);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch input:checked + .track {
+  background: color-mix(in srgb, var(--pb-accent) 35%, var(--pb-bg));
+  border-color: var(--pb-accent);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(12px);
+  background: var(--pb-accent);
+}
+
+.switch input:focus-visible + .track {
+  outline: 1px solid var(--vscode-focusBorder, var(--pb-accent));
+  outline-offset: 1px;
+}
+
+/* fidelity chip — pure function of the used capability matrix */
 .fid {
   font-size: 10px;
   padding: 1px 8px;
@@ -253,17 +398,17 @@ input[type="text"] {
 
 .fid.full {
   color: var(--pb-ok);
-  border: 1px solid #2a4a39;
+  border: 1px solid color-mix(in srgb, var(--pb-ok) 30%, var(--pb-bg));
 }
 
 .fid.partial {
   color: var(--pb-warn);
-  border: 1px solid #4c4023;
+  border: 1px solid color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
 }
 
 .fid.outside {
   color: var(--pb-err);
-  border: 1px solid #5c3335;
+  border: 1px solid color-mix(in srgb, var(--pb-err) 30%, var(--pb-bg));
 }
 
 /* capability matrix table */
@@ -357,17 +502,17 @@ tr.sep td {
 
 .verdict.allow {
   color: var(--pb-ok);
-  border: 1px solid #2a4a39;
+  border: 1px solid color-mix(in srgb, var(--pb-ok) 30%, var(--pb-bg));
 }
 
 .verdict.ask {
   color: var(--pb-warn);
-  border: 1px solid #4c4023;
+  border: 1px solid color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
 }
 
 .verdict.deny {
   color: var(--pb-err);
-  border: 1px solid #5c3335;
+  border: 1px solid color-mix(in srgb, var(--pb-err) 30%, var(--pb-bg));
 }
 
 .audit {
@@ -375,6 +520,68 @@ tr.sep td {
   font-size: 11px;
   color: var(--pb-text-faint);
   line-height: 1.7;
+}
+
+/* ── roster combobox — searchable Add Agent picker (ui.md § Settings
+   Agents) ─────────────────────────────────────────────────────────────── */
+.combobox {
+  position: relative;
+}
+
+.combobox input[type="text"] {
+  width: 100%;
+  padding-right: 26px;
+}
+
+.combobox .e {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--pb-text-faint);
+  cursor: pointer;
+}
+
+.combobox .e:hover {
+  color: var(--pb-text);
+}
+
+.combobox-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--pb-panel);
+  border: 1px solid var(--pb-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.combobox-opt {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.combobox-opt:hover {
+  background: var(--pb-panel-2);
+}
+
+.combobox-opt.sel {
+  color: var(--pb-accent);
+}
+
+.combobox-opt.disabled {
+  color: var(--pb-text-faint);
+  cursor: not-allowed;
+}
+
+.combobox-empty {
+  padding: 6px 10px;
+  margin-top: 0;
 }
 
 /* ── stat tiles (ui.md § Settings Agents) ─────────────────────────────── */
@@ -385,12 +592,13 @@ tr.sep td {
 }
 
 .tile {
-  flex: 1;
-  max-width: 160px;
+  flex: none;
+  width: auto;
+  min-width: 96px;
   background: var(--pb-panel);
   border: 1px solid var(--pb-border);
   border-radius: var(--pb-radius);
-  padding: 10px 14px;
+  padding: 10px 16px;
 }
 
 .tile .n {
@@ -403,7 +611,26 @@ tr.sep td {
   color: var(--pb-text-dim);
 }
 
-/* ── default knobs on the per-agent card — enabled only where offered ── */
+/* Add Agent as a tile-shaped button — same box as the counters, but it
+   reads as an action: accent icon, pointer, hover lift. */
+button.tile.add {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--pb-text);
+}
+
+button.tile.add .n {
+  color: var(--pb-accent);
+}
+
+button.tile.add:hover,
+button.tile.add.on {
+  border-color: var(--pb-accent);
+  background: var(--pb-panel-2);
+}
+
+/* ── default knobs on the per-agent card — only what the agent offered ── */
 .knob-default {
   display: inline-flex;
   align-items: center;
@@ -412,12 +639,60 @@ tr.sep td {
   color: var(--pb-text-dim);
 }
 
-.knob-default.off {
-  opacity: 0.55;
-}
-
 .crashed-note {
   color: var(--pb-err);
+}
+
+/* ── connect/add forms — one layout for every form on the page: a column
+   of label|control rows, actions in a footer, notes aligned under the
+   controls. No wrap-flex soup. ─────────────────────────────────────────── */
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 8px;
+  max-width: 640px;
+}
+
+/* Inline flex row inside one control cell (input + trailing button/link). */
+.ctl-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ctl-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: 148px;
+}
+
+.connect-form > .note {
+  margin: 0 0 0 148px !important;
+}
+
+/* ── curated catalog — compact rows, one expandable connect form ─────── */
+.cat-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--pb-border);
+}
+
+.cat-row:first-of-type {
+  border-top: none;
+  padding-top: 2px;
+}
+
+.or-divider {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: var(--pb-text-dim);
 }
 
 /* ── diagnostics cost-disclosure modal (ui.md: cost before running) ──── */

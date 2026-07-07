@@ -19,7 +19,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", live: false, emulated: false, branchOf: null }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "running" }],
+        agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
       }),
     );
     expect(content.text).toBe("$(circle-filled) Fix the bug");
@@ -31,7 +31,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, emulated: false, branchOf: null }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "crashed" }],
+        agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false }],
       }),
     );
     expect(content.text).toBe("$(error) T");
@@ -41,7 +41,7 @@ describe("statusBarContent", () => {
     const base = state({
       sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, emulated: false, branchOf: null }],
       activeSessionId: "s1",
-      agents: [{ id: "a1", name: "Claude Code", status: "running" }],
+      agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
     });
     expect(statusBarContent(base).text).toBe("$(circle-filled) T");
 

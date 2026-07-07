@@ -2,6 +2,10 @@
  * inventory: docs/design/ui.md). Theme-aware via --vscode-* variables; the
  * patchbay identity accents (teal, consumed-orange) stay fixed. */
 :root {
+  /* the actual mechanism browsers use to theme native form-control chrome
+   * (checkbox/radio/select popup) — without it Chromium falls back to its
+   * light-UA default regardless of the vscode-* tokens above. */
+  color-scheme: light dark;
   --pb-accent: #45c4a8;
   --pb-accent-dim: #2c6f61;
   --pb-consumed: #e8964f;
@@ -81,7 +85,11 @@ body {
 
 .agent-chip .caret {
   color: var(--pb-text-faint);
-  font-size: 10px;
+  display: inline-flex;
+}
+
+.agent-chip .caret .codicon {
+  font-size: 12px;
 }
 
 .dot {
@@ -137,7 +145,7 @@ body {
   color: var(--pb-text);
 }
 
-/* usage gauge — rendered only where usage reporting is verified */
+/* usage gauge — rendered only where usage reporting is used */
 .gauge {
   position: relative;
   width: 26px;
@@ -200,7 +208,7 @@ body {
 
 .badge.emulated {
   color: var(--pb-warn);
-  border-color: #4c4023;
+  border-color: color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
 }
 
 .badge.branch {
@@ -426,7 +434,7 @@ body {
 
 /* permission card */
 .perm {
-  border-color: #5a4a2a;
+  border-color: color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
 }
 
 .perm .q {
@@ -501,7 +509,7 @@ body {
 .term {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11.5px;
-  background: var(--vscode-textCodeBlock-background, #121316);
+  background: var(--vscode-textCodeBlock-background, var(--pb-panel-2));
   color: var(--pb-text-dim);
   padding: 9px 11px;
   max-height: 160px;
@@ -697,7 +705,7 @@ body {
 }
 
 .send.stop {
-  background: #5c3335;
+  background: color-mix(in srgb, var(--pb-err) 35%, var(--pb-bg));
 }
 
 /* popovers */
@@ -804,7 +812,7 @@ body {
   color: var(--pb-text-faint);
 }
 
-/* fidelity chip — pure function of the verified capability matrix */
+/* fidelity chip — pure function of the used capability matrix */
 .fid {
   font-size: 10px;
   padding: 1px 7px;
@@ -814,17 +822,17 @@ body {
 
 .fid.full {
   color: var(--pb-ok);
-  border: 1px solid #2a4a39;
+  border: 1px solid color-mix(in srgb, var(--pb-ok) 30%, var(--pb-bg));
 }
 
 .fid.partial {
   color: var(--pb-warn);
-  border: 1px solid #4c4023;
+  border: 1px solid color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
 }
 
 .fid.outside {
   color: var(--pb-err);
-  border: 1px solid #5c3335;
+  border: 1px solid color-mix(in srgb, var(--pb-err) 30%, var(--pb-bg));
 }
 
 .drawer .foot {

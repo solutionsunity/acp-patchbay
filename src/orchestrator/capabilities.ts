@@ -1,5 +1,5 @@
 // Normalizes an agent's initialize response into the declared table.
-// Declared ≠ verified: this is what the agent claims, refreshed every connect.
+// Declared ≠ used: this is what the agent claims, refreshed every connect.
 import type { InitializeResponse } from "@agentclientprotocol/sdk";
 import type { CapabilityMatrix, DeclaredCapabilities } from "../shared/protocol";
 
@@ -21,7 +21,15 @@ export function declaredFromInitialize(
     promptEmbeddedContext: prompt.embeddedContext === true,
     mcpHttp: mcp.http === true,
     mcpSse: mcp.sse === true,
-    authMethods: (init.authMethods ?? []).map((m) => m.id),
+    authMethods: (init.authMethods ?? []).map((m) => ({
+      id: m.id,
+      name: m.name,
+      // The wire's `type` field is absent for the stable default ("agent"
+      // handles it itself via `authenticate`); "env_var"/"terminal" are both
+      // UNSTABLE ACP capabilities — declared here, never wired to a Log-in
+      // action (protocol.ts's AuthMethodView docstring).
+      kind: (m as { type?: "env_var" | "terminal" }).type ?? "agent",
+    })),
   };
 }
 
@@ -37,14 +45,14 @@ const CLIENT_DECLARES = {
   elicitation: false,
 } as const;
 
-function cell(declared: boolean): { declared: boolean; verified: boolean } {
-  return { declared, verified: false };
+function cell(declared: boolean): { declared: boolean; used: boolean } {
+  return { declared, used: false };
 }
 
 /**
  * Builds the full capability matrix (architecture.md's row list) from the
  * agent's declared table. Fired fresh on every connect, so every cell starts
- * at verified=false — reset-on-reconnect falls out of always replacing the
+ * at used=false — reset-on-reconnect falls out of always replacing the
  * whole matrix, never patching it in place.
  */
 export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMatrix {
@@ -68,5 +76,9 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     // No initialize-time claim exists for these — only ever observed directly.
     usage: cell(false),
     concurrentSessions: cell(false),
+    // Declared the moment authMethods is non-empty; used only once a
+    // session has actually opened (with or without an authenticate round
+    // trip in between — see capability-tracker.ts / pool.ts).
+    auth: cell(declared.authMethods.length > 0),
   };
 }

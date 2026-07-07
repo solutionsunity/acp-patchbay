@@ -1,0 +1,126 @@
+{
+  "$comment": "Adapter-observed knowledge only — never identity/install data, that now comes live from the official ACP registry (agentclientprotocol/registry, roster.ts merges it in). An entry with registryId links to that registry by id; 'local' entries (registry doesn't list them) carry their own launch command exactly like the pre-registry roster did. assets: rules/skills/commands locations relative to the workspace; null = not mapped, shown honestly, never guessed (v1 maps Claude Code and Augment). metaExtensions: observed _meta conventions. quirks: earned by observation only. knownBypassBridge: forces the fidelity label to 'acts outside' regardless of the capability matrix — defaults false, none observed yet.",
+  "agents": [
+    {
+      "id": "claude-code",
+      "registryId": "claude-acp",
+      "assets": {
+        "rules": ["CLAUDE.md"],
+        "commands": [".claude/commands"],
+        "skills": [".claude/skills"]
+      },
+      "metaExtensions": [
+        "_claude/sdkMessage",
+        "_claude/rateLimit",
+        "_claude/askUserQuestionOption",
+        "terminal-output _meta channel (convention shared with codex-acp)"
+      ],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "copilot",
+      "registryId": "github-copilot-cli",
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "gemini",
+      "registryId": "gemini",
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "qwen",
+      "registryId": "qwen-code",
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "auggie",
+      "registryId": "auggie",
+      "assets": {
+        "rules": [".augment/rules"],
+        "commands": [".augment/commands"],
+        "skills": null
+      },
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "qoder",
+      "registryId": "qoder",
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "codex",
+      "registryId": "codex-acp",
+      "assets": null,
+      "metaExtensions": [
+        "terminal-output _meta channel (convention shared with claude-agent-acp)"
+      ],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "opencode",
+      "registryId": "opencode",
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "openclaw",
+      "local": {
+        "name": "OpenClaw",
+        "command": "npx",
+        "args": ["openclaw", "acp"],
+        "env": {},
+        "installHint": "Runs via npx."
+      },
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "kiro",
+      "local": {
+        "name": "Kiro CLI",
+        "command": "kiro-cli",
+        "args": ["acp"],
+        "env": {},
+        "installHint": "Requires the kiro-cli binary on PATH."
+      },
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    },
+    {
+      "id": "hermes",
+      "local": {
+        "name": "Hermes Agent",
+        "command": "hermes",
+        "args": ["acp"],
+        "env": {},
+        "installHint": "Requires the hermes binary on PATH."
+      },
+      "assets": null,
+      "metaExtensions": [],
+      "quirks": [],
+      "knownBypassBridge": false
+    }
+  ]
+}

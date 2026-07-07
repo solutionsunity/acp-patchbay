@@ -5,11 +5,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CapabilityVerifier } from "../src/orchestrator/capability-verifier";
+import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
+import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
   reduceAgentView,
@@ -55,7 +56,7 @@ function harness(opts?: {
 } {
   const events: AgentViewEvent[] = [];
   let sessionManager!: SessionManager;
-  let capabilityVerifier!: CapabilityVerifier;
+  let capabilityTracker!: CapabilityTracker;
   const pool = new AgentPool({
     onStatusChanged: (agentId, status) => {
       if (status === "crashed" || status === "reconnecting") {
@@ -67,13 +68,16 @@ function harness(opts?: {
         sessionManager.invalidatePoolKey(poolKey);
       }
     },
-    onDeclaredCaptured: (agentId, declared) => capabilityVerifier.onDeclared(agentId, declared),
+    onDeclaredCaptured: (agentId, declared, raw) =>
+      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onConcurrentSessionsVerified: (agentId) =>
-      capabilityVerifier.markVerified(agentId, "concurrentSessions"),
+    onCapabilityUsed: (agentId, row) => capabilityTracker.markUsed(agentId, row),
     ...stubFsTerminalHooks(),
   });
-  capabilityVerifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
+  capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    emit: (...evs) => events.push(...evs),
+    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+  });
   const sessionIndex = new SessionIndexStore(new MemoryKV());
   sessionManager = new SessionManager(
     pool,
@@ -271,35 +275,35 @@ describe("SessionManager", () => {
     await h.pool.stop("sm6");
   });
 
-  it("usage reporting verifies opportunistically the moment it's first observed (P5)", async () => {
+  it("usage reporting is marked used opportunistically the moment it's first observed (P5)", async () => {
     const h = harness();
     await h.pool.connect(
       spec({ turn: [{ type: "usage", used: 42, size: 200 }, { type: "chunk", text: "hi" }] }, "sm7"),
     );
-    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: false, verified: false });
+    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: false, used: false });
 
     const sessionId = await h.sessionManager.createSession("sm7", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "go");
 
     expect(h.state().sessionUsage[sessionId]).toEqual({ used: 42, size: 200, cost: undefined });
-    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: true, verified: true });
+    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: true, used: true });
 
     await h.pool.stop("sm7");
   });
 
-  it("session.load reopening verifies the session.load row (P5)", async () => {
+  it("session.load reopening marks the session.load row used (P5)", async () => {
     const h = harness();
     await h.pool.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sm8"),
     );
     const sessionId = await h.sessionManager.createSession("sm8", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "first");
-    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, verified: false });
+    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, used: false });
 
     await h.pool.restart("sm8");
     await h.sessionManager.sendPrompt(sessionId, "second");
 
-    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, verified: true });
+    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, used: true });
     await h.pool.stop("sm8");
   });
 
@@ -425,15 +429,15 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11");
   });
 
-  it("a fork inherits its parent's context roots, verified on the wire", async () => {
+  it("a fork inherits its parent's context roots, used on the wire", async () => {
     const h = harness();
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { fork: {} } }, turn: [{ type: "echoRoots" }] }, "sm12"),
     );
     const cell = () => h.state().capabilities.sm12?.["session.fork"];
     const start = Date.now();
-    while (!cell()?.verified) {
-      if (Date.now() - start > 3000) throw new Error("fork never verified");
+    while (!cell()?.used) {
+      if (Date.now() - start > 3000) throw new Error("fork never used");
       await new Promise((r) => setTimeout(r, 20));
     }
     const parentId = await h.sessionManager.createSession("sm12", "Fake Agent", cwd);

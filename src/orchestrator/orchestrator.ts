@@ -19,12 +19,13 @@ import {
   type CapabilityRowId,
   type ConnectAgentSource,
   type PermissionOptionView,
+  type RosterEntry,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
 import { resolveAgentAssets, type FsLike } from "./asset-locations";
 import { applyFileWrite, PermissionBroker } from "./broker";
-import { CapabilityVerifier } from "./capability-verifier";
+import { CapabilityTracker } from "./capability-tracker";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
@@ -32,15 +33,20 @@ import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { SessionManager } from "./session-manager";
-import { WorkspaceAgentAdoptionStore } from "./stores/adoption";
-import { ConfigFileStore, CONFIG_RELATIVE_PATH, type AgentConfig } from "./stores/config-file";
+import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
+import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
+import { SecretEnvStore } from "./stores/secret-env";
+import { AgentKnobsStore } from "./stores/agent-knobs";
+import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { DecisionAuditStore } from "./stores/decision-audit";
+import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastKnownViewStore } from "./stores/last-known-view";
-import { PermissionRulesStore } from "./stores/permission-rules";
+import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
-import { loadRoster, type RosterAgent } from "./stores/roster";
+import { loadOverlay, mergeRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
+import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
 
@@ -54,6 +60,20 @@ function optionViewsFromAcp(
   }));
 }
 
+function rosterEntryView(agent: RosterAgent): RosterEntry {
+  const launch = agent.launch;
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    assetsMapped: agent.assets !== null,
+    knownBypassBridge: agent.knownBypassBridge,
+    unavailableReason: launch.kind === "unavailable" ? launch.reason : null,
+    registryId: launch.kind === "local" ? null : launch.registryId,
+    registryVersion: launch.kind === "local" ? null : launch.version,
+  };
+}
+
 export class Orchestrator {
   readonly agentView: ChannelHost<AgentViewState, AgentViewEvent>;
   readonly settings: ChannelHost<SettingsState, SettingsEvent>;
@@ -61,13 +81,21 @@ export class Orchestrator {
   readonly sessionIndex: SessionIndexStore;
   readonly decisionAudit: DecisionAuditStore;
   readonly lastKnownView: LastKnownViewStore;
-  readonly configFile: ConfigFileStore;
+  readonly agentConfigs: AgentConfigStore;
+  readonly integrationConfigs: IntegrationConfigStore;
+  readonly usedCapabilities: UsedCapabilityStore;
+  readonly agentKnobsCache: AgentKnobsStore;
+  readonly agentEnv: SecretEnvStore;
+  readonly integrationEnv: SecretEnvStore;
+  readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
-  readonly adoption: WorkspaceAgentAdoptionStore;
-  readonly roster: RosterAgent[];
+  readonly machinePermissionRules: MachineRulesStore;
+  /** Registry × overlay merge (roster.ts) — recomputed whenever the ACP
+   * registry refreshes; every roster-shaped lookup elsewhere reads this. */
+  roster: RosterAgent[];
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
-  readonly capabilityVerifier: CapabilityVerifier;
+  readonly capabilityTracker: CapabilityTracker;
   readonly broker: PermissionBroker;
   readonly editorStateHost: EditorStateHost;
   readonly integrationTokens: IntegrationTokenStore;
@@ -76,8 +104,17 @@ export class Orchestrator {
   readonly oauthCallbacks = new OAuthCallbackRegistry();
 
   private readonly workspaceRoot: string | null;
+  private readonly binaryCacheDir: string;
   private readonly agentNames = new Map<string, string>();
-  private readonly workspaceAgentSpecs = new Map<string, LaunchSpec>();
+  /** Agents (global — never repo-committed), resolved to a spawnable
+   * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
+  private readonly configuredAgentSpecs = new Map<string, LaunchSpec>();
+  /** A registry `binary` distribution awaiting the one-time download
+   * confirmation — at most one per agentId in flight. */
+  private readonly pendingBinaryConfirms = new Map<
+    string,
+    { entry: RosterAgent; verifyAfterConnect: boolean }
+  >();
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
   private readonly mcpServerScriptPath: string;
@@ -101,7 +138,10 @@ export class Orchestrator {
   isAgentViewVisible: () => boolean = () => true;
   private statusBarItem!: vscode.StatusBarItem;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(
+    context: vscode.ExtensionContext,
+    private readonly log: vscode.LogOutputChannel,
+  ) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     this.workspaceRoot = workspaceRoot;
     this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
@@ -110,20 +150,24 @@ export class Orchestrator {
       "out",
       "integration-bridge.js",
     ).fsPath;
+    this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
 
     this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
-    this.adoption = new WorkspaceAgentAdoptionStore(context.workspaceState);
+    this.machinePermissionRules = new MachineRulesStore(context.globalState);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastKnownView = new LastKnownViewStore(context.storageUri?.fsPath ?? null);
-    this.configFile = new ConfigFileStore(
-      workspaceRoot === null
-        ? null
-        : vscode.Uri.joinPath(
-            vscode.Uri.file(workspaceRoot),
-            CONFIG_RELATIVE_PATH,
-          ).fsPath,
-    );
+    // Agents and integrations are developer-env, not code-env: global to
+    // this machine, never a repo-committed file. Deliberately global-only —
+    // workspace binding may return later as an opt-in (see
+    // stores/integration-configs.ts's header for the incident that shaped
+    // this).
+    this.agentConfigs = new AgentConfigStore(context.globalState);
+    this.integrationConfigs = new IntegrationConfigStore(context.globalState);
+    this.usedCapabilities = new UsedCapabilityStore(context.globalState);
+    this.agentKnobsCache = new AgentKnobsStore(context.globalState);
+    this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
+    this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
     this.integrationTokens = new IntegrationTokenStore(context.secrets);
     // OAuth browser/redirect step (docs/reference-mcp-oauth.md, pitfall §1):
     // the redirect target is this extension's own vscode:// URI, passed
@@ -133,8 +177,9 @@ export class Orchestrator {
     const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
     this.integrations = new IntegrationsManager(
       loadRegistry(),
-      this.configFile,
+      this.integrationConfigs,
       this.integrationTokens,
+      this.integrationEnv,
       { emit: (...events) => this.settings.emit(...events) },
       {
         redirectUri: async () => {
@@ -151,13 +196,12 @@ export class Orchestrator {
       },
     );
 
-    this.roster = loadRoster();
-    const rosterEntries = this.roster.map((a) => ({
-      id: a.id,
-      name: a.name,
-      assetsMapped: a.assets !== null,
-      knownBypassBridge: a.knownBypassBridge,
-    }));
+    // Roster = the official ACP registry (fetched below) merged with our own
+    // adapter-observed overlay (roster.ts). Starts registry-empty — every
+    // registry-backed entry shows "registry not loaded yet" until the first
+    // fetch (cache or network) resolves and republishes via rosterChanged.
+    this.roster = mergeRoster(loadOverlay(), []);
+    const rosterEntries = this.roster.map(rosterEntryView);
 
     const onAction = (action: Action) => this.handleAction(action);
     this.agentView = new ChannelHost(
@@ -172,6 +216,7 @@ export class Orchestrator {
         ...initialSettingsState,
         roster: rosterEntries,
         commandRules: rules.commandRules,
+        machineCommandRules: this.machinePermissionRules.get().commandRules,
         fileWriteScope: rules.fileWriteScope,
         integrationRegistry: this.integrations.registryViews(),
       },
@@ -179,15 +224,24 @@ export class Orchestrator {
       coalesceSettingsEvent,
       onAction,
     );
+
+    this.acpRegistry = new AcpRegistryStore(
+      join(context.globalStorageUri.fsPath, "registry"),
+      (data) => this.applyRegistryData(data),
+    );
+
     // Pool hooks close over `this` and only fire once the pool is actually
     // used (after the constructor returns), so referencing sessionManager /
-    // capabilityVerifier / broker here — before they're assigned below — is
+    // capabilityTracker / broker here — before they're assigned below — is
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
       onStatusChanged: (agentId, status, detail) => {
         const event = { kind: "agentStatusChanged", agentId, status, detail } as const;
         this.agentView.emit(event);
         this.settings.emit(event);
+        const suffix = detail !== undefined ? ` — ${detail}` : "";
+        if (status === "crashed") this.log.error(`${agentId}: crashed${suffix}`);
+        else this.log.info(`${agentId}: ${status}${suffix}`);
         // A dead or reconnecting connection invalidates every sessionId that
         // rode it — they must reopen (possibly via session/load) before reuse.
         if (status === "crashed" || status === "reconnecting") {
@@ -202,11 +256,14 @@ export class Orchestrator {
           this.sessionManager.invalidatePoolKey(poolKey);
         }
       },
-      onDeclaredCaptured: (agentId, declared) => this.capabilityVerifier.onDeclared(agentId, declared),
+      onDeclaredCaptured: (agentId, declared, raw) => {
+        const version = raw.agentInfo?.version ?? null;
+        this.capabilityTracker.onDeclared(agentId, declared, version);
+        if (version !== null) void this.recordSeenVersion(agentId, version);
+      },
       onSessionUpdate: (agentId, notification) =>
         this.sessionManager.handleUpdate(agentId, notification),
-      onConcurrentSessionsVerified: (agentId) =>
-        this.capabilityVerifier.markVerified(agentId, "concurrentSessions"),
+      onCapabilityUsed: (agentId, row) => this.capabilityTracker.markUsed(agentId, row),
       onPermissionRequest: async (_agentId, params) => {
         const subject =
           params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
@@ -223,15 +280,16 @@ export class Orchestrator {
       },
       onReadTextFile: async (agentId, params) => {
         const content = await this.readTextFileLive(params.path);
-        this.verifyObserved(agentId, "fs.readTextFile");
+        this.markFirstUse(agentId, "fs.readTextFile");
         return { content };
       },
       onWriteTextFile: async (agentId, params) => {
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
         if (accepted) await applyFileWrite(params.path, params.content);
-        // A rejected write still verifies: "brokered" means the agent routes
-        // writes through patchbay's gate, and a rejection is the gate working.
-        this.verifyObserved(agentId, "fs.writeTextFile");
+        // A rejected write still counts as used: "brokered" means the agent
+        // routes writes through patchbay's gate, and a rejection is the gate
+        // working.
+        this.markFirstUse(agentId, "fs.writeTextFile");
         return {};
       },
       onCreateTerminal: async (agentId, params) => {
@@ -246,7 +304,7 @@ export class Orchestrator {
           cwd: params.cwd ?? null,
           outputByteLimit: params.outputByteLimit ?? null,
         });
-        this.verifyObserved(agentId, "terminal");
+        this.markFirstUse(agentId, "terminal");
         const terminalId = `term-${++this.terminalCounter}`;
         this.terminals.set(terminalId, handle);
         const blockId = `term-block-${terminalId}`;
@@ -333,8 +391,8 @@ export class Orchestrator {
         },
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
-        isForkVerified: (agentId) =>
-          this.agentView.current.capabilities[agentId]?.["session.fork"]?.verified ?? false,
+        isForkUsed: (agentId) =>
+          this.agentView.current.capabilities[agentId]?.["session.fork"]?.used ?? false,
         defaultsFor: (agentId) => this.pool.get(agentId)?.spec.defaults,
         lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
@@ -367,11 +425,12 @@ export class Orchestrator {
         return [editorServer, ...integrationServers];
       },
     );
-    this.capabilityVerifier = new CapabilityVerifier(this.pool, {
+    this.capabilityTracker = new CapabilityTracker(this.pool, this.usedCapabilities, {
       emit: (...events) => {
         this.agentView.emit(...events);
         this.settings.emit(...events);
       },
+      currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
     });
     this.broker = new PermissionBroker(
       this.permissionRules,
@@ -383,11 +442,15 @@ export class Orchestrator {
           this.notifyIfHidden(requestId, title, detail, options),
       },
       () => this.workspaceRoot,
+      undefined, // default NodeTerminalRunner
+      this.machinePermissionRules,
     );
 
     void this.refreshAuditTail();
-    void this.loadWorkspaceConfigAgents();
+    this.loadAgentConfigs();
+    this.seedObservedKnobs();
     void this.integrations.refresh();
+    void this.acpRegistry.start().then((cached) => this.applyRegistryData(cached));
     this.publishSessionStats();
 
     // Native surfaces (P11): the status bar mirrors canonical state via
@@ -469,7 +532,9 @@ export class Orchestrator {
    * View's Agents drawer offers, reachable without opening it first. */
   async connectAgentCommand(): Promise<void> {
     const items = [
-      ...this.roster.map((a) => ({ label: a.name, rosterId: a.id as string | undefined })),
+      ...this.roster
+        .filter((a) => a.launch.kind !== "unavailable")
+        .map((a) => ({ label: a.name, rosterId: a.id as string | undefined })),
       { label: "Custom command…", rosterId: undefined as string | undefined },
     ];
     const picked = await vscode.window.showQuickPick(items, { placeHolder: "Connect agent…" });
@@ -531,32 +596,32 @@ export class Orchestrator {
 
   /** Process-policy decision for a new top-level session (architecture.md §
    * process model): `isolated` always isolates; `shared` always shares;
-   * `auto` (default) shares only once concurrent-session behavior is
-   * *verified* on the primary connection, isolating every session before
+   * `auto` (default) shares only once concurrent-session behavior has been
+   * *used* on the primary connection, isolating every session before
    * that — a fork always rides its parent's poolKey regardless (SessionManager
-   * never calls this for a fork), so verification bootstraps organically the
+   * never calls this for a fork), so the signal bootstraps organically the
    * first time a branch shares a connection with an existing session. */
   private async resolveProcessFor(agentId: string): Promise<string> {
     const primary = this.pool.get(agentId);
     if (primary === undefined) return agentId;
     const policy = primary.spec.processPolicy ?? "auto";
     const hasExisting = primary.sessions.length > 0;
-    const verified = this.agentView.current.capabilities[agentId]?.concurrentSessions?.verified ?? false;
-    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !verified);
+    const used = this.agentView.current.capabilities[agentId]?.concurrentSessions?.used ?? false;
+    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !used);
     if (!isolate) return agentId;
     const poolKey = `${agentId}::iso::${++this.isolationCounter}`;
     await this.pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
     return poolKey;
   }
 
-  /** Opportunistic behavior-level verification (architecture.md § capability
+  /** Opportunistic behavior-level marking (architecture.md § capability
    * matrix; plan.md P5's "first fs success / first terminal" hooks): marks a
-   * row verified the first time its path is genuinely exercised on the wire.
+   * row used the first time its path is genuinely exercised on the wire.
    * Guarded on current state so a chatty agent (many reads per turn) doesn't
    * flood the patch stream with idempotent events. */
-  private verifyObserved(agentId: string, row: CapabilityRowId): void {
-    if (this.agentView.current.capabilities[agentId]?.[row]?.verified) return;
-    this.capabilityVerifier.markVerified(agentId, row);
+  private markFirstUse(agentId: string, row: CapabilityRowId): void {
+    if (this.agentView.current.capabilities[agentId]?.[row]?.used) return;
+    this.capabilityTracker.markUsed(agentId, row);
   }
 
   /** Settings-side projections of session-manager events (ui.md § Settings
@@ -588,7 +653,42 @@ export class Orchestrator {
         }
         this.observedKnobs.set(agentId, merged);
         this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { ...merged } });
+        this.persistObservedKnobs(agentId, merged);
       }
+    }
+  }
+
+  /** Version-keyed persistence for the offered knobs, mirroring the
+   * used-capability cache's lifetime rule: what an agent build offers is a
+   * fact about that build, so it survives restarts and is dropped honestly
+   * when `agentInfo.version` changes (recordSeenVersion). No version
+   * reported → never persisted, same as used-capabilities. */
+  private persistObservedKnobs(agentId: string, knobs: { modes: AgentKnobsView["modes"]; options: AgentKnobsView["options"] }): void {
+    const version = this.agentConfigs.get(agentId)?.lastSeenVersion;
+    if (version == null) return;
+    void this.agentKnobsCache.upsert({
+      id: agentId,
+      version,
+      knobs: {
+        modes: knobs.modes === null ? null : knobs.modes.map((m) => ({ id: m.id, name: m.name })),
+        options: knobs.options.map((o) => ({ ...o, values: [...o.values] })),
+      },
+    });
+  }
+
+  /** Rehydrates the in-memory observed-knobs map (and the settings channel)
+   * from the persisted cache on startup — only where the stored version
+   * still matches the config's `lastSeenVersion`; a mismatch is a stale
+   * record from an older build, dropped rather than shown. */
+  private seedObservedKnobs(): void {
+    for (const entry of this.agentKnobsCache.list()) {
+      if (this.agentConfigs.get(entry.id)?.lastSeenVersion !== entry.version) {
+        void this.agentKnobsCache.remove(entry.id);
+        continue;
+      }
+      const knobs = { modes: entry.knobs.modes, options: entry.knobs.options };
+      this.observedKnobs.set(entry.id, knobs);
+      this.settings.emit({ kind: "agentKnobsObserved", agentId: entry.id, knobs: { ...knobs } });
     }
   }
 
@@ -699,56 +799,78 @@ export class Orchestrator {
     this.settings.emit({ kind: "auditTailChanged", entries });
   }
 
-  private async loadWorkspaceConfigAgents(): Promise<void> {
-    const result = await this.configFile.read();
-    if (!result.ok) return;
-    for (const agent of result.config.agents) {
-      const spec: LaunchSpec = {
+  /** Loads globally-stored agent configs — replaces the old workspace-file
+   * bootstrap (and the one-time-adoption gate that existed only because
+   * that file could be repo-authored by someone else; a global,
+   * developer-owned record needs no such gate). */
+  private loadAgentConfigs(): void {
+    for (const agent of this.agentConfigs.list()) {
+      // env deliberately empty here: values live in SecretStorage and are
+      // joined onto the spec at spawn time (connectAgent), read fresh per
+      // connect — never cached in this map.
+      this.configuredAgentSpecs.set(agent.id, {
         agentId: agent.id,
         name: agent.name,
         command: agent.command,
         args: agent.args,
-        env: agent.env,
+        env: {},
         cwd: this.workspaceRoot ?? process.cwd(),
         processPolicy: agent.processPolicy,
         defaults: agent.defaults,
-      };
-      this.workspaceAgentSpecs.set(agent.id, spec);
-      if (this.adoption.isAdopted(agent.id)) {
-        this.agentNames.set(agent.id, agent.name);
-        continue; // already adopted in an earlier session — connect stays a user action, not automatic
-      }
-      this.settings.emit({
-        kind: "workspaceAgentPending",
-        agent: { agentId: agent.id, name: agent.name, command: launchCommandText(agent) },
       });
+      this.agentNames.set(agent.id, agent.name);
     }
-    await this.refreshAgentConfigs();
+    void this.refreshAgentConfigs();
   }
 
   /** Settings § Agents (features.md: "add, edit, and remove agents,
-   * including launch configuration per agent") — persists to the same
-   * workspace config file repo-defined agents already use. Adoption is
-   * marked immediately: the user just typed this command themselves, right
-   * now, which is exactly the trust the one-time adoption gate exists to
-   * establish for a config file someone else might have authored. */
-  private async addOrUpdateAgentConfig(config: AgentConfigView): Promise<void> {
-    await this.configFile.upsertAgent({
+   * including launch configuration per agent") — persists globally. The
+   * Edit form sends the launch line raw (render-only-webview: parsing is
+   * logic), so an empty args array means "parse `command` here" — the same
+   * quote-aware house parser custom Add uses, never a naive split.
+   * `env` is the form's submitted set: the full desired key list, an empty
+   * value meaning "keep the stored value" (the form never sees values, so
+   * that's its only way to say unchanged); keys the user deleted are gone
+   * from the submitted set and thus removed. Values go to SecretStorage
+   * only (stores/agent-env.ts). */
+  private async addOrUpdateAgentConfig(
+    config: AgentConfigView,
+    env: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    let { command, args } = { command: config.command, args: [...config.args] };
+    if (args.length === 0) {
+      const parsed = parseCommandLine(command);
+      if (parsed === null) {
+        this.log.error(`agent config ${config.id}: command line has an unterminated quote`);
+        return;
+      }
+      ({ command } = parsed);
+      args = parsed.args;
+    }
+    const stored = await this.agentEnv.get(config.id);
+    const merged: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env)) {
+      if (value !== "") merged[key] = value;
+      else if (key in stored) merged[key] = stored[key]!;
+      // a blank value for a key that has no stored value: nothing to keep
+    }
+    await this.agentEnv.set(config.id, merged);
+    await this.agentConfigs.upsert({
       id: config.id,
       name: config.name,
-      command: config.command,
-      args: [...config.args],
-      env: { ...config.env },
+      command,
+      args,
       processPolicy: config.processPolicy,
       defaults: { ...config.defaults },
+      registrySource: config.registrySource,
+      lastSeenVersion: config.lastSeenVersion,
     });
-    await this.adoption.adopt(config.id);
-    this.workspaceAgentSpecs.set(config.id, {
+    this.configuredAgentSpecs.set(config.id, {
       agentId: config.id,
       name: config.name,
-      command: config.command,
-      args: [...config.args],
-      env: { ...config.env },
+      command,
+      args,
+      env: {},
       cwd: this.workspaceRoot ?? process.cwd(),
       processPolicy: config.processPolicy,
       defaults: config.defaults,
@@ -757,29 +879,81 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
   }
 
+  /** Remove is stop + forget (features.md: "add, edit, and remove agents") —
+   * the process goes down (isolated instances included), its live sessions
+   * are invalidated, the agent leaves both channel states via the
+   * `agentRemoved` event, and its per-agent facts (used capabilities,
+   * observed knobs) are purged so a future re-add starts honest. The
+   * session index is deliberately left alone: it's patchbay's own record
+   * of sessions that happened (decisions are recorded, not deleted). */
   private async removeAgentConfig(agentId: string): Promise<void> {
-    await this.configFile.removeAgent(agentId);
-    this.workspaceAgentSpecs.delete(agentId);
+    await this.pool.stopAllFor(agentId);
+    this.sessionManager.invalidateAgent(agentId);
+    await this.agentConfigs.remove(agentId);
+    await this.usedCapabilities.remove(agentId);
+    await this.agentKnobsCache.remove(agentId);
+    await this.agentEnv.remove(agentId);
+    this.configuredAgentSpecs.delete(agentId);
+    this.agentNames.delete(agentId);
+    this.observedKnobs.delete(agentId);
+    const removed = { kind: "agentRemoved", agentId } as const;
+    this.agentView.emit(removed);
+    this.settings.emit(removed);
     await this.refreshAgentConfigs();
   }
 
   private async refreshAgentConfigs(): Promise<void> {
-    const result = await this.configFile.read();
-    const configs: AgentConfigView[] = result.ok
-      ? result.config.agents.map((a) => ({
-          id: a.id,
-          name: a.name,
-          command: a.command,
-          args: a.args,
-          env: a.env,
-          processPolicy: a.processPolicy,
-          defaults: a.defaults,
-        }))
-      : [];
+    // Key names only — env values never leave SecretStorage for a webview
+    // state snapshot (no-secret-exposure.md); the form edits them write-only.
+    const configs: AgentConfigView[] = await Promise.all(
+      this.agentConfigs.list().map(async (c) => ({
+        id: c.id,
+        name: c.name,
+        command: c.command,
+        args: c.args,
+        envKeys: Object.keys(await this.agentEnv.get(c.id)),
+        processPolicy: c.processPolicy,
+        defaults: c.defaults,
+        registrySource: c.registrySource,
+        lastSeenVersion: c.lastSeenVersion,
+      })),
+    );
     this.settings.emit({ kind: "agentConfigsChanged", configs });
   }
 
-  /** Connect an agent from config or roster; upserts it into both channel states. */
+  /** `agentInfo.version` is reality (whoami.md: "reality is the source of
+   * truth") — recorded on the config so the roster's live registry version
+   * can be compared against what actually answered, driving "update
+   * available" without ever trusting the pinned ask over the wire's fact. */
+  private async recordSeenVersion(agentId: string, version: string): Promise<void> {
+    const existing = this.agentConfigs.get(agentId);
+    if (existing === undefined || existing.lastSeenVersion === version) return;
+    // A new build may offer different knobs — drop the old observation and
+    // let this version's own sessions rebuild it (same honest reset the
+    // used-capability cache makes in capability-tracker.ts's onDeclared).
+    if (existing.lastSeenVersion !== null) {
+      await this.agentKnobsCache.remove(agentId);
+      this.observedKnobs.delete(agentId);
+      this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { modes: null, options: [] } });
+    }
+    await this.agentConfigs.upsert({ ...existing, lastSeenVersion: version });
+    await this.refreshAgentConfigs();
+  }
+
+  private applyRegistryData(data: AcpRegistryData): void {
+    this.roster = mergeRoster(loadOverlay(), data.agents);
+    const rosterEntries = this.roster.map(rosterEntryView);
+    this.agentView.emit({ kind: "rosterChanged", roster: rosterEntries });
+    this.settings.emit(
+      { kind: "rosterChanged", roster: rosterEntries },
+      { kind: "registryUpdated", at: data.fetchedAt },
+    );
+  }
+
+  /** Connect an agent from config or roster; upserts it into both channel
+   * states. The single env-injection point: values are read fresh from
+   * SecretStorage per connect (stores/agent-env.ts) — the spec maps and the
+   * config store never carry them. */
   async connectAgent(spec: LaunchSpec): Promise<void> {
     this.agentNames.set(spec.agentId, spec.name);
     const upsert = {
@@ -789,23 +963,102 @@ export class Orchestrator {
         name: spec.name,
         status: "reconnecting",
         command: [spec.command, ...spec.args].join(" "),
+        needsAuth: false,
       },
     } as const;
     this.agentView.emit(upsert);
     this.settings.emit(upsert);
-    await this.pool.connect(spec);
+    const env = await this.agentEnv.get(spec.agentId);
+    await this.pool.connect({ ...spec, env: { ...spec.env, ...env } });
     void this.refreshAgentAssets(spec.agentId);
   }
 
-  launchSpecForRosterAgent(agent: RosterAgent): LaunchSpec {
-    return {
-      agentId: agent.id,
-      name: agent.name,
-      command: agent.command,
-      args: agent.args,
-      env: agent.env,
-      cwd: this.workspaceRoot ?? process.cwd(),
-    };
+  /** Resolves a roster entry's declared distribution into a spawnable spec.
+   * npx/uvx are ecosystem-managed installs — spawning them *is* installing,
+   * nothing extra to do. A `binary` distribution not yet cached for this
+   * exact version gates on an explicit download confirmation (no checksum
+   * exists in the registry spec, binary-installer.ts) — `confirmed` skips
+   * that gate once the user has already said yes. Returns null when the
+   * entry can't be resolved right now (unavailable) or a confirmation is
+   * now pending. */
+  private async resolveRosterLaunch(
+    entry: RosterAgent,
+    verifyAfterConnect: boolean,
+    confirmed = false,
+  ): Promise<{ spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null> {
+    const launch = entry.launch;
+    const cwd = this.workspaceRoot ?? process.cwd();
+    switch (launch.kind) {
+      case "unavailable":
+        return null; // reason already visible on the roster entry
+      case "local":
+        return {
+          spec: { agentId: entry.id, name: entry.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
+          registrySource: null,
+        };
+      case "npx":
+      case "uvx":
+        return {
+          spec: { agentId: entry.id, name: entry.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
+          registrySource: { registryId: launch.registryId, distributionKind: launch.kind, pinnedVersion: launch.version },
+        };
+      case "binary": {
+        const installed =
+          confirmed || (await isBinaryInstalled(this.binaryCacheDir, entry.id, launch.version, launch.cmd));
+        if (!installed) {
+          this.pendingBinaryConfirms.set(entry.id, { entry, verifyAfterConnect });
+          this.settings.emit({
+            kind: "binaryInstallPending",
+            install: { agentId: entry.id, name: entry.name, archiveUrl: launch.archiveUrl, cmd: launch.cmd },
+          });
+          return null;
+        }
+        const binary = await installBinary(this.binaryCacheDir, {
+          agentId: entry.id,
+          version: launch.version,
+          archiveUrl: launch.archiveUrl,
+          cmd: launch.cmd,
+          args: launch.args,
+          env: launch.env,
+        });
+        return {
+          spec: { agentId: entry.id, name: entry.name, command: binary.command, args: [...binary.args], env: { ...binary.env }, cwd: binary.cwd },
+          registrySource: { registryId: launch.registryId, distributionKind: "binary", pinnedVersion: launch.version },
+        };
+      }
+    }
+  }
+
+  /** Persists the launch as a global agent config — "add" and "connect" are
+   * one action now (features.md: adding an agent means it's activated —
+   * checked spawnable, ready to start conversations on), not two decoupled
+   * steps a user could leave half-done. Preserves any hand-edited
+   * process-policy/defaults an existing config already carries. */
+  private async persistAgentConfig(
+    spec: LaunchSpec,
+    registrySource: AgentConfig["registrySource"],
+  ): Promise<void> {
+    const existing = this.agentConfigs.get(spec.agentId);
+    // Registry-declared launch env (part of the distribution recipe) goes to
+    // the same SecretStorage record user-entered env lives in — one source
+    // at spawn time. Registry values win for their own keys; the user's
+    // other keys survive a re-add/Upgrade.
+    if (Object.keys(spec.env).length > 0) {
+      const stored = await this.agentEnv.get(spec.agentId);
+      await this.agentEnv.set(spec.agentId, { ...stored, ...spec.env });
+    }
+    await this.agentConfigs.upsert({
+      id: spec.agentId,
+      name: spec.name,
+      command: spec.command,
+      args: [...spec.args],
+      processPolicy: existing?.processPolicy ?? spec.processPolicy ?? "auto",
+      defaults: existing?.defaults ?? spec.defaults ?? {},
+      registrySource: registrySource ?? existing?.registrySource ?? null,
+      lastSeenVersion: existing?.lastSeenVersion ?? null,
+    });
+    this.configuredAgentSpecs.set(spec.agentId, { ...spec, env: {} });
+    await this.refreshAgentConfigs();
   }
 
   private handleAction(action: Action): void {
@@ -814,11 +1067,11 @@ export class Orchestrator {
         void vscode.commands.executeCommand("acpPatchbay.openSettings");
         break;
       case "connectAgent":
-        void this.connectFromSource(action.source);
+        void this.connectFromSource(action.source, action.verifyAfterConnect ?? false);
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.pool.restart(action.agentId).catch(() => {});
+        void this.pool.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
         break;
       case "stopAgent":
         void this.pool.stop(action.agentId);
@@ -846,11 +1099,13 @@ export class Orchestrator {
         break;
       case "branchSession": {
         const transcript = this.agentView.current.transcripts[action.sessionId] ?? [];
-        void this.sessionManager.branch(action.sessionId, transcript).catch(() => {});
+        void this.sessionManager
+          .branch(action.sessionId, transcript)
+          .catch(this.logCatch(`branch ${action.sessionId}`));
         break;
       }
       case "reloadSession":
-        void this.sessionManager.reload(action.sessionId).catch(() => {});
+        void this.sessionManager.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
         break;
       case "setSessionMode":
         void this.sessionManager.setMode(action.sessionId, action.modeId);
@@ -860,13 +1115,15 @@ export class Orchestrator {
         break;
       case "sendPrompt":
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
-        void this.sessionManager.sendPrompt(action.sessionId, action.text).catch(() => {});
+        void this.sessionManager
+          .sendPrompt(action.sessionId, action.text)
+          .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
         break;
-      case "runDiagnostics":
-        void this.capabilityVerifier.runDiagnostics(action.agentId);
+      case "verifyAgent":
+        void this.runVerify(action.agentId);
         break;
       case "resolvePermission":
         this.broker.resolve(action.requestId, action.optionId);
@@ -874,10 +1131,32 @@ export class Orchestrator {
       case "resolveDiff":
         this.broker.resolve(action.requestId, action.accept ? "accept" : "reject");
         break;
-      case "adoptWorkspaceAgent":
-        void this.adoptWorkspaceAgent(action.agentId);
+      case "authenticateAgent":
+        // failure leaves needsAuth set — the honest signal, no separate reply channel
+        void this.capabilityTracker
+          .authenticate(action.agentId, action.methodId)
+          .catch(this.logCatch(`authenticate ${action.agentId}`));
+        break;
+      case "confirmBinaryInstall":
+        void this.confirmBinaryInstall(action.agentId);
+        break;
+      case "cancelBinaryInstall":
+        this.cancelBinaryInstall(action.agentId);
+        break;
+      case "upgradeAgent":
+        void this.upgradeAgent(action.agentId);
+        break;
+      case "refreshRoster":
+        void this.acpRegistry.refresh();
         break;
       case "addCommandRule": {
+        if (action.layer === "machine") {
+          const machine = this.machinePermissionRules.get().commandRules;
+          void this.machinePermissionRules
+            .set([...machine, action.rule])
+            .then(() => this.publishRules());
+          break;
+        }
         const rules = this.permissionRules.get();
         void this.permissionRules
           .set({ ...rules, commandRules: [...rules.commandRules, action.rule] })
@@ -885,6 +1164,13 @@ export class Orchestrator {
         break;
       }
       case "removeCommandRule": {
+        if (action.layer === "machine") {
+          const machine = this.machinePermissionRules.get().commandRules;
+          void this.machinePermissionRules
+            .set(machine.filter((r) => r.pattern !== action.pattern))
+            .then(() => this.publishRules());
+          break;
+        }
         const rules = this.permissionRules.get();
         void this.permissionRules
           .set({
@@ -957,10 +1243,19 @@ export class Orchestrator {
         void this.integrations.connectRegistryOAuth(action.registryId, action.url);
         break;
       case "addCustomIntegration":
-        void this.integrations.addCustom(action.id, action.name, action.source, action.routing);
+        void this.integrations.addCustom(action.name, action.source, action.routing);
         break;
-      case "disconnectIntegration":
-        void this.integrations.disconnect(action.integrationId);
+      case "importIntegrationsJson":
+        void this.integrations.importJson(action.json);
+        break;
+      case "updateIntegrationJson":
+        void this.integrations.updateFromJson(action.integrationId, action.json);
+        break;
+      case "cancelIntegrationConnect":
+        this.integrations.cancelConnect(action.integrationId);
+        break;
+      case "setIntegrationActive":
+        void this.integrations.setActive(action.integrationId, action.active);
         break;
       case "removeIntegration":
         void this.integrations.remove(action.integrationId);
@@ -978,7 +1273,7 @@ export class Orchestrator {
         this.openAssetFile(action.path);
         break;
       case "addOrUpdateAgentConfig":
-        void this.addOrUpdateAgentConfig(action.config);
+        void this.addOrUpdateAgentConfig(action.config, action.env);
         break;
       case "removeAgentConfig":
         void this.removeAgentConfig(action.agentId);
@@ -1052,20 +1347,20 @@ export class Orchestrator {
     });
   }
 
-  /** "Explicit share command that copies config and reattaches credentials
-   * only on confirm" (plan.md P9): the sanitized config entry (no
-   * credential — none exists here by construction, see config-file.ts) goes
-   * to the clipboard for the user to paste into another workspace's config
-   * file. Reattaching a credential is never automatic: a pasted entry's
-   * `id` has no token in that workspace's own SecretStorage until its user
-   * explicitly connects there — workspace-scoped storage makes "following"
-   * impossible without extra machinery (features.md's incident-driven rule). */
+  /** "Explicit share command that copies config" (plan.md P9): the
+   * sanitized config entry (no credential — none exists here by
+   * construction, see integration-configs.ts) goes to the clipboard.
+   * Reattaching a credential is never automatic: a pasted entry's `id` has
+   * no token in SecretStorage until its user explicitly connects —
+   * SecretStorage itself is global, keyed only by integration id (never
+   * workspace-namespaced), so this has always been the real trust boundary. */
   private async shareIntegrationConfig(integrationId: string): Promise<void> {
-    const result = await this.configFile.read();
-    if (!result.ok) return;
-    const integration = result.config.integrations.find((i) => i.id === integrationId);
+    const integration = this.integrationConfigs.get(integrationId);
     if (integration === undefined) return;
     await vscode.env.clipboard.writeText(JSON.stringify(integration, null, 2));
+    void vscode.window.showInformationMessage(
+      `Copied "${integration.name}" config to the clipboard — no credential included.`,
+    );
   }
 
   private publishRules(): void {
@@ -1073,30 +1368,54 @@ export class Orchestrator {
     this.settings.emit({
       kind: "permissionRulesChanged",
       commandRules: rules.commandRules,
+      machineCommandRules: this.machinePermissionRules.get().commandRules,
       fileWriteScope: rules.fileWriteScope,
     });
   }
 
-  private async adoptWorkspaceAgent(agentId: string): Promise<void> {
-    if (!vscode.workspace.isTrusted) return; // adoption requires workspace trust, no exceptions
-    const spec = this.workspaceAgentSpecs.get(agentId);
-    if (spec === undefined) return;
-    await this.adoption.adopt(agentId);
-    this.settings.emit({ kind: "workspaceAgentAdopted", agentId });
-    try {
-      await this.connectAgent(spec);
-    } catch {
-      // pool already emitted the crashed status with detail
-    }
+  private async confirmBinaryInstall(agentId: string): Promise<void> {
+    const pending = this.pendingBinaryConfirms.get(agentId);
+    this.pendingBinaryConfirms.delete(agentId);
+    this.settings.emit({ kind: "binaryInstallResolved", agentId });
+    if (pending === undefined) return;
+    await this.connectFromSource({ rosterId: pending.entry.id }, pending.verifyAfterConnect, true);
   }
 
-  private async connectFromSource(source: ConnectAgentSource): Promise<void> {
+  private cancelBinaryInstall(agentId: string): void {
+    this.pendingBinaryConfirms.delete(agentId);
+    this.settings.emit({ kind: "binaryInstallResolved", agentId });
+  }
+
+  /** Re-resolves the roster's current (possibly newer) pinned version and
+   * reconnects — the same path a first Add takes, so the version-keyed
+   * used-capability cache and the binary-install confirmation both apply
+   * exactly as they would for a brand-new agent. Never silent: a
+   * still-uncached binary version re-gates on the download confirmation. */
+  private async upgradeAgent(agentId: string): Promise<void> {
+    const config = this.agentConfigs.get(agentId);
+    if (config === undefined || config.registrySource === null) return;
+    if (this.pool.get(agentId)?.status === "running") await this.pool.stop(agentId);
+    await this.connectFromSource({ rosterId: agentId });
+  }
+
+  private async connectFromSource(
+    source: ConnectAgentSource,
+    verifyAfterConnect = false,
+    confirmed = false,
+  ): Promise<void> {
     let spec: LaunchSpec | null = null;
+    let registrySource: AgentConfig["registrySource"] = null;
+    let shouldPersist = true;
     if ("rosterId" in source) {
       const entry = this.roster.find((a) => a.id === source.rosterId);
-      if (entry) spec = this.launchSpecForRosterAgent(entry);
+      if (entry === undefined) return;
+      const resolved = await this.resolveRosterLaunch(entry, verifyAfterConnect, confirmed);
+      if (resolved === null) return; // unavailable, or a binary install confirmation is now pending
+      spec = resolved.spec;
+      registrySource = resolved.registrySource;
     } else if ("configuredId" in source) {
-      spec = this.workspaceAgentSpecs.get(source.configuredId) ?? null;
+      spec = this.configuredAgentSpecs.get(source.configuredId) ?? null;
+      shouldPersist = false; // already persisted — this is a reconnect of an existing config
     } else {
       const parsed = parseCommandLine(source.command);
       if (parsed) {
@@ -1113,23 +1432,44 @@ export class Orchestrator {
     }
     if (spec === null) return;
     if (this.pool.get(spec.agentId)?.status === "running") return;
+    if (shouldPersist) await this.persistAgentConfig(spec, registrySource);
     try {
       await this.connectAgent(spec);
+      if (verifyAfterConnect) void this.runVerify(spec.agentId);
     } catch {
       // pool already emitted the crashed status with detail
+    }
+  }
+
+  /** Formats a swallowed action failure for the Output channel — these
+   * actions have no reply channel by design (state itself is the only
+   * signal back to the UI), but silently dropping the error entirely left
+   * nothing to debug from. */
+  private logCatch(context: string): (err: unknown) => void {
+    return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  /** Brackets a Verify round-trip (manual click or "Verify after add") with
+   * the settings-only in-flight signal — the card's Verify control dims and
+   * reads "Verifying…" for exactly the span of the free protocol check. */
+  private async runVerify(agentId: string): Promise<void> {
+    this.settings.emit({ kind: "agentVerifyStarted", agentId });
+    this.log.debug(`${agentId}: verify started`);
+    try {
+      await this.capabilityTracker.verify(agentId);
+    } finally {
+      this.settings.emit({ kind: "agentVerifyFinished", agentId });
+      this.log.debug(`${agentId}: verify finished`);
     }
   }
 
   dispose(): void {
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
+    this.acpRegistry.dispose();
     void this.pool.disposeAll();
     this.agentView.flushNow();
     this.settings.flushNow();
     this.statusBarItem.dispose();
   }
-}
-
-function launchCommandText(agent: AgentConfig): string {
-  return [agent.command, ...agent.args].join(" ");
 }

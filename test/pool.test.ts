@@ -192,6 +192,20 @@ describe("AgentPool", () => {
     await pool.stop("multi");
   });
 
+  it("stopAllFor stops the primary and its isolated instances — Remove's semantics", async () => {
+    const { pool } = makePool();
+    await pool.connect(spec({}, "gone"));
+    await pool.connect(spec({}, "gone"), { poolKey: "gone::iso::1", reportAs: "gone", isolated: true });
+    await pool.connect(spec({}, "stays"));
+
+    await pool.stopAllFor("gone");
+
+    expect(pool.get("gone")!.status).toBe("stopped");
+    expect(pool.get("gone::iso::1")!.status).toBe("stopped");
+    expect(pool.get("stays")!.status).toBe("running");
+    await pool.stop("stays");
+  });
+
   it("cancel mid-turn yields stopReason cancelled", async () => {
     const { pool } = makePool();
     await pool.connect(

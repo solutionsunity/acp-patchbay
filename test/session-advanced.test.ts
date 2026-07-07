@@ -5,11 +5,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CapabilityVerifier } from "../src/orchestrator/capability-verifier";
+import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
+import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
   reduceAgentView,
@@ -64,7 +65,7 @@ function harness(): {
 } {
   const events: AgentViewEvent[] = [];
   let sessionManager!: SessionManager;
-  let capabilityVerifier!: CapabilityVerifier;
+  let capabilityTracker!: CapabilityTracker;
   let isolationCounter = 0;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
 
@@ -75,13 +76,16 @@ function harness(): {
     onIsolatedStatusChanged: (poolKey, _agentId, status) => {
       if (status === "crashed" || status === "reconnecting") sessionManager.invalidatePoolKey(poolKey);
     },
-    onDeclaredCaptured: (agentId, declared) => capabilityVerifier.onDeclared(agentId, declared),
+    onDeclaredCaptured: (agentId, declared, raw) =>
+      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onConcurrentSessionsVerified: (agentId) =>
-      capabilityVerifier.markVerified(agentId, "concurrentSessions"),
+    onCapabilityUsed: (agentId, row) => capabilityTracker.markUsed(agentId, row),
     ...stubFsTerminalHooks(),
   });
-  capabilityVerifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
+  capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    emit: (...evs) => events.push(...evs),
+    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+  });
   const sessionIndex = new SessionIndexStore(new MemoryKV());
 
   const isolationKeys: string[] = [];
@@ -90,8 +94,8 @@ function harness(): {
     if (primary === undefined) return agentId;
     const policy = primary.spec.processPolicy ?? "auto";
     const hasExisting = primary.sessions.length > 0;
-    const verified = state().capabilities[agentId]?.concurrentSessions?.verified ?? false;
-    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !verified);
+    const used = state().capabilities[agentId]?.concurrentSessions?.used ?? false;
+    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !used);
     if (!isolate) return agentId;
     const poolKey = `${agentId}::iso::${++isolationCounter}`;
     isolationKeys.push(poolKey);
@@ -105,7 +109,7 @@ function harness(): {
     {
       emit: (...evs) => events.push(...evs),
       resolveProcessFor,
-      isForkVerified: (agentId) => state().capabilities[agentId]?.["session.fork"]?.verified ?? false,
+      isForkUsed: (agentId) => state().capabilities[agentId]?.["session.fork"]?.used ?? false,
     },
     () => cwd,
   );
@@ -122,10 +126,10 @@ function pidOf(sessionId: string): string {
 }
 
 describe("Session graph — branching (P8)", () => {
-  it("native session/fork produces a branch node once the capability is verified", async () => {
+  it("native session/fork produces a branch node once the capability is used", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "forker"));
-    await waitFor(() => (h.state().capabilities.forker!["session.fork"].verified ? true : undefined));
+    await waitFor(() => (h.state().capabilities.forker!["session.fork"].used ? true : undefined));
 
     const parentId = await h.sessionManager.createSession("forker", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(parentId, "hello");
@@ -163,13 +167,13 @@ describe("Session graph — branching (P8)", () => {
     await h.pool.stop("noforker");
   });
 
-  it("a lying agent (declares fork, breaks it) never verifies, so branching stays emulated — declared-but-broken must not be trusted", async () => {
+  it("a lying agent (declares fork, breaks it) never gets used, so branching stays emulated — declared-but-broken must not be trusted", async () => {
     const h = harness();
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "liar"),
     );
     await new Promise((r) => setTimeout(r, 300)); // let the automatic round-trip fail
-    expect(h.state().capabilities.liar!["session.fork"].verified).toBe(false);
+    expect(h.state().capabilities.liar!["session.fork"].used).toBe(false);
 
     const parentId = await h.sessionManager.createSession("liar", "Fake Agent", cwd);
     const branchId = await h.sessionManager.branch(parentId, h.state().transcripts[parentId]!);
@@ -198,7 +202,7 @@ describe("Process policy (P8)", () => {
   it("isolated pins a fork to its parent's process, not a third one", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "isofork", "isolated"));
-    await waitFor(() => (h.state().capabilities.isofork!["session.fork"].verified ? true : undefined));
+    await waitFor(() => (h.state().capabilities.isofork!["session.fork"].used ? true : undefined));
 
     const parentId = await h.sessionManager.createSession("isofork", "Fake Agent", cwd);
     const branchId = await h.sessionManager.branch(parentId, []);
@@ -222,12 +226,12 @@ describe("Process policy (P8)", () => {
     await h.pool.stop("shared");
   });
 
-  it("auto isolates a second top-level session until something verifies concurrent-session behavior", async () => {
+  it("auto isolates a second top-level session until something marks concurrent-session behavior used", async () => {
     const h = harness();
-    await h.pool.connect(spec({}, "auto")); // declares nothing — no automatic verification possible
+    await h.pool.connect(spec({}, "auto")); // declares nothing — no automatic check possible
     const a = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
     const b = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
-    // unverified concurrent-session behavior: the second top-level session
+    // not-yet-used concurrent-session behavior: the second top-level session
     // isolates rather than risk sharing an unproven connection
     expect(pidOf(a)).not.toBe(pidOf(b));
 
@@ -237,11 +241,11 @@ describe("Process policy (P8)", () => {
 
   it("auto shares once the automatic fork round-trip also proves concurrent-session behavior", async () => {
     const h = harness();
-    // P5's automatic, ephemeral fork-verification round-trip forks a
-    // temp-dir session on this very connection — structurally the same
-    // proof concurrentSessions itself looks for, so both verify together.
+    // P5's automatic, ephemeral fork-check round-trip forks a temp-dir
+    // session on this very connection — structurally the same proof
+    // concurrentSessions itself looks for, so both get marked used together.
     await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "auto"));
-    await waitFor(() => (h.state().capabilities.auto!.concurrentSessions.verified ? true : undefined));
+    await waitFor(() => (h.state().capabilities.auto!.concurrentSessions.used ? true : undefined));
 
     const a = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
     const b = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
@@ -353,23 +357,27 @@ describe("Session model/mode/effort knobs (P8)", () => {
     await h.pool.stop("cfg");
   });
 
-  it("per-agent defaults are applied post-create by issuing the matching set requests", async () => {
+  it("per-agent defaults are applied post-create by option id — no category needed (ACP: category is UX-only)", async () => {
     const events: AgentViewEvent[] = [];
     let sessionManager!: SessionManager;
-    let capabilityVerifier!: CapabilityVerifier;
+    let capabilityTracker!: CapabilityTracker;
     const pool = new AgentPool({
       onStatusChanged: () => {},
-      onDeclaredCaptured: (agentId, declared) => capabilityVerifier.onDeclared(agentId, declared),
+      onDeclaredCaptured: (agentId, declared, raw) =>
+      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
       onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
       ...stubFsTerminalHooks(),
     });
-    capabilityVerifier = new CapabilityVerifier(pool, { emit: (...evs) => events.push(...evs) });
+    capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    emit: (...evs) => events.push(...evs),
+    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+  });
     sessionManager = new SessionManager(
       pool,
       new SessionIndexStore(new MemoryKV()),
       {
         emit: (...evs) => events.push(...evs),
-        defaultsFor: () => ({ mode: "code", model: "opus" }),
+        defaultsFor: () => ({ mode: "code", options: { "model-opt": "opus" } }),
       },
       () => cwd,
     );
@@ -377,11 +385,13 @@ describe("Session model/mode/effort knobs (P8)", () => {
       spec(
         {
           modes: { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] },
+          // no `category` on purpose — the ACP schema makes it UX-only
+          // ("MUST NOT be required for correctness"), so defaults must
+          // apply by option id alone.
           configOptions: [
             {
               id: "model-opt",
               name: "Model",
-              category: "model",
               type: "select",
               currentValue: "sonnet",
               options: [{ value: "sonnet", name: "Sonnet" }, { value: "opus", name: "Opus" }],

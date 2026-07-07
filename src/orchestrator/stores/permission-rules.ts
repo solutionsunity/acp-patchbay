@@ -1,7 +1,12 @@
-// Permission rules: command allowlists + file-write scope. Placement:
-// workspaceState + built-in defaults — per user, per workspace, never
-// repo-shipped; a cloned repo must not arrive pre-authorized
-// (architecture.md § State, § Permission broker).
+// Permission rules, two layers. Workspace layer (this file's original
+// scope): command rules + file-write scope in workspaceState — per user,
+// per workspace, never repo-shipped; a cloned repo must not arrive
+// pre-authorized (architecture.md § State, § Permission broker). Machine
+// layer (MachineRulesStore): command rules only, in globalState —
+// developer-owned defaults for every workspace ("allow `npm test`
+// everywhere"). Evaluation order is workspace first, then machine, then
+// ask (broker.ts): a workspace can tighten or loosen its own floor, and
+// the repo still can't grant anything — the machine layer never rides it.
 import type { KV } from "./kv";
 
 export type RuleVerdict = "allow" | "ask" | "deny";
@@ -40,5 +45,23 @@ export class PermissionRulesStore {
 
   async set(rules: PermissionRules): Promise<void> {
     await this.kv.update(KEY, rules);
+  }
+}
+
+const MACHINE_KEY = "acpPatchbay.machineCommandRules";
+
+/** Machine-layer command rules — globalState (developer-owned, every
+ * workspace on this machine), consulted only after the workspace layer
+ * stays silent. Command rules only: file-write scope stays workspace-level
+ * by nature (it's defined relative to the current workspace root). */
+export class MachineRulesStore {
+  constructor(private readonly kv: KV) {}
+
+  get(): { commandRules: CommandRule[] } {
+    return { commandRules: this.kv.get<CommandRule[]>(MACHINE_KEY) ?? [] };
+  }
+
+  async set(commandRules: CommandRule[]): Promise<void> {
+    await this.kv.update(MACHINE_KEY, commandRules);
   }
 }

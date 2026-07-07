@@ -9,20 +9,41 @@
       "note": "GitHub's official remote MCP server. Uses a Personal Access Token — its OAuth is not open to third-party clients (no dynamic client registration).",
       "auth": {
         "header": {
-          "hint": "Personal Access Token from github.com/settings/tokens (repo + read:org for full tool coverage)"
+          "hint": "Personal Access Token from github.com/settings/tokens (repo + read:org for full tool coverage)",
+          "keyUrl": "https://github.com/settings/tokens"
         },
         "oauth": false
+      },
+      "local": {
+        "command": "docker",
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "ghcr.io/github/github-mcp-server"
+        ],
+        "envKeys": [
+          "GITHUB_PERSONAL_ACCESS_TOKEN"
+        ],
+        "note": "official github-mcp-server via Docker; a native binary also exists — see Docs"
       }
     },
     {
       "id": "figma",
       "name": "Figma",
       "url": "https://mcp.figma.com/mcp",
+      "userUrl": false,
       "docsUrl": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/",
-      "note": "Not connectable yet: Figma's remote server has no API-key mode and its OAuth client registration is allowlisted to approved clients. Alternative: Figma Desktop's local MCP server (Dev Mode) — add it as a custom stdio integration.",
+      "note": "Remote is gated on Figma's MCP client catalog (VS Code, Cursor, Claude Code are listed; new clients join a waitlist — patchbay's own OAuth client isn't listed yet, and running inside VS Code doesn't inherit VS Code's listing). The desktop app's local Dev Mode server is connectable today — see the local option.",
       "auth": {
         "header": null,
         "oauth": false
+      },
+      "local": {
+        "url": "http://127.0.0.1:3845/mcp",
+        "note": "Figma desktop app must be running with the local MCP server enabled (Preferences → Enable local MCP Server, or Dev Mode's inspect panel)"
       }
     },
     {
@@ -35,7 +56,8 @@
         "header": {
           "headerName": "X-Goog-Api-Key",
           "valuePrefix": "",
-          "hint": "API key from stitch.withgoogle.com settings"
+          "hint": "API key from stitch.withgoogle.com settings",
+          "keyUrl": "https://stitch.withgoogle.com"
         },
         "oauth": false
       }
@@ -48,9 +70,22 @@
       "note": "Connect with OAuth (recommended) or paste a restricted API key.",
       "auth": {
         "header": {
-          "hint": "Restricted API key from dashboard.stripe.com/apikeys"
+          "hint": "Restricted API key from dashboard.stripe.com/apikeys",
+          "keyUrl": "https://dashboard.stripe.com/apikeys"
         },
         "oauth": true
+      },
+      "local": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@stripe/mcp",
+          "--tools=all"
+        ],
+        "envKeys": [
+          "STRIPE_SECRET_KEY"
+        ],
+        "note": "official @stripe/mcp; restrict tools and use a Restricted API Key"
       }
     },
     {
@@ -61,9 +96,21 @@
       "note": "Connect with OAuth, or paste a personal token — Sentry's own recommended fallback for remote-IDE setups.",
       "auth": {
         "header": {
-          "hint": "User Auth Token from sentry.io settings (org:read, project:read)"
+          "hint": "User Auth Token from sentry.io settings (org:read, project:read)",
+          "keyUrl": "https://sentry.io/settings/account/api/auth-tokens/"
         },
         "oauth": true
+      },
+      "local": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@sentry/mcp-server"
+        ],
+        "envKeys": [
+          "SENTRY_ACCESS_TOKEN"
+        ],
+        "note": "official @sentry/mcp-server; auth token from your Sentry settings"
       }
     },
     {
@@ -74,7 +121,8 @@
       "note": "US endpoint. EU accounts: use https://mcp.eu.postman.com as a custom integration (key-only there).",
       "auth": {
         "header": {
-          "hint": "API key from postman.com account settings"
+          "hint": "API key from postman.com account settings",
+          "keyUrl": "https://go.postman.co/settings/me/api-keys"
         },
         "oauth": true
       }
@@ -88,9 +136,21 @@
       "note": "Endpoint is per-project — paste your project's MCP URL. OAuth works when the project's OAuth server has dynamic client registration enabled.",
       "auth": {
         "header": {
-          "hint": "Project API key from your Supabase dashboard"
+          "hint": "Project API key from your Supabase dashboard",
+          "keyUrl": "https://supabase.com/dashboard/account/tokens"
         },
         "oauth": true
+      },
+      "local": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@supabase/mcp-server-supabase@latest"
+        ],
+        "envKeys": [
+          "SUPABASE_ACCESS_TOKEN"
+        ],
+        "note": "official @supabase/mcp-server-supabase; add --project-ref=<ref> to scope it"
       }
     },
     {
@@ -102,9 +162,19 @@
       "note": "Semantic codebase retrieval. Endpoint and credentials come from app.augmentcode.com/mcp/configuration; remote indexing additionally needs Augment's GitHub App on the repo.",
       "auth": {
         "header": {
-          "hint": "API key from app.augmentcode.com/mcp/configuration"
+          "hint": "API key from app.augmentcode.com/mcp/configuration",
+          "keyUrl": "https://app.augmentcode.com/mcp/configuration"
         },
         "oauth": true
+      },
+      "local": {
+        "command": "auggie",
+        "args": [
+          "--mcp",
+          "--mcp-auto-workspace"
+        ],
+        "envKeys": [],
+        "note": "Auggie CLI (npm i -g @augmentcode/auggie), authenticated via `auggie login` first"
       }
     }
   ]

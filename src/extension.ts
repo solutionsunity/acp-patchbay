@@ -11,7 +11,12 @@ export function activate(context: vscode.ExtensionContext): {
   /** Test surface, not API — no stability promise. */
   internal: ExtensionInternal;
 } {
-  const orchestrator = new Orchestrator(context);
+  // Shows up in the Output panel's channel dropdown as "Patchbay" (matches
+  // the command-palette category) — the one place agent lifecycle, verify
+  // runs, and swallowed action failures are visible without opening devtools.
+  const log = vscode.window.createOutputChannel("Patchbay", { log: true });
+  context.subscriptions.push(log);
+  const orchestrator = new Orchestrator(context, log);
   const settingsPanelHost = new SettingsPanelHost(
     context.extensionUri,
     orchestrator.settings,

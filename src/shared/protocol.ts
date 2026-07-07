@@ -36,7 +36,11 @@ export type ConnectAgentSource =
 
 export type Action =
   | { kind: "openSettings" }
-  | { kind: "connectAgent"; source: ConnectAgentSource }
+  /** `verifyAfterConnect` (Settings § Agents' "Verify after add", default
+   * checked) auto-runs the free protocol-level Verify once the connection —
+   * and any required login — succeeds. Absent → false (existing callers:
+   * Agent View drawer, command palette, default-agent bootstrap). */
+  | { kind: "connectAgent"; source: ConnectAgentSource; verifyAfterConnect?: boolean }
   | { kind: "restartAgent"; agentId: string }
   | { kind: "stopAgent"; agentId: string }
   | { kind: "newSession"; agentId: string }
@@ -45,12 +49,23 @@ export type Action =
   | { kind: "closeSession"; sessionId: string }
   | { kind: "sendPrompt"; sessionId: string; text: string }
   | { kind: "stopTurn"; sessionId: string }
-  | { kind: "runDiagnostics"; agentId: string }
+  | { kind: "verifyAgent"; agentId: string }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
-  | { kind: "adoptWorkspaceAgent"; agentId: string }
-  | { kind: "addCommandRule"; rule: CommandRuleView }
-  | { kind: "removeCommandRule"; pattern: string }
+  | { kind: "authenticateAgent"; agentId: string; methodId: string }
+  /** A registry `binary` distribution not yet cached locally always gates
+   * on this — no checksum exists in the registry spec (binary-installer.ts),
+   * so the first download of each (agent, version) needs an explicit,
+   * visible confirmation, never a silent fetch-and-run. */
+  | { kind: "confirmBinaryInstall"; agentId: string }
+  | { kind: "cancelBinaryInstall"; agentId: string }
+  | { kind: "upgradeAgent"; agentId: string }
+  | { kind: "refreshRoster" }
+  /** `layer` picks which rule list (permission-rules.ts): "workspace"
+   * (workspaceState, this repo, evaluated first) or "machine" (globalState,
+   * every workspace, the fallback floor). */
+  | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
+  | { kind: "removeCommandRule"; pattern: string; layer: "workspace" | "machine" }
   | { kind: "setFileWriteScope"; scope: FileWriteScopeView }
   | { kind: "resolveElicitation"; requestId: string; values: Record<string, unknown> | null }
   | { kind: "addSelectionContext"; sessionId: string }
@@ -63,20 +78,39 @@ export type Action =
   | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean }
   | { kind: "connectRegistryKey"; registryId: string; token: string; url?: string }
   | { kind: "connectRegistryOAuth"; registryId: string; url?: string }
+  /** `id` is generated orchestrator-side from the name (slug, uniquified) —
+   * it's the storage/SecretStorage key, an internal concern the user never
+   * names. */
   | {
       kind: "addCustomIntegration";
-      id: string;
       name: string;
       source: IntegrationSourceView;
       routing: IntegrationRoutingView;
     }
-  | { kind: "disconnectIntegration"; integrationId: string }
+  /** The well-known `{"mcpServers": {...}}` JSON (Claude Desktop / Cursor /
+   * VS Code shape) — parsed orchestrator-side; each entry becomes a custom
+   * server, failures labeled per entry. */
+  | { kind: "importIntegrationsJson"; json: string }
+  /** Replaces one custom server's config from its edited mcpServers-fragment
+   * JSON. Env values are write-only: an empty value keeps the stored one. */
+  | { kind: "updateIntegrationJson"; integrationId: string; json: string }
+  /** Abandons an in-flight browser OAuth connect — the pending state clears
+   * and nothing is stored (the browser tab, if still open, dies unanswered). */
+  | { kind: "cancelIntegrationConnect"; integrationId: string }
+  /** Disconnect and remove are the same act — the full clear (config +
+   * credential + env). A curated entry then reappears in the catalog, ready
+   * for a fresh connect; a custom one is simply gone. The non-destructive
+   * option is the active toggle below. */
   | { kind: "removeIntegration"; integrationId: string }
+  | { kind: "setIntegrationActive"; integrationId: string; active: boolean }
   | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
   | { kind: "shareIntegrationConfig"; integrationId: string }
   | { kind: "refreshAgentAssets"; agentId: string }
   | { kind: "openAssetFile"; agentId: string; path: string }
-  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView }
+  /** `env` is the form's submitted set — full desired key list, where an
+   * empty value means "keep the stored value for this key". Values ride the
+   * action upward only; state snapshots never carry them (envKeys only). */
+  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView; env: Readonly<Record<string, string>> }
   | { kind: "removeAgentConfig"; agentId: string }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
@@ -86,17 +120,42 @@ export type Action =
    * content (ui.md § Composer: "@ → context mention picker"). */
   | { kind: "addOpenEditorContext"; sessionId: string; path: string };
 
-// ── Settings § Agents — workspace agent launch config (features.md: "add,
-// edit, and remove agents, including launch configuration per agent") ─────
+// ── Settings § Agents — agent launch config (features.md: "add, edit, and
+// remove agents, including launch configuration per agent"). Agents are
+// developer-env, not code-env: global to this machine (stores/
+// agent-configs.ts), never repo-committed. Deliberately no per-workspace
+// scoping — binding to workspaces (not repos) may return later as an
+// opt-in; today global-only keeps one honest visibility rule. ──────────────
+
+export interface AgentRegistrySourceView {
+  registryId: string;
+  distributionKind: "npx" | "uvx" | "binary";
+  pinnedVersion: string;
+}
 
 export interface AgentConfigView {
   id: string;
   name: string;
   command: string;
   args: readonly string[];
-  env: Readonly<Record<string, string>>;
+  /** Env var *names* only — the values live in SecretStorage
+   * (stores/agent-env.ts, no-secret-exposure.md) and never reach a webview
+   * state snapshot; the Settings form edits them write-only. */
+  envKeys: readonly string[];
   processPolicy: "auto" | "shared" | "isolated";
-  defaults: { model?: string; mode?: string; effort?: string };
+  /** Per-agent session defaults. `mode` targets the agent's SessionModeState;
+   * `options` is keyed by the agent's own config-option *id* — never by
+   * semantic category, which ACP defines as UX-only ("MUST NOT be required
+   * for correctness. Clients MUST handle missing or unknown categories
+   * gracefully."). */
+  defaults: { mode?: string; options?: Readonly<Record<string, string>> };
+  /** Present only for agents added from the official ACP registry — drives
+   * the "update available" comparison against the roster's live version. */
+  registrySource: AgentRegistrySourceView | null;
+  /** `agentInfo.version` last captured at connect — what the used-
+   * capability cache is actually keyed against (reality over the pinned
+   * ask); null until connected at least once. */
+  lastSeenVersion: string | null;
 }
 
 // ── integrations (architecture.md § Integrations) ───────────────────────────
@@ -111,6 +170,9 @@ export type IntegrationRoutingView = "auto" | readonly string[];
  * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
  * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
 export type IntegrationSourceView =
+  /** `env` values ride the add action upward once, straight into
+   * SecretStorage (stores/secret-env.ts) — state snapshots never carry
+   * them, same write-only rule as agent env. */
   | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
   | {
       kind: "custom-http";
@@ -126,10 +188,21 @@ export interface IntegrationView {
   name: string;
   sourceKind: "registry" | "custom-stdio" | "custom-http";
   registryId?: string;
-  /** A token exists in this workspace's SecretStorage — never assumes one
-   * followed from another workspace (features.md's incident-driven rule). */
+  /** The launch line for a custom-stdio server, or the endpoint URL for a
+   * custom-http one — shown mono on the card (ui.md § Integrations). */
+  command?: string;
+  /** A token exists in SecretStorage — never assumed from a pasted/shared
+   * config (features.md's incident-driven rule: a shared config carries no
+   * credential; connecting is always this user's own explicit act). */
   connected: boolean;
+  /** The mute switch: inactive keeps config + credential but the server is
+   * excluded from every agent's mcpServers until toggled back. */
+  active: boolean;
   routing: IntegrationRoutingView;
+  /** Present for custom servers only: the editable mcpServers-fragment JSON.
+   * Env values never ride it — keys appear with "" (write-only: blank keeps
+   * the stored value, filled overwrites, removed key deletes). */
+  editJson?: string;
 }
 
 export interface RegistryEntryView {
@@ -143,10 +216,20 @@ export interface RegistryEntryView {
   docsUrl: string;
   /** The user pastes their account's endpoint at connect (Supabase, Augment). */
   userUrl: boolean;
-  /** Static-key mode offered — hint says where to get a key. Null = none. */
-  headerAuth: { hint: string } | null;
+  /** Static-key mode offered — hint says where to get a key; keyUrl is the
+   * issuing page, rendered as a clickable link ("" = none known). */
+  headerAuth: { hint: string; keyUrl: string } | null;
   /** MCP-spec OAuth with open DCR verified for this vendor. */
   oauth: boolean;
+  /** Verified official local server, offered as a prefill into the custom
+   * add form (never auto-run). Two shapes: a stdio command (structured so
+   * the prefill never re-parses a joined line; `envKeys` names the vars the
+   * user must fill) or a local HTTP endpoint served by the vendor's own
+   * desktop app (Figma). Null = none verified. */
+  local:
+    | { kind: "stdio"; command: string; args: readonly string[]; envKeys: readonly string[]; note: string }
+    | { kind: "http"; url: string; note: string }
+    | null;
 }
 
 /** Connect-in-flight state per registryId — "pending" while the browser
@@ -225,6 +308,11 @@ export interface AgentSummary {
   detail?: string;
   /** Launch command line as spawned (ui.md § Settings Agents — shown mono). */
   command?: string;
+  /** True once a real call has hit ACP's `auth_required` for this
+   * connection — cleared on a successful authenticate+retry, or on
+   * disconnect. Distinct from the `auth` capability row: this is "blocked
+   * right now," that row is "has this ever been used successfully." */
+  needsAuth: boolean;
 }
 
 /** The live-selection indicator's data (ui.md § Composer — the ghost chip):
@@ -241,9 +329,21 @@ export interface OpenEditorView {
   dirty: boolean;
 }
 
+/** One of `initialize`'s declared `authMethods` (ACP schema, stable). `kind`
+ * discriminates by the wire's `type` field: "agent" (absent/default type,
+ * stable — the agent handles auth itself via `authenticate`) is the only
+ * one patchbay can act on; "env_var" and "terminal" are both UNSTABLE ACP
+ * capabilities (may change/be removed) — shown as declared, never wired to
+ * a Log-in button, per "only stable calls are used." */
+export interface AuthMethodView {
+  id: string;
+  name: string;
+  kind: "agent" | "env_var" | "terminal";
+}
+
 /**
  * What the agent *claims* at `initialize` — normalized from the handshake,
- * refreshed on every connect. A claim, not a fact: UI gates on verified.
+ * refreshed on every connect. A claim, not a fact: UI gates on used.
  */
 export interface DeclaredCapabilities {
   loadSession: boolean;
@@ -256,7 +356,7 @@ export interface DeclaredCapabilities {
   promptEmbeddedContext: boolean;
   mcpHttp: boolean;
   mcpSse: boolean;
-  authMethods: string[];
+  authMethods: readonly AuthMethodView[];
 }
 
 // ── agent-view channel ───────────────────────────────────────────────────────
@@ -264,18 +364,32 @@ export interface DeclaredCapabilities {
 export interface RosterEntry {
   id: string;
   name: string;
+  /** Registry description, or a local-only entry's installHint. */
+  description: string;
   /** rules/skills/commands locations known for this agent (roster data). */
   assetsMapped: boolean;
   /** A bridge observed to act on fs/terminal regardless of client capabilities. */
   knownBypassBridge: boolean;
+  /** Not addable right now — no distribution published for this platform,
+   * or a registry id the registry hasn't (yet) returned. Shown on the Add
+   * Agent picker, never silently hidden. */
+  unavailableReason: string | null;
+  /** Present only for registry-backed entries. */
+  registryId: string | null;
+  /** The registry's current version for this agent — compared against an
+   * added config's own pinned version to drive "update available." */
+  registryVersion: string | null;
 }
 
 // ── capability matrix (architecture.md § Agent capability matrix) ──────────
 // Two states per capability: declared (the handshake's claim, refreshed every
-// connect) and verified (set only once the path succeeds on the wire).
-// A row with declared=false is "not declared" regardless of verified (which
-// cannot be true without declared — enforced by construction: every writer
-// below only ever sets verified on a row that was declared).
+// connect) and used (set only once the path actually fires on the wire —
+// whether that's a real user action or patchbay's own free connectivity
+// check; either way the RPC genuinely happened, hence "used" over "verified":
+// a single successful round-trip proves the path fired, not that it's
+// certified correct). A row with declared=false is "not declared" regardless
+// of used (which cannot be true without declared — enforced by construction:
+// every writer below only ever sets used on a row that was declared).
 
 export type CapabilityRowId =
   | "fs.readTextFile"
@@ -293,27 +407,28 @@ export type CapabilityRowId =
   | "mcp.http"
   | "mcp.sse"
   | "usage"
-  | "concurrentSessions";
+  | "concurrentSessions"
+  | "auth";
 
 export interface CapabilityCell {
   declared: boolean;
-  verified: boolean;
+  used: boolean;
 }
 
 export type CapabilityMatrix = Readonly<Record<CapabilityRowId, CapabilityCell>>;
 
-export type CapabilityState = "not-declared" | "declared" | "verified";
+export type CapabilityState = "not-declared" | "declared" | "used";
 
 export function capabilityState(cell: CapabilityCell | undefined): CapabilityState {
   if (cell === undefined || !cell.declared) return "not-declared";
-  return cell.verified ? "verified" : "declared";
+  return cell.used ? "used" : "declared";
 }
 
 export type FidelityLabel = "fully-brokered" | "partially-brokered" | "acts-outside";
 
 /**
  * Pure function of the matrix (architecture.md § Permission broker): fs and
- * terminal declared *and* verified → fully brokered; a proper subset →
+ * terminal declared *and* used → fully brokered; a proper subset →
  * partially brokered; neither, or a known-bypass bridge → acts outside.
  * Never hand-assigned.
  */
@@ -322,10 +437,28 @@ export function computeFidelity(
   knownBypassBridge: boolean,
 ): FidelityLabel {
   if (knownBypassBridge) return "acts-outside";
-  const brokered = (row: CapabilityRowId) => matrix[row].declared && matrix[row].verified;
+  const brokered = (row: CapabilityRowId) => matrix[row].declared && matrix[row].used;
   const rows = [brokered("fs.readTextFile"), brokered("fs.writeTextFile"), brokered("terminal")];
   if (rows.every(Boolean)) return "fully-brokered";
   return rows.some(Boolean) ? "partially-brokered" : "acts-outside";
+}
+
+/**
+ * True while the free protocol check (session/new + session/fork probe) still
+ * has something it could resolve for this agent — the single predicate both
+ * the automatic post-connect/reconnect retry (capability-tracker.ts's
+ * `onDeclared`) and the Settings § Agents manual Verify control gate on, so
+ * "does this still need a check" can never drift between the two call
+ * sites. Only `session.fork` and `auth` are ever probed (capability-
+ * verification.md's verification-cost split) — every other row is either
+ * opportunistic or has no active check to retry.
+ */
+export function hasUnusedProbe(
+  matrix: CapabilityMatrix,
+  authMethods: readonly AuthMethodView[],
+): boolean {
+  if (matrix["session.fork"].declared && !matrix["session.fork"].used) return true;
+  return authMethods.some((m) => m.kind === "agent") && !matrix.auth.used;
 }
 
 export interface SessionSummary {
@@ -518,11 +651,14 @@ export interface AgentViewState {
    * live one"). */
   activePlan: Readonly<Record<string, PlanBlock | null>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
-  /** Declared/verified per agent — replaced wholesale on every (re)connect. */
+  /** Declared/used per agent — replaced wholesale on every (re)connect. */
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   /** ISO time of the last capabilitiesDeclared — powers the "reset <time>" chip. */
   capabilitiesResetAt: Readonly<Record<string, string>>;
-  /** Present only once `usage` verifies — absence over fake (ui.md § gauge). */
+  /** Declared auth methods per agent — the Log-in button's source (only
+   * "agent"-kind methods are actionable; see AuthMethodView). */
+  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
+  /** Present only once `usage` is used — absence over fake (ui.md § gauge). */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
   /** Explicitly attached context, pending inclusion in the next prompt
    * (features.md § Chat: "explicitly add editor state to the prompt"). */
@@ -572,6 +708,7 @@ export const initialAgentViewState: AgentViewState = {
   commandsBySession: {},
   capabilities: {},
   capabilitiesResetAt: {},
+  authMethods: {},
   sessionUsage: {},
   contextChips: {},
   sessionModes: {},
@@ -660,9 +797,17 @@ export type AgentViewEvent =
       selection: LiveSelectionView | null;
       openEditors: readonly OpenEditorView[];
     }
-  /** Fired on every connect — replaces the agent's whole matrix, verified resets to false. */
-  | { kind: "capabilitiesDeclared"; agentId: string; matrix: CapabilityMatrix; at: string }
-  | { kind: "capabilityVerified"; agentId: string; row: CapabilityRowId }
+  /** Fired on every connect — replaces the agent's whole matrix (used
+   * seeded from the persisted cache when the version matches, honestly
+   * reset otherwise) and its declared auth methods. */
+  | {
+      kind: "capabilitiesDeclared";
+      agentId: string;
+      matrix: CapabilityMatrix;
+      authMethods: readonly AuthMethodView[];
+      at: string;
+    }
+  | { kind: "capabilityUsed"; agentId: string; row: CapabilityRowId }
   | {
       kind: "usageReported";
       sessionId: string;
@@ -670,18 +815,13 @@ export type AgentViewEvent =
       size: number;
       cost?: { amount: number; currency: string };
     }
-  /** Settings-only (shared union — AgentView's reducer no-ops on these). */
-  | { kind: "workspaceAgentPending"; agent: WorkspaceAgentPending }
-  | { kind: "workspaceAgentAdopted"; agentId: string };
-
-/** A repo-defined agent (from `.vscode/acp-patchbay.json`) awaiting the
- * one-time, workspace-trust-gated adoption architecture.md requires before
- * its launch command runs — shown in full, never silently trusted. */
-export interface WorkspaceAgentPending {
-  agentId: string;
-  name: string;
-  command: string;
-}
+  /** A real call (Verify's ephemeral session, or a real one) hit ACP's
+   * `auth_required` — the agent needs `authenticate` before sessions work. */
+  | { kind: "agentAuthRequired"; agentId: string }
+  | { kind: "agentAuthResolved"; agentId: string }
+  /** Full replace — the registry × overlay merge changed (refresh, or a new
+   * version landed upstream). */
+  | { kind: "rosterChanged"; roster: readonly RosterEntry[] };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -701,6 +841,10 @@ function reduceAgents(
           ? { ...a, status: event.status, detail: event.detail }
           : a,
       );
+    case "agentAuthRequired":
+      return agents.map((a) => (a.id === event.agentId ? { ...a, needsAuth: true } : a));
+    case "agentAuthResolved":
+      return agents.map((a) => (a.id === event.agentId ? { ...a, needsAuth: false } : a));
     default:
       return agents;
   }
@@ -713,15 +857,15 @@ function reduceCapabilities(
   switch (event.kind) {
     case "capabilitiesDeclared":
       return { ...capabilities, [event.agentId]: event.matrix };
-    case "capabilityVerified": {
-      // Verified always implies declared — the single write path for both,
+    case "capabilityUsed": {
+      // Used always implies declared — the single write path for both,
       // which is what lets rows with no initialize-time claim (usage,
-      // concurrentSessions) go straight from not-declared to verified.
+      // concurrentSessions) go straight from not-declared to used.
       const matrix = capabilities[event.agentId];
       if (matrix === undefined) return capabilities;
       return {
         ...capabilities,
-        [event.agentId]: { ...matrix, [event.row]: { declared: true, verified: true } },
+        [event.agentId]: { ...matrix, [event.row]: { declared: true, used: true } },
       };
     }
     default:
@@ -736,6 +880,15 @@ function reduceCapabilitiesResetAt(
   return event.kind === "capabilitiesDeclared"
     ? { ...resetAt, [event.agentId]: event.at }
     : resetAt;
+}
+
+function reduceAuthMethods(
+  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>,
+  event: AgentViewEvent,
+): Readonly<Record<string, readonly AuthMethodView[]>> {
+  return event.kind === "capabilitiesDeclared"
+    ? { ...authMethods, [event.agentId]: event.authMethods }
+    : authMethods;
 }
 
 function withTranscript(
@@ -825,7 +978,11 @@ export function reduceAgentView(
     case "agentUpserted":
     case "agentRemoved":
     case "agentStatusChanged":
+    case "agentAuthRequired":
+    case "agentAuthResolved":
       return { ...state, agents: reduceAgents(state.agents, event) };
+    case "rosterChanged":
+      return { ...state, roster: event.roster };
     case "sessionCreated":
       return {
         ...state,
@@ -917,8 +1074,9 @@ export function reduceAgentView(
         ...state,
         capabilities: reduceCapabilities(state.capabilities, event),
         capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
+        authMethods: reduceAuthMethods(state.authMethods, event),
       };
-    case "capabilityVerified":
+    case "capabilityUsed":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "usageReported":
       return {
@@ -1112,15 +1270,28 @@ export interface AgentKnobsView {
   }[];
 }
 
+/** A registry `binary` distribution awaiting the one-time download
+ * confirmation (no checksum exists in the registry spec — see
+ * binary-installer.ts) before it's fetched and run. */
+export interface PendingBinaryInstallView {
+  agentId: string;
+  name: string;
+  archiveUrl: string;
+  cmd: string;
+}
+
 export interface SettingsState {
   agents: readonly AgentSummary[];
   roster: readonly RosterEntry[];
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   capabilitiesResetAt: Readonly<Record<string, string>>;
+  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
+  /** Workspace layer — evaluated first (permission-rules.ts). */
   commandRules: readonly CommandRuleView[];
+  /** Machine layer — the fallback floor for every workspace on this machine. */
+  machineCommandRules: readonly CommandRuleView[];
   fileWriteScope: FileWriteScopeView;
   auditTail: readonly AuditEntryView[];
-  pendingAdoptions: readonly WorkspaceAgentPending[];
   integrationRegistry: readonly RegistryEntryView[];
   integrations: readonly IntegrationView[];
   /** Keyed by registryId (or custom integration id) while a connect is in
@@ -1129,14 +1300,22 @@ export interface SettingsState {
   connectFlow: Readonly<Record<string, ConnectFlowView>>;
   /** Keyed by agentId — populated as each connects (and on-demand refresh). */
   assets: Readonly<Record<string, AgentAssetsView>>;
-  /** Workspace-config agents (`.vscode/acp-patchbay.json`) — addable, editable,
-   * removable from Settings; connecting one goes through the same
+  /** Agents (global, developer-env — never repo-committed): addable,
+   * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as roster/custom (`{ configuredId }`). */
   agentConfigs: readonly AgentConfigView[];
   /** Stat tile: sessions created today (from the session index). */
   sessionsToday: number;
   /** Keyed by agentId — observed knob offerings (see AgentKnobsView). */
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
+  /** ISO time of the last successful ACP registry fetch; "" = never. */
+  registryUpdatedAt: string;
+  /** At most one at a time — the Add Agent flow blocks on it. */
+  pendingBinaryInstall: PendingBinaryInstallView | null;
+  /** Present while a Verify round-trip (manual click or "Verify after add")
+   * is in flight for this agent — the card's Verify control dims and reads
+   * "Verifying…" until it clears. */
+  verifyingAgents: Readonly<Record<string, true>>;
 }
 
 export const initialSettingsState: SettingsState = {
@@ -1144,10 +1323,11 @@ export const initialSettingsState: SettingsState = {
   roster: [],
   capabilities: {},
   capabilitiesResetAt: {},
+  authMethods: {},
   commandRules: [],
+  machineCommandRules: [],
   fileWriteScope: "workspace",
   auditTail: [],
-  pendingAdoptions: [],
   integrationRegistry: [],
   integrations: [],
   connectFlow: {},
@@ -1155,6 +1335,9 @@ export const initialSettingsState: SettingsState = {
   agentConfigs: [],
   sessionsToday: 0,
   agentKnobs: {},
+  registryUpdatedAt: "",
+  pendingBinaryInstall: null,
+  verifyingAgents: {},
 };
 
 export type SettingsEvent =
@@ -1162,6 +1345,7 @@ export type SettingsEvent =
   | {
       kind: "permissionRulesChanged";
       commandRules: readonly CommandRuleView[];
+      machineCommandRules: readonly CommandRuleView[];
       fileWriteScope: FileWriteScopeView;
     }
   | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
@@ -1170,10 +1354,18 @@ export type SettingsEvent =
   /** A browser-authorization connect is out — the card shows waiting state. */
   | { kind: "integrationConnectStarted"; registryId: string }
   | { kind: "integrationConnectFailed"; registryId: string; reason: string }
+  /** In-flight/failed connect state cleared without an outcome — the
+   * user cancelled a browser flow that will never answer. */
+  | { kind: "integrationConnectResolved"; registryId: string }
   | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsToday: number }
-  | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView };
+  | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
+  | { kind: "registryUpdated"; at: string }
+  | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
+  | { kind: "binaryInstallResolved"; agentId: string }
+  | { kind: "agentVerifyStarted"; agentId: string }
+  | { kind: "agentVerifyFinished"; agentId: string };
 
 export function reduceSettings(
   state: SettingsState,
@@ -1183,28 +1375,46 @@ export function reduceSettings(
     case "agentUpserted":
     case "agentRemoved":
     case "agentStatusChanged":
+    case "agentAuthRequired":
+    case "agentAuthResolved":
       return { ...state, agents: reduceAgents(state.agents, event) };
+    case "rosterChanged":
+      return { ...state, roster: event.roster };
     case "capabilitiesDeclared":
       return {
         ...state,
         capabilities: reduceCapabilities(state.capabilities, event),
         capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
+        authMethods: reduceAuthMethods(state.authMethods, event),
       };
-    case "capabilityVerified":
+    case "capabilityUsed":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "permissionRulesChanged":
-      return { ...state, commandRules: event.commandRules, fileWriteScope: event.fileWriteScope };
-    case "auditTailChanged":
-      return { ...state, auditTail: event.entries };
-    case "workspaceAgentPending":
-      return state.pendingAdoptions.some((a) => a.agentId === event.agent.agentId)
-        ? state
-        : { ...state, pendingAdoptions: [...state.pendingAdoptions, event.agent] };
-    case "workspaceAgentAdopted":
       return {
         ...state,
-        pendingAdoptions: state.pendingAdoptions.filter((a) => a.agentId !== event.agentId),
+        commandRules: event.commandRules,
+        machineCommandRules: event.machineCommandRules,
+        fileWriteScope: event.fileWriteScope,
       };
+    case "auditTailChanged":
+      return { ...state, auditTail: event.entries };
+    case "registryUpdated":
+      return { ...state, registryUpdatedAt: event.at };
+    case "binaryInstallPending":
+      return { ...state, pendingBinaryInstall: event.install };
+    case "binaryInstallResolved":
+      return state.pendingBinaryInstall?.agentId === event.agentId
+        ? { ...state, pendingBinaryInstall: null }
+        : state;
+    case "agentVerifyStarted":
+      return {
+        ...state,
+        verifyingAgents: { ...state.verifyingAgents, [event.agentId]: true },
+      };
+    case "agentVerifyFinished": {
+      const { [event.agentId]: _v, ...rest } = state.verifyingAgents;
+      return { ...state, verifyingAgents: rest };
+    }
     case "integrationRegistryLoaded":
       return { ...state, integrationRegistry: event.entries };
     case "integrationsChanged": {
@@ -1224,6 +1434,10 @@ export function reduceSettings(
         ...state,
         connectFlow: { ...state.connectFlow, [event.registryId]: { status: "pending" } },
       };
+    case "integrationConnectResolved": {
+      const { [event.registryId]: _cleared, ...connectFlow } = state.connectFlow;
+      return { ...state, connectFlow };
+    }
     case "integrationConnectFailed":
       return {
         ...state,
@@ -1252,10 +1466,16 @@ const SETTINGS_ONLY_KINDS = new Set([
   "integrationsChanged",
   "integrationConnectStarted",
   "integrationConnectFailed",
+  "integrationConnectResolved",
   "agentAssetsChanged",
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",
+  "registryUpdated",
+  "binaryInstallPending",
+  "binaryInstallResolved",
+  "agentVerifyStarted",
+  "agentVerifyFinished",
 ]);
 
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {

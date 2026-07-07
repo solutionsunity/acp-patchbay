@@ -1,11 +1,15 @@
 // Stores: session index over KV, permission rules defaults, decision audit
-// JSONL append/tail, config JSONC round-trip preserving human edits.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+// JSONL append/tail, the generic globalState-backed record store agents/
+// integrations/used-capabilities all share.
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConfigFileStore, parseWorkspaceConfig } from "../src/orchestrator/stores/config-file";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
+import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-store";
+import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
+import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import {
   DEFAULT_PERMISSION_RULES,
@@ -77,105 +81,75 @@ describe("DecisionAuditStore", () => {
   });
 });
 
-describe("workspace config", () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "patchbay-config-"));
-  });
-  afterEach(() => rm(dir, { recursive: true, force: true }));
+describe("GlobalRecordStore", () => {
+  const schema = z.object({ id: z.string().min(1), label: z.string().default("") });
+  type Rec = z.infer<typeof schema>;
 
-  it("parses JSONC with comments and applies zod defaults", () => {
-    const r = parseWorkspaceConfig(`{
-      // the backend agent
-      "agents": [{ "id": "claude", "name": "Claude Code", "command": "npx" }]
-    }`);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.config.agents[0]?.args).toEqual([]);
-      expect(r.config.agents[0]?.processPolicy).toBe("auto");
-    }
+  it("upserts by id — appends new, replaces existing, never duplicates", async () => {
+    const store = new GlobalRecordStore<Rec>(new MemoryKV(), "test.records", schema);
+    await store.upsert({ id: "a", label: "first" });
+    await store.upsert({ id: "b", label: "second" });
+    expect(store.list().map((r) => r.id)).toEqual(["a", "b"]);
+
+    await store.upsert({ id: "a", label: "updated" });
+    expect(store.list()).toHaveLength(2);
+    expect(store.get("a")?.label).toBe("updated");
   });
 
-  it("returns typed errors for malformed input, not undefined behavior", () => {
-    expect(parseWorkspaceConfig("{ nope").ok).toBe(false);
-    const bad = parseWorkspaceConfig(`{ "agents": [{ "id": "x" }] }`);
-    expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.error).toContain("agents");
+  it("removes by id", async () => {
+    const store = new GlobalRecordStore<Rec>(new MemoryKV(), "test.records", schema);
+    await store.upsert({ id: "a", label: "x" });
+    await store.remove("a");
+    expect(store.list()).toEqual([]);
   });
 
-  it("absent file reads as empty config", async () => {
-    const store = new ConfigFileStore(join(dir, "acp-patchbay.json"));
-    const r = await store.read();
-    expect(r).toEqual({ ok: true, config: { agents: [], integrations: [] } });
+  it("drops a malformed stored record instead of trusting it blind — a trust boundary, not undefined behavior", async () => {
+    const kv = new MemoryKV();
+    await kv.update("test.records", [{ id: "ok", label: "fine" }, { label: "no id" }, "not even an object"]);
+    const store = new GlobalRecordStore<Rec>(kv, "test.records", schema);
+    expect(store.list()).toEqual([{ id: "ok", label: "fine" }]);
   });
 
-  it("upsert preserves comments and unknown keys (surgical JSONC edits)", async () => {
-    const file = join(dir, "acp-patchbay.json");
-    await writeFile(
-      file,
-      `{
-  // team note: keep this
-  "futureKey": { "kept": true },
-  "agents": []
-}`,
-      "utf8",
-    );
-    const store = new ConfigFileStore(file);
-    await store.upsertAgent({
-      id: "claude",
-      name: "Claude Code",
-      command: "npx",
-      args: ["@agentclientprotocol/claude-agent-acp@latest"],
-      env: {},
-      processPolicy: "auto",
-      defaults: {},
-    });
+  it("two stores over the same underlying key see each other's writes", async () => {
+    const kv = new MemoryKV();
+    const a = new GlobalRecordStore<Rec>(kv, "shared", schema);
+    const b = new GlobalRecordStore<Rec>(kv, "shared", schema);
+    expect(a.list()).toEqual([]);
+    await b.upsert({ id: "x", label: "" });
+    expect(a.list().map((r) => r.id)).toEqual(["x"]);
+  });
+});
 
-    const text = await readFile(file, "utf8");
-    expect(text).toContain("// team note: keep this");
-    expect(text).toContain("futureKey");
+describe("SecretEnvStore — env values live in SecretStorage, never globalState", () => {
+  it("round-trips a record per id and deletes on empty set", async () => {
+    const secrets = new MemorySecrets();
+    const store = new SecretEnvStore(secrets, "acpPatchbay.agent");
+    await store.set("a1", { FOO_API_KEY: "sk-123", DEBUG: "1" });
+    expect(await store.get("a1")).toEqual({ FOO_API_KEY: "sk-123", DEBUG: "1" });
+    expect(await store.get("other")).toEqual({});
 
-    const r = await store.read();
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.config.agents[0]?.id).toBe("claude");
-
-    // upsert same id replaces, not duplicates
-    await store.upsertAgent({
-      id: "claude",
-      name: "Claude Code",
-      command: "npx",
-      args: ["-y", "@agentclientprotocol/claude-agent-acp@latest"],
-      env: {},
-      processPolicy: "isolated",
-      defaults: {},
-    });
-    const r2 = await store.read();
-    if (r2.ok) {
-      expect(r2.config.agents).toHaveLength(1);
-      expect(r2.config.agents[0]?.processPolicy).toBe("isolated");
-    }
-
-    await store.removeAgent("claude");
-    const r3 = await store.read();
-    if (r3.ok) expect(r3.config.agents).toHaveLength(0);
-    const text3 = await readFile(file, "utf8");
-    expect(text3).toContain("futureKey");
+    await store.set("a1", {}); // writing empty is a delete, not an empty blob
+    expect(await secrets.get("acpPatchbay.agent.a1.env")).toBeUndefined();
   });
 
-  it("creates .vscode/acp-patchbay.json on first upsert", async () => {
-    const file = join(dir, ".vscode", "acp-patchbay.json");
-    const store = new ConfigFileStore(file);
-    await store.upsertAgent({
-      id: "a",
-      name: "A",
-      command: "a-cmd",
-      args: [],
-      env: {},
-      processPolicy: "auto",
-      defaults: {},
-    });
-    const r = await store.read();
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.config.agents).toHaveLength(1);
+  it("two prefixes over one SecretStorage never collide", async () => {
+    const secrets = new MemorySecrets();
+    const agents = new SecretEnvStore(secrets, "acpPatchbay.agent");
+    const integrations = new SecretEnvStore(secrets, "acpPatchbay.integration");
+    await agents.set("x", { A: "1" });
+    await integrations.set("x", { B: "2" });
+    expect(await agents.get("x")).toEqual({ A: "1" });
+    expect(await integrations.get("x")).toEqual({ B: "2" });
+  });
+
+  it("remove purges the record; malformed stored JSON reads as empty, never throws", async () => {
+    const secrets = new MemorySecrets();
+    const store = new SecretEnvStore(secrets, "acpPatchbay.agent");
+    await store.set("a1", { K: "v" });
+    await store.remove("a1");
+    expect(await store.get("a1")).toEqual({});
+
+    await secrets.store("acpPatchbay.agent.bad.env", "{not json");
+    expect(await store.get("bad")).toEqual({});
   });
 });

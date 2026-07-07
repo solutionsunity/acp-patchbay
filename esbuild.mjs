@@ -4,6 +4,7 @@
 // integration stdio-to-HTTP bridge (src/integrations/bridge-main.ts).
 // esbuild by rule (.dotagent/rules/stack.md) — no webpack.
 import esbuild from "esbuild";
+import { copyFileSync, mkdirSync } from "node:fs";
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -69,9 +70,20 @@ const configs = [
   integrationBridge,
 ];
 
+// Font assets aren't JS/CSS esbuild bundles — copied straight from the
+// installed package so both webviews share one codicon.css/.ttf pair.
+function copyCodicons() {
+  mkdirSync("out/codicons", { recursive: true });
+  for (const file of ["codicon.css", "codicon.ttf"]) {
+    copyFileSync(`node_modules/@vscode/codicons/dist/${file}`, `out/codicons/${file}`);
+  }
+}
+
 if (watch) {
+  copyCodicons();
   const contexts = await Promise.all(configs.map((c) => esbuild.context(c)));
   await Promise.all(contexts.map((c) => c.watch()));
 } else {
   await Promise.all(configs.map((c) => esbuild.build(c)));
+  copyCodicons();
 }

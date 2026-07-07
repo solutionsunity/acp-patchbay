@@ -27,9 +27,11 @@ import type { AgentPool } from "./pool";
 import type { SessionIndexStore } from "./stores/session-index";
 
 export interface AgentDefaults {
-  model?: string;
   mode?: string;
-  effort?: string;
+  /** Keyed by the agent's own config-option id — never by semantic
+   * category, which ACP defines as UX-only ("MUST NOT be required for
+   * correctness"). */
+  options?: Readonly<Record<string, string>>;
 }
 
 export interface SessionManagerHooks {
@@ -45,9 +47,9 @@ export interface SessionManagerHooks {
    * connected a dedicated subprocess for it) when isolating. Absent → always
    * share (pre-P8 behavior — fine for tests that don't exercise policy). */
   resolveProcessFor?(agentId: string): Promise<string>;
-  /** Whether `session.fork` is declared *and verified* for this agent — the
+  /** Whether `session.fork` is declared *and used* for this agent — the
    * one signal that decides native fork vs. emulated seeding (P8). */
-  isForkVerified?(agentId: string): boolean;
+  isForkUsed?(agentId: string): boolean;
   /** Per-agent knob defaults from workspace config, applied once, post-create. */
   defaultsFor?(agentId: string): AgentDefaults | undefined;
   /** The persisted last-known view (architecture.md § State) — the only
@@ -264,7 +266,8 @@ export class SessionManager {
       await this.mcpServersFor(contextToken, agentId),
       [...roots],
     );
-    this.hooks.emit({ kind: "capabilityVerified", agentId, row: "session.load" });
+    // pool.ts's loadSession already marked "session.load" used the instant
+    // the RPC succeeded — this only has to update the render state.
     this.emitModeAndConfig(sessionId, modes, configOptions);
   }
 
@@ -335,7 +338,7 @@ export class SessionManager {
   }
 
   /** Branch (P8): native `session/fork` when the agent's `session.fork`
-   * capability is declared *and verified*, else an emulated continuation
+   * capability is declared *and used*, else an emulated continuation
    * seeded from the parent's current transcript — either way, a node in the
    * session graph (`branchOf`); the UI never has to know which mechanism
    * produced it (architecture.md § Branching). */
@@ -343,13 +346,13 @@ export class SessionManager {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
 
-    if (!(this.hooks.isForkVerified?.(agentId) ?? false)) {
+    if (!(this.hooks.isForkUsed?.(agentId) ?? false)) {
       return this.createEmulatedContinuation(sessionId, agentId, parentTranscript);
     }
 
     // Native fork must address the connection holding the parent's live
     // context — reopen first (throws, rather than silently downgrading to
-    // emulated, if a *verified* capability turns out not to hold up).
+    // emulated, if a capability that tested as *used* turns out not to hold up).
     await this.reopen(sessionId, agentId);
     const poolKey = this.sessions.get(sessionId)!.poolKey;
     const contextToken = `ctx-${++this.contextTokenCounter}`;
@@ -444,14 +447,12 @@ export class SessionManager {
     if (defaults.mode && modes?.availableModes.some((m) => m.id === defaults.mode)) {
       await this.pool.setSessionMode(poolKey, sessionId, defaults.mode).catch(() => {});
     }
-    const byCategory = (category: string) => configOptions?.find((o) => o.category === category);
-    if (defaults.model !== undefined) {
-      const option = byCategory("model");
-      if (option) await this.pool.setSessionConfigOption(poolKey, sessionId, option.id, defaults.model).catch(() => {});
-    }
-    if (defaults.effort !== undefined) {
-      const option = byCategory("thought_level");
-      if (option) await this.pool.setSessionConfigOption(poolKey, sessionId, option.id, defaults.effort).catch(() => {});
+    // Defaults are keyed by the agent's own option id (ACP: category is
+    // UX-only, forbidden as a correctness dependency) — applied only where
+    // the agent actually offered that option this session, never invented.
+    for (const [optionId, value] of Object.entries(defaults.options ?? {})) {
+      if (!configOptions?.some((o) => o.id === optionId)) continue;
+      await this.pool.setSessionConfigOption(poolKey, sessionId, optionId, value).catch(() => {});
     }
   }
 
@@ -552,7 +553,7 @@ export class SessionManager {
 
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
-  handleUpdate(agentId: string, notification: SessionNotification): void {
+  handleUpdate(_agentId: string, notification: SessionNotification): void {
     const { sessionId, update } = notification;
     const session = this.sessions.get(sessionId);
     if (!session) return; // update for a session patchbay isn't tracking
@@ -628,18 +629,17 @@ export class SessionManager {
         });
         break;
       case "usage_update":
-        // No initialize-time claim exists for usage reporting — declared
-        // and verified arrive together, the moment it's first observed.
-        this.hooks.emit(
-          {
-            kind: "usageReported",
-            sessionId,
-            used: update.used,
-            size: update.size,
-            cost: update.cost ?? undefined,
-          },
-          { kind: "capabilityVerified", agentId, row: "usage" },
-        );
+        // Capability marking (declared+used together, on first sight — no
+        // initialize-time claim exists for usage reporting) already happened
+        // in pool.ts's notification handler, right where this same
+        // usage_update tag was first seen; this only renders it.
+        this.hooks.emit({
+          kind: "usageReported",
+          sessionId,
+          used: update.used,
+          size: update.size,
+          cost: update.cost ?? undefined,
+        });
         break;
       default:
         break; // unconsumed schema surface — a future capability row, not silently guessed at

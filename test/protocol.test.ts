@@ -12,8 +12,8 @@ import {
   type AgentViewState,
 } from "../src/shared/protocol";
 
-const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running" };
-const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped" };
+const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false };
+const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false };
 
 const events: AgentViewEvent[] = [
   { kind: "agentUpserted", agent: claude },
@@ -114,6 +114,18 @@ describe("settings projections (ui.md § Settings Agents)", () => {
     expect(s.sessionsToday).toBe(3);
     expect(s.agentKnobs.claude!.modes).toEqual([{ id: "code", name: "Code" }]);
     expect(s.agentKnobs.claude!.options[0]!.category).toBe("model");
+  });
+
+  it("agentVerifyStarted/Finished track exactly the in-flight agents", () => {
+    const s1 = [
+      { kind: "agentVerifyStarted", agentId: "claude" } as const,
+      { kind: "agentVerifyStarted", agentId: "gemini" } as const,
+    ].reduce(reduceSettings, initialSettingsState);
+    expect(s1.verifyingAgents).toEqual({ claude: true, gemini: true });
+
+    const s2 = reduceSettings(s1, { kind: "agentVerifyFinished", agentId: "claude" });
+    expect(s2.verifyingAgents).toEqual({ gemini: true });
+    expect(s2.verifyingAgents.claude).toBeUndefined();
   });
 });
 

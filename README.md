@@ -27,7 +27,7 @@ the same way for every agent that speaks ACP, not just one vendor's.
   is home; switching agents or sessions is one gesture away, never a
   navigation maze.
 - **A capability matrix that doesn't lie** — every agent × every capability,
-  shown as *not declared* / *declared but unverified* / *verified working*.
+  shown as *not declared* / *declared but not used* / *used*.
   What an agent claims at handshake and what it actually does on the wire are
   tracked separately, and the UI only ever lights up on the latter.
 - **Editor depth, brokered** — live selection, current file (including
@@ -39,14 +39,14 @@ the same way for every agent that speaks ACP, not just one vendor's.
   file-write/terminal gates. An agent that acts outside the brokered path is
   labeled as such, never silently trusted.
 - **Sessions that behave like sessions** — concurrent sessions per agent,
-  branching (native `session/fork` where verified, an honestly-labeled
+  branching (native `session/fork` where used, an honestly-labeled
   emulated continuation otherwise), one-click reload, and per-agent process
   policy (share a connection or isolate it).
 - **Integrations, the same mechanism for curated and custom** — connect
   GitHub in one click (OAuth Device Flow) or add any other MCP server by
-  command or URL. Routing is yours, per agent; integrations are
-  workspace-scoped by default so a credential never silently follows you
-  into another repo.
+  command or URL. Routing is yours, per agent; a shared config never
+  carries its credential, so an integration never silently follows you
+  into another machine or account.
 - **Rules, skills, and commands, visible** — each agent's native rule/skill/
   command files, listed from Settings and opened in VS Code's own editor. An
   agent with no known mapping is shown as unmapped, never silently skipped.

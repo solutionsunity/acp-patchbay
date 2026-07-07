@@ -1,4 +1,4 @@
-// ACP client pool: agentId → { process, declared, verified, sessions[] }.
+// ACP client pool: agentId → { process, declared, used, sessions[] }.
 // Different agents are always separate subprocesses; sessions with the same
 // agent multiplex over one connection (the protocol's own model). Crash is
 // visible the moment it happens; recovery is one action.
@@ -8,7 +8,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentStatus, DeclaredCapabilities } from "../shared/protocol";
+import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
 import { declaredFromInitialize } from "./capabilities";
 
 export interface LaunchSpec {
@@ -21,8 +21,9 @@ export interface LaunchSpec {
   /** Per-agent process policy (architecture.md § process model). Absent →
    * "auto", same as an unset config-file field. */
   processPolicy?: "auto" | "shared" | "isolated";
-  /** Per-agent knob defaults, applied post-create (P8). */
-  defaults?: { model?: string; mode?: string; effort?: string };
+  /** Per-agent knob defaults, applied post-create (P8) — `options` keyed by
+   * the agent's own config-option id (category is UX-only per ACP). */
+  defaults?: { mode?: string; options?: Readonly<Record<string, string>> };
 }
 
 export interface PoolHooks {
@@ -38,9 +39,15 @@ export interface PoolHooks {
     agentId: string,
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
-  /** A second session succeeded on a connection already serving one — the
-   * one opportunistic signal for concurrent-session behavior (P5 matrix). */
-  onConcurrentSessionsVerified?(agentId: string): void;
+  /** Fired the instant pool.ts itself observes a capability's wire path
+   * actually succeed — `auth` via a working session/new, `session.fork` via
+   * a working fork, `session.load` via a working load, `usage` via a
+   * usage_update notification's kind tag, `concurrentSessions` via a second
+   * session succeeding on a connection already serving one. One hook for
+   * every RPC-outcome-based row (capability-verification.md: declared ≠
+   * used) — called synchronously, right where pool.ts sees the fact, and
+   * never awaited so it can't block the RPC it's reporting on. */
+  onCapabilityUsed?(agentId: string, row: CapabilityRowId): void;
   /** Status of a process-policy "isolated" instance (P8) — kept off
    * `onStatusChanged` on purpose: an isolated subprocess dying must not flip
    * the shared agent's own status, since the agent itself is unaffected. */
@@ -221,6 +228,12 @@ export class AgentPool {
         });
       })
       .onNotification(acp.methods.client.session.update, (ctx) => {
+        // No initialize-time claim exists for usage reporting — the kind tag
+        // arriving at all is the only signal, so it's marked used right here
+        // rather than waiting for session-manager.ts to decode the payload.
+        if (ctx.params.update.sessionUpdate === "usage_update") {
+          this.hooks.onCapabilityUsed?.(reportAs, "usage");
+        }
         this.hooks.onSessionUpdate(reportAs, ctx.params);
       })
       .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
@@ -294,7 +307,7 @@ export class AgentPool {
     this.setStatus(entry, "stopped");
   }
 
-  /** One-action recovery. Fresh connect ⇒ declared re-captured, verified resets (P5). */
+  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets (P5). */
   async restart(poolKey: string): Promise<DeclaredCapabilities> {
     const entry = this.entries.get(poolKey);
     if (!entry) throw new Error(`unknown agent ${poolKey}`);
@@ -317,8 +330,22 @@ export class AgentPool {
       { cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
-    if (hadOtherSessions) this.hooks.onConcurrentSessionsVerified?.(entry.reportAs);
+    // A working session/new is the proof: whoever called this (a real
+    // session, or capability-tracker.ts's throwaway probe) got a session out
+    // of it, so auth — if this agent even declares any — actually works.
+    this.hooks.onCapabilityUsed?.(entry.reportAs, "auth");
+    if (hadOtherSessions) this.hooks.onCapabilityUsed?.(entry.reportAs, "concurrentSessions");
     return response;
+  }
+
+  /** Stable ACP call (`authenticate`, not the unstable terminal-auth
+   * extension): the agent handles whatever interactive flow its method
+   * needs (browser, device code, ...) — patchbay only picks the methodId
+   * and awaits the round trip. Callers retry whatever hit `auth_required`
+   * once this resolves. */
+  async authenticate(poolKey: string, methodId: string): Promise<void> {
+    const entry = this.running(poolKey);
+    await entry.connection!.agent.request(acp.methods.agent.authenticate, { methodId });
   }
 
   /** Also used for P5's automatic, ephemeral fork-verification round-trip
@@ -339,12 +366,13 @@ export class AgentPool {
       { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(response.sessionId);
+    this.hooks.onCapabilityUsed?.(entry.reportAs, "session.fork");
     // The parent was already on `entry.sessions` — a fork always proves this
     // connection sustains 2+ concurrent sessions, the same signal newSession's
     // hadOtherSessions case reports (P8: this is what lets "auto" process
-    // policy bootstrap toward sharing without ever risking an unverified
+    // policy bootstrap toward sharing without ever risking an unproven
     // top-level session/new).
-    this.hooks.onConcurrentSessionsVerified?.(entry.reportAs);
+    this.hooks.onCapabilityUsed?.(entry.reportAs, "concurrentSessions");
     return response;
   }
 
@@ -383,6 +411,7 @@ export class AgentPool {
       { sessionId, cwd, mcpServers, additionalDirectories },
     );
     entry.sessions.add(sessionId);
+    this.hooks.onCapabilityUsed?.(entry.reportAs, "session.load");
     return response;
   }
 
@@ -414,6 +443,17 @@ export class AgentPool {
    * freed (P8; see SessionManager.close). */
   forgetSession(poolKey: string, sessionId: string): void {
     this.entries.get(poolKey)?.sessions.delete(sessionId);
+  }
+
+  /** Stops the primary connection *and* every process-policy "isolated"
+   * instance reporting as this agent — Remove's semantics (a removed agent
+   * must not keep running anywhere), where `stop(poolKey)` is one
+   * connection. */
+  async stopAllFor(agentId: string): Promise<void> {
+    const keys = [...this.entries.entries()]
+      .filter(([, entry]) => entry.reportAs === agentId)
+      .map(([key]) => key);
+    await Promise.allSettled(keys.map((key) => this.stop(key)));
   }
 
   async disposeAll(): Promise<void> {

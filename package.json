@@ -2,7 +2,7 @@
   "name": "acp-patchbay",
   "displayName": "acp-patchbay",
   "description": "Any ACP agent. Every integration it can accept. Shown exactly as it is.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "solutionsunity",
   "license": "MIT",
   "repository": {
@@ -110,6 +110,7 @@
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.96.0",
     "@types/vscode-webview": "^1.57.5",
+    "@vscode/codicons": "^0.0.45",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",

@@ -1,8 +1,8 @@
-// Opportunistic behavior-level verification through the real orchestrator
+// Opportunistic behavior-level marking through the real orchestrator
 // (architecture.md § Agent capability matrix; plan.md P5's "first fs
 // success" hooks, wired in P6's handlers): an agent that genuinely routes
 // fs reads/writes and terminal commands through patchbay's gates earns
-// verified on those rows — which is also the only path to the
+// used on those rows — which is also the only path to the
 // "fully brokered" fidelity label and to auto-attach integration routing.
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -12,7 +12,7 @@ import * as vscode from "vscode";
 
 interface CapabilityCell {
   declared: boolean;
-  verified: boolean;
+  used: boolean;
 }
 
 interface Internal {
@@ -62,7 +62,7 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 8000): Promise
 }
 
 suite("opportunistic fs/terminal verification", () => {
-  test("fs read+write and terminal verify when exercised; rows start declared-unverified", async function () {
+  test("fs read+write and terminal get used when exercised; rows start declared-not-used", async function () {
     this.timeout(20000);
     const { orchestrator } = await internal();
     const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
@@ -103,9 +103,9 @@ suite("opportunistic fs/terminal verification", () => {
       });
 
       const matrix = () => orchestrator.agentView.current.capabilities["verify-e2e"];
-      assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, verified: false });
-      assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, verified: false });
-      assert.deepStrictEqual(matrix()["terminal"], { declared: true, verified: false });
+      assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, used: false });
+      assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, used: false });
+      assert.deepStrictEqual(matrix()["terminal"], { declared: true, used: false });
 
       const sessionId = await orchestrator.sessionManager.createSession(
         "verify-e2e",
@@ -122,9 +122,9 @@ suite("opportunistic fs/terminal verification", () => {
       orchestrator.broker.resolve(diffBlock.id, "accept");
       await turnDone;
 
-      assert.strictEqual(matrix()["fs.readTextFile"].verified, true, "read verifies");
-      assert.strictEqual(matrix()["fs.writeTextFile"].verified, true, "write verifies");
-      assert.strictEqual(matrix()["terminal"].verified, true, "terminal verifies");
+      assert.strictEqual(matrix()["fs.readTextFile"].used, true, "read gets used");
+      assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
+      assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
       await orchestrator.pool.stop("verify-e2e");
       await rm(cwd, { recursive: true, force: true });

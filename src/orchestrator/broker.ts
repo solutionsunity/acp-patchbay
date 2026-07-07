@@ -20,7 +20,7 @@ import { dirname, sep } from "node:path";
 import type { AgentViewEvent, PermissionOptionView } from "../shared/protocol";
 import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
-import { type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
+import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import { NodeTerminalRunner, type TerminalRunner } from "./terminal-runner";
 
 export interface BrokerHooks {
@@ -76,14 +76,24 @@ export class PermissionBroker {
     private readonly hooks: BrokerHooks,
     private readonly workspaceRoot: () => string | null,
     private readonly terminals: TerminalRunner = new NodeTerminalRunner(),
+    /** Machine-layer command rules — absent in tests that don't exercise
+     * layering; the workspace layer alone then behaves as before. */
+    private readonly machineRules: MachineRulesStore | null = null,
   ) {}
 
+  /** Two layers, workspace first (permission-rules.ts): the workspace's own
+   * rule wins wherever both match — it can tighten or loosen the machine
+   * floor for this repo — and the machine layer answers only where the
+   * workspace stayed silent. First match wins within each layer. */
   evaluateCommand(command: string): RuleVerdict {
     const { commandRules } = this.rules.get();
     for (const rule of commandRules) {
       if (patternToRegExp(rule.pattern).test(command)) return rule.verdict;
     }
-    return "ask"; // no matching rule — the safe default, never a silent allow
+    for (const rule of this.machineRules?.get().commandRules ?? []) {
+      if (patternToRegExp(rule.pattern).test(command)) return rule.verdict;
+    }
+    return "ask"; // no matching rule in either layer — the safe default, never a silent allow
   }
 
   evaluateFileWrite(path: string): RuleVerdict {

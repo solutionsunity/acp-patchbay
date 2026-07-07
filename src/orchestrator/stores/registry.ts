@@ -20,6 +20,9 @@ export const registryHeaderAuthSchema = z.object({
   valuePrefix: z.string().default("Bearer "),
   /** Where the user gets a key — shown next to the paste field. */
   hint: z.string().default(""),
+  /** The page that issues the key — rendered as a clickable "get a key"
+   * link, not buried in hint prose. */
+  keyUrl: z.string().default(""),
 });
 
 export const registryAuthSchema = z.object({
@@ -45,6 +48,26 @@ export const registryEntrySchema = z.object({
    * Augment's GitHub App prerequisite) — never buried. */
   note: z.string().default(""),
   auth: registryAuthSchema,
+  /** Verified official *local* server for this vendor, when one exists —
+   * offered as a prefill into the custom add form, never auto-run. Two
+   * shapes: a stdio command (github-mcp-server, @stripe/mcp — `envKeys`
+   * names the vars the user must fill) or a local HTTP endpoint served by
+   * the vendor's own desktop app (Figma's Dev Mode server). */
+  local: z
+    .union([
+      z.object({
+        command: z.string().min(1),
+        args: z.array(z.string()).default([]),
+        envKeys: z.array(z.string()).default([]),
+        note: z.string().default(""),
+      }),
+      z.object({
+        url: z.string().min(1),
+        note: z.string().default(""),
+      }),
+    ])
+    .nullable()
+    .default(null),
 });
 
 export type RegistryHeaderAuth = z.infer<typeof registryHeaderAuthSchema>;

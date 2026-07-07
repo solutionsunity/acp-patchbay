@@ -23,6 +23,7 @@ import type {
 import { computeFidelity } from "../../shared/protocol";
 import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
 import type { ViewChannel } from "../shared/channel";
+import { Icon } from "../shared/icon";
 import { Markdown } from "./markdown";
 
 type Drawer = "agents" | "sessions" | null;
@@ -82,7 +83,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
       {active !== null && (
         <SessionRow
           session={active}
-          forkVerified={state.capabilities[active.agentId]?.["session.fork"]?.verified ?? false}
+          forkUsed={state.capabilities[active.agentId]?.["session.fork"]?.used ?? false}
           onTitle={() => setDrawer("sessions")}
           onRename={(title) => renameSession(active.id, title)}
           onClose={() => closeSession(active.id)}
@@ -92,7 +93,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (
         <div class="crash-banner">
-          ⚠ {activeAgent.name} crashed{activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}
+          <Icon name="warning" /> {activeAgent.name} crashed{activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}
           <button
             class="btn danger row-btn"
             onClick={() => {
@@ -185,7 +186,7 @@ export function App({ channel }: { channel: ViewChannel<AgentViewState> }) {
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
-          forkVerified={(agentId) => state.capabilities[agentId]?.["session.fork"]?.verified ?? false}
+          forkUsed={(agentId) => state.capabilities[agentId]?.["session.fork"]?.used ?? false}
           onNew={() => setDrawer("agents")}
           onSwitch={switchSession}
           onRename={renameSession}
@@ -242,25 +243,29 @@ function Header(props: {
       <div class="agent-chip" title="Agents — status & routing" onClick={props.onAgents}>
         <Dot status={props.agent?.status ?? "none"} />
         <span class="name">{props.agent?.name ?? "No agent"}</span>
-        <span class="caret">▾</span>
+        <span class="caret">
+          <Icon name="chevron-down" />
+        </span>
       </div>
       <div class="spacer" />
       {/* sessionUsage only ever gets an entry alongside marking "usage"
-          verified (SessionManager emits both atomically), so presence here
-          already means verified — absent, never grayed, until then. */}
+          used (pool.ts's notification handler and this both fire off the
+          same usage_update), so presence here already means used — absent,
+          never grayed, until then. */}
       {props.usage !== null && <UsageGauge usage={props.usage} />}
-      <button class="icon-btn" title="Sessions" onClick={props.onSessions}>
-        🕘
+      <button class="icon-btn" title="Sessions" aria-label="Sessions" onClick={props.onSessions}>
+        <Icon name="history" />
       </button>
-      <button class="icon-btn" title="New session" onClick={props.onNew}>
-        ＋
+      <button class="icon-btn" title="New session" aria-label="New session" onClick={props.onNew}>
+        <Icon name="add" />
       </button>
       <button
         class="icon-btn"
         title="Settings — opens directly"
+        aria-label="Settings"
         onClick={props.onSettings}
       >
-        ⚙
+        <Icon name="gear" />
       </button>
     </div>
   );
@@ -279,7 +284,7 @@ function Badges({ session }: { session: SessionSummary }) {
       )}
       {session.branchOf !== null && (
         <span class="badge branch" title={`Branched from ${session.branchOf}`}>
-          ⑂ branch
+          <Icon name="git-branch" /> branch
         </span>
       )}
     </>
@@ -289,7 +294,7 @@ function Badges({ session }: { session: SessionSummary }) {
 /** Small popover shared by the session row and sessions-drawer rows. */
 function SessionActions(props: {
   title: string;
-  forkVerified: boolean;
+  forkUsed: boolean;
   onRename(title: string): void;
   onClose(): void;
   onBranch(): void;
@@ -343,7 +348,7 @@ function SessionActions(props: {
           props.onDone();
         }}
       >
-        Branch <span class="d">{props.forkVerified ? "native fork ✓" : "emulated"}</span>
+        Branch <span class="d">{props.forkUsed ? "native fork ✓" : "emulated"}</span>
       </div>
       <div
         class="it"
@@ -369,7 +374,7 @@ function SessionActions(props: {
 
 function SessionRow(props: {
   session: SessionSummary;
-  forkVerified: boolean;
+  forkUsed: boolean;
   onTitle(): void;
   onRename(title: string): void;
   onClose(): void;
@@ -387,14 +392,15 @@ function SessionRow(props: {
       <button
         class="icon-btn"
         title="Session actions"
+        aria-label="Session actions"
         onClick={() => setMenuOpen((v) => !v)}
       >
-        ⋯
+        <Icon name="ellipsis" />
       </button>
       {menuOpen && (
         <SessionActions
           title={props.session.title}
-          forkVerified={props.forkVerified}
+          forkUsed={props.forkUsed}
           onRename={props.onRename}
           onClose={props.onClose}
           onBranch={props.onBranch}
@@ -416,12 +422,22 @@ function PlanStrip({ plan }: { plan: PlanBlock | null }) {
     "";
   return (
     <div class={`plan-strip ${open ? "open" : ""}`} onClick={() => setOpen((v) => !v)}>
-      ▸ Plan <span class="frac">{done}/{plan.entries.length}</span> — {current}
+      <Icon name={open ? "chevron-down" : "chevron-right"} /> Plan{" "}
+      <span class="frac">{done}/{plan.entries.length}</span> — {current}
       {open && (
         <div class="items">
           {plan.entries.map((e, i) => (
             <div key={i} class={e.status}>
-              {e.status === "completed" ? "✓" : e.status === "in_progress" ? "▸" : "○"} {e.content}
+              <Icon
+                name={
+                  e.status === "completed"
+                    ? "check"
+                    : e.status === "in_progress"
+                      ? "circle-large-filled"
+                      : "circle-large"
+                }
+              />{" "}
+              {e.content}
             </div>
           ))}
         </div>
@@ -434,25 +450,26 @@ function Thought({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div class={`thought ${open ? "open" : ""}`} onClick={() => setOpen((v) => !v)}>
-      💭 {open ? text : text.length > 60 ? `${text.slice(0, 60)}…` : text} ▸
+      <Icon name="sparkle" /> {open ? text : text.length > 60 ? `${text.slice(0, 60)}…` : text}{" "}
+      <Icon name={open ? "chevron-down" : "chevron-right"} />
       {open && <div class="body">{text}</div>}
     </div>
   );
 }
 
 function ToolCallCard({ title, status }: { title: string; status: string }) {
-  const glyph = status === "completed" ? "✓" : status === "failed" ? "✗" : null;
+  const glyph = status === "completed" ? "check" : status === "failed" ? "close" : null;
   return (
     <div class="card">
       <div class="card-hd">
-        🛠 {title}
+        <Icon name="tools" /> {title}
         <span class="st">
           {glyph === null ? (
             <>
               <span class="spin" /> {status === "pending" ? "pending" : "running"}
             </>
           ) : (
-            glyph
+            <Icon name={glyph} />
           )}
         </span>
       </div>
@@ -463,10 +480,20 @@ function ToolCallCard({ title, status }: { title: string; status: string }) {
 function PlanCard({ block }: { block: PlanBlock }) {
   return (
     <div class="card plan-card">
-      <div class="card-hd">📋 Plan</div>
+      <div class="card-hd">
+        <Icon name="checklist" /> Plan
+      </div>
       {block.entries.map((e, i) => (
         <div key={i} class={`row ${e.status}`}>
-          {e.status === "completed" ? "✓" : e.status === "in_progress" ? "▸" : "○"}{" "}
+          <Icon
+            name={
+              e.status === "completed"
+                ? "check"
+                : e.status === "in_progress"
+                  ? "circle-large-filled"
+                  : "circle-large"
+            }
+          />{" "}
           <span>{e.content}</span>
         </div>
       ))}
@@ -481,7 +508,9 @@ function PermissionCard(props: {
   const { block } = props;
   return (
     <div class="card perm">
-      <div class="card-hd">🛡 {block.title} — one broker, one rule set</div>
+      <div class="card-hd">
+        <Icon name="shield" /> {block.title} — one broker, one rule set
+      </div>
       <div class="q">
         <code>{block.detail}</code>
       </div>
@@ -499,7 +528,7 @@ function PermissionCard(props: {
         </div>
       ) : (
         <div class="resolved">
-          ✓ {block.resolution.label}
+          <Icon name="check" /> {block.resolution.label}
           {block.resolution.auto ? " (rule)" : ""} · written to decision audit
         </div>
       )}
@@ -515,15 +544,18 @@ function DiffCard(props: {
   return (
     <div class="card">
       <div class="diff-file">
-        📝 <code>{block.file}</code>
+        <Icon name="diff" /> <code>{block.file}</code>
         <span class="plus">+{block.additions}</span>
         <span class="minus">−{block.deletions}</span>
         <span class="st" style="margin-left:auto">
-          {block.resolution !== null
-            ? block.resolution.accepted
-              ? `✓ ${block.resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
-              : "✗ rejected — disk untouched"
-            : ""}
+          {block.resolution !== null && (
+            <>
+              <Icon name={block.resolution.accepted ? "check" : "close"} />{" "}
+              {block.resolution.accepted
+                ? `${block.resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
+                : "rejected — disk untouched"}
+            </>
+          )}
         </span>
       </div>
       <div class="diff-body">
@@ -551,14 +583,16 @@ function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "terminal" 
   return (
     <div class="card">
       <div class="card-hd">
-        ▣ {block.command}
+        <Icon name="terminal" /> {block.command}
         <span class="st">
           {block.running ? (
             <>
               <span class="spin" /> live
             </>
           ) : (
-            `✓ exit ${block.exitCode ?? "?"}`
+            <>
+              <Icon name="check" /> exit {block.exitCode ?? "?"}
+            </>
           )}
         </span>
       </div>
@@ -577,8 +611,13 @@ function ElicitationCard(props: {
   if (block.resolution !== null) {
     return (
       <div class="card perm">
-        <div class="card-hd">❔ {block.message}</div>
-        <div class="resolved">{block.resolution.cancelled ? "✗ cancelled" : "✓ submitted"}</div>
+        <div class="card-hd">
+          <Icon name="question" /> {block.message}
+        </div>
+        <div class="resolved">
+          <Icon name={block.resolution.cancelled ? "close" : "check"} />{" "}
+          {block.resolution.cancelled ? "cancelled" : "submitted"}
+        </div>
       </div>
     );
   }
@@ -596,7 +635,9 @@ function ElicitationCard(props: {
 
   return (
     <div class="card perm">
-      <div class="card-hd">❔ {block.message}</div>
+      <div class="card-hd">
+        <Icon name="question" /> {block.message}
+      </div>
       <div class="connect-form" style="padding:0 10px 10px">
         {block.fields.map((f) => (
           <div key={f.name}>
@@ -695,15 +736,23 @@ function Chat(props: {
     return (
       <div class="chat">
         <div class="empty">
-          <div class="glyph">⧉</div>
+          <div class="glyph">
+            <Icon name="comment-discussion" />
+          </div>
           <div class="tag">
             {agents.length === 0
               ? "Any ACP agent, resident in your editor. Connect one to begin."
-              : "No session yet — start one with ＋."}
+              : "No session yet — start one with +."}
           </div>
           <div class="pick">
             <button class="btn primary" onClick={props.onConnectClick}>
-              {agents.length === 0 ? "Connect agent…" : "＋ New session"}
+              {agents.length === 0 ? (
+                "Connect agent…"
+              ) : (
+                <>
+                  <Icon name="add" /> New session
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -772,25 +821,39 @@ function MentionMenu(props: {
     <div class="pop" style="bottom:44px;left:0;right:0">
       {editors.slice(0, 8).map((e) => (
         <div class="it" key={e.file} onClick={() => props.onPickEditor(e.file)}>
-          <b>📄 {basename(e.file)}</b>
+          <b>
+            <Icon name="file" /> {basename(e.file)}
+          </b>
           <span class="d">
-            {e.dirty ? "● unsaved · " : ""}
+            {e.dirty ? (
+              <>
+                <Icon name="circle-filled" /> unsaved ·{" "}
+              </>
+            ) : (
+              ""
+            )}
             {e.file}
           </span>
         </div>
       ))}
       {props.hasSelection && (
         <div class="it" onClick={props.onPickSelection}>
-          <b>⌖ Selection</b>
+          <b>
+            <Icon name="target" /> Selection
+          </b>
           <span class="d">current editor selection</span>
         </div>
       )}
       <div class="it" onClick={props.onPickProblems}>
-        <b>⚠ Problems</b>
+        <b>
+          <Icon name="warning" /> Problems
+        </b>
         <span class="d">workspace diagnostics</span>
       </div>
       <div class="it" onClick={props.onPickAttach}>
-        <b>📎 Attach file…</b>
+        <b>
+          <Icon name="attach" /> Attach file…
+        </b>
         <span class="d">pick any file</span>
       </div>
       <div class="src">resolves to standard content blocks — works for every agent</div>
@@ -798,10 +861,10 @@ function MentionMenu(props: {
   );
 }
 
-/** ◈ model · ⚙ default · ⚡ effort — one pill per agent-offered knob only; an
+/** model · mode · effort — one pill per agent-offered knob only; an
  * unoffered knob renders nothing (ui.md § Composer action row). Requested ≠
- * confirmed: a just-changed pill shows ⏳ until the agent's own state
- * notification lands, never optimistically. */
+ * confirmed: a just-changed pill shows a pending spinner until the agent's
+ * own state notification lands, never optimistically. */
 function Knobs(props: {
   modes: SessionModesView | null;
   configOptions: readonly SessionConfigOptionView[];
@@ -820,13 +883,13 @@ function Knobs(props: {
   }, [props.configOptions.map((o) => String(o.currentValue)).join("|")]);
 
   const glyphFor = (category: string | undefined) =>
-    category === "model" ? "◈" : category === "thought_level" ? "⚡" : "⚙";
+    category === "model" ? "sparkle" : category === "thought_level" ? "dashboard" : "gear";
 
   return (
     <>
       {props.modes && (
         <span class="knob" title="Session mode">
-          ⚙
+          <Icon name="gear" />
           <select
             value={props.modes.currentModeId}
             onChange={(e) => {
@@ -840,12 +903,12 @@ function Knobs(props: {
               </option>
             ))}
           </select>
-          {pendingMode && <span class="knob-pending">⏳</span>}
+          {pendingMode && <span class="knob-pending spin" />}
         </span>
       )}
       {props.configOptions.map((o) => (
         <span class="knob" key={o.id} title={o.name}>
-          {glyphFor(o.category)}
+          <Icon name={glyphFor(o.category)} />
           {o.type === "boolean" ? (
             <input
               type="checkbox"
@@ -880,14 +943,14 @@ function Knobs(props: {
               )}
             </select>
           )}
-          {pendingConfig[o.id] && <span class="knob-pending">⏳</span>}
+          {pendingConfig[o.id] && <span class="knob-pending spin" />}
         </span>
       ))}
     </>
   );
 }
 
-/** ⧉ n — external context roots (features.md § Chat): workspace folders are
+/** External context roots (features.md § Chat): workspace folders are
  * always active and need no chip; this is the removable, user-added set,
  * passed to the agent as `additionalDirectories` on the next
  * create/reload/fork (ACP has no live-update request, so a note says so). */
@@ -899,7 +962,7 @@ function RootsChip(props: {
   const [open, setOpen] = useState(false);
   return (
     <span class="ctx-chip" style="position:relative" onClick={() => setOpen((v) => !v)}>
-      ⧉ {props.roots.length} root{props.roots.length === 1 ? "" : "s"}
+      <Icon name="root-folder" /> {props.roots.length} root{props.roots.length === 1 ? "" : "s"}
       {open && (
         <div class="pop" style="bottom:28px;left:0" onClick={(e) => e.stopPropagation()}>
           {props.roots.length === 0 && (
@@ -1015,7 +1078,7 @@ function Composer(props: {
               title="Live IDE selection — click to add it to context"
               onClick={props.onAddSelection}
             >
-              ⌖ {basename(props.liveSelection.file)}:{props.liveSelection.startLine}
+              <Icon name="target" /> {basename(props.liveSelection.file)}:{props.liveSelection.startLine}
               {props.liveSelection.endLine !== props.liveSelection.startLine
                 ? `-${props.liveSelection.endLine}`
                 : ""}
@@ -1023,7 +1086,17 @@ function Composer(props: {
           )}
           {props.contextChips.map((c) => (
             <span class="ctx-chip" key={c.id} title={c.kind === "image" ? c.label : c.content.slice(0, 300)}>
-              {c.kind === "selection" ? "⌖" : c.kind === "file" ? "📄" : c.kind === "image" ? "🖼" : "⚠"}{" "}
+              <Icon
+                name={
+                  c.kind === "selection"
+                    ? "target"
+                    : c.kind === "file"
+                      ? "file"
+                      : c.kind === "image"
+                        ? "file-media"
+                        : "warning"
+                }
+              />{" "}
               {c.label}
               <span class="x" onClick={() => props.onRemoveChip(c.id)}>
                 ×
@@ -1031,8 +1104,8 @@ function Composer(props: {
             </span>
           ))}
           {enabled && (
-            <span class="ctx-chip ctx-add" onClick={() => setAdderOpen((v) => !v)}>
-              ＋
+            <span class="ctx-chip ctx-add" onClick={() => setAdderOpen((v) => !v)} title="Add context">
+              <Icon name="add" />
             </span>
           )}
           {adderOpen && (
@@ -1044,7 +1117,9 @@ function Composer(props: {
                   setAdderOpen(false);
                 }}
               >
-                <b>⌖ Selection</b>
+                <b>
+                  <Icon name="target" /> Selection
+                </b>
                 <span class="d">current editor selection</span>
               </div>
               <div
@@ -1054,7 +1129,9 @@ function Composer(props: {
                   setAdderOpen(false);
                 }}
               >
-                <b>📄 Current file</b>
+                <b>
+                  <Icon name="file" /> Current file
+                </b>
                 <span class="d">active editor</span>
               </div>
               <div
@@ -1064,7 +1141,9 @@ function Composer(props: {
                   setAdderOpen(false);
                 }}
               >
-                <b>⚠ Problems</b>
+                <b>
+                  <Icon name="warning" /> Problems
+                </b>
                 <span class="d">workspace diagnostics</span>
               </div>
               <div
@@ -1074,7 +1153,9 @@ function Composer(props: {
                   setAdderOpen(false);
                 }}
               >
-                <b>📎 Attach file…</b>
+                <b>
+                  <Icon name="attach" /> Attach file…
+                </b>
                 <span class="d">pick any file</span>
               </div>
             </div>
@@ -1130,9 +1211,10 @@ function Composer(props: {
             class={`send ${live ? "stop" : ""}`}
             disabled={!enabled}
             title={live ? "Stop" : "Send"}
+            aria-label={live ? "Stop" : "Send"}
             onClick={submit}
           >
-            {live ? "■" : "↑"}
+            <Icon name={live ? "debug-stop" : "arrow-up"} />
           </button>
         </div>
       </div>
@@ -1236,7 +1318,7 @@ function AgentsDrawer(props: {
         </div>
       ) : (
         <div class="foot" onClick={() => setConnecting(true)}>
-          ＋ Connect agent — roster or custom command…
+          <Icon name="add" /> Connect agent — roster or custom command…
         </div>
       )}
     </div>
@@ -1246,7 +1328,7 @@ function AgentsDrawer(props: {
 function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
-  forkVerified(agentId: string): boolean;
+  forkUsed(agentId: string): boolean;
   onNew(): void;
   onSwitch(sessionId: string): void;
   onRename(sessionId: string, title: string): void;
@@ -1282,18 +1364,21 @@ function SessionsDrawer(props: {
               <Badges session={s} />
               <span
                 class="kebab"
+                role="button"
+                tabIndex={0}
+                aria-label="Session actions"
                 onClick={(e) => {
                   e.stopPropagation();
                   setMenuFor((cur) => (cur === s.id ? null : s.id));
                 }}
               >
-                ⋯
+                <Icon name="ellipsis" />
               </span>
             </div>
             {menuFor === s.id && (
               <SessionActions
                 title={s.title}
-                forkVerified={props.forkVerified(s.agentId)}
+                forkUsed={props.forkUsed(s.agentId)}
                 onRename={(title) => props.onRename(s.id, title)}
                 onClose={() => props.onClose(s.id)}
                 onBranch={() => props.onBranch(s.id)}
@@ -1305,7 +1390,7 @@ function SessionsDrawer(props: {
         );
       })}
       <div class="foot" onClick={props.onNew}>
-        ＋ New session
+        <Icon name="add" /> New session
       </div>
     </div>
   );

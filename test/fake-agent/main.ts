@@ -3,7 +3,7 @@
 // Apache-2.0, Zed Industries), extended with a behavior script so it can be
 // told to lie: declare a capability and drop the calls, confirm a rejected
 // mode change, crash on demand. Lying is the only way to test
-// declared-vs-verified honesty deterministically.
+// declared-vs-used honesty deterministically.
 //
 // Every update sent during a turn is also durably recorded per session under
 // `<cwd>/.fake-agent-sessions/` — simulating what a real agent's own storage
@@ -40,6 +40,10 @@ export type TurnStep =
 
 export interface FakeAgentScript {
   name?: string;
+  /** agentInfo.version returned from initialize — default "0.0.0"; tests
+   * that need a version bump (the persisted used-capability cache
+   * resetting) set this explicitly. */
+  version?: string;
   /** agentCapabilities fragment returned from initialize. */
   declare?: acp.AgentCapabilities;
   authMethods?: acp.AuthMethod[];
@@ -57,6 +61,8 @@ export interface FakeAgentScript {
     modeChangeNoop?: boolean;
     /** session/fork declared but errors when called. */
     forkBroken?: boolean;
+    /** session/new rejects with `auth_required` until `authenticate` is called. */
+    authRequired?: boolean;
   };
 }
 
@@ -398,6 +404,8 @@ async function callMcpTool(
   }
 }
 
+let authenticated = false;
+
 const app = acp
   .agent({ name: script.name ?? "fake-agent" })
   .onRequest("initialize", (): acp.InitializeResponse => {
@@ -405,10 +413,17 @@ const app = acp
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: script.declare ?? {},
       authMethods: script.authMethods ?? [],
-      agentInfo: { name: script.name ?? "fake-agent", version: "0.0.0" },
+      agentInfo: { name: script.name ?? "fake-agent", version: script.version ?? "0.0.0" },
     };
   })
+  .onRequest("authenticate", (): acp.AuthenticateResponse => {
+    authenticated = true;
+    return {};
+  })
   .onRequest("session/new", (ctx): acp.NewSessionResponse => {
+    if (script.lies?.authRequired && !authenticated) {
+      throw acp.RequestError.authRequired();
+    }
     if (script.concurrent === "fail" && sessions.size > 0) {
       throw acp.RequestError.invalidRequest("concurrent sessions unsupported");
     }

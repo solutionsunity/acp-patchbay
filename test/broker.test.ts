@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PermissionBroker } from "../src/orchestrator/broker";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
+import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import type { AgentViewEvent } from "../src/shared/protocol";
 
 let dir: string;
@@ -19,6 +19,7 @@ afterEach(() => rm(dir, { recursive: true, force: true }));
 
 function harness() {
   const rules = new PermissionRulesStore(new MemoryKV());
+  const machineRules = new MachineRulesStore(new MemoryKV());
   const audit = new DecisionAuditStore(dir);
   const events: AgentViewEvent[] = [];
   let auditRefreshes = 0;
@@ -30,8 +31,10 @@ function harness() {
       onAuditWritten: () => auditRefreshes++,
     },
     () => workspaceRoot,
+    undefined,
+    machineRules,
   );
-  return { broker, rules, audit, events, refreshCount: () => auditRefreshes };
+  return { broker, rules, machineRules, audit, events, refreshCount: () => auditRefreshes };
 }
 
 describe("PermissionBroker.evaluateCommand", () => {
@@ -70,6 +73,33 @@ describe("PermissionBroker.evaluateCommand", () => {
       fileWriteScope: "workspace",
     });
     expect(broker.evaluateCommand("rm -rf /tmp/x")).toBe("deny");
+  });
+
+  it("machine layer answers only where the workspace layer stays silent", async () => {
+    const { broker, machineRules } = harness();
+    await machineRules.set([{ pattern: "npm test", verdict: "allow" }]);
+    // no workspace rule matches → the machine floor answers
+    expect(broker.evaluateCommand("npm test")).toBe("allow");
+    // machine layer silent too → ask
+    expect(broker.evaluateCommand("rm -rf /")).toBe("ask");
+  });
+
+  it("a workspace rule beats the machine floor wherever both match — tighten or loosen", async () => {
+    const { broker, rules, machineRules } = harness();
+    await machineRules.set([
+      { pattern: "npm *", verdict: "allow" },
+      { pattern: "./deploy.sh", verdict: "deny" },
+    ]);
+    await rules.set({
+      commandRules: [
+        { pattern: "npm publish*", verdict: "deny" }, // tighten the machine allow
+        { pattern: "./deploy.sh", verdict: "allow" }, // loosen the machine deny, this repo only
+      ],
+      fileWriteScope: "workspace",
+    });
+    expect(broker.evaluateCommand("npm publish --tag next")).toBe("deny");
+    expect(broker.evaluateCommand("npm run build")).toBe("allow"); // machine floor still covers the rest
+    expect(broker.evaluateCommand("./deploy.sh")).toBe("allow");
   });
 });
 

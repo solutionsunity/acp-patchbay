@@ -65,6 +65,32 @@ suite("snapshot/patch round-trip through real webviews", () => {
     assert.ok(acked >= targetRev, `webview acked ${acked}, wanted ${targetRev}`);
   });
 
+  test("verify-in-flight events round-trip to the real settings webview", async () => {
+    const { orchestrator } = await internal();
+    const ch = orchestrator.settings;
+
+    await vscode.commands.executeCommand("acpPatchbay.openSettings");
+    await ch.waitForApplied(ch.revision);
+
+    // Needs-auth so the card's Verify control actually renders, then the
+    // in-flight bracket a real "Verify" click (or "Verify after add") sends —
+    // this exercises the real bundled AgentsSection/AddAgentRow JS, not just
+    // the pure reducer, catching anything a plain reducer test can't (a
+    // render-time throw in the new combobox/verify-button code).
+    ch.emit(upsert("dummy-verify"), { kind: "agentAuthRequired", agentId: "dummy-verify" });
+    ch.flushNow();
+    await ch.waitForApplied(ch.revision);
+
+    ch.emit({ kind: "agentVerifyStarted", agentId: "dummy-verify" });
+    ch.flushNow();
+    await ch.waitForApplied(ch.revision);
+
+    ch.emit({ kind: "agentVerifyFinished", agentId: "dummy-verify" });
+    ch.flushNow();
+    const acked = await ch.waitForApplied(ch.revision);
+    assert.ok(acked >= ch.revision, `webview acked ${acked}, wanted ${ch.revision}`);
+  });
+
   test("agent view hydrates on focus and re-hydrates after hide/show", async () => {
     const { orchestrator } = await internal();
     const ch = orchestrator.agentView;

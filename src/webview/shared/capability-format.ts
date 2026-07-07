@@ -14,21 +14,21 @@ export const FIDELITY_CLASS: Record<FidelityLabel, string> = {
   "acts-outside": "outside",
 };
 
-function rowText(label: string, cell: CapabilityCell, verifiedSuffix = ""): string {
-  if (cell.verified) return `${label} ✓${verifiedSuffix}`;
-  if (cell.declared) return `${label} declared, unverified`;
+function rowText(label: string, cell: CapabilityCell, usedSuffix = ""): string {
+  if (cell.used) return `${label} ✓${usedSuffix}`;
+  if (cell.declared) return `${label} declared, not used`;
   return `${label} —`;
 }
 
 /** The Agents drawer / Settings card's short summary line. */
 export function capabilityOneLiner(matrix: CapabilityMatrix): string {
-  const fsOk = matrix["fs.readTextFile"].verified && matrix["fs.writeTextFile"].verified;
+  const fsOk = matrix["fs.readTextFile"].used && matrix["fs.writeTextFile"].used;
   const fs = fsOk
     ? "fs ✓"
     : matrix["fs.readTextFile"].declared
-      ? "fs declared, unverified"
+      ? "fs declared, not used"
       : "fs —";
-  return [fs, rowText("terminal", matrix.terminal), rowText("fork", matrix["session.fork"], " verified")].join(
+  return [fs, rowText("terminal", matrix.terminal), rowText("fork", matrix["session.fork"], " used")].join(
     " · ",
   );
 }
