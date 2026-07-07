@@ -1,5 +1,6 @@
 // P1 gate: reducer determinism and revision-gap recovery are pure and provable.
 import { describe, expect, it } from "vitest";
+import { assertKind } from "./support/assert-kind";
 import {
   applyHostMessage,
   coalesceAgentViewEvent,
@@ -84,9 +85,8 @@ describe("plan strip mirrors only what the agent reports", () => {
   it("transcriptReset clears the live plan — replay rebuilds it or it stays absent", () => {
     const s = replay(initialAgentViewState, [
       {
-        kind: "planAppended",
+        kind: "planUpdated",
         sessionId: "s1",
-        blockId: "p1",
         entries: [{ content: "step", status: "in_progress" }],
       },
       { kind: "transcriptReset", sessionId: "s1" },
@@ -147,11 +147,9 @@ describe("applyHostMessage", () => {
       { rev: 7, state: stateWith([claude]) },
       { kind: "patch", rev: 8, events: [{ kind: "agentUpserted", agent: gemini }] },
     );
-    expect(r.kind).toBe("ok");
-    if (r.kind === "ok") {
-      expect(r.next.rev).toBe(8);
-      expect(r.next.state.agents).toHaveLength(2);
-    }
+    const ok = assertKind(r, "ok");
+    expect(ok.next.rev).toBe(8);
+    expect(ok.next.state.agents).toHaveLength(2);
   });
 
   it("reports a gap on a revision jump — recovery is resnapshot, never repair", () => {

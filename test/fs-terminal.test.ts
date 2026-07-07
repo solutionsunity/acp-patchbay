@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assertKind } from "./support/assert-kind";
 import { applyFileWrite, PermissionBroker } from "../src/orchestrator/broker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
@@ -161,15 +162,15 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(textOf(sessionId, h.events)).toContain("write: ok");
     expect(await readFile(join(workspaceRoot, "a.txt"), "utf8")).toBe("hello\n");
 
-    const diff = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff");
-    expect(diff).toBeDefined();
-    if (diff?.kind === "diff") {
-      // "hello\n".split("\n") is ["hello", ""] — the trailing empty line is
-      // a real line in the diff, not a quirk; see diff.test.ts for the
-      // dedicated engine coverage.
-      expect(diff.additions).toBe(2);
-      expect(diff.resolution).toEqual({ accepted: true, auto: true });
-    }
+    const diff = assertKind(
+      h.state().transcripts[sessionId]!.find((b) => b.kind === "diff"),
+      "diff",
+    );
+    // "hello\n".split("\n") is ["hello", ""] — the trailing empty line is
+    // a real line in the diff, not a quirk; see diff.test.ts for the
+    // dedicated engine coverage.
+    expect(diff.additions).toBe(2);
+    expect(diff.resolution).toEqual({ accepted: true, auto: true });
     await h.pool.stop("w1");
   });
 

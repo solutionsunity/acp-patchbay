@@ -1,17 +1,30 @@
 /* Agent View shell — ported from docs/design/agent-view-mockup.html (binding
  * inventory: docs/design/ui.md). Theme-aware via --vscode-* variables; the
  * patchbay identity accents (teal, consumed-orange) stay fixed. */
+
+/* Layered below Tailwind's utilities (theme.css declares the order:
+ * theme, base, components, utilities) so the shadcn/Streamdown surfaces
+ * can override the hand CSS where they collide — most importantly the
+ * `* { margin:0; padding:0 }` reset, which as an unlayered rule would
+ * silently beat every margin/padding utility. Retires per the ledger above. */
+/* ── CSS LEDGER (P14g) ─────────────────────────────────────────────────
+ * What remains here is the agent view shell layout and block/card styling
+ * that predates the shadcn layer. Terms of the debt:
+ *  - every rule lives in the `components` layer: utilities written in TSX
+ *    always win a collision;
+ *  - a rule retires when its last consumer converts to utilities — checked
+ *    by the dead-class sweep (grep classNames vs selectors), enforced at
+ *    each extraction, never in one risky sweep;
+ *  - no NEW rules land here: new styling is utilities on the theme
+ *    contract's tokens (theme.css).
+ * Surface aliases (--pb-*) up top stay until the last consumer converts;
+ * the identity palette itself lives in theme.css, not here. */
+@layer components {
 :root {
   /* the actual mechanism browsers use to theme native form-control chrome
    * (checkbox/radio/select popup) — without it Chromium falls back to its
    * light-UA default regardless of the vscode-* tokens above. */
   color-scheme: light dark;
-  --pb-accent: #45c4a8;
-  --pb-accent-dim: #2c6f61;
-  --pb-consumed: #e8964f;
-  --pb-ok: #4cc38a;
-  --pb-warn: #e5b567;
-  --pb-err: #e5675c;
   --pb-bg: var(--vscode-sideBar-background);
   --pb-panel: var(--vscode-editorWidget-background);
   --pb-panel-2: var(--vscode-list-hoverBackground);
@@ -127,23 +140,7 @@ body {
   flex: 1;
 }
 
-.icon-btn {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--pb-text-dim);
-  cursor: pointer;
-  border: none;
-  background: none;
-  font-size: 14px;
-}
 
-.icon-btn:hover {
-  background: var(--pb-panel-2);
-  color: var(--pb-text);
-}
 
 /* usage gauge — rendered only where usage reporting is used */
 .gauge {
@@ -262,9 +259,6 @@ body {
   border-bottom: 1px solid var(--pb-err);
 }
 
-.crash-banner .btn {
-  margin-left: auto;
-}
 
 /* ── chat ───────────────────────────────────────────────────────────── */
 .chat {
@@ -411,26 +405,6 @@ body {
   }
 }
 
-.plan-card {
-  padding-bottom: 6px;
-}
-
-.plan-card .row {
-  display: flex;
-  gap: 8px;
-  padding: 4px 12px;
-  font-size: 12.5px;
-  align-items: baseline;
-}
-
-.plan-card .row.completed {
-  color: var(--pb-text-faint);
-  text-decoration: line-through;
-}
-
-.plan-card .row.in_progress {
-  color: var(--pb-accent);
-}
 
 /* permission card */
 .perm {
@@ -526,35 +500,10 @@ body {
   margin-top: 8px;
 }
 
-.btn {
-  border: 1px solid var(--pb-border);
-  background: var(--pb-panel-2);
-  color: var(--pb-text);
-  border-radius: 6px;
-  padding: 4px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: inherit;
-}
 
-.btn:hover {
-  border-color: var(--pb-text-faint);
-}
 
-.btn.primary {
-  background: var(--pb-accent-dim);
-  border-color: var(--pb-accent);
-}
 
-.btn.danger:hover {
-  border-color: var(--pb-err);
-  color: var(--pb-err);
-}
 
-.row-btn {
-  font-size: 11px;
-  padding: 2px 9px;
-}
 
 /* ── composer ───────────────────────────────────────────────────────── */
 .composer {
@@ -905,4 +854,6 @@ body {
   padding: 6px 14px;
   font-size: 12px;
   white-space: nowrap;
+}
+
 }

@@ -1,6 +1,24 @@
 // vscode glue between webviews and channel hosts. Webviews are render-only:
 // they die when hidden and resurrect via ready → snapshot.
 // CSP + nonce pattern after vscode-acp's ChatWebviewProvider (MIT, formulahendry).
+//
+// CSP is authored here and never widened silently (stack.md). The record:
+// - P13a: React/Radix apply their "inline styles" through the CSSOM
+//   (element.style), which `style-src` does not govern — no widening needed.
+// - P13b: Shiki runs its JS regex engine — `wasm-unsafe-eval` never added.
+// - P13c follow-up (Mermaid): style-src gains 'unsafe-inline'. Mermaid's
+//   rendered SVG carries <style> elements and style="" attributes as
+//   parsed markup, which strict style-src blocks and which cannot be
+//   nonce'd (attributes take no nonce). Scope: styles only — script-src
+//   stays nonce-strict, and agent-authored HTML cannot reach a <style>
+//   element anyway (Streamdown sanitizes it). The mermaid bundle itself
+//   loads lazily via a <script> carrying this same nonce.
+// - script-src also carries 'strict-dynamic': the nonce'd entry bundle may
+//   load further scripts (the lazy mermaid bundle) and nonce propagation
+//   via document.currentScript proved unreliable inside the webview iframe
+//   — strict-dynamic is CSP3's designed answer: trust what the trusted
+//   script loads, transitively. Host/scheme sources are ignored under it,
+//   which is fine — nonce was already the only script source.
 import * as vscode from "vscode";
 import type { ViewToHost } from "../shared/protocol";
 import type { ChannelEndpoint } from "./channel";
@@ -33,7 +51,7 @@ export function webviewHtml(
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${n}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
+        content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="${codiconStyle}">
   <link rel="stylesheet" href="${style}">

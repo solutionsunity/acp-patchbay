@@ -1,7 +1,9 @@
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -32,6 +34,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { AgentPool, type LaunchSpec } from "./pool";
+import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager } from "./session-manager";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
@@ -46,6 +49,7 @@ import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rul
 import { loadRegistry } from "./stores/registry";
 import { loadOverlay, mergeRoster, type RosterAgent } from "./stores/roster";
 import { SessionIndexStore } from "./stores/session-index";
+import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
@@ -84,6 +88,7 @@ export class Orchestrator {
   readonly agentConfigs: AgentConfigStore;
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
+  readonly spawnRegistry: SpawnRegistryStore;
   readonly agentKnobsCache: AgentKnobsStore;
   readonly agentEnv: SecretEnvStore;
   readonly integrationEnv: SecretEnvStore;
@@ -165,6 +170,7 @@ export class Orchestrator {
     this.agentConfigs = new AgentConfigStore(context.globalState);
     this.integrationConfigs = new IntegrationConfigStore(context.globalState);
     this.usedCapabilities = new UsedCapabilityStore(context.globalState);
+    this.spawnRegistry = new SpawnRegistryStore(context.globalState);
     this.agentKnobsCache = new AgentKnobsStore(context.globalState);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
     this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
@@ -265,16 +271,34 @@ export class Orchestrator {
       onSessionUpdate: (agentId, notification) =>
         this.sessionManager.handleUpdate(agentId, notification),
       onCapabilityUsed: (agentId, row) => this.capabilityTracker.markUsed(agentId, row),
+      // Spawn registry (P15c): records live in globalState so an abnormal
+      // end (crash, OS kill) leaves exactly what the next activate reaps.
+      onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
+      onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
       onPermissionRequest: async (_agentId, params) => {
         const subject =
           params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
+        const options = optionViewsFromAcp(params.options);
         const result = await this.broker.resolveAgentPermissionRequest(
           params.sessionId,
           params.toolCall.title ?? "Permission request",
           params.toolCall.kind ?? "other",
           subject,
-          optionViewsFromAcp(params.options),
+          options,
         );
+        // A rejected request marks its tool-call block denied — "blocked by
+        // permission" renders distinct from "failed" (ui-rendering-strategy).
+        // Only this path can correlate: the request carries the toolCallId;
+        // patchbay's own fs/terminal gates have no id and already show their
+        // own permission/diff cards inline.
+        const chosen = "cancelled" in result ? undefined : options.find((o) => o.optionId === result.optionId);
+        if (chosen !== undefined && chosen.kind.startsWith("reject")) {
+          this.agentView.emit({
+            kind: "toolCallDenied",
+            sessionId: params.sessionId,
+            blockId: params.toolCall.toolCallId,
+          });
+        }
         return "cancelled" in result
           ? { outcome: { outcome: "cancelled" } }
           : { outcome: { outcome: "selected", optionId: result.optionId } };
@@ -308,6 +332,16 @@ export class Orchestrator {
         this.markFirstUse(agentId, "terminal");
         const terminalId = `term-${++this.terminalCounter}`;
         this.terminals.set(terminalId, handle);
+        if (handle.pid !== null) {
+          const pid = handle.pid;
+          void commandOf(pid).then((cmd) => {
+            // Already exited (fast command) → the record would only be stale.
+            if (cmd !== "" && handle.exitStatus() === null) {
+              void this.spawnRegistry.add(pid, cmd, "terminal");
+            }
+          });
+          handle.onExit(() => void this.spawnRegistry.removePid(pid));
+        }
         const blockId = `term-block-${terminalId}`;
         this.agentView.emit({ kind: "terminalStarted", sessionId: params.sessionId, blockId, command });
         handle.onData((chunk) =>
@@ -349,6 +383,11 @@ export class Orchestrator {
         return {};
       },
       onReleaseTerminal: async (_agentId, params) => {
+        // ACP release semantics: a still-running command is killed — before
+        // this, releasing dropped the handle and left the process running
+        // with nothing pointing at it (P15c).
+        const handle = this.terminals.get(params.terminalId);
+        if (handle !== undefined && handle.exitStatus() === null) handle.kill();
         this.terminals.delete(params.terminalId);
         return {};
       },
@@ -469,7 +508,41 @@ export class Orchestrator {
     this.agentView.onChange(() => this.refreshStatusBar());
     this.refreshStatusBar();
 
-    void this.connectDefaultAgent();
+    // Orphan reaping strictly before the default agent spawns (P15c): the
+    // registry must be settled before new pids start landing in it.
+    void this.reapLeftoverProcesses().then(() => this.connectDefaultAgent());
+  }
+
+  /** Sweeps spawn-registry records left by a session that never ran its
+   * cleanup (crash, OS kill, host death). Kill only what still matches the
+   * recorded command line — a mismatch is a reused pid and is spared, always
+   * the safe direction (process-tree.ts). Every record is spent either way. */
+  private async reapLeftoverProcesses(): Promise<void> {
+    const records = this.spawnRegistry.list();
+    if (records.length === 0) return;
+    const { killed, spared } = await reapOrphans(records);
+    for (const record of records) await this.spawnRegistry.removePid(record.pid);
+    for (const record of killed) {
+      this.log.info(`reaped orphan ${record.kind} process (pid ${record.pid}) from a previous session`);
+    }
+    for (const record of spared) {
+      this.log.debug(`spared pid ${record.pid} — command line changed, pid was reused`);
+    }
+  }
+
+  /** deactivate's bounded best-effort (plan.md P15): terminal trees get a
+   * straight SIGKILL (batch commands — no protocol to be graceful about),
+   * agents get the pool ladder on its tight budget, and the whole sweep is
+   * raced against the ~2s VS Code actually waits before killing the host.
+   * Whatever this couldn't reach, the next activate's reap covers. */
+  async shutdown(): Promise<void> {
+    for (const handle of this.terminals.values()) {
+      if (handle.pid !== null && handle.exitStatus() === null) killTree(handle.pid, "SIGKILL");
+    }
+    await Promise.race([
+      this.pool.disposeAll(),
+      new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
+    ]);
   }
 
   /** "Default agent" (VS Code native settings, architecture.md § UI layer —
@@ -771,6 +844,54 @@ export class Orchestrator {
       roster?.assets ?? null,
     );
     this.settings.emit({ kind: "agentAssetsChanged", assets });
+  }
+
+  /** A rendered mermaid SVG, opened as an editor-area panel — the agent
+   * view's column is narrow; the files area is where a diagram can breathe.
+   * Static content: no scripts at all, styles allowed for the SVG's own
+   * inline styling (same CSP posture as the chat webview that rendered it). */
+  private openDiagram(svg: string): void {
+    const panel = vscode.window.createWebviewPanel(
+      "acpPatchbay.diagram",
+      "Diagram",
+      vscode.ViewColumn.Active,
+      {},
+    );
+    panel.webview.html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;">
+  <style>
+    body { margin: 0; height: 100vh; display: grid; place-items: center; overflow: auto; }
+    svg { max-width: 95vw; max-height: 95vh; height: auto; }
+  </style>
+</head>
+<body>${svg}</body>
+</html>`;
+  }
+
+  /** Agent-reported tool-call diffs open in VS Code's native diff editor,
+   * never an inline webview diff (ui-rendering-strategy § tool call card
+   * design) — the texts come back from the session-manager's stash, written
+   * to temp files so vscode.diff has real URIs to compare. */
+  private async openToolCallDiff(sessionId: string, toolCallId: string, path: string): Promise<void> {
+    const diff = this.sessionManager.toolCallDiff(sessionId, toolCallId, path);
+    if (diff === null) return; // stale id after a close — nothing to show
+    const dir = join(tmpdir(), "acp-patchbay-diffs", toolCallId.replace(/[^a-zA-Z0-9_-]/g, "_"));
+    await mkdir(dir, { recursive: true });
+    const name = basename(path);
+    const left = join(dir, `before-${name}`);
+    const right = join(dir, `after-${name}`);
+    await writeFile(left, diff.oldText, "utf8");
+    await writeFile(right, diff.newText, "utf8");
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      vscode.Uri.file(left),
+      vscode.Uri.file(right),
+      `${name} — agent-proposed change`,
+    );
   }
 
   /** Real editing happens in VS Code's own editor, never a webview dialect
@@ -1275,6 +1396,19 @@ export class Orchestrator {
         break;
       case "refreshAgentAssets":
         void this.refreshAgentAssets(action.agentId);
+        break;
+      case "openToolCallDiff":
+        void this.openToolCallDiff(action.sessionId, action.toolCallId, action.path).catch(
+          this.logCatch(`openToolCallDiff ${action.path}`),
+        );
+        break;
+      case "openDiagram":
+        this.openDiagram(action.svg);
+        break;
+      case "reportWebviewError":
+        // the webviews' own runtime errors — surfaced here so the Output
+        // channel is the durable record behind the in-view errors chip
+        this.log.error(`webview ${action.view}: ${action.message}`);
         break;
       case "openAssetFile":
         this.openAssetFile(action.path);

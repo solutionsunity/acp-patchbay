@@ -22,6 +22,7 @@ import type {
   SessionConfigOptionView,
   SessionModesView,
   SessionSummary,
+  TurnUsage,
 } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
@@ -122,6 +123,12 @@ function toModesView(modes: SessionModeState): SessionModesView {
 
 export class SessionManager {
   private sessions = new Map<string, LiveSession>();
+  /** Agent-reported diff content per tool call (ToolCallContent "diff") —
+   * the texts stay here, never in webview state (they can be whole files);
+   * the block carries only the openable paths, and openToolCallDiff reads
+   * back through `toolCallDiff`. Cleared with the session; a replay
+   * re-sends tool_call content, so it repopulates itself. */
+  private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   private contextTokenCounter = 0;
 
   constructor(
@@ -195,6 +202,7 @@ export class SessionManager {
   async close(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
+    this.toolDiffs.delete(sessionId);
     await this.sessionIndex.remove(sessionId);
     this.hooks.emit({ kind: "sessionClosed", sessionId });
     if (session === undefined || session.poolKey === session.agentId) return;
@@ -512,9 +520,14 @@ export class SessionManager {
       await this.sessionIndex.rename(targetId, title);
       events.push({ kind: "sessionRenamed", sessionId: targetId, title });
     }
+    // Duration basis is send→stop, deliberately not first-chunk→stop: the
+    // live ticker exists so a slow response has visible feedback instead of
+    // silence, and the silence starts at send.
+    const startedAt = new Date().toISOString();
     events.push(
       { kind: "userMessageAppended", sessionId: targetId, blockId: newBlockId("user"), text },
       { kind: "sessionLiveChanged", sessionId: targetId, live: true },
+      { kind: "turnStarted", sessionId: targetId, at: startedAt },
     );
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
@@ -543,6 +556,16 @@ export class SessionManager {
       }
     }
     prompt.push({ type: "text", text });
+    const endTurn = (stopReason: string, usage: TurnUsage | null) =>
+      this.hooks.emit({
+        kind: "turnEnded",
+        sessionId: targetId,
+        blockId: newBlockId("turn"),
+        startedAt,
+        at: new Date().toISOString(),
+        stopReason,
+        usage,
+      });
     try {
       const response = await this.pool.prompt(session.poolKey, targetId, prompt);
       // end_turn is the unremarkable outcome; anything else is worth a line.
@@ -551,6 +574,11 @@ export class SessionManager {
       } else {
         this.log.info(`session ${targetId}: turn stopped — ${response.stopReason}`);
       }
+      endTurn(response.stopReason, toTurnUsage(response.usage));
+    } catch (err) {
+      // The turn still ended — as an error, said as such, never silently.
+      endTurn("error", null);
+      throw err;
     } finally {
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId: targetId, live: false });
     }
@@ -562,6 +590,37 @@ export class SessionManager {
     await this.pool.cancel(session.poolKey, sessionId);
   }
 
+  /** Pulls type:"diff" entries out of a tool call's content: texts stashed
+   * here, paths returned for the event (spread-friendly; absent when the
+   * update carried no content, so "keep existing" merge semantics hold —
+   * present content replaces the collection, per ACP). */
+  private stashToolDiffs(
+    sessionId: string,
+    toolCallId: string,
+    content: readonly { type: string; path?: string; oldText?: string | null; newText?: string }[] | null | undefined,
+  ): { diffFiles: readonly string[] } | Record<string, never> {
+    if (content == null) return {};
+    const diffs = new Map<string, { oldText: string; newText: string }>();
+    for (const c of content) {
+      if (c.type !== "diff" || c.path === undefined || c.newText === undefined) continue;
+      diffs.set(c.path, { oldText: c.oldText ?? "", newText: c.newText });
+    }
+    if (diffs.size === 0) return {}; // content present but no diffs — not a replacement signal for diffs
+    let perSession = this.toolDiffs.get(sessionId);
+    if (perSession === undefined) {
+      perSession = new Map();
+      this.toolDiffs.set(sessionId, perSession);
+    }
+    perSession.set(toolCallId, diffs);
+    return { diffFiles: [...diffs.keys()] };
+  }
+
+  /** The stashed texts for one openToolCallDiff action — null when unknown
+   * (stale id after a close; the action is simply a no-op then). */
+  toolCallDiff(sessionId: string, toolCallId: string, path: string): { oldText: string; newText: string } | null {
+    return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
+  }
+
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
   handleUpdate(_agentId: string, notification: SessionNotification): void {
@@ -570,8 +629,13 @@ export class SessionManager {
     if (!session) return; // update for a session patchbay isn't tracking
 
     switch (update.sessionUpdate) {
+      // Block-model interruption rule (ui-rendering-strategy.md): a chunk
+      // merges into the *last* block only if it's the same type — any other
+      // block landing in between (the other chunk type, a tool call, a plan)
+      // closes it, and a later chunk of the old type starts a fresh block.
       case "agent_message_chunk": {
         if (update.content.type !== "text") return;
+        session.activeThoughtBlockId = null; // prose interrupts the thought run
         session.activeTextBlockId ??= newBlockId("text");
         this.hooks.emit({
           kind: "agentTextDelta",
@@ -583,6 +647,7 @@ export class SessionManager {
       }
       case "agent_thought_chunk": {
         if (update.content.type !== "text") return;
+        session.activeTextBlockId = null; // thinking interrupts the prose run
         session.activeThoughtBlockId ??= newBlockId("thought");
         this.hooks.emit({
           kind: "agentThoughtDelta",
@@ -593,13 +658,21 @@ export class SessionManager {
         break;
       }
       case "tool_call":
-        session.activeTextBlockId = null; // a following chunk starts a fresh text block
+        session.activeTextBlockId = null; // the agent paused to act
+        session.activeThoughtBlockId = null;
         this.hooks.emit({
           kind: "toolCallUpserted",
           sessionId,
           blockId: update.toolCallId,
           title: update.title,
           status: update.status ?? "pending",
+          toolKind: update.kind ?? "other",
+          ...boundedRaw("input", update.rawInput),
+          ...boundedRaw("output", update.rawOutput),
+          ...(update.locations != null
+            ? { locations: update.locations.map((l) => l.path) }
+            : {}),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
       case "tool_call_update":
@@ -609,13 +682,21 @@ export class SessionManager {
           blockId: update.toolCallId,
           title: update.title ?? "",
           status: update.status ?? "completed",
+          ...(update.kind != null ? { toolKind: update.kind } : {}),
+          ...boundedRaw("input", update.rawInput),
+          ...boundedRaw("output", update.rawOutput),
+          ...(update.locations != null
+            ? { locations: update.locations.map((l) => l.path) }
+            : {}),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
       case "plan":
+        // Session-level state, not a transcript event — replaces the pinned
+        // widget's snapshot; it neither appends a block nor interrupts a run.
         this.hooks.emit({
-          kind: "planAppended",
+          kind: "planUpdated",
           sessionId,
-          blockId: newBlockId("plan"),
           entries: toPlanEntries(update.entries),
         });
         break;
@@ -677,6 +758,46 @@ async function imageAsResourceLink(chip: ContextChip): Promise<ContentBlock> {
   const file = join(dir, name);
   await writeFile(file, Buffer.from(chip.content, "base64"));
   return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType };
+}
+
+/** PromptResponse.usage (UNSTABLE in ACP, optional per agent) → the view's
+ * TurnUsage — null when unreported, so the UI omits the row entirely
+ * (absence over fake). */
+function toTurnUsage(usage: { totalTokens: number; inputTokens: number; outputTokens: number; cachedReadTokens?: number | null } | null | undefined): TurnUsage | null {
+  if (usage == null) return null;
+  return {
+    total: usage.totalTokens,
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    ...(usage.cachedReadTokens != null ? { cached: usage.cachedReadTokens } : {}),
+  };
+}
+
+/** A tool call's rawInput/rawOutput can be arbitrarily large (a full file
+ * read, a long command's stdout) — bound it before it rides every state
+ * snapshot, with an honest marker, never a silent cut. Absent stays absent:
+ * the spread-friendly shape keeps `undefined` out of the event entirely so
+ * the reducer's "absent = keep existing" merge rule holds. */
+const RAW_CAP = 4_000;
+
+function boundedRaw(
+  key: "input" | "output",
+  raw: unknown,
+): { input: string } | { output: string } | Record<string, never> {
+  if (raw === undefined || raw === null) return {};
+  let text: string;
+  if (typeof raw === "string") text = raw;
+  else {
+    try {
+      text = JSON.stringify(raw, null, 2);
+    } catch {
+      text = String(raw);
+    }
+  }
+  if (text.length > RAW_CAP) {
+    text = `${text.slice(0, RAW_CAP)}\n… truncated (${text.length.toLocaleString()} chars total)`;
+  }
+  return { [key]: text } as { input: string } | { output: string };
 }
 
 function toPlanEntries(

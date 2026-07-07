@@ -5,7 +5,7 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "jsxImportSource": "preact",
+    "paths": { "@/*": ["./src/webview/*"] },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

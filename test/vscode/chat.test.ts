@@ -3,6 +3,7 @@
 // recovers to the accumulated chat state. (The Claude-Code-over-ACP half of
 // this gate is a manual smoke test outside this harness — no live agent
 // credentials are available in this sandboxed run.)
+import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ interface ChatBlockLike {
 
 interface Internal {
   orchestrator: {
+    isAgentViewVisible(): boolean;
     agentView: {
       revision: number;
       waitForApplied(rev?: number): Promise<number>;
@@ -94,17 +96,18 @@ suite("chat vertical slice", () => {
       // fire the turn without awaiting completion — we want to interrupt mid-stream
       const turnDone = orchestrator.sessionManager.sendPrompt(sessionId, "go");
 
-      // let the first chunk or two land, then kill the webview mid-turn
-      await new Promise((r) => setTimeout(r, 400));
+      // wait for the first chunk to land, then kill the webview mid-turn
+      await waitFor(() => {
+        const text = textOf(orchestrator.agentView.current.transcripts[sessionId] ?? []);
+        return text.length > 0 ? text : undefined;
+      });
       const midTurnSession = orchestrator.agentView.current.sessions.find(
         (s) => s.id === sessionId,
       );
       assert.strictEqual(midTurnSession?.live, true, "turn should still be in flight");
-      const midTurnText = textOf(orchestrator.agentView.current.transcripts[sessionId] ?? []);
-      assert.ok(midTurnText.length > 0, "at least one chunk should have streamed already");
 
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
-      await new Promise((r) => setTimeout(r, 150));
+      await waitFor(() => (orchestrator.isAgentViewVisible() ? undefined : true));
 
       // reopen mid-turn — the webview must resync to whatever canonical state
       // has accumulated by now (render cache lives in the orchestrator, not

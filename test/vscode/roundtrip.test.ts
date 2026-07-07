@@ -1,6 +1,7 @@
 // P1 gate: a dummy state round-trips through a real webview, kill/reopen
 // included. Drives the settings panel (deterministic dispose) and the sidebar
 // Agent View (hide/show remount).
+import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
 
@@ -10,12 +11,15 @@ type Internal = {
       emit(...events: unknown[]): void;
       flushNow(): void;
       revision: number;
+      attached: boolean;
       waitForApplied(rev?: number): Promise<number>;
     };
+    isAgentViewVisible(): boolean;
     settings: {
       emit(...events: unknown[]): void;
       flushNow(): void;
       revision: number;
+      attached: boolean;
       waitForApplied(rev?: number): Promise<number>;
     };
   };
@@ -50,9 +54,9 @@ suite("snapshot/patch round-trip through real webviews", () => {
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    // kill
+    // kill — settled once the channel reports the webview detached
     settingsPanelHost.currentPanel!.dispose();
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => (ch.attached ? undefined : true));
 
     // state advances while the webview is dead
     ch.emit(upsert("dummy-2"));
@@ -103,8 +107,10 @@ suite("snapshot/patch round-trip through real webviews", () => {
     await ch.waitForApplied(ch.revision);
 
     // hide the sidebar (kills non-retained webview content), advance state, re-show
+    // closing the sidebar hides the view (it is not disposed) — settled once
+    // the provider has reported not-visible and the hidden iframe is gone
     await vscode.commands.executeCommand("workbench.action.closeSidebar");
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => (orchestrator.isAgentViewVisible() ? undefined : true));
     ch.emit(upsert("dummy-4"));
     ch.flushNow();
     const targetRev = ch.revision;

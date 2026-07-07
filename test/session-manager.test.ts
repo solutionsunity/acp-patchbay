@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assertKind } from "./support/assert-kind";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
@@ -151,15 +152,12 @@ describe("SessionManager", () => {
     const toolBlock = blocks.find((b) => b.kind === "toolCall");
     expect(toolBlock).toMatchObject({ title: "Reading file", status: "completed" });
 
-    const planBlock = blocks.find((b) => b.kind === "plan");
-    expect(planBlock?.kind).toBe("plan");
-    if (planBlock?.kind === "plan") {
-      expect(planBlock.entries).toEqual([
-        { content: "step one", status: "completed" },
-        { content: "step two", status: "in_progress" },
-      ]);
-    }
-    expect(state.activePlan[sessionId]).toEqual(planBlock);
+    // A plan is session-level state (ui-rendering-strategy § Plans): it
+    // updates the pinned widget's snapshot and never enters the transcript.
+    expect(state.activePlan[sessionId]).toEqual([
+      { content: "step one", status: "completed" },
+      { content: "step two", status: "in_progress" },
+    ]);
     expect(state.commandsBySession[sessionId]).toEqual([
       { name: "review", description: "fake review" },
       { name: "deploy", description: "fake deploy" },
@@ -273,6 +271,156 @@ describe("SessionManager", () => {
     expect(continued.some((b) => b.kind === "user" && b.text === "after restart")).toBe(true);
 
     await h.pool.stop("sm6");
+  });
+
+  it("interleaved text/thought/tool updates render ordered, merged, and updated in place (P13b gate)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "chunk", text: "let me " },
+            { type: "chunk", text: "look. " },
+            { type: "thought", text: "hmm, " },
+            { type: "thought", text: "grep first" },
+            { type: "chunk", text: "searching now" },
+            { type: "toolCall", id: "t1", title: "Grep pattern", kind: "search", rawInput: { pattern: "foo" } },
+            { type: "toolDone", id: "t1", rawOutput: "3 matches" },
+            { type: "chunk", text: "found it" },
+          ],
+        },
+        "sm13b",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm13b", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "find foo");
+
+    const blocks = h.state().transcripts[sessionId]!;
+    // Literal arrival order, chunks merged per run, interruptions split runs:
+    // user · text · thought · text · one tool block · text — never re-bucketed
+    // — then the turn's own metadata block (P13c) closing it.
+    expect(blocks.map((b) => b.kind)).toEqual(["user", "text", "thought", "text", "toolCall", "text", "turnEnd"]);
+    expect(textOf(blocks[1])).toBe("let me look. ");
+    expect(textOf(blocks[2])).toBe("hmm, grep first");
+    expect(textOf(blocks[3])).toBe("searching now");
+    expect(textOf(blocks[5])).toBe("found it");
+    // tool_call + tool_call_update landed on ONE block, updated in place,
+    // with kind and raw input/output carried through.
+    const search = assertKind(blocks[4], "toolCall");
+    expect(search).toMatchObject({
+      id: "t1",
+      status: "completed",
+      toolKind: "search",
+      denied: false,
+    });
+    expect(search.input).toContain('"pattern": "foo"');
+    expect(search.output).toBe("3 matches");
+
+    await h.pool.stop("sm13b");
+  });
+
+  it("oversized tool rawOutput is bounded with an honest truncation marker (P13b)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "big", title: "Read file", kind: "read" },
+            { type: "toolDone", id: "big", rawOutput: "x".repeat(10_000) },
+          ],
+        },
+        "sm13c",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm13c", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "read it");
+
+    const tool = assertKind(
+      h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"),
+      "toolCall",
+    );
+    expect(tool.output).not.toBeNull();
+    expect(tool.output!.length).toBeLessThan(4_200);
+    expect(tool.output).toContain("… truncated (10,000 chars total)");
+
+    await h.pool.stop("sm13c");
+  });
+
+  it("a resolved turn appends a turnEnd block: send→stop duration, stop reason, usage when reported (P13c gate)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "chunk", text: "done" },
+            { type: "toolCall", id: "e1", title: "Edit a.ts", kind: "edit", locations: ["/ws/a.ts"] },
+            { type: "toolDone", id: "e1" },
+          ],
+          usage: { totalTokens: 1200, inputTokens: 1000, outputTokens: 200, cachedReadTokens: 800 },
+        },
+        "sm13d",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm13d", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit it");
+
+    const state = h.state();
+    const blocks = state.transcripts[sessionId]!;
+    const end = assertKind(blocks[blocks.length - 1], "turnEnd");
+    expect(end.stopReason).toBe("end_turn");
+    expect(Date.parse(end.endedAt)).toBeGreaterThanOrEqual(Date.parse(end.startedAt));
+    expect(end.usage).toEqual({ total: 1200, input: 1000, output: 200, cached: 800 });
+    // the ticker's basis is cleared the moment the turn resolves
+    expect(state.activeTurn[sessionId]).toBeUndefined();
+    // locations rode in for the rollup's distinct-files count
+    const tool = assertKind(blocks.find((b) => b.kind === "toolCall"), "toolCall");
+    expect(tool.locations).toEqual(["/ws/a.ts"]);
+
+    await h.pool.stop("sm13d");
+  });
+
+  it("agent-reported diff content: paths ride the block, texts stay orchestrator-side for the native diff editor", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "d1", title: "Edit a.ts", kind: "edit" },
+            { type: "toolDone", id: "d1", diff: { path: "/ws/a.ts", oldText: "old\n", newText: "new\n" } },
+          ],
+        },
+        "sm13f",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm13f", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit");
+
+    const tool = assertKind(
+      h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"),
+      "toolCall",
+    );
+    expect(tool.diffFiles).toEqual(["/ws/a.ts"]);
+    // texts never enter webview state — they come back through the stash
+    expect(h.sessionManager.toolCallDiff(sessionId, "d1", "/ws/a.ts")).toEqual({
+      oldText: "old\n",
+      newText: "new\n",
+    });
+    expect(h.sessionManager.toolCallDiff(sessionId, "d1", "/nope")).toBeNull();
+
+    await h.pool.stop("sm13f");
+  });
+
+  it("a turn without reported usage gets usage: null — absence over fake (P13c)", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sm13e"));
+    const sessionId = await h.sessionManager.createSession("sm13e", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+
+    const blocks = h.state().transcripts[sessionId]!;
+    const end = assertKind(blocks[blocks.length - 1], "turnEnd");
+    expect(end.usage).toBeNull();
+
+    await h.pool.stop("sm13e");
   });
 
   it("usage reporting is marked used opportunistically the moment it's first observed (P5)", async () => {

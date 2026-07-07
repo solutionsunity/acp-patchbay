@@ -7,9 +7,16 @@ import {
 } from "../../shared/protocol";
 import { createViewChannel } from "../shared/channel";
 import { mount } from "../shared/mount";
+import { installErrorCollector } from "../shared/error-collector";
+import { syncDarkClass } from "../shared/theme-dark-sync";
 import { App } from "./app";
+import "../shared/theme.css";
 import "./style.css";
 
 const channel = createViewChannel<SettingsState, SettingsEvent>(reduceSettings);
 
+installErrorCollector((message) =>
+  channel.sendAction({ kind: "reportWebviewError", view: "settings", message }),
+);
+syncDarkClass();
 mount(channel, App, document.getElementById("root")!);

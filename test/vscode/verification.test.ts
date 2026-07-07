@@ -4,6 +4,7 @@
 // fs reads/writes and terminal commands through patchbay's gates earns
 // used on those rows — which is also the only path to the
 // "fully brokered" fidelity label and to auto-attach integration routing.
+import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,16 +50,6 @@ async function internal(): Promise<Internal> {
   assert.ok(ext);
   const api = (await ext.activate()) as { internal: Internal };
   return api.internal;
-}
-
-async function waitFor<T>(probe: () => T | undefined, timeoutMs = 8000): Promise<T> {
-  const start = Date.now();
-  for (;;) {
-    const value = probe();
-    if (value !== undefined) return value;
-    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
-    await new Promise((r) => setTimeout(r, 30));
-  }
 }
 
 suite("opportunistic fs/terminal verification", () => {

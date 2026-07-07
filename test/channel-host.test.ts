@@ -1,6 +1,7 @@
 // ChannelHost against a fake webview: ready → snapshot, patches carry
 // consecutive revs, resnapshot after gap, snapshot discards buffered events.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertKind } from "./support/assert-kind";
 import { FLUSH_INTERVAL_MS } from "../src/orchestrator/bus";
 import { ChannelHost, type WebviewLike } from "../src/orchestrator/channel";
 import {
@@ -85,9 +86,8 @@ describe("ChannelHost", () => {
     host.emit(upsert("a")); // buffered, not yet flushed
     host.handleViewMessage({ kind: "ready" }); // snapshot folds it in
 
-    const snap = view.last();
-    expect(snap?.kind).toBe("snapshot");
-    if (snap?.kind === "snapshot") expect(snap.state.agents).toHaveLength(1);
+    const snap = assertKind(view.last(), "snapshot");
+    expect(snap.state.agents).toHaveLength(1);
 
     vi.advanceTimersByTime(FLUSH_INTERVAL_MS * 2);
     expect(view.messages.filter((m) => m.kind === "patch")).toHaveLength(0);
@@ -95,9 +95,8 @@ describe("ChannelHost", () => {
     // next event patches at rev+1 relative to the snapshot
     host.emit(upsert("b"));
     vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
-    const patch = view.last();
-    expect(patch?.kind).toBe("patch");
-    if (patch?.kind === "patch") expect(patch.rev).toBe(snap!.rev + 1);
+    const patch = assertKind(view.last(), "patch");
+    expect(patch.rev).toBe(snap.rev + 1);
   });
 
   it("resnapshot (gap recovery) sends a fresh snapshot", () => {
@@ -110,12 +109,9 @@ describe("ChannelHost", () => {
     host.flushNow();
     host.handleViewMessage({ kind: "resnapshot" });
 
-    const snap = view.last();
-    expect(snap?.kind).toBe("snapshot");
-    if (snap?.kind === "snapshot") {
-      expect(snap.rev).toBe(1);
-      expect(snap.state.agents).toHaveLength(1);
-    }
+    const snap = assertKind(view.last(), "snapshot");
+    expect(snap.rev).toBe(1);
+    expect(snap.state.agents).toHaveLength(1);
   });
 
   it("canonical revision advances while no webview is attached; remount rehydrates", () => {
@@ -129,12 +125,9 @@ describe("ChannelHost", () => {
     const view = new FakeWebview();
     host.attach(view);
     host.handleViewMessage({ kind: "ready" });
-    const snap = view.last();
-    expect(snap?.kind).toBe("snapshot");
-    if (snap?.kind === "snapshot") {
-      expect(snap.rev).toBe(2);
-      expect(snap.state.agents).toHaveLength(2);
-    }
+    const snap = assertKind(view.last(), "snapshot");
+    expect(snap.rev).toBe(2);
+    expect(snap.state.agents).toHaveLength(2);
   });
 
   it("routes actions to the handler and resolves waitForApplied on ack", async () => {

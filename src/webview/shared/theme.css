@@ -1,0 +1,140 @@
+/* The theme bridge — written once, imported by every webview entry
+ * (ui-rendering-strategy.md: one bridge, never duplicated per surface).
+ *
+ * THIS FILE IS A CONTRACT, not an accumulation: the table below is the
+ * complete set of tokens the component layer consumes (shadcn components,
+ * Streamdown, and patchbay's own accents). Adding a consumer that needs a
+ * new token means adding a row here — with its VS Code source and fallback
+ * — never an arbitrary-value var() class at the point of use. The ui-gate
+ * (scripts/ui-gate) renders three theme variable sets against it.
+ *
+ * Preflight history: skipped at P13a to protect the then-hand-CSS surfaces;
+ * re-derived and imported once the single-UI-source sweep finished (shadcn
+ * assumes it — without it every <button> takes UA ButtonText). Hand CSS
+ * lives in the `components` layer, above `base`, so it wins its collisions
+ * until it retires (P14f/g ledger). */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Scan every webview source for class candidates (relative to this file),
+ * plus Streamdown's component source — its markdown styling is Tailwind
+ * utility classes that only exist if the scanner sees them. */
+@source "../";
+@source "../../../node_modules/streamdown/dist";
+
+/* Tailwind's `dark:` variant keys off a `.dark` ancestor class, not the OS
+ * media query — VS Code themes flip independently of the OS. The `.dark`
+ * class itself is synced from VS Code's body class by theme-dark-sync.ts
+ * (one bridge, two dialects: CSS vars above, class variant here). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* ── shadcn semantic tokens ← VS Code theme variables ──────────────────
+   * token                  VS Code source (fallback)          consumers   */
+  /* background/foreground  editor surface                     everything  */
+  --background: var(--vscode-editor-background);
+  --foreground: var(--vscode-foreground);
+  /* card                   widget surface                     Card, cards */
+  --card: var(--vscode-editorWidget-background);
+  --card-foreground: var(--vscode-foreground);
+  /* popover                dropdown surface (widget)          Select/Menu/
+   *                        — what native select popups use    Popover/Tip */
+  --popover: var(--vscode-dropdown-background, var(--vscode-editorWidget-background));
+  --popover-foreground: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  /* primary                the theme's button                 Button, Switch,
+   *                                                           Checkbox, Radio */
+  --primary: var(--vscode-button-background);
+  --primary-foreground: var(--vscode-button-foreground);
+  /* secondary              secondary button (list hover)      Button secondary */
+  --secondary: var(--vscode-button-secondaryBackground, var(--vscode-list-hoverBackground));
+  --secondary-foreground: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  /* muted                  list hover / description text      subtitles, labels */
+  --muted: var(--vscode-list-hoverBackground);
+  --muted-foreground: var(--vscode-descriptionForeground);
+  /* accent                 hover surface                      Menu/Select focus */
+  --accent: var(--vscode-list-hoverBackground);
+  --accent-foreground: var(--vscode-foreground);
+  /* destructive            theme error red                    Button destructive,
+   *                                                           AlertDialogAction */
+  --destructive: var(--vscode-errorForeground);
+  --destructive-foreground: var(--vscode-button-foreground);
+  /* border/input/ring      widget & input chrome              every bordered
+   *                                                           control + focus */
+  --border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  --input: var(--vscode-input-border, var(--vscode-editorWidget-border));
+  --input-background: var(--vscode-input-background, transparent);
+  --ring: var(--vscode-focusBorder);
+  /* sidebar family         side bar surface                   Streamdown code/
+   *                                                           mermaid chrome */
+  --sidebar: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+  --sidebar-foreground: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  --sidebar-border: var(--vscode-sideBar-border, var(--vscode-panel-border));
+  /* radius                 = --pb-radius (hand CSS)           rounded-* scale */
+  --radius: 8px;
+
+  /* ── patchbay identity palette (fixed, not theme-derived) ──────────────
+   * The teal/status accents ARE the product identity across themes; the
+   * hand CSS reads them as --pb-*, utilities as text-brand/ok/warn/err etc.
+   * One palette, two dialects, single definition — here. */
+  --pb-accent: #45c4a8;
+  --pb-accent-dim: #2c6f61;
+  --pb-consumed: #e8964f;
+  --pb-ok: #4cc38a;
+  --pb-warn: #e5b567;
+  --pb-err: #e5675c;
+}
+
+/* Unlayered on purpose: must outrank the `text-primary` utility Streamdown
+ * puts on links. `primary` maps to VS Code's *button* background — right
+ * for Buttons, wrong for prose links, which follow the theme's own link
+ * color like every other link in the workbench. */
+a[data-streamdown="link"] {
+  color: var(--vscode-textLink-foreground);
+}
+a[data-streamdown="link"]:hover,
+a[data-streamdown="link"]:active {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  /* patchbay palette as first-class utility colors: text-brand, text-ok,
+   * text-warn, text-err, text-consumed (+ bg-/border- forms) — never the
+   * arbitrary-value `text-(--pb-*)` dialect. */
+  --color-brand: var(--pb-accent);
+  --color-brand-dim: var(--pb-accent-dim);
+  --color-ok: var(--pb-ok);
+  --color-warn: var(--pb-warn);
+  --color-err: var(--pb-err);
+  --color-consumed: var(--pb-consumed);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--vscode-font-family, sans-serif);
+  --font-mono: var(--vscode-editor-font-family, monospace);
+}

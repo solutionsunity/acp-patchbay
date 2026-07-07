@@ -1,15 +1,29 @@
 /* Settings shell — ported from docs/design/settings-mockup.html (binding
  * inventory: docs/design/ui.md § Settings). Left nav + cards. */
+
+/* Layered below Tailwind's utilities (theme.css declares the order:
+ * theme, base, components, utilities) so the shadcn/Streamdown surfaces
+ * can override the hand CSS where they collide — most importantly the
+ * `* { margin:0; padding:0 }` reset, which as an unlayered rule would
+ * silently beat every margin/padding utility. Retires per the ledger above. */
+/* ── CSS LEDGER (P14g) ─────────────────────────────────────────────────
+ * What remains here is the settings shell layout and block/card styling
+ * that predates the shadcn layer. Terms of the debt:
+ *  - every rule lives in the `components` layer: utilities written in TSX
+ *    always win a collision;
+ *  - a rule retires when its last consumer converts to utilities — checked
+ *    by the dead-class sweep (grep classNames vs selectors), enforced at
+ *    each extraction, never in one risky sweep;
+ *  - no NEW rules land here: new styling is utilities on the theme
+ *    contract's tokens (theme.css).
+ * Surface aliases (--pb-*) up top stay until the last consumer converts;
+ * the identity palette itself lives in theme.css, not here. */
+@layer components {
 :root {
   /* the actual mechanism browsers use to theme native form-control chrome
    * (checkbox/radio/select popup) — without it Chromium falls back to its
    * light-UA default regardless of the vscode-* tokens above. */
   color-scheme: light dark;
-  --pb-accent: #45c4a8;
-  --pb-accent-dim: #2c6f61;
-  --pb-ok: #4cc38a;
-  --pb-warn: #e5b567;
-  --pb-err: #e5675c;
   --pb-bg: var(--vscode-editor-background);
   --pb-panel: var(--vscode-editorWidget-background);
   --pb-panel-2: var(--vscode-list-hoverBackground);
@@ -211,45 +225,12 @@ h2 {
   padding: 5px 9px;
 }
 
-.btn {
-  border: 1px solid var(--pb-border);
-  background: var(--pb-panel-2);
-  color: var(--pb-text);
-  border-radius: 6px;
-  padding: 5px 13px;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: inherit;
-}
 
-.btn:hover {
-  border-color: var(--pb-text-faint);
-}
 
-.btn.primary {
-  background: var(--pb-accent-dim);
-  border-color: var(--pb-accent);
-}
 
-.btn.primary.on {
-  background: var(--pb-panel-2);
-  color: var(--pb-text-dim);
-  border-color: var(--pb-border);
-}
 
-.btn.danger:hover {
-  border-color: var(--pb-err);
-  color: var(--pb-err);
-}
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
-.btn:disabled:hover {
-  border-color: var(--pb-border);
-}
 
 .note {
   font-size: 11.5px;
@@ -261,35 +242,12 @@ h2 {
   color: var(--pb-ok);
 }
 
-.chip {
-  font-size: 10.5px;
-  border: 1px solid var(--pb-border);
-  border-radius: 8px;
-  padding: 1px 8px;
-  color: var(--pb-text-dim);
-}
 
 /* VS Code's own input variables — password fields and textareas included
    (they used to fall back to browser defaults: light/yellowish on dark
    themes). Autofill gets the same treatment: Chromium paints it yellow
    unless the background is forced through an inset shadow. */
-select,
-textarea,
-input[type="text"],
-input[type="password"] {
-  background: var(--vscode-input-background, var(--pb-panel-2));
-  border: 1px solid var(--vscode-input-border, var(--pb-border));
-  color: var(--vscode-input-foreground, var(--pb-text));
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 12px;
-}
 
-textarea::placeholder,
-input::placeholder {
-  color: var(--vscode-input-placeholderForeground, var(--pb-text-dim));
-}
 
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -336,58 +294,12 @@ input:focus {
 }
 
 /* ── toggle switch (the active/inactive mute control) ─────────────────── */
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--pb-text-dim);
-}
 
-.switch input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
 
-.switch .track {
-  width: 28px;
-  height: 15px;
-  border-radius: 8px;
-  background: var(--pb-panel-2);
-  border: 1px solid var(--pb-border);
-  position: relative;
-  transition: background 0.15s ease;
-  flex: none;
-}
 
-.switch .track::after {
-  content: "";
-  position: absolute;
-  top: 1px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--pb-text-dim);
-  transition: transform 0.15s ease, background 0.15s ease;
-}
 
-.switch input:checked + .track {
-  background: color-mix(in srgb, var(--pb-accent) 35%, var(--pb-bg));
-  border-color: var(--pb-accent);
-}
 
-.switch input:checked + .track::after {
-  transform: translateX(12px);
-  background: var(--pb-accent);
-}
 
-.switch input:focus-visible + .track {
-  outline: 1px solid var(--vscode-focusBorder, var(--pb-accent));
-  outline-offset: 1px;
-}
 
 /* fidelity chip — pure function of the used capability matrix */
 .fid {
@@ -412,23 +324,8 @@ input:focus {
 }
 
 /* capability matrix table */
-table {
-  border-collapse: collapse;
-  width: 100%;
-}
 
-th,
-td {
-  border: 1px solid var(--pb-border);
-  padding: 6px 10px;
-  font-size: 12px;
-  text-align: center;
-}
 
-th {
-  background: var(--pb-panel);
-  font-weight: 600;
-}
 
 td.cap {
   text-align: left;
@@ -524,112 +421,17 @@ tr.sep td {
 
 /* ── roster combobox — searchable Add Agent picker (ui.md § Settings
    Agents) ─────────────────────────────────────────────────────────────── */
-.combobox {
-  position: relative;
-}
 
-.combobox input[type="text"] {
-  width: 100%;
-  padding-right: 26px;
-}
 
-.combobox .e {
-  position: absolute;
-  right: 7px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--pb-text-faint);
-  cursor: pointer;
-}
 
-.combobox .e:hover {
-  color: var(--pb-text);
-}
 
-.combobox-list {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  max-height: 220px;
-  overflow-y: auto;
-  background: var(--pb-panel);
-  border: 1px solid var(--pb-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-}
 
-.combobox-opt {
-  padding: 6px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
 
-.combobox-opt:hover {
-  background: var(--pb-panel-2);
-}
 
-.combobox-opt.sel {
-  color: var(--pb-accent);
-}
 
-.combobox-opt.disabled {
-  color: var(--pb-text-faint);
-  cursor: not-allowed;
-}
 
-.combobox-empty {
-  padding: 6px 10px;
-  margin-top: 0;
-}
 
 /* ── stat tiles (ui.md § Settings Agents) ─────────────────────────────── */
-.tiles {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.tile {
-  flex: none;
-  width: auto;
-  min-width: 96px;
-  background: var(--pb-panel);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  padding: 10px 16px;
-}
-
-.tile .n {
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.tile .l {
-  font-size: 11px;
-  color: var(--pb-text-dim);
-}
-
-/* Add Agent as a tile-shaped button — same box as the counters, but it
-   reads as an action: accent icon, pointer, hover lift. */
-button.tile.add {
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  color: var(--pb-text);
-}
-
-button.tile.add .n {
-  color: var(--pb-accent);
-}
-
-button.tile.add:hover,
-button.tile.add.on {
-  border-color: var(--pb-accent);
-  background: var(--pb-panel-2);
-}
-
 /* ── default knobs on the per-agent card — only what the agent offered ── */
 .knob-default {
   display: inline-flex;
@@ -696,27 +498,13 @@ button.tile.add.on {
 }
 
 /* ── diagnostics cost-disclosure modal (ui.md: cost before running) ──── */
-.modal-scrim {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 40;
-}
 
-.modal {
-  background: var(--pb-panel);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  padding: 16px 18px;
-  max-width: 440px;
-}
 
 /* ── explicit plug-in confirmation (routing onto < fully brokered) ───── */
 .plug-in-confirm {
   flex-basis: 100%;
   color: var(--pb-warn);
   margin: 4px 0 0;
+}
+
 }

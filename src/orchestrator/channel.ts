@@ -74,6 +74,12 @@ export class ChannelHost<S, E> {
     this.bus.flushNow();
   }
 
+  /** True while a webview is attached — the disposal-settled signal the
+   * electron tests poll instead of guessing with fixed sleeps. */
+  get attached(): boolean {
+    return this.view !== null;
+  }
+
   attach(view: WebviewLike): void {
     this.view = view;
     this.lastAckedRev = -1;

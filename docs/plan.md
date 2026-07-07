@@ -507,7 +507,7 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
   mockup HTML files still lag ui.md (device-flow modal, new controls) —
   mockups illustrate, ui.md binds.*
 
-### P13 — UI rendering strategy (ui-rendering-strategy.md) ☐
+### P13 — UI rendering strategy (ui-rendering-strategy.md) ☑
 
 One shared component layer (shadcn/Radix, Codicons, one VS Code-theme bridge)
 across both webviews, and the chat transcript pipeline (Streamdown markdown +
@@ -515,28 +515,320 @@ block components) on the block model P4/P8 already built. Forces two recorded
 stack decisions: webviews Preact→React (amended above) and Tailwind alongside
 esbuild. Four sub-phases, each shipped and installed before the next:
 
-- **P13a — foundation**: React swap; Tailwind v4 into the esbuild pipeline;
+- **P13a — foundation ☑**: React swap; Tailwind v4 into the esbuild pipeline;
   shadcn init (source-copied components, never a black-box dep); the theme
   bridge written once (VS Code CSS vars → shadcn tokens — the strategy doc's
   single-bridge rule); Codicons re-pointed. CSP decision made explicitly at
   this step (Radix inline styles already allowed; Shiki = `wasm-unsafe-eval`
   or JS engine — never widened silently). Gate: one small surface converted
   and visually theme-correct in dark + light; all 216+ tests green.
-- **P13b — chat view**: Streamdown for `agent_message_chunk`/`agent_thought_chunk`
+  *Shipped: both webviews on React 19 (view-library swap only — reducers,
+  channel, and render-only rule untouched); Tailwind v4 compiles the shared
+  theme bridge (src/webview/shared/theme.css, VS Code vars → shadcn tokens,
+  preflight deliberately skipped until P13d so hand CSS stays untouched)
+  via a postcss step inside esbuild.mjs; shadcn Button/Card source-copied
+  under src/webview/components/ui with components.json for future adds;
+  Codicons unchanged as the only icon set. CSP verified, not widened:
+  React/Radix set styles through the CSSOM, which strict style-src doesn't
+  govern (recorded in webview-host.ts). Proven surface: Settings stat tiles
+  + the Add Agent tile-button on Card/Button, dark + light checked against
+  the built bundle under both Modern themes.*
+- **P13b — chat view ☑**: Streamdown for `agent_message_chunk`/`agent_thought_chunk`
   only (tool calls/diffs/plans never enter the markdown parser); tool-call
   cards (kind icons, collapsed default, permission-denied visually distinct
   from failed); thought auto-collapse; streaming caret; sequential tool-call
   grouping. Gate: fake-agent turn with interleaved text/thought/tool updates
   renders ordered, merged, and updated-in-place.
-- **P13c — per-turn metadata + plan widget**: client-side duration (live
+  *Shipped: the deferred CSP decision landed as no widening — Shiki runs its
+  JavaScript regex engine (src/webview/agent-view/highlighter.ts, curated
+  grammar set; ~1.4 MB minified bundle cost, accepted for a local webview).
+  ToolCallBlock carries toolKind + bounded rawInput/rawOutput (4 KB cap,
+  honest truncation marker) + a `denied` flag set from the agent-permission
+  reject path (the only path that can correlate a toolCallId; patchbay's own
+  fs/terminal gates already render their own cards). Session-manager now
+  enforces the full interruption rule (thought↔text↔tool). Grouping is a
+  pure helper (grouping.ts, threshold 3 — deliberate, not tunable) with the
+  in-flight call's title kept visible on the collapsed summary. Streaming
+  caret derives from session.live + last-block — no new state. Gate: 226
+  tests green incl. the interleaved fake-agent turn; dark+light verified
+  against the built bundle. Found and fixed at the gate: hand CSS moved into
+  the `components` cascade layer — its unlayered `*` reset was beating every
+  layered margin/padding utility.*
+- **P13c — per-turn metadata + plan widget ☑**: client-side duration (live
   ticker), completion-time tooltip, usage-when-reported (absence over fake),
   stop-reason chip only when not `end_turn`; plan pinned per session, manual
   expand only.
-- **P13d — settings conversion**: `Field`/`Toggle`/`ConfirmButton` →
+  *Shipped: a `turnEnd` block closes each turn (send→stop duration —
+  deliberate deviation from the strategy's "first chunk to stop": the ticker
+  must fill the silence before a first chunk, so timing starts at send);
+  rollup (counts, deduped files via new ToolCallBlock.locations, by-kind
+  breakdown) derives from the turn's own blocks in the webview
+  (turn-rollup.ts, pure, tested) — no separate tracking. `PromptResponse.
+  usage` (UNSTABLE) maps to `usage: null` when unreported. An errored turn
+  emits stopReason "error", never silence. Plan corrected to session-level:
+  `planUpdated` replaces the pinned snapshot, PlanBlock left the transcript
+  and the ChatBlock union entirely; strip gates on >1 entries with a pulse
+  on fraction tick. Gate: 232 tests green; dark+light verified against the
+  built bundle; QC swept dead code (PlanCard, plan-card CSS, and the
+  pre-existing unused settings `Section` helper).*
+  *Post-C audit vs. ui-rendering-strategy.md (owner feedback round): Mermaid
+  wired as a lazy separate bundle (the recorded CSP widening — style-src
+  'unsafe-inline', scripts stay nonce-strict; webview-host.ts holds the full
+  record); Streamdown controls flattened + re-pointed to Codicons; links on
+  --vscode-textLink-foreground with the link-safety modal off (workbench
+  already gates external links); tool-call diff content routed to the native
+  diff editor per § tool call card design. Second owner round (international
+  multi-specialty audience): KaTeX wired (singleDollarTextMath off — currency
+  prose is never corrupted into math), CJK emphasis/strikethrough fixes in,
+  RTL via per-block dir="auto" (Arabic), table copy/download controls
+  re-enabled. Still deliberately open: custom fence renderers (extension
+  point stays empty until a concrete fence type earns one), cost estimate
+  (needs an owned price table), plan-item click-to-scroll (doc: optional
+  polish), and Radix-backed primitives inside chat cards + the settings
+  conversion — both ride P13d.*
+- **P13d — settings conversion ☑**: `Field`/`Toggle`/`ConfirmButton` →
   shadcn `Form`/`Switch`/`AlertDialog`; the 3-group nav and every honesty
   behavior (write-only env, two-step destructive confirm semantics, unobserved
   vs offered-nothing knob states) preserved exactly; hand CSS retires
   incrementally.
+  *Shipped: the three named controls converted 1:1 at their definitions —
+  call sites untouched, so behavior contracts are provably unchanged
+  (Toggle→Switch; ConfirmButton→AlertDialog, whose destructive consequence
+  text was previously a hover tooltip and is now impossible to miss; Field
+  keeps its native <label> row — the shadcn conversion is the controls
+  inside it, and react-hook-form was deliberately not adopted: pure
+  controlled state already covers these forms, per the no-state-library
+  rule). Full primitive sweep: every button→Button (incl. asChild anchors),
+  input/textarea→Input/Textarea, all six selects→Select (Radix forbids
+  value="" — the knob "(agent default)" maps through a sentinel at the
+  component boundary only), chips→Badge, both modals→Dialog/AlertDialog,
+  checkboxes→Checkbox, capability matrix→Table+Radix Tooltip per cell. The
+  three radio groups stay native (RadioGroup isn't in the doc's component
+  list — add the primitive when it earns a place); RosterCombobox stays
+  hand-built pending a Command/cmdk decision. Retired settings CSS: .btn,
+  .chip, .switch, .modal(-scrim), the input/select/textarea element rules
+  and the matrix table element rules. Gate: 234 tests green; dark+light
+  verified incl. open AlertDialog and matrix tooltip hover.*
+  *Superseded by owner call ("fully single UI source, no mix and match"):
+  the two deferrals above closed — radios → RadioGroup, RosterCombobox →
+  Popover+Command (cmdk; type-to-filter/click-to-pick/clear contract and
+  the disabled-with-reason entries preserved) — and the agent view swept
+  onto the same layer: every button/input/select/checkbox/textarea is the
+  shared shadcn set (composer textarea chrome-neutralized inside its
+  shell; knob selects compact-styled; the config-option optgroups →
+  SelectGroup/Label; the empty roster placeholder → Radix's placeholder,
+  since Select forbids empty item values), session-actions popover →
+  DropdownMenu with rename in a Dialog, roots chip → Popover. Documented
+  exclusions, reasoned not deferred: the slash/mention suggestion menus
+  stay bespoke because they are textarea-anchored autocomplete — a Radix
+  menu steals focus from the composer mid-typing, which is the wrong
+  primitive, not a missing conversion; drawers and the toast are
+  presentational shells whose *controls* are all shadcn. Retired CSS:
+  agent-view .btn/.icon-btn/.row-btn/.kebab, settings .combobox family.*
+
+### P14 — UI architecture consolidation (owner-approved after the P13 regression loop) ☑
+
+*Shipped, gated green at every step (typecheck, 237 vitest, ui-gate 45
+checks × 3 themes): a — ui-gate in repo (`npm run ui:shots`, asserting the
+invariants that actually regressed: RTL-after-completion, mermaid ok+broken,
+currency-vs-math, UA-ButtonText, dialog/combobox/tooltip overlays); b —
+useSyncExternalStore store bridge; c — one ActionsContext (components send
+their own actions; OpenDiagramContext and the chat's 4-layer callback
+threading are gone); d — transcript view-model (`chat/view-model.ts`, one
+traversal, one vocabulary: `live`; grouping.ts/turn-rollup.ts folded in;
+live-block contract has its own tests); e — theme contract (declared token
+table; --pb-* palette promoted to text-brand/ok/warn/err/consumed
+utilities); f — monoliths decomposed: agent-view 1,705 → 103-line shell +
+10 owned modules (header, session-row, plan-strip, chat/{view-model, chat,
+markdown, blocks, cards}, composer/{composer, knobs, menus, roots-chip},
+drawers), settings 2,074 → 145-line shell + 6 section modules; g — zero
+`style={{}}` codemod leftovers in either webview, CSS ledgers written into
+both style.css files, lazy-script nonce path removed (strict-dynamic is the
+mechanism), ui/ imports on the @/ alias, env-parse and copy-feedback
+unified into parse-env.ts / use-copy.ts. Remaining, deliberate: settings
+sections still take their action wiring as props from the 145-line shell —
+a single explicit call site, not deep threading; convert section-internally
+opportunistically when a section is next touched.*
+
+The P13 iterations exposed structure, not feature, problems: rendering policy
+scattered (one fact under four names: live/streaming/active/isAnimating), four
+styling dialects in the same files, the visual gate living outside the repo,
+and one un-re-derived Preact-era decision (root re-render per patch). Beautiful
+code before beautiful UI. Also sweeps every conversion leftover from the
+Preact→React move.
+
+- **P14a — ui-gate in repo**: the screenshot harnesses become
+  `scripts/ui-gate/` (fixtures: interleaved transcript, RTL/CJK/math, broken
+  mermaid, dialogs; three theme var sets), `npm run ui:shots`. The UI
+  equivalent of the fake agent's lying modes.
+- **P14b — store bridge**: `useSyncExternalStore` replaces the bespoke
+  subscribe→root.render loop (the one stack decision not re-derived at the
+  React swap); subscribe-before-first-paint race stays closed by the
+  primitive itself.
+- **P14c — one action bridge**: typed `ActionsContext` (`useActions()`)
+  replaces prop-threading and the one-off OpenDiagramContext.
+- **P14d — transcript view-model**: one pure `deriveTranscript(blocks, live)`
+  → items/rollups/liveBlockId; grouping.ts + turn-rollup.ts fold in; ONE
+  vocabulary — `live` — end to end. All stream/end semantics get one test
+  target.
+- **P14e — theme contract**: theme.css becomes a declared token table
+  (every shadcn/Streamdown-consumed token: VS Code source, fallback,
+  consumer); `--pb-*` palette promoted into `@theme` (text-warn, not
+  `text-(--pb-warn)` arbitrary-value dialect).
+- **P14f — decompose the monoliths** (agent-view 1,705 / settings 2,074
+  lines) into owned component modules; per extracted file: `style={{}}`
+  codemod leftovers → utilities, hand-CSS rules retired as they lose
+  consumers. No behavior change, gated by ui-gate shots per step.
+- **P14g — CSS ledger + leftover sweep**: every remaining hand-CSS block
+  gets an owner note (stays vs retires-with-X); conversion leftovers
+  cleaned (redundant nonce propagation in lazy-script under strict-dynamic,
+  ui/ alias-boundary imports, env-parse and clipboard duplicates).
+
+Not in scope, deliberately: no state library (reducers over patches stand),
+no second styling system (convergence toward the one shadcn/Tailwind
+dialect), no restructuring of the flat block timeline (ordering principle
+stands; P14d centralizes only its derivation).
+
+- **P14h — test-correctness addendum ☑** (owner-approved, from the test-code
+  audit): `npm run check` is THE phase gate — typecheck → lint → vitest →
+  build → ui:shots, plus the electron suite where the environment allows
+  (skips LOUDLY, never silently — the P14 arc proved silent gaps hide for
+  weeks). ESLint enters scoped to the demonstrated failure classes only
+  (vitest `expect-expect` + `no-conditional-expect`; typed
+  `no-floating-promises`) — not a style linter; conditional-narrowing
+  expect patterns convert to an `assertKind` helper that asserts and
+  narrows in one move. The electron suite's fixed sleeps become condition
+  polling (`waitFor`). Deliberately skipped: pixel-golden comparison for
+  ui-gate (assertion checks are catching the real regressions; goldens add
+  maintenance with no demonstrated miss).
+
+### P15 — Process lifecycle: bounded shutdown, tree-wide kill, orphan reaping
+
+From the connection-flow study (2026-07-08, owner-approved plan): `deactivate()`
+was empty and `dispose()` fire-and-forgot `pool.disposeAll()`, so on window
+close an agent got a SIGTERM at best and the SIGKILL escalation never ran;
+brokered `terminal/create` processes were never cleaned up at all (and their
+handles leaked in the orchestrator's map); nothing killed process *trees*, so
+an agent's own children could outlive everything; and no record of spawned
+PIDs survived a crash, so nothing could reap orphans afterward.
+
+- **P15a — subprocess self-exit discipline** (ships alone — live orphan bug):
+  bridge-main.ts exits on stdin EOF exactly as server-main.ts already does
+  (the agent that spawned it is gone → exit 0). ipc-client.ts stops hanging
+  forever on a dead socket: in-flight requests reject on socket close, a
+  post-connect socket error no longer crashes the process as an unhandled
+  `'error'` event, and a later request may retry a fresh connect. Rule
+  recorded: **everything patchbay ships as an agent-spawnable executable
+  exits on stdin EOF** — self-exit is the defense that still works when
+  patchbay itself died without running any cleanup.
+- **P15b — process groups + tree kill** (`process-tree.ts` — house mechanism,
+  no dependency): agents (pool.ts) and brokered terminals
+  (terminal-runner.ts) spawn `detached` on POSIX so each leads its own
+  process group; killing is group-wide (`kill(-pid)`), `taskkill /pid X /T
+  /F` on Windows (no graceful rung there — taskkill has no signal concept).
+  `stop()` becomes the graceful ladder: close the protocol connection, end
+  stdin (EOF — `connection.close()` never ended the pipe), short grace,
+  SIGTERM the tree, grace, SIGKILL the tree, final group sweep for stragglers
+  the agent left behind even on a clean exit. Budgets are parameters:
+  interactive Stop stays patient, `disposeAll(budget)` fits inside
+  deactivate's window. Grandchildren are deliberately *not* registered
+  anywhere — they are the agent's children, not ours (the agent spawns
+  mcp-server/bridge by design, no-secret-exposure.md): tree-kill covers them
+  when we kill the agent, P15a self-exit covers them when nobody kills
+  anything.
+- **P15c — one spawn registry + orphan reaping**: every direct child (agent
+  process, brokered terminal) is recorded in a globalState-backed store
+  (`stores/spawn-registry.ts`: pid, command line *read back from the OS right
+  after spawn* — record what reality says, compare with what reality says
+  later — kind, ISO time) and cleared on observed exit. `deactivate()`
+  returns the orchestrator's bounded `shutdown()` (~2s — VS Code won't wait
+  much longer): pool ladder on a tight budget plus straight SIGKILL-tree for
+  terminal handles (batch commands, no protocol to be graceful about). On
+  activate, before `connectDefaultAgent`, leftovers are reaped: alive PID
+  *and* matching command line (the PID-reuse guard; mismatch = never kill,
+  drop the record — always the safe direction) → SIGKILL the tree.
+
+- **Gate**: `npm run check` green; reap proven against a real orphaned
+  process in tests (killed when command matches, spared when PID was
+  reused); the stop ladder proven against a SIGTERM-ignoring fake agent;
+  bridge exits on stdin EOF in the real-subprocess bridge test.
+
+### P16 — Connection status honesty: configs first-class, "untested", visible stderr
+
+From the study: configured agents were invisible in the Agent View until
+connected in-window (`state.agents` fed only by `agentUpserted` at connect),
+never-connected configs rendered as `"stopped"` in Settings (`a?.status ??
+"stopped"` — a lie of omission), and `stderrTail` was captured (pool.ts, 40
+lines) but never reached any UI, leaving "initialize timed out" unexplained.
+
+- Connection status stays in **`AgentStatus`**, extended with `"untested"` —
+  config exists, never initialized successfully at any version. Explicitly
+  NOT a capability-matrix row (the proposal's implementation note, answered:
+  *extended existing type — `AgentStatus`, not `CapabilityState`*): a
+  `CapabilityCell` has no error arm and its used-state is version-keyed and
+  persisted — a "connection" row would light up for a dead process.
+  Connection is live process state; the matrix is durable proven-ness of the
+  declared capability surface. Terminology holds: **used**, never
+  "verified".
+- `loadAgentConfigs()` upserts every config into both channels' agent lists
+  at construction — the Agent View knows every configured agent from the
+  first frame: `untested` / `stopped` (has connected before —
+  `lastSeenVersion !== null`) / live states as they happen.
+- stderrTail rides the crash/timeout surface (`agentStatusChanged` carries
+  it alongside `detail`) so "initialize failed" comes with the process's own
+  last words, no Output panel required. An initialize timeout gets the
+  specific state the study named: *"needs interactive setup — run the CLI
+  once manually"*. The 15s initialize timeout **stays** (supersedes the
+  proposal's "a few seconds": cold `npx`/`uvx` first runs download packages;
+  a short fuse would false-fail them).
+- **Gate**: fresh window, nothing connected — every configured agent visible
+  in drawer + Settings with honest state; a spawn failure and an initialize
+  timeout each show reason + stderr inline.
+
+### P17 — New-chat flow: one intent, one click
+
+Replaces the double-click ("+" → drawer → Start session) and the
+picker-of-nothing:
+
+- "+" with exactly one configured agent starts it directly — connecting
+  first when needed, no picker. Multiple → picker listing every configured
+  agent with inline readiness ("ready" / "untested" / "crashed — reason").
+  Selecting a not-running agent connects *inside the chat pane* — a
+  lightweight "Connecting…" resolving into the session; failure lands inline
+  with the specific reason and a Retry, never a bounce to the empty state.
+  Connect-on-demand routes through the existing `configuredId` path
+  (SecretStorage env injection at spawn, process policy respected) — never a
+  bare `pool.connect`.
+- Add-path consolidation (owner-approved 2026-07-08; supersedes features.md
+  §1's in-view *add* affordance): adding agents lives in Settings only — the
+  one rich form (roster search, Verify toggle, binary confirm). The drawer's
+  duplicate connect form retires; the picker's and empty state's "add an
+  agent…" routes to Settings § Agents. Connecting/starting *configured*
+  agents stays fully in-view; Settings Connect/Stop remain as
+  troubleshooting controls. features.md §1/§2 amended in the same commit.
+- **Gate**: single-agent install — "+" → connecting → composer, zero drawer
+  interactions; failure path shows the reason inline with a working Retry.
+
+### P18 — "Disconnect & erase all data" + storage honesty docs
+
+No platform hook distinguishes uninstall from reload (vscode#45474), secrets
+survive uninstall (vscode#123817, open/Backlog), and Memento deletion on
+uninstall is not a contract either — so an automatic wipe on any lifecycle
+event is impossible to do safely. The answer is an explicit, user-triggered
+Settings action — never automatic: stop everything running, then delete
+every SecretStorage record (both env families + integration tokens), config
+stores, used-capability/knob caches, machine rules, session index +
+workspace permission rules (this window's workspaceState — other workspaces'
+documented as unreachable), decision-audit/last-known-view files, spawn
+registry.
+
+- Ordering constraint (SecretStorage has no enumeration API): secrets are
+  deleted *before or with* their config records — the config lists are the
+  only key index; a config removed first strands its secret forever.
+- README documents plainly: run this before uninstalling for a clean slate;
+  the platform provides no hook to do it on the user's behalf.
+- **Gate**: erase → fresh activate shows factory state; SecretStorage reads
+  for every previously configured id return undefined.
 
 ## Owner touchpoints, complete list
 
@@ -550,6 +842,11 @@ esbuild. Four sub-phases, each shipped and installed before the next:
    raised immediately with a proposed call, never silently resolved.
 
 ## Verification strategy
+
+THE gate is one command: `npm run check` — typecheck → lint (correctness
+classes only) → vitest → build → ui-gate, plus the electron suite where the
+environment can run it (skips loudly, never silently). "Tests clean" means
+that command exits 0.
 
 Automated per phase: vitest units (orchestrator, reducers, broker, stores),
 fake-agent integration (pool, sessions, verification honesty), minimal

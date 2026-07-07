@@ -7,6 +7,10 @@ export interface ExtensionInternal {
   settingsPanelHost: SettingsPanelHost;
 }
 
+/** For deactivate — the only hook VS Code gives us at shutdown, and it must
+ * reach the live orchestrator. */
+let activeOrchestrator: Orchestrator | null = null;
+
 export function activate(context: vscode.ExtensionContext): {
   /** Test surface, not API — no stability promise. */
   internal: ExtensionInternal;
@@ -17,6 +21,7 @@ export function activate(context: vscode.ExtensionContext): {
   const log = vscode.window.createOutputChannel("Patchbay", { log: true });
   context.subscriptions.push(log);
   const orchestrator = new Orchestrator(context, log);
+  activeOrchestrator = orchestrator;
   const settingsPanelHost = new SettingsPanelHost(
     context.extensionUri,
     orchestrator.settings,
@@ -53,4 +58,12 @@ export function activate(context: vscode.ExtensionContext): {
   return { internal: { orchestrator, settingsPanelHost } };
 }
 
-export function deactivate(): void {}
+// Fires on window close, reload, disable, and uninstall alike — best-effort
+// only (never on a crash or OS kill; the next activate's orphan reap covers
+// those). Returning the promise makes VS Code wait for the bounded sweep
+// (plan.md P15): agents down the graceful ladder, terminal trees killed.
+export function deactivate(): Thenable<void> | undefined {
+  const pending = activeOrchestrator?.shutdown();
+  activeOrchestrator = null;
+  return pending;
+}

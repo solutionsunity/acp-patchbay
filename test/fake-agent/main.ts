@@ -20,8 +20,8 @@ import * as acp from "@agentclientprotocol/sdk";
 export type TurnStep =
   | { type: "chunk"; text: string }
   | { type: "thought"; text: string }
-  | { type: "toolCall"; id: string; title: string }
-  | { type: "toolDone"; id: string }
+  | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: string[] }
+  | { type: "toolDone"; id: string; rawOutput?: unknown; diff?: { path: string; oldText?: string; newText: string } }
   | {
       type: "plan";
       entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
@@ -56,6 +56,9 @@ export interface FakeAgentScript {
   modes?: acp.SessionModeState | null;
   /** model/effort/etc. config options offered at session/new (P8 knobs). */
   configOptions?: acp.SessionConfigOption[] | null;
+  /** PromptResponse.usage returned on every turn (UNSTABLE ACP field) —
+   * absent by default, matching most agents. */
+  usage?: acp.Usage;
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -156,8 +159,12 @@ async function runTurn(
           sessionUpdate: "tool_call",
           toolCallId: step.id,
           title: step.title,
-          kind: "other",
+          kind: step.kind ?? "other",
           status: "in_progress",
+          ...(step.rawInput !== undefined ? { rawInput: step.rawInput } : {}),
+          ...(step.locations !== undefined
+            ? { locations: step.locations.map((path) => ({ path })) }
+            : {}),
         });
         break;
       case "toolDone":
@@ -165,6 +172,8 @@ async function runTurn(
           sessionUpdate: "tool_call_update",
           toolCallId: step.id,
           status: "completed",
+          ...(step.rawOutput !== undefined ? { rawOutput: step.rawOutput } : {}),
+          ...(step.diff !== undefined ? { content: [{ type: "diff", ...step.diff }] } : {}),
         });
         break;
       case "plan":
@@ -482,7 +491,7 @@ const app = acp
       ctx.client,
     );
     session.pending = null;
-    return { stopReason };
+    return { stopReason, ...(script.usage !== undefined ? { usage: script.usage } : {}) };
   })
   .onRequest("session/set_mode", async (ctx): Promise<acp.SetSessionModeResponse> => {
     const session = sessions.get(ctx.params.sessionId);

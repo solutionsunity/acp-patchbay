@@ -2,6 +2,205 @@
 
 ## Unreleased
 
+- P14h — test-correctness addendum (from the test-code audit): `npm run
+  check` is now THE phase gate — typecheck, lint, vitest, build, ui-gate,
+  and the electron suite where the environment allows (skipping loudly,
+  never silently — a silent gap hid for weeks once). ESLint enters scoped
+  to the audit's demonstrated failure classes only (vitest expect-expect +
+  no-conditional-expect + no-conditional-tests; typed no-floating-promises
+  — src came back already clean on that one): 21 conditional-expect sites
+  converted to an `assertKind` helper that asserts the discriminant and
+  narrows the type in one move. The electron suite's five fixed sleeps are
+  gone — tests now poll the fact they need (`waitFor` + a new
+  `ChannelHost.attached` observable for panel disposal, the orchestrator's
+  own visibility fact for sidebar hides, first-streamed-chunk for the
+  mid-turn interrupt) — which also cut the suite from 19s to 3s: the
+  sleeps were pure waste.
+- P14 — UI architecture consolidation (owner call after the P13 regression
+  loop: beautiful code before beautiful UI). The visual gate now lives in
+  the repo (`npm run ui:shots`, scripts/ui-gate/): three theme variable sets
+  × fixture states asserting the invariants that actually regressed —
+  RTL-after-completion, mermaid valid+broken, currency-vs-math, washed-out
+  UA ButtonText, dialog/combobox/tooltip overlays. The channel bridges into
+  React via `useSyncExternalStore` (the last un-re-derived Preact-era
+  decision — no more whole-tree re-render per patch). One action seam:
+  `useActions()` context; components send their own actions, the chat's
+  four-layer callback threading and the one-off diagram context are gone.
+  Stream/end semantics live in ONE place — `chat/view-model.ts`
+  (`deriveTranscript(blocks, live)` → items/rollups/liveBlockId, one
+  traversal, one vocabulary: `live`) with its own contract tests. theme.css
+  is a declared token table (patchbay's palette is now first-class
+  utilities: text-brand/ok/warn/err/consumed). The monoliths are gone:
+  agent-view 1,705 → 103-line shell + 10 owned modules; settings 2,074 →
+  145-line shell + 6 section modules. Conversion leftovers swept: zero
+  `style={{}}` objects remain in either webview, hand-CSS files carry a
+  ledger header stating retirement terms, lazy-script's dead nonce path
+  removed (strict-dynamic is the mechanism), env-parsing and copy-feedback
+  each have one implementation.
+- Mermaid lazy-load fixed under CSP ("failed to load mermaid.js"): nonce
+  propagation to the injected <script> via document.currentScript proved
+  unreliable inside the webview iframe, so script-src gains
+  `'strict-dynamic'` — CSP3's designed answer: scripts loaded by the
+  nonce-trusted bundle are trusted transitively; scripts stay locked to the
+  nonce for everything parser-inserted. Error visibility: both webviews now
+  collect their own runtime errors (uncaught exceptions, unhandled
+  rejections, CSP violations) into a bounded buffer — an "errors (N)" chip
+  appears (agent-view header / settings nav) only when there are any, click
+  copies the list — and every entry is also forwarded to the orchestrator's
+  Output channel as the durable record (the chip's buffer is honest
+  ephemeral state: it describes that webview instance and dies with it).
+  Also silenced the activation-time `navigator` PendingMigrationError in
+  devtools: zod v4 probes the global at module load and VS Code's extension
+  host wraps it in a warning getter — the extension bundle now shadows it
+  with a plain stub at bundle scope.
+- Mermaid + RTL feedback round: ```mermaid blocks are now owned end to end
+  by a Streamdown custom renderer — an incomplete fence mid-stream shows the
+  dimmed source (mermaid never sees partial input, so its error bomb can't
+  flash while streaming); a genuine parse failure renders an honest fallback
+  (the reason plus the source) instead of the bomb (`suppressErrorRendering`
+  on); and a rendered diagram gains **Open in editor**, which hands the SVG
+  to the orchestrator and opens it as an editor-area panel — full size,
+  outside the agent view's narrow column (script-free panel, styles allowed
+  only for the SVG's own inline styling). RTL fixed for completed turns:
+  the markdown renderer stays in block mode permanently — Streamdown's
+  static mode detects direction once over the whole message, so a leading
+  Latin character was flipping Arabic paragraphs to LTR the moment the
+  stream ended; per-block parsing keeps per-block direction, and only the
+  caret tracks live-ness now.
+- Washed-out controls fixed at the root (owner screenshot: buttons and
+  select values near-invisible on a dark custom theme). Cause: preflight was
+  still skipped — a P13a decision whose rationale (protecting hand-CSS
+  surfaces) evaporated when the single-UI-source sweep finished. Without it,
+  every <button> — which is now every shadcn Button *and* every Radix Select
+  trigger — takes the UA's ButtonText color, washed-out gray on dark themes.
+  Preflight is in (re-derived, not carried; hand CSS sits in the higher
+  `components` layer, so it still wins its collisions), the scoped
+  Streamdown button reset it supersedes is gone, and the bridge grew the
+  missing mappings: popovers/menus/selects now use VS Code's own dropdown
+  surface (`--vscode-dropdown-*`), inputs paint `--vscode-input-background`
+  instead of transparent, and Input/Textarea/SelectTrigger carry an explicit
+  foreground so a select's *value* stays readable inside deliberately-dim
+  label contexts (the knob rows). Buttons regained the pointer cursor
+  preflight doesn't set. Verified against Dark/Light Modern plus a
+  purple-ish custom-theme variable set.
+- Single UI source (owner call, closing P13d's two recorded deferrals and
+  sweeping the chat view): the three settings radio groups are Radix
+  `RadioGroup`; the roster picker is a `Popover`+`Command` (cmdk) combobox —
+  same contract as before (type to filter, click to pick, clear to search
+  again; unavailable entries stay visible with their reason, disabled). The
+  agent view now sits on the same shared layer end to end: every button,
+  input, select, checkbox, and textarea is the shadcn set (permission-card
+  actions, elicitation forms, composer knobs — including grouped model
+  options via SelectGroup — the connect drawer, and the composer itself);
+  the session-actions menu is a Radix DropdownMenu with rename in a Dialog;
+  the roots chip is a Popover. Two reasoned exclusions, not deferrals: the
+  slash/mention suggestion menus stay bespoke (textarea-anchored
+  autocomplete — a focus-trapping Radix menu would break typing), and
+  drawers/toast are presentational shells whose controls are all shadcn.
+  Retired hand CSS: .btn/.icon-btn/.row-btn/.kebab (agent view), the
+  .combobox family (settings).
+- P13d — settings conversion (ui-rendering-strategy.md § phase D, closing
+  P13): the whole Settings surface now sits on the shared shadcn/Radix layer.
+  The three hand-built controls converted 1:1 at their definitions with call
+  sites untouched — Toggle → `Switch`, ConfirmButton → `AlertDialog` (same
+  honesty contract: no destructive action without an explicit second click,
+  and the consequence text that used to hide in a hover tooltip is now shown
+  in the dialog), Field keeps its native label row while the controls inside
+  became shadcn `Input`/`Textarea`/`Select`. Every button is a `Button`,
+  chips are `Badge`s, both modals are `Dialog`/`AlertDialog`, checkboxes are
+  Radix `Checkbox`, and the capability matrix is a shadcn `Table` with a
+  Radix `Tooltip` per cell — declared-vs-used stays inspectable by hover or
+  keyboard focus. The 3-group nav (This machine / Trust / This workspace)
+  is untouched, as are all honesty behaviors: write-only env, the auto
+  process-policy label carrying observed concurrency reality, and the
+  unobserved-vs-offered-nothing knob states. Retired from the hand CSS:
+  .btn, .chip, .switch, .modal(-scrim), and the native input/select/table
+  element rules. Deliberately still native: the three radio groups (no
+  RadioGroup in the strategy's component list) and the roster combobox
+  (pending a Command/cmdk decision). react-hook-form deliberately not
+  adopted — pure controlled state covers these forms.
+- Markdown for an international, multi-specialty audience (owner call: "all
+  are needed"): **KaTeX math** — `$$…$$` typesets via remark-math +
+  rehype-katex, with `singleDollarTextMath` off deliberately so "costs $5
+  and $10" in financial prose is never silently corrupted into a formula
+  (woff2 fonts ride the bundle; the woff/ttf fallbacks Chromium never
+  fetches are left out of the vsix). **CJK** — remark-cjk-friendly (+ its
+  GFM-strikethrough companion) fixes bold/emphasis parsing adjacent to
+  Chinese/Japanese/Korean punctuation. **RTL** — per-block first-strong-
+  character direction detection (`dir="auto"`), so Arabic prose renders
+  right-to-left block by block. **Table controls re-enabled** — copy as
+  CSV/Markdown/TSV and download, the path from an agent's table into a
+  spreadsheet. Custom fence renderers remain the deliberately empty
+  extension point until a concrete fence type earns one.
+- P13 owner-feedback + strategy-audit pass: Mermaid diagrams now render as
+  diagrams — the library ships as its own lazily-injected bundle
+  (out/mermaid.js, loaded CSP-compatibly via the script nonce only when a
+  ```mermaid block actually appears; theme follows the editor's dark/light).
+  This forced the one recorded CSP widening: `style-src` gains
+  `'unsafe-inline'` because Mermaid's SVG carries `<style>` elements and
+  style attributes as parsed markup that cannot be nonce'd — scripts stay
+  nonce-strict, and agent HTML still cannot reach a style element
+  (Streamdown sanitizes it). Streamdown's copy/download controls are now
+  properly flat (a scoped reset for the exact hole skipping preflight left)
+  and use Codicons — one icon set everywhere. Markdown links render as true
+  links in the theme's own link color (`--vscode-textLink-foreground`):
+  Streamdown's link-safety modal is disabled since VS Code's workbench
+  already interposes its trusted-domain prompt, and the modal rendered links
+  as buttons. Tool calls carrying agent-reported diff content now offer
+  "Open diff" per file on expand, routed to VS Code's native diff editor —
+  never an inline webview diff (texts stay orchestrator-side; webview state
+  carries only paths). Hardening found along the way: transcripts seeded
+  from the persisted last-known view normalize older-schema tool-call
+  blocks, so pre-P13b data can't crash the renderer.
+- P13c — per-turn metadata + plan widget (ui-rendering-strategy.md § phase C):
+  every resolved turn closes with a subtle metadata line — tool-call count and
+  distinct-files-touched (deduped: three edits to one file is 1 file) computed
+  from the turn's own transcript blocks, send→stop duration (deliberately not
+  first-chunk-based: the live per-second ticker exists to fill the silence
+  *before* a first chunk, so the silence counts), completion wall-clock as a
+  hover tooltip, agent-reported token usage when present (absence over fake —
+  no placeholder row), and a stop-reason chip only when the turn didn't end
+  cleanly (`max_tokens`, `cancelled`, `refusal`, or `error` when the turn
+  threw). Click expands a by-kind breakdown. The plan became what the spec
+  says it is — session-level state: `plan` updates replace the pinned strip's
+  snapshot and no longer append transcript cards (the inline PlanCard is
+  gone); the strip shows only for plans with more than one task, expand stays
+  manual, and a completing task pulses the collapsed fraction instead of
+  yanking the view open. Tool calls now carry their ACP `locations` (file
+  paths) to feed the distinct-files count.
+- P13b — chat view rendering (ui-rendering-strategy.md § phase B): agent
+  message and thought chunks render through Streamdown (streaming-safe
+  markdown, sanitization/hardening on by default) — tool calls, diffs, and
+  plans never enter the markdown parser. Code highlighting is Shiki on its
+  JavaScript regex engine with a curated grammar set: the CSP decision P13a
+  deferred lands as **no widening** — the strict `style-src`/no-wasm policy
+  stands. Tool-call cards carry ACP's own kind taxonomy (icon per kind),
+  collapse by default, and expand to bounded rawInput/rawOutput (honest
+  truncation marker, never a silent cut); a tool call rejected through the
+  permission broker renders "blocked by permission" — visually distinct from
+  a genuine failure. Thoughts auto-collapse into a "Thinking…" accordion the
+  moment the real answer starts (manual toggle overrides); a streaming caret
+  marks the one actively-streaming block; runs of 3+ back-to-back tool calls
+  group into one expandable "N tool calls" summary row, order intact. The
+  block model gained the interruption rule end-to-end: any different block
+  type closes the current text/thought run. Fixed in passing: the hand CSS
+  now sits in the `components` cascade layer below Tailwind's utilities —
+  its unlayered `* { margin:0; padding:0 }` reset had been silently beating
+  every margin/padding utility (including P13a's tile padding).
+- P13a — UI rendering foundation (ui-rendering-strategy.md § phase A): both
+  webviews moved Preact → React 19 (a view-library swap — the
+  reducer-over-patch-events state model and the render-only-webview rule are
+  unchanged); Tailwind v4 enters the esbuild pipeline as a CSS build step
+  (esbuild stays, per stack.md); shadcn initialized with source-copied
+  components (`src/webview/components/ui`, never a black-box dep) with
+  Codicons remaining the only icon set; and the theme bridge written once
+  (`src/webview/shared/theme.css` — VS Code CSS variables → shadcn/Tailwind
+  tokens, shared by both webview entries, correct in dark and light). CSP
+  verified and not widened: React/Radix apply styles via the CSSOM, so the
+  strict `style-src` already admits Radix positioning; the Shiki decision is
+  deferred to P13b as recorded. First converted surface: the Settings stat
+  tiles and the Add Agent tile-button on shadcn Card/Button — everything
+  else stays hand-CSS until P13d.
 - The Patchbay Output channel now shows the extension's actual life (owner:
   "we don't have much showing at OUTPUT"): a vscode-free `Logger` seam
   (src/orchestrator/logger.ts, no-op in tests) injected into the pool,

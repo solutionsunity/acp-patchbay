@@ -5,7 +5,7 @@
 export function Icon(props: { name: string; spin?: boolean }) {
   return (
     <i
-      class={`codicon codicon-${props.name}${props.spin === true ? " codicon-modifier-spin" : ""}`}
+      className={`codicon codicon-${props.name}${props.spin === true ? " codicon-modifier-spin" : ""}`}
       aria-hidden="true"
     />
   );

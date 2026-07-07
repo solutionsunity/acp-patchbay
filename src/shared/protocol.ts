@@ -107,6 +107,15 @@ export type Action =
   | { kind: "shareIntegrationConfig"; integrationId: string }
   | { kind: "refreshAgentAssets"; agentId: string }
   | { kind: "openAssetFile"; agentId: string; path: string }
+  /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
+  | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
+  /** Open a rendered mermaid SVG as an editor-area panel — full size,
+   * outside the agent view's narrow column. */
+  | { kind: "openDiagram"; svg: string }
+  /** A webview-side runtime error (uncaught, rejection, CSP violation) —
+   * logged to the Patchbay Output channel, the durable record the in-view
+   * "errors (N)" chip points at. */
+  | { kind: "reportWebviewError"; view: "agent-view" | "settings"; message: string }
   /** `env` is the form's submitted set — full desired key list, where an
    * empty value means "keep the stored value for this key". Values ride the
    * action upward only; state snapshots never carry them (envKeys only). */
@@ -542,23 +551,77 @@ export interface ThoughtBlock {
   text: string;
 }
 
+/** ACP's own tool-call taxonomy (ToolKind) — carried verbatim so the card
+ * icon can pattern-match by kind instead of a generic spinner-only look. */
+export type ToolCallKind =
+  | "read"
+  | "edit"
+  | "delete"
+  | "move"
+  | "search"
+  | "execute"
+  | "think"
+  | "fetch"
+  | "switch_mode"
+  | "other";
+
 export interface ToolCallBlock {
   kind: "toolCall";
   /** == the ACP toolCallId — one block, updated in place as status changes. */
   id: string;
   title: string;
   status: ToolCallStatus;
+  toolKind: ToolCallKind;
+  /** rawInput/rawOutput as bounded pretty-printed text (ui-rendering-strategy:
+   * collapsed by default, expandable) — null when the agent never sent one.
+   * Bounded at the source with an honest truncation marker, never silently. */
+  input: string | null;
+  output: string | null;
+  /** File paths this call reported touching (ACP locations) — the per-turn
+   * rollup's "N files" is the deduped set across edit/delete/move calls. */
+  locations: readonly string[];
+  /** Paths with agent-reported diff content (ToolCallContent type:"diff").
+   * The texts stay orchestrator-side; expanding the card offers "Open
+   * diff", routed to VS Code's native diff editor — never an inline diff
+   * view (ui-rendering-strategy § tool call card design). */
+  diffFiles: readonly string[];
+  /** True once the permission broker rejected this call's own
+   * session/request_permission — "blocked by permission" and "command
+   * failed" are different facts, told apart at a glance. */
+  denied: boolean;
+}
+
+/** The agent-reported token counts for one turn (PromptResponse.usage —
+ * UNSTABLE in ACP and optional per agent). Absent entirely when not
+ * reported: absence over fake, never a "—" placeholder. */
+export interface TurnUsage {
+  total: number;
+  input: number;
+  output: number;
+  /** Cache-read tokens, when the agent breaks them out. */
+  cached?: number;
+}
+
+/** Appended when a turn resolves — the per-turn metadata line's source.
+ * Counts/files are NOT stored here: the rollup derives from the turn's own
+ * blocks in the transcript (ui-rendering-strategy § Per-turn summary). */
+export interface TurnEndBlock {
+  kind: "turnEnd";
+  id: string;
+  /** ISO — when the prompt was sent (send→stop is the duration basis;
+   * deliberate: the ticker must fill the silence *before* a first chunk). */
+  startedAt: string;
+  /** ISO — when the PromptResponse (or the turn's error) was observed. */
+  endedAt: string;
+  /** ACP StopReason, or "error" when the turn threw — chip shown only when
+   * not a clean end_turn. */
+  stopReason: string;
+  usage: TurnUsage | null;
 }
 
 export interface PlanEntry {
   content: string;
   status: "pending" | "in_progress" | "completed";
-}
-
-export interface PlanBlock {
-  kind: "plan";
-  id: string;
-  entries: readonly PlanEntry[];
 }
 
 /** One broker path for every gated action (architecture.md § Permission
@@ -627,7 +690,7 @@ export type ChatBlock =
   | TextBlock
   | ThoughtBlock
   | ToolCallBlock
-  | PlanBlock
+  | TurnEndBlock
   | PermissionBlock
   | DiffBlock
   | TerminalBlock
@@ -646,10 +709,15 @@ export interface AgentViewState {
   roster: readonly RosterEntry[];
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
-  /** The plan strip's source: the most recent plan snapshot, or none. Distinct
-   * from the inline plan cards in the transcript (ui.md: "the strip is the
-   * live one"). */
-  activePlan: Readonly<Record<string, PlanBlock | null>>;
+  /** The pinned plan widget's source — the most recent plan snapshot, or
+   * none. A plan is *session-level* state spanning many prompts
+   * (ui-rendering-strategy § Plans): it never enters the per-turn
+   * transcript, so an update replaces this snapshot instead of repeating a
+   * card per turn. */
+  activePlan: Readonly<Record<string, readonly PlanEntry[] | null>>;
+  /** ISO start time of the in-flight turn, per session — the live elapsed
+   * ticker's basis; cleared when the turn's TurnEndBlock lands. */
+  activeTurn: Readonly<Record<string, string>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
   /** Declared/used per agent — replaced wholesale on every (re)connect. */
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
@@ -705,6 +773,7 @@ export const initialAgentViewState: AgentViewState = {
   roster: [],
   transcripts: {},
   activePlan: {},
+  activeTurn: {},
   commandsBySession: {},
   capabilities: {},
   capabilitiesResetAt: {},
@@ -744,8 +813,32 @@ export type AgentViewEvent =
       /** Empty string = unspecified; reducer keeps the existing title. */
       title: string;
       status: ToolCallStatus;
+      /** Absent = unspecified; reducer keeps the existing value (tool_call
+       * carries these, tool_call_update only sometimes repeats them).
+       * `locations`, when present, *replaces* — ACP defines the update's
+       * locations field as a replacement of the collection. */
+      toolKind?: ToolCallKind;
+      input?: string;
+      output?: string;
+      locations?: readonly string[];
+      diffFiles?: readonly string[];
     }
-  | { kind: "planAppended"; sessionId: string; blockId: string; entries: readonly PlanEntry[] }
+  /** The broker rejected this tool call's session/request_permission. */
+  | { kind: "toolCallDenied"; sessionId: string; blockId: string }
+  /** Replaces the session's pinned plan snapshot — never a transcript block. */
+  | { kind: "planUpdated"; sessionId: string; entries: readonly PlanEntry[] }
+  /** A prompt turn began (send time) / resolved — the turnEnd block carries
+   * both timestamps so the reducer never has to reconstruct them. */
+  | { kind: "turnStarted"; sessionId: string; at: string }
+  | {
+      kind: "turnEnded";
+      sessionId: string;
+      blockId: string;
+      startedAt: string;
+      at: string;
+      stopReason: string;
+      usage: TurnUsage | null;
+    }
   | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
   | {
       kind: "permissionRequested";
@@ -932,17 +1025,37 @@ function upsertTextBlock(
 function upsertToolCall(
   state: AgentViewState,
   sessionId: string,
-  blockId: string,
-  title: string,
-  status: ToolCallStatus,
+  event: Extract<AgentViewEvent, { kind: "toolCallUpserted" }>,
 ): AgentViewState {
   const blocks = state.transcripts[sessionId] ?? [];
-  const i = blocks.findIndex((b) => b.id === blockId);
+  const i = blocks.findIndex((b) => b.id === event.blockId);
   if (i === -1) {
-    return appendBlock(state, sessionId, { kind: "toolCall", id: blockId, title, status });
+    return appendBlock(state, sessionId, {
+      kind: "toolCall",
+      id: event.blockId,
+      title: event.title,
+      status: event.status,
+      toolKind: event.toolKind ?? "other",
+      input: event.input ?? null,
+      output: event.output ?? null,
+      locations: event.locations ?? [],
+      diffFiles: event.diffFiles ?? [],
+      denied: false,
+    });
   }
   const existing = blocks[i] as ToolCallBlock;
-  const updated: ToolCallBlock = { ...existing, status, title: title || existing.title };
+  // Absent fields keep what a prior event established — a bare status update
+  // must never erase the kind or the input already shown.
+  const updated: ToolCallBlock = {
+    ...existing,
+    status: event.status,
+    title: event.title || existing.title,
+    toolKind: event.toolKind ?? existing.toolKind,
+    input: event.input ?? existing.input,
+    output: event.output ?? existing.output,
+    locations: event.locations ?? existing.locations,
+    diffFiles: event.diffFiles ?? existing.diffFiles,
+  };
   return withTranscript(
     state,
     sessionId,
@@ -1010,6 +1123,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
       const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
       const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
+      const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
       const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
       const { [event.sessionId]: _m, ...sessionModes } = state.sessionModes;
       const { [event.sessionId]: _o, ...sessionConfigOptions } = state.sessionConfigOptions;
@@ -1025,6 +1139,7 @@ export function reduceAgentView(
         transcripts,
         commandsBySession,
         activePlan,
+        activeTurn,
         contextChips,
         sessionModes,
         sessionConfigOptions,
@@ -1039,14 +1154,18 @@ export function reduceAgentView(
           s.id === event.sessionId ? { ...s, live: event.live } : s,
         ),
       };
-    case "transcriptReset":
+    case "transcriptReset": {
       // The strip mirrors only what the agent reports: a reset means replay
       // is about to rebuild the transcript, and the live plan rebuilds from
-      // the same replay — a stale strip must not outlive its source.
+      // the same replay — a stale strip must not outlive its source. Same
+      // for a stale ticker: no turn survives a transcript rebuild.
+      const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
       return {
         ...withTranscript(state, event.sessionId, []),
         activePlan: { ...state.activePlan, [event.sessionId]: null },
+        activeTurn,
       };
+    }
     case "userMessageAppended":
       return appendBlock(state, event.sessionId, {
         kind: "user",
@@ -1058,11 +1177,29 @@ export function reduceAgentView(
     case "agentThoughtDelta":
       return upsertTextBlock(state, event.sessionId, event.blockId, "thought", event.text);
     case "toolCallUpserted":
-      return upsertToolCall(state, event.sessionId, event.blockId, event.title, event.status);
-    case "planAppended": {
-      const block: PlanBlock = { kind: "plan", id: event.blockId, entries: event.entries };
-      const withBlock = appendBlock(state, event.sessionId, block);
-      return { ...withBlock, activePlan: { ...withBlock.activePlan, [event.sessionId]: block } };
+      return upsertToolCall(state, event.sessionId, event);
+    case "toolCallDenied":
+      return patchBlock<ToolCallBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        denied: true,
+      }));
+    case "planUpdated":
+      return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: event.entries } };
+    case "turnStarted":
+      return { ...state, activeTurn: { ...state.activeTurn, [event.sessionId]: event.at } };
+    case "turnEnded": {
+      const { [event.sessionId]: _t, ...activeTurn } = state.activeTurn;
+      return {
+        ...appendBlock(state, event.sessionId, {
+          kind: "turnEnd",
+          id: event.blockId,
+          startedAt: event.startedAt,
+          endedAt: event.at,
+          stopReason: event.stopReason,
+          usage: event.usage,
+        }),
+        activeTurn,
+      };
     }
     case "commandsAdvertised":
       return {
@@ -1185,7 +1322,27 @@ export function reduceAgentView(
         sessionConfigOptions: { ...state.sessionConfigOptions, [event.sessionId]: event.options },
       };
     case "transcriptSeeded":
-      return withTranscript(state, event.sessionId, event.blocks);
+      // Seeded blocks come from the persisted last-known view, which may
+      // predate fields the live block model has since grown — normalize
+      // here, the one door stored data re-enters through, so the view never
+      // meets a partial block.
+      return withTranscript(
+        state,
+        event.sessionId,
+        event.blocks.map((b) =>
+          b.kind === "toolCall"
+            ? {
+                ...b,
+                toolKind: b.toolKind ?? "other",
+                input: b.input ?? null,
+                output: b.output ?? null,
+                locations: b.locations ?? [],
+                diffFiles: b.diffFiles ?? [],
+                denied: b.denied ?? false,
+              }
+            : b,
+        ),
+      );
     case "contextRootsChanged":
       return { ...state, contextRoots: { ...state.contextRoots, [event.sessionId]: event.roots } };
     case "editorContextChanged":
@@ -1205,14 +1362,23 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       return { ...next, text: prev.text + next.text } as AgentViewEvent;
     }
   }
-  // Rapid-fire status updates on the same tool call: only the latest matters.
+  // Rapid-fire status updates on the same tool call: only the latest matters,
+  // but absent fields inherit — same merge rule as the reducer's upsert.
   if (
     prev.kind === "toolCallUpserted" &&
     next.kind === "toolCallUpserted" &&
     prev.sessionId === next.sessionId &&
     prev.blockId === next.blockId
   ) {
-    return { ...next, title: next.title || prev.title };
+    return {
+      ...next,
+      title: next.title || prev.title,
+      toolKind: next.toolKind ?? prev.toolKind,
+      input: next.input ?? prev.input,
+      output: next.output ?? prev.output,
+      locations: next.locations ?? prev.locations,
+      diffFiles: next.diffFiles ?? prev.diffFiles,
+    };
   }
   // Usage can report mid-stream (claude-agent-acp does) — only the latest matters.
   if (
