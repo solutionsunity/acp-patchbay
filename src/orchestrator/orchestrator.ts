@@ -524,7 +524,7 @@ export class Orchestrator {
     // Native surfaces (P11): the status bar mirrors canonical state via
     // ChannelHost.onChange — no webview in the path (architecture.md § UI
     // layer: "direct orchestrator consumers: same state, no webview").
-    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.statusBarItem.command = "acpPatchbay.agentView.focus";
     this.statusBarItem.show();
     this.agentView.onChange(() => this.refreshStatusBar());
