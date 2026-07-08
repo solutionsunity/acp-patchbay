@@ -9,7 +9,11 @@ import type { CapabilityMatrix } from "../../shared/protocol";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
-const capabilityCellSchema = z.object({ declared: z.boolean(), used: z.boolean() });
+const capabilityCellSchema = z.object({
+  declared: z.boolean(),
+  used: z.boolean(),
+  suspect: z.boolean().optional(),
+});
 
 export const usedCacheEntrySchema = z.object({
   id: z.string().min(1), // agentId
@@ -25,7 +29,8 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
     super(kv, KEY, usedCacheEntrySchema);
   }
 
-  /** Seeds `used` from the cache when `version` matches what's stored —
+  /** Seeds `used` — and `suspect`, a broken bridge must not look clean
+   * after a restart — from the cache when `version` matches what's stored;
    * an honest reset (all cells declared-but-not-used) otherwise, same
    * shape `matrixFromDeclared` already produces. */
   seed(agentId: string, version: string, freshlyDeclared: CapabilityMatrix): CapabilityMatrix {
@@ -35,6 +40,12 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
     for (const key of Object.keys(freshlyDeclared) as (keyof CapabilityMatrix)[]) {
       const cachedCell = cached.matrix[key];
       if (cachedCell?.used) seeded[key] = { declared: freshlyDeclared[key].declared, used: true };
+      else if (cachedCell?.suspect === true) {
+        // Suspicion implied declared when earned (the attempt is the claim)
+        // — restore it the same way, or an undeclared-claim row's flag
+        // (concurrentSessions) would vanish into "not declared".
+        seeded[key] = { declared: true, used: false, suspect: true };
+      }
     }
     return seeded;
   }

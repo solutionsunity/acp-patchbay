@@ -442,7 +442,18 @@ export class SessionManager {
   async setConfigOption(sessionId: string, configId: string, value: string | boolean): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    await this.pool.setSessionConfigOption(session.poolKey, sessionId, configId, value);
+    // The response's `configOptions` is spec-required authoritative state
+    // (see pool.setSessionConfigOption) — emitted like a notification would
+    // be; a `config_option_update` arriving anyway just re-emits the same.
+    const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, configId, value);
+    this.hooks.emit({
+      kind: "sessionConfigOptionsChanged",
+      sessionId,
+      options: response.configOptions.map(toConfigOptionView),
+    });
+    void this.sessionIndex.recordConfirmed(sessionId, {
+      options: Object.fromEntries(response.configOptions.map((o) => [o.id, o.currentValue])),
+    });
   }
 
   private emitModeAndConfig(

@@ -79,7 +79,8 @@ function harness(): {
     onDeclaredCaptured: (agentId, declared, raw) =>
       capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onCapabilityUsed: (agentId, row) => capabilityTracker.markUsed(agentId, row),
+    onCapabilityEvidence: (agentId, row, evidence) =>
+      evidence === "used" ? capabilityTracker.markUsed(agentId, row) : capabilityTracker.markSuspect(agentId, row),
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
@@ -355,6 +356,37 @@ describe("Session model/mode/effort knobs (P8)", () => {
     expect(h.state().sessionConfigOptions[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await h.pool.stop("cfg");
+  });
+
+  it("set_config_option with no update echo: the response's required configOptions is consumed as state (claude-agent-acp behavior)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          configOptions: [
+            {
+              id: "model-opt",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "sonnet",
+              options: [
+                { value: "sonnet", name: "Sonnet" },
+                { value: "opus", name: "Opus" },
+              ],
+            },
+          ],
+          configSetRepliesOnly: true,
+        },
+        "cfg-reply",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("cfg-reply", "Fake Agent", cwd);
+    await h.sessionManager.setConfigOption(sessionId, "model-opt", "opus");
+    // no config_option_update arrived — the display truth rode the response
+    expect(h.state().sessionConfigOptions[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+
+    await h.pool.stop("cfg-reply");
   });
 
   it("per-agent defaults are applied post-create by option id — no category needed (ACP: category is UX-only)", async () => {

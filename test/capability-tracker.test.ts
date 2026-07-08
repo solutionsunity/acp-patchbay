@@ -58,7 +58,8 @@ function harness(kv = new MemoryKV()): {
     onDeclaredCaptured: (agentId, declared, raw) =>
       tracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
     onSessionUpdate: () => {},
-    onCapabilityUsed: (agentId, row) => tracker.markUsed(agentId, row),
+    onCapabilityEvidence: (agentId, row, evidence) =>
+      evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),
     ...stubFsTerminalHooks(),
   });
   tracker = new CapabilityTracker(pool, usedCache, {
@@ -119,7 +120,7 @@ describe("CapabilityTracker", () => {
     await pool.stop("tidy2");
   });
 
-  it("a lying agent (declares fork, breaks it) shows declared-but-not-used — never used", async () => {
+  it("a lying agent (declares fork, breaks it) reads suspect — indicted, never used", async () => {
     const { pool, state } = harness();
     await pool.connect(
       spec(
@@ -131,7 +132,9 @@ describe("CapabilityTracker", () => {
     // give the automatic round trip a chance to run and fail
     await new Promise((r) => setTimeout(r, 300));
     const cell = state().capabilities.liar!["session.fork"];
-    expect(capabilityState(cell)).toBe("declared");
+    // The probe's failed fork is exactly a fact-that-would-have-proven riding
+    // a failed request: declared, not used, flagged — suspicion, not error.
+    expect(capabilityState(cell)).toBe("suspect");
     expect(cell.used).toBe(false);
 
     await pool.stop("liar");

@@ -59,6 +59,10 @@ export interface FakeAgentScript {
   /** PromptResponse.usage returned on every turn (UNSTABLE ACP field) —
    * absent by default, matching most agents. */
   usage?: acp.Usage;
+  /** session/set_config_option answers with the new state in the required
+   * response field only — no config_option_update echo. Spec-conformant, not
+   * a lie: claude-agent-acp behaves this way for client-initiated sets. */
+  configSetRepliesOnly?: boolean;
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -512,10 +516,12 @@ const app = acp
     const option = session.configOptions?.find((o) => o.id === ctx.params.configId);
     if (!option) throw acp.RequestError.invalidRequest(`unknown config option ${ctx.params.configId}`);
     option.currentValue = ctx.params.value as never;
-    await ctx.client.notify(acp.methods.client.session.update, {
-      sessionId: session.id,
-      update: { sessionUpdate: "config_option_update", configOptions: session.configOptions! },
-    });
+    if (!script.configSetRepliesOnly) {
+      await ctx.client.notify(acp.methods.client.session.update, {
+        sessionId: session.id,
+        update: { sessionUpdate: "config_option_update", configOptions: session.configOptions! },
+      });
+    }
     return { configOptions: session.configOptions! };
   })
   .onRequest("session/fork", (ctx): acp.ForkSessionResponse => {

@@ -30,19 +30,29 @@ export function Knobs(props: {
 }) {
   const send = useActions();
   const [pendingMode, setPendingMode] = useState(false);
-  useEffect(() => setPendingMode(false), [props.modes?.currentModeId]);
   const [pendingConfig, setPendingConfig] = useState<Record<string, boolean>>({});
+  // Pending clears on *arrival* of authoritative state (new reference), not
+  // on value change: a rejected set republishes unchanged state, and waiting
+  // for a different value would spin forever on it.
+  useEffect(() => setPendingMode(false), [props.modes]);
   useEffect(() => {
-    setPendingConfig((cur) => {
-      const next = { ...cur };
-      for (const o of props.configOptions) delete next[o.id];
-      return next;
-    });
-  }, [props.configOptions.map((o) => String(o.currentValue)).join("|")]);
+    setPendingConfig((cur) => (Object.keys(cur).length === 0 ? cur : {}));
+  }, [props.configOptions]);
+  // Some bridges surface the session mode twice: natively (modes) and again
+  // as a mode-category config option — one knob, not two. Here the *config
+  // option* wins (opposite of Settings' defaults editor, deliberately): this
+  // pill displays live agent-confirmed state, and claude-agent-acp confirms
+  // `session/set_mode` only via `config_option_update` — through the native
+  // pill the confirmation lands on the surface that's hidden and the spinner
+  // never settles. The set_config_option path confirms on both surfaces
+  // (response state + current_mode_update). Category used for display
+  // routing only, never as a correctness dependency.
+  const modeAsConfigOption = props.configOptions.some((o) => o.category === "mode");
+  const showNativeModes = props.modes !== null && !modeAsConfigOption;
 
   return (
     <>
-      {props.modes && (
+      {showNativeModes && props.modes && (
         <span className="knob" title="Session mode">
           <Icon name="gear" />
           <Select

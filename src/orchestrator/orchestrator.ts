@@ -219,8 +219,10 @@ export class Orchestrator {
     const rosterEntries = this.roster.map(rosterEntryView);
 
     const onAction = (action: Action) => this.handleAction(action);
+    const workspaceRootsView = () =>
+      (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     this.agentView = new ChannelHost(
-      { ...initialAgentViewState, roster: rosterEntries },
+      { ...initialAgentViewState, roster: rosterEntries, workspaceRoots: workspaceRootsView() },
       reduceAgentView,
       coalesceAgentViewEvent,
       onAction,
@@ -303,7 +305,7 @@ export class Orchestrator {
         }
         this.sessionManager.handleUpdate(agentId, notification);
       },
-      onCapabilityUsed: (agentId, row) => this.capabilityTracker.markUsed(agentId, row),
+      onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
       // Spawn registry (P15c): records live in globalState so an abnormal
@@ -338,21 +340,21 @@ export class Orchestrator {
           ? { outcome: { outcome: "cancelled" } }
           : { outcome: { outcome: "selected", optionId: result.optionId } };
       },
-      onReadTextFile: async (agentId, params) => {
+      // fs/terminal used-marking happens in pool.ts's incoming-request
+      // chokepoint when these handlers resolve (capabilities.ts
+      // CAPABILITY_PROOFS) — a rejected write still resolves, so it still
+      // counts: the agent routing writes through patchbay's gate is the
+      // brokered path firing, and a rejection is the gate working.
+      onReadTextFile: async (_agentId, params) => {
         const content = await this.readTextFileLive(params.path);
-        this.markFirstUse(agentId, "fs.readTextFile");
         return { content };
       },
-      onWriteTextFile: async (agentId, params) => {
+      onWriteTextFile: async (_agentId, params) => {
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
         if (accepted) await applyFileWrite(params.path, params.content);
-        // A rejected write still counts as used: "brokered" means the agent
-        // routes writes through patchbay's gate, and a rejection is the gate
-        // working.
-        this.markFirstUse(agentId, "fs.writeTextFile");
         return {};
       },
-      onCreateTerminal: async (agentId, params) => {
+      onCreateTerminal: async (_agentId, params) => {
         const command = [params.command, ...(params.args ?? [])].join(" ");
         const { accepted } = await this.broker.gateCommand(params.sessionId, command);
         if (!accepted) throw new Error("command rejected by permission rules");
@@ -364,7 +366,6 @@ export class Orchestrator {
           cwd: params.cwd ?? null,
           outputByteLimit: params.outputByteLimit ?? null,
         });
-        this.markFirstUse(agentId, "terminal");
         const terminalId = `term-${++this.terminalCounter}`;
         this.terminals.set(terminalId, handle);
         if (handle.pid !== null) {
@@ -453,6 +454,9 @@ export class Orchestrator {
       vscode.workspace.onDidCloseTextDocument(pushEditorContext),
       vscode.workspace.onDidChangeTextDocument(pushEditorContext), // dirty-flag flips
       vscode.workspace.onDidSaveTextDocument(pushEditorContext),
+      vscode.workspace.onDidChangeWorkspaceFolders(() =>
+        this.agentView.emit({ kind: "workspaceRootsChanged", roots: workspaceRootsView() }),
+      ),
     );
 
     this.sessionManager = new SessionManager(
@@ -804,14 +808,17 @@ export class Orchestrator {
     return poolKey;
   }
 
-  /** Opportunistic behavior-level marking (architecture.md § capability
-   * matrix; plan.md P5's "first fs success / first terminal" hooks): marks a
-   * row used the first time its path is genuinely exercised on the wire.
-   * Guarded on current state so a chatty agent (many reads per turn) doesn't
-   * flood the patch stream with idempotent events. */
-  private markFirstUse(agentId: string, row: CapabilityRowId): void {
-    if (this.agentView.current.capabilities[agentId]?.[row]?.used) return;
-    this.capabilityTracker.markUsed(agentId, row);
+  /** The single sink for pool.ts's proof-table hits (capabilities.ts
+   * CAPABILITY_PROOFS): marks a row used the first time its path is
+   * genuinely exercised on the wire, or suspect the first time it rides a
+   * failed request. Guarded on current state so a chatty agent (many reads
+   * per turn, a usage_update per turn) doesn't flood the patch stream with
+   * idempotent events — and so suspicion never speaks over proof. */
+  private noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
+    const cell = this.agentView.current.capabilities[agentId]?.[row];
+    if (cell?.used) return;
+    if (evidence === "used") this.capabilityTracker.markUsed(agentId, row);
+    else if (cell?.suspect !== true) this.capabilityTracker.markSuspect(agentId, row);
   }
 
   /** Settings-side projections of session-manager events (ui.md § Settings
@@ -1474,11 +1481,27 @@ export class Orchestrator {
       case "reloadSession":
         void this.sessionManager.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
         break;
+      // A rejected set leaves authoritative state unchanged — republish it
+      // (fresh identity) so the pill's pending spinner settles back to truth.
       case "setSessionMode":
-        void this.sessionManager.setMode(action.sessionId, action.modeId);
+        void this.sessionManager.setMode(action.sessionId, action.modeId).catch((err) => {
+          this.logCatch(`setMode ${action.sessionId}`)(err);
+          const modes = this.agentView.current.sessionModes[action.sessionId];
+          if (modes != null) {
+            this.agentView.emit({ kind: "sessionModesSet", sessionId: action.sessionId, modes: { ...modes } });
+          }
+        });
         break;
       case "setSessionConfigOption":
-        void this.sessionManager.setConfigOption(action.sessionId, action.configId, action.value);
+        void this.sessionManager
+          .setConfigOption(action.sessionId, action.configId, action.value)
+          .catch((err) => {
+            this.logCatch(`setConfigOption ${action.sessionId}`)(err);
+            const options = this.agentView.current.sessionConfigOptions[action.sessionId];
+            if (options !== undefined) {
+              this.agentView.emit({ kind: "sessionConfigOptionsChanged", sessionId: action.sessionId, options: [...options] });
+            }
+          });
         break;
       case "sendPrompt":
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design

@@ -72,7 +72,8 @@ function harness(opts?: {
     onDeclaredCaptured: (agentId, declared, raw) =>
       capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onCapabilityUsed: (agentId, row) => capabilityTracker.markUsed(agentId, row),
+    onCapabilityEvidence: (agentId, row, evidence) =>
+      evidence === "used" ? capabilityTracker.markUsed(agentId, row) : capabilityTracker.markSuspect(agentId, row),
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {

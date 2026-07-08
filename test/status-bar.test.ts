@@ -14,7 +14,7 @@ describe("statusBarContent", () => {
     expect(content.text).toBe("$(plug) Patchbay");
   });
 
-  it("shows the active session's title and a running-agent glyph", () => {
+  it("shows the active session's title under the Patchbay mark — running adds no glyph", () => {
     const content = statusBarContent(
       state({
         sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", live: false, emulated: false, branchOf: null }],
@@ -22,7 +22,7 @@ describe("statusBarContent", () => {
         agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
       }),
     );
-    expect(content.text).toBe("$(circle-filled) Fix the bug");
+    expect(content.text).toBe("$(plug) Fix the bug");
     expect(content.tooltip).toBe("Claude Code — running");
   });
 
@@ -34,7 +34,7 @@ describe("statusBarContent", () => {
         agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false }],
       }),
     );
-    expect(content.text).toBe("$(error) T");
+    expect(content.text).toBe("$(plug) $(error) T");
   });
 
   it("appends usage only once reported — absent, never a fake 0%", () => {
@@ -43,9 +43,9 @@ describe("statusBarContent", () => {
       activeSessionId: "s1",
       agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
     });
-    expect(statusBarContent(base).text).toBe("$(circle-filled) T");
+    expect(statusBarContent(base).text).toBe("$(plug) T");
 
     const withUsage = state({ ...base, sessionUsage: { s1: { used: 50, size: 200 } } });
-    expect(statusBarContent(withUsage).text).toBe("$(circle-filled) T · 25%");
+    expect(statusBarContent(withUsage).text).toBe("$(plug) T · 25%");
   });
 });

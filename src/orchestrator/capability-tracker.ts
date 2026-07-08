@@ -9,14 +9,12 @@
 // knob-offering read (offerings are connection state, read fresh each
 // connect), proves whether `auth_required` blocks this agent, and adds the
 // session/fork round-trip while that row is still declared-but-unused.
-// Marking a row *used* doesn't happen here, though — it happens in pool.ts
-// itself, at the exact point each RPC succeeds or a wire notification's kind
-// tag arrives (one `onCapabilityUsed` hook, fired alike for auth,
-// session.fork, session.load, usage, concurrentSessions). This file only
-// decides *when* to run the synthetic probe below and persists whatever
-// pool.ts reports. fs/terminal/elicitation/image marking wait on P6/P7's
-// real handlers — declaring them checkable now would be exactly the kind of
-// lie bet #2 exists to prevent.
+// Marking a row *used* doesn't happen here, though — pool.ts's wire
+// chokepoints (agent RPC resolved, incoming request handled, session/update
+// kind tag arrived) consult the one proof table (capabilities.ts
+// CAPABILITY_PROOFS) and fire the one `onCapabilityEvidence` hook; no call
+// site anywhere names a row. This file only decides *when* to run the
+// synthetic probe below and persists whatever pool.ts reports.
 //
 // Used to reset on every reconnect (a side effect of always rebuilding the
 // matrix fresh); it's now version-keyed (capability-verification.md,
@@ -109,6 +107,15 @@ export class CapabilityTracker {
 
   markUsed(agentId: string, row: CapabilityRowId): void {
     this.hooks.emit({ kind: "capabilityUsed", agentId, row });
+    this.persist(agentId);
+  }
+
+  /** Suspicion, not conviction: the row rode a failed request. Persisted
+   * version-keyed exactly like used — a broken bridge must not look clean
+   * after a restart — and cleared the moment a success proves the row
+   * (used wins; the reducer drops the flag). */
+  markSuspect(agentId: string, row: CapabilityRowId): void {
+    this.hooks.emit({ kind: "capabilitySuspect", agentId, row });
     this.persist(agentId);
   }
 

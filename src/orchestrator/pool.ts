@@ -10,7 +10,12 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
-import { declaredFromInitialize } from "./capabilities";
+import {
+  clientCapabilitiesWire,
+  declaredFromInitialize,
+  rowsProvenBy,
+  type WireFact,
+} from "./capabilities";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
 export interface LaunchSpec {
@@ -43,15 +48,19 @@ export interface PoolHooks {
     agentId: string,
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
-  /** Fired the instant pool.ts itself observes a capability's wire path
-   * actually succeed — `auth` via a working session/new, `session.fork` via
-   * a working fork, `session.load` via a working load, `usage` via a
-   * usage_update notification's kind tag, `concurrentSessions` via a second
-   * session succeeding on a connection already serving one. One hook for
-   * every RPC-outcome-based row (capability-verification.md: declared ≠
-   * used) — called synchronously, right where pool.ts sees the fact, and
-   * never awaited so it can't block the RPC it's reporting on. */
-  onCapabilityUsed?(agentId: string, row: CapabilityRowId): void;
+  /** Fired the instant a wire fact bears on a capability row: "used" when
+   * the fact rode a request that succeeded, "suspect" when it rode one that
+   * failed (suspicion, not conviction — the failure may not be the row's
+   * fault). Which fact bears on which row lives in one place —
+   * capabilities.ts's CAPABILITY_PROOFS table — consulted at pool.ts's
+   * three chokepoints (agent RPC settled, incoming client request handled,
+   * session/update kind tag arrived); no call site ever names a row itself
+   * (capability-verification.md: declared ≠ used). Only the outgoing
+   * chokepoint can report "suspect": a client-side handler throwing is
+   * patchbay's own gate rejecting, never the agent failing. Called
+   * synchronously and never awaited so it can't block the RPC it's
+   * reporting on. */
+  onCapabilityEvidence?(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void;
   /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
    * while false, chunks are dropped without even being decoded. */
   wireLogActive?(): boolean;
@@ -291,44 +300,76 @@ export class AgentPool {
       Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
     );
 
+    // Chokepoint: every incoming request registers through `proven`, so a
+    // handler resolving marks whatever row the proof table ties to its
+    // method (capabilities.ts CAPABILITY_PROOFS) — registration sites never
+    // name rows, and a future handler (P7 elicitation) marks for free.
+    const proven = <M extends acp.ClientRequestMethod>(
+      method: M,
+      handler: acp.ClientRequestHandlersByMethod[M],
+    ): [M, acp.ClientRequestHandlersByMethod[M]] => [
+      method,
+      (async (ctx: never) => {
+        const result = await (handler as (ctx: never) => Promise<unknown>)(ctx);
+        this.markProven(reportAs, { via: "clientRequest", method });
+        return result;
+      }) as acp.ClientRequestHandlersByMethod[M],
+    ];
     const connection = acp
       .client({ name: "acp-patchbay" })
-      .onRequest(acp.methods.client.session.requestPermission, (ctx) => {
-        const handler = this.hooks.onPermissionRequest;
-        if (handler) return handler(reportAs, ctx.params);
-        return Promise.resolve<acp.RequestPermissionResponse>({
-          outcome: { outcome: "cancelled" },
-        });
-      })
+      .onRequest(
+        ...proven(acp.methods.client.session.requestPermission, (ctx) => {
+          const handler = this.hooks.onPermissionRequest;
+          if (handler) return handler(reportAs, ctx.params);
+          return Promise.resolve<acp.RequestPermissionResponse>({
+            outcome: { outcome: "cancelled" },
+          });
+        }),
+      )
       .onNotification(acp.methods.client.session.update, (ctx) => {
-        // No initialize-time claim exists for usage reporting — the kind tag
-        // arriving at all is the only signal, so it's marked used right here
-        // rather than waiting for session-manager.ts to decode the payload.
-        if (ctx.params.update.sessionUpdate === "usage_update") {
-          this.hooks.onCapabilityUsed?.(reportAs, "usage");
-        }
+        // Chokepoint: the kind tag is the wire fact (e.g. usage_update has
+        // no initialize-time claim — its arrival is the only signal), so it
+        // goes through the table before session-manager decodes the payload.
+        this.markProven(reportAs, {
+          via: "sessionUpdate",
+          updateKind: ctx.params.update.sessionUpdate,
+        });
         this.hooks.onSessionUpdate(reportAs, ctx.params);
       })
-      .onRequest(acp.methods.client.fs.readTextFile, (ctx) =>
-        this.hooks.onReadTextFile(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.fs.readTextFile, (ctx) =>
+          this.hooks.onReadTextFile(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.fs.writeTextFile, (ctx) =>
-        this.hooks.onWriteTextFile(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.fs.writeTextFile, (ctx) =>
+          this.hooks.onWriteTextFile(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.terminal.create, (ctx) =>
-        this.hooks.onCreateTerminal(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.terminal.create, (ctx) =>
+          this.hooks.onCreateTerminal(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.terminal.output, (ctx) =>
-        this.hooks.onTerminalOutput(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.terminal.output, (ctx) =>
+          this.hooks.onTerminalOutput(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.terminal.waitForExit, (ctx) =>
-        this.hooks.onWaitForTerminalExit(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.terminal.waitForExit, (ctx) =>
+          this.hooks.onWaitForTerminalExit(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.terminal.kill, (ctx) =>
-        this.hooks.onKillTerminal(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.terminal.kill, (ctx) =>
+          this.hooks.onKillTerminal(reportAs, ctx.params),
+        ),
       )
-      .onRequest(acp.methods.client.terminal.release, (ctx) =>
-        this.hooks.onReleaseTerminal(reportAs, ctx.params),
+      .onRequest(
+        ...proven(acp.methods.client.terminal.release, (ctx) =>
+          this.hooks.onReleaseTerminal(reportAs, ctx.params),
+        ),
       )
       .connect(stream);
     entry.connection = connection;
@@ -336,13 +377,10 @@ export class AgentPool {
     let init: acp.InitializeResponse;
     try {
       init = await this.withTimeout(
-        connection.agent.request(acp.methods.agent.initialize, {
+        this.request(entry, acp.methods.agent.initialize, {
           protocolVersion: acp.PROTOCOL_VERSION,
           clientInfo: { name: "acp-patchbay", version: "0.0.1" },
-          clientCapabilities: {
-            fs: { readTextFile: true, writeTextFile: true },
-            terminal: true,
-          },
+          clientCapabilities: clientCapabilitiesWire(),
         }),
         this.initializeTimeoutMs,
         // The classic silent hang is a CLI doing first-run setup against a
@@ -435,18 +473,13 @@ export class AgentPool {
     additionalDirectories: string[] = [],
   ): Promise<acp.NewSessionResponse> {
     const entry = this.running(poolKey);
-    const hadOtherSessions = entry.sessions.size > 0;
-    const response = await entry.connection!.agent.request(
-      acp.methods.agent.session.new,
-      { cwd, mcpServers, additionalDirectories },
-    );
+    const response = await this.request(entry, acp.methods.agent.session.new, {
+      cwd,
+      mcpServers,
+      additionalDirectories,
+    });
     entry.sessions.add(response.sessionId);
     this.log.debug(`${poolKey}: session/new -> ${response.sessionId}`);
-    // A working session/new is the proof: whoever called this (a real
-    // session, or capability-tracker.ts's throwaway probe) got a session out
-    // of it, so auth — if this agent even declares any — actually works.
-    this.hooks.onCapabilityUsed?.(entry.reportAs, "auth");
-    if (hadOtherSessions) this.hooks.onCapabilityUsed?.(entry.reportAs, "concurrentSessions");
     return response;
   }
 
@@ -457,7 +490,7 @@ export class AgentPool {
    * once this resolves. */
   async authenticate(poolKey: string, methodId: string): Promise<void> {
     const entry = this.running(poolKey);
-    await entry.connection!.agent.request(acp.methods.agent.authenticate, { methodId });
+    await this.request(entry, acp.methods.agent.authenticate, { methodId });
   }
 
   /** Also used for P5's automatic, ephemeral fork-verification round-trip
@@ -473,19 +506,14 @@ export class AgentPool {
     additionalDirectories: string[] = [],
   ): Promise<acp.ForkSessionResponse> {
     const entry = this.running(poolKey);
-    const response = await entry.connection!.agent.request(
-      acp.methods.agent.session.fork,
-      { sessionId, cwd, mcpServers, additionalDirectories },
-    );
+    const response = await this.request(entry, acp.methods.agent.session.fork, {
+      sessionId,
+      cwd,
+      mcpServers,
+      additionalDirectories,
+    });
     entry.sessions.add(response.sessionId);
     this.log.debug(`${poolKey}: session/fork ${sessionId} -> ${response.sessionId}`);
-    this.hooks.onCapabilityUsed?.(entry.reportAs, "session.fork");
-    // The parent was already on `entry.sessions` — a fork always proves this
-    // connection sustains 2+ concurrent sessions, the same signal newSession's
-    // hadOtherSessions case reports (P8: this is what lets "auto" process
-    // policy bootstrap toward sharing without ever risking an unproven
-    // top-level session/new).
-    this.hooks.onCapabilityUsed?.(entry.reportAs, "concurrentSessions");
     return response;
   }
 
@@ -495,10 +523,7 @@ export class AgentPool {
     prompt: acp.ContentBlock[],
   ): Promise<acp.PromptResponse> {
     const entry = this.running(poolKey);
-    return entry.connection!.agent.request(acp.methods.agent.session.prompt, {
-      sessionId,
-      prompt,
-    });
+    return this.request(entry, acp.methods.agent.session.prompt, { sessionId, prompt });
   }
 
   async cancel(poolKey: string, sessionId: string): Promise<void> {
@@ -519,13 +544,14 @@ export class AgentPool {
     additionalDirectories: string[] = [],
   ): Promise<acp.LoadSessionResponse> {
     const entry = this.running(poolKey);
-    const response = await entry.connection!.agent.request(
-      acp.methods.agent.session.load,
-      { sessionId, cwd, mcpServers, additionalDirectories },
-    );
+    const response = await this.request(entry, acp.methods.agent.session.load, {
+      sessionId,
+      cwd,
+      mcpServers,
+      additionalDirectories,
+    });
     entry.sessions.add(sessionId);
     this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
-    this.hooks.onCapabilityUsed?.(entry.reportAs, "session.load");
     return response;
   }
 
@@ -535,21 +561,25 @@ export class AgentPool {
    * reported success for rejected changes), so the response is discarded. */
   async setSessionMode(poolKey: string, sessionId: string, modeId: string): Promise<void> {
     const entry = this.running(poolKey);
-    await entry.connection!.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
+    await this.request(entry, acp.methods.agent.session.setMode, { sessionId, modeId });
   }
 
-  /** Same distrust-the-response rule as `setSessionMode` — callers must wait
-   * for the `config_option_update` notification to reflect the change. */
+  /** Unlike `setSessionMode` (whose response carries no state), the spec
+   * makes this response's `configOptions` required — "the full set of
+   * configuration options and their current values" — and agents are not
+   * obliged to echo a `config_option_update` notification at the client
+   * that initiated the change (claude-agent-acp doesn't). The response is
+   * agent-authored state, not an echo of the request, so callers consume it. */
   async setSessionConfigOption(
     poolKey: string,
     sessionId: string,
     configId: string,
     value: string | boolean,
-  ): Promise<void> {
+  ): Promise<acp.SetSessionConfigOptionResponse> {
     const entry = this.running(poolKey);
     const params: acp.SetSessionConfigOptionRequest =
       typeof value === "boolean" ? { sessionId, configId, type: "boolean", value } : { sessionId, configId, value };
-    await entry.connection!.agent.request(acp.methods.agent.session.setConfigOption, params);
+    return this.request(entry, acp.methods.agent.session.setConfigOption, params);
   }
 
   /** Attaches the wire-log tap to one direction of a connection's stdio.
@@ -601,6 +631,41 @@ export class AgentPool {
    * parallel — the whole sweep has to fit VS Code's ~2s shutdown window. */
   async disposeAll(budget: StopBudget = SHUTDOWN_STOP): Promise<void> {
     await Promise.allSettled([...this.entries.keys()].map((id) => this.stop(id, budget)));
+  }
+
+  /** Chokepoint: every outgoing agent RPC goes through here, so however the
+   * call settles, whatever rows the proof table ties to its method + params
+   * (capabilities.ts CAPABILITY_PROOFS) get their evidence — "used" on
+   * success, "suspect" on failure — and no other place in pool.ts decides
+   * what a wire fact means. One failure is exempt from suspicion:
+   * auth_required (-32000) is the honest pre-login state, already surfaced
+   * as its own condition, not a capability misbehaving. `priorSessionCount`
+   * is captured before the await: "a second session on a connection already
+   * serving one" must count the sessions as they stood when the call was
+   * made. */
+  private async request<M extends acp.AgentRequestMethod>(
+    entry: Entry,
+    method: M,
+    params: acp.AgentRequestParamsByMethod[M],
+  ): Promise<acp.AgentRequestResponsesByMethod[M]> {
+    const priorSessionCount = entry.sessions.size;
+    const fact: WireFact = { via: "agentRequest", method, params, priorSessionCount };
+    try {
+      const result = await entry.connection!.agent.request(method, params);
+      this.markProven(entry.reportAs, fact);
+      return result;
+    } catch (err) {
+      if (!(err instanceof acp.RequestError && err.code === -32000)) {
+        for (const row of rowsProvenBy(fact)) {
+          this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");
+        }
+      }
+      throw err;
+    }
+  }
+
+  private markProven(reportAs: string, fact: WireFact): void {
+    for (const row of rowsProvenBy(fact)) this.hooks.onCapabilityEvidence?.(reportAs, row, "used");
   }
 
   private running(poolKey: string): Entry {

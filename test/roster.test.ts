@@ -39,7 +39,7 @@ describe("roster overlay data", () => {
 
     const auggie = overlay.find((a) => a.id === "auggie")!;
     expect(auggie.assets?.rules).toContain(".augment/rules");
-    expect(auggie.assets?.skills).toBeNull();
+    expect(auggie.assets?.skills).toContain(".augment/skills");
   });
 
   it("records observed _meta conventions for claude and codex", () => {

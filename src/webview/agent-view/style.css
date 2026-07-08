@@ -604,11 +604,16 @@ body {
   background: none;
   border: none;
   outline: none;
-  resize: none;
+  resize: vertical;
   color: var(--pb-text);
   font: inherit;
   padding: 9px 11px 2px;
   min-height: 40px;
+  max-height: 50vh;
+}
+
+.input-shell textarea::placeholder {
+  color: var(--pb-text-faint);
 }
 
 .input-shell textarea:disabled {

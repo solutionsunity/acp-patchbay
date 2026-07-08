@@ -2,7 +2,7 @@
 // and the reducer's capability handling — the parts of P5 that don't need a
 // live agent at all.
 import { describe, expect, it } from "vitest";
-import { matrixFromDeclared } from "../src/orchestrator/capabilities";
+import { matrixFromDeclared, rowsProvenBy } from "../src/orchestrator/capabilities";
 import {
   capabilityState,
   computeFidelity,
@@ -39,6 +39,12 @@ describe("capabilityState", () => {
   });
   it("is used once exercised", () => {
     expect(capabilityState({ declared: true, used: true })).toBe("used");
+  });
+  it("is suspect when declared, not used, and implicated in a failed request", () => {
+    expect(capabilityState({ declared: true, used: false, suspect: true })).toBe("suspect");
+  });
+  it("proof outranks suspicion — a used cell never reads suspect", () => {
+    expect(capabilityState({ declared: true, used: true, suspect: true })).toBe("used");
   });
 });
 
@@ -81,6 +87,69 @@ describe("matrixFromDeclared", () => {
   it("every cell starts unused — being used is a separate, later event", () => {
     const matrix = matrixFromDeclared({ ...noDeclared, sessionFork: true, loadSession: true });
     for (const cell of Object.values(matrix)) expect(cell.used).toBe(false);
+  });
+});
+
+describe("rowsProvenBy — the one used-proof table", () => {
+  const prompt = (blocks: Array<{ type: string }>) =>
+    rowsProvenBy({
+      via: "agentRequest",
+      method: "session/prompt",
+      params: { sessionId: "s1", prompt: blocks },
+      priorSessionCount: 1,
+    });
+
+  it("session/new proves auth; concurrentSessions only with a prior session", () => {
+    const first = rowsProvenBy({
+      via: "agentRequest",
+      method: "session/new",
+      params: { cwd: "/" },
+      priorSessionCount: 0,
+    });
+    expect(first).toEqual(["auth"]);
+    const second = rowsProvenBy({
+      via: "agentRequest",
+      method: "session/new",
+      params: { cwd: "/" },
+      priorSessionCount: 1,
+    });
+    expect(second.sort()).toEqual(["auth", "concurrentSessions"]);
+  });
+
+  it("session/fork proves fork and concurrentSessions — the parent already rides the connection", () => {
+    const rows = rowsProvenBy({
+      via: "agentRequest",
+      method: "session/fork",
+      params: { sessionId: "s1", cwd: "/" },
+      priorSessionCount: 1,
+    });
+    expect(rows.sort()).toEqual(["concurrentSessions", "session.fork"]);
+  });
+
+  it("session/prompt proves prompt rows only for block types actually carried", () => {
+    expect(prompt([{ type: "text" }])).toEqual([]);
+    expect(prompt([{ type: "image" }, { type: "text" }])).toEqual(["prompt.image"]);
+    expect(prompt([{ type: "audio" }])).toEqual(["prompt.audio"]);
+    expect(prompt([{ type: "resource" }])).toEqual(["prompt.embeddedContext"]);
+    // resource_link is the baseline every agent must accept — proves nothing.
+    expect(prompt([{ type: "resource_link" }])).toEqual([]);
+  });
+
+  it("incoming client requests prove fs/terminal by method; output/kill do not", () => {
+    expect(rowsProvenBy({ via: "clientRequest", method: "fs/read_text_file" })).toEqual([
+      "fs.readTextFile",
+    ]);
+    expect(rowsProvenBy({ via: "clientRequest", method: "fs/write_text_file" })).toEqual([
+      "fs.writeTextFile",
+    ]);
+    expect(rowsProvenBy({ via: "clientRequest", method: "terminal/create" })).toEqual(["terminal"]);
+    expect(rowsProvenBy({ via: "clientRequest", method: "terminal/output" })).toEqual([]);
+    expect(rowsProvenBy({ via: "clientRequest", method: "session/request_permission" })).toEqual([]);
+  });
+
+  it("usage_update is the only session/update kind that proves a row", () => {
+    expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "usage_update" })).toEqual(["usage"]);
+    expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "agent_message_chunk" })).toEqual([]);
   });
 });
 
@@ -184,6 +253,32 @@ describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
     });
     expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: false });
     expect(state.capabilitiesResetAt.a1).toBe("2026-01-01T01:00:00.000Z");
+  });
+
+  it("capabilitySuspect flags a declared row — suspicion implies declared, like used does", () => {
+    let state = reduceAgentView(initialAgentViewState, declared);
+    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "prompt.image" });
+    expect(state.capabilities.a1!["prompt.image"]).toEqual({
+      declared: true,
+      used: false,
+      suspect: true,
+    });
+    expect(capabilityState(state.capabilities.a1!["prompt.image"])).toBe("suspect");
+  });
+
+  it("suspicion never speaks over proof — suspect on a used row is a no-op", () => {
+    let state = reduceAgentView(initialAgentViewState, declared);
+    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "session.fork" });
+    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "session.fork" });
+    expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: true });
+  });
+
+  it("first success acquits — capabilityUsed drops the suspect flag", () => {
+    let state = reduceAgentView(initialAgentViewState, declared);
+    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "prompt.image" });
+    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "prompt.image" });
+    expect(state.capabilities.a1!["prompt.image"]).toEqual({ declared: true, used: true });
+    expect(capabilityState(state.capabilities.a1!["prompt.image"])).toBe("used");
   });
 
   it("usageReported populates sessionUsage", () => {

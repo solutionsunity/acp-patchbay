@@ -48,7 +48,7 @@
       "assets": {
         "rules": [".augment/rules"],
         "commands": [".augment/commands"],
-        "skills": null
+        "skills": [".augment/skills"]
       },
       "metaExtensions": [],
       "quirks": [],

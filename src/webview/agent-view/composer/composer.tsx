@@ -27,6 +27,7 @@ export function Composer(props: {
   commands: readonly AvailableCommand[];
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
+  workspaceRoots: readonly string[];
   liveSelection: LiveSelectionView | null;
   openEditors: readonly OpenEditorView[];
   modes: SessionModesView | null;
@@ -96,7 +97,13 @@ export function Composer(props: {
     <div className="composer">
       {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
         <div className="ctx-row">
-          {enabled && <RootsChip sessionId={sessionId} roots={props.contextRoots} />}
+          {enabled && (
+            <RootsChip
+              sessionId={sessionId}
+              roots={props.contextRoots}
+              workspaceRoots={props.workspaceRoots}
+            />
+          )}
           {enabled && props.liveSelection !== null && (
             <span
               className="ctx-chip ghost"
@@ -182,7 +189,7 @@ export function Composer(props: {
         )}
         <Textarea
           rows={1}
-          className="min-h-0 resize-none border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+          className="min-h-0 resize-y border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
           disabled={!enabled}
           value={draft}
           onPaste={handlePaste}

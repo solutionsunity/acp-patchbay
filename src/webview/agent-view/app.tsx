@@ -86,6 +86,7 @@ export function App({ state }: { state: AgentViewState }) {
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
+        workspaceRoots={state.workspaceRoots}
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}
         modes={active !== null ? (state.sessionModes[active.id] ?? null) : null}

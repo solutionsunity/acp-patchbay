@@ -28,12 +28,24 @@ const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
   { id: "auth", label: "auth" },
 ];
 
-const STATE_ICON = { used: "pass-filled", declared: "circle", "not-declared": null } as const;
+const STATE_ICON = {
+  used: "pass-filled",
+  suspect: "warning",
+  declared: "circle",
+  "not-declared": null,
+} as const;
 
-const STATE_CLASS = { used: "st-v", declared: "st-d", "not-declared": "st-n" } as const;
+const STATE_CLASS = {
+  used: "st-v",
+  suspect: "st-s",
+  declared: "st-d",
+  "not-declared": "st-n",
+} as const;
 
 const STATE_TEXT = {
-  used: "declared, used — fired successfully on the wire",
+  used: "used — fired successfully on the wire",
+  suspect:
+    "suspect — declared, not used; rode at least one failed request. The failure may not be this capability's fault; a success clears it.",
   declared: "declared, not used — claimed at initialize, not yet exercised",
   "not-declared": "not declared",
 } as const;
@@ -72,16 +84,21 @@ export function MatrixSection({ state }: { state: SettingsState }) {
         </div>
       ) : (
         <>
-          {/* declared-not-used leads: the claim comes first, the proof follows */}
+          {/* evidence order: nothing → proof → suspicion → bare claim.
+              "used" needs no "declared," prefix — used implies declared by
+              construction (the reducer writes both in one path). */}
           <div className="legend">
             <span>
-              <span className="st-d"><Icon name="circle" /></span> declared, not used
-            </span>
-            <span>
-              <span className="st-v"><Icon name="pass-filled" /></span> declared, used
-            </span>
-            <span>
               <span className="st-n">—</span> not declared
+            </span>
+            <span>
+              <span className="st-v"><Icon name="pass-filled" /></span> used
+            </span>
+            <span>
+              <span className="st-s"><Icon name="warning" /></span> suspect
+            </span>
+            <span>
+              <span className="st-d"><Icon name="circle" /></span> declared, not used
             </span>
           </div>
           {/* Tooltip per cell (Radix, hover or keyboard focus) — the

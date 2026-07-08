@@ -329,6 +329,10 @@ td.cap {
   color: var(--pb-warn);
 }
 
+.st-s {
+  color: var(--pb-warn);
+}
+
 .st-n {
   color: var(--pb-text-faint);
 }

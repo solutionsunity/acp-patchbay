@@ -183,17 +183,39 @@ design — used to reset as a side effect of always rebuilding the matrix fresh 
 connect; it's now seeded from the cache first.) UI affordances gate on *used*,
 not declared: real bridges have been observed silently dropping `mcpServers`,
 collapsing stop reasons, and reporting rejected mode changes as succeeded.
-Three honest states per row: not declared / declared-but-not-used / used.
+Four honest states per row: not declared / declared-but-not-used / used /
+**suspect** — declared, not used, and implicated in at least one failed
+request (a wire fact that would have proven the row rode a request that
+rejected). Suspicion, not conviction: the failure may not be the row's fault,
+so it renders as a warning triangle, never an error, and gates nothing — UI
+features still gate on used only. First success acquits (used drops the
+flag); `auth_required` never indicts (it's the honest pre-login state, with
+its own surface); only outgoing agent RPCs can indict — a client-side handler
+throwing is patchbay's own gate rejecting, never the agent failing. Suspect
+persists version-keyed exactly like used: a broken bridge must not look clean
+after a restart.
 
-Marking a row used is centralized in `pool.ts` — the sole channel that talks to
-an agent on the wire — at the exact point each RPC succeeds (`newSession` →
-`auth`, `fork` → `session.fork`, `loadSession` → `session.load`) or a
-notification's kind tag arrives (`usage_update` → `usage`), plus the existing
-`hadOtherSessions` check (→ `concurrentSessions`). One `onCapabilityUsed` hook
-carries all five, called synchronously and never awaited so it can't block the
-RPC it's reporting on. `capability-tracker.ts` only decides *when* to run the
-synthetic probe below and persists whatever pool.ts reports — it does not mark
-anything itself. session-manager.ts, which decodes `session/update` payloads for
+Marking a row used is centralized in one **proof table**
+(`CAPABILITY_PROOFS`, capabilities.ts) — the single place that knows which wire
+fact proves which row. `pool.ts` — the sole channel that talks to an agent on
+the wire — consults it at three chokepoints: an outgoing agent RPC resolving
+(`session/new` → `auth`, and → `concurrentSessions` when the connection already
+served a session; `session/fork` → `session.fork` + `concurrentSessions`;
+`session/load` → `session.load`; `session/prompt` → `prompt.image` / `audio` /
+`embeddedContext` when the prompt actually carried that block type), an
+incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
+`terminal/create` — and `elicitation/create` the moment P7 registers its
+handler), and a `session/update` kind tag arriving (`usage_update` → `usage`).
+The same table serves both verdicts: a fact riding a successful call marks its
+rows used; the same fact riding a failed call marks them suspect. No call site
+anywhere names a row; adding a `CapabilityRowId` forces a table entry (the
+Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
+carries every hit, called synchronously and never awaited so it can't block
+the RPC it's reporting on. `capability-tracker.ts` only decides *when* to run
+the synthetic probe below and persists whatever pool.ts reports — it does not
+mark anything itself. (Supersedes the earlier per-call-site emits in pool.ts
+and orchestrator.ts's own fs/terminal marks — same facts, previously written
+at eight scattered points.) session-manager.ts, which decodes `session/update` payloads for
 rendering, marks nothing either; the wire-level fact and the render-level
 interpretation are two different concerns living at two different layers.
 

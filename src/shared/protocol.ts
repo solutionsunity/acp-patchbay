@@ -447,15 +447,20 @@ export type CapabilityRowId =
 export interface CapabilityCell {
   declared: boolean;
   used: boolean;
+  /** Suspicion, not conviction: a wire fact that would have proven this row
+   * rode a request that failed. Absent = never implicated; cleared forever
+   * (for this agent version) by the first success — used wins. */
+  suspect?: boolean;
 }
 
 export type CapabilityMatrix = Readonly<Record<CapabilityRowId, CapabilityCell>>;
 
-export type CapabilityState = "not-declared" | "declared" | "used";
+export type CapabilityState = "not-declared" | "declared" | "used" | "suspect";
 
 export function capabilityState(cell: CapabilityCell | undefined): CapabilityState {
   if (cell === undefined || !cell.declared) return "not-declared";
-  return cell.used ? "used" : "declared";
+  if (cell.used) return "used";
+  return cell.suspect === true ? "suspect" : "declared";
 }
 
 /** Removes one key from a keyed map, referentially lazily — the reducers'
@@ -790,6 +795,10 @@ export interface AgentViewState {
    * on the next create/reload/fork — ACP has no live-update request, so
    * patchbay never claims one. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
+  /** Workspace folders — the always-active roots every session gets as its
+   * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
+   * reflects reality instead of counting only the user-added extras. */
+  workspaceRoots: readonly string[];
   /** Live IDE selection — the ghost chip's presence signal (ui.md: appears
    * only while the IDE has a selection). Position only; never the text. */
   liveSelection: LiveSelectionView | null;
@@ -833,6 +842,7 @@ export const initialAgentViewState: AgentViewState = {
   sessionModes: {},
   sessionConfigOptions: {},
   contextRoots: {},
+  workspaceRoots: [],
   liveSelection: null,
   openEditors: [],
 };
@@ -939,6 +949,7 @@ export type AgentViewEvent =
   | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
   /** Full replace — the current external-root list for a session. */
   | { kind: "contextRootsChanged"; sessionId: string; roots: readonly string[] }
+  | { kind: "workspaceRootsChanged"; roots: readonly string[] }
   /** Full replace — live selection + open editors, coalesced to the latest. */
   | {
       kind: "editorContextChanged";
@@ -956,6 +967,7 @@ export type AgentViewEvent =
       at: string;
     }
   | { kind: "capabilityUsed"; agentId: string; row: CapabilityRowId }
+  | { kind: "capabilitySuspect"; agentId: string; row: CapabilityRowId }
   | {
       kind: "usageReported";
       sessionId: string;
@@ -1009,12 +1021,25 @@ function reduceCapabilities(
     case "capabilityUsed": {
       // Used always implies declared — the single write path for both,
       // which is what lets rows with no initialize-time claim (usage,
-      // concurrentSessions) go straight from not-declared to used.
+      // concurrentSessions) go straight from not-declared to used. Writing
+      // the whole cell also drops any suspect flag: success acquits.
       const matrix = capabilities[event.agentId];
       if (matrix === undefined) return capabilities;
       return {
         ...capabilities,
         [event.agentId]: { ...matrix, [event.row]: { declared: true, used: true } },
+      };
+    }
+    case "capabilitySuspect": {
+      // Suspicion implies declared too — the attempt is itself the claim
+      // (a failed second session/new indicts concurrentSessions even though
+      // no initialize-time claim exists). Never touches a used row: proof
+      // already won, and pool.ts doesn't emit suspect over used anyway.
+      const matrix = capabilities[event.agentId];
+      if (matrix === undefined || matrix[event.row].used) return capabilities;
+      return {
+        ...capabilities,
+        [event.agentId]: { ...matrix, [event.row]: { declared: true, used: false, suspect: true } },
       };
     }
     default:
@@ -1289,6 +1314,7 @@ export function reduceAgentView(
         authMethods: reduceAuthMethods(state.authMethods, event),
       };
     case "capabilityUsed":
+    case "capabilitySuspect":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "usageReported":
       return {
@@ -1420,6 +1446,8 @@ export function reduceAgentView(
       );
     case "contextRootsChanged":
       return { ...state, contextRoots: { ...state.contextRoots, [event.sessionId]: event.roots } };
+    case "workspaceRootsChanged":
+      return { ...state, workspaceRoots: event.roots };
     case "editorContextChanged":
       return { ...state, liveSelection: event.selection, openEditors: event.openEditors };
     default:
@@ -1672,6 +1700,7 @@ export function reduceSettings(
         authMethods: reduceAuthMethods(state.authMethods, event),
       };
     case "capabilityUsed":
+    case "capabilitySuspect":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "permissionRulesChanged":
       return {

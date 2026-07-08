@@ -15,18 +15,22 @@ export function statusBarContent(state: AgentViewState): StatusBarContent {
     return { text: "$(plug) Patchbay", tooltip: "No active session — click to open the Agent View" };
   }
   const agent = state.agents.find((a) => a.id === session.agentId);
-  const icon =
+  // $(plug) is Patchbay's identity mark in both states (the status bar can
+  // only render codicons — the real extension icon can't appear here). A
+  // healthy running agent adds no second glyph; a status icon appearing at
+  // all means something needs attention.
+  const statusIcon =
     agent?.status === "running"
-      ? "$(circle-filled)"
+      ? ""
       : agent?.status === "crashed"
-        ? "$(error)"
+        ? "$(error) "
         : agent?.status === "reconnecting"
-          ? "$(sync~spin)"
-          : "$(circle-outline)";
+          ? "$(sync~spin) "
+          : "$(circle-outline) ";
   const usage = state.sessionUsage[session.id];
   const usageText = usage !== undefined ? ` · ${Math.round((usage.used / usage.size) * 100)}%` : "";
   return {
-    text: `${icon} ${session.title}${usageText}`,
+    text: `$(plug) ${statusIcon}${session.title}${usageText}`,
     tooltip: `${agent?.name ?? session.agentId} — ${agent?.status ?? "unknown"}`,
   };
 }
