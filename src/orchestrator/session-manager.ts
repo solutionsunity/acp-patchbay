@@ -32,8 +32,8 @@ export interface AgentDefaults {
   mode?: string;
   /** Keyed by the agent's own config-option id — never by semantic
    * category, which ACP defines as UX-only ("MUST NOT be required for
-   * correctness"). */
-  options?: Readonly<Record<string, string>>;
+   * correctness"). Boolean values drive boolean-typed options. */
+  options?: Readonly<Record<string, string | boolean>>;
 }
 
 export interface SessionManagerHooks {

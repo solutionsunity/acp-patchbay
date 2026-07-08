@@ -25,7 +25,7 @@ export interface LaunchSpec {
   processPolicy?: "auto" | "shared" | "isolated";
   /** Per-agent knob defaults, applied post-create (P8) — `options` keyed by
    * the agent's own config-option id (category is UX-only per ACP). */
-  defaults?: { mode?: string; options?: Readonly<Record<string, string>> };
+  defaults?: { mode?: string; options?: Readonly<Record<string, string | boolean>> };
 }
 
 export interface PoolHooks {

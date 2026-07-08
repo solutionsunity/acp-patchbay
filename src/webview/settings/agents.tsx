@@ -468,37 +468,70 @@ const KNOB_ICON: Record<string, string> = {
 };
 
 const DEFAULT_SENTINEL = "__agent_default__";
+const BOOL_ON = "__on__";
+const BOOL_OFF = "__off__";
 
 /** One default-knob select for an option the agent actually offered —
  * patchbay never invents an option, so unoffered knobs simply don't render
- * (the card states the observed reality instead). */
+ * (the card states the observed reality instead). `offered: null` marks a
+ * boolean option: a tri-state select (agent default / on / off), since a
+ * checkbox can't express "no default saved". */
 function DefaultKnob(props: {
   icon: string;
   label: string;
-  offered: readonly { value: string; name: string }[];
-  value: string;
-  onChange(value: string): void;
+  offered: readonly { value: string; name: string }[] | null;
+  value: string | boolean;
+  onChange(value: string | boolean): void;
 }) {
+  // Radix Select items can't carry value="" — DEFAULT_SENTINEL maps to the
+  // config's "unset" at this boundary only, never persisted; booleans ride
+  // the BOOL_ON/BOOL_OFF sentinels the same way.
+  const selectValue =
+    props.value === "" ? DEFAULT_SENTINEL : typeof props.value === "boolean" ? (props.value ? BOOL_ON : BOOL_OFF) : props.value;
   return (
     <label className="knob-default">
       <Icon name={props.icon} /> {props.label}
-      {/* Radix Select items can't carry value="" — DEFAULT_SENTINEL maps to
-          the config's "unset" at this boundary only, never persisted */}
       <Select
-        value={props.value === "" ? DEFAULT_SENTINEL : props.value}
-        onValueChange={(v) => props.onChange(v === DEFAULT_SENTINEL ? "" : v)}
+        value={selectValue}
+        onValueChange={(v) =>
+          props.onChange(v === DEFAULT_SENTINEL ? "" : v === BOOL_ON ? true : v === BOOL_OFF ? false : v)
+        }
       >
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value={DEFAULT_SENTINEL}>(agent default)</SelectItem>
-          {props.offered.map((v) => (
-            <SelectItem key={v.value} value={v.value}>
-              {v.name}
-            </SelectItem>
-          ))}
+          {props.offered === null ? (
+            <>
+              <SelectItem value={BOOL_ON}>on</SelectItem>
+              <SelectItem value={BOOL_OFF}>off</SelectItem>
+            </>
+          ) : (
+            props.offered.map((v) => (
+              <SelectItem key={v.value} value={v.value}>
+                {v.name}
+              </SelectItem>
+            ))
+          )}
         </SelectContent>
       </Select>
     </label>
+  );
+}
+
+/** The stored selections, stated as text while the agent isn't connected —
+ * offerings are connection state (read fresh each connect, never persisted),
+ * so with no connection there is no list to render, only what's saved. */
+function StoredDefaultsLine({ defaults }: { defaults: AgentConfigView["defaults"] }) {
+  const entries = [
+    ...(defaults.mode !== undefined && defaults.mode !== "" ? [`mode=${defaults.mode}`] : []),
+    ...Object.entries(defaults.options ?? {}).map(([id, v]) => `${id}=${String(v)}`),
+  ];
+  return (
+    <span className="note m-0 self-center">
+      {entries.length === 0
+        ? "no session defaults saved — connect to see this agent's knobs"
+        : `saved defaults: ${entries.join(" · ")} — connect to edit`}
+    </span>
   );
 }
 
@@ -616,12 +649,32 @@ export function AgentsSection(props: {
         // Some bridges surface the session mode twice: natively (modes) and
         // again as a mode-category config option — one knob, not two.
         const optionKnobs = (knobs?.options ?? []).filter((o) => !(hasModeKnob && o.category === "mode"));
-        const setOptionDefault = (optionId: string, value: string) => {
+        const setOptionDefault = (optionId: string, value: string | boolean) => {
           const options = { ...effectiveConfig.defaults.options };
           if (value === "") delete options[optionId];
           else options[optionId] = value;
           saveConfig({ defaults: { ...effectiveConfig.defaults, options } });
         };
+        // Saved selections the current connection doesn't offer (a model
+        // retired, an option gone) — stated, never silently blanked; apply
+        // time already guards per session. Checked against the unfiltered
+        // option list so the deduped mode-category option still counts.
+        const savedNotOffered: string[] = [];
+        if (knobs !== undefined) {
+          const savedMode = effectiveConfig.defaults.mode;
+          if (savedMode !== undefined && savedMode !== "" && !(modeValues?.some((m) => m.value === savedMode) ?? false)) {
+            savedNotOffered.push(`mode=${savedMode}`);
+          }
+          for (const [optionId, value] of Object.entries(effectiveConfig.defaults.options ?? {})) {
+            const offered = knobs.options.find((o) => o.id === optionId);
+            const valueOffered =
+              offered !== undefined &&
+              (offered.type === "boolean"
+                ? typeof value === "boolean"
+                : typeof value === "string" && offered.values.some((v) => v.value === value));
+            if (!valueOffered) savedNotOffered.push(`${optionId}=${String(value)}`);
+          }
+        }
         return (
           <div className="card" key={id}>
             {/* flex-wrap + min-w-0: at narrow widths the action cluster wraps
@@ -733,12 +786,15 @@ export function AgentsSection(props: {
                     </SelectContent>
                   </Select>
                 </label>
-                {knobs === undefined ? (
-                  // Never observed vs. observed-and-absent are different
-                  // facts — this is the first, stated as such, not dressed
-                  // up as "not offered".
+                {status !== "running" ? (
+                  // Offerings are connection state — no connection, no list
+                  // to render, only the stored selections stated as text.
+                  <StoredDefaultsLine defaults={effectiveConfig.defaults} />
+                ) : knobs === undefined ? (
+                  // Connected but the connect-time offering read hasn't
+                  // landed (or is blocked on login) — pending, not "none".
                   <span className="note m-0 self-center">
-                    session knobs appear after the first session with this agent
+                    reading this agent's knob offering…
                   </span>
                 ) : (
                   <>
@@ -749,7 +805,7 @@ export function AgentsSection(props: {
                         offered={modeValues!}
                         value={effectiveConfig.defaults.mode ?? ""}
                         onChange={(v) =>
-                          saveConfig({ defaults: { ...effectiveConfig.defaults, mode: v || undefined } })
+                          saveConfig({ defaults: { ...effectiveConfig.defaults, mode: (v as string) || undefined } })
                         }
                       />
                     )}
@@ -758,7 +814,7 @@ export function AgentsSection(props: {
                         key={option.id}
                         icon={(option.category !== undefined ? KNOB_ICON[option.category] : undefined) ?? "settings"}
                         label={option.name}
-                        offered={option.values}
+                        offered={option.type === "boolean" ? null : option.values}
                         value={effectiveConfig.defaults.options?.[option.id] ?? ""}
                         onChange={(v) => setOptionDefault(option.id, v)}
                       />
@@ -766,6 +822,12 @@ export function AgentsSection(props: {
                     {!hasModeKnob && optionKnobs.length === 0 && (
                       <span className="note m-0 self-center">
                         this agent offered no session knobs
+                      </span>
+                    )}
+                    {savedNotOffered.length > 0 && (
+                      <span className="note m-0 self-center">
+                        saved but not currently offered: {savedNotOffered.join(" · ")} — applied
+                        only where a session actually offers it
                       </span>
                     )}
                   </>

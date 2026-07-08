@@ -166,7 +166,7 @@ export interface AgentConfigView {
    * semantic category, which ACP defines as UX-only ("MUST NOT be required
    * for correctness. Clients MUST handle missing or unknown categories
    * gracefully."). */
-  defaults: { mode?: string; options?: Readonly<Record<string, string>> };
+  defaults: { mode?: string; options?: Readonly<Record<string, string | boolean>> };
   /** Present only for agents added from the official ACP registry — drives
    * the "update available" comparison against the roster's live version. */
   registrySource: AgentRegistrySourceView | null;

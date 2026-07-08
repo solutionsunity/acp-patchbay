@@ -14,7 +14,9 @@ import type { KV } from "./kv";
  * under the old keys are dropped on read.) */
 export const agentDefaultsSchema = z.object({
   mode: z.string().optional(),
-  options: z.record(z.string(), z.string()).optional(),
+  // boolean covers boolean-typed options (a thinking toggle); the wire call
+  // (session/set_config_option) carries both shapes natively.
+  options: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 
 /** Present only when this config was created from the official ACP agent
