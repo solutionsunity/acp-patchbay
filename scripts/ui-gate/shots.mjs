@@ -102,14 +102,15 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForSelector(".section h1");
   await p.screenshot({ path: `${OUT}/settings-${theme}.png` });
   const [btnColor, bodyColor] = await p.evaluate(() => {
-    const btn = [...document.querySelectorAll("button")].find((b) => b.textContent === "Stop");
+    // Row actions are icon-only buttons (aria-label carries the semantics).
+    const btn = document.querySelector('button[aria-label="Stop"]');
     return [getComputedStyle(btn).color, getComputedStyle(document.body).color];
   });
   // outline buttons set no text color of their own — they must inherit the
   // theme foreground exactly (UA ButtonText broke this before preflight)
   check(`[${theme}] outline button text = theme foreground (${btnColor})`, btnColor === bodyColor);
 
-  await p.click('button:has-text("Remove")');
+  await p.click('button[aria-label="Remove"]');
   check(`[${theme}] destructive AlertDialog opens`, (await p.waitForSelector("text=Confirm remove?", { timeout: 3000 })) !== null);
   await p.screenshot({ path: `${OUT}/settings-dialog-${theme}.png` });
   await p.keyboard.press("Escape");
