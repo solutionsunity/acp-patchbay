@@ -135,7 +135,7 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Session index | IDs, titles, timestamps, agent | `workspaceState` | Small, machine-local, non-sensitive |
+| Session index | IDs, titles, timestamps, agent, last agent-confirmed knob state | `workspaceState` | Small, machine-local, non-sensitive; confirmed knob state seeds emulated continuations (§ Session model) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |
@@ -213,14 +213,18 @@ Verification cost splits the triggers:
 
 | Trigger | Protocol-level (free RPC) | Behavior-level (costs real LLM turns) |
 |---|---|---|
-| Connect/reconnect, only while a checkable row (`session.fork`, `auth`) is still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
+| Connect/reconnect: `session/new` always (it doubles as the knob-offering read — offerings are connection state and must be read fresh); the `session/fork` half only while still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
 | User-run diagnostics (Settings § Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
 | Background schedule | Fine, cheap | Never |
 
-`hasUnusedProbe` (protocol.ts) is the single predicate for "a checkable row
-is still outstanding" — both the automatic connect/reconnect retry
-(`capability-tracker.ts`'s `onDeclared`) and the manual `Verify…` control's
-visibility gate on it, so the two can't drift on what still needs a check.
+Connect therefore always implies one throwaway temp-dir session — an accepted
+behavioral contract, not an accident: `session/new` is free, the offering read
+needs it every connect (see § Session model), and auth/concurrency proof falls
+out of the same round-trip opportunistically. The *verification* gates keep
+their version-keyed skip: `hasUnusedProbe` (protocol.ts) remains the single
+predicate for "a checkable row is still outstanding" — the `session/fork`
+sub-check and the manual `Verify…` control's visibility both gate on it, so
+the two can't drift on what still needs a check.
 
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.
@@ -257,20 +261,46 @@ commands surface is its channel, no protocol involved.
 
 ## Session model, mode, effort
 
-Three knobs, each existing only if the agent offers it — model is the only one
-observed everywhere; mode and effort are frequent but optional. The knob set is
-per-agent reality, not a patchbay form to fill.
+Knobs (model, mode, effort, thinking, …), each existing only if the agent offers
+it — model is the only one observed everywhere; the rest are frequent but
+optional. The knob set is per-agent reality, not a patchbay form to fill.
 
-- Options come only from the agent — session config options at create, list
-  updates after. Patchbay never invents entries, never renders a knob the agent
-  didn't offer.
-- Per-agent defaults (one per offered knob, part of the agent's config record) are
-  applied at session creation by issuing the corresponding set requests after
-  `session/new`; absent options, there is nothing to default.
+**Offerings are read, never stored; selections are stored, never inferred.**
+ACP has no session-independent "list the knobs" call — `initialize` carries
+capabilities only; the option surface rides `session/new`/`load`/`fork`
+*responses* and `session/update` notifications, deliberately per-session state.
+And offerings are provider inventory, not build behavior: a provider adds or
+removes a model without `agentInfo.version` moving, so no persisted copy can be
+keyed honestly. Therefore:
+
+- **Offerings** are connection-scoped, in-memory only: seeded from the
+  connect-time read (the free `session/new` every connect performs — see the
+  capability matrix section), refreshed by every live session's responses and
+  notifications, gone when the connection ends. Settings renders offerings only
+  while the agent is connected; stopped agents show stored selections as text.
+  (Supersedes the persisted, version-keyed observed-knobs cache — its lifetime
+  rule was borrowed from used-capabilities, but "this build's fork worked" is a
+  build fact and "these models exist" is not.)
+- **Selections** (per-agent defaults, part of the agent's config record; and
+  per-session confirmed state, below) are the only persisted artifacts — bare
+  ids/values, never lists.
+- Patchbay never invents entries, never renders a knob the agent didn't offer.
 - Displayed values update only from the agent's subsequent state notifications,
   never from the set-request's success response — bridges have returned success
   for rejected mode changes. What the user sees is the last agent-confirmed
   state, which is the honest one.
+
+**Seeding at session birth** — what gets applied, by how the session came to be:
+
+| Birth | Seed applied |
+|---|---|
+| Fresh `session/new` | Per-agent defaults, once, via set requests — skipped silently where the option isn't offered |
+| Native `session/load` / `session/fork` | Nothing — the agent's own restored/inherited state is the truth; re-imposing a stored copy would force a cache over reality |
+| Emulated continuation / branch | The parent session's **last confirmed** combination (recorded from agent notifications, never from what patchbay requested) — the same honesty class as the transcript seed; never the defaults, which the user may have steered away from |
+
+The last-confirmed combination lives on the session-index entry (workspace
+state, tiny, leaves with the session) precisely because emulation is the one
+case with no reality left to read.
 
 ## Local MCP server — editor depth
 
