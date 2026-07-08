@@ -74,8 +74,8 @@ So a clean slate is an explicit act, deliberately never automatic:
 
 **Settings → Permissions → "Disconnect & erase all data"** stops every agent
 and deletes everything patchbay stored on this machine — agent and MCP-server
-configs, every credential and env value in SecretStorage, capability and knob
-caches, permission rules, the session index, the decision audit, and persisted
+configs, every credential and env value in SecretStorage, the capability
+cache, permission rules, the session index, the decision audit, and persisted
 session views. Run it *before* uninstalling.
 
 Two honest limits: it reaches only the current window's workspace records

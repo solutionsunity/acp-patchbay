@@ -178,8 +178,8 @@ export function PermissionsSection(props: {
         <div className="nm mb-1">Disconnect &amp; erase all data</div>
         <div className="note mx-0 mt-0">
           Stops every agent, then deletes everything patchbay stored on this machine: agent and
-          MCP-server configs, every credential and env value in SecretStorage, capability and knob
-          caches, permission rules, this workspace's session index, the decision audit, and
+          MCP-server configs, every credential and env value in SecretStorage, the capability
+          cache, permission rules, this workspace's session index, the decision audit, and
           persisted session views. Run it before uninstalling — VS Code has no hook that lets
           patchbay do this for you.
         </div>

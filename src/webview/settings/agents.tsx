@@ -729,7 +729,7 @@ export function AgentsSection(props: {
                 <ConfirmButton
                   label="Remove"
                   icon="trash"
-                  title="stops the agent and forgets it — config, env, capability and knob caches"
+                  title="stops the agent and forgets it — config, env, and capability cache"
                   onConfirm={() => props.onRemove(id)}
                 />
               )}
