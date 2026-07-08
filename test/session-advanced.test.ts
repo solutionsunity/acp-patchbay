@@ -409,4 +409,74 @@ describe("Session model/mode/effort knobs (P8)", () => {
 
     await pool.stop("defaulted");
   });
+
+  it("an emulated continuation seeds the parent's confirmed combination — never the defaults the user steered away from", async () => {
+    const events: AgentViewEvent[] = [];
+    let sessionManager!: SessionManager;
+    let capabilityTracker!: CapabilityTracker;
+    const pool = new AgentPool({
+      onStatusChanged: () => {},
+      onDeclaredCaptured: (agentId, declared, raw) =>
+        capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
+      onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+      ...stubFsTerminalHooks(),
+    });
+    capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+      emit: (...evs) => events.push(...evs),
+      currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    });
+    const sessionIndex = new SessionIndexStore(new MemoryKV());
+    sessionManager = new SessionManager(
+      pool,
+      sessionIndex,
+      {
+        emit: (...evs) => events.push(...evs),
+        // Defaults say sonnet/ask — the continuation must NOT get these.
+        defaultsFor: () => ({ mode: "ask", options: { "model-opt": "sonnet" } }),
+      },
+      () => cwd,
+    );
+    await pool.connect(
+      spec(
+        {
+          // no fork, no loadSession — branching can only emulate
+          modes: { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] },
+          configOptions: [
+            {
+              id: "model-opt",
+              name: "Model",
+              type: "select",
+              currentValue: "sonnet",
+              options: [{ value: "sonnet", name: "Sonnet" }, { value: "opus", name: "Opus" }],
+            },
+          ],
+        },
+        "steered",
+      ),
+    );
+    const state = () => events.reduce(reduceAgentView, initialAgentViewState);
+    const parentId = await sessionManager.createSession("steered", "Fake Agent", cwd);
+    // The user steers the session away from its defaults; the agent confirms.
+    await sessionManager.setMode(parentId, "code");
+    await sessionManager.setConfigOption(parentId, "model-opt", "opus");
+    await waitFor(() =>
+      state().sessionConfigOptions[parentId]![0]!.currentValue === "opus" ? true : undefined,
+    );
+    expect(sessionIndex.get(parentId)?.lastConfirmed).toMatchObject({
+      modeId: "code",
+      options: { "model-opt": "opus" },
+    });
+
+    const branchId = await sessionManager.branch(parentId, []);
+    expect(state().sessions.find((s) => s.id === branchId)?.emulated).toBe(true);
+    // The continuation runs at the parent's confirmed opus/code, not sonnet/ask.
+    await waitFor(() =>
+      state().sessionConfigOptions[branchId]?.[0]?.currentValue === "opus" ? true : undefined,
+    );
+    await waitFor(() =>
+      state().sessionModes[branchId]?.currentModeId === "code" ? true : undefined,
+    );
+
+    await pool.stop("steered");
+  });
 });

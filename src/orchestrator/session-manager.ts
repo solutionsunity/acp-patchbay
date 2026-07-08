@@ -355,7 +355,15 @@ export class SessionManager {
       this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: seedBlocks });
     }
     this.emitModeAndConfig(sessionId, modes, configOptions);
-    await this.applyDefaults(agentId, sessionId, modes, configOptions);
+    // Semantically a continuation, mechanically a session/new: seed the
+    // parent's last agent-confirmed combination — never the defaults, which
+    // the user may have steered the parent away from (architecture.md
+    // § Session model, seeding table). Options the fresh session doesn't
+    // offer are skipped silently inside applyKnobs.
+    const confirmed = this.sessionIndex.get(parentSessionId)?.lastConfirmed;
+    if (confirmed !== undefined) {
+      await this.applyKnobs(sessionId, confirmed, modes, configOptions);
+    }
     return sessionId;
   }
 
@@ -450,13 +458,22 @@ export class SessionManager {
         options: configOptions.map(toConfigOptionView),
       });
     }
+    // A session response's current values are agent-confirmed state — the
+    // session's own durable record of its combination (see recordConfirmed).
+    void this.sessionIndex.recordConfirmed(sessionId, {
+      ...(modes ? { modeId: modes.currentModeId } : {}),
+      ...(configOptions && configOptions.length > 0
+        ? { options: Object.fromEntries(configOptions.map((o) => [o.id, o.currentValue])) }
+        : {}),
+    });
   }
 
   /** Per-agent defaults (architecture.md § Session model, mode, effort):
-   * applied once, post-create, by issuing the corresponding set requests —
-   * never on reopen/reload/fork, which must show the agent's own resumed
-   * state rather than re-forcing a default over it. Absent options: nothing
-   * to default, silently skipped (patchbay never invents a knob). */
+   * applied once, post-create on a *fresh* session only — never on
+   * reopen/reload/fork (the agent's own resumed state is the truth), and
+   * never on an emulated continuation (which seeds from the parent's
+   * confirmed combination instead — the user may have steered away from
+   * the defaults). */
   private async applyDefaults(
     agentId: string,
     sessionId: string,
@@ -465,14 +482,26 @@ export class SessionManager {
   ): Promise<void> {
     const defaults = this.hooks.defaultsFor?.(agentId);
     if (!defaults) return;
+    await this.applyKnobs(sessionId, { modeId: defaults.mode, options: defaults.options }, modes, configOptions);
+  }
+
+  /** Issues the set requests for a knob seed, guarded per option: a knob is
+   * applied only where the agent actually offered it *this session* —
+   * silently skipped otherwise (patchbay never invents a knob), and keyed by
+   * the agent's own option id (ACP: category is UX-only, forbidden as a
+   * correctness dependency). Rejections are swallowed: the honest displayed
+   * state comes from the agent's own notifications either way. */
+  private async applyKnobs(
+    sessionId: string,
+    seed: { modeId?: string; options?: Readonly<Record<string, string | boolean>> },
+    modes: SessionModeState | null | undefined,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): Promise<void> {
     const poolKey = this.sessions.get(sessionId)!.poolKey;
-    if (defaults.mode && modes?.availableModes.some((m) => m.id === defaults.mode)) {
-      await this.pool.setSessionMode(poolKey, sessionId, defaults.mode).catch(() => {});
+    if (seed.modeId !== undefined && modes?.availableModes.some((m) => m.id === seed.modeId)) {
+      await this.pool.setSessionMode(poolKey, sessionId, seed.modeId).catch(() => {});
     }
-    // Defaults are keyed by the agent's own option id (ACP: category is
-    // UX-only, forbidden as a correctness dependency) — applied only where
-    // the agent actually offered that option this session, never invented.
-    for (const [optionId, value] of Object.entries(defaults.options ?? {})) {
+    for (const [optionId, value] of Object.entries(seed.options ?? {})) {
       if (!configOptions?.some((o) => o.id === optionId)) continue;
       await this.pool.setSessionConfigOption(poolKey, sessionId, optionId, value).catch(() => {});
     }
@@ -721,12 +750,17 @@ export class SessionManager {
         break;
       case "current_mode_update":
         this.hooks.emit({ kind: "sessionModeChanged", sessionId, modeId: update.currentModeId });
+        // Agent-confirmed (the only kind recorded — never the set request).
+        void this.sessionIndex.recordConfirmed(sessionId, { modeId: update.currentModeId });
         break;
       case "config_option_update":
         this.hooks.emit({
           kind: "sessionConfigOptionsChanged",
           sessionId,
           options: update.configOptions.map(toConfigOptionView),
+        });
+        void this.sessionIndex.recordConfirmed(sessionId, {
+          options: Object.fromEntries(update.configOptions.map((o) => [o.id, o.currentValue])),
         });
         break;
       case "usage_update":
