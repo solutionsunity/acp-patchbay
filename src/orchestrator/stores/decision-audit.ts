@@ -40,6 +40,19 @@ export class DecisionAuditStore {
     await rm(this.file, { force: true });
   }
 
+  /** Entry count for the Data page's live inventory — read from the file,
+   * never a maintained counter (reality is the source of truth). */
+  async count(): Promise<number> {
+    if (this.file === null) return 0;
+    await this.queue;
+    try {
+      const text = await readFile(this.file, "utf8");
+      return text.split("\n").filter((l) => l.trim() !== "").length;
+    } catch {
+      return 0;
+    }
+  }
+
   async tail(n: number): Promise<AuditEntry[]> {
     if (this.file === null) return [];
     await this.queue;

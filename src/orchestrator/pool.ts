@@ -6,7 +6,7 @@
 // Connection handling approach checked against vscode-acp's ConnectionManager
 // (MIT, formulahendry); rebuilt here on the SDK 1.x client() builder API.
 import { spawn, type ChildProcess } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
@@ -52,6 +52,12 @@ export interface PoolHooks {
    * used) — called synchronously, right where pool.ts sees the fact, and
    * never awaited so it can't block the RPC it's reporting on. */
   onCapabilityUsed?(agentId: string, row: CapabilityRowId): void;
+  /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
+   * while false, chunks are dropped without even being decoded. */
+  wireLogActive?(): boolean;
+  /** One complete ndjson frame, already line-assembled. Redaction is the
+   * receiver's job (wire-log.ts) — pool.ts hands over the raw line. */
+  onWireFrame?(agentId: string, direction: "→" | "←", line: string): void;
   /** Status of a process-policy "isolated" instance (P8) — kept off
    * `onStatusChanged` on purpose: an isolated subprocess dying must not flip
    * the shared agent's own status, since the agent itself is unaffected. */
@@ -270,9 +276,19 @@ export class AgentPool {
       else this.markDead(entry, `exited ${code ?? String(signal)} · ${timeOfDay()}`);
     });
 
+    // Wire-log tap: outgoing frames pass through `toAgent` on their way to
+    // the child's stdin; incoming get an extra data listener alongside the
+    // pipe into the SDK. Both directions line-assemble before handing off —
+    // redaction (wire-log.ts) needs whole frames, and chunks split anywhere.
+    const toAgent = new PassThrough();
+    toAgent.pipe(child.stdin!);
+    this.tapLines(reportAs, "→", toAgent);
+    const fromAgent = new PassThrough();
+    child.stdout!.pipe(fromAgent);
+    this.tapLines(reportAs, "←", child.stdout!);
     const stream = acp.ndJsonStream(
-      Writable.toWeb(child.stdin!),
-      Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>,
+      Writable.toWeb(toAgent),
+      Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
     );
 
     const connection = acp
@@ -534,6 +550,33 @@ export class AgentPool {
     const params: acp.SetSessionConfigOptionRequest =
       typeof value === "boolean" ? { sessionId, configId, type: "boolean", value } : { sessionId, configId, value };
     await entry.connection!.agent.request(acp.methods.agent.session.setConfigOption, params);
+  }
+
+  /** Attaches the wire-log tap to one direction of a connection's stdio.
+   * Zero-cost while the log is off: chunks are dropped before decode, and
+   * the partial-line buffer resets so a mid-frame enable never emits a torn
+   * frame as if it were whole. */
+  private tapLines(agentId: string, direction: "→" | "←", stream: NodeJS.ReadableStream): void {
+    const { onWireFrame, wireLogActive } = this.hooks;
+    if (onWireFrame === undefined) return;
+    let buffer = "";
+    stream.on("data", (chunk: Buffer | string) => {
+      if (wireLogActive?.() !== true) {
+        buffer = "";
+        return;
+      }
+      buffer += chunk.toString();
+      for (;;) {
+        const nl = buffer.indexOf("\n");
+        if (nl === -1) break;
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line !== "") onWireFrame(agentId, direction, line);
+      }
+      // A runaway partial line (a frame far beyond any sane size) is not
+      // worth holding — this is a debug tap, never the protocol path.
+      if (buffer.length > 1_000_000) buffer = "";
+    });
   }
 
   /** Local-only bookkeeping once a session is no longer in use — lets an

@@ -229,6 +229,29 @@ the two can't drift on what still needs a check.
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.
 
+## Wire log — the opt-in raw-frame tap
+
+Settings § Audit can stream every ACP JSON-RPC frame (the stdio ndjson wire —
+there is no gRPC anywhere in this stack) to a dedicated Output channel.
+Decisions, recorded:
+
+- **Redaction at the seam, not consent alone.** `session/new`'s `mcpServers`
+  array carries the env values patchbay injected for custom-stdio servers —
+  real secrets on the wire. Every value patchbay reads out of SecretStorage on
+  its way to a session is registered with the wire log and masked before a
+  byte reaches the channel (`wire-log.ts`); over-redaction of plumbing values
+  is accepted as the safe direction. What an agent echoes back on its own
+  initiative cannot be masked — the disclosure prompt says so instead of
+  pretending otherwise.
+- **Never persisted; TTL-bounded.** Debugging is a session act, not
+  configuration: a reload always starts clean, and the log turns itself off
+  after 30 minutes unless deliberately extended. While on, a warning-tinted
+  status-bar pill shows the countdown; its existence *is* the state. Click →
+  stop (fast path) or extend.
+- **Tap lives in pool.ts** — the sole channel on the wire — line-assembled so
+  redaction always sees whole frames, and zero-cost while off (chunks dropped
+  before decode). Frames over 8 KB are truncated with an honest marker.
+
 ## Protocol extensions (`_meta`)
 
 ACP reserves `_meta` fields on every type and underscore-prefixed methods for

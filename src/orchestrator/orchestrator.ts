@@ -21,6 +21,7 @@ import {
   type AgentViewState,
   type CapabilityRowId,
   type ConnectAgentSource,
+  type DataInventoryRow,
   type PermissionOptionView,
   type RosterEntry,
   type SessionConfigOptionView,
@@ -39,6 +40,7 @@ import { OAuthCallbackRegistry } from "./oauth-callback";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager, toConfigOptionView, toModesView } from "./session-manager";
+import { WireLog } from "./wire-log";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
 import { SecretEnvStore } from "./stores/secret-env";
@@ -143,6 +145,12 @@ export class Orchestrator {
    * spuriously before that's connected. */
   isAgentViewVisible: () => boolean = () => true;
   private statusBarItem!: vscode.StatusBarItem;
+  /** Wire log (Audit page): channel and status pill exist only while it's
+   * ever been / is on — a transient state gets transient surfaces. */
+  private wireLog!: WireLog;
+  private wireChannel: vscode.OutputChannel | null = null;
+  private wireStatusItem: vscode.StatusBarItem | null = null;
+  private wireStatusTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -237,6 +245,16 @@ export class Orchestrator {
       (data) => this.applyRegistryData(data),
     );
 
+    // Wire log: sink is lazy (no empty Output channel for a feature never
+    // used); state changes feed the settings channel and the status pill.
+    this.wireLog = new WireLog(
+      () => {
+        this.wireChannel ??= vscode.window.createOutputChannel("ACP Patchbay — Wire");
+        return this.wireChannel;
+      },
+      (active, until) => this.onWireLogStateChanged(active, until),
+    );
+
     // Pool hooks close over `this` and only fire once the pool is actually
     // used (after the constructor returns), so referencing sessionManager /
     // capabilityTracker / broker here — before they're assigned below — is
@@ -286,6 +304,8 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification);
       },
       onCapabilityUsed: (agentId, row) => this.capabilityTracker.markUsed(agentId, row),
+      wireLogActive: () => this.wireLog.active,
+      onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
       // Spawn registry (P15c): records live in globalState so an abnormal
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
@@ -477,6 +497,15 @@ export class Orchestrator {
           this.integrationBridgeScriptPath,
           this.editorStateHost.socketPath,
         );
+        // Env values are secrets by classification (no-secret-exposure.md),
+        // and this is the one place they cross to the wire — register every
+        // one with the wire log's redaction set. Over-redaction (plumbing
+        // values like socket paths get masked too) is the safe direction.
+        for (const server of [editorServer, ...integrationServers]) {
+          if ("env" in server && server.env !== undefined) {
+            for (const { value } of server.env) this.wireLog.registerSecret(value);
+          }
+        }
         return [editorServer, ...integrationServers];
       },
       log,
@@ -599,6 +628,8 @@ export class Orchestrator {
     await this.integrations.refresh();
     this.publishRules();
     await this.refreshAuditTail();
+    // An open Data page should watch its own inventory hit zero.
+    await this.publishDataInventory();
     this.log.info("erase all data: complete — factory state");
   }
 
@@ -1110,6 +1141,134 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
   }
 
+  /** Enable goes through the disclosure prompt — every entry point (Audit
+   * page toggle, status pill, palette command) shares this one consent
+   * gate; the confirming state event fires only after the user says yes. */
+  private async setWireLog(active: boolean): Promise<void> {
+    if (!active) {
+      this.wireLog.disable();
+      return;
+    }
+    if (this.wireLog.active) return;
+    const ENABLE = "Enable for 30 minutes";
+    const pick = await vscode.window.showWarningMessage(
+      "Enable the ACP wire log?",
+      {
+        modal: true,
+        detail:
+          "Every JSON-RPC frame on the agent wire goes to the Output panel — prompts, file contents, " +
+          "and tool traffic will be readable there. Credentials patchbay injected are masked at the seam; " +
+          "anything an agent echoes back on its own is not. Turns itself off in 30 minutes.",
+      },
+      ENABLE,
+    );
+    if (pick !== ENABLE) return;
+    this.wireLog.enable();
+    this.wireChannel?.show(true);
+  }
+
+  /** Status-pill click and the palette command land here: consent+enable
+   * when off; a stop-first quick pick when on (at minute 25 the state
+   * you're usually in is "not done yet" — extending must not require
+   * re-toggling, but stop stays the fast path). */
+  async wireLogCommand(): Promise<void> {
+    if (!this.wireLog.active) {
+      await this.setWireLog(true);
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: "$(debug-stop) Stop now", action: "stop" as const },
+        { label: "$(watch) Extend 30 minutes", action: "extend" as const },
+      ],
+      {
+        placeHolder: `Wire log is on — auto-off at ${new Date(this.wireLog.until ?? Date.now()).toLocaleTimeString()}`,
+      },
+    );
+    if (pick?.action === "stop") this.wireLog.disable();
+    else if (pick?.action === "extend") this.wireLog.extend();
+  }
+
+  private onWireLogStateChanged(active: boolean, until: string | null): void {
+    this.settings.emit({ kind: "wireLogChanged", active, until });
+    if (!active) {
+      this.wireStatusItem?.dispose();
+      this.wireStatusItem = null;
+      if (this.wireStatusTimer !== null) clearInterval(this.wireStatusTimer);
+      this.wireStatusTimer = null;
+      return;
+    }
+    if (this.wireStatusItem === null) {
+      // Transient pill, right side next to the main item — its existence IS
+      // the state; warning background is the platform's own "temporarily
+      // elevated" grammar.
+      this.wireStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+      this.wireStatusItem.command = "acpPatchbay.wireLog";
+      this.wireStatusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    }
+    this.updateWireStatusText();
+    this.wireStatusItem.show();
+    if (this.wireStatusTimer === null) {
+      this.wireStatusTimer = setInterval(() => this.updateWireStatusText(), 30_000);
+      this.wireStatusTimer.unref?.();
+    }
+  }
+
+  private updateWireStatusText(): void {
+    if (this.wireStatusItem === null) return;
+    const until = this.wireLog.until;
+    const mins =
+      until === null ? 0 : Math.max(0, Math.ceil((new Date(until).getTime() - Date.now()) / 60_000));
+    this.wireStatusItem.text = `$(pulse) Wire log · ${mins}m`;
+    this.wireStatusItem.tooltip =
+      "ACP wire log is on — every frame goes to Output. Click to stop or extend.";
+  }
+
+  /** The Data page's storage inventory — recomputed from the live stores on
+   * every request, never cached (reality is the source of truth). Counts
+   * only — never values. */
+  private async publishDataInventory(): Promise<void> {
+    const n = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+    const agentConfigs = this.agentConfigs.list();
+    const agentEnvCount = (await Promise.all(agentConfigs.map((c) => this.agentEnv.get(c.id)))).reduce(
+      (sum, env) => sum + Object.keys(env).length,
+      0,
+    );
+    const integrations = this.integrationConfigs.list();
+    const integrationEnvCount = (
+      await Promise.all(integrations.map((i) => this.integrationEnv.get(i.id)))
+    ).reduce((sum, env) => sum + Object.keys(env).length, 0);
+    let tokenCount = 0;
+    for (const i of integrations) {
+      if ((await this.integrationTokens.get(i.id)) !== null) tokenCount++;
+    }
+    const rules = this.permissionRules.get();
+    const machineRules = this.machinePermissionRules.get();
+    const rows: DataInventoryRow[] = [
+      { id: "agent-configs", label: "Agent configs", placement: "globalState", detail: n(agentConfigs.length, "agent") },
+      { id: "integration-configs", label: "MCP server configs", placement: "globalState", detail: n(integrations.length, "server") },
+      { id: "used-capabilities", label: "Used-capability cache", placement: "globalState", detail: n(this.usedCapabilities.list().length, "agent record") },
+      { id: "machine-rules", label: "Command rules — this machine", placement: "globalState", detail: n(machineRules.commandRules.length, "rule") },
+      { id: "spawn-registry", label: "Spawn registry", placement: "globalState", detail: n(this.spawnRegistry.list().length, "process record") },
+      {
+        id: "secrets",
+        label: "Credentials & env values",
+        placement: "SecretStorage",
+        detail: `${n(agentEnvCount + integrationEnvCount, "env value")} · ${n(tokenCount, "OAuth token")}`,
+      },
+      { id: "session-index", label: "Session index — this workspace", placement: "workspaceState", detail: n(this.sessionIndex.list().length, "session") },
+      {
+        id: "workspace-rules",
+        label: "Command rules & file-write scope — this workspace",
+        placement: "workspaceState",
+        detail: `${n(rules.commandRules.length, "rule")} · scope: ${rules.fileWriteScope}`,
+      },
+      { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: n(await this.decisionAudit.count(), "entry") },
+      { id: "last-known-views", label: "Persisted session views", placement: "workspace storage", detail: n(await this.lastKnownView.count(), "session") },
+    ];
+    this.settings.emit({ kind: "dataInventoryChanged", rows });
+  }
+
   private async refreshAgentConfigs(): Promise<void> {
     // Key names only — env values never leave SecretStorage for a webview
     // state snapshot (no-secret-exposure.md); the form edits them write-only.
@@ -1287,6 +1446,12 @@ export class Orchestrator {
         break;
       case "eraseAllData":
         void this.eraseEverything().catch(this.logCatch("eraseAllData"));
+        break;
+      case "setWireLog":
+        void this.setWireLog(action.active);
+        break;
+      case "refreshDataInventory":
+        void this.publishDataInventory();
         break;
       case "switchSession":
         this.sessionManager.activate(action.sessionId);
@@ -1720,5 +1885,9 @@ export class Orchestrator {
     this.agentView.flushNow();
     this.settings.flushNow();
     this.statusBarItem.dispose();
+    this.wireLog.dispose();
+    this.wireChannel?.dispose();
+    this.wireStatusItem?.dispose();
+    if (this.wireStatusTimer !== null) clearInterval(this.wireStatusTimer);
   }
 }

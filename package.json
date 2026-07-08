@@ -72,6 +72,11 @@
         "command": "acpPatchbay.addSelectionToContext",
         "title": "Add Selection to Patchbay Context",
         "category": "Patchbay"
+      },
+      {
+        "command": "acpPatchbay.wireLog",
+        "title": "Wire Log — Toggle / Extend",
+        "category": "Patchbay"
       }
     ],
     "menus": {

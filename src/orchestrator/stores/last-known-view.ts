@@ -3,7 +3,7 @@
 // labeled fallback, not a competing truth"). One JSON file per session so a
 // crashed non-replay agent's conversation survives an extension-host
 // restart, available as the seed for an emulated continuation (P8).
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChatBlock } from "../../shared/protocol";
 
@@ -47,6 +47,16 @@ export class LastKnownViewStore {
     const file = this.fileFor(sessionId);
     if (file === null) return;
     await rm(file, { force: true });
+  }
+
+  /** Persisted-view count for the Data page's live inventory. */
+  async count(): Promise<number> {
+    if (this.dir === null) return 0;
+    try {
+      return (await readdir(this.dir)).filter((f) => f.endsWith(".json")).length;
+    } catch {
+      return 0; // directory absent — nothing persisted yet
+    }
   }
 
   /** "Disconnect & erase all data" (plan.md P18): every persisted view goes. */
