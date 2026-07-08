@@ -23,6 +23,7 @@ import {
   type ConnectAgentSource,
   type PermissionOptionView,
   type RosterEntry,
+  type SessionConfigOptionView,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
@@ -37,11 +38,10 @@ import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
-import { SessionManager } from "./session-manager";
+import { SessionManager, toConfigOptionView, toModesView } from "./session-manager";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
 import { SecretEnvStore } from "./stores/secret-env";
-import { AgentKnobsStore } from "./stores/agent-knobs";
 import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { IntegrationConfigStore } from "./stores/integration-configs";
@@ -91,7 +91,6 @@ export class Orchestrator {
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
   readonly spawnRegistry: SpawnRegistryStore;
-  readonly agentKnobsCache: AgentKnobsStore;
   readonly agentEnv: SecretEnvStore;
   readonly integrationEnv: SecretEnvStore;
   readonly acpRegistry: AcpRegistryStore;
@@ -173,7 +172,6 @@ export class Orchestrator {
     this.integrationConfigs = new IntegrationConfigStore(context.globalState);
     this.usedCapabilities = new UsedCapabilityStore(context.globalState);
     this.spawnRegistry = new SpawnRegistryStore(context.globalState);
-    this.agentKnobsCache = new AgentKnobsStore(context.globalState);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
     this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
     this.integrationTokens = new IntegrationTokenStore(context.secrets);
@@ -256,6 +254,10 @@ export class Orchestrator {
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidateAgent(agentId);
         }
+        // Offerings are connection state (architecture.md § Session model) —
+        // gone with the connection; the settings reducer drops its copy off
+        // the same event, and the next connect's offering read repopulates.
+        if (status !== "running") this.observedKnobs.delete(agentId);
       },
       onIsolatedStatusChanged: (poolKey, _agentId, status) => {
         // Not surfaced in the Agents list (P8: isolated instances are an
@@ -270,8 +272,19 @@ export class Orchestrator {
         this.capabilityTracker.onDeclared(agentId, declared, version);
         if (version !== null) void this.recordSeenVersion(agentId, version);
       },
-      onSessionUpdate: (agentId, notification) =>
-        this.sessionManager.handleUpdate(agentId, notification),
+      onSessionUpdate: (agentId, notification) => {
+        // A throwaway probe session's late config_option_update still counts
+        // as part of the connect-time offering read — some agents deliver
+        // the option surface only after session/new returns.
+        const probeAgent = this.capabilityTracker.agentForProbeSession(notification.sessionId);
+        if (probeAgent !== undefined) {
+          if (notification.update.sessionUpdate === "config_option_update") {
+            this.noteOfferings(probeAgent, null, notification.update.configOptions.map(toConfigOptionView));
+          }
+          return;
+        }
+        this.sessionManager.handleUpdate(agentId, notification);
+      },
       onCapabilityUsed: (agentId, row) => this.capabilityTracker.markUsed(agentId, row),
       // Spawn registry (P15c): records live in globalState so an abnormal
       // end (crash, OS kill) leaves exactly what the next activate reaps.
@@ -477,6 +490,14 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
+        onOfferings: (agentId, modes, configOptions) =>
+          this.noteOfferings(
+            agentId,
+            modes ? toModesView(modes).available : null,
+            configOptions && configOptions.length > 0
+              ? configOptions.map(toConfigOptionView)
+              : null,
+          ),
       },
       log,
     );
@@ -496,7 +517,6 @@ export class Orchestrator {
 
     void this.refreshAuditTail();
     this.loadAgentConfigs();
-    this.seedObservedKnobs();
     void this.integrations.refresh();
     void this.acpRegistry.start().then((cached) => this.applyRegistryData(cached));
     this.publishSessionStats();
@@ -551,7 +571,6 @@ export class Orchestrator {
       agentConfigs: this.agentConfigs,
       integrationConfigs: this.integrationConfigs,
       usedCapabilities: this.usedCapabilities,
-      agentKnobs: this.agentKnobsCache,
       spawnRegistry: this.spawnRegistry,
       sessionIndex: this.sessionIndex,
       agentEnv: this.agentEnv,
@@ -774,62 +793,47 @@ export class Orchestrator {
       } else if (event.kind === "sessionModesSet" || event.kind === "sessionConfigOptionsChanged") {
         const agentId = this.sessionIndex.get(event.sessionId)?.agentId;
         if (agentId === undefined) continue;
-        const merged = this.observedKnobs.get(agentId) ?? { modes: null, options: [] };
         if (event.kind === "sessionModesSet") {
-          merged.modes = event.modes?.available ?? null;
+          this.noteOfferings(agentId, event.modes?.available ?? null, null);
         } else {
-          merged.options = event.options
-            .filter((o) => o.type === "select")
-            .map((o) => ({
+          this.noteOfferings(agentId, null, event.options);
+        }
+      }
+    }
+  }
+
+  /** The one merge point for knob offerings — connection-scoped, in-memory
+   * only (architecture.md § Session model: offerings are read, never
+   * stored). Sources: the connect-time probe read, and every live session's
+   * responses/notifications. Modes and options arrive separately (null =
+   * nothing new for that half); the settings channel gets the merged record
+   * on every observation. */
+  private noteOfferings(
+    agentId: string,
+    modes: AgentKnobsView["modes"] | null,
+    options: readonly SessionConfigOptionView[] | null,
+  ): void {
+    const merged = this.observedKnobs.get(agentId) ?? { modes: null, options: [] };
+    if (modes !== null) merged.modes = modes;
+    if (options !== null) {
+      merged.options = options.map((o) =>
+        o.type === "select"
+          ? {
               id: o.id,
               name: o.name,
               category: o.category,
+              type: "select" as const,
               values: o.options.flatMap((entry) =>
                 "group" in entry
                   ? entry.options.map((v) => ({ value: v.value, name: v.name }))
                   : [{ value: entry.value, name: entry.name }],
               ),
-            }));
-        }
-        this.observedKnobs.set(agentId, merged);
-        this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { ...merged } });
-        this.persistObservedKnobs(agentId, merged);
-      }
+            }
+          : { id: o.id, name: o.name, category: o.category, type: "boolean" as const, values: [] },
+      );
     }
-  }
-
-  /** Version-keyed persistence for the offered knobs, mirroring the
-   * used-capability cache's lifetime rule: what an agent build offers is a
-   * fact about that build, so it survives restarts and is dropped honestly
-   * when `agentInfo.version` changes (recordSeenVersion). No version
-   * reported → never persisted, same as used-capabilities. */
-  private persistObservedKnobs(agentId: string, knobs: { modes: AgentKnobsView["modes"]; options: AgentKnobsView["options"] }): void {
-    const version = this.agentConfigs.get(agentId)?.lastSeenVersion;
-    if (version == null) return;
-    void this.agentKnobsCache.upsert({
-      id: agentId,
-      version,
-      knobs: {
-        modes: knobs.modes === null ? null : knobs.modes.map((m) => ({ id: m.id, name: m.name })),
-        options: knobs.options.map((o) => ({ ...o, values: [...o.values] })),
-      },
-    });
-  }
-
-  /** Rehydrates the in-memory observed-knobs map (and the settings channel)
-   * from the persisted cache on startup — only where the stored version
-   * still matches the config's `lastSeenVersion`; a mismatch is a stale
-   * record from an older build, dropped rather than shown. */
-  private seedObservedKnobs(): void {
-    for (const entry of this.agentKnobsCache.list()) {
-      if (this.agentConfigs.get(entry.id)?.lastSeenVersion !== entry.version) {
-        void this.agentKnobsCache.remove(entry.id);
-        continue;
-      }
-      const knobs = { modes: entry.knobs.modes, options: entry.knobs.options };
-      this.observedKnobs.set(entry.id, knobs);
-      this.settings.emit({ kind: "agentKnobsObserved", agentId: entry.id, knobs: { ...knobs } });
-    }
+    this.observedKnobs.set(agentId, merged);
+    this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { ...merged } });
   }
 
   private publishSessionStats(): void {
@@ -1096,7 +1100,6 @@ export class Orchestrator {
     this.sessionManager.invalidateAgent(agentId);
     await this.agentConfigs.remove(agentId);
     await this.usedCapabilities.remove(agentId);
-    await this.agentKnobsCache.remove(agentId);
     await this.agentEnv.remove(agentId);
     this.configuredAgentSpecs.delete(agentId);
     this.agentNames.delete(agentId);
@@ -1133,14 +1136,9 @@ export class Orchestrator {
   private async recordSeenVersion(agentId: string, version: string): Promise<void> {
     const existing = this.agentConfigs.get(agentId);
     if (existing === undefined || existing.lastSeenVersion === version) return;
-    // A new build may offer different knobs — drop the old observation and
-    // let this version's own sessions rebuild it (same honest reset the
-    // used-capability cache makes in capability-tracker.ts's onDeclared).
-    if (existing.lastSeenVersion !== null) {
-      await this.agentKnobsCache.remove(agentId);
-      this.observedKnobs.delete(agentId);
-      this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { modes: null, options: [] } });
-    }
+    // Knob offerings need no reset here: they're connection-scoped, and a
+    // version can only change on a fresh connect, whose own offering read
+    // just repopulated them.
     await this.agentConfigs.upsert({ ...existing, lastSeenVersion: version });
     await this.refreshAgentConfigs();
   }

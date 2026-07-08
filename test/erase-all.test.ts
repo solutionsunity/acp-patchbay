@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eraseAllData } from "../src/orchestrator/erase-all";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
-import { AgentKnobsStore } from "../src/orchestrator/stores/agent-knobs";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
 import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
@@ -38,7 +37,6 @@ describe("eraseAllData", () => {
     const agentConfigs = new AgentConfigStore(globalKv);
     const integrationConfigs = new IntegrationConfigStore(globalKv);
     const usedCapabilities = new UsedCapabilityStore(globalKv);
-    const agentKnobs = new AgentKnobsStore(globalKv);
     const spawnRegistry = new SpawnRegistryStore(globalKv);
     const sessionIndex = new SessionIndexStore(workspaceKv);
     const agentEnv = new SecretEnvStore(secrets, "acpPatchbay.agent");
@@ -66,7 +64,7 @@ describe("eraseAllData", () => {
     await lastKnownView.save("s1", [], "2026-01-01T00:00:00Z");
 
     await eraseAllData({
-      agentConfigs, integrationConfigs, usedCapabilities, agentKnobs,
+      agentConfigs, integrationConfigs, usedCapabilities,
       spawnRegistry, sessionIndex, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastKnownView,

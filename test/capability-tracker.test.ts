@@ -41,12 +41,15 @@ function harness(kv = new MemoryKV()): {
   tracker: CapabilityTracker;
   usedCache: UsedCapabilityStore;
   state(): ReturnType<typeof reduceAgentView>;
+  /** Every onOfferings delivery, in order — the connect-time offering read. */
+  offerings: { agentId: string; modes: unknown; configOptions: unknown }[];
   /** `agentAuthRequired`/`agentAuthResolved` only patch an existing
    * AgentSummary (same shape as the real orchestrator, which always
    * upserts before connecting) — tests touching `needsAuth` seed one first. */
   seedAgent(agentId: string): void;
 } {
   const events: AgentViewEvent[] = [];
+  const offerings: { agentId: string; modes: unknown; configOptions: unknown }[] = [];
   let tracker!: CapabilityTracker;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
   const usedCache = new UsedCapabilityStore(kv);
@@ -61,13 +64,14 @@ function harness(kv = new MemoryKV()): {
   tracker = new CapabilityTracker(pool, usedCache, {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => state().capabilities[agentId],
+    onOfferings: (agentId, modes, configOptions) => offerings.push({ agentId, modes, configOptions }),
   });
   const seedAgent = (agentId: string) =>
     events.push({
       kind: "agentUpserted",
       agent: { id: agentId, name: agentId, status: "reconnecting", needsAuth: false },
     });
-  return { pool, tracker, usedCache, state, seedAgent };
+  return { pool, tracker, usedCache, state, offerings, seedAgent };
 }
 
 async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {
@@ -155,6 +159,31 @@ describe("CapabilityTracker", () => {
     expect(state().capabilitiesResetAt.reconn).not.toBe(resetAt1);
 
     await pool.stop("reconn");
+  });
+
+  it("every connect performs the offering read — even a reconnect with nothing left to verify", async () => {
+    const script: FakeAgentScript = {
+      declare: { sessionCapabilities: { fork: {} } },
+      modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] },
+      configOptions: [
+        { id: "model", name: "Model", type: "select", currentValue: "s", options: [{ value: "s", name: "Sonnet" }] },
+      ],
+    };
+    const { pool, state, offerings } = harness();
+    await pool.connect(spec(script, "offer"));
+    await waitFor(() => (offerings.length > 0 ? true : undefined));
+    expect(offerings[0]!.agentId).toBe("offer");
+    expect(offerings[0]!.modes).toMatchObject({ currentModeId: "code" });
+    expect(offerings[0]!.configOptions).toMatchObject([{ id: "model" }]);
+
+    // reconnect at the same version: fork/auth are seeded used (nothing to
+    // verify), but offerings are connection state — read again regardless.
+    await waitFor(() => (state().capabilities.offer!["session.fork"].used ? true : undefined));
+    await pool.restart("offer");
+    await waitFor(() => (offerings.length >= 2 ? true : undefined));
+    expect(offerings[1]!.modes).toMatchObject({ currentModeId: "code" });
+
+    await pool.stop("offer");
   });
 
   it("a version change resets used — an honestly fresh matrix, not carried over", async () => {

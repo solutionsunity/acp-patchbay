@@ -11,6 +11,7 @@ import {
   type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
+  type SettingsEvent,
 } from "../src/shared/protocol";
 
 const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false };
@@ -173,19 +174,20 @@ describe("plan strip mirrors only what the agent reports", () => {
 
 describe("settings projections (ui.md § Settings Agents)", () => {
   it("sessionStatsChanged and agentKnobsObserved land in settings state", () => {
-    const s = [
-      { kind: "sessionStatsChanged", sessionsToday: 3 } as const,
+    const events: SettingsEvent[] = [
+      { kind: "sessionStatsChanged", sessionsToday: 3 },
       {
         kind: "agentKnobsObserved",
         agentId: "claude",
         knobs: {
           modes: [{ id: "code", name: "Code" }],
           options: [
-            { id: "model", name: "Model", category: "model", values: [{ value: "s", name: "Sonnet" }] },
+            { id: "model", name: "Model", category: "model", type: "select", values: [{ value: "s", name: "Sonnet" }] },
           ],
         },
-      } as const,
-    ].reduce(reduceSettings, initialSettingsState);
+      },
+    ];
+    const s = events.reduce(reduceSettings, initialSettingsState);
     expect(s.sessionsToday).toBe(3);
     expect(s.agentKnobs.claude!.modes).toEqual([{ id: "code", name: "Code" }]);
     expect(s.agentKnobs.claude!.options[0]!.category).toBe("model");

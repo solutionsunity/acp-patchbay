@@ -5,8 +5,10 @@
 // architecture.md's verification-cost table draws the line precisely:
 // protocol-level checks are free and automatic on connect; behavior-level
 // probes cost a real agent turn and need real handlers to be honest at all.
-// Today that's exactly one automatic check (session/new + session/fork
-// round-trip, which also proves whether `auth_required` blocks this agent).
+// The probe runs on *every* connect — its session/new doubles as the
+// knob-offering read (offerings are connection state, read fresh each
+// connect), proves whether `auth_required` blocks this agent, and adds the
+// session/fork round-trip while that row is still declared-but-unused.
 // Marking a row *used* doesn't happen here, though — it happens in pool.ts
 // itself, at the exact point each RPC succeeds or a wire notification's kind
 // tag arrives (one `onCapabilityUsed` hook, fired alike for auth,
@@ -24,9 +26,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError, type SessionConfigOption, type SessionModeState } from "@agentclientprotocol/sdk";
 import {
-  hasUnusedProbe,
   type AgentViewEvent,
   type CapabilityMatrix,
   type CapabilityRowId,
@@ -43,12 +44,27 @@ export interface CapabilityTrackerHooks {
    * the tracker persist the whole row set wholesale without holding its
    * own copy of state that could drift from the canonical one. */
   currentMatrix(agentId: string): CapabilityMatrix | undefined;
+  /** Connect-time knob-offering read (architecture.md § Session model:
+   * offerings are read, never stored) — the probe's session/new response
+   * carries the agent's current knob surface; follow-up notifications for
+   * the probe session route here via `agentForProbeSession`. */
+  onOfferings?(
+    agentId: string,
+    modes: SessionModeState | null | undefined,
+    configOptions: SessionConfigOption[] | null | undefined,
+  ): void;
 }
 
 export class CapabilityTracker {
   /** agentId → the `agentInfo.version` its current connection reported —
    * what persisted used state gets saved and seeded against. */
   private versions = new Map<string, string>();
+  /** Probe sessionId → agentId — lets the orchestrator route an agent's
+   * late config_option_update notifications for a throwaway probe session
+   * into the offerings instead of dropping them (some agents deliver the
+   * option surface only after session/new returns). Pruned per agent at
+   * each new probe, so it never holds more than the latest probe session. */
+  private probeSessions = new Map<string, string>();
 
   constructor(
     private readonly pool: AgentPool,
@@ -77,10 +93,18 @@ export class CapabilityTracker {
     if (version !== null && seeded !== fresh) {
       this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
     }
-    if (hasUnusedProbe(seeded, declared.authMethods)) {
-      this.log.debug(`${agentId}: free connectivity probe starting (session/new + fork where declared)`);
-      void this.probe(agentId);
-    }
+    // Every connect probes: the session/new is the knob-offering read
+    // (offerings are connection state — architecture.md § Session model),
+    // with auth proof falling out of the same free round-trip. Only the
+    // fork sub-check keeps a version-keyed skip, inside probe() itself.
+    this.log.debug(`${agentId}: connect-time probe starting (offering read; fork where still unproven)`);
+    void this.probe(agentId);
+  }
+
+  /** Routes an update notification's session to its agent when the session
+   * is one of the tracker's throwaway probes — undefined for real sessions. */
+  agentForProbeSession(sessionId: string): string | undefined {
+    return this.probeSessions.get(sessionId);
   }
 
   markUsed(agentId: string, row: CapabilityRowId): void {
@@ -95,9 +119,11 @@ export class CapabilityTracker {
     void this.usedCache.save(agentId, version, matrix);
   }
 
-  /** Free RPC round-trip: session/new (+ session/fork, when declared) in a
-   * throwaway temp-dir session, never the workspace, never surfaced as a
-   * real session. Marking `auth`/`session.fork` used happens inside pool.ts
+  /** Free RPC round-trip: session/new (+ session/fork, while still
+   * declared-but-unused) in a throwaway temp-dir session, never the
+   * workspace, never surfaced as a real session. Doubles as the connect-time
+   * offering read: the session/new response's modes/configOptions go out via
+   * onOfferings. Marking `auth`/`session.fork` used happens inside pool.ts
    * itself, right where each call succeeds — this only has to make the
    * calls. A declared-but-broken fork (a lying bridge) fails here and the
    * row stays honestly at declared-but-unused. An `auth_required` error is
@@ -107,14 +133,21 @@ export class CapabilityTracker {
   private async probe(agentId: string): Promise<void> {
     const declared = this.pool.get(agentId)?.declared;
     if (declared === undefined || declared === null) return;
+    for (const [sessionId, owner] of this.probeSessions) {
+      if (owner === agentId) this.probeSessions.delete(sessionId);
+    }
     const dir = await mkdtemp(join(tmpdir(), "acp-patchbay-verify-"));
     const probeSessionIds: string[] = [];
     try {
-      const { sessionId } = await this.pool.newSession(agentId, dir);
-      probeSessionIds.push(sessionId);
+      const response = await this.pool.newSession(agentId, dir);
+      probeSessionIds.push(response.sessionId);
+      this.probeSessions.set(response.sessionId, agentId);
+      this.hooks.onOfferings?.(agentId, response.modes, response.configOptions);
       this.hooks.emit({ kind: "agentAuthResolved", agentId });
-      if (declared.sessionFork) {
-        const forked = await this.pool.fork(agentId, sessionId, dir);
+      const forkStillUnproven =
+        declared.sessionFork && !(this.hooks.currentMatrix(agentId)?.["session.fork"].used ?? false);
+      if (forkStillUnproven) {
+        const forked = await this.pool.fork(agentId, response.sessionId, dir);
         probeSessionIds.push(forked.sessionId);
       }
     } catch (err) {

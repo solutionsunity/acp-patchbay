@@ -1487,19 +1487,21 @@ export interface AuditEntryView {
   [key: string]: unknown;
 }
 
-/** What an agent has been observed to offer, knob-wise, across its sessions
- * (ui.md § Settings Agents: default knobs render "only where offered" —
- * an unoffered knob is a disabled "— not offered", never a free-text guess).
- * Sourced from real session/new|load|fork responses and update
- * notifications; empty until the agent's first session ever offers one. */
+/** What this agent's *current connection* offers, knob-wise — connection
+ * state, never persisted (architecture.md § Session model: offerings are
+ * read, never stored — provider inventory can't be version-keyed honestly).
+ * Sourced from the connect-time offering read (the free probe's session/new)
+ * plus every live session's responses and update notifications; the entry
+ * leaves settings state when the connection does. */
 export interface AgentKnobsView {
-  /** null until modes have ever been offered. */
+  /** null until modes have been offered on this connection. */
   modes: readonly SessionModeOptionView[] | null;
-  /** Select-type config options only — the shapes defaults can name. */
   options: readonly {
     id: string;
     name: string;
     category?: string;
+    type: "select" | "boolean";
+    /** Offered values — empty for boolean options. */
     values: readonly { value: string; name: string }[];
   }[];
 }
@@ -1606,8 +1608,17 @@ export function reduceSettings(
   event: SettingsEvent,
 ): SettingsState {
   switch (event.kind) {
-    case "agentUpserted":
     case "agentStatusChanged":
+      return {
+        ...state,
+        agents: reduceAgents(state.agents, event),
+        // Offerings are connection state — they leave with the connection;
+        // the next connect's offering read repopulates them fresh.
+        ...(event.status !== "running"
+          ? { agentKnobs: dropKey(state.agentKnobs, event.agentId) }
+          : {}),
+      };
+    case "agentUpserted":
     case "agentAuthRequired":
     case "agentAuthResolved":
       return { ...state, agents: reduceAgents(state.agents, event) };

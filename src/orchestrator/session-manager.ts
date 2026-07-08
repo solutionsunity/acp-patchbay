@@ -94,7 +94,7 @@ function toSelectValue(o: { value: string; name: string; description?: string | 
   return { value: o.value, name: o.name, description: o.description ?? undefined };
 }
 
-function toConfigOptionView(opt: SessionConfigOption): SessionConfigOptionView {
+export function toConfigOptionView(opt: SessionConfigOption): SessionConfigOptionView {
   const base = {
     id: opt.id,
     name: opt.name,
@@ -110,7 +110,7 @@ function toConfigOptionView(opt: SessionConfigOption): SessionConfigOptionView {
   return { ...base, type: "select", currentValue: opt.currentValue, options } as SessionConfigOptionView;
 }
 
-function toModesView(modes: SessionModeState): SessionModesView {
+export function toModesView(modes: SessionModeState): SessionModesView {
   return {
     currentModeId: modes.currentModeId,
     available: modes.availableModes.map((m) => ({

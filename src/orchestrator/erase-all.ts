@@ -24,7 +24,6 @@ export interface EraseTargets {
   agentConfigs: RecordStoreLike;
   integrationConfigs: RecordStoreLike;
   usedCapabilities: RecordStoreLike;
-  agentKnobs: RecordStoreLike;
   spawnRegistry: RecordStoreLike;
   sessionIndex: RecordStoreLike;
   agentEnv: SecretsById;
@@ -59,7 +58,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     targets.agentConfigs,
     targets.integrationConfigs,
     targets.usedCapabilities,
-    targets.agentKnobs,
     targets.spawnRegistry,
     targets.sessionIndex,
   ];
