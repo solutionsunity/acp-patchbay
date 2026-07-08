@@ -307,27 +307,8 @@ input:focus {
 
 
 
-/* fidelity chip — pure function of the used capability matrix */
-.fid {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 8px;
-}
-
-.fid.full {
-  color: var(--pb-ok);
-  border: 1px solid color-mix(in srgb, var(--pb-ok) 30%, var(--pb-bg));
-}
-
-.fid.partial {
-  color: var(--pb-warn);
-  border: 1px solid color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
-}
-
-.fid.outside {
-  color: var(--pb-err);
-  border: 1px solid color-mix(in srgb, var(--pb-err) 30%, var(--pb-bg));
-}
+/* fidelity chip retired — FidelityChip is a Badge with utility colors
+   (controls.tsx); the agent-view copy keeps its own .fid rules. */
 
 /* capability matrix table */
 

@@ -132,18 +132,33 @@ function CatalogRow(props: {
 
   return (
     <div className="cat-row">
-      <div className="row">
-        <span className="nm">{entry.name}</span>
-        {entry.headerAuth !== null && <Badge>key</Badge>}
-        {entry.oauth && <Badge>OAuth</Badge>}
-        {entry.local !== null && <Badge>local</Badge>}
+      <div className="row flex-wrap">
+        <span className="nm min-w-0">{entry.name}</span>
+        {/* mechanism chips — each mechanism keeps one color everywhere */}
+        {entry.headerAuth !== null && <Badge className="border-consumed/40 text-consumed">key</Badge>}
+        {entry.oauth && <Badge className="border-brand/40 text-brand">OAuth</Badge>}
+        {entry.local !== null && <Badge className="border-ok/40 text-ok">local</Badge>}
         <span className="flex-1" />
-        <Button asChild variant="outline" size="sm">
-          <a href={entry.docsUrl}>Docs</a>
-        </Button>        
+        <Button asChild variant="outline" size="icon" className="size-8">
+          <a href={entry.docsUrl} title="Docs" aria-label={`${entry.name} docs`}>
+            <Icon name="book" />
+          </a>
+        </Button>
         {offersAnything ? (
           <Button variant={props.expanded ? "outline" : "default"} size="sm" onClick={props.onToggle} disabled={pending}>
-            {pending ? "Connecting…" : props.expanded ? "Close" : "Connect…"}
+            {pending ? (
+              <>
+                <Icon name="loading" spin /> Connecting…
+              </>
+            ) : props.expanded ? (
+              <>
+                <Icon name="chevron-up" /> Close
+              </>
+            ) : (
+              <>
+                <Icon name="plug" /> Connect…
+              </>
+            )}
           </Button>
         ) : (
           <Badge>not connectable yet</Badge>
@@ -183,8 +198,10 @@ function CatalogRow(props: {
                   />
                   {entry.headerAuth.keyUrl !== "" && (
                     <Button asChild variant="outline" size="sm">
-                      <a href={entry.headerAuth.keyUrl} title={entry.headerAuth.hint}>Get a key ↗</a>
-                    </Button>                    
+                      <a href={entry.headerAuth.keyUrl} title={entry.headerAuth.hint}>
+                        Get a key <Icon name="link-external" />
+                      </a>
+                    </Button>
                   )}
                   <Button
                     size="sm"
@@ -378,10 +395,12 @@ export function IntegrationsSection(props: {
       )}
       {state.integrations.map((integration) => (
         <div className="card" key={integration.id}>
-          <div className="row">
+          <div className="row flex-wrap">
             <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
-            <span className="nm">{integration.name}</span>
-            <Badge>{integration.sourceKind === "registry" ? "curated" : integration.sourceKind}</Badge>
+            <span className="nm min-w-0">{integration.name}</span>
+            <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
+              {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
+            </Badge>
             <span className="flex-1" />
             <Toggle
               checked={integration.active}
@@ -389,11 +408,17 @@ export function IntegrationsSection(props: {
               title="inactive keeps the credential but the server reaches no agent until toggled back"
               onChange={(active) => props.onSetActive(integration.id, active)}
             />
-            <Button variant="outline" size="sm" onClick={() => props.onShare(integration.id)}>
-              Share config…
+            <Button
+              variant="outline" size="icon" className="size-8"
+              title="Share config… (never the credential)"
+              aria-label="Share config"
+              onClick={() => props.onShare(integration.id)}
+            >
+              <Icon name="export" />
             </Button>
             <ConfirmButton
               label={integration.sourceKind === "registry" ? "Disconnect" : "Remove"}
+              icon={integration.sourceKind === "registry" ? "debug-disconnect" : "trash"}
               title={
                 integration.sourceKind === "registry"
                   ? "full clear — credential and config; the catalog entry stays, ready for a fresh connect"
@@ -403,7 +428,7 @@ export function IntegrationsSection(props: {
             />
           </div>
           {integration.command !== undefined && (
-            <div className="mono mt-1.5">
+            <div className="mono mt-1.5 break-all">
               {integration.command}
             </div>
           )}
@@ -450,7 +475,7 @@ export function IntegrationsSection(props: {
                   setEditingJsonId(integration.id);
                 }}
               >
-                Edit JSON…
+                <Icon name="json" /> Edit JSON…
               </Button>
             </div>
           ) : null}
@@ -478,13 +503,13 @@ export function IntegrationsSection(props: {
         {adding === null ? (
           <div className="row gap-2.5">
             <Button variant="outline" size="sm" onClick={() => openAdd("stdio")}>
-              + Command (stdio)
+              <Icon name="terminal" /> Command (stdio)
             </Button>
             <Button variant="outline" size="sm" onClick={() => openAdd("http")}>
-              + URL (with auth)
+              <Icon name="globe" /> URL (with auth)
             </Button>
             <Button variant="outline" size="sm" onClick={() => openAdd("json")}>
-              Import JSON…
+              <Icon name="json" /> Import JSON…
             </Button>
           </div>
         ) : adding === "json" ? (

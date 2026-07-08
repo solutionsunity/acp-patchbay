@@ -2,9 +2,10 @@
 // hand-built trio (ui-rendering-strategy: Field/Toggle/ConfirmButton →
 // labeled row / Switch / AlertDialog) plus the fidelity chip.
 import type { ReactNode } from "react";
-import type { CapabilityMatrix } from "../../shared/protocol";
+import type { CapabilityMatrix, FidelityLabel } from "../../shared/protocol";
 import { computeFidelity } from "../../shared/protocol";
-import { FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
+import { FIDELITY_TEXT } from "../shared/capability-format";
+import { Icon } from "../shared/icon";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,11 +39,25 @@ export function Field(props: { label: string; hint?: string; children: ReactNode
  * AlertDialog (P13d: ConfirmButton → AlertDialog, 1:1). The dialog states
  * exactly what will happen (`title` — previously a hover tooltip, now
  * impossible to miss) before offering the confirm. */
-export function ConfirmButton(props: { label: string; confirmLabel?: string; title?: string; onConfirm(): void }) {
+export function ConfirmButton(props: {
+  label: string;
+  /** Codicon name — renders the trigger icon-only (label moves to aria/tooltip). */
+  icon?: string;
+  variant?: "outline" | "destructive";
+  confirmLabel?: string;
+  title?: string;
+  onConfirm(): void;
+}) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm">{props.label}</Button>
+        {props.icon !== undefined ? (
+          <Button variant={props.variant ?? "outline"} size="icon" className="size-8" title={props.label} aria-label={props.label}>
+            <Icon name={props.icon} />
+          </Button>
+        ) : (
+          <Button variant={props.variant ?? "outline"} size="sm">{props.label}</Button>
+        )}
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -68,7 +83,16 @@ export function Toggle(props: { checked: boolean; label: string; title?: string;
   );
 }
 
+/** Badge's own utilities outrank the components-layer hand CSS, so the
+ * status colors are utilities on the theme contract's tokens — the .fid
+ * rules retired with this (CSS ledger). */
+const FIDELITY_BADGE: Record<FidelityLabel, string> = {
+  "fully-brokered": "border-ok/40 text-ok",
+  "partially-brokered": "border-warn/40 text-warn",
+  "acts-outside": "border-err/40 text-err",
+};
+
 export function FidelityChip({ matrix, knownBypassBridge }: { matrix: CapabilityMatrix; knownBypassBridge: boolean }) {
   const label = computeFidelity(matrix, knownBypassBridge);
-  return <Badge className={`fid ${FIDELITY_CLASS[label]}`}>{FIDELITY_TEXT[label]}</Badge>;
+  return <Badge className={FIDELITY_BADGE[label]}>{FIDELITY_TEXT[label]}</Badge>;
 }

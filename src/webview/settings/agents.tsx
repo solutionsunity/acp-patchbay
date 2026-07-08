@@ -433,20 +433,23 @@ function LoginControl(props: {
 /** Stat tiles + whatever rides the same row (the Add Agent tile-button) —
  * one container so they share sizing and rhythm. The first surface converted
  * to shadcn primitives (P13a — the first converted surface). */
-const TILE = "min-w-24 flex-none rounded-lg px-4 py-2.5";
+const TILE = "min-w-24 flex-none rounded-lg px-4 py-2.5 text-center";
 
 export function StatTiles({ state, children }: { state: SettingsState; children?: ReactNode }) {
   const running = state.agents.filter((a) => a.status === "running").length;
   const tiles = [
-    { n: state.agents.length, label: "agents" },
-    { n: running, label: "running" },
-    { n: state.sessionsToday, label: "sessions today" },
+    { n: state.agents.length, label: "agents", icon: "hubot" },
+    { n: running, label: "running", icon: "pulse" },
+    { n: state.sessionsToday, label: "sessions today", icon: "comment-discussion" },
   ];
   return (
     <div className="mb-3.5 flex gap-2.5">
       {tiles.map((t) => (
         <Card className={TILE} key={t.label}>
-          <div className="text-[22px] font-semibold">{t.n}</div>
+          <div className="flex items-center justify-center gap-1.5 text-[22px] font-semibold">
+            <span className="text-muted-foreground"><Icon name={t.icon} /></span>
+            {t.n}
+          </div>
           <div className="text-[11px] text-muted-foreground">{t.label}</div>
         </Card>
       ))}
@@ -540,10 +543,11 @@ export function AgentsSection(props: {
       </div>
       <StatTiles state={state}>
         {/* Add Agent as a tile-shaped Button — same box as the counter
-            Cards, but it reads as an action: accent icon, hover lift. */}
+            Cards, but it reads as an action: accent icon, hover lift.
+            ml-auto: the action tile sits right, the counters stay left. */}
         <Button
           variant="outline"
-          className={`${TILE} h-auto flex-col items-start gap-0 border-border bg-card font-normal text-foreground shadow-sm hover:border-brand hover:bg-accent hover:text-foreground aria-expanded:border-brand aria-expanded:bg-accent`}
+          className={`${TILE} ml-auto h-auto flex-col items-center gap-0 border-border bg-card font-normal text-foreground shadow-sm hover:border-brand hover:bg-accent hover:text-foreground aria-expanded:border-brand aria-expanded:bg-accent`}
           onClick={() => setAddOpen(!addOpen)}
           aria-expanded={addOpen}
         >
@@ -608,6 +612,10 @@ export function AgentsSection(props: {
             Object.fromEntries(effectiveConfig.envKeys.map((k) => [k, ""])),
           );
         const modeValues = knobs?.modes?.map((m) => ({ value: m.id, name: m.name })) ?? null;
+        const hasModeKnob = modeValues !== null && modeValues.length > 0;
+        // Some bridges surface the session mode twice: natively (modes) and
+        // again as a mode-category config option — one knob, not two.
+        const optionKnobs = (knobs?.options ?? []).filter((o) => !(hasModeKnob && o.category === "mode"));
         const setOptionDefault = (optionId: string, value: string) => {
           const options = { ...effectiveConfig.defaults.options };
           if (value === "") delete options[optionId];
@@ -616,14 +624,16 @@ export function AgentsSection(props: {
         };
         return (
           <div className="card" key={id}>
-            <div className="row">
+            {/* flex-wrap + min-w-0: at narrow widths the action cluster wraps
+                to its own line instead of pushing past the card border */}
+            <div className="row flex-wrap">
               <span className={`dot ${status}`} />
-              <span className="nm">{a?.name ?? effectiveConfig.name}</span>
+              <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
               {matrix !== undefined && (
                 <FidelityChip matrix={matrix} knownBypassBridge={roster?.knownBypassBridge ?? false} />
               )}
               {upgrade !== null && (
-                <Badge title={`registry has v${upgrade.to}, pinned to v${upgrade.from}`}>
+                <Badge className="border-warn/40 text-warn" title={`registry has v${upgrade.to}, pinned to v${upgrade.from}`}>
                   update available
                 </Badge>
               )}
@@ -633,49 +643,46 @@ export function AgentsSection(props: {
               )}
               {status === "running" && (
                 <>
-                  <Button variant="outline" size="sm" onClick={() => props.onStop(id)}>
-                    Stop
+                  <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
+                    <Icon name="debug-stop" />
                   </Button>
                   {needsVerify && (
                     <Button
-                      variant="outline" size="sm"
+                      variant="outline" size="icon" className="size-8"
+                      title={state.verifyingAgents[id] === true ? "Verifying…" : "Verify…"}
+                      aria-label="Verify"
                       disabled={state.verifyingAgents[id] === true}
                       onClick={() => setDiagFor(id)}
                     >
-                      {state.verifyingAgents[id] === true ? (
-                        <>
-                          <Icon name="loading" spin /> Verifying…
-                        </>
-                      ) : (
-                        "Verify…"
-                      )}
+                      <Icon name={state.verifyingAgents[id] === true ? "loading" : "beaker"} spin={state.verifyingAgents[id] === true} />
                     </Button>
                   )}
                 </>
               )}
               {status !== "running" && config !== undefined && (
-                <Button variant="outline" size="sm" onClick={() => props.onConnectConfigured(id)}>
-                  Connect
+                <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
+                  <Icon name="plug" />
                 </Button>
               )}
               {upgrade !== null && (
-                <Button variant="outline" size="sm" onClick={() => props.onUpgrade(id)}>
-                  Upgrade to v{upgrade.to}
+                <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${upgrade.to}`} aria-label={`Upgrade to v${upgrade.to}`} onClick={() => props.onUpgrade(id)}>
+                  <Icon name="arrow-circle-up" />
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={() => setEditing(id)}>
-                <Icon name="edit" /> Edit
+              <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
+                <Icon name="edit" />
               </Button>
               {config !== undefined && (
                 <ConfirmButton
                   label="Remove"
+                  icon="trash"
                   title="stops the agent and forgets it — config, env, capability and knob caches"
                   onConfirm={() => props.onRemove(id)}
                 />
               )}
             </div>
             {command !== undefined && (
-              <div className="mono mt-1.5">
+              <div className="mono mt-1.5 break-all">
                 {command}
               </div>
             )}
@@ -705,7 +712,9 @@ export function AgentsSection(props: {
                 onCancel={() => setEditing(null)}
               />
             ) : (
-              <div className="row mt-2 gap-3.5 flex-wrap">
+              // one knob per line — process policy, then mode/model/effort/…
+              // (whatever the agent actually offered), never a wrap soup
+              <div className="mt-2 flex flex-col items-start gap-2">
                 <label className="knob-default">
                   process
                   <Select
@@ -733,18 +742,18 @@ export function AgentsSection(props: {
                   </span>
                 ) : (
                   <>
-                    {modeValues !== null && modeValues.length > 0 && (
+                    {hasModeKnob && (
                       <DefaultKnob
                         icon={KNOB_ICON.mode!}
                         label="mode"
-                        offered={modeValues}
+                        offered={modeValues!}
                         value={effectiveConfig.defaults.mode ?? ""}
                         onChange={(v) =>
                           saveConfig({ defaults: { ...effectiveConfig.defaults, mode: v || undefined } })
                         }
                       />
                     )}
-                    {knobs.options.map((option) => (
+                    {optionKnobs.map((option) => (
                       <DefaultKnob
                         key={option.id}
                         icon={(option.category !== undefined ? KNOB_ICON[option.category] : undefined) ?? "settings"}
@@ -754,7 +763,7 @@ export function AgentsSection(props: {
                         onChange={(v) => setOptionDefault(option.id, v)}
                       />
                     ))}
-                    {(modeValues === null || modeValues.length === 0) && knobs.options.length === 0 && (
+                    {!hasModeKnob && optionKnobs.length === 0 && (
                       <span className="note m-0 self-center">
                         this agent offered no session knobs
                       </span>

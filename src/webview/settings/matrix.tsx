@@ -33,7 +33,7 @@ const STATE_ICON = { used: "pass-filled", declared: "circle", "not-declared": nu
 const STATE_CLASS = { used: "st-v", declared: "st-d", "not-declared": "st-n" } as const;
 
 const STATE_TEXT = {
-  used: "used — fired successfully on the wire",
+  used: "declared, used — fired successfully on the wire",
   declared: "declared, not used — claimed at initialize, not yet exercised",
   "not-declared": "not declared",
 } as const;
@@ -72,12 +72,13 @@ export function MatrixSection({ state }: { state: SettingsState }) {
         </div>
       ) : (
         <>
+          {/* declared-not-used leads: the claim comes first, the proof follows */}
           <div className="legend">
             <span>
-              <span className="st-v"><Icon name="pass-filled" /></span> used
+              <span className="st-d"><Icon name="circle" /></span> declared, not used
             </span>
             <span>
-              <span className="st-d"><Icon name="circle" /></span> declared, not used
+              <span className="st-v"><Icon name="pass-filled" /></span> declared, used
             </span>
             <span>
               <span className="st-n">—</span> not declared
