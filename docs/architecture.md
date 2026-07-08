@@ -310,6 +310,36 @@ Knobs (model, mode, effort, thinking, …), each existing only if the agent offe
 it — model is the only one observed everywhere; the rest are frequent but
 optional. The knob set is per-agent reality, not a patchbay form to fill.
 
+**One knob processor.** `knobs.ts` is the knob sibling of `capabilities.ts`: the
+only module that reads the wire's modes/configOptions relationship. Every
+knob-bearing wire fact (create/load/fork responses, `config_option_update`,
+`current_mode_update`, set responses) passes through it and comes out as one
+normalized knob list; every knob set goes back through it to be routed
+(`session/set_config_option`, or `session/set_mode` on the fallback surface).
+No other file — and no webview — may distinguish the two surfaces
+(render-only-webview: the UI renders knobs and sends `setSessionKnob`, nothing
+else).
+
+- **Exclusivity, per spec**: ACP v1 declares config options the successor —
+  clients "SHOULD use `configOptions` exclusively and ignore `modes`", and v2
+  drops `session/set_mode` entirely. So any non-empty `configOptions` wins the
+  whole surface; `modes` alone synthesizes a single fallback knob
+  (`MODE_KNOB_ID`). This replaces the old category-keyed dedup — category is
+  UX-only ("MUST NOT be required for correctness"), so suppressing the native
+  mode pill only when a `category:"mode"` option existed was fitted to one
+  bridge's shape and broke the moment an agent omitted the category. Under
+  exclusivity the dup-pill class of bug is unrepresentable.
+- **`current_mode_update` on the config surface is dropped** (visible in the
+  wire log, never guessed at): mapping it onto an option would need category as
+  a correctness key. The spec's transition duty ("keep both in sync") means a
+  config-surface agent confirms mode changes via `config_option_update`; a
+  bridge that doesn't earns a quirk entry in knobs.ts — the designated place —
+  never a standing heuristic at a UI leaf.
+- **Selections are knob-id-keyed everywhere** (defaults, confirmed
+  combinations): one flat record, the modes-fallback knob under `MODE_KNOB_ID`.
+  The stores keep their legacy `{mode, options}` / `modeId` fields as
+  read-only history, folded on read (`foldSeed`) and never written again.
+
 **Offerings are read, never stored; selections are stored, never inferred.**
 ACP has no session-independent "list the knobs" call — `initialize` carries
 capabilities only; the option surface rides `session/new`/`load`/`fork`

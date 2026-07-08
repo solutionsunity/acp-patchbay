@@ -8,8 +8,7 @@ import type {
   ContextChip,
   LiveSelectionView,
   OpenEditorView,
-  SessionConfigOptionView,
-  SessionModesView,
+  SessionKnobView,
   SessionSummary,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -30,8 +29,7 @@ export function Composer(props: {
   workspaceRoots: readonly string[];
   liveSelection: LiveSelectionView | null;
   openEditors: readonly OpenEditorView[];
-  modes: SessionModesView | null;
-  configOptions: readonly SessionConfigOptionView[];
+  knobs: readonly SessionKnobView[];
 }) {
   const send = useActions();
   const [draft, setDraft] = useState("");
@@ -207,7 +205,7 @@ export function Composer(props: {
           }
         />
         <div className="input-foot">
-          <Knobs sessionId={sessionId} modes={props.modes} configOptions={props.configOptions} />
+          <Knobs sessionId={sessionId} knobs={props.knobs} />
           <span className="flex-1" />
           <Button
             variant="ghost"

@@ -293,16 +293,23 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const sessionId = await h.sessionManager.createSession("modes", "Fake Agent", cwd);
-    expect(h.state().sessionModes[sessionId]).toEqual({
-      currentModeId: "ask",
-      available: [
-        { id: "ask", name: "Ask", description: undefined },
-        { id: "code", name: "Code", description: undefined },
-      ],
-    });
+    // The modes fallback surface synthesizes one uniform knob (knobs.ts).
+    expect(h.state().sessionKnobs[sessionId]).toEqual([
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "ask",
+        options: [
+          { value: "ask", name: "Ask", description: undefined },
+          { value: "code", name: "Code", description: undefined },
+        ],
+      },
+    ]);
 
-    await h.sessionManager.setMode(sessionId, "code");
-    expect(h.state().sessionModes[sessionId]!.currentModeId).toBe("code");
+    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "code" });
 
     await h.pool.stop("modes");
   });
@@ -319,9 +326,9 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const sessionId = await h.sessionManager.createSession("liarmode", "Fake Agent", cwd);
-    await h.sessionManager.setMode(sessionId, "code");
+    await h.sessionManager.setKnob(sessionId, "mode", "code");
     // the request "succeeded" but emitted no current_mode_update — display stays put
-    expect(h.state().sessionModes[sessionId]!.currentModeId).toBe("ask");
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "ask" });
 
     await h.pool.stop("liarmode");
   });
@@ -349,11 +356,11 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const sessionId = await h.sessionManager.createSession("cfg", "Fake Agent", cwd);
-    expect(h.state().sessionConfigOptions[sessionId]).toHaveLength(1);
-    expect(h.state().sessionConfigOptions[sessionId]![0]).toMatchObject({ id: "model-opt", currentValue: "sonnet" });
+    expect(h.state().sessionKnobs[sessionId]).toHaveLength(1);
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ id: "model-opt", currentValue: "sonnet" });
 
-    await h.sessionManager.setConfigOption(sessionId, "model-opt", "opus");
-    expect(h.state().sessionConfigOptions[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await h.pool.stop("cfg");
   });
@@ -382,11 +389,43 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const sessionId = await h.sessionManager.createSession("cfg-reply", "Fake Agent", cwd);
-    await h.sessionManager.setConfigOption(sessionId, "model-opt", "opus");
+    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
     // no config_option_update arrived — the display truth rode the response
-    expect(h.state().sessionConfigOptions[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await h.pool.stop("cfg-reply");
+  });
+
+  it("an agent offering both surfaces gets exactly the config knobs — modes are ignored wholesale (spec: use configOptions exclusively)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          modes: { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] },
+          // Deliberately no category:"mode" anywhere — exclusivity must not
+          // depend on it (ACP: category is UX-only, never correctness).
+          configOptions: [
+            {
+              id: "permission-style",
+              name: "Permissions",
+              type: "select",
+              currentValue: "ask",
+              options: [{ value: "ask", name: "Ask" }, { value: "code", name: "Code" }],
+            },
+          ],
+        },
+        "both",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("both", "Fake Agent", cwd);
+    // One knob, not two — the dup-pill class of bug is unrepresentable.
+    expect(h.state().sessionKnobs[sessionId]).toHaveLength(1);
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ id: "permission-style" });
+    // The ignored surface is not settable: "mode" names no offered knob.
+    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "ask" });
+
+    await h.pool.stop("both");
   });
 
   it("per-agent defaults are applied post-create by option id — no category needed (ACP: category is UX-only)", async () => {
@@ -409,18 +448,25 @@ describe("Session model/mode/effort knobs (P8)", () => {
       new SessionIndexStore(new MemoryKV()),
       {
         emit: (...evs) => events.push(...evs),
-        defaultsFor: () => ({ mode: "code", options: { "model-opt": "opus" } }),
+        // Folded seed (knob id → value), as the orchestrator delivers it.
+        defaultsFor: () => ({ mode: "code", "model-opt": "opus" }),
       },
       () => cwd,
     );
     await pool.connect(
       spec(
         {
-          modes: { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] },
           // no `category` on purpose — the ACP schema makes it UX-only
           // ("MUST NOT be required for correctness"), so defaults must
-          // apply by option id alone.
+          // apply by knob id alone.
           configOptions: [
+            {
+              id: "mode",
+              name: "Mode",
+              type: "select",
+              currentValue: "ask",
+              options: [{ value: "ask", name: "Ask" }, { value: "code", name: "Code" }],
+            },
             {
               id: "model-opt",
               name: "Model",
@@ -436,8 +482,8 @@ describe("Session model/mode/effort knobs (P8)", () => {
     const state = () => events.reduce(reduceAgentView, initialAgentViewState);
     const sessionId = await sessionManager.createSession("defaulted", "Fake Agent", cwd);
 
-    expect(state().sessionModes[sessionId]!.currentModeId).toBe("code");
-    expect(state().sessionConfigOptions[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+    expect(state().sessionKnobs[sessionId]!.find((k) => k.id === "mode")).toMatchObject({ currentValue: "code" });
+    expect(state().sessionKnobs[sessionId]!.find((k) => k.id === "model-opt")).toMatchObject({ currentValue: "opus" });
 
     await pool.stop("defaulted");
   });
@@ -464,7 +510,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       {
         emit: (...evs) => events.push(...evs),
         // Defaults say sonnet/ask — the continuation must NOT get these.
-        defaultsFor: () => ({ mode: "ask", options: { "model-opt": "sonnet" } }),
+        defaultsFor: () => ({ mode: "ask", "model-opt": "sonnet" }),
       },
       () => cwd,
     );
@@ -472,8 +518,14 @@ describe("Session model/mode/effort knobs (P8)", () => {
       spec(
         {
           // no fork, no loadSession — branching can only emulate
-          modes: { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] },
           configOptions: [
+            {
+              id: "mode",
+              name: "Mode",
+              type: "select",
+              currentValue: "ask",
+              options: [{ value: "ask", name: "Ask" }, { value: "code", name: "Code" }],
+            },
             {
               id: "model-opt",
               name: "Model",
@@ -487,27 +539,22 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const state = () => events.reduce(reduceAgentView, initialAgentViewState);
+    const knobValue = (sessionId: string, knobId: string) =>
+      state().sessionKnobs[sessionId]?.find((k) => k.id === knobId)?.currentValue;
     const parentId = await sessionManager.createSession("steered", "Fake Agent", cwd);
     // The user steers the session away from its defaults; the agent confirms.
-    await sessionManager.setMode(parentId, "code");
-    await sessionManager.setConfigOption(parentId, "model-opt", "opus");
-    await waitFor(() =>
-      state().sessionConfigOptions[parentId]![0]!.currentValue === "opus" ? true : undefined,
-    );
+    await sessionManager.setKnob(parentId, "mode", "code");
+    await sessionManager.setKnob(parentId, "model-opt", "opus");
+    await waitFor(() => (knobValue(parentId, "model-opt") === "opus" ? true : undefined));
     expect(sessionIndex.get(parentId)?.lastConfirmed).toMatchObject({
-      modeId: "code",
-      options: { "model-opt": "opus" },
+      options: { mode: "code", "model-opt": "opus" },
     });
 
     const branchId = await sessionManager.branch(parentId, []);
     expect(state().sessions.find((s) => s.id === branchId)?.emulated).toBe(true);
     // The continuation runs at the parent's confirmed opus/code, not sonnet/ask.
-    await waitFor(() =>
-      state().sessionConfigOptions[branchId]?.[0]?.currentValue === "opus" ? true : undefined,
-    );
-    await waitFor(() =>
-      state().sessionModes[branchId]?.currentModeId === "code" ? true : undefined,
-    );
+    await waitFor(() => (knobValue(branchId, "model-opt") === "opus" ? true : undefined));
+    await waitFor(() => (knobValue(branchId, "mode") === "code" ? true : undefined));
 
     await pool.stop("steered");
   });

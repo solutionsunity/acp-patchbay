@@ -8,7 +8,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentStatus, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
+import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
 import {
   clientCapabilitiesWire,
@@ -28,9 +28,9 @@ export interface LaunchSpec {
   /** Per-agent process policy (architecture.md § process model). Absent →
    * "auto", same as an unset config-file field. */
   processPolicy?: "auto" | "shared" | "isolated";
-  /** Per-agent knob defaults, applied post-create (P8) — `options` keyed by
-   * the agent's own config-option id (category is UX-only per ACP). */
-  defaults?: { mode?: string; options?: Readonly<Record<string, string | boolean>> };
+  /** Per-agent knob defaults, applied post-create (P8) — the folded,
+   * knob-id-keyed seed (knobs.ts; category is UX-only per ACP). */
+  defaults?: KnobSeed;
 }
 
 export interface PoolHooks {

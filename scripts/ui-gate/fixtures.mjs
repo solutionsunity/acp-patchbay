@@ -54,8 +54,8 @@ export function agentViewState({ live }) {
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [] },
     capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
-    contextChips: { s1: [] }, sessionModes: { s1: null }, sessionConfigOptions: { s1: [] },
-    contextRoots: { s1: [] }, liveSelection: null, openEditors: [],
+    contextChips: { s1: [] }, sessionKnobs: { s1: [] },
+    contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null, openEditors: [],
   };
 }
 

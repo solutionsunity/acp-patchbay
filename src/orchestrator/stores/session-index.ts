@@ -13,7 +13,9 @@ export interface SessionIndexEntry {
    * agent's own responses/notifications, never from what patchbay requested
    * (architecture.md § Session model). Seeds emulated continuations, the one
    * session birth with no reality left to read; never re-imposed on native
-   * load/fork, where the agent's restored state is the truth. */
+   * load/fork, where the agent's restored state is the truth.
+   * `options` is knob-id-keyed (knobs.ts); `modeId` is legacy-read-only,
+   * folded on read (foldSeed) and never written again. */
   lastConfirmed?: {
     modeId?: string;
     options?: Readonly<Record<string, string | boolean>>;
@@ -41,22 +43,19 @@ export class SessionIndexStore {
     await this.kv.update(KEY, entries);
   }
 
-  /** Merges a confirmed-knob observation into the entry — mode and option
-   * values patch independently since the agent reports them separately.
+  /** Merges a confirmed-knob observation into the entry (knob-id-keyed —
+   * the legacy modeId field is read-only history, never written here).
    * No entry (a session the index never saw) is a no-op, not an error. */
   async recordConfirmed(
     id: string,
-    patch: { modeId?: string; options?: Readonly<Record<string, string | boolean>> },
+    patch: { options: Readonly<Record<string, string | boolean>> },
   ): Promise<void> {
     const entries = this.list();
     const entry = entries.find((e) => e.id === id);
     if (!entry) return;
     entry.lastConfirmed = {
       ...entry.lastConfirmed,
-      ...(patch.modeId !== undefined ? { modeId: patch.modeId } : {}),
-      ...(patch.options !== undefined
-        ? { options: { ...entry.lastConfirmed?.options, ...patch.options } }
-        : {}),
+      options: { ...entry.lastConfirmed?.options, ...patch.options },
     };
     await this.kv.update(KEY, entries);
   }

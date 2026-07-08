@@ -7,11 +7,13 @@ import { z } from "zod";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
-/** `options` is keyed by the agent's own config-option id, never by
- * semantic category — ACP defines category as UX-only, forbidden as a
- * correctness dependency. (Supersedes the earlier {model, mode, effort}
- * triple, which required categories to map back to options; stored values
- * under the old keys are dropped on read.) */
+/** `options` is keyed by knob id (the agent's own config-option id, or
+ * knobs.ts's MODE_KNOB_ID on the modes-fallback surface), never by semantic
+ * category — ACP defines category as UX-only, forbidden as a correctness
+ * dependency. `mode` is legacy-read-only: folded into the seed on read
+ * (knobs.ts foldSeed), never written again — new saves carry `options`
+ * alone. (Supersedes the earlier {model, mode, effort} triple, which
+ * required categories to map back to options.) */
 export const agentDefaultsSchema = z.object({
   mode: z.string().optional(),
   // boolean covers boolean-typed options (a thinking toggle); the wire call

@@ -78,7 +78,7 @@ describe("reducers", () => {
       { kind: "agentUpserted", agent: claude } as const,
       declared,
       { kind: "agentVerifyStarted", agentId: "claude" } as const,
-      { kind: "agentKnobsObserved", agentId: "claude", knobs: { modes: null, options: [] } } as const,
+      { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
       { kind: "agentRemoved", agentId: "claude" } as const,
     ].reduce(reduceSettings, initialSettingsState);
     expect(settings.agents).toEqual([]);
@@ -180,8 +180,7 @@ describe("settings projections (ui.md § Settings Agents)", () => {
         kind: "agentKnobsObserved",
         agentId: "claude",
         knobs: {
-          modes: [{ id: "code", name: "Code" }],
-          options: [
+          knobs: [
             { id: "model", name: "Model", category: "model", type: "select", values: [{ value: "s", name: "Sonnet" }] },
           ],
         },
@@ -189,8 +188,7 @@ describe("settings projections (ui.md § Settings Agents)", () => {
     ];
     const s = events.reduce(reduceSettings, initialSettingsState);
     expect(s.sessionsToday).toBe(3);
-    expect(s.agentKnobs.claude!.modes).toEqual([{ id: "code", name: "Code" }]);
-    expect(s.agentKnobs.claude!.options[0]!.category).toBe("model");
+    expect(s.agentKnobs.claude!.knobs[0]!.category).toBe("model");
   });
 
   it("agentVerifyStarted/Finished track exactly the in-flight agents", () => {

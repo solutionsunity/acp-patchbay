@@ -90,8 +90,10 @@ export type Action =
   | { kind: "removeContextChip"; sessionId: string; chipId: string }
   | { kind: "branchSession"; sessionId: string }
   | { kind: "reloadSession"; sessionId: string }
-  | { kind: "setSessionMode"; sessionId: string; modeId: string }
-  | { kind: "setSessionConfigOption"; sessionId: string; configId: string; value: string | boolean }
+  /** One action for every knob — the UI never knows (render-only-webview)
+   * whether a knob rides ACP's config-option surface or the legacy modes
+   * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
+  | { kind: "setSessionKnob"; sessionId: string; knobId: string; value: string | boolean }
   | { kind: "connectRegistryKey"; registryId: string; token: string; url?: string }
   | { kind: "connectRegistryOAuth"; registryId: string; url?: string }
   /** `id` is generated orchestrator-side from the name (slug, uniquified) —
@@ -168,12 +170,12 @@ export interface AgentConfigView {
    * state snapshot; the Settings form edits them write-only. */
   envKeys: readonly string[];
   processPolicy: "auto" | "shared" | "isolated";
-  /** Per-agent session defaults. `mode` targets the agent's SessionModeState;
-   * `options` is keyed by the agent's own config-option *id* — never by
-   * semantic category, which ACP defines as UX-only ("MUST NOT be required
-   * for correctness. Clients MUST handle missing or unknown categories
-   * gracefully."). */
-  defaults: { mode?: string; options?: Readonly<Record<string, string | boolean>> };
+  /** Per-agent session defaults, keyed by knob id (the agent's own
+   * config-option id, or knobs.ts's MODE_KNOB_ID on the modes-fallback
+   * surface) — never by semantic category, which ACP defines as UX-only.
+   * Always the folded shape here; the store's legacy {mode, options} split
+   * is folded at the orchestrator boundary (knobs.ts foldSeed). */
+  defaults: KnobSeed;
   /** Present only for agents added from the official ACP registry — drives
    * the "update available" comparison against the roster's live version. */
   registrySource: AgentRegistrySourceView | null;
@@ -523,22 +525,12 @@ export interface SessionSummary {
   branchOf: string | null;
 }
 
-// ── session model/mode/effort knobs (architecture.md § Session model, mode,
-// effort) — three optional knobs, each existing only if the agent offers it.
-// Display comes only from the agent's own state notifications, never from a
-// set-request's response (bridges have returned success for rejected
-// changes) — reducer cases below only ever apply *Set/*Changed events.
-
-export interface SessionModeOptionView {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-export interface SessionModesView {
-  currentModeId: string;
-  available: readonly SessionModeOptionView[];
-}
+// ── session knobs (architecture.md § Session model, mode, effort) — one
+// normalized list per session, produced only by the orchestrator's knob
+// processor (knobs.ts). The webview renders it uniformly: it never sees the
+// wire's modes/configOptions split, and display updates only from the
+// agent's own state (a set-request's success is never trusted — bridges
+// have returned success for rejected changes).
 
 export interface SessionConfigSelectValueView {
   value: string;
@@ -552,15 +544,16 @@ export interface SessionConfigSelectGroupView {
   options: readonly SessionConfigSelectValueView[];
 }
 
-interface SessionConfigOptionBase {
+interface SessionKnobBase {
   id: string;
   name: string;
   description?: string;
-  /** "model" | "mode" | "thought_level" | ... — agent-declared, UX-only. */
+  /** "model" | "mode" | "thought_level" | ... — agent-declared, UX-only
+   * (glyph/placement); never a routing or correctness key. */
   category?: string;
 }
 
-export type SessionConfigOptionView = SessionConfigOptionBase &
+export type SessionKnobView = SessionKnobBase &
   (
     | {
         type: "select";
@@ -569,6 +562,11 @@ export type SessionConfigOptionView = SessionConfigOptionBase &
       }
     | { type: "boolean"; currentValue: boolean }
   );
+
+/** A stored knob selection set — knob id → value. The persisted stores keep
+ * a legacy {mode, options} split for old data; everything in memory and
+ * every view uses this folded shape (knobs.ts foldSeed is the one door). */
+export type KnobSeed = Readonly<Record<string, string | boolean>>;
 
 // ── chat / transcript (render cache — rebuilt wholesale, never merged) ──────
 
@@ -785,10 +783,9 @@ export interface AgentViewState {
   /** Explicitly attached context, pending inclusion in the next prompt
    * (features.md § Chat: "explicitly add editor state to the prompt"). */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
-  /** Mode knob — absent (null) when the agent doesn't offer session modes. */
-  sessionModes: Readonly<Record<string, SessionModesView | null>>;
-  /** Model/effort/etc. knobs — empty when the agent offers none. */
-  sessionConfigOptions: Readonly<Record<string, readonly SessionConfigOptionView[]>>;
+  /** Normalized knobs per session (knobs.ts is the only producer) — empty
+   * when the agent offers none. */
+  sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
   /** User-added external context roots, per session (features.md § Chat —
    * workspace folders are always active and need no chip; these are the
    * removable, explicit ones). Passed to the agent as `additionalDirectories`
@@ -839,8 +836,7 @@ export const initialAgentViewState: AgentViewState = {
   authMethods: {},
   sessionUsage: {},
   contextChips: {},
-  sessionModes: {},
-  sessionConfigOptions: {},
+  sessionKnobs: {},
   contextRoots: {},
   workspaceRoots: [],
   liveSelection: null,
@@ -937,12 +933,10 @@ export type AgentViewEvent =
   | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
-  /** Full replace — from a session/new, /load, or /fork response. */
-  | { kind: "sessionModesSet"; sessionId: string; modes: SessionModesView | null }
-  /** Partial — from a `current_mode_update` notification; a no-op if no modes state exists yet. */
-  | { kind: "sessionModeChanged"; sessionId: string; modeId: string }
-  /** Full replace — from a create/load/fork response or a `config_option_update` notification. */
-  | { kind: "sessionConfigOptionsChanged"; sessionId: string; options: readonly SessionConfigOptionView[] }
+  /** Full replace, always — every knob-bearing wire fact (a create/load/fork
+   * response, a config_option_update or current_mode_update notification, a
+   * set_config_option response) lands here already normalized by knobs.ts. */
+  | { kind: "sessionKnobsSet"; sessionId: string; knobs: readonly SessionKnobView[] }
   /** A branch (native or emulated) or an emulated dead-end continuation
    * seeding its transcript wholesale — never merged, same "replay always
    * wins" rule as transcriptReset (architecture.md § Last-known view). */
@@ -1198,8 +1192,7 @@ export function reduceAgentView(
         transcripts: { ...state.transcripts, [event.session.id]: [] },
         commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
         contextChips: { ...state.contextChips, [event.session.id]: [] },
-        sessionModes: { ...state.sessionModes, [event.session.id]: null },
-        sessionConfigOptions: { ...state.sessionConfigOptions, [event.session.id]: [] },
+        sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
         activeSessionId: event.session.id,
         // A session arriving ends any in-pane connect, success or stale
@@ -1223,8 +1216,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
       const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
       const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
-      const { [event.sessionId]: _m, ...sessionModes } = state.sessionModes;
-      const { [event.sessionId]: _o, ...sessionConfigOptions } = state.sessionConfigOptions;
+      const { [event.sessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
@@ -1240,8 +1232,7 @@ export function reduceAgentView(
         activePlan,
         activeTurn,
         contextChips,
-        sessionModes,
-        sessionConfigOptions,
+        sessionKnobs,
         contextRoots,
         sessionUsage,
         activeSessionId,
@@ -1404,24 +1395,8 @@ export function reduceAgentView(
           ),
         },
       };
-    case "sessionModesSet":
-      return { ...state, sessionModes: { ...state.sessionModes, [event.sessionId]: event.modes } };
-    case "sessionModeChanged": {
-      const existing = state.sessionModes[event.sessionId];
-      if (!existing) return state; // no modes state to update — stale or unsupported
-      return {
-        ...state,
-        sessionModes: {
-          ...state.sessionModes,
-          [event.sessionId]: { ...existing, currentModeId: event.modeId },
-        },
-      };
-    }
-    case "sessionConfigOptionsChanged":
-      return {
-        ...state,
-        sessionConfigOptions: { ...state.sessionConfigOptions, [event.sessionId]: event.options },
-      };
+    case "sessionKnobsSet":
+      return { ...state, sessionKnobs: { ...state.sessionKnobs, [event.sessionId]: event.knobs } };
     case "transcriptSeeded":
       // Seeded blocks come from the persisted last-known view, which may
       // predate fields the live block model has since grown — normalize
@@ -1529,9 +1504,10 @@ export interface AuditEntryView {
  * plus every live session's responses and update notifications; the entry
  * leaves settings state when the connection does. */
 export interface AgentKnobsView {
-  /** null until modes have been offered on this connection. */
-  modes: readonly SessionModeOptionView[] | null;
-  options: readonly {
+  /** The normalized knob offering (knobs.ts): ids, names, and offered
+   * values only — no current value, since offerings describe what the
+   * connection can do, not any one session's state. */
+  knobs: readonly {
     id: string;
     name: string;
     category?: string;

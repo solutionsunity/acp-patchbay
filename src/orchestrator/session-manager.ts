@@ -10,31 +10,30 @@ import { pathToFileURL } from "node:url";
 import type {
   ContentBlock,
   McpServer,
-  SessionConfigOption,
-  SessionModeState,
   SessionNotification,
 } from "@agentclientprotocol/sdk";
 import type {
   AgentViewEvent,
   ChatBlock,
   ContextChip,
+  KnobSeed,
   PlanEntry,
-  SessionConfigOptionView,
-  SessionModesView,
   SessionSummary,
   TurnUsage,
 } from "../shared/protocol";
+import {
+  applyConfigUpdate,
+  applyModeUpdate,
+  confirmedFromKnobs,
+  foldSeed,
+  NO_KNOBS,
+  normalizeKnobs,
+  routeKnobSet,
+  type NormalizedKnobs,
+} from "./knobs";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { SessionIndexStore } from "./stores/session-index";
-
-export interface AgentDefaults {
-  mode?: string;
-  /** Keyed by the agent's own config-option id — never by semantic
-   * category, which ACP defines as UX-only ("MUST NOT be required for
-   * correctness"). Boolean values drive boolean-typed options. */
-  options?: Readonly<Record<string, string | boolean>>;
-}
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -52,8 +51,9 @@ export interface SessionManagerHooks {
   /** Whether `session.fork` is declared *and used* for this agent — the
    * one signal that decides native fork vs. emulated seeding (P8). */
   isForkUsed?(agentId: string): boolean;
-  /** Per-agent knob defaults from workspace config, applied once, post-create. */
-  defaultsFor?(agentId: string): AgentDefaults | undefined;
+  /** Per-agent knob defaults (folded, knob-id-keyed — knobs.ts foldSeed),
+   * applied once, post-create. */
+  defaultsFor?(agentId: string): KnobSeed | undefined;
   /** The persisted last-known view (architecture.md § State) — the only
    * continuation available for a dead session whose agent never declared
    * `session/load`. */
@@ -88,37 +88,9 @@ interface LiveSession {
   activeTextBlockId: string | null;
   activeThoughtBlockId: string | null;
   pendingContext: ContextChip[];
-}
-
-function toSelectValue(o: { value: string; name: string; description?: string | null }) {
-  return { value: o.value, name: o.name, description: o.description ?? undefined };
-}
-
-export function toConfigOptionView(opt: SessionConfigOption): SessionConfigOptionView {
-  const base = {
-    id: opt.id,
-    name: opt.name,
-    description: opt.description ?? undefined,
-    category: opt.category ?? undefined,
-  };
-  if (opt.type === "boolean") return { ...base, type: "boolean", currentValue: opt.currentValue };
-  const options = opt.options.map((o) =>
-    "group" in o
-      ? { group: o.group, name: o.name, options: o.options.map(toSelectValue) }
-      : toSelectValue(o),
-  );
-  return { ...base, type: "select", currentValue: opt.currentValue, options } as SessionConfigOptionView;
-}
-
-export function toModesView(modes: SessionModeState): SessionModesView {
-  return {
-    currentModeId: modes.currentModeId,
-    available: modes.availableModes.map((m) => ({
-      id: m.id,
-      name: m.name,
-      description: m.description ?? undefined,
-    })),
-  };
+  /** Normalized knob state (knobs.ts) — carries the wire surface that
+   * drives set routing; the view side only ever sees the knob list. */
+  knobs: NormalizedKnobs;
 }
 
 export class SessionManager {
@@ -169,6 +141,7 @@ export class SessionManager {
       activeTextBlockId: null,
       activeThoughtBlockId: null,
       pendingContext: [],
+      knobs: NO_KNOBS,
     });
     const now = new Date().toISOString();
     const title = `${agentName} session`;
@@ -183,8 +156,8 @@ export class SessionManager {
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
     this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
-    this.emitModeAndConfig(sessionId, modes, configOptions);
-    await this.applyDefaults(agentId, sessionId, modes, configOptions);
+    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
+    await this.applyDefaults(agentId, sessionId);
     return sessionId;
   }
 
@@ -275,6 +248,7 @@ export class SessionManager {
       activeTextBlockId: null,
       activeThoughtBlockId: null,
       pendingContext: [],
+      knobs: NO_KNOBS,
     });
     this.hooks.emit({ kind: "transcriptReset", sessionId });
     const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
@@ -290,7 +264,7 @@ export class SessionManager {
     // pool.ts's loadSession already marked "session.load" used the instant
     // the RPC succeeded — this only has to update the render state.
     this.log.info(`session ${sessionId} reopened via session/load on ${agentId}`);
-    this.emitModeAndConfig(sessionId, modes, configOptions);
+    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
   }
 
   /** Reopens where possible; otherwise the only continuation left for an
@@ -336,6 +310,7 @@ export class SessionManager {
       activeTextBlockId: null,
       activeThoughtBlockId: null,
       pendingContext: [],
+      knobs: NO_KNOBS,
     });
     const now = new Date().toISOString();
     const parentTitle = this.sessionIndex.get(parentSessionId)?.title ?? "session";
@@ -354,15 +329,15 @@ export class SessionManager {
     if (seedBlocks.length > 0) {
       this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: seedBlocks });
     }
-    this.emitModeAndConfig(sessionId, modes, configOptions);
+    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
     // Semantically a continuation, mechanically a session/new: seed the
     // parent's last agent-confirmed combination — never the defaults, which
     // the user may have steered the parent away from (architecture.md
-    // § Session model, seeding table). Options the fresh session doesn't
-    // offer are skipped silently inside applyKnobs.
+    // § Session model, seeding table). Knobs the fresh session doesn't
+    // offer are skipped silently inside applySeed.
     const confirmed = this.sessionIndex.get(parentSessionId)?.lastConfirmed;
     if (confirmed !== undefined) {
-      await this.applyKnobs(sessionId, confirmed, modes, configOptions);
+      await this.applySeed(sessionId, foldSeed(confirmed));
     }
     return sessionId;
   }
@@ -402,6 +377,7 @@ export class SessionManager {
       activeTextBlockId: null,
       activeThoughtBlockId: null,
       pendingContext: [],
+      knobs: NO_KNOBS,
     });
     const now = new Date().toISOString();
     const parentTitle = this.sessionIndex.get(sessionId)?.title ?? "session";
@@ -427,56 +403,42 @@ export class SessionManager {
     }
     // Native fork: the agent itself decides how much history to replay as
     // session/update notifications, if any — nothing else to seed here.
-    this.emitModeAndConfig(response.sessionId, response.modes, response.configOptions);
+    this.publishKnobs(response.sessionId, normalizeKnobs(response.modes, response.configOptions));
     return response.sessionId;
   }
 
-  async setMode(sessionId: string, modeId: string): Promise<void> {
+  /** The one knob-set entry point (knobs.ts routes it to the wire). A knob
+   * or value the session doesn't offer is a silent no-op — patchbay never
+   * invents a knob. Display honesty per route: set_config_option's response
+   * is spec-required complete state and is consumed; set_mode's response
+   * carries no state and display waits for the agent's own
+   * current_mode_update (bridges have returned success for rejected
+   * changes). */
+  async setKnob(sessionId: string, knobId: string, value: string | boolean): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    // Display updates only from the agent's own current_mode_update
-    // notification (architecture.md) — the response here is deliberately unused.
-    await this.pool.setSessionMode(session.poolKey, sessionId, modeId);
-  }
-
-  async setConfigOption(sessionId: string, configId: string, value: string | boolean): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    // The response's `configOptions` is spec-required authoritative state
-    // (see pool.setSessionConfigOption) — emitted like a notification would
-    // be; a `config_option_update` arriving anyway just re-emits the same.
-    const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, configId, value);
-    this.hooks.emit({
-      kind: "sessionConfigOptionsChanged",
-      sessionId,
-      options: response.configOptions.map(toConfigOptionView),
-    });
-    void this.sessionIndex.recordConfirmed(sessionId, {
-      options: Object.fromEntries(response.configOptions.map((o) => [o.id, o.currentValue])),
-    });
-  }
-
-  private emitModeAndConfig(
-    sessionId: string,
-    modes: SessionModeState | null | undefined,
-    configOptions: SessionConfigOption[] | null | undefined,
-  ): void {
-    if (modes) this.hooks.emit({ kind: "sessionModesSet", sessionId, modes: toModesView(modes) });
-    if (configOptions && configOptions.length > 0) {
-      this.hooks.emit({
-        kind: "sessionConfigOptionsChanged",
-        sessionId,
-        options: configOptions.map(toConfigOptionView),
-      });
+    const route = routeKnobSet(session.knobs, knobId, value);
+    if (route === null) return;
+    if (route.via === "setMode") {
+      await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId);
+      return;
     }
-    // A session response's current values are agent-confirmed state — the
-    // session's own durable record of its combination (see recordConfirmed).
-    void this.sessionIndex.recordConfirmed(sessionId, {
-      ...(modes ? { modeId: modes.currentModeId } : {}),
-      ...(configOptions && configOptions.length > 0
-        ? { options: Object.fromEntries(configOptions.map((o) => [o.id, o.currentValue])) }
-        : {}),
-    });
+    const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
+    this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions));
+  }
+
+  /** The one exit for knob state: stores the normalized truth on the
+   * session (set routing reads the surface from it), emits the full view
+   * replace, and records the agent-confirmed combination on the session
+   * index (the emulated-continuation seed — the one session birth with no
+   * reality left to read). */
+  private publishKnobs(sessionId: string, knobs: NormalizedKnobs): void {
+    const session = this.sessions.get(sessionId);
+    if (session) session.knobs = knobs;
+    this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
+    if (knobs.surface !== "none") {
+      void this.sessionIndex.recordConfirmed(sessionId, { options: confirmedFromKnobs(knobs) });
+    }
   }
 
   /** Per-agent defaults (architecture.md § Session model, mode, effort):
@@ -485,36 +447,32 @@ export class SessionManager {
    * never on an emulated continuation (which seeds from the parent's
    * confirmed combination instead — the user may have steered away from
    * the defaults). */
-  private async applyDefaults(
-    agentId: string,
-    sessionId: string,
-    modes: SessionModeState | null | undefined,
-    configOptions: SessionConfigOption[] | null | undefined,
-  ): Promise<void> {
+  private async applyDefaults(agentId: string, sessionId: string): Promise<void> {
     const defaults = this.hooks.defaultsFor?.(agentId);
-    if (!defaults) return;
-    await this.applyKnobs(sessionId, { modeId: defaults.mode, options: defaults.options }, modes, configOptions);
+    if (defaults === undefined) return;
+    await this.applySeed(sessionId, defaults);
   }
 
-  /** Issues the set requests for a knob seed, guarded per option: a knob is
-   * applied only where the agent actually offered it *this session* —
-   * silently skipped otherwise (patchbay never invents a knob), and keyed by
-   * the agent's own option id (ACP: category is UX-only, forbidden as a
-   * correctness dependency). Rejections are swallowed: the honest displayed
-   * state comes from the agent's own notifications either way. */
-  private async applyKnobs(
-    sessionId: string,
-    seed: { modeId?: string; options?: Readonly<Record<string, string | boolean>> },
-    modes: SessionModeState | null | undefined,
-    configOptions: SessionConfigOption[] | null | undefined,
-  ): Promise<void> {
-    const poolKey = this.sessions.get(sessionId)!.poolKey;
-    if (seed.modeId !== undefined && modes?.availableModes.some((m) => m.id === seed.modeId)) {
-      await this.pool.setSessionMode(poolKey, sessionId, seed.modeId).catch(() => {});
-    }
-    for (const [optionId, value] of Object.entries(seed.options ?? {})) {
-      if (!configOptions?.some((o) => o.id === optionId)) continue;
-      await this.pool.setSessionConfigOption(poolKey, sessionId, optionId, value).catch(() => {});
+  /** Issues the set requests for a knob seed, each routed and guarded by
+   * knobs.ts against what this session actually offers — silently skipped
+   * otherwise. Rejections are swallowed: the honest displayed state comes
+   * from the agent's own responses/notifications either way. */
+  private async applySeed(sessionId: string, seed: KnobSeed): Promise<void> {
+    for (const [knobId, value] of Object.entries(seed)) {
+      const session = this.sessions.get(sessionId);
+      if (!session) return;
+      const route = routeKnobSet(session.knobs, knobId, value);
+      if (route === null) continue;
+      if (route.via === "setMode") {
+        await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId).catch(() => {});
+        continue;
+      }
+      try {
+        const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
+        this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions));
+      } catch {
+        // rejected seed entry — the agent's state stands, nothing to repair
+      }
     }
   }
 
@@ -759,20 +717,19 @@ export class SessionManager {
           })),
         });
         break;
-      case "current_mode_update":
-        this.hooks.emit({ kind: "sessionModeChanged", sessionId, modeId: update.currentModeId });
-        // Agent-confirmed (the only kind recorded — never the set request).
-        void this.sessionIndex.recordConfirmed(sessionId, { modeId: update.currentModeId });
+      case "current_mode_update": {
+        // Meaningful only on the modes surface; on the config surface it's
+        // dropped by the normalizer (knobs.ts: mapping it onto an option
+        // would need category as a correctness key — spec-forbidden; the
+        // agent's transition duty confirms via config_option_update).
+        const next = applyModeUpdate(session.knobs, update.currentModeId);
+        if (next !== null) this.publishKnobs(sessionId, next);
+        else this.log.debug(`session ${sessionId}: current_mode_update dropped (config surface owns the knob state)`);
         break;
+      }
       case "config_option_update":
-        this.hooks.emit({
-          kind: "sessionConfigOptionsChanged",
-          sessionId,
-          options: update.configOptions.map(toConfigOptionView),
-        });
-        void this.sessionIndex.recordConfirmed(sessionId, {
-          options: Object.fromEntries(update.configOptions.map((o) => [o.id, o.currentValue])),
-        });
+        // Spec: the notification carries the complete configuration state.
+        this.publishKnobs(sessionId, applyConfigUpdate(update.configOptions));
         break;
       case "usage_update":
         // Capability marking (declared+used together, on first sight — no

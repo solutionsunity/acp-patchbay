@@ -16,7 +16,6 @@ import {
   reduceSettings,
   type Action,
   type AgentConfigView,
-  type AgentKnobsView,
   type AgentViewEvent,
   type AgentViewState,
   type CapabilityRowId,
@@ -24,7 +23,6 @@ import {
   type DataInventoryRow,
   type PermissionOptionView,
   type RosterEntry,
-  type SessionConfigOptionView,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
@@ -37,9 +35,10 @@ import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
+import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
-import { SessionManager, toConfigOptionView, toModesView } from "./session-manager";
+import { SessionManager } from "./session-manager";
 import { WireLog } from "./wire-log";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
@@ -135,10 +134,6 @@ export class Orchestrator {
   private elicitationCounter = 0;
   private isolationCounter = 0;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
-  /** Orchestrator-side merge of knob offerings per agent (modes and config
-   * options arrive as separate events) — the settings channel gets the
-   * merged record on every observation. */
-  private readonly observedKnobs = new Map<string, { modes: AgentKnobsView["modes"]; options: AgentKnobsView["options"] }>();
   /** Set by the webview host as the Agent View mounts/unmounts (wired in
    * extension.ts to `AgentViewProvider`'s real `onDidChangeVisibility`
    * signal, P6); defaults to "visible" so native notifications don't fire
@@ -275,9 +270,8 @@ export class Orchestrator {
           this.sessionManager.invalidateAgent(agentId);
         }
         // Offerings are connection state (architecture.md § Session model) —
-        // gone with the connection; the settings reducer drops its copy off
-        // the same event, and the next connect's offering read repopulates.
-        if (status !== "running") this.observedKnobs.delete(agentId);
+        // the settings reducer drops its copy off this same event, and the
+        // next connect's offering read repopulates it.
       },
       onIsolatedStatusChanged: (poolKey, _agentId, status) => {
         // Not surfaced in the Agents list (P8: isolated instances are an
@@ -299,7 +293,7 @@ export class Orchestrator {
         const probeAgent = this.capabilityTracker.agentForProbeSession(notification.sessionId);
         if (probeAgent !== undefined) {
           if (notification.update.sessionUpdate === "config_option_update") {
-            this.noteOfferings(probeAgent, null, notification.update.configOptions.map(toConfigOptionView));
+            this.noteOfferings(probeAgent, applyConfigUpdate(notification.update.configOptions));
           }
           return;
         }
@@ -524,13 +518,7 @@ export class Orchestrator {
         },
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
         onOfferings: (agentId, modes, configOptions) =>
-          this.noteOfferings(
-            agentId,
-            modes ? toModesView(modes).available : null,
-            configOptions && configOptions.length > 0
-              ? configOptions.map(toConfigOptionView)
-              : null,
-          ),
+          this.noteOfferings(agentId, normalizeKnobs(modes, configOptions)),
       },
       log,
     );
@@ -617,7 +605,6 @@ export class Orchestrator {
 
     this.configuredAgentSpecs.clear();
     this.agentNames.clear();
-    this.observedKnobs.clear();
 
     for (const session of this.agentView.current.sessions) {
       this.agentView.emit({ kind: "sessionClosed", sessionId: session.id });
@@ -828,50 +815,32 @@ export class Orchestrator {
     for (const event of events) {
       if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
         this.publishSessionStats();
-      } else if (event.kind === "sessionModesSet" || event.kind === "sessionConfigOptionsChanged") {
+      } else if (event.kind === "sessionKnobsSet" && event.knobs.length > 0) {
         const agentId = this.sessionIndex.get(event.sessionId)?.agentId;
         if (agentId === undefined) continue;
-        if (event.kind === "sessionModesSet") {
-          this.noteOfferings(agentId, event.modes?.available ?? null, null);
-        } else {
-          this.noteOfferings(agentId, null, event.options);
-        }
+        this.settings.emit({
+          kind: "agentKnobsObserved",
+          agentId,
+          knobs: { knobs: toOfferedKnobs(event.knobs) },
+        });
       }
     }
   }
 
-  /** The one merge point for knob offerings — connection-scoped, in-memory
-   * only (architecture.md § Session model: offerings are read, never
-   * stored). Sources: the connect-time probe read, and every live session's
-   * responses/notifications. Modes and options arrive separately (null =
-   * nothing new for that half); the settings channel gets the merged record
-   * on every observation. */
-  private noteOfferings(
-    agentId: string,
-    modes: AgentKnobsView["modes"] | null,
-    options: readonly SessionConfigOptionView[] | null,
-  ): void {
-    const merged = this.observedKnobs.get(agentId) ?? { modes: null, options: [] };
-    if (modes !== null) merged.modes = modes;
-    if (options !== null) {
-      merged.options = options.map((o) =>
-        o.type === "select"
-          ? {
-              id: o.id,
-              name: o.name,
-              category: o.category,
-              type: "select" as const,
-              values: o.options.flatMap((entry) =>
-                "group" in entry
-                  ? entry.options.map((v) => ({ value: v.value, name: v.name }))
-                  : [{ value: entry.value, name: entry.name }],
-              ),
-            }
-          : { id: o.id, name: o.name, category: o.category, type: "boolean" as const, values: [] },
-      );
-    }
-    this.observedKnobs.set(agentId, merged);
-    this.settings.emit({ kind: "agentKnobsObserved", agentId, knobs: { ...merged } });
+  /** Knob offerings for Settings — connection-scoped, in-memory only
+   * (architecture.md § Session model: offerings are read, never stored).
+   * Sources: the connect-time probe read and every live session's
+   * responses/notifications — each already a complete normalized surface
+   * (knobs.ts exclusivity killed the old modes/options two-half merge), so
+   * every observation replaces wholesale. An empty surface is not an
+   * observation. */
+  private noteOfferings(agentId: string, normalized: NormalizedKnobs): void {
+    if (normalized.surface === "none") return;
+    this.settings.emit({
+      kind: "agentKnobsObserved",
+      agentId,
+      knobs: { knobs: toOfferedKnobs(normalized.knobs) },
+    });
   }
 
   private publishSessionStats(): void {
@@ -1051,7 +1020,9 @@ export class Orchestrator {
         env: {},
         cwd: this.workspaceRoot ?? process.cwd(),
         processPolicy: agent.processPolicy,
-        defaults: agent.defaults,
+        // Stored {mode, options} folds to the knob-id-keyed seed here — the
+        // one door legacy defaults re-enter memory through.
+        defaults: foldSeed(agent.defaults),
       });
       this.agentNames.set(agent.id, agent.name);
       const upsert = {
@@ -1108,7 +1079,9 @@ export class Orchestrator {
       command,
       args,
       processPolicy: config.processPolicy,
-      defaults: { ...config.defaults },
+      // The view's folded seed is stored under `options` alone — the legacy
+      // `mode` field is read (foldSeed) but never written again.
+      defaults: { options: { ...config.defaults } },
       registrySource: config.registrySource,
       lastSeenVersion: config.lastSeenVersion,
     });
@@ -1141,7 +1114,6 @@ export class Orchestrator {
     await this.agentEnv.remove(agentId);
     this.configuredAgentSpecs.delete(agentId);
     this.agentNames.delete(agentId);
-    this.observedKnobs.delete(agentId);
     const removed = { kind: "agentRemoved", agentId } as const;
     this.agentView.emit(removed);
     this.settings.emit(removed);
@@ -1287,7 +1259,7 @@ export class Orchestrator {
         args: c.args,
         envKeys: Object.keys(await this.agentEnv.get(c.id)),
         processPolicy: c.processPolicy,
-        defaults: c.defaults,
+        defaults: foldSeed(c.defaults),
         registrySource: c.registrySource,
         lastSeenVersion: c.lastSeenVersion,
       })),
@@ -1422,7 +1394,7 @@ export class Orchestrator {
       command: spec.command,
       args: [...spec.args],
       processPolicy: existing?.processPolicy ?? spec.processPolicy ?? "auto",
-      defaults: existing?.defaults ?? spec.defaults ?? {},
+      defaults: existing?.defaults ?? (spec.defaults !== undefined ? { options: spec.defaults } : {}),
       registrySource: registrySource ?? existing?.registrySource ?? null,
       lastSeenVersion: existing?.lastSeenVersion ?? null,
     });
@@ -1483,23 +1455,14 @@ export class Orchestrator {
         break;
       // A rejected set leaves authoritative state unchanged — republish it
       // (fresh identity) so the pill's pending spinner settles back to truth.
-      case "setSessionMode":
-        void this.sessionManager.setMode(action.sessionId, action.modeId).catch((err) => {
-          this.logCatch(`setMode ${action.sessionId}`)(err);
-          const modes = this.agentView.current.sessionModes[action.sessionId];
-          if (modes != null) {
-            this.agentView.emit({ kind: "sessionModesSet", sessionId: action.sessionId, modes: { ...modes } });
-          }
-        });
-        break;
-      case "setSessionConfigOption":
+      case "setSessionKnob":
         void this.sessionManager
-          .setConfigOption(action.sessionId, action.configId, action.value)
+          .setKnob(action.sessionId, action.knobId, action.value)
           .catch((err) => {
-            this.logCatch(`setConfigOption ${action.sessionId}`)(err);
-            const options = this.agentView.current.sessionConfigOptions[action.sessionId];
-            if (options !== undefined) {
-              this.agentView.emit({ kind: "sessionConfigOptionsChanged", sessionId: action.sessionId, options: [...options] });
+            this.logCatch(`setKnob ${action.sessionId}`)(err);
+            const knobs = this.agentView.current.sessionKnobs[action.sessionId];
+            if (knobs !== undefined) {
+              this.agentView.emit({ kind: "sessionKnobsSet", sessionId: action.sessionId, knobs: [...knobs] });
             }
           });
         break;

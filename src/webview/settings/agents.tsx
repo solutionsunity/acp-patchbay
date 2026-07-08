@@ -522,10 +522,7 @@ function DefaultKnob(props: {
  * offerings are connection state (read fresh each connect, never persisted),
  * so with no connection there is no list to render, only what's saved. */
 function StoredDefaultsLine({ defaults }: { defaults: AgentConfigView["defaults"] }) {
-  const entries = [
-    ...(defaults.mode !== undefined && defaults.mode !== "" ? [`mode=${defaults.mode}`] : []),
-    ...Object.entries(defaults.options ?? {}).map(([id, v]) => `${id}=${String(v)}`),
-  ];
+  const entries = Object.entries(defaults).map(([id, v]) => `${id}=${String(v)}`);
   return (
     <span className="note m-0 self-center">
       {entries.length === 0
@@ -644,35 +641,28 @@ export function AgentsSection(props: {
             { ...effectiveConfig, ...patch },
             Object.fromEntries(effectiveConfig.envKeys.map((k) => [k, ""])),
           );
-        const modeValues = knobs?.modes?.map((m) => ({ value: m.id, name: m.name })) ?? null;
-        const hasModeKnob = modeValues !== null && modeValues.length > 0;
-        // Some bridges surface the session mode twice: natively (modes) and
-        // again as a mode-category config option — one knob, not two.
-        const optionKnobs = (knobs?.options ?? []).filter((o) => !(hasModeKnob && o.category === "mode"));
-        const setOptionDefault = (optionId: string, value: string | boolean) => {
-          const options = { ...effectiveConfig.defaults.options };
-          if (value === "") delete options[optionId];
-          else options[optionId] = value;
-          saveConfig({ defaults: { ...effectiveConfig.defaults, options } });
+        // One normalized knob list (the orchestrator's knobs.ts already
+        // resolved the wire's modes/configOptions split) — no dedup here.
+        const offeredKnobs = knobs?.knobs ?? [];
+        const setKnobDefault = (knobId: string, value: string | boolean) => {
+          const defaults = { ...effectiveConfig.defaults };
+          if (value === "") delete defaults[knobId];
+          else defaults[knobId] = value;
+          saveConfig({ defaults });
         };
         // Saved selections the current connection doesn't offer (a model
         // retired, an option gone) — stated, never silently blanked; apply
-        // time already guards per session. Checked against the unfiltered
-        // option list so the deduped mode-category option still counts.
+        // time already guards per session.
         const savedNotOffered: string[] = [];
         if (knobs !== undefined) {
-          const savedMode = effectiveConfig.defaults.mode;
-          if (savedMode !== undefined && savedMode !== "" && !(modeValues?.some((m) => m.value === savedMode) ?? false)) {
-            savedNotOffered.push(`mode=${savedMode}`);
-          }
-          for (const [optionId, value] of Object.entries(effectiveConfig.defaults.options ?? {})) {
-            const offered = knobs.options.find((o) => o.id === optionId);
+          for (const [knobId, value] of Object.entries(effectiveConfig.defaults)) {
+            const offered = offeredKnobs.find((k) => k.id === knobId);
             const valueOffered =
               offered !== undefined &&
               (offered.type === "boolean"
                 ? typeof value === "boolean"
                 : typeof value === "string" && offered.values.some((v) => v.value === value));
-            if (!valueOffered) savedNotOffered.push(`${optionId}=${String(value)}`);
+            if (!valueOffered) savedNotOffered.push(`${knobId}=${String(value)}`);
           }
         }
         return (
@@ -798,28 +788,17 @@ export function AgentsSection(props: {
                   </span>
                 ) : (
                   <>
-                    {hasModeKnob && (
+                    {offeredKnobs.map((knob) => (
                       <DefaultKnob
-                        icon={KNOB_ICON.mode!}
-                        label="mode"
-                        offered={modeValues!}
-                        value={effectiveConfig.defaults.mode ?? ""}
-                        onChange={(v) =>
-                          saveConfig({ defaults: { ...effectiveConfig.defaults, mode: (v as string) || undefined } })
-                        }
-                      />
-                    )}
-                    {optionKnobs.map((option) => (
-                      <DefaultKnob
-                        key={option.id}
-                        icon={(option.category !== undefined ? KNOB_ICON[option.category] : undefined) ?? "settings"}
-                        label={option.name}
-                        offered={option.type === "boolean" ? null : option.values}
-                        value={effectiveConfig.defaults.options?.[option.id] ?? ""}
-                        onChange={(v) => setOptionDefault(option.id, v)}
+                        key={knob.id}
+                        icon={(knob.category !== undefined ? KNOB_ICON[knob.category] : undefined) ?? "settings"}
+                        label={knob.name}
+                        offered={knob.type === "boolean" ? null : knob.values}
+                        value={effectiveConfig.defaults[knob.id] ?? ""}
+                        onChange={(v) => setKnobDefault(knob.id, v)}
                       />
                     ))}
-                    {!hasModeKnob && optionKnobs.length === 0 && (
+                    {offeredKnobs.length === 0 && (
                       <span className="note m-0 self-center">
                         this agent offered no session knobs
                       </span>

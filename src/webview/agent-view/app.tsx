@@ -89,8 +89,7 @@ export function App({ state }: { state: AgentViewState }) {
         workspaceRoots={state.workspaceRoots}
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}
-        modes={active !== null ? (state.sessionModes[active.id] ?? null) : null}
-        configOptions={active !== null ? (state.sessionConfigOptions[active.id] ?? []) : []}
+        knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (
