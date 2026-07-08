@@ -9,6 +9,8 @@ import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
 import { AgentsSection } from "./agents";
 import { AssetsSection } from "./assets";
+import { AuditSection } from "./audit";
+import { DataSection } from "./data";
 import { IntegrationsSection } from "./integrations";
 import { MatrixSection } from "./matrix";
 import { PermissionsSection } from "./permissions";
@@ -31,6 +33,15 @@ const NAV_GROUPS = [
   {
     label: "Trust",
     items: [{ id: "permissions", icon: "shield", label: "Permissions" }],
+  },
+  // One verb per page: Permissions sets the rules, Audit reviews what
+  // happened (decisions + wire), Data shows what's stored and the way out.
+  {
+    label: "Transparency",
+    items: [
+      { id: "audit", icon: "eye", label: "Audit" },
+      { id: "data", icon: "database", label: "Data" },
+    ],
   },
   {
     label: "This workspace",
@@ -130,6 +141,18 @@ export function App({ state }: { state: SettingsState }) {
             onAddRule={(rule, layer) => send({ kind: "addCommandRule", rule, layer })}
             onRemoveRule={(pattern, layer) => send({ kind: "removeCommandRule", pattern, layer })}
             onSetScope={(scope) => send({ kind: "setFileWriteScope", scope })}
+          />
+        )}
+        {section === "audit" && (
+          <AuditSection
+            state={state}
+            onSetWireLog={(active) => send({ kind: "setWireLog", active })}
+          />
+        )}
+        {section === "data" && (
+          <DataSection
+            state={state}
+            onRefresh={() => send({ kind: "refreshDataInventory" })}
             onEraseAll={() => send({ kind: "eraseAllData" })}
           />
         )}

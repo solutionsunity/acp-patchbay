@@ -1,9 +1,10 @@
-// § Permissions (Trust): command rules in two layers (workspace over
-// machine floor), the file-write scope, and the decision audit tail.
+// § Permissions (Trust): the rules that answer next time — command rules in
+// two layers (workspace over machine floor) and the file-write scope.
+// Reviewing what happened lives on Audit; what's stored (and erasing it) on
+// Data — one verb per page.
 import { useState } from "react";
 import type { CommandRuleView, FileWriteScopeView, SettingsState } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
-import { ConfirmButton } from "./controls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -90,7 +91,6 @@ export function PermissionsSection(props: {
   onAddRule(rule: CommandRuleView, layer: "workspace" | "machine"): void;
   onRemoveRule(pattern: string, layer: "workspace" | "machine"): void;
   onSetScope(scope: FileWriteScopeView): void;
-  onEraseAll(): void;
 }) {
   const { state } = props;
 
@@ -144,52 +144,6 @@ export function PermissionsSection(props: {
         Workspace rules live in workspaceState (per user, per workspace), machine rules in global
         storage (per user, this machine) — never in the repo either way. A cloned repository
         cannot arrive pre-authorized.
-      </div>
-
-      <div className="card mt-3">
-        <h2 className="mt-0">Decision audit — recent</h2>
-        {state.auditTail.length === 0 ? (
-          <div className="note m-0">
-            No decisions recorded yet.
-          </div>
-        ) : (
-          <div className="audit">
-            {state.auditTail.map((entry, i) => {
-              const { ts, kind, ...rest } = entry;
-              const detail = Object.entries(rest)
-                .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                .join(" ");
-              return (
-                <div key={i}>
-                  {new Date(ts).toLocaleTimeString()} {kind} {detail}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* P18: the platform gives no uninstall hook (deactivate can't tell
-          uninstall from reload) and secrets outlive uninstalling — so a
-          clean slate is an explicit act here, never a lifecycle side
-          effect. */}
-      <div className="card mt-3 border-err/40">
-        <h2 className="mt-0 text-err">Danger zone</h2>
-        <div className="nm mb-1">Disconnect &amp; erase all data</div>
-        <div className="note mx-0 mt-0">
-          Stops every agent, then deletes everything patchbay stored on this machine: agent and
-          MCP-server configs, every credential and env value in SecretStorage, the capability
-          cache, permission rules, this workspace's session index, the decision audit, and
-          persisted session views. Run it before uninstalling — VS Code has no hook that lets
-          patchbay do this for you.
-        </div>
-        <ConfirmButton
-          label="Erase all data"
-          variant="destructive"
-          confirmLabel="Erase everything patchbay stored?"
-          title="Every agent stops now. Configs, credentials, caches, rules, and session records are deleted permanently. Other workspaces' session indexes are out of this window's reach — reopen them and erase again if needed."
-          onConfirm={props.onEraseAll}
-        />
       </div>
     </section>
   );

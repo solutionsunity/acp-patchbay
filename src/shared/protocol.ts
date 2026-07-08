@@ -53,6 +53,13 @@ export type Action =
    * never a lifecycle side effect: the platform has no uninstall hook, so
    * a clean slate before uninstalling is the user's own deliberate act. */
   | { kind: "eraseAllData" }
+  /** Wire log on/off (Audit page + status bar + palette command). Turning
+   * it on goes through the orchestrator's disclosure prompt first — the
+   * event confirming `active: true` arrives only after consent. */
+  | { kind: "setWireLog"; active: boolean }
+  /** Data page mount/refresh: recompute the storage inventory from the
+   * live stores and answer with dataInventoryChanged. */
+  | { kind: "refreshDataInventory" }
   | { kind: "switchSession"; sessionId: string }
   | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }
@@ -1552,6 +1559,23 @@ export interface SettingsState {
    * is in flight for this agent — the card's Verify control dims and reads
    * "Verifying…" until it clears. */
   verifyingAgents: Readonly<Record<string, true>>;
+  /** Wire log (Audit page): live state of the raw-frame tap. Never
+   * persisted — debugging is a session act, a reload always starts clean. */
+  wireLog: { active: boolean; until: string | null };
+  /** Live storage inventory (Data page) — null until the first read; always
+   * recomputed from the stores on request, never cached (reality is the
+   * source of truth). */
+  dataInventory: readonly DataInventoryRow[] | null;
+}
+
+/** One row of the Data page's storage inventory — a store, where it lives
+ * (the placement contract from architecture.md § State, stated as live
+ * reality), and what's in it right now. */
+export interface DataInventoryRow {
+  id: string;
+  label: string;
+  placement: "globalState" | "workspaceState" | "SecretStorage" | "workspace storage";
+  detail: string;
 }
 
 export const initialSettingsState: SettingsState = {
@@ -1574,6 +1598,8 @@ export const initialSettingsState: SettingsState = {
   registryUpdatedAt: "",
   pendingBinaryInstall: null,
   verifyingAgents: {},
+  wireLog: { active: false, until: null },
+  dataInventory: null,
 };
 
 export type SettingsEvent =
@@ -1597,6 +1623,8 @@ export type SettingsEvent =
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
+  | { kind: "wireLogChanged"; active: boolean; until: string | null }
+  | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "registryUpdated"; at: string }
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
   | { kind: "binaryInstallResolved"; agentId: string }
@@ -1710,6 +1738,10 @@ export function reduceSettings(
       return { ...state, sessionsToday: event.sessionsToday };
     case "agentKnobsObserved":
       return { ...state, agentKnobs: { ...state.agentKnobs, [event.agentId]: event.knobs } };
+    case "wireLogChanged":
+      return { ...state, wireLog: { active: event.active, until: event.until } };
+    case "dataInventoryChanged":
+      return { ...state, dataInventory: event.rows };
     default:
       return state;
   }
@@ -1727,6 +1759,8 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",
+  "wireLogChanged",
+  "dataInventoryChanged",
   "registryUpdated",
   "binaryInstallPending",
   "binaryInstallResolved",

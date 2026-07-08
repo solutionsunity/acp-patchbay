@@ -90,5 +90,6 @@ export function settingsState() {
       envKeys: ["API_KEY"], processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,
     }],
     sessionsToday: 7, agentKnobs: {}, registryUpdatedAt: "", pendingBinaryInstall: null, verifyingAgents: {},
+    wireLog: { active: false, until: null }, dataInventory: null,
   };
 }
