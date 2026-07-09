@@ -88,10 +88,18 @@ Context row (above):
 | Context chips | 📄 ⌖ ⚠ 🖼 | attached files, solidified selection, diagnostics, images; × removes |
 | Adder | ＋ dashed | one popover: Files · Selection · Problems · Roots · Attach (image/file — never disabled; converts to the best form the agent accepts) |
 
-Input: placeholder teaches the two typed triggers. **`/`** → advertised-commands
-menu (`available_commands_update`, sent as an ordinary prompt; typed-only — a `/`
-*button* is a vendor-menu pattern that doesn't apply here). **`@`** → context
-mention picker (resolves to standard content blocks — works for every agent).
+Input: placeholder teaches the two typed triggers; both menus navigate by
+arrow/Enter/Tab/Escape with focus never leaving the input (Lexical-backed —
+a textarea can't style ranges, which is what forced the editor; recorded
+2026-07-09). **`/`** → advertised-commands menu (`available_commands_update`,
+sent as an ordinary prompt; typed-only — a `/` *button* is a vendor-menu
+pattern that doesn't apply here); an accepted command becomes an inline
+token. **`@`** → context mention picker: open editors first, then workspace
+files (queried from the orchestrator — render-only-webview, the input never
+reads the filesystem), plus the adder's fixed rows. A picked file becomes an
+inline token sent as a `resource_link` block *at its position in the prompt*
+(the baseline every agent MUST accept); the fixed rows resolve to context
+chips as before.
 
 Action row (below):
 

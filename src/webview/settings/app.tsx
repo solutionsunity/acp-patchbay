@@ -99,6 +99,7 @@ export function App({ state }: { state: SettingsState }) {
             onAuthenticate={(agentId, methodId) =>
               send({ kind: "authenticateAgent", agentId, methodId })
             }
+            onLogout={(agentId) => send({ kind: "logoutAgent", agentId })}
             onUpgrade={(agentId) => send({ kind: "upgradeAgent", agentId })}
             onRefreshRoster={() => send({ kind: "refreshRoster" })}
             onConfirmBinaryInstall={(agentId) => send({ kind: "confirmBinaryInstall", agentId })}

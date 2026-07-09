@@ -25,14 +25,18 @@
    * (checkbox/radio/select popup) — without it Chromium falls back to its
    * light-UA default regardless of the vscode-* tokens above. */
   color-scheme: light dark;
-  --pb-bg: var(--vscode-sideBar-background);
+  /* Aliases into the theme contract (theme.css) — one definition, two
+   * dialects; this view's page surface is the side bar, hence --sidebar.
+   * Only tokens the contract doesn't carry (widget panel, faint text)
+   * still map VS Code vars directly. */
+  --pb-bg: var(--sidebar);
   --pb-panel: var(--vscode-editorWidget-background);
-  --pb-panel-2: var(--vscode-list-hoverBackground);
-  --pb-border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
-  --pb-text: var(--vscode-foreground);
-  --pb-text-dim: var(--vscode-descriptionForeground);
+  --pb-panel-2: var(--muted);
+  --pb-border: var(--border);
+  --pb-text: var(--foreground);
+  --pb-text-dim: var(--muted-foreground);
   --pb-text-faint: var(--vscode-disabledForeground);
-  --pb-radius: 8px;
+  --pb-radius: var(--radius);
 }
 
 * {
@@ -71,6 +75,7 @@ body {
   padding: 8px 10px 4px;
 }
 
+/* a read-out of the active session's agent — deliberately not interactive */
 .agent-chip {
   display: flex;
   align-items: center;
@@ -79,13 +84,8 @@ body {
   background: var(--pb-panel);
   border: 1px solid var(--pb-border);
   border-radius: 20px;
-  cursor: pointer;
   user-select: none;
   min-width: 0;
-}
-
-.agent-chip:hover {
-  background: var(--pb-panel-2);
 }
 
 .agent-chip .name {
@@ -94,15 +94,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.agent-chip .caret {
-  color: var(--pb-text-faint);
-  display: inline-flex;
-}
-
-.agent-chip .caret .codicon {
-  font-size: 12px;
 }
 
 .dot {
@@ -321,9 +312,9 @@ body {
   padding: 20px;
 }
 
+/* Size comes from StatePage's Icon (state-page.tsx, the one GLYPH_SIZE);
+ * only the accent color lives here. */
 .empty .glyph {
-  font-size: 34px;
-  letter-spacing: 4px;
   color: var(--pb-accent);
 }
 
@@ -534,6 +525,10 @@ body {
   padding: 8px 10px 10px;
   border-top: 1px solid var(--pb-border);
   position: relative;
+  /* one elevation step off the page (theme.css --card contract: darker in
+   * light themes, lighter in dark) — the input-shell keeps --pb-panel, so
+   * the prompt box reads as its own surface on top of the composer */
+  background: var(--card);
 }
 
 .ctx-row {
@@ -547,7 +542,7 @@ body {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--pb-text-dim);
   border: 1px solid var(--pb-border);
   border-radius: 6px;
@@ -599,36 +594,64 @@ body {
   border-color: var(--pb-accent-dim);
 }
 
-.input-shell textarea {
-  width: 100%;
-  background: none;
-  border: none;
+/* The Lexical prompt box (prompt-editor.tsx) — replaces the old textarea;
+ * same look, but a contenteditable so inline tokens can be styled. Sizing
+ * mirrors the old utilities: min 5 lines, grows with the dragged composer. */
+.prompt-editor {
+  flex: 1;
+  min-height: 7.5em;
+  overflow-y: auto;
   outline: none;
-  resize: vertical;
   color: var(--pb-text);
   font: inherit;
-  padding: 9px 11px 2px;
-  min-height: 40px;
-  max-height: 50vh;
+  padding: 9px 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.input-shell textarea::placeholder {
+.prompt-editor[contenteditable="false"] {
   color: var(--pb-text-faint);
 }
 
-.input-shell textarea:disabled {
-  color: var(--pb-text-faint);
+.prompt-placeholder {
+  /* the input-surface placeholder token (theme.css contract) — same
+   * muting rule as every other input */
+  color: var(--input-placeholder);
+  position: absolute;
+  top: 9px;
+  left: 11px;
+  pointer-events: none;
+}
+
+/* Inline tokens (nodes.ts): an accepted `/` command or `@` file mention —
+ * chip-like, atomic, visually distinct from prose. */
+.prompt-token {
+  background: var(--pb-panel-2);
+  border: 1px solid var(--pb-border);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+
+.mention-token {
+  color: var(--pb-accent);
+  border-color: var(--pb-accent-dim);
+}
+
+.command-token {
+  color: var(--pb-accent);
 }
 
 .input-foot {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 7px 6px;
+  /* sits on the composer surface now, below the input-shell — the
+   * composer's own side padding frames it, no bottom inset needed */
+  padding: 4px 0 0;
 }
 
 .knob {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--pb-text-dim);
   border: none;
   background: none;
@@ -647,7 +670,7 @@ body {
 }
 
 .knob select {
-  font-size: 11px;
+  font-size: 10px;
   font-family: inherit;
   color: inherit;
   background: none;
@@ -659,32 +682,10 @@ body {
   font-size: 10px;
 }
 
-.send {
-  margin-left: auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  border: none;
-  background: var(--pb-accent-dim);
-  color: var(--pb-text);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.send:hover {
-  background: var(--pb-accent);
-  color: #10231f;
-}
-
-.send:disabled {
-  background: var(--pb-panel-2);
-  color: var(--pb-text-faint);
-  cursor: default;
-}
-
-.send.stop {
-  background: color-mix(in srgb, var(--pb-err) 35%, var(--pb-bg));
-}
+/* .send/.stop retired — the composer send button converted to Button
+ * variants (brand fill / destructive while live) with size utilities
+ * (composer.tsx); the ghost-variant hover was silently outranking these
+ * rules anyway (utilities > components layer). */
 
 /* popovers */
 .pop {
@@ -698,7 +699,9 @@ body {
   overflow: hidden;
 }
 
-.pop .it {
+/* rows shared with Radix popover panels (the composer's context adder) */
+.pop .it,
+[data-slot="popover-content"] .it {
   padding: 7px 11px;
   cursor: pointer;
   display: flex;
@@ -707,11 +710,13 @@ body {
 }
 
 .pop .it:hover,
-.pop .it.sel {
+.pop .it.sel,
+[data-slot="popover-content"] .it:hover {
   background: var(--pb-panel-2);
 }
 
-.pop .it .d {
+.pop .it .d,
+[data-slot="popover-content"] .it .d {
   color: var(--pb-text-faint);
   font-size: 11px;
   margin-left: auto;
@@ -867,6 +872,16 @@ body {
 
 .live-dot-slot {
   width: 6px;
+  flex: none;
+}
+
+/* a turn completed while the session wasn't open — steady brand blue,
+ * no pulse (nothing is running); cleared by opening the session */
+.unseen-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pb-accent);
   flex: none;
 }
 

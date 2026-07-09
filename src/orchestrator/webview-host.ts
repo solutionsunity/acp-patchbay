@@ -25,7 +25,7 @@ import type { ChannelEndpoint } from "./channel";
 
 type Bundle = "agent-view" | "settings";
 
-function nonce(): string {
+export function nonce(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -45,6 +45,10 @@ export function webviewHtml(
   const codiconStyle = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "out", "codicons", "codicon.css"),
   );
+  // Declared, not derived: lazy-loaded sibling bundles (mermaid.js) need the
+  // out/ base URL, and document.currentScript is null by the time a lazily
+  // initialized module reads it (lazy-script.ts).
+  const outBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out"));
   const n = nonce();
   return `<!DOCTYPE html>
 <html lang="en">
@@ -53,6 +57,7 @@ export function webviewHtml(
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="patchbay-out-base" content="${outBase}/">
   <link rel="stylesheet" href="${codiconStyle}">
   <link rel="stylesheet" href="${style}">
 </head>

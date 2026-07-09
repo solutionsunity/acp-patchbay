@@ -7,8 +7,23 @@ import { computeFidelity } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
+import { timeAgo } from "../shared/time";
 import { Dot } from "./header";
 import { Badges, SessionActions } from "./session-row";
+import { Button } from "@/components/ui/button";
+
+/** Drawer title row with the explicit way out — clicking the scrim still
+ * works, but the affordance must be visible (P16). */
+function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
+  return (
+    <div className="flex items-center">
+      <h3 className="flex-1">{title}</h3>
+      <Button variant="ghost" size="icon" className="h-6 w-6" title="Close" aria-label="Close" onClick={onClose}>
+        <Icon name="close" />
+      </Button>
+    </div>
+  );
+}
 
 /** The agent picker (P17): one row per configured agent with its readiness
  * inline; picking one starts a chat with it — connecting first, inside the
@@ -25,7 +40,7 @@ export function AgentsDrawer(props: {
   const send = useActions();
   return (
     <div className="drawer">
-      <h3>New chat with…</h3>
+      <DrawerHead title="New chat with…" onClose={() => props.onDone()} />
       {props.agents.length === 0 && (
         <div className="a-row cursor-default">
           <span className="sub">No agents yet — add one in Settings.</span>
@@ -86,15 +101,18 @@ export function SessionsDrawer(props: {
   onDone(): void;
 }) {
   const send = useActions();
+  // Latest activity on top — sorted here in the view, so the reducer stays
+  // append-only and wire-merge arrival order stops mattering.
+  const ordered = [...props.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
     <div className="drawer">
-      <h3>Sessions</h3>
-      {props.sessions.length === 0 && (
+      <DrawerHead title="Sessions" onClose={props.onDone} />
+      {ordered.length === 0 && (
         <div className="s-row cursor-default">
           <span className="sub">No sessions yet.</span>
         </div>
       )}
-      {props.sessions.map((s) => {
+      {ordered.map((s) => {
         const agent = props.agents.find((a) => a.id === s.agentId);
         return (
           <div
@@ -105,10 +123,20 @@ export function SessionsDrawer(props: {
               props.onDone();
             }}
           >
-            {s.live ? <span className="live-dot" /> : <span className="live-dot-slot" />}
+            {/* green pulse = turn in flight (same green as a running agent);
+                blue = completed since last opened; empty slot otherwise */}
+            {s.live ? (
+              <span className="live-dot" title="Turn in progress" />
+            ) : s.unseen === true ? (
+              <span className="unseen-dot" title="Completed since you last opened it" />
+            ) : (
+              <span className="live-dot-slot" />
+            )}
             <div>
               <div className="nm">{s.title}</div>
-              <div className="sub">{agent?.name ?? s.agentId}</div>
+              <div className="sub">
+                {agent?.name ?? s.agentId} · {timeAgo(s.updatedAt)}
+              </div>
             </div>
             <div className="badges" onClick={(e) => e.stopPropagation()}>
               <Badges session={s} />

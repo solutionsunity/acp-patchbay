@@ -157,10 +157,24 @@ export class CapabilityTracker {
         const forked = await this.pool.fork(agentId, response.sessionId, dir);
         probeSessionIds.push(forked.sessionId);
       }
+      // Close, then delete, the throwaway sessions where the agent supports
+      // each — probe hygiene first (a list-capable agent's own history must
+      // not accrete one junk session per connect), with the session.close
+      // and session.delete used-proofs falling out of the same free
+      // round-trips (delete is spec-idempotent; close frees what delete
+      // doesn't cover on close-only agents).
+      if (declared.sessionClose) {
+        for (const id of probeSessionIds) await this.pool.closeSession(agentId, id);
+      }
+      if (declared.sessionDelete) {
+        for (const id of probeSessionIds) await this.pool.deleteSession(agentId, id);
+      }
     } catch (err) {
       if (err instanceof RequestError && err.code === -32000) {
+        // needsAuth itself was already raised by pool.ts's wire chokepoint
+        // (onAuthRequired — one writer for every auth_required, probe or
+        // real usage); this only names the friendly next step in the log.
         this.log.info(`${agentId}: probe hit auth_required — Log in to proceed`);
-        this.hooks.emit({ kind: "agentAuthRequired", agentId });
       } else {
         // declared but the round-trip failed — an honest state, not an error to surface
         this.log.debug(`${agentId}: probe round-trip failed — ${(err as Error).message}`);
@@ -192,6 +206,16 @@ export class CapabilityTracker {
    * cleared on a failed attempt. */
   async authenticate(agentId: string, methodId: string): Promise<void> {
     await this.pool.authenticate(agentId, methodId);
+    await this.probe(agentId);
+  }
+
+  /** Stable `logout` round trip, then re-probes: whether the agent now
+   * requires auth again isn't guessed at — the probe's session/new either
+   * works (agent allows unauthenticated sessions) or hits `auth_required`,
+   * which raises `needsAuth` and the Log in control through the same path
+   * the connect-time check uses. */
+  async logout(agentId: string): Promise<void> {
+    await this.pool.logout(agentId);
     await this.probe(agentId);
   }
 }

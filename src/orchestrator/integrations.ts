@@ -63,6 +63,13 @@ const mcpServersEntrySchema = z.union([
   }),
 ]);
 
+/** Own the routing arrays on store writes — the view's readonly arrays stay
+ * the webview's (protocol.ts: three reaches — auto / id list / except). */
+function cloneRouting(routing: IntegrationRoutingView): "auto" | string[] | { except: string[] } {
+  if (routing === "auto") return "auto";
+  return Array.isArray(routing) ? [...routing] : { except: [...(routing as { except: readonly string[] }).except] };
+}
+
 /** True with a minute of margin — refresh slightly before expiry rather
  * than reacting to a 401 whenever avoidable. */
 function isExpired(token: StoredToken): boolean {
@@ -437,7 +444,7 @@ export class IntegrationsManager {
       id,
       name,
       source: configSource,
-      routing: routing === "auto" ? "auto" : [...routing],
+      routing: cloneRouting(routing),
       active: true,
     });
     this.log.info(`${id}: custom ${configSource.kind} added`);
@@ -589,7 +596,7 @@ export class IntegrationsManager {
     if (existing === undefined) return;
     await this.integrationStore.upsert({
       ...existing,
-      routing: routing === "auto" ? "auto" : [...routing],
+      routing: cloneRouting(routing),
     });
     await this.refresh();
   }
@@ -636,8 +643,14 @@ export class IntegrationsManager {
     const servers: McpServer[] = [];
     for (const integration of this.integrationStore.list()) {
       if (!integration.active) continue; // muted — configured, credential intact, not routed
+      // "except" narrows the auto set, never widens it: a less-than-brokered
+      // agent stays outside whether or not it's listed (protocol.ts).
       const routed =
-        integration.routing === "auto" ? isFullyBrokered : integration.routing.includes(agentId);
+        integration.routing === "auto"
+          ? isFullyBrokered
+          : Array.isArray(integration.routing)
+            ? integration.routing.includes(agentId)
+            : isFullyBrokered && !integration.routing.except.includes(agentId);
       if (!routed) continue;
 
       const source = integration.source;

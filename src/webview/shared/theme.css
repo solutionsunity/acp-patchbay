@@ -36,8 +36,10 @@
   /* background/foreground  editor surface                     everything  */
   --background: var(--vscode-editor-background);
   --foreground: var(--vscode-foreground);
-  /* card                   widget surface                     Card, cards */
-  --card: var(--vscode-editorWidget-background);
+  /* card                   editor surface, one elevation step Card, .card,
+   *                        (darker in light; .dark block below stat tiles
+   *                        lightens instead)                              */
+  --card: color-mix(in srgb, var(--vscode-editor-background) 96%, black);
   --card-foreground: var(--vscode-foreground);
   /* popover                dropdown surface (widget)          Select/Menu/
    *                        — what native select popups use    Popover/Tip */
@@ -65,6 +67,13 @@
   --border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
   --input: var(--vscode-input-border, var(--vscode-editorWidget-border));
   --input-background: var(--vscode-input-background, transparent);
+  /* input text/placeholder    VS Code's own input tokens        Input, Textarea,
+   *                        — guaranteed muted placeholder on    CommandInput,
+   *                        the input surface in every theme,    SelectTrigger
+   *                        unlike descriptionForeground which
+   *                        is relative to the editor surface */
+  --input-foreground: var(--vscode-input-foreground, var(--vscode-foreground));
+  --input-placeholder: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
   --ring: var(--vscode-focusBorder);
   /* sidebar family         side bar surface                   Streamdown code/
    *                                                           mermaid chrome */
@@ -74,16 +83,37 @@
   /* radius                 = --pb-radius (hand CSS)           rounded-* scale */
   --radius: 8px;
 
-  /* ── patchbay identity palette (fixed, not theme-derived) ──────────────
-   * The teal/status accents ARE the product identity across themes; the
-   * hand CSS reads them as --pb-*, utilities as text-brand/ok/warn/err etc.
-   * One palette, two dialects, single definition — here. */
-  --pb-accent: #45c4a8;
-  --pb-accent-dim: #2c6f61;
-  --pb-consumed: #e8964f;
-  --pb-ok: #4cc38a;
-  --pb-warn: #e5b567;
-  --pb-err: #e5675c;
+  /* ── patchbay identity palette (contributed defaults, theme-overridable) ─
+   * The suctl functional palette (suctl.com/brand): every color MEANS
+   * something — blue is identity and can never read as a status verdict.
+   * Registered via contributes.colors (package.json) with per-mode
+   * defaults, so themes and users can override; the hexes here are only
+   * the fallback for contexts where the contributed vars don't resolve.
+   * Hand CSS reads them as --pb-*, utilities as text-brand/ok/warn/err etc.
+   * One palette, two dialects, single definition — here.
+   * (Supersedes the fixed teal palette — teal sat inside green's semantic
+   * neighborhood and collided with ok; re-derived when the suctl house
+   * system landed, not carried.) */
+  --pb-accent: var(--vscode-acpPatchbay-brand, #5b9bd5);
+  /* Brand FILLS on the agent flow's primary actions were tried and
+   * superseded (2026-07): where and how brand may fill is a design-pass
+   * decision, deferred until a designer is in place. Until then every
+   * button is theme-token vocabulary (Button variants on --primary etc.)
+   * and brand stays accent-only — text, borders, ≤26% tints — and never
+   * carries a verdict. */
+  --pb-accent-dim: color-mix(in srgb, var(--pb-accent) 45%, transparent);
+  --pb-consumed: var(--vscode-acpPatchbay-consumed, #56b6c2);
+  --pb-ok: var(--vscode-acpPatchbay-ok, #4ec9a0);
+  --pb-warn: var(--vscode-acpPatchbay-warn, #e5a830);
+  --pb-err: var(--vscode-acpPatchbay-err, #e06c75);
+}
+
+/* Card = the page surface nudged one elevation step: darker than the page
+ * in light themes (above), lighter in dark — guaranteed contrast even where
+ * a theme paints editor and widget surfaces identically. `.dark` rides the
+ * html element, synced from VS Code's body class (theme-dark-sync.ts). */
+:root.dark {
+  --card: color-mix(in srgb, var(--vscode-editor-background) 93%, white);
 }
 
 /* Unlayered on purpose: must outrank the `text-primary` utility Streamdown
@@ -96,6 +126,43 @@ a[data-streamdown="link"] {
 a[data-streamdown="link"]:hover,
 a[data-streamdown="link"]:active {
   color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+/* Rendered-block chrome, one policy: header strips and control icons on
+ * rendered blocks (code fences, mermaid, tables) and tool-call rows are
+ * chrome, not content — smaller and dimmer than what they decorate.
+ * Unlayered on purpose, twice over: Streamdown's own text-xs /
+ * text-muted-foreground utilities, and codicon.css's size pin
+ * (.codicon[class*=codicon-] { font: … 16px/1 codicon }, itself unlayered)
+ * are both unbeatable from inside the utilities layer. Opt-in hooks:
+ * .fence-hd (mermaid block header), .tool-hd (tool-call rows). */
+[data-streamdown="code-block-header"],
+[data-streamdown="mermaid-block"] > div:first-child, /* the "mermaid" label row — Streamdown gives it no data attribute of its own */
+.fence-hd,
+.tool-hd {
+  font-size: 11px;
+  color: var(--vscode-disabledForeground);
+}
+[data-streamdown="code-block-header"] .codicon[class*="codicon-"],
+[data-streamdown="code-block-actions"] .codicon[class*="codicon-"],
+[data-streamdown="mermaid-block-actions"] .codicon[class*="codicon-"],
+[data-streamdown="table-wrapper"] button .codicon[class*="codicon-"],
+.fence-hd .codicon[class*="codicon-"],
+.tool-hd .codicon[class*="codicon-"] {
+  font-size: 12px;
+}
+/* Streamdown's action buttons carry their own text-muted-foreground /
+ * hover:text-foreground utilities, which this unlayered rule outranks —
+ * so the hover feedback is restated here too. */
+[data-streamdown="code-block-actions"] button,
+[data-streamdown="mermaid-block-actions"] button,
+[data-streamdown="table-wrapper"] button {
+  color: var(--vscode-disabledForeground);
+}
+[data-streamdown="code-block-actions"] button:hover,
+[data-streamdown="mermaid-block-actions"] button:hover,
+[data-streamdown="table-wrapper"] button:hover {
+  color: var(--foreground);
 }
 
 @theme inline {
@@ -118,6 +185,8 @@ a[data-streamdown="link"]:active {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-input-background: var(--input-background);
+  --color-input-foreground: var(--input-foreground);
+  --color-input-placeholder: var(--input-placeholder);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);

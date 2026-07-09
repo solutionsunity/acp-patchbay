@@ -3,7 +3,10 @@
 // (the set that caught the unmapped-token and UA-ButtonText regressions).
 // Every var the theme bridge or hand CSS reads should appear here — a var
 // consumed but absent from these sets is exactly the kind of gap the gate
-// exists to catch.
+// exists to catch. The --vscode-acpPatchbay-* contributed colors
+// (package.json contributes.colors — VS Code always emits them, defaults or
+// theme-overridden) ride dark/light with their per-mode defaults; `purple`
+// deliberately omits them so the theme.css fallback hexes stay exercised.
 const SHARED = `
   --vscode-font-family:"Segoe WPC","Segoe UI",sans-serif;
   --vscode-editor-font-family:Consolas,monospace;`;
@@ -19,6 +22,9 @@ export const THEMES = {
     --vscode-input-background:#313131; --vscode-input-border:#3c3c3c;
     --vscode-errorForeground:#f85149; --vscode-dropdown-background:#252526;
     --vscode-dropdown-foreground:#cccccc; --vscode-textLink-foreground:#4daafc;
+    --vscode-acpPatchbay-brand:#5b9bd5; --vscode-acpPatchbay-ok:#4ec9a0;
+    --vscode-acpPatchbay-warn:#e5a830; --vscode-acpPatchbay-err:#e06c75;
+    --vscode-acpPatchbay-consumed:#56b6c2;
     color-scheme:dark;`,
   light: `${SHARED}
     --vscode-sideBar-background:#f8f8f8; --vscode-editor-background:#ffffff;
@@ -30,6 +36,9 @@ export const THEMES = {
     --vscode-input-background:#ffffff; --vscode-input-border:#cecece;
     --vscode-errorForeground:#f85149; --vscode-dropdown-background:#ffffff;
     --vscode-dropdown-foreground:#3b3b3b; --vscode-textLink-foreground:#005fb8;
+    --vscode-acpPatchbay-brand:#2e6da4; --vscode-acpPatchbay-ok:#177245;
+    --vscode-acpPatchbay-warn:#8a5d00; --vscode-acpPatchbay-err:#b3444f;
+    --vscode-acpPatchbay-consumed:#0f6674;
     color-scheme:light;`,
   purple: `${SHARED}
     --vscode-sideBar-background:#16141f; --vscode-editor-background:#191723;

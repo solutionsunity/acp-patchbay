@@ -2,11 +2,11 @@
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.
 import { useState, type ReactNode } from "react";
-import type { AgentConfigView, AgentSummary, RosterEntry, SettingsState } from "../../shared/protocol";
+import type { AgentConfigView, AgentSummary, AuthMethodView, RosterEntry, SettingsState } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
-import { ConfirmButton, Field, FidelityChip } from "./controls";
+import { ConfirmButton, Field, FidelityChip, Toggle } from "./controls";
 import { parseEnvLines } from "./parse-env";
 import {
   AlertDialog,
@@ -123,10 +123,7 @@ function AgentConfigForm(props: {
         </Select>
       </Field>
       <Field label="auto-connect" hint="connect this agent when the window opens">
-        <label className="row gap-1.5">
-          <Checkbox checked={autoConnect} onCheckedChange={(v) => setAutoConnect(v === true)} />
-          connect on window open
-        </label>
+        <Toggle icon="zap" label="connect on window open" checked={autoConnect} onChange={setAutoConnect} />
       </Field>
       <Field label="environment variables" hint="KEY=value, one per line">
         <Textarea
@@ -407,7 +404,7 @@ function BinaryInstallModal(props: {
  * declared but never wired to a button. */
 function LoginControl(props: {
   agentId: string;
-  methods: readonly { id: string; name: string; kind: "agent" | "env_var" | "terminal" }[];
+  methods: readonly AuthMethodView[];
   onAuthenticate(agentId: string, methodId: string): void;
 }) {
   const actionable = props.methods.filter((m) => m.kind === "agent");
@@ -419,6 +416,7 @@ function LoginControl(props: {
       </span>
     );
   }
+  const selected = actionable.find((m) => m.id === methodId) ?? actionable[0]!;
   return (
     <span className="row gap-1.5">
       {actionable.length > 1 && (
@@ -428,12 +426,19 @@ function LoginControl(props: {
             {actionable.map((m) => (
               <SelectItem key={m.id} value={m.id}>
                 {m.name}
+                {m.description !== null && (
+                  <span className="block text-[11px] text-muted-foreground">{m.description}</span>
+                )}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       )}
-      <Button size="sm" onClick={() => props.onAuthenticate(props.agentId, methodId || actionable[0]!.id)}>
+      <Button
+        size="sm"
+        title={selected.description ?? undefined}
+        onClick={() => props.onAuthenticate(props.agentId, selected.id)}
+      >
         Log in
       </Button>
     </span>
@@ -552,6 +557,7 @@ export function AgentsSection(props: {
   onStop(agentId: string): void;
   onRestart(agentId: string): void;
   onAuthenticate(agentId: string, methodId: string): void;
+  onLogout(agentId: string): void;
   onUpgrade(agentId: string): void;
   onRefreshRoster(): void;
   onConfirmBinaryInstall(agentId: string): void;
@@ -560,6 +566,9 @@ export function AgentsSection(props: {
   const { state } = props;
   const [editing, setEditing] = useState<string | null>(null); // agentId being edited
   const [diagFor, setDiagFor] = useState<string | null>(null);
+  // Card body (command line, capabilities, knobs) is collapsed by default —
+  // the header row carries status and actions; the gear opens the rest.
+  const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
 
   // One card per known agent id — the union of connected-this-session
   // (state.agents) and persisted (state.agentConfigs); Add always persists,
@@ -634,6 +643,8 @@ export function AgentsSection(props: {
         const status = a?.status ?? "untested";
         const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
         const upgrade = updateAvailable(state, config);
+        // Editing forces the body open — the form lives there.
+        const detailsOpen = openDetails[id] === true || editing === id;
         // Same predicate the orchestrator's own automatic post-connect/
         // reconnect retry gates on (capability-tracker.ts) — centralized in
         // protocol.ts so "does this still need a check" can't drift between
@@ -696,6 +707,17 @@ export function AgentsSection(props: {
               )}
               {status === "running" && (
                 <>
+                  {/* Offered only on a declared auth.logout — the spec's
+                      "Clients MUST NOT call it" otherwise. Hidden while
+                      needsAuth: nothing to log out of. */}
+                  {a?.needsAuth !== true && matrix?.["auth.logout"]?.declared === true && (
+                    <ConfirmButton
+                      label="Log out"
+                      icon="sign-out"
+                      title="Active sessions may start failing with auth errors until you log in again."
+                      onConfirm={() => props.onLogout(id)}
+                    />
+                  )}
                   <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
                     <Icon name="debug-stop" />
                   </Button>
@@ -733,12 +755,19 @@ export function AgentsSection(props: {
                   onConfirm={() => props.onRemove(id)}
                 />
               )}
+              <Button
+                variant="outline" size="icon" className="size-8"
+                title={detailsOpen ? "Hide settings" : "Settings"}
+                aria-label={detailsOpen ? "Hide settings" : "Settings"}
+                aria-expanded={detailsOpen}
+                onClick={() => {
+                  if (editing === id) setEditing(null);
+                  setOpenDetails({ ...openDetails, [id]: !detailsOpen });
+                }}
+              >
+                <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
+              </Button>
             </div>
-            {command !== undefined && (
-              <div className="mono mt-1.5 break-all">
-                {command}
-              </div>
-            )}
             {status === "crashed" && (
               <div className="note crashed-note mt-1.5">
                 <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}
@@ -750,12 +779,17 @@ export function AgentsSection(props: {
                 )}
               </div>
             )}
-            {matrix !== undefined && (
+            {detailsOpen && command !== undefined && (
+              <div className="mono mt-1.5 break-all">
+                {command}
+              </div>
+            )}
+            {detailsOpen && matrix !== undefined && (
               <div className="note mt-1.5">
                 {capabilityOneLiner(matrix)}
               </div>
             )}
-            {editing === id ? (
+            {!detailsOpen ? null : editing === id ? (
               <AgentConfigForm
                 initial={effectiveConfig}
                 onSave={(c, env) => {
@@ -786,16 +820,13 @@ export function AgentsSection(props: {
                     </SelectContent>
                   </Select>
                 </label>
-                <label
-                  className="knob-default"
+                <Toggle
+                  icon="zap"
+                  label="auto-connect"
                   title="connect this agent when the window opens"
-                >
-                  auto-connect
-                  <Checkbox
-                    checked={effectiveConfig.autoConnect}
-                    onCheckedChange={(v) => saveConfig({ autoConnect: v === true })}
-                  />
-                </label>
+                  checked={effectiveConfig.autoConnect}
+                  onChange={(v) => saveConfig({ autoConnect: v })}
+                />
                 {status !== "running" ? (
                   // Offerings are connection state — no connection, no list
                   // to render, only the stored selections stated as text.

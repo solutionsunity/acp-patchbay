@@ -14,6 +14,7 @@ import {
   initialSettingsState,
   reduceAgentView,
   reduceSettings,
+  restoredSessionState,
   type Action,
   type AgentConfigView,
   type AgentViewEvent,
@@ -39,6 +40,7 @@ import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type Norma
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager } from "./session-manager";
+import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
@@ -47,6 +49,7 @@ import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
+import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { LastKnownViewStore } from "./stores/last-known-view";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
@@ -90,6 +93,7 @@ export class Orchestrator {
   readonly decisionAudit: DecisionAuditStore;
   readonly lastKnownView: LastKnownViewStore;
   readonly lastConnected: LastConnectedStore;
+  readonly lastActiveSession: LastActiveSessionStore;
   readonly agentConfigs: AgentConfigStore;
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
@@ -169,6 +173,7 @@ export class Orchestrator {
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastKnownView = new LastKnownViewStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
+    this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
     // Agents and integrations are developer-env, not code-env: global to
     // this machine, never a repo-committed file. Deliberately global-only —
     // workspace binding may return later as an opt-in (see
@@ -220,7 +225,17 @@ export class Orchestrator {
     const workspaceRootsView = () =>
       (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     this.agentView = new ChannelHost(
-      { ...initialAgentViewState, roster: rosterEntries, workspaceRoots: workspaceRootsView() },
+      {
+        ...initialAgentViewState,
+        // The session list survives a restart: rehydrated from the index,
+        // not-live, transcripts refilled by replay/emulation on first use.
+        ...restoredSessionState(this.sessionIndex.list()),
+        // Hold the loading page only when there is actually a last open
+        // session to come back to — startupSettled clears it either way.
+        restoring: this.lastActiveSession.get() !== undefined,
+        roster: rosterEntries,
+        workspaceRoots: workspaceRootsView(),
+      },
       reduceAgentView,
       coalesceAgentViewEvent,
       onAction,
@@ -272,6 +287,22 @@ export class Orchestrator {
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidateAgent(agentId);
         }
+        // Every connect of a list-capable agent syncs its own session
+        // history into the list — the wire is the truth for who exists;
+        // patchbay's index stays as fallback + overlay (§ Session model).
+        if (status === "running") {
+          void this.sessionManager
+            .syncAgentSessions(agentId)
+            .then(() => {
+              // A session opened before its agent connected sat blank (no
+              // replay to run yet) — hydrate it now that one exists.
+              const active = this.agentView.current.activeSessionId;
+              if (active !== null && this.sessionIndex.get(active)?.agentId === agentId) {
+                return this.sessionManager.hydrate(active);
+              }
+            })
+            .catch(this.logCatch(`session/list sync for ${agentId}`));
+        }
         // Offerings are connection state (architecture.md § Session model) —
         // the settings reducer drops its copy off this same event, and the
         // next connect's offering read repopulates it.
@@ -303,6 +334,11 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification);
       },
       onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
+      onAuthRequired: (agentId) => {
+        const event = { kind: "agentAuthRequired", agentId } as const;
+        this.agentView.emit(event);
+        this.settings.emit(event);
+      },
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
       // Spawn registry (P15c): records live in globalState so an abnormal
@@ -464,14 +500,23 @@ export class Orchestrator {
           this.agentView.emit(...events);
           this.persistLastKnownViewIfNeeded(events);
           this.relaySettingsDerived(events);
+          this.recordLastActive(events);
         },
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
         isForkUsed: (agentId) =>
           this.agentView.current.capabilities[agentId]?.["session.fork"]?.used ?? false,
-        defaultsFor: (agentId) => this.pool.get(agentId)?.spec.defaults,
+        // From the store-backed spec map, never the pool entry's spec: that
+        // one is a connect-time snapshot, and a Settings edit to defaults
+        // must reach the very next session, not wait for a reconnect.
+        defaultsFor: (agentId) => this.configuredAgentSpecs.get(agentId)?.defaults,
         lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
+        currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
+        isDeleteUsed: (agentId) =>
+          this.agentView.current.capabilities[agentId]?.["session.delete"]?.used ?? false,
+        dropLastKnownView: (sessionId) => this.lastKnownView.remove(sessionId),
+        isActiveSession: (sessionId) => this.agentView.current.activeSessionId === sessionId,
       },
       () => this.workspaceRoot ?? process.cwd(),
       async (contextToken, agentId) => {
@@ -556,7 +601,11 @@ export class Orchestrator {
 
     // Orphan reaping strictly before any startup agent spawns (P15c): the
     // registry must be settled before new pids start landing in it.
-    void this.reapLeftoverProcesses().then(() => this.connectStartupAgents());
+    void this.reapLeftoverProcesses()
+      .then(() => this.connectStartupAgents())
+      // Settles the view's restore hold no matter how the connects went —
+      // the loading page must never outlive the startup sequence.
+      .finally(() => this.agentView.emit({ kind: "startupSettled" }));
   }
 
   /** Sweeps spawn-registry records left by a session that never ran its
@@ -603,6 +652,7 @@ export class Orchestrator {
       permissionRules: this.permissionRules,
       machineRules: this.machinePermissionRules,
       decisionAudit: this.decisionAudit,
+      lastActiveSession: this.lastActiveSession,
       lastKnownView: this.lastKnownView,
       lastConnected: this.lastConnected,
     });
@@ -690,6 +740,24 @@ export class Orchestrator {
         return Promise.resolve();
       }),
     );
+    this.restoreLastActiveSession();
+  }
+
+  /** Reload continuity's third rung (flag → list → pointer): return to the
+   * session that was open when the window went down. View restoration only
+   * — activate rides the same open path as a drawer click (load/resume
+   * where the agent is already up from the startup connects, else the
+   * persisted last-known view, read-only), and never spawns a process for
+   * an agent the startup rules didn't start. Runs after the connects so a
+   * running agent's attach wins over the seeded view; skipped if the user
+   * already opened something, or the pointer no longer resolves (session
+   * closed/pruned since — degrades to today's behavior, drawer unselected). */
+  private restoreLastActiveSession(): void {
+    const sessionId = this.lastActiveSession.get();
+    if (sessionId === undefined) return;
+    if (this.agentView.current.activeSessionId !== null) return;
+    if (this.sessionIndex.get(sessionId) === undefined) return;
+    this.sessionManager.activate(sessionId);
   }
 
   /** Active session · agent health · usage when reported (features.md § 3) —
@@ -825,12 +893,21 @@ export class Orchestrator {
   private async resolveProcessFor(agentId: string): Promise<string> {
     const primary = this.pool.get(agentId);
     if (primary === undefined) return agentId;
-    const policy = primary.spec.processPolicy ?? "auto";
+    // The policy is a config decision about placing *new* sessions — read
+    // from the store-backed spec map so a Settings edit applies to the next
+    // session, not the next reconnect; the pool snapshot is only the
+    // fallback for a connection with no config write behind it.
+    const policy =
+      this.configuredAgentSpecs.get(agentId)?.processPolicy ?? primary.spec.processPolicy ?? "auto";
     const hasExisting = primary.sessions.length > 0;
     const used = this.agentView.current.capabilities[agentId]?.concurrentSessions?.used ?? false;
     const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !used);
     if (!isolate) return agentId;
     const poolKey = `${agentId}::iso::${++this.isolationCounter}`;
+    // Deliberately the pool entry's spec, snapshot and all: an isolated
+    // instance is a sibling of the *running* process (same binary, same
+    // env), not a fresh config connect — every live session of one agent
+    // must ride the same process reality until an actual (re)connect.
     await this.pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
     return poolKey;
   }
@@ -849,31 +926,33 @@ export class Orchestrator {
   }
 
   /** Settings-side projections of session-manager events (ui.md § Settings
-   * Agents): the sessions-today stat tile, and per-agent knob offerings so
-   * default knobs render only where the agent actually offers them. */
+   * Agents): the sessions-today stat tile. Live sessions' knob surfaces
+   * deliberately do NOT feed the Settings offerings: a set_config_option
+   * response is the session's option surface *given its current selections*
+   * (fast mode exists only on some models, effort lists vary per model) —
+   * session state, not provider inventory. Republishing it as agent-level
+   * offerings made the Settings default-knob rows track whichever session
+   * last touched a knob. Offerings come only from session-independent
+   * reads: the connect-time probe (noteOfferings via the capability
+   * tracker, plus the probe session's late config_option_update). */
   private relaySettingsDerived(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
         this.publishSessionStats();
-      } else if (event.kind === "sessionKnobsSet" && event.knobs.length > 0) {
-        const agentId = this.sessionIndex.get(event.sessionId)?.agentId;
-        if (agentId === undefined) continue;
-        this.settings.emit({
-          kind: "agentKnobsObserved",
-          agentId,
-          knobs: { knobs: toOfferedKnobs(event.knobs) },
-        });
       }
     }
   }
 
   /** Knob offerings for Settings — connection-scoped, in-memory only
    * (architecture.md § Session model: offerings are read, never stored).
-   * Sources: the connect-time probe read and every live session's
-   * responses/notifications — each already a complete normalized surface
-   * (knobs.ts exclusivity killed the old modes/options two-half merge), so
-   * every observation replaces wholesale. An empty surface is not an
-   * observation. */
+   * Sources: the connect-time probe read only (session/new response plus
+   * the probe's late config_option_update) — a fresh session at agent
+   * defaults, so its surface is the one a new session will actually offer.
+   * Never live sessions: their surfaces are conditioned on their own
+   * selections (see relaySettingsDerived). Each read is a complete
+   * normalized surface (knobs.ts exclusivity killed the old modes/options
+   * two-half merge), so every observation replaces wholesale. An empty
+   * surface is not an observation. */
   private noteOfferings(agentId: string, normalized: NormalizedKnobs): void {
     if (normalized.surface === "none") return;
     this.settings.emit({
@@ -881,6 +960,18 @@ export class Orchestrator {
       agentId,
       knobs: { knobs: toOfferedKnobs(normalized.knobs) },
     });
+  }
+
+  /** The "last open session" pointer (stores/last-active-session.ts).
+   * Every activation flows through the session-manager emit hook — a user
+   * switch, a branch's auto-open, an emulated continuation replacing its
+   * dead parent — so this one chokepoint keeps the pointer honest; close
+   * (user click or prune) clears it only while it still points there. */
+  private recordLastActive(events: readonly AgentViewEvent[]): void {
+    for (const event of events) {
+      if (event.kind === "sessionActivated") void this.lastActiveSession.set(event.sessionId);
+      else if (event.kind === "sessionClosed") void this.lastActiveSession.clearIf(event.sessionId);
+    }
   }
 
   private publishSessionStats(): void {
@@ -907,7 +998,16 @@ export class Orchestrator {
     for (const sessionId of sessionIds) {
       const agentId = this.sessionIndex.get(sessionId)?.agentId;
       if (agentId === undefined) continue;
-      if (this.pool.get(agentId)?.declared?.loadSession) continue; // real replay exists — no fallback needed
+      // "Real replay exists — no fallback needed." Read from the matrix, not
+      // the live connection: pool.get(...)?.declared degrades to undefined
+      // while the agent is down, which used to flip this to "persist anyway"
+      // for load-capable agents. The matrix survives disconnects and is only
+      // dropped with the agent itself.
+      const declaresLoad =
+        this.agentView.current.capabilities[agentId]?.["session.load"]?.declared ??
+        this.pool.get(agentId)?.declared?.loadSession ??
+        false;
+      if (declaresLoad) continue;
       const blocks = this.agentView.current.transcripts[sessionId];
       if (blocks === undefined) continue;
       void this.lastKnownView.save(sessionId, blocks, new Date().toISOString());
@@ -958,28 +1058,68 @@ export class Orchestrator {
   }
 
   /** A rendered mermaid SVG, opened as an editor-area panel — the agent
-   * view's column is narrow; the files area is where a diagram can breathe.
-   * Static content: no scripts at all, styles allowed for the SVG's own
-   * inline styling (same CSP posture as the chat webview that rendered it). */
+   * view's column is narrow (even the in-chat fullscreen stops at it); the
+   * files area is where a diagram can breathe. Pan/zoom is hand-rolled
+   * vanilla (wheel = zoom around cursor, drag = pan, double-click = reset):
+   * CSP allows exactly one nonce'd inline script for it — a deliberate,
+   * recorded widening of this panel's previous no-script posture, still
+   * default-src 'none' and the SVG is mermaid's sanitized output. */
   private openDiagram(svg: string): void {
     const panel = vscode.window.createWebviewPanel(
       "acpPatchbay.diagram",
       "Diagram",
       vscode.ViewColumn.Active,
-      {},
+      { enableScripts: true },
     );
+    const n = nonce();
     panel.webview.html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;">
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${n}'; img-src data:;">
   <style>
-    body { margin: 0; height: 100vh; display: grid; place-items: center; overflow: auto; }
-    svg { max-width: 95vw; max-height: 95vh; height: auto; }
+    body { margin: 0; height: 100vh; overflow: hidden; cursor: grab; }
+    body.dragging { cursor: grabbing; }
+    #stage { height: 100%; display: grid; place-items: center; }
+    #wrap { transform-origin: 0 0; }
+    svg { max-width: 95vw; max-height: 95vh; height: auto; display: block; }
   </style>
 </head>
-<body>${svg}</body>
+<body>
+  <div id="stage"><div id="wrap">${svg}</div></div>
+  <script nonce="${n}">
+    "use strict";
+    const wrap = document.getElementById("wrap");
+    let scale = 1, x = 0, y = 0, drag = null;
+    const apply = () => { wrap.style.transform = \`translate(\${x}px, \${y}px) scale(\${scale})\`; };
+    window.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const next = Math.min(10, Math.max(0.2, scale * factor));
+      // keep the point under the cursor fixed while scaling
+      x = e.clientX - (e.clientX - x) * (next / scale);
+      y = e.clientY - (e.clientY - y) * (next / scale);
+      scale = next;
+      apply();
+    }, { passive: false });
+    window.addEventListener("pointerdown", (e) => {
+      drag = { x: e.clientX, y: e.clientY };
+      document.body.classList.add("dragging");
+    });
+    window.addEventListener("pointermove", (e) => {
+      if (drag === null) return;
+      x += e.clientX - drag.x;
+      y += e.clientY - drag.y;
+      drag = { x: e.clientX, y: e.clientY };
+      apply();
+    });
+    const end = () => { drag = null; document.body.classList.remove("dragging"); };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("dblclick", () => { scale = 1; x = 0; y = 0; apply(); });
+  </script>
+</body>
 </html>`;
   }
 
@@ -1145,9 +1285,12 @@ export class Orchestrator {
    * are invalidated, the agent leaves both channel states via the
    * `agentRemoved` event, and its per-agent facts (used capabilities,
    * observed knobs) are purged so a future re-add starts honest. The
-   * session index is deliberately left alone: it's patchbay's own record
-   * of sessions that happened (decisions are recorded, not deleted). */
+   * session index is the user's call: it's patchbay's own record of
+   * sessions that happened, but records for an agent that no longer exists
+   * are dead weight in the sessions list — so a modal asks keep or delete
+   * (Esc keeps: destruction is never the default). */
   private async removeAgentConfig(agentId: string): Promise<void> {
+    const name = this.agentNames.get(agentId) ?? agentId;
     await this.pool.stopAllFor(agentId);
     this.sessionManager.invalidateAgent(agentId);
     await this.agentConfigs.remove(agentId);
@@ -1159,6 +1302,21 @@ export class Orchestrator {
     this.agentView.emit(removed);
     this.settings.emit(removed);
     await this.refreshAgentConfigs();
+    const orphaned = this.sessionIndex.list().filter((e) => e.agentId === agentId).length;
+    if (orphaned === 0) return;
+    const DELETE = `Delete ${orphaned === 1 ? "it" : `all ${orphaned}`}`;
+    const pick = await vscode.window.showWarningMessage(
+      `${name} was removed — delete its session history too?`,
+      {
+        modal: true,
+        detail:
+          `${orphaned === 1 ? "1 saved session" : `${orphaned} saved sessions`} from this agent ` +
+          "would otherwise stay in the sessions list as read-only records.",
+      },
+      DELETE,
+      "Keep history",
+    );
+    if (pick === DELETE) await this.sessionManager.purgeAgentSessions(agentId);
   }
 
   /** Enable goes through the disclosure prompt — every entry point (Audit
@@ -1356,6 +1514,21 @@ export class Orchestrator {
     void this.refreshAgentAssets(spec.agentId);
   }
 
+  /** Restart is a spawn, so it reads reality like any connect: the current
+   * config spec and fresh SecretStorage env — never the pool entry's
+   * connect-time snapshot (a command edit or key rotation in Settings must
+   * reach the very next spawn). No config behind the connection: the
+   * snapshot is all there is, and pool.restart falls back to it. */
+  private async restartAgent(agentId: string): Promise<void> {
+    const spec = this.configuredAgentSpecs.get(agentId);
+    if (spec === undefined) {
+      await this.pool.restart(agentId);
+      return;
+    }
+    const env = await this.agentEnv.get(agentId);
+    await this.pool.restart(agentId, { ...spec, env: { ...spec.env, ...env } });
+  }
+
   /** Resolves a roster entry's declared distribution into a spawnable spec.
    * npx/uvx are ecosystem-managed installs — spawning them *is* installing,
    * nothing extra to do. A `binary` distribution not yet cached for this
@@ -1455,7 +1628,7 @@ export class Orchestrator {
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.pool.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
+        void this.restartAgent(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
         break;
       case "stopAgent":
         void this.pool.stop(action.agentId);
@@ -1475,9 +1648,23 @@ export class Orchestrator {
       case "refreshDataInventory":
         void this.publishDataInventory();
         break;
-      case "switchSession":
+      case "switchSession": {
+        const previous = this.agentView.current.activeSessionId;
         this.sessionManager.activate(action.sessionId);
+        // A session click is a connect trigger — the running agent is the
+        // session's prerequisite (composer stays disabled until then); the
+        // activate above already showed whatever local view exists.
+        void this.connectForSession(action.sessionId);
+        // Looking away frees the previous chat's agent-side resources —
+        // release() itself refuses when a turn is in flight or the agent
+        // offers no way back (no load/resume), so this is always safe.
+        if (previous !== null && previous !== action.sessionId) {
+          void this.sessionManager
+            .release(previous, "switched away")
+            .catch(this.logCatch(`release ${previous}`));
+        }
         break;
+      }
       case "renameSession":
         void this.sessionManager.rename(action.sessionId, action.title);
         break;
@@ -1512,7 +1699,7 @@ export class Orchestrator {
       case "sendPrompt":
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
         void this.sessionManager
-          .sendPrompt(action.sessionId, action.text)
+          .sendPrompt(action.sessionId, action.text, action.parts)
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
       case "stopTurn":
@@ -1532,6 +1719,13 @@ export class Orchestrator {
         void this.capabilityTracker
           .authenticate(action.agentId, action.methodId)
           .catch(this.logCatch(`authenticate ${action.agentId}`));
+        break;
+      case "logoutAgent":
+        // the UI only offers this on a declared auth.logout; the follow-up
+        // probe re-raises needsAuth if sessions now need a login again
+        void this.capabilityTracker
+          .logout(action.agentId)
+          .catch(this.logCatch(`logout ${action.agentId}`));
         break;
       case "confirmBinaryInstall":
         void this.confirmBinaryInstall(action.agentId);
@@ -1691,7 +1885,9 @@ export class Orchestrator {
         void this.addContextRoot(action.sessionId);
         break;
       case "removeContextRoot":
-        this.sessionManager.removeRoot(action.sessionId, action.path);
+        void this.sessionManager
+          .removeRoot(action.sessionId, action.path)
+          .catch(this.logCatch(`removeRoot ${action.sessionId}`));
         break;
       case "addImageContext":
         this.sessionManager.addContext(action.sessionId, {
@@ -1705,17 +1901,52 @@ export class Orchestrator {
       case "addFilePickerContext":
         void this.addFilePickerContext(action.sessionId);
         break;
-      case "addOpenEditorContext":
-        void this.readTextFileLive(action.path).then((content) =>
-          this.sessionManager.addContext(action.sessionId, {
-            id: `chip-${Date.now()}`,
-            kind: "file",
-            label: `File: ${action.path}`,
-            content,
-          }),
+      case "queryWorkspaceFiles":
+        void this.queryWorkspaceFiles(action.query).catch(
+          this.logCatch(`queryWorkspaceFiles "${action.query}"`),
         );
         break;
     }
+  }
+
+  /** The `@` mention picker's workspace tier (render-only-webview: the
+   * webview asks, never reads the filesystem). One findFiles sweep per
+   * query, ranked host-side — basename prefix, then basename substring,
+   * then path substring — and cut to a menu-sized answer. Directories come
+   * from the same sweep (every matched file's ancestors up to its workspace
+   * folder) — no second walk. `files.exclude` applies through findFiles
+   * itself; node_modules is excluded explicitly since only `search.exclude`
+   * covers it by default. */
+  private async queryWorkspaceFiles(query: string): Promise<void> {
+    const uris = await vscode.workspace.findFiles("**/*", "**/node_modules/**", 2000);
+    const q = query.toLowerCase();
+    const rankOf = (path: string): number => {
+      const name = path.split(/[\\/]/).pop()!.toLowerCase();
+      return name.startsWith(q) ? 0 : name.includes(q) ? 1 : path.toLowerCase().includes(q) ? 2 : 3;
+    };
+    const rank = (paths: Iterable<string>) =>
+      [...paths]
+        .map((path) => ({ path, rank: rankOf(path) }))
+        .filter((e) => e.rank < 3)
+        .sort((a, b) => a.rank - b.rank || a.path.length - b.path.length);
+    const dirSet = new Set<string>();
+    for (const uri of uris) {
+      const stop = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath;
+      let dir = uri.fsPath;
+      for (;;) {
+        const cut = Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\"));
+        const parent = cut > 0 ? dir.slice(0, cut) : "";
+        if (parent === "" || parent === stop || parent === dir) break;
+        dirSet.add(parent);
+        dir = parent;
+      }
+    }
+    this.agentView.emit({
+      kind: "workspaceFilesListed",
+      query,
+      files: rank(uris.map((u) => u.fsPath)).slice(0, 20).map((e) => e.path),
+      dirs: rank(dirSet).slice(0, 8).map((e) => e.path),
+    });
   }
 
   /** "Add workspace folders as session context roots" (features.md § Chat) —
@@ -1731,7 +1962,7 @@ export class Orchestrator {
     });
     const uri = picked?.[0];
     if (uri === undefined) return;
-    this.sessionManager.addRoot(sessionId, uri.fsPath);
+    await this.sessionManager.addRoot(sessionId, uri.fsPath);
   }
 
   /** "Attach files by... picker" (features.md § Chat) — reuses the same
@@ -1841,6 +2072,35 @@ export class Orchestrator {
     }
   }
 
+  /** The session-click half of P17's connect-on-demand: opening a session
+   * whose configured agent is off spawns it, through the same in-pane
+   * chatConnect states startChat uses — but no session is minted: on
+   * success the status-running hook re-syncs and hydrates the now-active
+   * session, and `forSessionId` makes the failure pane's Retry re-open this
+   * session instead of starting a new chat. Unconfigured agents stay
+   * untouched — the row is a readable record, nothing more to offer. */
+  private async connectForSession(sessionId: string): Promise<void> {
+    const agentId = this.sessionIndex.get(sessionId)?.agentId;
+    if (agentId === undefined) return;
+    if (this.pool.get(agentId)?.status === "running") return;
+    const spec = this.configuredAgentSpecs.get(agentId);
+    if (spec === undefined) return;
+    if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
+    this.agentView.emit({ kind: "chatConnectStarted", agentId, forSessionId: sessionId });
+    try {
+      await this.connectAgent(spec);
+      this.agentView.emit({ kind: "chatConnectResolved" });
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const reason =
+        err instanceof RequestError && err.code === -32000
+          ? "needs login first — use Log in on this agent in Settings § Agents"
+          : (this.pool.get(agentId)?.detail ?? raw);
+      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason, forSessionId: sessionId });
+      this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
+    }
+  }
+
   private async connectFromSource(
     source: ConnectAgentSource,
     verifyAfterConnect = false,
@@ -1907,6 +2167,7 @@ export class Orchestrator {
   }
 
   dispose(): void {
+    this.sessionManager.dispose();
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
     this.acpRegistry.dispose();

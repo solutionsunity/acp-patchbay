@@ -52,12 +52,12 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
         <span className="minus">−{block.deletions}</span>
         <span className="st ml-auto">
           {block.resolution !== null && (
-            <>
+            <span className={block.resolution.accepted ? "text-ok" : undefined}>
               <Icon name={block.resolution.accepted ? "check" : "close"} />{" "}
               {block.resolution.accepted
                 ? `${block.resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
                 : "rejected — disk untouched"}
-            </>
+            </span>
           )}
         </span>
       </div>
@@ -96,10 +96,17 @@ export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "ter
             <>
               <span className="spin" /> live
             </>
+          ) : block.exitCode === 0 ? (
+            <span className="text-ok">
+              <Icon name="check" /> exit 0
+            </span>
+          ) : block.exitCode != null ? (
+            <span className="text-err">
+              <Icon name="close" /> exit {block.exitCode}
+            </span>
           ) : (
-            <>
-              <Icon name="check" /> exit {block.exitCode ?? "?"}
-            </>
+            // exit code unknown — no verdict, no verdict color
+            <>exit ?</>
           )}
         </span>
       </div>

@@ -78,7 +78,19 @@ export class WireLog {
   frame(agentId: string, direction: "→" | "←", line: string): void {
     if (!this.active) return;
     let out = line;
-    for (const secret of this.secrets) out = out.split(secret).join("•••");
+    // Longest first: when one registered value is a prefix of another
+    // (systematic for context tokens — ctx-1/ctx-10), replacing the short
+    // one first would shred the long one and print its tail in clear.
+    // Each value is also masked in its JSON-escaped spelling — the frame is
+    // JSON, so a secret containing `"` or `\` rides the wire escaped and
+    // would never match raw.
+    const spellings = [...this.secrets]
+      .flatMap((secret) => {
+        const escaped = JSON.stringify(secret).slice(1, -1);
+        return escaped === secret ? [secret] : [secret, escaped];
+      })
+      .sort((a, b) => b.length - a.length);
+    for (const secret of spellings) out = out.split(secret).join("•••");
     if (out.length > MAX_FRAME_CHARS) {
       out = `${out.slice(0, MAX_FRAME_CHARS)} … [truncated — ${line.length} chars total]`;
     }

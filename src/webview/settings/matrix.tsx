@@ -18,14 +18,20 @@ const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
   { id: "prompt.image", label: "prompt.image" },
   { id: "prompt.audio", label: "prompt.audio" },
   { id: "prompt.embeddedContext", label: "prompt.embeddedContext" },
-  { id: "session.fork", label: "session.fork" },
+  // session.* in lifecycle order: enumerate → reopen (load, else resume) →
+  // branch → release → remove.
+  { id: "session.list", label: "session.list" },
   { id: "session.load", label: "session.load" },
   { id: "session.resume", label: "session.resume" },
+  { id: "session.fork", label: "session.fork" },
+  { id: "session.close", label: "session.close" },
+  { id: "session.delete", label: "session.delete" },
   { id: "mcp.http", label: "mcp.http" },
   { id: "mcp.sse", label: "mcp.sse" },
   { id: "usage", label: "usage reporting" },
   { id: "concurrentSessions", label: "concurrent sessions" },
   { id: "auth", label: "auth" },
+  { id: "auth.logout", label: "auth.logout" },
 ];
 
 const STATE_ICON = {
@@ -55,13 +61,18 @@ const STATE_TEXT = {
 const ROW_CONSEQUENCE: Partial<Record<CapabilityRowId, string>> = {
   "session.fork": "without it, branching is emulated — seeded from the transcript, labeled",
   "session.load": "without it, reopening after a restart falls back to an emulated continuation",
-  "session.resume": "no live path yet — declared state only",
+  "session.resume": "continues a dead session without replay — real memory, but no visible history; load is preferred",
+  "session.list": "the agent's own session history feeds the list — without it, only sessions patchbay created show",
+  "session.delete": "without it, removing a session only forgets it in patchbay — the agent's own history keeps it",
+  "session.close": "lets patchbay free an idle session's agent-side resources — reopened on demand via load/resume",
   "fs.readTextFile": "brokered read path — gates the fully-brokered fidelity label",
   "fs.writeTextFile": "brokered write path — routed writes arrive as native diffs",
   terminal: "brokered command execution — gates the fully-brokered fidelity label",
   usage: "without it, no usage gauge is shown — absence over fake",
   concurrentSessions: "process policy `auto` isolates new sessions until this is proven",
   auth: "a working session/new — proven by the free check at add/Verify, or by the first real session",
+  "auth.logout":
+    "without it, there is no Log out control — the spec forbids calling logout on an agent that didn't declare it",
 };
 
 export function MatrixSection({ state }: { state: SettingsState }) {
@@ -84,10 +95,14 @@ export function MatrixSection({ state }: { state: SettingsState }) {
         </div>
       ) : (
         <>
-          {/* evidence order: nothing → proof → suspicion → bare claim.
-              "used" needs no "declared," prefix — used implies declared by
-              construction (the reducer writes both in one path). */}
+          {/* reading order: the claim and its absence first, then the two
+              evidence states. "used" needs no "declared," prefix — used
+              implies declared by construction (the reducer writes both in
+              one path). */}
           <div className="legend">
+            <span>
+              <span className="st-d"><Icon name="circle" /></span> declared, not used
+            </span>
             <span>
               <span className="st-n">—</span> not declared
             </span>
@@ -96,9 +111,6 @@ export function MatrixSection({ state }: { state: SettingsState }) {
             </span>
             <span>
               <span className="st-s"><Icon name="warning" /></span> suspect
-            </span>
-            <span>
-              <span className="st-d"><Icon name="circle" /></span> declared, not used
             </span>
           </div>
           {/* Tooltip per cell (Radix, hover or keyboard focus) — the

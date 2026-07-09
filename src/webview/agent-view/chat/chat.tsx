@@ -9,6 +9,7 @@ import { deriveTranscript, formatDuration, type TurnRollup } from "./view-model"
 import { Thought, ToolCallCard, ToolRunCard } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
+import { StatePage } from "./state-page";
 import { Button } from "@/components/ui/button";
 
 /** Per-turn metadata line (ui-rendering-strategy § Per-turn summary /
@@ -59,7 +60,9 @@ function TurnMetaLine({ block, rollup }: { block: TurnEndBlock; rollup: TurnRoll
 }
 
 /** Live elapsed ticker while a turn is in flight — visible feedback for a
- * slow response instead of silence. Client-side seconds; ephemeral. */
+ * slow response instead of silence. Client-side seconds; ephemeral. A
+ * spinner, not a clock glyph: animation is the "something is happening"
+ * signal, the digits already say how long. */
 function TurnTicker({ startedAt }: { startedAt: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -68,7 +71,7 @@ function TurnTicker({ startedAt }: { startedAt: string }) {
   }, []);
   return (
     <div className="py-0.5 text-[11px] text-muted-foreground">
-      <Icon name="watch" /> {formatDuration(startedAt, new Date(now).toISOString())}
+      <Icon name="loading" spin /> {formatDuration(startedAt, new Date(now).toISOString())}
     </div>
   );
 }
@@ -97,6 +100,14 @@ function Block({ block, live, sessionId }: { block: ChatBlock; live: boolean; se
       return <TerminalCard block={block} />;
     case "elicitation":
       return <ElicitationCard block={block} />;
+    case "notice":
+      // System voice — visually distinct from agent prose on purpose (the
+      // honesty seam: e.g. where a resumed session's cached view ends).
+      return (
+        <div className="py-1 text-[11px] italic text-muted-foreground">
+          <Icon name="info" /> {block.text}
+        </div>
+      );
   }
 }
 
@@ -126,67 +137,69 @@ export function Chat(props: {
   const connect = props.state.chatConnect ?? null;
   if (connect !== null) {
     const name = agents.find((a) => a.id === connect.agentId)?.name ?? connect.agentId;
+    if (connect.status === "connecting") {
+      return <StatePage icon="loading" spin tag={<>Connecting {name}…</>} />;
+    }
     return (
-      <div className="chat">
-        <div className="empty">
-          {connect.status === "connecting" ? (
-            <>
-              <div className="glyph">
-                <Icon name="loading" spin />
-              </div>
-              <div className="tag">Connecting {name}…</div>
-            </>
-          ) : (
-            <>
-              <div className="glyph">
-                <Icon name="warning" />
-              </div>
-              <div className="tag">
-                {name} couldn't start{connect.reason !== undefined ? ` — ${connect.reason}` : ""}
-              </div>
-              <div className="pick">
-                <Button size="sm" onClick={() => send({ kind: "startChat", agentId: connect.agentId })}>
-                  Retry
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings" })}>
-                  Settings
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>
-                  Dismiss
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      <StatePage
+        icon="warning"
+        tag={
+          <>
+            {name} couldn't start{connect.reason !== undefined ? ` — ${connect.reason}` : ""}
+          </>
+        }
+      >
+        <Button
+          size="sm"
+          onClick={() =>
+            send(
+              // a session-click connect retries as the same click —
+              // never minting a new session for it
+              connect.forSessionId !== undefined
+                ? { kind: "switchSession", sessionId: connect.forSessionId }
+                : { kind: "startChat", agentId: connect.agentId },
+            )
+          }
+        >
+          Retry
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings" })}>
+          Settings
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>
+          Dismiss
+        </Button>
+      </StatePage>
     );
+  }
+
+  // Startup restore in flight (protocol.ts `restoring`): the last open
+  // session is on its way back — hold a loading page rather than flashing
+  // the empty state. `?? false` guards snapshots minted before the field.
+  if (active === null && (props.state.restoring ?? false)) {
+    return <StatePage icon="loading" spin tag="Restoring last session…" />;
   }
 
   if (active === null) {
     return (
-      <div className="chat">
-        <div className="empty">
-          <div className="glyph">
-            <Icon name="comment-discussion" />
-          </div>
-          <div className="tag">
-            {agents.length === 0
-              ? "Any ACP agent, resident in your editor. Set one up to begin."
-              : "No session yet — start one with +."}
-          </div>
-          <div className="pick">
-            <Button size="sm" onClick={props.onNewChat}>
-              {agents.length === 0 ? (
-                "Set up an agent…"
-              ) : (
-                <>
-                  <Icon name="add" /> New chat
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
+      <StatePage
+        icon="comment-discussion"
+        tag={
+          agents.length === 0
+            ? "Any ACP agent, resident in your editor. Set one up to begin."
+            : "No session yet — start one with +."
+        }
+      >
+        <Button size="sm" onClick={props.onNewChat}>
+          {agents.length === 0 ? (
+            "Set up an agent…"
+          ) : (
+            <>
+              <Icon name="add" /> New chat
+            </>
+          )}
+        </Button>
+      </StatePage>
     );
   }
 

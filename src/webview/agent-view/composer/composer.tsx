@@ -1,23 +1,25 @@
-// The composer: context chips row, typed-trigger menus, the input, knobs,
-// send/stop. Owns its draft and sends its own actions per session id; the
-// only ephemeral state is UI furniture (draft text, open adder).
-import type React from "react";
-import { useState } from "react";
+// The composer: context chips row, the Lexical prompt editor (typed-trigger
+// menus + inline tokens live in prompt-editor.tsx), knobs, send/stop. Owns
+// its send/stop routing per session id; the only ephemeral state is UI
+// furniture (draft content, open adder, drag height).
+import { useRef, useState } from "react";
 import type {
   AgentSummary,
   ContextChip,
   LiveSelectionView,
   OpenEditorView,
+  PromptPart,
   SessionKnobView,
   SessionSummary,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Knobs } from "./knobs";
-import { basename, MentionMenu, SlashMenu } from "./menus";
+import { basename } from "./menus";
+import { PromptEditor } from "./prompt-editor";
 import { RootsChip } from "./roots-chip";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { AvailableCommand } from "../../../shared/protocol";
 
 export function Composer(props: {
@@ -27,63 +29,40 @@ export function Composer(props: {
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
   workspaceRoots: readonly string[];
+  /** Whether a root change re-applies to the live session (agent declares
+   * session/load or session/resume) — drives the roots chip's honesty note. */
+  rootsApplyLive: boolean;
   liveSelection: LiveSelectionView | null;
   openEditors: readonly OpenEditorView[];
+  workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   knobs: readonly SessionKnobView[];
 }) {
   const send = useActions();
-  const [draft, setDraft] = useState("");
   const [adderOpen, setAdderOpen] = useState(false);
+  // The resize surface is the whole composer block (context row → send row),
+  // dragged from its top edge — the input itself never grows a resizer.
+  // Ephemeral by design: render furniture, reset with the webview.
+  const [height, setHeight] = useState<number | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y0: number; h0: number } | null>(null);
+  const submitRef = useRef<(() => void) | null>(null);
+  const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
   const enabled = props.session !== null && props.agent?.status === "running";
   const sessionId = props.session?.id ?? "";
   const live = props.session?.live ?? false;
-  const showSlash = draft.startsWith("/") && !draft.includes(" ");
-  // The second typed trigger (ui.md § Composer): the caret word starting
-  // with "@" opens the context mention picker.
-  const mentionToken = (() => {
-    if (showSlash) return null;
-    const last = draft.split(/\s/).pop() ?? "";
-    return last.startsWith("@") ? last : null;
-  })();
-  const mentionPick = (action: () => void) => {
-    setDraft(draft.slice(0, draft.length - mentionToken!.length).trimEnd());
-    action();
-  };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      e.preventDefault();
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result); // "data:image/png;base64,...."
-        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-        send({
-          kind: "addImageContext",
-          sessionId,
-          dataUrl: base64,
-          mimeType: item.type,
-          label: `Image (${item.type})`,
-        });
-      };
-      reader.readAsDataURL(file);
-      return; // one image per paste — never disabled, never ambiguous
-    }
+  const sendOrStop = () => {
+    if (live) send({ kind: "stopTurn", sessionId });
+    else submitRef.current?.();
   };
-
-  const submit = () => {
+  const onSubmit = (text: string, parts?: readonly PromptPart[]): boolean => {
     if (live) {
+      // Enter during a live turn = Stop (same as the button); draft stays.
       send({ kind: "stopTurn", sessionId });
-      return;
+      return false;
     }
-    const text = draft.trim();
-    if (text === "") return;
-    send({ kind: "sendPrompt", sessionId, text });
-    setDraft("");
+    send({ kind: "sendPrompt", sessionId, text, parts });
+    return true;
   };
 
   /** The adder's entries — also reused by the `@` mention picker's fixed rows. */
@@ -92,7 +71,31 @@ export function Composer(props: {
   const addFilePicker = () => send({ kind: "addFilePickerContext", sessionId });
 
   return (
-    <div className="composer">
+    <div
+      className="composer flex flex-col"
+      ref={shellRef}
+      style={height !== null ? { height } : undefined}
+    >
+      <div
+        className="group absolute inset-x-0 -top-[5px] z-10 flex h-[10px] cursor-ns-resize items-center justify-center"
+        title="Drag to resize"
+        onPointerDown={(e) => {
+          drag.current = { y0: e.clientY, h0: shellRef.current!.getBoundingClientRect().height };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          if (drag.current === null) return;
+          const next = drag.current.h0 + (drag.current.y0 - e.clientY);
+          setHeight(Math.min(window.innerHeight * 0.8, Math.max(MIN_HEIGHT, next)));
+        }}
+        onPointerUp={(e) => {
+          drag.current = null;
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }}
+      >
+        {/* the grabber pill — the visible "hold here" affordance */}
+        <div className="h-[3px] w-10 rounded-full bg-border transition-colors group-hover:bg-muted-foreground group-active:bg-muted-foreground" />
+      </div>
       {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
         <div className="ctx-row">
           {enabled && (
@@ -100,6 +103,7 @@ export function Composer(props: {
               sessionId={sessionId}
               roots={props.contextRoots}
               workspaceRoots={props.workspaceRoots}
+              applyLive={props.rootsApplyLive}
             />
           )}
           {enabled && props.liveSelection !== null && (
@@ -134,91 +138,89 @@ export function Composer(props: {
             </span>
           ))}
           {enabled && (
-            <span className="ctx-chip ctx-add" onClick={() => setAdderOpen((v) => !v)} title="Add context">
-              <Icon name="add" />
-            </span>
-          )}
-          {adderOpen && (
-            <div className="pop bottom-7 left-0">
-              {(
-                [
-                  { icon: "target", label: "Selection", hint: "current editor selection", run: addSelection },
-                  { icon: "file", label: "Current file", hint: "active editor", run: () => send({ kind: "addFileContext", sessionId }) },
-                  { icon: "warning", label: "Problems", hint: "workspace diagnostics", run: addDiagnostics },
-                  { icon: "attach", label: "Attach file…", hint: "pick any file", run: addFilePicker },
-                ] as const
-              ).map((entry) => (
-                <div
-                  key={entry.label}
-                  className="it"
-                  onClick={() => {
-                    entry.run();
-                    setAdderOpen(false);
-                  }}
-                >
-                  <b>
-                    <Icon name={entry.icon} /> {entry.label}
-                  </b>
-                  <span className="d">{entry.hint}</span>
-                </div>
-              ))}
-            </div>
+            // A real Popover (like the roots chip): closes on outside click
+            // and Escape, panel style shared with every other popover.
+            <Popover open={adderOpen} onOpenChange={setAdderOpen}>
+              <PopoverTrigger asChild>
+                <span className="ctx-chip ctx-add" title="Add context">
+                  <Icon name="add" />
+                </span>
+              </PopoverTrigger>
+              <PopoverContent align="start" side="top" className="w-auto min-w-56 p-0">
+                {(
+                  [
+                    { icon: "target", label: "Selection", hint: "current editor selection", run: addSelection },
+                    { icon: "file", label: "Current file", hint: "active editor", run: () => send({ kind: "addFileContext", sessionId }) },
+                    { icon: "warning", label: "Problems", hint: "workspace diagnostics", run: addDiagnostics },
+                    { icon: "attach", label: "Attach file…", hint: "pick any file", run: addFilePicker },
+                  ] as const
+                ).map((entry) => (
+                  <div
+                    key={entry.label}
+                    className="it"
+                    onClick={() => {
+                      entry.run();
+                      setAdderOpen(false);
+                    }}
+                  >
+                    <b>
+                      <Icon name={entry.icon} /> {entry.label}
+                    </b>
+                    <span className="d">{entry.hint}</span>
+                  </div>
+                ))}
+              </PopoverContent>
+            </Popover>
           )}
         </div>
       )}
-      <div className="input-shell relative">
-        {showSlash && (
-          <SlashMenu
-            commands={props.commands}
-            filter={draft.slice(1)}
-            onPick={(name) => setDraft(`/${name} `)}
-          />
-        )}
-        {enabled && mentionToken !== null && (
-          <MentionMenu
-            filter={mentionToken.slice(1)}
-            openEditors={props.openEditors}
-            hasSelection={props.liveSelection !== null}
-            onPickEditor={(path) => mentionPick(() => send({ kind: "addOpenEditorContext", sessionId, path }))}
-            onPickSelection={() => mentionPick(addSelection)}
-            onPickProblems={() => mentionPick(addDiagnostics)}
-            onPickAttach={() => mentionPick(addFilePicker)}
-          />
-        )}
-        <Textarea
-          rows={1}
-          className="min-h-0 resize-y border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-          disabled={!enabled}
-          value={draft}
-          onPaste={handlePaste}
-          onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
+      <div className="input-shell relative flex min-h-0 flex-1 flex-col">
+        <PromptEditor
+          enabled={enabled}
           placeholder={
             enabled
               ? `Message ${props.agent!.name} — / commands · @ context`
               : "Connect an agent to start"
           }
+          commands={props.commands}
+          openEditors={props.openEditors}
+          workspaceFiles={props.workspaceFiles}
+          hasSelection={enabled && props.liveSelection !== null}
+          onSubmit={onSubmit}
+          onPasteImage={(base64, mimeType) =>
+            send({
+              kind: "addImageContext",
+              sessionId,
+              dataUrl: base64,
+              mimeType,
+              label: `Image (${mimeType})`,
+            })
+          }
+          onPickSelection={addSelection}
+          onPickProblems={addDiagnostics}
+          onPickAttach={addFilePicker}
+          submitRef={submitRef}
         />
-        <div className="input-foot">
-          <Knobs sessionId={sessionId} knobs={props.knobs} />
-          <span className="flex-1" />
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`send ${live ? "stop" : ""}`}
-            disabled={!enabled}
-            title={live ? "Stop" : "Send"}
-            aria-label={live ? "Stop" : "Send"}
-            onClick={submit}
-          >
-            <Icon name={live ? "debug-stop" : "arrow-up"} />
-          </Button>
-        </div>
+      </div>
+      {/* Outside the input-shell on purpose: the foot sits on the composer's
+          elevated surface (--card); only the prompt box keeps --pb-panel. */}
+      <div className="input-foot">
+        <Knobs sessionId={sessionId} knobs={props.knobs} />
+        <span className="flex-1" />
+        {/* theme-token primary (brand fills superseded — theme.css
+            § identity palette); while a turn is live it becomes Stop,
+            which is destructive. */}
+        <Button
+          variant={live ? "destructive" : "default"}
+          size="icon"
+          className="ml-auto size-[26px] rounded-[7px]"
+          disabled={!enabled}
+          title={live ? "Stop" : "Send"}
+          aria-label={live ? "Stop" : "Send"}
+          onClick={sendOrStop}
+        >
+          <Icon name={live ? "debug-stop" : "arrow-up"} />
+        </Button>
       </div>
     </div>
   );

@@ -24,16 +24,20 @@
    * (checkbox/radio/select popup) — without it Chromium falls back to its
    * light-UA default regardless of the vscode-* tokens above. */
   color-scheme: light dark;
-  --pb-bg: var(--vscode-editor-background);
+  /* Aliases into the theme contract (theme.css) — one definition, two
+   * dialects: utilities read the tokens, the hand CSS below reads these.
+   * Only tokens the contract doesn't carry (widget panel, faint text,
+   * mono font) still map VS Code vars directly. */
+  --pb-bg: var(--background);
   --pb-panel: var(--vscode-editorWidget-background);
-  --pb-panel-2: var(--vscode-list-hoverBackground);
-  --pb-card: var(--vscode-editorWidget-background);
-  --pb-border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
-  --pb-text: var(--vscode-foreground);
-  --pb-text-dim: var(--vscode-descriptionForeground);
+  --pb-panel-2: var(--muted);
+  --pb-card: var(--card);
+  --pb-border: var(--border);
+  --pb-text: var(--foreground);
+  --pb-text-dim: var(--muted-foreground);
   --pb-text-faint: var(--vscode-disabledForeground);
   --pb-mono: var(--vscode-editor-font-family, monospace);
-  --pb-radius: 8px;
+  --pb-radius: var(--radius);
 }
 
 * {

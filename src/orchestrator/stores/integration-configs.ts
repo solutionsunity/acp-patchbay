@@ -47,8 +47,11 @@ export const integrationConfigSchema = z.object({
   source: integrationSourceSchema,
   /** "auto" (default) attaches only to agents whose fidelity is fully
    * brokered (features.md § Integrations); an explicit id list pins exactly
-   * which agents receive it — the user's routing, never all-or-nothing. */
-  routing: z.union([z.literal("auto"), z.array(z.string())]).default("auto"),
+   * which agents receive it; `{ except }` is the auto set minus the listed
+   * agents — the user's routing, never all-or-nothing. */
+  routing: z
+    .union([z.literal("auto"), z.array(z.string()), z.object({ except: z.array(z.string()) })])
+    .default("auto"),
   /** Inactive = configured with its credential intact, but excluded from
    * every agent's mcpServers — the mute switch, not a disconnect.
    * Disconnect is the full clear (config + credential + env); a curated

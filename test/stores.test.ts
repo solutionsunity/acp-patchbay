@@ -11,6 +11,7 @@ import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-stor
 import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore, RELOAD_GRACE_MS } from "../src/orchestrator/stores/last-connected";
 import {
   DEFAULT_PERMISSION_RULES,
@@ -71,6 +72,29 @@ describe("LastConnectedStore — reload-continuation stamp", () => {
     await store.write(["claude"]);
     await store.write([]);
     expect(await store.consume()).toEqual([]);
+  });
+});
+
+describe("LastActiveSessionStore — the last-open-session pointer", () => {
+  it("holds the latest activation; close clears only while it still points there", async () => {
+    const store = new LastActiveSessionStore(new MemoryKV());
+    expect(store.get()).toBeUndefined();
+    await store.set("s1");
+    await store.set("s2");
+    expect(store.get()).toBe("s2");
+    // Closing a session the user already switched away from must not
+    // erase the newer pointer.
+    await store.clearIf("s1");
+    expect(store.get()).toBe("s2");
+    await store.clearIf("s2");
+    expect(store.get()).toBeUndefined();
+  });
+
+  it("survives what a reload survives — no freshness bound, unlike the stamp", async () => {
+    const kv = new MemoryKV();
+    await new LastActiveSessionStore(kv).set("s1");
+    // A fresh store over the same KV (the next activate) still reads it.
+    expect(new LastActiveSessionStore(kv).get()).toBe("s1");
   });
 });
 

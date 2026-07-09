@@ -69,7 +69,7 @@ function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
   }
   if (block.status === "completed") {
     return (
-      <span className="st">
+      <span className="st text-ok">
         <Icon name="check" />
       </span>
     );
@@ -92,11 +92,12 @@ export function ToolCallCard({ block, sessionId }: { block: ToolCallBlock; sessi
   return (
     <div className="card">
       <div
-        className={`card-hd ${expandable ? "cursor-pointer" : ""}`}
+        className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""}`}
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
         aria-expanded={expandable ? open : undefined}
       >
-        <Icon name={TOOL_ICON[block.toolKind]} /> {block.title}
+        <Icon name={TOOL_ICON[block.toolKind]} />
+        <span className="min-w-0 flex-1 truncate">{block.title}</span>
         {expandable && <Icon name={open ? "chevron-down" : "chevron-right"} />}
         <ToolCallStatusTag block={block} />
       </div>
@@ -148,7 +149,7 @@ export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBloc
     return (
       <>
         <div
-          className="card-hd cursor-pointer text-muted-foreground"
+          className="card-hd tool-hd cursor-pointer"
           onClick={() => setOpen(false)}
           aria-expanded={true}
         >
@@ -162,9 +163,15 @@ export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBloc
   }
   return (
     <div className="card">
-      <div className="card-hd cursor-pointer" onClick={() => setOpen(true)} aria-expanded={false}>
-        <Icon name="tools" /> {calls.length} tool calls
-        {running !== undefined && <span className="text-muted-foreground"> — {running.title}</span>}
+      <div
+        className="card-hd tool-hd cursor-pointer"
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+      >
+        <Icon name="tools" />
+        <span className="min-w-0 flex-1 truncate">
+          {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}
+        </span>
         <Icon name="chevron-right" />
         <span className="st">
           {running !== undefined ? (
@@ -178,7 +185,9 @@ export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBloc
               <Icon name="close" /> {failed} failed
             </span>
           ) : (
-            <Icon name="check" />
+            <span className="text-ok">
+              <Icon name="check" />
+            </span>
           )}
         </span>
       </div>

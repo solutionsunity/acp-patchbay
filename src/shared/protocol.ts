@@ -63,12 +63,20 @@ export type Action =
   | { kind: "switchSession"; sessionId: string }
   | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }
-  | { kind: "sendPrompt"; sessionId: string; text: string }
+  /** `text` is the readable form (transcript + title derivation). `parts`,
+   * when present, is the same content with inline file mentions kept
+   * positional — the orchestrator turns each `fileRef` into a
+   * `resource_link` content block *at its place in the prompt* instead of
+   * a chip riding ahead of the prose. Absent for plain text prompts. */
+  | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[] }
   | { kind: "stopTurn"; sessionId: string }
   | { kind: "verifyAgent"; agentId: string }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
   | { kind: "authenticateAgent"; agentId: string; methodId: string }
+  /** Only ever offered when the agent declared `auth.logout` — the spec's
+   * "Clients MUST NOT call it" otherwise holds by construction. */
+  | { kind: "logoutAgent"; agentId: string }
   /** A registry `binary` distribution not yet cached locally always gates
    * on this — no checksum exists in the registry spec (binary-installer.ts),
    * so the first download of each (agent, version) needs an explicit,
@@ -127,8 +135,9 @@ export type Action =
   | { kind: "openAssetFile"; agentId: string; path: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
-  /** Open a rendered mermaid SVG as an editor-area panel — full size,
-   * outside the agent view's narrow column. */
+  /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
+   * fullscreen maxes out at the sidebar column; the files area is where a
+   * big diagram can breathe. */
   | { kind: "openDiagram"; svg: string }
   /** A webview-side runtime error (uncaught, rejection, CSP violation) —
    * logged to the Patchbay Output channel, the durable record the in-view
@@ -143,9 +152,17 @@ export type Action =
   | { kind: "removeContextRoot"; sessionId: string; path: string }
   | { kind: "addImageContext"; sessionId: string; dataUrl: string; mimeType: string; label: string }
   | { kind: "addFilePickerContext"; sessionId: string }
-  /** From the composer's `@` mention picker — attach an open editor's live
-   * content (ui.md § Composer: "@ → context mention picker"). */
-  | { kind: "addOpenEditorContext"; sessionId: string; path: string };
+  /** The `@` mention picker's workspace tier: the webview never touches the
+   * filesystem (render-only-webview) — it asks, the orchestrator runs
+   * `workspace.findFiles` and answers with workspaceFilesListed. */
+  | { kind: "queryWorkspaceFiles"; query: string };
+
+/** One positional piece of a composed prompt (sendPrompt `parts`). */
+export type PromptPart =
+  | { kind: "text"; text: string }
+  /** An inline `@file` mention — sent as a `resource_link` content block at
+   * this position; the agent reads it through the brokered fs path itself. */
+  | { kind: "fileRef"; path: string };
 
 // ── Settings § Agents — agent launch config (features.md: "add, edit, and
 // remove agents, including launch configuration per agent"). Agents are
@@ -190,7 +207,11 @@ export interface AgentConfigView {
 
 // ── integrations (architecture.md § Integrations) ───────────────────────────
 
-export type IntegrationRoutingView = "auto" | readonly string[];
+/** Three reaches: "auto" = every fully-brokered agent (the safety gate);
+ * an id list = exactly these agents; `{ except }` = the auto set minus the
+ * listed agents. Excluding never widens reach — a less-than-brokered agent
+ * stays outside the auto set whether or not it's listed. */
+export type IntegrationRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
 
 /** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
  * with auth" escape hatch (features.md § Integrations). Registry-backed
@@ -377,6 +398,9 @@ export interface OpenEditorView {
 export interface AuthMethodView {
   id: string;
   name: string;
+  /** The wire's optional `description` — stable on all method shapes, meant
+   * for display; normalized to null when the agent omits it. */
+  description: string | null;
   kind: "agent" | "env_var" | "terminal";
 }
 
@@ -389,6 +413,7 @@ export interface DeclaredCapabilities {
   sessionFork: boolean;
   sessionResume: boolean;
   sessionList: boolean;
+  sessionDelete: boolean;
   sessionClose: boolean;
   promptImage: boolean;
   promptAudio: boolean;
@@ -396,6 +421,9 @@ export interface DeclaredCapabilities {
   mcpHttp: boolean;
   mcpSse: boolean;
   authMethods: readonly AuthMethodView[];
+  /** `agentCapabilities.auth.logout` — the agent supports the stable
+   * `logout` method; absent means "Clients MUST NOT call it". */
+  authLogout: boolean;
 }
 
 // ── agent-view channel ───────────────────────────────────────────────────────
@@ -443,11 +471,15 @@ export type CapabilityRowId =
   | "session.fork"
   | "session.load"
   | "session.resume"
+  | "session.list"
+  | "session.delete"
+  | "session.close"
   | "mcp.http"
   | "mcp.sse"
   | "usage"
   | "concurrentSessions"
-  | "auth";
+  | "auth"
+  | "auth.logout";
 
 export interface CapabilityCell {
   declared: boolean;
@@ -526,6 +558,14 @@ export interface SessionSummary {
   emulated: boolean;
   /** Parent session id when this is a branch (⑂ badge names its parent). */
   branchOf: string | null;
+  /** ISO time of the last activity — creation, prompt send, turn end, or
+   * the agent's own session/list metadata, whichever is newest. The
+   * drawer's sort key ("latest" = last activity, not creation). */
+  updatedAt: string;
+  /** A turn completed while this session wasn't the open one — the blue
+   * dot. Reducer-derived (turnEnded on a non-active session), cleared by
+   * activation; never persisted — a reload starts with nothing unread. */
+  unseen?: boolean;
 }
 
 // ── session knobs (architecture.md § Session model, mode, effort) — one
@@ -727,6 +767,15 @@ export interface ElicitationBlock {
   resolution: { cancelled: boolean } | null;
 }
 
+/** A patchbay-authored transcript marker — system voice, never agent prose.
+ * Exists for the honesty seams: e.g. the session/resume rung shows where
+ * patchbay's cached view ends and the agent's unreplayed memory continues. */
+export interface NoticeBlock {
+  kind: "notice";
+  id: string;
+  text: string;
+}
+
 export type ChatBlock =
   | UserBlock
   | TextBlock
@@ -736,7 +785,8 @@ export type ChatBlock =
   | PermissionBlock
   | DiffBlock
   | TerminalBlock
-  | ElicitationBlock;
+  | ElicitationBlock
+  | NoticeBlock;
 
 export interface AvailableCommand {
   name: string;
@@ -751,6 +801,11 @@ export interface ChatConnectView {
   agentId: string;
   status: "connecting" | "failed";
   reason?: string;
+  /** Present when the connect was triggered by opening an existing session
+   * (a session click is a connect trigger — the running agent is the
+   * session's prerequisite). Retry then re-opens that session instead of
+   * minting a new one via startChat. */
+  forSessionId?: string;
 }
 
 export interface AgentViewState {
@@ -760,6 +815,12 @@ export interface AgentViewState {
   /** Non-null while a "+"-initiated chat is connecting or has failed —
    * cleared by success (the session activates), retry, or dismissal. */
   chatConnect: ChatConnectView | null;
+  /** True while the startup restore is still settling (startup connects +
+   * last-active-session reactivation, orchestrator.ts) — the rendering area
+   * shows a loading page instead of flashing the empty state while the last
+   * open session is on its way back. Seeded true only when a last-active
+   * pointer exists; cleared by `startupSettled`. */
+  restoring: boolean;
   /** Known-agents roster (shipped data) for the pickers. */
   roster: readonly RosterEntry[];
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
@@ -791,9 +852,11 @@ export interface AgentViewState {
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
   /** User-added external context roots, per session (features.md § Chat —
    * workspace folders are always active and need no chip; these are the
-   * removable, explicit ones). Passed to the agent as `additionalDirectories`
-   * on the next create/reload/fork — ACP has no live-update request, so
-   * patchbay never claims one. */
+   * removable, explicit ones). Passed to the agent as `additionalDirectories`.
+   * ACP has no live-update request, but `session/load`/`session/resume` "set
+   * the complete list" — so a change re-applies to a live session through an
+   * in-place re-attach; only an agent declaring neither waits for the next
+   * reload/branch. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
   /** Workspace folders — the always-active roots every session gets as its
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
@@ -804,6 +867,11 @@ export interface AgentViewState {
   liveSelection: LiveSelectionView | null;
   /** Currently open editor tabs — the `@` mention picker's source. */
   openEditors: readonly OpenEditorView[];
+  /** The `@` mention picker's workspace tier — the latest
+   * queryWorkspaceFiles answer (files and directories, ranked host-side).
+   * `query` rides along so the picker can tell a stale answer from the one
+   * matching what's typed now. */
+  workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
 }
 
 export interface UsageInfo {
@@ -829,6 +897,7 @@ export const initialAgentViewState: AgentViewState = {
   sessions: [],
   activeSessionId: null,
   chatConnect: null,
+  restoring: false,
   roster: [],
   transcripts: {},
   activePlan: {},
@@ -844,7 +913,64 @@ export const initialAgentViewState: AgentViewState = {
   workspaceRoots: [],
   liveSelection: null,
   openEditors: [],
+  workspaceFiles: { query: "", files: [], dirs: [] },
 };
+
+/** One persisted session-index entry, as rehydration needs it — structural
+ * on purpose so this shared module never imports orchestrator store types. */
+export interface RestorableSessionEntry {
+  id: string;
+  agentId: string;
+  title: string;
+  createdAt: string;
+  updatedAt?: string;
+  emulated?: boolean;
+  branchOf?: string | null;
+}
+
+/** Rehydrates the persisted session index into initial view state, so the
+ * session list survives an extension-host restart (ACP has no session
+ * enumeration — the index is the only list there is). Every session comes
+ * back `live: false` with the same empty per-session collections the
+ * `sessionCreated` reducer case establishes; transcripts refill through the
+ * normal continuation paths (session/load replay, or the last-known-view
+ * emulated seed) on first use — never from here. Nothing activates:
+ * `activeSessionId` stays null until the user picks a session. */
+export function restoredSessionState(
+  entries: readonly RestorableSessionEntry[],
+): Pick<
+  AgentViewState,
+  "sessions" | "transcripts" | "commandsBySession" | "contextChips" | "sessionKnobs" | "contextRoots"
+> {
+  // createdAt ascending — the reducer appends new sessions, so newest-last
+  // is the order the list would have had without the restart.
+  const ordered = [...entries].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const state = {
+    sessions: [] as SessionSummary[],
+    transcripts: {} as Record<string, readonly ChatBlock[]>,
+    commandsBySession: {} as Record<string, readonly AvailableCommand[]>,
+    contextChips: {} as Record<string, readonly ContextChip[]>,
+    sessionKnobs: {} as Record<string, readonly SessionKnobView[]>,
+    contextRoots: {} as Record<string, readonly string[]>,
+  };
+  for (const e of ordered) {
+    state.sessions.push({
+      id: e.id,
+      agentId: e.agentId,
+      title: e.title,
+      live: false,
+      emulated: e.emulated ?? false,
+      branchOf: e.branchOf ?? null,
+      updatedAt: e.updatedAt ?? e.createdAt,
+    });
+    state.transcripts[e.id] = [];
+    state.commandsBySession[e.id] = [];
+    state.contextChips[e.id] = [];
+    state.sessionKnobs[e.id] = [];
+    state.contextRoots[e.id] = [];
+  }
+  return state;
+}
 
 export type AgentViewEvent =
   | { kind: "agentUpserted"; agent: AgentSummary }
@@ -857,10 +983,20 @@ export type AgentViewEvent =
       /** stderr tail, riding crash statuses only. */
       stderr?: readonly string[];
     }
-  | { kind: "chatConnectStarted"; agentId: string }
-  | { kind: "chatConnectFailed"; agentId: string; reason: string }
+  | { kind: "chatConnectStarted"; agentId: string; forSessionId?: string }
+  | { kind: "chatConnectFailed"; agentId: string; reason: string; forSessionId?: string }
   | { kind: "chatConnectResolved" }
+  /** The startup restore settled — restored, or found nothing to restore
+   * (stale pointer, failed connects); either way `restoring` clears and the
+   * rendering area stops holding the loading page. */
+  | { kind: "startupSettled" }
   | { kind: "sessionCreated"; session: SessionSummary }
+  /** A session surfaced by the agent's own `session/list` (or refreshed by a
+   * later sync) — upserts the row *without* activating it or touching the
+   * connect pane, unlike sessionCreated: a connect-time sync of N history
+   * rows must not steal focus. `live` is advisory on update (existing rows
+   * keep their own). */
+  | { kind: "sessionListed"; session: SessionSummary }
   | { kind: "sessionActivated"; sessionId: string }
   | { kind: "sessionRenamed"; sessionId: string; title: string }
   | { kind: "sessionClosed"; sessionId: string }
@@ -953,6 +1089,8 @@ export type AgentViewEvent =
       selection: LiveSelectionView | null;
       openEditors: readonly OpenEditorView[];
     }
+  /** Full replace — the answer to one queryWorkspaceFiles, echoing its query. */
+  | { kind: "workspaceFilesListed"; query: string; files: readonly string[]; dirs: readonly string[] }
   /** Fired on every connect — replaces the agent's whole matrix (used
    * seeded from the persisted cache when the version matches, honestly
    * reset otherwise) and its declared auth methods. */
@@ -1183,11 +1321,13 @@ export function reduceAgentView(
     case "rosterChanged":
       return { ...state, roster: event.roster };
     case "chatConnectStarted":
-      return { ...state, chatConnect: { agentId: event.agentId, status: "connecting" } };
+      return { ...state, chatConnect: { agentId: event.agentId, status: "connecting", forSessionId: event.forSessionId } };
     case "chatConnectFailed":
-      return { ...state, chatConnect: { agentId: event.agentId, status: "failed", reason: event.reason } };
+      return { ...state, chatConnect: { agentId: event.agentId, status: "failed", reason: event.reason, forSessionId: event.forSessionId } };
     case "chatConnectResolved":
       return { ...state, chatConnect: null };
+    case "startupSettled":
+      return { ...state, restoring: false };
     case "sessionCreated":
       return {
         ...state,
@@ -1202,9 +1342,48 @@ export function reduceAgentView(
         // failure alike — cleared here so it can't desync from reality.
         chatConnect: null,
       };
+    case "sessionListed": {
+      const existing = state.sessions.find((s) => s.id === event.session.id);
+      if (existing !== undefined) {
+        // Refresh the summary facts; `live` stays whatever the row already
+        // knows — a list sync is metadata, not a liveness signal. Activity
+        // time: newest wins — the wire's stamp may trail a local prompt.
+        return {
+          ...state,
+          sessions: state.sessions.map((s) =>
+            s.id === event.session.id
+              ? {
+                  ...s,
+                  title: event.session.title,
+                  emulated: event.session.emulated,
+                  branchOf: event.session.branchOf,
+                  updatedAt:
+                    event.session.updatedAt > s.updatedAt ? event.session.updatedAt : s.updatedAt,
+                }
+              : s,
+          ),
+        };
+      }
+      return {
+        ...state,
+        sessions: [...state.sessions, event.session],
+        transcripts: { ...state.transcripts, [event.session.id]: [] },
+        commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
+        contextChips: { ...state.contextChips, [event.session.id]: [] },
+        sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
+        contextRoots: { ...state.contextRoots, [event.session.id]: [] },
+      };
+    }
     case "sessionActivated":
       return state.sessions.some((s) => s.id === event.sessionId)
-        ? { ...state, activeSessionId: event.sessionId }
+        ? {
+            ...state,
+            activeSessionId: event.sessionId,
+            // opening it is what "seen" means
+            sessions: state.sessions.map((s) =>
+              s.id === event.sessionId && s.unseen === true ? { ...s, unseen: undefined } : s,
+            ),
+          }
         : state;
     case "sessionRenamed":
       return {
@@ -1280,7 +1459,14 @@ export function reduceAgentView(
     case "planUpdated":
       return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: event.entries } };
     case "turnStarted":
-      return { ...state, activeTurn: { ...state.activeTurn, [event.sessionId]: event.at } };
+      return {
+        ...state,
+        activeTurn: { ...state.activeTurn, [event.sessionId]: event.at },
+        // "latest" = last activity: a prompt send is the freshest fact there is
+        sessions: state.sessions.map((s) =>
+          s.id === event.sessionId ? { ...s, updatedAt: event.at } : s,
+        ),
+      };
     case "turnEnded": {
       const { [event.sessionId]: _t, ...activeTurn } = state.activeTurn;
       return {
@@ -1293,6 +1479,14 @@ export function reduceAgentView(
           usage: event.usage,
         }),
         activeTurn,
+        // A turn finished while the user was looking elsewhere → the blue
+        // dot (unseen) until the session is next activated. Watching it
+        // complete counts as seen.
+        sessions: state.sessions.map((s) =>
+          s.id === event.sessionId
+            ? { ...s, updatedAt: event.at, unseen: state.activeSessionId !== event.sessionId || undefined }
+            : s,
+        ),
       };
     }
     case "commandsAdvertised":
@@ -1428,6 +1622,8 @@ export function reduceAgentView(
       return { ...state, workspaceRoots: event.roots };
     case "editorContextChanged":
       return { ...state, liveSelection: event.selection, openEditors: event.openEditors };
+    case "workspaceFilesListed":
+      return { ...state, workspaceFiles: { query: event.query, files: event.files, dirs: event.dirs } };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -1471,6 +1667,10 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   }
   // Editor context changes on every cursor move — only the latest matters.
   if (prev.kind === "editorContextChanged" && next.kind === "editorContextChanged") {
+    return next;
+  }
+  // Mention queries arrive per keystroke — only the latest answer matters.
+  if (prev.kind === "workspaceFilesListed" && next.kind === "workspaceFilesListed") {
     return next;
   }
   // Terminal output streams in small chunks — concatenate per block, same as text.

@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const KNOB_TRIGGER = "h-5 border-0 px-1 text-[11.5px] shadow-none";
+const KNOB_TRIGGER = "h-5 border-0 px-1 text-[10.5px] shadow-none";
 
 function glyphFor(category: string | undefined): string {
   return category === "model" ? "sparkle" : category === "thought_level" ? "dashboard" : "gear";

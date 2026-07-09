@@ -1,5 +1,9 @@
 // Session index: patchbay's registry of session IDs, titles, timestamps, agent.
-// Exists because ACP has no session enumeration (architecture.md § State).
+// Two jobs since ACP grew `session/list`: the only list for agents that don't
+// declare it, and the overlay everywhere — facts the wire can't carry
+// (emulated, branchOf, renamedByUser, lastConfirmed). For list-capable agents
+// the wire is the truth for *who exists*; SessionManager.syncAgentSessions
+// reconciles this index against it on every connect.
 // Placement: workspaceState — small, machine-local, non-sensitive.
 import type { KV } from "./kv";
 
@@ -9,6 +13,20 @@ export interface SessionIndexEntry {
   title: string;
   createdAt: string; // ISO
   updatedAt: string; // ISO
+  /** Continuation seeded by patchbay, not replayed natively — persisted so
+   * the label survives a restart (a rehydrated list must not launder an
+   * emulated session into a native-looking one). Optional: entries written
+   * before this field existed default to false on read. */
+  emulated?: boolean;
+  /** Parent session id when this is a branch — same restart-survival
+   * rationale as `emulated`. */
+  branchOf?: string | null;
+  /** True once the user explicitly renamed this session. The one title
+   * authority rule (architecture.md § Session model): the agent's own title
+   * (session/list, session_info_update) wins over patchbay's auto-derived
+   * one, but never over an explicit rename — which has no wire request, so
+   * it lives only here. */
+  renamedByUser?: boolean;
   /** The session's last agent-confirmed knob combination — recorded from the
    * agent's own responses/notifications, never from what patchbay requested
    * (architecture.md § Session model). Seeds emulated continuations, the one
@@ -60,12 +78,25 @@ export class SessionIndexStore {
     await this.kv.update(KEY, entries);
   }
 
-  async rename(id: string, title: string): Promise<void> {
+  /** `byUser` marks an explicit rename (see `renamedByUser`) — auto-titling
+   * and agent-title merges leave it unset so the agent can keep winning. */
+  async rename(id: string, title: string, byUser = false): Promise<void> {
     const entries = this.list();
     const entry = entries.find((e) => e.id === id);
     if (!entry) return;
     entry.title = title;
     entry.updatedAt = new Date().toISOString();
+    if (byUser) entry.renamedByUser = true;
+    await this.kv.update(KEY, entries);
+  }
+
+  /** Bumps the activity stamp — the drawer's sort key ("latest" = last
+   * activity). Called at prompt send so ordering survives a restart. */
+  async touch(id: string, at: string): Promise<void> {
+    const entries = this.list();
+    const entry = entries.find((e) => e.id === id);
+    if (!entry) return;
+    entry.updatedAt = at;
     await this.kv.update(KEY, entries);
   }
 

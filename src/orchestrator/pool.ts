@@ -61,6 +61,12 @@ export interface PoolHooks {
    * synchronously and never awaited so it can't block the RPC it's
    * reporting on. */
   onCapabilityEvidence?(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void;
+  /** Any outgoing agent RPC settling with `auth_required` (-32000) — the
+   * connect-time probe, a mid-session prompt after the agent's credentials
+   * expired, or a post-logout session attempt all funnel through here, so
+   * "prompt the user to authenticate again" (spec § Authentication) has one
+   * writer. Like onCapabilityEvidence: synchronous, never awaited. */
+  onAuthRequired?(agentId: string): void;
   /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
    * while false, chunks are dropped without even being decoded. */
   wireLogActive?(): boolean;
@@ -456,14 +462,17 @@ export class AgentPool {
     this.setStatus(entry, "stopped");
   }
 
-  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets (P5). */
-  async restart(poolKey: string): Promise<DeclaredCapabilities> {
+  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets (P5).
+   * `spec`, when given, replaces the entry's connect-time snapshot — the
+   * caller read current config and secrets; a restart is a spawn and must
+   * not resurrect stale command/args/env. */
+  async restart(poolKey: string, spec?: LaunchSpec): Promise<DeclaredCapabilities> {
     const entry = this.entries.get(poolKey);
     if (!entry) throw new Error(`unknown agent ${poolKey}`);
     const { reportAs, isolated } = entry;
     await this.stop(poolKey);
     entry.stopping = false;
-    return this.connect(entry.spec, { poolKey, reportAs, isolated });
+    return this.connect(spec ?? entry.spec, { poolKey, reportAs, isolated });
   }
 
   async newSession(
@@ -491,6 +500,14 @@ export class AgentPool {
   async authenticate(poolKey: string, methodId: string): Promise<void> {
     const entry = this.running(poolKey);
     await this.request(entry, acp.methods.agent.authenticate, { methodId });
+  }
+
+  /** Stable `logout` — callers gate on the declared `auth.logout`
+   * capability (spec: "Clients MUST NOT call it" when undeclared); pool.ts
+   * itself just makes the round trip. */
+  async logout(poolKey: string): Promise<void> {
+    const entry = this.running(poolKey);
+    await this.request(entry, acp.methods.agent.logout, {});
   }
 
   /** Also used for P5's automatic, ephemeral fork-verification round-trip
@@ -552,6 +569,62 @@ export class AgentPool {
     });
     entry.sessions.add(sessionId);
     this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
+    return response;
+  }
+
+  /** The agent's own session history (`session/list`), cwd-filtered and
+   * paginated by the caller. Only meaningful when declared.sessionList is
+   * true — callers check first. A free read: no LLM turn, no session
+   * mutation, so it doubles as the capability's own connectivity proof. */
+  async listSessions(
+    poolKey: string,
+    params: acp.ListSessionsRequest = {},
+  ): Promise<acp.ListSessionsResponse> {
+    const entry = this.running(poolKey);
+    return this.request(entry, acp.methods.agent.session.list, params);
+  }
+
+  /** Deletes a session from the agent's own history (`session/delete`).
+   * Spec: idempotent — deleting an unknown/already-deleted session SHOULD
+   * succeed silently. Only meaningful when declared.sessionDelete is true. */
+  async deleteSession(poolKey: string, sessionId: string): Promise<void> {
+    const entry = this.running(poolKey);
+    await this.request(entry, acp.methods.agent.session.delete, { sessionId });
+    entry.sessions.delete(sessionId);
+    this.log.debug(`${poolKey}: session/delete ${sessionId}`);
+  }
+
+  /** Frees a session's agent-side resources (`session/close`): cancels any
+   * in-flight work and detaches — history stays intact (`delete` is the
+   * destructive sibling). Only meaningful when declared.sessionClose. */
+  async closeSession(poolKey: string, sessionId: string): Promise<void> {
+    const entry = this.running(poolKey);
+    await this.request(entry, acp.methods.agent.session.close, { sessionId });
+    entry.sessions.delete(sessionId);
+    this.log.debug(`${poolKey}: session/close ${sessionId}`);
+  }
+
+  /** Re-attaches to a session *without* replay (`session/resume`): the agent
+   * restores its own context and returns immediately — real memory, no
+   * visible history. The ladder rung between load and an emulated
+   * continuation; load is preferred wherever declared (architecture.md
+   * § State: what the user sees and what the agent remembers must match). */
+  async resumeSession(
+    poolKey: string,
+    sessionId: string,
+    cwd: string,
+    mcpServers: acp.McpServer[] = [],
+    additionalDirectories: string[] = [],
+  ): Promise<acp.ResumeSessionResponse> {
+    const entry = this.running(poolKey);
+    const response = await this.request(entry, acp.methods.agent.session.resume, {
+      sessionId,
+      cwd,
+      mcpServers,
+      additionalDirectories,
+    });
+    entry.sessions.add(sessionId);
+    this.log.debug(`${poolKey}: session/resume ${sessionId}`);
     return response;
   }
 
@@ -655,7 +728,9 @@ export class AgentPool {
       this.markProven(entry.reportAs, fact);
       return result;
     } catch (err) {
-      if (!(err instanceof acp.RequestError && err.code === -32000)) {
+      if (err instanceof acp.RequestError && err.code === -32000) {
+        this.hooks.onAuthRequired?.(entry.reportAs);
+      } else {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");
         }

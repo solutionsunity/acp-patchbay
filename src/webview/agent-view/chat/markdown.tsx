@@ -25,6 +25,10 @@ const SD_ICONS = {
   ZoomOutIcon: () => <Icon name="zoom-out" />,
 };
 
+/** Module-level so Streamdown's memo isn't broken by a fresh array per
+ * render (same rule as SD_ICONS). */
+const RENDERERS = [{ language: "mermaid", component: MermaidBlock }];
+
 export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
   return (
     <Streamdown
@@ -44,10 +48,10 @@ export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
         code: shikiPlugin,
         math: katexPlugin,
         cjk: cjkPlugin,
-        // ```mermaid is ours end to end (MermaidBlock): no render attempts
-        // on incomplete fences, honest parse-failure fallback, and the
-        // open-in-editor hand-off
-        renderers: [{ language: "mermaid", component: MermaidBlock }],
+        // ```mermaid renders through the vendored copy of Streamdown's own
+        // block (mermaid-block.tsx: pan/zoom, fullscreen, copy, download —
+        // plus the Open-in-editor action upstream has no slot for)
+        renderers: RENDERERS,
       }}
       // controls default on — table copy-as-CSV/Markdown is load-bearing for
       // the accountants/operations half of the audience

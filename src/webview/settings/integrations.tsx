@@ -10,7 +10,7 @@ import type {
 import { computeFidelity } from "../../shared/protocol";
 import { FIDELITY_TEXT } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
-import { ConfirmButton, Field, Toggle } from "./controls";
+import { ConfirmButton, Field } from "./controls";
 import { parseEnvLines } from "./parse-env";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,80 +20,103 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-/** Per-agent checkboxes for an integration's routing — "auto" (default,
- * fully-brokered agents only) or an explicit pinned list, never
- * all-or-nothing (features.md § Integrations). */
+/** The three reaches (protocol.ts), stated as the three sentences they are —
+ * one mode per line, the agent tick-list indented under whichever list mode
+ * is active, never an undifferentiated wrap of radios and checkboxes:
+ *   auto    — every fully-brokered agent (the safety gate);
+ *   only    — exactly the ticked agents, any fidelity (confirmation below);
+ *   except  — the auto set minus the ticked agents (narrowing is always
+ *             safe, so no confirmation exists in this mode). */
 function RoutingEditor(props: {
   agents: SettingsState["agents"];
   routing: IntegrationRoutingView;
   fidelityOf(agentId: string): FidelityLabel | null;
   onChange(routing: IntegrationRoutingView): void;
 }) {
-  const explicit = props.routing !== "auto";
-  // ui.md § Integrations: toggling onto a less-than-fully-brokered agent
-  // interrupts with the explicit plug-in confirmation — auto-attach covers
-  // fully-brokered only, so anything less is a deliberate act.
+  const mode: "auto" | "only" | "except" =
+    props.routing === "auto" ? "auto" : Array.isArray(props.routing) ? "only" : "except";
+  const list: readonly string[] =
+    props.routing === "auto"
+      ? []
+      : Array.isArray(props.routing)
+        ? props.routing
+        : (props.routing as { except: readonly string[] }).except;
+  // ui.md § Integrations: ticking a less-than-fully-brokered agent in "only"
+  // mode interrupts with the explicit plug-in confirmation — auto-attach
+  // covers fully-brokered only, so anything less is a deliberate act.
   const [pendingPlugIn, setPendingPlugIn] = useState<{ agentId: string; name: string; label: FidelityLabel | null } | null>(null);
-  const plugIn = (agentId: string) => {
-    const list = props.routing === "auto" ? [] : props.routing;
-    props.onChange([...list, agentId]);
+  const setMode = (m: "auto" | "only" | "except") => {
+    if (m === mode) return;
     setPendingPlugIn(null);
+    // A list never carries across modes — the same ids mean the opposite
+    // thing in "only" vs "except".
+    props.onChange(m === "auto" ? "auto" : m === "only" ? [] : { except: [] });
   };
+  const tickList = (onTick: (agentId: string, checked: boolean) => void) => (
+    <div className="ml-6 flex flex-wrap gap-x-2.5 gap-y-1">
+      {props.agents.map((a) => (
+        <label key={a.id} className="flex items-center gap-1.5">
+          <Checkbox checked={list.includes(a.id)} onCheckedChange={() => onTick(a.id, list.includes(a.id))} />
+          {a.name}
+        </label>
+      ))}
+    </div>
+  );
   return (
-    <div className="row gap-2.5 flex-wrap">
+    <div className="flex flex-col gap-1.5">
       <span
         className="lbl text-[10.5px] tracking-[0.04em] uppercase text-muted-foreground"
         title="which agents receive this server in their sessions"
       >
         reaches
       </span>
-      <RadioGroup
-        className="contents"
-        value={explicit ? "explicit" : "auto"}
-        onValueChange={(v) => props.onChange(v === "auto" ? "auto" : explicit ? props.routing : [])}
-      >
+      <RadioGroup className="flex flex-col gap-1" value={mode} onValueChange={(v) => setMode(v as "auto" | "only" | "except")}>
         <label
           className="flex items-center gap-1.5"
           title="attaches automatically, but only to agents whose fs/terminal actually route through patchbay's permission gate (fully brokered) — an agent acting outside the gate never gets it silently"
         >
-          <RadioGroupItem value="auto" /> fully-brokered agents (auto)
+          <RadioGroupItem value="auto" /> all fully-brokered agents (auto)
         </label>
         <label
           className="flex items-center gap-1.5"
           title="an explicit list — exactly the agents you tick, regardless of fidelity (less-than-brokered ones ask for confirmation)"
         >
-          <RadioGroupItem value="explicit" /> only these agents:
+          <RadioGroupItem value="only" /> only these agents
         </label>
+        {mode === "only" &&
+          tickList((agentId, checked) => {
+            if (checked) {
+              props.onChange(list.filter((id) => id !== agentId));
+            } else if (props.fidelityOf(agentId) === "fully-brokered") {
+              props.onChange([...list, agentId]);
+            } else {
+              const agent = props.agents.find((a) => a.id === agentId);
+              setPendingPlugIn({ agentId, name: agent?.name ?? agentId, label: props.fidelityOf(agentId) });
+            }
+          })}
+        <label
+          className="flex items-center gap-1.5"
+          title="the auto set minus the ticked agents — excluding only ever narrows reach, so less-than-brokered agents stay outside either way"
+        >
+          <RadioGroupItem value="except" /> all fully-brokered agents except these
+        </label>
+        {mode === "except" &&
+          tickList((agentId, checked) =>
+            props.onChange({ except: checked ? list.filter((id) => id !== agentId) : [...list, agentId] }),
+          )}
       </RadioGroup>
-      {explicit &&
-        props.agents.map((a) => {
-          const list = props.routing as readonly string[];
-          const checked = list.includes(a.id);
-          const fidelity = props.fidelityOf(a.id);
-          return (
-            <label key={a.id}>
-              <Checkbox
-                checked={checked}
-                onCheckedChange={() => {
-                  if (checked) {
-                    props.onChange(list.filter((id) => id !== a.id));
-                  } else if (fidelity === "fully-brokered") {
-                    props.onChange([...list, a.id]);
-                  } else {
-                    setPendingPlugIn({ agentId: a.id, name: a.name, label: fidelity });
-                  }
-                }}
-              />{" "}
-              {a.name}
-            </label>
-          );
-        })}
       {pendingPlugIn !== null && (
         <div className="note plug-in-confirm">
           <Icon name="warning" /> <b>{pendingPlugIn.name}</b> is{" "}
           {pendingPlugIn.label === null ? "not yet determined" : FIDELITY_TEXT[pendingPlugIn.label]} — tools
           this integration exposes may be used outside patchbay's permission flow. Plug in anyway?
-          <Button variant="outline" size="sm" className="ml-2" onClick={() => plugIn(pendingPlugIn.agentId)}>
+          <Button
+            variant="outline" size="sm" className="ml-2"
+            onClick={() => {
+              props.onChange([...list, pendingPlugIn.agentId]);
+              setPendingPlugIn(null);
+            }}
+          >
             Plug in
           </Button>
           <Button variant="outline" size="sm" onClick={() => setPendingPlugIn(null)}>
@@ -296,6 +319,9 @@ export function IntegrationsSection(props: {
    * here for lookup only, not invented meaning. */
   const [lastCustomId, setLastCustomId] = useState<string | null>(null);
   const [editingJsonId, setEditingJsonId] = useState<string | null>(null);
+  // Card body (command line, JSON edit, routing) is collapsed by default —
+  // the header row carries status and actions; the gear opens the rest.
+  const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
   const [jsonDraft, setJsonDraft] = useState("");
   const [importText, setImportText] = useState("");
   const [name, setName] = useState("");
@@ -393,7 +419,10 @@ export function IntegrationsSection(props: {
           </div>
         </div>
       )}
-      {state.integrations.map((integration) => (
+      {state.integrations.map((integration) => {
+        // Editing JSON forces the body open — the form lives there.
+        const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
+        return (
         <div className="card" key={integration.id}>
           <div className="row flex-wrap">
             <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
@@ -402,19 +431,28 @@ export function IntegrationsSection(props: {
               {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
             </Badge>
             <span className="flex-1" />
-            <Toggle
-              checked={integration.active}
-              label="active"
-              title="inactive keeps the credential but the server reaches no agent until toggled back"
-              onChange={(active) => props.onSetActive(integration.id, active)}
-            />
             <Button
               variant="outline" size="icon" className="size-8"
-              title="Share config… (never the credential)"
-              aria-label="Share config"
+              title={
+                integration.active
+                  ? "on — power off keeps the credential but the server reaches no agent until powered back"
+                  : "off — power on to route this server again"
+              }
+              aria-label={integration.active ? "Power off" : "Power on"}
+              aria-pressed={integration.active}
+              onClick={() => props.onSetActive(integration.id, !integration.active)}
+            >
+              <span className={integration.active ? "text-ok" : "text-muted-foreground"}>
+                <Icon name={integration.active ? "zap" : "circle-slash"} />
+              </span>
+            </Button>
+            <Button
+              variant="outline" size="icon" className="size-8"
+              title="Copy config… (never the credential)"
+              aria-label="Copy config"
               onClick={() => props.onShare(integration.id)}
             >
-              <Icon name="export" />
+              <Icon name="copy" />
             </Button>
             <ConfirmButton
               label={integration.sourceKind === "registry" ? "Disconnect" : "Remove"}
@@ -426,18 +464,30 @@ export function IntegrationsSection(props: {
               }
               onConfirm={() => props.onRemove(integration.id)}
             />
+            <Button
+              variant="outline" size="icon" className="size-8"
+              title={detailsOpen ? "Hide settings" : "Settings"}
+              aria-label={detailsOpen ? "Hide settings" : "Settings"}
+              aria-expanded={detailsOpen}
+              onClick={() => {
+                if (editingJsonId === integration.id) setEditingJsonId(null);
+                setOpenDetails({ ...openDetails, [integration.id]: !detailsOpen });
+              }}
+            >
+              <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
+            </Button>
           </div>
-          {integration.command !== undefined && (
+          {detailsOpen && integration.command !== undefined && (
             <div className="mono mt-1.5 break-all">
               {integration.command}
             </div>
           )}
           {!integration.active && (
             <div className="note mt-1.5">
-              inactive — configured with its credential intact, reaching no agent
+              powered off — configured with its credential intact, reaching no agent
             </div>
           )}
-          {integration.editJson !== undefined && editingJsonId === integration.id ? (
+          {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
             <div className="connect-form">
               <Field label="server JSON" hint="the mcpServers-fragment for this server">
                 <Textarea
@@ -487,16 +537,19 @@ export function IntegrationsSection(props: {
               </Button>
             </div>
           )}
-          <div className="mt-2">
-            <RoutingEditor
-              agents={state.agents}
-              routing={integration.routing}
-              fidelityOf={fidelityOf}
-              onChange={(routing) => props.onSetRouting(integration.id, routing)}
-            />
-          </div>
+          {detailsOpen && (
+            <div className="mt-2">
+              <RoutingEditor
+                agents={state.agents}
+                routing={integration.routing}
+                fidelityOf={fidelityOf}
+                onChange={(routing) => props.onSetRouting(integration.id, routing)}
+              />
+            </div>
+          )}
         </div>
-      ))}
+        );
+      })}
 
       <div className="card">
         <h2 className="mt-0">Add a custom MCP server</h2>

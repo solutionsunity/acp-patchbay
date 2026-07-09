@@ -138,6 +138,7 @@ each with different truth semantics, so each gets different placement:
 |---|---|---|---|
 | Session index | IDs, titles, timestamps, agent, last agent-confirmed knob state | `workspaceState` | Small, machine-local, non-sensitive; confirmed knob state seeds emulated continuations (§ Session model) |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
+| Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). Deliberately unbounded, unlike the stamp: reopening a *view* is free and safe at any age (open never emulates, never spawns), resurrecting *processes* is not. Not a session-index column — "last open" is a pointer into the set, not a fact about a session; exactly one may hold it |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |
@@ -192,7 +193,10 @@ rejected). Suspicion, not conviction: the failure may not be the row's fault,
 so it renders as a warning triangle, never an error, and gates nothing — UI
 features still gate on used only. First success acquits (used drops the
 flag); `auth_required` never indicts (it's the honest pre-login state, with
-its own surface); only outgoing agent RPCs can indict — a client-side handler
+its own surface: pool.ts's wire chokepoint raises `needsAuth` on any -32000 —
+probe, connect, or a mid-session prompt after credentials expired — one
+writer for the spec's "prompt the user to authenticate again"); only
+outgoing agent RPCs can indict — a client-side handler
 throwing is patchbay's own gate rejecting, never the agent failing. Suspect
 persists version-keyed exactly like used: a broken bridge must not look clean
 after a restart.
@@ -202,7 +206,10 @@ Marking a row used is centralized in one **proof table**
 fact proves which row. `pool.ts` — the sole channel that talks to an agent on
 the wire — consults it at three chokepoints: an outgoing agent RPC resolving
 (`session/new` → `auth`, and → `concurrentSessions` when the connection already
-served a session; `session/fork` → `session.fork` + `concurrentSessions`;
+served a session; `logout` → `auth.logout` — declared from
+`agentCapabilities.auth.logout`, and the Log out control only exists on a
+declared row: the spec's "Clients MUST NOT call it" holds by construction;
+`session/fork` → `session.fork` + `concurrentSessions`;
 `session/load` → `session.load`; `session/prompt` → `prompt.image` / `audio` /
 `embeddedContext` when the prompt actually carried that block type), an
 incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
@@ -350,14 +357,22 @@ And offerings are provider inventory, not build behavior: a provider adds or
 removes a model without `agentInfo.version` moving, so no persisted copy can be
 keyed honestly. Therefore:
 
-- **Offerings** are connection-scoped, in-memory only: seeded from the
-  connect-time read (the free `session/new` every connect performs — see the
-  capability matrix section), refreshed by every live session's responses and
-  notifications, gone when the connection ends. Settings renders offerings only
-  while the agent is connected; stopped agents show stored selections as text.
-  (Supersedes the persisted, version-keyed observed-knobs cache — its lifetime
-  rule was borrowed from used-capabilities, but "this build's fork worked" is a
-  build fact and "these models exist" is not.)
+- **Offerings** are connection-scoped, in-memory only: read from the
+  connect-time probe alone (the free `session/new` every connect performs — see
+  the capability matrix section — plus the probe session's own late
+  `config_option_update`), gone when the connection ends. Settings renders
+  offerings only while the agent is connected; stopped agents show stored
+  selections as text. (Supersedes the persisted, version-keyed observed-knobs
+  cache — its lifetime rule was borrowed from used-capabilities, but "this
+  build's fork worked" is a build fact and "these models exist" is not.
+  *Refines* "refreshed by every live session's responses": a live session's
+  option surface is conditioned on that session's current selections — fast
+  mode exists only on some models, effort lists vary per model — so it is
+  session state, not provider inventory; feeding it to Settings made the
+  default-knob rows track whichever session last touched a knob, with
+  last-writer-wins flapping across sessions. The probe session sits at agent
+  defaults, so its surface is exactly what a new session will be offered —
+  the right inventory for a defaults form.)
 - **Selections** (per-agent defaults, part of the agent's config record; and
   per-session confirmed state, below) are the only persisted artifacts — bare
   ids/values, never lists.

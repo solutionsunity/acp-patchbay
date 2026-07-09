@@ -48,7 +48,6 @@ export function App({ state }: { state: AgentViewState }) {
       <Header
         agent={activeAgent}
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
-        onAgents={() => setDrawer("agents")}
         onSessions={() => setDrawer("sessions")}
         onNew={newChat}
       />
@@ -87,8 +86,19 @@ export function App({ state }: { state: AgentViewState }) {
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         workspaceRoots={state.workspaceRoots}
+        rootsApplyLive={
+          // declared drives the mechanism itself (the continuation ladder is
+          // declared-gated), so the honesty note follows declared too; a
+          // session with nothing in it re-applies by recreation regardless
+          (active !== null &&
+            ((state.transcripts[active.id]?.length ?? 0) === 0 ||
+              state.capabilities[active.agentId]?.["session.load"]?.declared === true ||
+              state.capabilities[active.agentId]?.["session.resume"]?.declared === true)) ||
+          false
+        }
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}
+        workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}

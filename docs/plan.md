@@ -434,7 +434,18 @@ proceeds (e.g. P3 awaiting design verdict does not block P5 logic work).
     the user-added external ones (workspace folders are always active and
     need no chip); since ACP has no live-update request for this field, a
     root added mid-session honestly reaches the agent only on the next
-    reload/branch, surfaced in the UI rather than hidden.*
+    reload/branch, surfaced in the UI rather than hidden. (Refined
+    2026-07-09: `session/load`/`session/resume` "set the complete list" of
+    `additionalDirectories`, so a mid-session root change now re-applies to
+    the live attachment in place — deferred to turn end when a prompt is in
+    flight; only an agent declaring neither rung still waits for the next
+    reload/branch, and only then does the roots chip say so. Same day, from
+    a live wire log: load on a *never-prompted* session 404s and kills the
+    live session (claude-agent-acp 0.57 — nothing persisted to load yet), so
+    the zero-turn case recreates via session/new instead — universally safe,
+    free by construction, covers even no-load/no-resume agents — and a
+    failed re-apply always detaches locally so the next prompt re-enters
+    the continuation ladder instead of hitting a corpse.)*
   - *Fixed a real pre-existing bug found while wiring context roots through
     `reopen()`: reconnecting a crashed session via `session/load` never
     re-attached the local MCP server or any integrations (no `mcpServers`

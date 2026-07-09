@@ -71,9 +71,13 @@ export function SessionActions({ session, forkUsed }: { session: SessionSummary;
           >
             Rename…
           </DropdownMenuItem>
+          {/* Branch disabled pending a full architecture and mechanics check
+              (native fork vs. emulated continuation — seeding, process policy,
+              graph semantics). Orchestrator path stays intact; re-enable here.
           <DropdownMenuItem onSelect={() => send({ kind: "branchSession", sessionId: session.id })}>
             Branch <span className="d">{forkUsed ? "native fork ✓" : "emulated"}</span>
           </DropdownMenuItem>
+          */}
           <DropdownMenuItem onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}>
             Reload from agent
           </DropdownMenuItem>

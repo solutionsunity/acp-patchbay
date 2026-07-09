@@ -60,6 +60,9 @@ function harness(kv = new MemoryKV()): {
     onSessionUpdate: () => {},
     onCapabilityEvidence: (agentId, row, evidence) =>
       evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),
+    // Mirrors the orchestrator: needsAuth is raised at the pool's wire
+    // chokepoint, not by the tracker.
+    onAuthRequired: (agentId) => events.push({ kind: "agentAuthRequired", agentId }),
     ...stubFsTerminalHooks(),
   });
   tracker = new CapabilityTracker(pool, usedCache, {

@@ -1,8 +1,8 @@
-// Top bar: agent chip (opens the agents drawer), errors chip, usage gauge,
-// session/new/settings buttons. Drawer switching is the shell's local UI
-// state and stays a callback; real actions go through useActions.
+// Top bar: current-session agent indicator, errors chip, usage gauge,
+// session/new buttons. The agent chip is a read-out, not a picker — agent
+// choice happens where it matters, in the new-chat flow; Settings lives in
+// the native view title bar (package.json view/title), not here.
 import type { AgentStatus, AgentSummary, UsageInfo } from "../../shared/protocol";
-import { useActions } from "../shared/actions";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -40,20 +40,17 @@ function UsageGauge({ usage }: { usage: UsageInfo }) {
 export function Header(props: {
   agent: AgentSummary | null;
   usage: UsageInfo | null;
-  onAgents(): void;
   onSessions(): void;
   onNew(): void;
 }) {
-  const send = useActions();
   return (
     <div className="hdr">
-      <div className="agent-chip" title="Agents — status & routing" onClick={props.onAgents}>
-        <Dot status={props.agent?.status ?? "none"} />
-        <span className="name">{props.agent?.name ?? "No agent"}</span>
-        <span className="caret">
-          <Icon name="chevron-down" />
-        </span>
-      </div>
+      {props.agent !== null && (
+        <div className="agent-chip" title="Current session's agent">
+          <Dot status={props.agent.status} />
+          <span className="name">{props.agent.name}</span>
+        </div>
+      )}
       <div className="spacer" />
       {/* sessionUsage only ever gets an entry alongside marking "usage"
           used (pool.ts's notification handler and this both fire off the
@@ -66,16 +63,6 @@ export function Header(props: {
       </Button>
       <Button variant="ghost" size="icon" className="h-6 w-6" title="New session" aria-label="New session" onClick={props.onNew}>
         <Icon name="add" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        title="Settings — opens directly"
-        aria-label="Settings"
-        onClick={() => send({ kind: "openSettings" })}
-      >
-        <Icon name="gear" />
       </Button>
     </div>
   );

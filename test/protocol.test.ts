@@ -8,6 +8,7 @@ import {
   initialSettingsState,
   reduceAgentView,
   reduceSettings,
+  restoredSessionState,
   type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
@@ -109,11 +110,32 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "t", live: false, emulated: false, branchOf: null },
+        session: { id: "s1", agentId: "claude", title: "t", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" },
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
     expect(succeeded.activeSessionId).toBe("s1");
+  });
+
+  it("chatConnect carries forSessionId through connecting and failed — the Retry-as-same-click hook", () => {
+    const connecting = replay(initialAgentViewState, [
+      { kind: "chatConnectStarted", agentId: "claude", forSessionId: "s9" },
+    ]);
+    expect(connecting.chatConnect?.forSessionId).toBe("s9");
+    const failed = replay(connecting, [
+      { kind: "chatConnectFailed", agentId: "claude", reason: "spawn failed", forSessionId: "s9" },
+    ]);
+    expect(failed.chatConnect?.forSessionId).toBe("s9");
+  });
+
+  // Startup restore hold: seeded true by the orchestrator when a
+  // last-active pointer exists; startupSettled is the only clear — the
+  // loading page must never outlive the startup sequence.
+  it("startupSettled clears the restore hold", () => {
+    const restoring = { ...initialAgentViewState, restoring: true };
+    expect(replay(restoring, [{ kind: "startupSettled" }]).restoring).toBe(false);
+    // idempotent from the ground state too
+    expect(replay(initialAgentViewState, [{ kind: "startupSettled" }]).restoring).toBe(false);
   });
 
   // P16: crash carries the process's last words; recovery clears them —
@@ -249,5 +271,104 @@ describe("applyHostMessage", () => {
     expect(
       applyHostMessage(reduce, current, { kind: "snapshot", rev: 3, state: stateWith([]) }).kind,
     ).toBe("stale");
+  });
+});
+
+describe("session activity + unseen (drawer ordering / dots)", () => {
+  const mk = (id: string): AgentViewEvent => ({
+    kind: "sessionCreated",
+    session: { id, agentId: "claude", title: id, live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" },
+  });
+
+  it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      mk("b"),
+      { kind: "sessionActivated", sessionId: "b" },
+      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
+    expect(s.sessions.find((x) => x.id === "b")!.updatedAt).toBe("2026-07-09T00:00:00Z");
+  });
+
+  it("a turn ending on a non-active session marks it unseen; activation clears it", () => {
+    const end: AgentViewEvent = {
+      kind: "turnEnded",
+      sessionId: "a",
+      blockId: "t1",
+      startedAt: "2026-07-09T10:00:00Z",
+      at: "2026-07-09T10:00:05Z",
+      stopReason: "end_turn",
+      usage: null,
+    };
+    const unseen = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", sessionId: "b" }, end]);
+    expect(unseen.sessions.find((x) => x.id === "a")!.unseen).toBe(true);
+
+    const seen = replay(unseen, [{ kind: "sessionActivated", sessionId: "a" }]);
+    expect(seen.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
+  });
+
+  it("a turn ending on the active session is already seen — watching it complete counts", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      { kind: "sessionActivated", sessionId: "a" },
+      { kind: "turnEnded", sessionId: "a", blockId: "t1", startedAt: "x", at: "2026-07-09T10:00:05Z", stopReason: "end_turn", usage: null },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
+  });
+
+  it("sessionListed keeps the newer activity stamp — the wire may trail a local prompt", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
+      {
+        kind: "sessionListed",
+        session: { id: "a", agentId: "claude", title: "a", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T09:00:00Z" },
+      },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
+  });
+});
+
+// Restart rehydration: the session index is the only session list there is
+// (ACP has no enumeration), so the initial view state must carry it.
+describe("restoredSessionState", () => {
+  const entries = [
+    { id: "s2", agentId: "gemini", title: "Later", createdAt: "2026-07-09T10:00:00Z", emulated: true, branchOf: "s1" },
+    { id: "s1", agentId: "claude", title: "Earlier", createdAt: "2026-07-08T10:00:00Z" },
+  ];
+
+  it("orders by createdAt ascending — the order the reducer would have built", () => {
+    const s = restoredSessionState(entries);
+    expect(s.sessions.map((x) => x.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("restores not-live summaries, defaulting pre-field entries honestly", () => {
+    const s = restoredSessionState(entries);
+    // updatedAt falls back to createdAt for entries written before the field
+    expect(s.sessions[0]).toEqual({
+      id: "s1", agentId: "claude", title: "Earlier", live: false, emulated: false, branchOf: null,
+      updatedAt: "2026-07-08T10:00:00Z",
+    });
+    expect(s.sessions[1]).toEqual({
+      id: "s2", agentId: "gemini", title: "Later", live: false, emulated: true, branchOf: "s1",
+      updatedAt: "2026-07-09T10:00:00Z",
+    });
+  });
+
+  it("establishes the same per-session collections sessionCreated would", () => {
+    const state: AgentViewState = { ...initialAgentViewState, ...restoredSessionState(entries) };
+    for (const id of ["s1", "s2"]) {
+      expect(state.transcripts[id]).toEqual([]);
+      expect(state.commandsBySession[id]).toEqual([]);
+      expect(state.contextChips[id]).toEqual([]);
+      expect(state.sessionKnobs[id]).toEqual([]);
+      expect(state.contextRoots[id]).toEqual([]);
+    }
+    expect(state.activeSessionId).toBeNull();
+    // A rehydrated session must close cleanly through the ordinary reducer path.
+    const closed = reduceAgentView(state, { kind: "sessionClosed", sessionId: "s1" });
+    expect(closed.sessions.map((x) => x.id)).toEqual(["s2"]);
+    expect(closed.transcripts["s1"]).toBeUndefined();
   });
 });

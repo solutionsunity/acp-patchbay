@@ -20,6 +20,7 @@ const noDeclared: DeclaredCapabilities = {
   sessionFork: false,
   sessionResume: false,
   sessionList: false,
+  sessionDelete: false,
   sessionClose: false,
   promptImage: false,
   promptAudio: false,
@@ -27,6 +28,7 @@ const noDeclared: DeclaredCapabilities = {
   mcpHttp: false,
   mcpSse: false,
   authMethods: [],
+  authLogout: false,
 };
 
 describe("capabilityState", () => {
@@ -67,6 +69,12 @@ describe("matrixFromDeclared", () => {
     const matrix = matrixFromDeclared(noDeclared);
     expect(matrix.usage).toEqual({ declared: false, used: false });
     expect(matrix.concurrentSessions).toEqual({ declared: false, used: false });
+  });
+
+  it("auth.logout mirrors the agent's declared auth.logout capability", () => {
+    expect(matrixFromDeclared(noDeclared)["auth.logout"]).toEqual({ declared: false, used: false });
+    const declared = matrixFromDeclared({ ...noDeclared, authLogout: true });
+    expect(declared["auth.logout"]).toEqual({ declared: true, used: false });
   });
 
   it("mirrors the agent's declared session/prompt/mcp capabilities", () => {
@@ -114,6 +122,16 @@ describe("rowsProvenBy — the one used-proof table", () => {
       priorSessionCount: 1,
     });
     expect(second.sort()).toEqual(["auth", "concurrentSessions"]);
+  });
+
+  it("a logout round trip proves auth.logout and nothing else", () => {
+    const rows = rowsProvenBy({
+      via: "agentRequest",
+      method: "logout",
+      params: {},
+      priorSessionCount: 0,
+    });
+    expect(rows).toEqual(["auth.logout"]);
   });
 
   it("session/fork proves fork and concurrentSessions — the parent already rides the connection", () => {
@@ -182,7 +200,9 @@ describe("computeFidelity", () => {
 });
 
 describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => {
-  const agentAuth: readonly AuthMethodView[] = [{ id: "login", name: "Log in", kind: "agent" }];
+  const agentAuth: readonly AuthMethodView[] = [
+    { id: "login", name: "Log in", description: null, kind: "agent" },
+  ];
 
   it("false when nothing is declared — nothing for the free check to resolve", () => {
     const matrix = matrixFromDeclared(noDeclared);
@@ -206,7 +226,9 @@ describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => 
   });
 
   it("env_var/terminal-kind auth methods never gate a retry — not actionable", () => {
-    const unstable: readonly AuthMethodView[] = [{ id: "e", name: "Env", kind: "env_var" }];
+    const unstable: readonly AuthMethodView[] = [
+      { id: "e", name: "Env", description: null, kind: "env_var" },
+    ];
     const matrix = matrixFromDeclared({ ...noDeclared, authMethods: unstable });
     expect(hasUnusedProbe(matrix, unstable)).toBe(false);
   });

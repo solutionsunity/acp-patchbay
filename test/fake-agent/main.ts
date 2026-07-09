@@ -12,7 +12,7 @@
 // in-memory shortcut).
 //
 // Script arrives as JSON in the FAKE_AGENT_SCRIPT env var.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -36,7 +36,8 @@ export type TurnStep =
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
   | { type: "echoRoots" }
-  | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> };
+  | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> }
+  | { type: "infoUpdate"; title: string };
 
 export interface FakeAgentScript {
   name?: string;
@@ -52,6 +53,9 @@ export interface FakeAgentScript {
   stepDelayMs?: number;
   /** "fail" → second live session/new is rejected (concurrency knob). */
   concurrent?: "ok" | "fail";
+  /** Lying mode: session/load 404s *and drops the live session* — observed
+   * claude-agent-acp 0.57 behavior on a never-persisted sessionId. */
+  failLoad?: boolean;
   /** Modes offered at session/new (P8 knobs). */
   modes?: acp.SessionModeState | null;
   /** model/effort/etc. config options offered at session/new (P8 knobs). */
@@ -59,6 +63,9 @@ export interface FakeAgentScript {
   /** PromptResponse.usage returned on every turn (UNSTABLE ACP field) —
    * absent by default, matching most agents. */
   usage?: acp.Usage;
+  /** session/list reports `title: "fake:<sessionId>"` per session — lets
+   * tests exercise the agent-title-wins merge rule deterministically. */
+  listWithTitles?: boolean;
   /** session/set_config_option answers with the new state in the required
    * response field only — no config_option_update echo. Spec-conformant, not
    * a lie: claude-agent-acp behaves this way for client-initiated sets. */
@@ -336,6 +343,13 @@ async function runTurn(
         });
         break;
       }
+      case "infoUpdate":
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "session_info_update",
+          title: step.title,
+          updatedAt: new Date().toISOString(),
+        });
+        break;
       case "callMcpTool": {
         let result: string;
         try {
@@ -463,6 +477,10 @@ const app = acp
     if (script.declare?.loadSession !== true) {
       throw acp.RequestError.methodNotFound("session/load");
     }
+    if (script.failLoad === true) {
+      sessions.delete(ctx.params.sessionId); // the corpse-leaving variant
+      throw acp.RequestError.invalidRequest(`Resource not found: ${ctx.params.sessionId}`);
+    }
     const { sessionId, cwd } = ctx.params;
     sessions.set(sessionId, {
       id: sessionId,
@@ -543,6 +561,69 @@ const app = acp
     const response: acp.ForkSessionResponse = { sessionId: id };
     if (script.modes) response.modes = { ...script.modes, currentModeId: parent.mode ?? script.modes.currentModeId };
     if (parent.configOptions) response.configOptions = parent.configOptions;
+    return response;
+  })
+  .onRequest("session/list", (ctx): acp.ListSessionsResponse => {
+    if (script.declare?.sessionCapabilities?.list == null) {
+      throw acp.RequestError.methodNotFound("session/list");
+    }
+    const cwd = ctx.params.cwd ?? null;
+    const title = (id: string) => (script.listWithTitles ? { title: `fake:${id}` } : {});
+    const infos = new Map<string, acp.SessionInfo>();
+    // The durable store is what survives this process dying — exactly how a
+    // real agent's history outlives its connections.
+    if (cwd !== null && existsSync(join(cwd, ".fake-agent-sessions"))) {
+      for (const f of readdirSync(join(cwd, ".fake-agent-sessions"))) {
+        if (!f.endsWith(".jsonl")) continue;
+        const sessionId = f.slice(0, -".jsonl".length);
+        infos.set(sessionId, { sessionId, cwd, ...title(sessionId) });
+      }
+    }
+    for (const s of sessions.values()) {
+      if (cwd !== null && s.cwd !== cwd) continue;
+      infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...title(s.id) });
+    }
+    return { sessions: [...infos.values()] };
+  })
+  .onRequest("session/delete", (ctx): acp.DeleteSessionResponse => {
+    if (script.declare?.sessionCapabilities?.delete == null) {
+      throw acp.RequestError.methodNotFound("session/delete");
+    }
+    // Spec: idempotent — unknown/already-deleted ids succeed silently.
+    const s = sessions.get(ctx.params.sessionId);
+    sessions.delete(ctx.params.sessionId);
+    if (s !== undefined) rmSync(storeFile(s.cwd, s.id), { force: true });
+    return {};
+  })
+  .onRequest("session/close", (ctx): acp.CloseSessionResponse => {
+    if (script.declare?.sessionCapabilities?.close == null) {
+      throw acp.RequestError.methodNotFound("session/close");
+    }
+    // Cancels in-flight work and detaches; the durable record stays —
+    // close frees resources, delete is the destructive sibling.
+    const s = sessions.get(ctx.params.sessionId);
+    s?.pending?.abort();
+    sessions.delete(ctx.params.sessionId);
+    return {};
+  })
+  .onRequest("session/resume", (ctx): acp.ResumeSessionResponse => {
+    if (script.declare?.sessionCapabilities?.resume == null) {
+      throw acp.RequestError.methodNotFound("session/resume");
+    }
+    // Context restored, no replay — the defining contrast with session/load.
+    const { sessionId, cwd } = ctx.params;
+    sessions.set(sessionId, {
+      id: sessionId,
+      cwd,
+      pending: null,
+      mode: script.modes?.currentModeId ?? null,
+      configOptions: script.configOptions ? structuredClone(script.configOptions) : null,
+      mcpServers: ctx.params.mcpServers ?? [],
+      additionalDirectories: ctx.params.additionalDirectories ?? [],
+    });
+    const response: acp.ResumeSessionResponse = {};
+    if (script.modes) response.modes = script.modes;
+    if (script.configOptions) response.configOptions = sessions.get(sessionId)!.configOptions;
     return response;
   })
   .onNotification("session/cancel", (ctx) => {

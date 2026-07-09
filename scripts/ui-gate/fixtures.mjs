@@ -45,17 +45,24 @@ export const chatPlan = [
 export function agentViewState({ live }) {
   return {
     agents: [{ id: "fake", name: "Claude Code", status: "running", needsAuth: false }],
-    sessions: [{ id: "s1", agentId: "fake", title: "find foo", live, emulated: false, branchOf: null }],
+    // s2: newer activity + unseen — must sort above the active s1 and show
+    // the blue dot in the sessions drawer.
+    sessions: [
+      { id: "s1", agentId: "fake", title: "find foo", live, emulated: false, branchOf: null, updatedAt: "2026-07-09T10:00:00Z" },
+      { id: "s2", agentId: "fake", title: "refactor bar", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T11:00:00Z", unseen: true },
+    ],
     activeSessionId: "s1",
     chatConnect: null,
     roster: [],
     transcripts: { s1: chatTranscript },
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
-    commandsBySession: { s1: [] },
+    commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
     capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
     contextChips: { s1: [] }, sessionKnobs: { s1: [] },
-    contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null, openEditors: [],
+    contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
+    openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
+    workspaceFiles: { query: "", files: [], dirs: [] },
   };
 }
 

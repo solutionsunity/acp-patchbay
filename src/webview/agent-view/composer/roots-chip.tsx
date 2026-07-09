@@ -1,8 +1,10 @@
 // Context roots (features.md § Chat): workspace folders are the always-active
 // baseline — fixed, non-removable, but shown so the count reflects reality.
 // `roots` is the removable, user-added external set, passed to the agent as
-// `additionalDirectories` on the next create/reload/fork (ACP has no
-// live-update request, so a note says so).
+// `additionalDirectories`. A change re-applies to the live session in place
+// (session/load or session/resume "set the complete list"); only an agent
+// declaring neither waits for the next reload/branch — and only then does
+// the note say so (`applyLive`).
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -12,17 +14,22 @@ export function RootsChip({
   sessionId,
   roots,
   workspaceRoots,
+  applyLive,
 }: {
   sessionId: string;
   roots: readonly string[];
   workspaceRoots: readonly string[];
+  applyLive: boolean;
 }) {
   const send = useActions();
   const count = workspaceRoots.length + roots.length;
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="ctx-chip h-auto">
+        {/* text-[10px] because size-sm's text-xs utility outranks the
+            .ctx-chip component rule — keeps this chip on the same font
+            step as its plain-span siblings */}
+        <Button variant="ghost" size="sm" className="ctx-chip h-auto text-[10px]">
           <Icon name="root-folder" /> {count} root{count === 1 ? "" : "s"}
         </Button>
       </PopoverTrigger>
@@ -39,10 +46,12 @@ export function RootsChip({
             <Button
               variant="ghost"
               size="sm"
-              className="h-5 px-1 text-muted-foreground"
+              className="h-5 px-1 text-destructive hover:text-destructive"
+              title="Remove root"
+              aria-label={`Remove root ${r}`}
               onClick={() => send({ kind: "removeContextRoot", sessionId, path: r })}
             >
-              remove
+              <Icon name="trash" />
             </Button>
           </div>
         ))}
@@ -53,7 +62,9 @@ export function RootsChip({
           onClick={() => send({ kind: "addContextRoot", sessionId })}
         >
           <b>+ Add folder…</b>
-          <span className="text-muted-foreground">takes effect next reload/branch</span>
+          {!applyLive && (
+            <span className="text-muted-foreground">takes effect next reload/branch</span>
+          )}
         </Button>
       </PopoverContent>
     </Popover>

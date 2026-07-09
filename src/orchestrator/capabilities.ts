@@ -23,6 +23,7 @@ export function declaredFromInitialize(
     sessionFork: session.fork != null,
     sessionResume: session.resume != null,
     sessionList: session.list != null,
+    sessionDelete: session.delete != null,
     sessionClose: session.close != null,
     promptImage: prompt.image === true,
     promptAudio: prompt.audio === true,
@@ -32,12 +33,14 @@ export function declaredFromInitialize(
     authMethods: (init.authMethods ?? []).map((m) => ({
       id: m.id,
       name: m.name,
+      description: m.description ?? null,
       // The wire's `type` field is absent for the stable default ("agent"
       // handles it itself via `authenticate`); "env_var"/"terminal" are both
       // UNSTABLE ACP capabilities — declared here, never wired to a Log-in
       // action (protocol.ts's AuthMethodView docstring).
       kind: (m as { type?: "env_var" | "terminal" }).type ?? "agent",
     })),
+    authLogout: caps.auth?.logout != null,
   };
 }
 
@@ -92,6 +95,9 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     "session.fork": cell(declared.sessionFork),
     "session.load": cell(declared.loadSession),
     "session.resume": cell(declared.sessionResume),
+    "session.list": cell(declared.sessionList),
+    "session.delete": cell(declared.sessionDelete),
+    "session.close": cell(declared.sessionClose),
     "mcp.http": cell(declared.mcpHttp),
     "mcp.sse": cell(declared.mcpSse),
     // No initialize-time claim exists for these — only ever observed directly.
@@ -101,6 +107,7 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     // session has actually opened (with or without an authenticate round
     // trip in between — see capability-tracker.ts / pool.ts).
     auth: cell(declared.authMethods.length > 0),
+    "auth.logout": cell(declared.authLogout),
   };
 }
 
@@ -165,8 +172,10 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   ],
   "session.fork": [{ via: "agentRequest", method: methods.agent.session.fork }],
   "session.load": [{ via: "agentRequest", method: methods.agent.session.load }],
-  // Pool has no resume() call path yet (UNSTABLE ACP capability).
-  "session.resume": [],
+  "session.resume": [{ via: "agentRequest", method: methods.agent.session.resume }],
+  "session.list": [{ via: "agentRequest", method: methods.agent.session.list }],
+  "session.delete": [{ via: "agentRequest", method: methods.agent.session.delete }],
+  "session.close": [{ via: "agentRequest", method: methods.agent.session.close }],
   // Proof would be the agent connecting to an attached http/sse server —
   // not visible on the ACP wire.
   "mcp.http": [],
@@ -186,6 +195,7 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   // capability-tracker.ts's throwaway probe) got a session out of it, so
   // auth — if this agent even declares any — actually works.
   auth: [{ via: "agentRequest", method: methods.agent.session.new }],
+  "auth.logout": [{ via: "agentRequest", method: methods.agent.logout }],
 };
 
 /** One wire fact, as observed by a pool.ts chokepoint. */

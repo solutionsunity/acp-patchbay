@@ -73,10 +73,19 @@ export function ConfirmButton(props: {
   );
 }
 
-/** The active/inactive mute switch (P13d: Toggle → shadcn Switch, 1:1). */
-export function Toggle(props: { checked: boolean; label: string; title?: string; onChange(checked: boolean): void }) {
+/** THE on/off control (P13d: Toggle → shadcn Switch, 1:1) — every persisted
+ * boolean setting renders through this one component; Checkbox stays for
+ * picking members of a set, never for state. Optional leading codicon. */
+export function Toggle(props: {
+  checked: boolean;
+  label: string;
+  icon?: string;
+  title?: string;
+  onChange(checked: boolean): void;
+}) {
   return (
     <label className="flex cursor-pointer items-center gap-1.5 text-[12px]" title={props.title}>
+      {props.icon !== undefined && <Icon name={props.icon} />}
       <Switch checked={props.checked} onCheckedChange={props.onChange} />
       {props.label}
     </label>

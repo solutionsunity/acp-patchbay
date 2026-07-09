@@ -31,6 +31,29 @@ describe("WireLog", () => {
     expect(frame).toContain("•••");
   });
 
+  it("masks longest-first: a value prefixed by another registered value never leaks its tail", () => {
+    // Systematic for context tokens (ctx-1 / ctx-10): replacing the short
+    // one first used to rewrite "ctx-10" as "•••0" — the observed leak.
+    const { log, lines } = harness();
+    log.registerSecret("ctx-1");
+    log.registerSecret("ctx-10");
+    log.enable();
+    log.frame("claude", "→", '{"env":[{"name":"SID","value":"ctx-10"}]}');
+    const frame = lines.find((l) => l.includes("claude"))!;
+    expect(frame).not.toContain("•••0");
+    expect(frame).toContain('"•••"');
+  });
+
+  it("masks the JSON-escaped spelling too — the frame is JSON, secrets with quotes ride escaped", () => {
+    const { log, lines } = harness();
+    log.registerSecret('pa"ss\\word');
+    log.enable();
+    log.frame("claude", "→", JSON.stringify({ env: [{ name: "KEY", value: 'pa"ss\\word' }] }));
+    const frame = lines.find((l) => l.includes("claude"))!;
+    expect(frame).not.toContain('pa\\"ss');
+    expect(frame).toContain("•••");
+  });
+
   it("skips masking tiny values — they would shred unrelated content", () => {
     const { log, lines } = harness();
     log.registerSecret("ab"); // too short to be a credential

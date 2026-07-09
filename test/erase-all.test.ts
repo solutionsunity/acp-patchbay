@@ -12,6 +12,7 @@ import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
 import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
 import { LastKnownViewStore } from "../src/orchestrator/stores/last-known-view";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -48,6 +49,7 @@ describe("eraseAllData", () => {
     const decisionAudit = new DecisionAuditStore(dir);
     const lastKnownView = new LastKnownViewStore(dir);
     const lastConnected = new LastConnectedStore(workspaceKv);
+    const lastActiveSession = new LastActiveSessionStore(workspaceKv);
 
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
@@ -55,9 +57,9 @@ describe("eraseAllData", () => {
     await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true });
     await integrationEnv.set("github", { GITHUB_PAT: "ghp-secret" });
     await integrationTokens.set("github", { accessToken: "gho-secret" });
-    await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [] }));
+    await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false }));
     // A stray from a removed agent — no config left, must still go.
-    await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [] }));
+    await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false }));
     await spawnRegistry.add(4242, "node agent.js", "agent");
     await sessionIndex.upsert({ id: "s1", agentId: "claude", title: "work", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
     await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], fileWriteScope: "always-ask" });
@@ -65,12 +67,13 @@ describe("eraseAllData", () => {
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastKnownView.save("s1", [], "2026-01-01T00:00:00Z");
     await lastConnected.write(["claude"]);
+    await lastActiveSession.set("s1");
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
       spawnRegistry, sessionIndex, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
-      decisionAudit, lastKnownView, lastConnected,
+      decisionAudit, lastKnownView, lastConnected, lastActiveSession,
     });
 
     expect(agentConfigs.list()).toEqual([]);
@@ -86,6 +89,7 @@ describe("eraseAllData", () => {
     expect(await decisionAudit.tail(5)).toEqual([]);
     expect(await lastKnownView.load("s1")).toBeNull();
     expect(await lastConnected.consume()).toEqual([]);
+    expect(lastActiveSession.get()).toBeUndefined();
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });
