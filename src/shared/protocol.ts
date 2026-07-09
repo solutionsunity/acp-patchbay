@@ -170,6 +170,9 @@ export interface AgentConfigView {
    * state snapshot; the Settings form edits them write-only. */
   envKeys: readonly string[];
   processPolicy: "auto" | "shared" | "isolated";
+  /** Connect this agent when the window opens. Per-agent and opt-in —
+   * superseded the native `acpPatchbay.defaultAgent` setting. */
+  autoConnect: boolean;
   /** Per-agent session defaults, keyed by knob id (the agent's own
    * config-option id, or knobs.ts's MODE_KNOB_ID on the modes-fallback
    * surface) — never by semantic category, which ACP defines as UX-only.

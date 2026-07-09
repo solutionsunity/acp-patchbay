@@ -41,6 +41,10 @@ export const agentConfigSchema = z.object({
   // keys, so they live in SecretStorage (stores/agent-env.ts), joined onto
   // the LaunchSpec at spawn time — never in globalState.
   processPolicy: z.enum(["auto", "shared", "isolated"]).default("auto"),
+  /** Connect this agent when a window opens (orchestrator's
+   * connectStartupAgents). Per-agent and opt-in — superseded the native
+   * `acpPatchbay.defaultAgent` setting, whose only semantic this generalizes. */
+  autoConnect: z.boolean().default(false),
   defaults: agentDefaultsSchema.default({}),
   registrySource: agentRegistrySourceSchema.nullable().default(null),
   /** `agentInfo.version` last captured at connect — the version-keyed

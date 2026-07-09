@@ -47,6 +47,7 @@ import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
+import { LastConnectedStore } from "./stores/last-connected";
 import { LastKnownViewStore } from "./stores/last-known-view";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
@@ -88,6 +89,7 @@ export class Orchestrator {
   readonly sessionIndex: SessionIndexStore;
   readonly decisionAudit: DecisionAuditStore;
   readonly lastKnownView: LastKnownViewStore;
+  readonly lastConnected: LastConnectedStore;
   readonly agentConfigs: AgentConfigStore;
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
@@ -166,6 +168,7 @@ export class Orchestrator {
     this.machinePermissionRules = new MachineRulesStore(context.globalState);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastKnownView = new LastKnownViewStore(context.storageUri?.fsPath ?? null);
+    this.lastConnected = new LastConnectedStore(context.workspaceState);
     // Agents and integrations are developer-env, not code-env: global to
     // this machine, never a repo-committed file. Deliberately global-only —
     // workspace binding may return later as an opt-in (see
@@ -551,9 +554,9 @@ export class Orchestrator {
     this.agentView.onChange(() => this.refreshStatusBar());
     this.refreshStatusBar();
 
-    // Orphan reaping strictly before the default agent spawns (P15c): the
+    // Orphan reaping strictly before any startup agent spawns (P15c): the
     // registry must be settled before new pids start landing in it.
-    void this.reapLeftoverProcesses().then(() => this.connectDefaultAgent());
+    void this.reapLeftoverProcesses().then(() => this.connectStartupAgents());
   }
 
   /** Sweeps spawn-registry records left by a session that never ran its
@@ -601,6 +604,7 @@ export class Orchestrator {
       machineRules: this.machinePermissionRules,
       decisionAudit: this.decisionAudit,
       lastKnownView: this.lastKnownView,
+      lastConnected: this.lastConnected,
     });
 
     this.configuredAgentSpecs.clear();
@@ -630,6 +634,13 @@ export class Orchestrator {
    * raced against the ~2s VS Code actually waits before killing the host.
    * Whatever this couldn't reach, the next activate's reap covers. */
   async shutdown(): Promise<void> {
+    // Reload-continuation stamp, written before any killing — the running
+    // set as it stood when the window went down is what the next activate
+    // restores (if it comes soon enough to be a reload; last-connected.ts).
+    // A Memento write is milliseconds; it must land inside the budget.
+    await this.lastConnected.write(
+      this.pool.list().filter((v) => v.status === "running").map((v) => v.spec.agentId),
+    );
     for (const handle of this.terminals.values()) {
       if (handle.pid !== null && handle.exitStatus() === null) killTree(handle.pid, "SIGKILL");
     }
@@ -639,17 +650,46 @@ export class Orchestrator {
     ]);
   }
 
-  /** "Default agent" (VS Code native settings, architecture.md § UI layer —
-   * deliberately near-empty, flat scalars only): connects it once, only if
-   * nothing is connected yet. The user's own configured choice, not patchbay
-   * picking an agent for them (prd.md's routing scope decision is about
-   * choosing among agents for a given task, not this). */
-  private async connectDefaultAgent(): Promise<void> {
-    const defaultAgentId = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
-    if (defaultAgentId === "" || this.pool.list().length > 0) return;
-    const entry = this.roster.find((a) => a.id === defaultAgentId);
-    if (entry === undefined) return;
-    await this.connectFromSource({ rosterId: defaultAgentId });
+  /** Startup connections: the union of every config flagged auto-connect
+   * and the reload-continuation stamp (stores/last-connected.ts — what was
+   * still running at the last shutdown, honored only while fresh). The
+   * union's two halves answer different questions — "always there" vs.
+   * "was there when the window reloaded" — so neither subsumes the other:
+   * a flagged agent the user manually stopped before reload stays in the
+   * flagged half (autoConnect means every window open); a manually
+   * connected, unflagged agent rides only the stamp and therefore survives
+   * reload but not quit-and-reopen-later. Always the user's own configured
+   * choices, never patchbay picking an agent for them (prd.md's routing
+   * scope decision is about choosing among agents for a task, not this). */
+  private async connectStartupAgents(): Promise<void> {
+    // Legacy `acpPatchbay.defaultAgent` (superseded by the per-agent flag):
+    // folded into the config once, so the old setting keeps working without
+    // two mechanisms living on. The raw value stays readable after the
+    // contribution's removal — unregistered keys still surface.
+    const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
+    if (legacy !== "") {
+      const existing = this.agentConfigs.get(legacy);
+      if (existing !== undefined && !existing.autoConnect) {
+        await this.agentConfigs.upsert({ ...existing, autoConnect: true });
+        await this.refreshAgentConfigs();
+        this.log.info(`migrated acpPatchbay.defaultAgent ("${legacy}") to the per-agent auto-connect flag`);
+      }
+    }
+    const stamped = await this.lastConnected.consume();
+    const flagged = this.agentConfigs.list().filter((c) => c.autoConnect).map((c) => c.id);
+    const ids = new Set([...flagged, ...stamped]);
+    if (legacy !== "") ids.add(legacy); // config may not exist yet — resolved below
+    await Promise.allSettled(
+      [...ids].map((id) => {
+        if (this.configuredAgentSpecs.has(id)) return this.connectFromSource({ configuredId: id });
+        // Only the legacy setting can name an agent with no config on this
+        // machine (a stamp or flag implies one was persisted) — the old
+        // roster path covers it, and persists the config it was missing.
+        if (id === legacy) return this.connectFromSource({ rosterId: id });
+        this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
+        return Promise.resolve();
+      }),
+    );
   }
 
   /** Active session · agent health · usage when reported (features.md § 3) —
@@ -1079,6 +1119,7 @@ export class Orchestrator {
       command,
       args,
       processPolicy: config.processPolicy,
+      autoConnect: config.autoConnect,
       // The view's folded seed is stored under `options` alone — the legacy
       // `mode` field is read (foldSeed) but never written again.
       defaults: { options: { ...config.defaults } },
@@ -1259,6 +1300,7 @@ export class Orchestrator {
         args: c.args,
         envKeys: Object.keys(await this.agentEnv.get(c.id)),
         processPolicy: c.processPolicy,
+        autoConnect: c.autoConnect,
         defaults: foldSeed(c.defaults),
         registrySource: c.registrySource,
         lastSeenVersion: c.lastSeenVersion,
@@ -1394,6 +1436,7 @@ export class Orchestrator {
       command: spec.command,
       args: [...spec.args],
       processPolicy: existing?.processPolicy ?? spec.processPolicy ?? "auto",
+      autoConnect: existing?.autoConnect ?? false,
       defaults: existing?.defaults ?? (spec.defaults !== undefined ? { options: spec.defaults } : {}),
       registrySource: registrySource ?? existing?.registrySource ?? null,
       lastSeenVersion: existing?.lastSeenVersion ?? null,

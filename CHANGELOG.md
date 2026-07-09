@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reload continuity: per-agent auto-connect (Settings § Agents — card toggle
+  and edit form) connects flagged agents on window open, and a window reload
+  additionally restores whatever agents were still running — the running set
+  is stamped at shutdown and honored by the next activate only while fresh
+  (~60s), so quit-and-reopen-later starts only the flagged ones. Supersedes
+  the `acpPatchbay.defaultAgent` setting; an existing value migrates onto its
+  agent's config automatically. In-flight turns still do not survive a reload
+  (deliberate scope decision, recorded in features.md § Agents).
 - P18 — "Disconnect & erase all data" (Settings → Permissions): stops every
   agent and deletes everything patchbay stored — configs, every SecretStorage
   credential and env value, capability/knob caches, rules, session index,

@@ -12,6 +12,7 @@ import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
 import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
 import { LastKnownViewStore } from "../src/orchestrator/stores/last-known-view";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
@@ -46,9 +47,10 @@ describe("eraseAllData", () => {
     const machineRules = new MachineRulesStore(globalKv);
     const decisionAudit = new DecisionAuditStore(dir);
     const lastKnownView = new LastKnownViewStore(dir);
+    const lastConnected = new LastConnectedStore(workspaceKv);
 
     // A lived-in install.
-    await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
+    await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
     await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true });
     await integrationEnv.set("github", { GITHUB_PAT: "ghp-secret" });
@@ -62,12 +64,13 @@ describe("eraseAllData", () => {
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastKnownView.save("s1", [], "2026-01-01T00:00:00Z");
+    await lastConnected.write(["claude"]);
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
       spawnRegistry, sessionIndex, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
-      decisionAudit, lastKnownView,
+      decisionAudit, lastKnownView, lastConnected,
     });
 
     expect(agentConfigs.list()).toEqual([]);
@@ -82,6 +85,7 @@ describe("eraseAllData", () => {
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(await decisionAudit.tail(5)).toEqual([]);
     expect(await lastKnownView.load("s1")).toBeNull();
+    expect(await lastConnected.consume()).toEqual([]);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });

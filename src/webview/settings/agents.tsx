@@ -43,6 +43,7 @@ const EMPTY_AGENT_CONFIG: AgentConfigView = {
   args: [],
   envKeys: [],
   processPolicy: "auto",
+  autoConnect: false,
   defaults: {},
   registrySource: null,
   lastSeenVersion: null,
@@ -72,6 +73,7 @@ function AgentConfigForm(props: {
   const [name, setName] = useState(props.initial.name);
   const [command, setCommand] = useState(displayCommandLine(props.initial.command, props.initial.args));
   const [processPolicy, setProcessPolicy] = useState(props.initial.processPolicy);
+  const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(props.initial.envKeys.map((k) => `${k}=`).join("\n"));
 
   const save = () => {
@@ -85,6 +87,7 @@ function AgentConfigForm(props: {
         args: [],
         envKeys: Object.keys(env),
         processPolicy,
+        autoConnect,
         defaults: props.initial.defaults,
         registrySource: props.initial.registrySource,
         lastSeenVersion: props.initial.lastSeenVersion,
@@ -118,6 +121,12 @@ function AgentConfigForm(props: {
             <SelectItem value="isolated">isolated</SelectItem>
           </SelectContent>
         </Select>
+      </Field>
+      <Field label="auto-connect" hint="connect this agent when the window opens">
+        <label className="row gap-1.5">
+          <Checkbox checked={autoConnect} onCheckedChange={(v) => setAutoConnect(v === true)} />
+          connect on window open
+        </label>
       </Field>
       <Field label="environment variables" hint="KEY=value, one per line">
         <Textarea
@@ -161,6 +170,7 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
     args: [],
     envKeys: [],
     processPolicy: "auto",
+    autoConnect: false,
     defaults: {},
     registrySource: null,
     lastSeenVersion: null,
@@ -775,6 +785,16 @@ export function AgentsSection(props: {
                       <SelectItem value="isolated">isolated</SelectItem>
                     </SelectContent>
                   </Select>
+                </label>
+                <label
+                  className="knob-default"
+                  title="connect this agent when the window opens"
+                >
+                  auto-connect
+                  <Checkbox
+                    checked={effectiveConfig.autoConnect}
+                    onCheckedChange={(v) => saveConfig({ autoConnect: v === true })}
+                  />
                 </label>
                 {status !== "running" ? (
                   // Offerings are connection state — no connection, no list

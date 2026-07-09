@@ -87,16 +87,6 @@
           "group": "9_cutcopypaste"
         }
       ]
-    },
-    "configuration": {
-      "title": "Patchbay",
-      "properties": {
-        "acpPatchbay.defaultAgent": {
-          "type": "string",
-          "default": "",
-          "description": "Roster id of the agent to connect automatically when a workspace opens with none connected yet. Empty \u2014 never auto-connects \u2014 until set."
-        }
-      }
     }
   },
   "scripts": {

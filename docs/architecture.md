@@ -89,8 +89,9 @@ Two webviews and one near-empty native settings page:
 2. **Settings** — agents and launch config, capability matrix, integrations,
    routing, permission rules. Structured data, low frequency, same render-only
    contract.
-3. **VS Code native settings** — flat scalars only (default agent, telemetry
-   opt-in). Never credentials: `settings.json` syncs.
+3. **VS Code native settings** — flat scalars only, deliberately near-empty
+   (`defaultAgent` was the one occupant until the per-agent auto-connect flag
+   superseded it). Never credentials: `settings.json` syncs.
 
 Native surfaces — the status bar item (active session, connection health, usage),
 permission notifications, and command palette entries — are direct orchestrator
@@ -136,6 +137,7 @@ each with different truth semantics, so each gets different placement:
 | Store | Contents | Placement | Why |
 |---|---|---|---|
 | Session index | IDs, titles, timestamps, agent, last agent-confirmed knob state | `workspaceState` | Small, machine-local, non-sensitive; confirmed knob state seeds emulated continuations (§ Session model) |
+| Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |

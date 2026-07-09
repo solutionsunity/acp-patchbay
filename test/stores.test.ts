@@ -11,6 +11,7 @@ import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-stor
 import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { LastConnectedStore, RELOAD_GRACE_MS } from "../src/orchestrator/stores/last-connected";
 import {
   DEFAULT_PERMISSION_RULES,
   PermissionRulesStore,
@@ -36,6 +37,40 @@ describe("SpawnRegistryStore", () => {
     await store.add(1234, "npm run stress", "terminal");
     expect(store.list()).toHaveLength(1);
     expect(store.get("1234")?.command).toBe("npm run stress");
+  });
+});
+
+describe("LastConnectedStore — reload-continuation stamp", () => {
+  it("a fresh stamp yields its ids, and is spent by the read", async () => {
+    const store = new LastConnectedStore(new MemoryKV());
+    await store.write(["claude", "gemini"]);
+    expect(await store.consume()).toEqual(["claude", "gemini"]);
+    // Spent: one stamp can never drive two activations.
+    expect(await store.consume()).toEqual([]);
+  });
+
+  it("a stale stamp yields nothing — quit-and-reopen-later must not resurrect agents", async () => {
+    const store = new LastConnectedStore(new MemoryKV());
+    await store.write(["claude"]);
+    const later = new Date(Date.now() + RELOAD_GRACE_MS + 1);
+    expect(await store.consume(later)).toEqual([]);
+  });
+
+  it("absent or torn stamps yield nothing, never throw", async () => {
+    const kv = new MemoryKV();
+    const store = new LastConnectedStore(kv);
+    expect(await store.consume()).toEqual([]);
+    await kv.update("acpPatchbay.lastConnected", { agentIds: "not-an-array", at: new Date().toISOString() });
+    expect(await store.consume()).toEqual([]);
+    await kv.update("acpPatchbay.lastConnected", { agentIds: ["ok", 42], at: "not-a-date" });
+    expect(await store.consume()).toEqual([]);
+  });
+
+  it("an empty write still lands — a shutdown with nothing running clears any stale stamp", async () => {
+    const store = new LastConnectedStore(new MemoryKV());
+    await store.write(["claude"]);
+    await store.write([]);
+    expect(await store.consume()).toEqual([]);
   });
 });
 

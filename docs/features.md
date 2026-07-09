@@ -112,6 +112,14 @@ deliverable, owed before implementation.
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
 - User can set per-agent process policy: auto / shared / isolated.
+- User can mark an agent auto-connect: it connects on every window open.
+  Independently of the flag, a window reload restores whatever agents were
+  still running when the window went down — a manually connected agent
+  survives reload but not quit-and-reopen-later (the running set is stamped
+  at shutdown and honored only while fresh; `stores/last-connected.ts`).
+  In-flight turns and process warmth do not survive a reload — a deliberate
+  scope decision; the connection-keeper daemon that would preserve them is
+  deferred until mid-turn reload loss demonstrates the need.
 - User can set per-agent defaults for the session mode and for every config
   option the agent actually offers (model and effort being the common ones) —
   keyed by the agent's own option id, since ACP defines the semantic category
@@ -191,7 +199,10 @@ deliverable, owed before implementation.
 
 Deliberately near-empty — flat toggles only, searchable in the standard Settings UI:
 
-- Default agent.
+- ~~Default agent~~ — superseded by the per-agent auto-connect flag (Settings
+  § Agents): the setting's one semantic, connect an agent on window open,
+  generalized to any number of agents. An existing `acpPatchbay.defaultAgent`
+  value is migrated onto its agent's config automatically on activate.
 - Telemetry opt-in.
 - Nothing else unless it proves to be a genuinely flat scalar. Never credentials.
 
