@@ -1,21 +1,27 @@
-MIT License
+Copyright (c) 2026 Solutions Unity. All rights reserved.
 
-Copyright (c) 2026 Solutions Unity
+This software and its accompanying documentation are proprietary to
+Solutions Unity. No license, express or implied, to any intellectual
+property rights is granted by this document.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Subject to the terms below, Solutions Unity grants you a non-exclusive,
+non-transferable, revocable license to install and use this software
+(the "Software") for its intended purpose, obtained through an official
+distribution channel (e.g. the Visual Studio Code Marketplace).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may not:
+- copy, modify, merge, publish, distribute, sublicense, or sell copies
+  of the Software;
+- reverse engineer, decompile, or disassemble the Software, except to
+  the extent such restriction is prohibited by applicable law;
+- remove or alter any copyright, trademark, or other proprietary notice.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL SOLUTIONS UNITY BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For licensing inquiries, contact Solutions Unity at solutionsunity.com.

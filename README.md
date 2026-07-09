@@ -100,4 +100,4 @@ everything the protocol alone doesn't give you.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Proprietary — see [LICENSE](LICENSE).

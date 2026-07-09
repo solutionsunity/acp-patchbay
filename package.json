@@ -2,9 +2,9 @@
   "name": "acp-patchbay",
   "displayName": "acp-patchbay",
   "description": "Any ACP agent. Every integration it can accept. Shown exactly as it is.",
-  "version": "0.0.2",
+  "version": "0.8.2",
   "publisher": "solutionsunity",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/solutionsunity/acp-patchbay"
