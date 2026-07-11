@@ -237,6 +237,7 @@ describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => 
 describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
   const declared: AgentViewEvent = {
     kind: "capabilitiesDeclared",
+    protocolVersion: 1,
     agentId: "a1",
     matrix: matrixFromDeclared({ ...noDeclared, sessionFork: true }),
     authMethods: [],
@@ -268,6 +269,7 @@ describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
 
     state = reduceAgentView(state, {
       kind: "capabilitiesDeclared",
+    protocolVersion: 1,
       agentId: "a1",
       matrix: matrixFromDeclared({ ...noDeclared, sessionFork: true }),
       authMethods: [],

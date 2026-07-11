@@ -123,9 +123,15 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                   <TableHead>capability</TableHead>
                   {agents.map((a) => {
                     const resetAt = state.capabilitiesResetAt[a.id];
+                    const protocol = state.agentProtocol[a.id];
                     return (
                       <TableHead key={a.id} className="text-center">
                         {a.name}
+                        {protocol !== undefined && (
+                          <Badge className="ml-1.5" title="negotiated ACP protocol version (per connection)">
+                            ACP v{protocol}
+                          </Badge>
+                        )}
                         {resetAt !== undefined && (
                           <Badge className="ml-1.5" title="used resets on every reconnect">
                             reset {new Date(resetAt).toLocaleTimeString()}

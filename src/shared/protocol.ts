@@ -1044,6 +1044,8 @@ export type AgentViewEvent =
       agentId: string;
       matrix: CapabilityMatrix;
       authMethods: readonly AuthMethodView[];
+      /** The initialize response's negotiated protocol version. */
+      protocolVersion: number;
       at: string;
     }
   | { kind: "capabilityUsed"; agentId: string; row: CapabilityRowId }
@@ -1681,6 +1683,9 @@ export interface SettingsState {
   roster: readonly RosterEntry[];
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   capabilitiesResetAt: Readonly<Record<string, string>>;
+  /** Negotiated ACP protocol version per agent (initialize response) —
+   * connection-level truth, refreshed per connect like the matrix. */
+  agentProtocol: Readonly<Record<string, number>>;
   authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Workspace layer — evaluated first (permission-rules.ts). */
   commandRules: readonly CommandRuleView[];
@@ -1736,6 +1741,7 @@ export const initialSettingsState: SettingsState = {
   roster: [],
   capabilities: {},
   capabilitiesResetAt: {},
+  agentProtocol: {},
   authMethods: {},
   commandRules: [],
   machineCommandRules: [],
@@ -1810,6 +1816,7 @@ export function reduceSettings(
         agents: reduceAgents(state.agents, event),
         capabilities: dropKey(state.capabilities, event.agentId),
         capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
+        agentProtocol: dropKey(state.agentProtocol, event.agentId),
         authMethods: dropKey(state.authMethods, event.agentId),
         assets: dropKey(state.assets, event.agentId),
         agentKnobs: dropKey(state.agentKnobs, event.agentId),
@@ -1822,6 +1829,7 @@ export function reduceSettings(
         ...state,
         capabilities: reduceCapabilities(state.capabilities, event),
         capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
+        agentProtocol: { ...state.agentProtocol, [event.agentId]: event.protocolVersion },
         authMethods: reduceAuthMethods(state.authMethods, event),
       };
     case "capabilityUsed":

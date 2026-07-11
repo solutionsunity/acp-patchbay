@@ -318,7 +318,7 @@ export class Orchestrator {
       },
       onDeclaredCaptured: (agentId, declared, raw) => {
         const version = raw.agentInfo?.version ?? null;
-        this.capabilityTracker.onDeclared(agentId, declared, version);
+        this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
         if (version !== null) void this.recordSeenVersion(agentId, version);
       },
       onSessionUpdate: (agentId, notification) => {

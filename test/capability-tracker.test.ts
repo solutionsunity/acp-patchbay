@@ -56,7 +56,7 @@ function harness(kv = new MemoryKV()): {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: (agentId, declared, raw) =>
-      tracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
+      tracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
     onSessionUpdate: () => {},
     onCapabilityEvidence: (agentId, row, evidence) =>
       evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),

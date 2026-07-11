@@ -78,7 +78,7 @@ function harness(opts?: {
       }
     },
     onDeclaredCaptured: (agentId, declared, raw) =>
-      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
+      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onCapabilityEvidence: (agentId, row, evidence) =>
       evidence === "used" ? capabilityTracker.markUsed(agentId, row) : capabilityTracker.markSuspect(agentId, row),

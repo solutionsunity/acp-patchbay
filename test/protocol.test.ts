@@ -63,6 +63,7 @@ describe("reducers", () => {
   it("agentRemoved takes the agent's per-agent facts with it", () => {
     const declared = {
       kind: "capabilitiesDeclared",
+    protocolVersion: 1,
       agentId: "claude",
       matrix: {} as never,
       authMethods: [],

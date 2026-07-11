@@ -411,6 +411,22 @@ export class AgentPool {
       throw err;
     }
 
+    // Spec § Initialization (SHOULD): an agent that answers with a protocol
+    // version we can't speak gets a named refusal — never undefined behavior
+    // on a half-understood wire. Patchbay speaks exactly v{PROTOCOL_VERSION}.
+    if (init.protocolVersion !== acp.PROTOCOL_VERSION) {
+      const reason =
+        `agent negotiated unsupported ACP protocol v${init.protocolVersion} — ` +
+        `patchbay speaks v${acp.PROTOCOL_VERSION}`;
+      this.markDead(entry, reason);
+      if (child.pid !== undefined) {
+        const pid = child.pid;
+        killTree(pid, "SIGTERM");
+        setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
+      }
+      throw new Error(reason);
+    }
+
     entry.initializeRaw = init;
     entry.declared = declaredFromInitialize(init);
     this.log.info(

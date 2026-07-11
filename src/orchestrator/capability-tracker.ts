@@ -76,7 +76,12 @@ export class CapabilityTracker {
    * connection's `agentInfo.version` (null when the agent didn't report
    * one — everything still works, it just never seeds from/saves to the
    * persisted cache, same as before this existed). */
-  onDeclared(agentId: string, declared: DeclaredCapabilities, version: string | null): void {
+  onDeclared(
+    agentId: string,
+    declared: DeclaredCapabilities,
+    version: string | null,
+    protocolVersion: number,
+  ): void {
     const fresh = matrixFromDeclared(declared);
     const seeded = version !== null ? this.usedCache.seed(agentId, version, fresh) : fresh;
     if (version !== null) this.versions.set(agentId, version);
@@ -86,6 +91,7 @@ export class CapabilityTracker {
       agentId,
       matrix: seeded,
       authMethods: declared.authMethods,
+      protocolVersion,
       at: new Date().toISOString(),
     });
     if (version !== null && seeded !== fresh) {
