@@ -238,3 +238,36 @@ describe("sliceTextFileRead (fs/read_text_file line/limit — acp-compliance.md 
     expect(sliceTextFileRead(content, 99)).toBe("");
   });
 });
+
+describe("resolveProbePermissionRequest — probe sessions answer, never dangle", () => {
+  const options = (kinds: string[]) =>
+    kinds.map((kind, i) => ({ optionId: `o${i}`, label: kind, kind }) as never);
+
+  it("picks reject_once over everything, whatever the agent's ordering", async () => {
+    const { broker } = harness();
+    const result = await broker.resolveProbePermissionRequest(
+      "probe-1",
+      "Workspace Indexing Permission",
+      options(["allow_always", "reject_always", "allow_once", "reject_once"]),
+    );
+    expect(result).toEqual({ optionId: "o3" });
+  });
+
+  it("falls back to reject_always, then the cancelled outcome", async () => {
+    const { broker } = harness();
+    expect(
+      await broker.resolveProbePermissionRequest("p", "t", options(["allow_once", "reject_always"])),
+    ).toEqual({ optionId: "o1" });
+    expect(
+      await broker.resolveProbePermissionRequest("p", "t", options(["allow_once", "allow_always"])),
+    ).toEqual({ cancelled: true });
+  });
+
+  it("audits the automatic decision and never emits a card", async () => {
+    const { broker, audit, events } = harness();
+    await broker.resolveProbePermissionRequest("probe-1", "Indexing", options(["reject_once"]));
+    const tail = await audit.tail(10);
+    expect(tail.at(-1)).toMatchObject({ kind: "probe-auto-deny", tool: "Indexing" });
+    expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
+  });
+});

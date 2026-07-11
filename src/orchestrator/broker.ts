@@ -137,6 +137,25 @@ export class PermissionBroker {
     this.hooks.onAuditWritten();
   }
 
+  /** A probe session's permission request: the tracker's throwaway
+   * session/new tripped an agent-side gate (Auggie's workspace-indexing
+   * question rides that call). Never surfaced — no card surface exists for
+   * a session the UI doesn't know — but always answered: it's a JSON-RPC
+   * request, and the probe's temp dir is about to be deleted anyway. Least
+   * privilege wins: reject_once, then reject_always, else the cancelled
+   * outcome. Audited like every other automatic decision. */
+  async resolveProbePermissionRequest(
+    sessionId: string,
+    toolTitle: string,
+    options: readonly PermissionOptionView[],
+  ): Promise<{ optionId: string } | { cancelled: true }> {
+    const reject =
+      options.find((o) => o.kind === "reject_once") ??
+      options.find((o) => o.kind === "reject_always");
+    await this.writeAudit({ kind: "probe-auto-deny", sessionId, tool: toolTitle, subject: null });
+    return reject !== undefined ? { optionId: reject.optionId } : { cancelled: true };
+  }
+
   /** The agent's own session/request_permission call — shown with exactly
    * the options the agent offered. */
   async resolveAgentPermissionRequest(

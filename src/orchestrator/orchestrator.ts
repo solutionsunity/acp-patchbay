@@ -355,12 +355,32 @@ export class Orchestrator {
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
       onPermissionRequest: async (_agentId, params) => {
+        const options = optionViewsFromAcp(params.options);
+        const title = params.toolCall.title ?? "Permission request";
+        // A throwaway probe session can trip real agent-side gates (Auggie's
+        // workspace-indexing question rides session/new). No surface renders
+        // a probe session, so the card/toast path would leave the agent's
+        // RPC dangling forever — a JSON-RPC request is always owed an
+        // answer. Least privilege instead: the question re-asks on the
+        // user's first real session, and the probe's temp dir is about to
+        // be deleted anyway.
+        const probeAgent = this.capabilityTracker.agentForProbeSession(params.sessionId);
+        if (probeAgent !== undefined) {
+          this.log.info(`${probeAgent}: auto-declined "${title}" on a probe session`);
+          const auto = await this.broker.resolveProbePermissionRequest(
+            params.sessionId,
+            title,
+            options,
+          );
+          return "cancelled" in auto
+            ? { outcome: { outcome: "cancelled" as const } }
+            : { outcome: { outcome: "selected" as const, optionId: auto.optionId } };
+        }
         const subject =
           params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
-        const options = optionViewsFromAcp(params.options);
         const result = await this.broker.resolveAgentPermissionRequest(
           params.sessionId,
-          params.toolCall.title ?? "Permission request",
+          title,
           params.toolCall.kind ?? "other",
           subject,
           options,
