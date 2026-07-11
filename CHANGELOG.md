@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.9 — 2026-07-11
+
+- Fixed: adding Codex (or any npx-distributed agent) could fail forever
+  with "initialize failed: ACP connection closed" after one interrupted
+  download — the launcher's package cache was left half-written and never
+  healed. Patchbay now detects that exact failure, repairs the cache, and
+  retries the connect once, automatically.
+- The download phase can no longer cause that corruption in the first
+  place: an aborted package download now cleans up after itself, and
+  binary-distributed agents install atomically (a killed install leaves
+  nothing behind).
+- New: if the same CLI is also installed on your PATH (e.g. `codex` in
+  your terminal) at a majorly different version than the one patchbay
+  runs, a one-time warning points it out — both copies share the same
+  sessions, auth, and config, so a wide gap between them is worth knowing
+  about. Purely informational; nothing is blocked.
+
 ## 0.8.8 — 2026-07-11
 
 - Logging in works for agents that hand the login to a terminal (the
