@@ -101,7 +101,7 @@ export function App({ state }: { state: AgentViewState }) {
       {drawer === "agents" && (
         <AgentsDrawer
           agents={state.agents}
-          roster={state.roster}
+          registryAgents={state.registryAgents}
           capabilities={state.capabilities}
           onDone={closeDrawer}
         />

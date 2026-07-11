@@ -33,7 +33,7 @@ function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
  * banner's Restart. */
 export function AgentsDrawer(props: {
   agents: readonly AgentSummary[];
-  roster: AgentViewState["roster"];
+  registryAgents: AgentViewState["registryAgents"];
   capabilities: AgentViewState["capabilities"];
   onDone(toast?: string): void;
 }) {
@@ -48,9 +48,9 @@ export function AgentsDrawer(props: {
       )}
       {props.agents.map((a) => {
         const matrix = props.capabilities[a.id];
-        const roster = props.roster.find((r) => r.id === a.id);
+        const registry = props.registryAgents.find((r) => r.id === a.id);
         const fidelity =
-          matrix !== undefined ? computeFidelity(matrix, roster?.knownBypassBridge ?? false) : null;
+          matrix !== undefined ? computeFidelity(matrix, registry?.knownBypassBridge ?? false) : null;
         return (
           <div
             className="a-row"

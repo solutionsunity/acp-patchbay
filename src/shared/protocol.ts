@@ -30,7 +30,7 @@ export type ViewToHost =
 // ── actions (fire-and-forget; results come back as state, never as replies) ──
 
 export type ConnectAgentSource =
-  | { rosterId: string }
+  | { registryId: string } // an agent from the official ACP registry
   | { command: string } // custom command line that speaks ACP
   | { configuredId: string }; // a saved workspace agent config (Settings § Agents)
 
@@ -83,7 +83,7 @@ export type Action =
   | { kind: "confirmBinaryInstall"; agentId: string }
   | { kind: "cancelBinaryInstall"; agentId: string }
   | { kind: "upgradeAgent"; agentId: string }
-  | { kind: "refreshRoster" }
+  | { kind: "refreshRegistry" }
   /** `layer` picks which rule list (permission-rules.ts): "workspace"
    * (workspaceState, this repo, evaluated first) or "machine" (globalState,
    * every workspace, the fallback floor). */
@@ -199,7 +199,7 @@ export interface AgentConfigView {
    * is folded at the orchestrator boundary (knobs.ts foldSeed). */
   defaults: KnobSeed;
   /** Present only for agents added from the official ACP registry — drives
-   * the "update available" comparison against the roster's live version. */
+   * the "update available" comparison against the registry's live version. */
   registrySource: AgentRegistrySourceView | null;
   /** `agentInfo.version` last captured at connect — what the used-
    * capability cache is actually keyed against (reality over the pinned
@@ -304,7 +304,7 @@ export interface AssetFileView {
 }
 
 export interface AssetCategoryView {
-  /** null = this category isn't mapped for this agent (roster data) —
+  /** null = this category isn't mapped for this agent (asset-locations.ts) —
    * shown as unmapped, never guessed. */
   files: readonly AssetFileView[] | null;
 }
@@ -439,29 +439,34 @@ export interface DeclaredCapabilities {
 
 // ── agent-view channel ───────────────────────────────────────────────────────
 
-export interface RosterEntry {
+/** One agent of the official ACP registry, as patchbay presents it — the
+ * registry record enriched with platform launch resolution and patchbay's
+ * own code-table curation (asset locations, bypass-bridge observations).
+ * The registry is the one source of agents (the pre-registry roster overlay
+ * is gone — terminology followed: roster = registry, so the word "roster"
+ * no longer exists in this codebase); custom commands remain the escape
+ * hatch for anything it doesn't list. */
+export interface RegistryAgentView {
+  /** The registry's own id — also the config id an Add mints. */
   id: string;
   name: string;
-  /** Registry description, or a local-only entry's installHint. */
   description: string;
   /** Registry icon as a data URI — fetched host-side and cached with the
    * registry snapshot (acp-registry.ts), so the webview renders it under the
    * already-authored `img-src data:` CSP and never talks to the CDN itself.
-   * Null for local-only entries or before the first fetch. */
+   * Null before the first successful fetch. */
   icon: string | null;
-  /** rules/skills/commands locations known for this agent (roster data). */
+  /** rules/skills/commands locations known for this agent (asset-locations.ts
+   * code table). */
   assetsMapped: boolean;
   /** A bridge observed to act on fs/terminal regardless of client capabilities. */
   knownBypassBridge: boolean;
-  /** Not addable right now — no distribution published for this platform,
-   * or a registry id the registry hasn't (yet) returned. Shown on the Add
-   * Agent picker, never silently hidden. */
+  /** Not addable right now — no distribution published for this platform.
+   * Shown on the Add Agent picker, never silently hidden. */
   unavailableReason: string | null;
-  /** Present only for registry-backed entries. */
-  registryId: string | null;
-  /** The registry's current version for this agent — compared against an
-   * added config's own pinned version to drive "update available." */
-  registryVersion: string | null;
+  /** The registry's current version — compared against an added config's
+   * own pinned version to drive "update available." */
+  version: string;
 }
 
 // ── capability matrix (architecture.md § Agent capability matrix) ──────────
@@ -854,8 +859,8 @@ export interface AgentViewState {
    * open session is on its way back. Seeded true only when a last-active
    * pointer exists; cleared by `startupSettled`. */
   restoring: boolean;
-  /** Known-agents roster (shipped data) for the pickers. */
-  roster: readonly RosterEntry[];
+  /** The ACP registry's agents (acp-registry.ts) for the pickers. */
+  registryAgents: readonly RegistryAgentView[];
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
   /** The pinned plan widget's source — the most recent plan snapshot, or
@@ -936,7 +941,7 @@ export const initialAgentViewState: AgentViewState = {
   activeSessionId: null,
   chatConnect: null,
   restoring: false,
-  roster: [],
+  registryAgents: [],
   transcripts: {},
   activePlan: {},
   activeTurn: {},
@@ -1110,7 +1115,7 @@ export type AgentViewEvent =
   | { kind: "agentAuthResolved"; agentId: string }
   /** Full replace — the registry × overlay merge changed (refresh, or a new
    * version landed upstream). */
-  | { kind: "rosterChanged"; roster: readonly RosterEntry[] };
+  | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -1323,8 +1328,10 @@ export function reduceAgentView(
         capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
         authMethods: dropKey(state.authMethods, event.agentId),
       };
-    case "rosterChanged":
-      return { ...state, roster: event.roster };
+    case "registryChanged":
+      // The agent view needs only the list; the settings channel also keeps
+      // the snapshot's fetchedAt for the Add Agent card's freshness line.
+      return { ...state, registryAgents: event.agents };
     case "chatConnectStarted":
       return { ...state, chatConnect: { agentId: event.agentId, status: "connecting", forSessionId: event.forSessionId } };
     case "chatConnectFailed":
@@ -1772,7 +1779,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
 
 export interface SettingsState {
   agents: readonly AgentSummary[];
-  roster: readonly RosterEntry[];
+  registryAgents: readonly RegistryAgentView[];
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   capabilitiesResetAt: Readonly<Record<string, string>>;
   /** Negotiated ACP protocol version per agent (initialize response) —
@@ -1795,14 +1802,14 @@ export interface SettingsState {
   assets: Readonly<Record<string, AgentAssetsView>>;
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
-   * `connectAgent` action as roster/custom (`{ configuredId }`). */
+   * `connectAgent` action as registry/custom (`{ configuredId }`). */
   agentConfigs: readonly AgentConfigView[];
   /** Stat tile: sessions created today (from the session index). */
   sessionsToday: number;
   /** Keyed by agentId — observed knob offerings (see AgentKnobsView). */
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
-  registryUpdatedAt: string;
+  registryFetchedAt: string;
   /** At most one at a time — the Add Agent flow blocks on it. */
   pendingBinaryInstall: PendingBinaryInstallView | null;
   /** Present while a Verify round-trip (manual click or "Verify after add")
@@ -1833,7 +1840,7 @@ export interface DataInventoryRow {
 
 export const initialSettingsState: SettingsState = {
   agents: [],
-  roster: [],
+  registryAgents: [],
   capabilities: {},
   capabilitiesResetAt: {},
   agentProtocol: {},
@@ -1849,7 +1856,7 @@ export const initialSettingsState: SettingsState = {
   agentConfigs: [],
   sessionsToday: 0,
   agentKnobs: {},
-  registryUpdatedAt: "",
+  registryFetchedAt: "",
   pendingBinaryInstall: null,
   verifyingAgents: {},
   wireLog: { active: false, until: null },
@@ -1881,7 +1888,6 @@ export type SettingsEvent =
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "preferencesChanged"; preferences: PreferencesView }
-  | { kind: "registryUpdated"; at: string }
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
   | { kind: "binaryInstallResolved"; agentId: string }
   | { kind: "agentVerifyStarted"; agentId: string }
@@ -1919,8 +1925,8 @@ export function reduceSettings(
         agentKnobs: dropKey(state.agentKnobs, event.agentId),
         verifyingAgents: dropKey(state.verifyingAgents, event.agentId),
       };
-    case "rosterChanged":
-      return { ...state, roster: event.roster };
+    case "registryChanged":
+      return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
     case "capabilitiesDeclared":
       return {
         ...state,
@@ -1941,8 +1947,6 @@ export function reduceSettings(
       };
     case "auditTailChanged":
       return { ...state, auditTail: event.entries };
-    case "registryUpdated":
-      return { ...state, registryUpdatedAt: event.at };
     case "binaryInstallPending":
       return { ...state, pendingBinaryInstall: event.install };
     case "binaryInstallResolved":
@@ -2023,7 +2027,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "wireLogChanged",
   "dataInventoryChanged",
   "preferencesChanged",
-  "registryUpdated",
   "binaryInstallPending",
   "binaryInstallResolved",
   "agentVerifyStarted",

@@ -1,11 +1,36 @@
-// Resolves a roster agent's rules/skills/commands locations (architecture.md
+// Resolves an agent's rules/skills/commands locations (architecture.md
 // § Rules, skills, commands) into the files actually on disk in this
 // workspace — management only, v1 is view + navigate, never delivery. A
 // structural `FsLike` (mirrors kv.ts's `KV`) keeps the resolution logic
 // vscode-free and unit-testable; the real implementation just wraps
 // vscode.workspace.fs.
 import { join } from "node:path";
-import type { AssetLocations } from "./stores/roster";
+
+export interface AssetLocations {
+  rules: readonly string[] | null;
+  commands: readonly string[] | null;
+  skills: readonly string[] | null;
+}
+
+/** The asset-location table — patchbay's own curated knowledge, keyed by
+ * the registry's agent id, in code like every other house table (meta.ts
+ * META_EXTENSIONS, capabilities.ts CAPABILITY_PROOFS — the roster-overlay
+ * JSON this replaces was vscode-acp heritage, retired when the official
+ * registry became the one agent source). v1 scope (features.md): Claude
+ * Code and Augment mapped; an unmapped agent shows as such, never guessed.
+ * Adding an agent here is a recorded curation decision, one line of diff. */
+export const ASSET_LOCATIONS: Readonly<Record<string, AssetLocations>> = {
+  "claude-acp": {
+    rules: ["CLAUDE.md", ".claude/rules"],
+    commands: [".claude/commands"],
+    skills: [".claude/skills"],
+  },
+  auggie: {
+    rules: [".augment/rules"],
+    commands: [".augment/commands"],
+    skills: [".augment/skills"],
+  },
+};
 
 export interface FsEntry {
   name: string;
@@ -26,7 +51,7 @@ export interface AssetFileView {
 }
 
 export interface AssetCategoryView {
-  /** null = this category isn't mapped for this agent (roster data), shown
+  /** null = this category isn't mapped for this agent (ASSET_LOCATIONS), shown
    * as unmapped — never guessed, never silently skipped. */
   files: readonly AssetFileView[] | null;
 }

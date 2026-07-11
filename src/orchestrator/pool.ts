@@ -119,7 +119,7 @@ interface Entry {
   /** The `entries` map key — same as `spec.agentId` for a primary connection,
    * a synthetic instance id for a process-policy "isolated" one. */
   poolKey: string;
-  /** The real roster agentId, for hook attribution — equals `poolKey` unless
+  /** The real configured agentId, for hook attribution — equals `poolKey` unless
    * `isolated`. */
   reportAs: string;
   /** A process-policy "isolated" instance: invisible to `list()`, doesn't
@@ -296,7 +296,7 @@ export class AgentPool {
    * `opts` backs process-policy "isolated" instances (P8): a distinct
    * `poolKey` from `spec.agentId` so a dedicated subprocess can coexist with
    * the shared one, while `reportAs` keeps every hook call attributed to the
-   * real roster agent. Declared capabilities are still recorded locally
+   * real configured agent. Declared capabilities are still recorded locally
    * (`entry.declared`, e.g. for `reopen`'s `loadSession` check) but never
    * re-broadcast via `onDeclaredCaptured` for an isolated instance — the
    * shared agent's own matrix must not reset just because a sibling process

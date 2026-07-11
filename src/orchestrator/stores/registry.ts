@@ -1,7 +1,7 @@
 // Registry loader: curated integrations as shipped data (architecture.md §
 // Integrations — "the registry is shipped data from day one... adding a
 // curated integration in v2 is a data change, not code"). Same trust-boundary
-// treatment as roster.ts: validated with zod, never trusted blind.
+// treatment as acp-registry.ts: validated with zod, never trusted blind.
 //
 // Auth model per docs/reference-mcp-oauth.md (decided): every entry offers
 // up to two mechanisms — a static key sent in a configurable header (the v1

@@ -2,7 +2,7 @@
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.
 import { useState, type CSSProperties, type ReactNode } from "react";
-import type { AgentConfigView, AgentSummary, AuthMethodView, RosterEntry, SettingsState } from "../../shared/protocol";
+import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
@@ -175,17 +175,19 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
 }
 
 /** Registry version vs. what this config is pinned to — null when there's
- * nothing to compare (custom command, local-only roster entry, or already
- * current). Never auto-applied: Upgrade is always the user's own click. */
+ * nothing to compare (custom command, or already current). Never
+ * auto-applied: Upgrade is always the user's own click. Linked through the
+ * config's own registrySource.registryId — never the config id, which may
+ * predate the registry naming. */
 function updateAvailable(state: SettingsState, config: AgentConfigView | undefined): { from: string; to: string } | null {
   if (config?.registrySource == null) return null;
-  const latest = state.roster.find((r) => r.id === config.id)?.registryVersion;
+  const latest = state.registryAgents.find((r) => r.id === config.registrySource!.registryId)?.version;
   if (latest == null || latest === config.registrySource.pinnedVersion) return null;
   return { from: config.registrySource.pinnedVersion, to: latest };
 }
 
 /** The registry's own icon for an agent (a host-fetched data URI riding
- * RosterEntry — CSP-safe by the authored `img-src data:`). Renders nothing
+ * RegistryAgentView — CSP-safe by the authored `img-src data:`). Renders nothing
  * when there is none: absence over a generic placeholder that would make
  * every local/custom agent wear the same fake brand.
  *
@@ -206,16 +208,16 @@ function AgentIcon({ icon }: { icon: string | null | undefined }) {
   return <span aria-hidden className="inline-block h-4 w-4 shrink-0" style={mask} />;
 }
 
-/** Searchable roster picker (ui.md § Settings Agents "Add Agent" — full
+/** Searchable registry picker (ui.md § Settings Agents "Add Agent" — full
  * scenario: type to filter, click to pick, clear to search again). Fully
  * controlled — the only local state is whether the dropdown is open, so a
  * parent reset (after Add, or on mode toggle) can't leave it out of sync. */
-function RosterCombobox(props: {
-  entries: readonly RosterEntry[];
+function RegistryCombobox(props: {
+  entries: readonly RegistryAgentView[];
   query: string;
   selectedId: string;
   onQueryChange(query: string): void;
-  onSelect(rosterId: string): void; // "" clears the selection
+  onSelect(registryId: string): void; // "" clears the selection
 }) {
   const [open, setOpen] = useState(false);
   const selected = props.entries.find((r) => r.id === props.selectedId);
@@ -231,14 +233,14 @@ function RosterCombobox(props: {
             aria-expanded={open}
             className="w-72 justify-between font-normal"
           >
-            {selected !== undefined ? selected.name : "search roster…"}
+            {selected !== undefined ? selected.name : "search the registry…"}
             <Icon name="chevron-down" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-72 p-0" align="start">
           <Command>
             <CommandInput
-              placeholder="search roster…"
+              placeholder="search the registry…"
               value={props.query}
               onValueChange={(q) => {
                 props.onQueryChange(q);
@@ -248,7 +250,7 @@ function RosterCombobox(props: {
             <CommandList>
               <CommandEmpty>
                 {props.entries.length === 0
-                  ? "no roster entries — try Refresh roster"
+                  ? "no registry agents — try Refresh registry"
                   : `no matches for \u201c${props.query}\u201d`}
               </CommandEmpty>
               {props.entries.map((r) => (
@@ -291,40 +293,37 @@ function RosterCombobox(props: {
   );
 }
 
-/** Roster search or custom command (ui.md § Settings Agents) — the one way
+/** Registry search or custom command (ui.md § Settings Agents) — the one way
  * to add an agent, which is also how it's activated: persisted, connected,
- * and (by default) Verified in one action. Already-configured roster ids
+ * and (by default) Verified in one action. Already-configured registry ids
  * are excluded here — their own card below is the way back to them. The two
  * ways of naming an agent are mutually exclusive modes behind one toggle,
  * never two half-filled fields at once. */
 function AddAgentRow(props: {
   state: SettingsState;
-  onAdd(source: { rosterId: string } | { command: string }, verifyAfterConnect: boolean): void;
-  onRefreshRoster(): void;
+  onAdd(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
+  onRefreshRegistry(): void;
 }) {
   const configuredIds = new Set(props.state.agentConfigs.map((c) => c.id));
-  const available = props.state.roster.filter((r) => !configuredIds.has(r.id));
-  // registryVersion is non-null exactly for agents in the current registry
-  // snapshot — local-only entries and overlay orphans (curated ids the
-  // registry didn't return) must not inflate the registry's own count.
-  const registryCount = props.state.roster.filter((r) => r.registryVersion !== null).length;
-  const [mode, setMode] = useState<"roster" | "custom">("roster");
-  const [rosterQuery, setRosterQuery] = useState("");
-  const [rosterId, setRosterId] = useState("");
+  const available = props.state.registryAgents.filter((r) => !configuredIds.has(r.id));
+  const registryCount = props.state.registryAgents.length;
+  const [mode, setMode] = useState<"registry" | "custom">("registry");
+  const [registryQuery, setRegistryQuery] = useState("");
+  const [registryId, setRegistryId] = useState("");
   const [customCommand, setCustomCommand] = useState("");
   const [verifyAfterAdd, setVerifyAfterAdd] = useState(true);
 
-  const canAdd = mode === "roster" ? rosterId !== "" : customCommand.trim() !== "";
+  const canAdd = mode === "registry" ? registryId !== "" : customCommand.trim() !== "";
 
   const resetFields = () => {
-    setRosterQuery("");
-    setRosterId("");
+    setRegistryQuery("");
+    setRegistryId("");
     setCustomCommand("");
   };
 
   const add = () => {
-    if (mode === "roster" && rosterId !== "") {
-      props.onAdd({ rosterId }, verifyAfterAdd);
+    if (mode === "registry" && registryId !== "") {
+      props.onAdd({ registryId }, verifyAfterAdd);
     } else if (mode === "custom" && customCommand.trim() !== "") {
       props.onAdd({ command: customCommand.trim() }, verifyAfterAdd);
     } else {
@@ -340,26 +339,26 @@ function AddAgentRow(props: {
         <span className="flex-1" />
         <Button
           variant="outline" size="sm"
-          onClick={props.onRefreshRoster}
+          onClick={props.onRefreshRegistry}
           title="Re-check the official ACP registry for new agents and versions"
         >
-          <Icon name="refresh" /> Refresh roster
+          <Icon name="refresh" /> Refresh registry
         </Button>
       </div>
-      {props.state.registryUpdatedAt !== "" && (
+      {props.state.registryFetchedAt !== "" && (
         <div className="note mx-0 mb-0 mt-1">
           {registryCount} agent{registryCount === 1 ? "" : "s"} in the ACP registry · last
-          checked {new Date(props.state.registryUpdatedAt).toLocaleString()}
+          checked {new Date(props.state.registryFetchedAt).toLocaleString()}
         </div>
       )}
       <div className="connect-form mt-2">
-        {mode === "roster" ? (
-          <RosterCombobox
+        {mode === "registry" ? (
+          <RegistryCombobox
             entries={available}
-            query={rosterQuery}
-            selectedId={rosterId}
-            onQueryChange={setRosterQuery}
-            onSelect={setRosterId}
+            query={registryQuery}
+            selectedId={registryId}
+            onQueryChange={setRegistryQuery}
+            onSelect={setRegistryId}
           />
         ) : (
           <Input
@@ -378,11 +377,11 @@ function AddAgentRow(props: {
         <Button
           variant="outline" size="sm"
           onClick={() => {
-            setMode(mode === "roster" ? "custom" : "roster");
+            setMode(mode === "registry" ? "custom" : "registry");
             resetFields();
           }}
         >
-          {mode === "roster" ? "Add custom…" : "Add from list"}
+          {mode === "registry" ? "Add custom…" : "Add from registry"}
         </Button>
         <label className="row gap-1.5">
           <Checkbox
@@ -584,7 +583,7 @@ export function AgentsSection(props: {
   state: SettingsState;
   onVerify(agentId: string): void;
   onConnectConfigured(agentId: string): void;
-  onAddAgent(source: { rosterId: string } | { command: string }, verifyAfterConnect: boolean): void;
+  onAddAgent(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
   onSave(config: AgentConfigView, env: Record<string, string>): void;
   onRemove(agentId: string): void;
   onStop(agentId: string): void;
@@ -592,7 +591,7 @@ export function AgentsSection(props: {
   onAuthenticate(agentId: string, methodId: string): void;
   onLogout(agentId: string): void;
   onUpgrade(agentId: string): void;
-  onRefreshRoster(): void;
+  onRefreshRegistry(): void;
   onConfirmBinaryInstall(agentId: string): void;
   onCancelBinaryInstall(agentId: string): void;
 }) {
@@ -606,7 +605,7 @@ export function AgentsSection(props: {
   // One card per known agent id — the union of connected-this-session
   // (state.agents) and persisted (state.agentConfigs); Add always persists,
   // so in steady state every agent has both. No more separate "workspace
-  // configs" list — one roster of cards, not two.
+  // configs" list — one set of cards, not two.
   const ids = [
     ...state.agentConfigs.map((c) => c.id),
     ...state.agents.filter((a) => !state.agentConfigs.some((c) => c.id === a.id)).map((a) => a.id),
@@ -646,7 +645,7 @@ export function AgentsSection(props: {
             props.onAddAgent(source, verifyAfterConnect);
             setAddOpen(false);
           }}
-          onRefreshRoster={props.onRefreshRoster}
+          onRefreshRegistry={props.onRefreshRegistry}
         />
       )}
       {state.pendingBinaryInstall !== null && (
@@ -668,7 +667,12 @@ export function AgentsSection(props: {
         const config = state.agentConfigs.find((c) => c.id === id);
         const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
         const matrix = state.capabilities[id];
-        const roster = state.roster.find((r) => r.id === id);
+        // Registry row for this config: the config's own registrySource is
+        // the link (a config id may predate the registry naming); plain id
+        // covers agents added straight from the registry.
+        const registry = state.registryAgents.find(
+          (r) => r.id === (config?.registrySource?.registryId ?? id),
+        );
         const knobs = state.agentKnobs[id];
         const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
         // No summary at all = the orchestrator never saw this config — the
@@ -725,10 +729,10 @@ export function AgentsSection(props: {
                 to its own line instead of pushing past the card border */}
             <div className="row flex-wrap">
               <span className={`dot ${status}`} />
-              <AgentIcon icon={roster?.icon} />
+              <AgentIcon icon={registry?.icon} />
               <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
               {matrix !== undefined && (
-                <FidelityChip matrix={matrix} knownBypassBridge={roster?.knownBypassBridge ?? false} />
+                <FidelityChip matrix={matrix} knownBypassBridge={registry?.knownBypassBridge ?? false} />
               )}
               {upgrade !== null && (
                 <Badge className="border-warn/40 text-warn" title={`registry has v${upgrade.to}, pinned to v${upgrade.from}`}>

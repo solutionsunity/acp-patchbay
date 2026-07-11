@@ -2,7 +2,7 @@
 // integrations, and the used-capability cache are all "developer env,
 // not code env" (never repo-committed) and all need the same shape: list,
 // upsert-by-id, remove-by-id. One implementation, three instantiations.
-// Same trust-boundary treatment as roster.ts/config-file.ts: zod-validated
+// Same trust-boundary treatment as acp-registry.ts/config-file.ts: zod-validated
 // on read, a malformed stored record is dropped rather than trusted blind.
 import type { z } from "zod";
 import type { KV } from "./kv";

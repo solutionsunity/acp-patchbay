@@ -308,7 +308,7 @@ export function IntegrationsSection(props: {
   const fidelityOf = (agentId: string): FidelityLabel | null => {
     const matrix = state.capabilities[agentId];
     if (matrix === undefined) return null;
-    return computeFidelity(matrix, state.roster.find((r) => r.id === agentId)?.knownBypassBridge ?? false);
+    return computeFidelity(matrix, state.registryAgents.find((r) => r.id === agentId)?.knownBypassBridge ?? false);
   };
   const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
   const [adding, setAdding] = useState<"stdio" | "http" | "json" | null>(null);

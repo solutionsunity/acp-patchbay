@@ -169,13 +169,13 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                 ))}
                 <TableRow className="sep">
                   <TableCell colSpan={agents.length + 1}>
-                    patchbay-side — from roster data, not the handshake
+                    patchbay-side — from the asset table, not the handshake
                   </TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="cap">rules/skills/commands locations</TableCell>
                   {agents.map((a) => {
-                    const mapped = state.roster.find((r) => r.id === a.id)?.assetsMapped ?? false;
+                    const mapped = state.registryAgents.find((r) => r.id === a.id)?.assetsMapped ?? false;
                     return (
                       <TableCell key={a.id} className={`text-center ${mapped ? "" : "st-n"}`}>
                         {mapped ? "mapped" : "not mapped"}

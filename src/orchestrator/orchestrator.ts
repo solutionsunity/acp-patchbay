@@ -22,11 +22,10 @@ import {
   type ConnectAgentSource,
   type DataInventoryRow,
   type PermissionOptionView,
-  type RosterEntry,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
-import { resolveAgentAssets, type FsLike } from "./asset-locations";
+import { ASSET_LOCATIONS, resolveAgentAssets, type FsLike } from "./asset-locations";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker } from "./capability-tracker";
@@ -43,7 +42,14 @@ import { SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
 import { playDoneSound } from "./sound";
-import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
+import {
+  type AcpRegistryData,
+  AcpRegistryStore,
+  KNOWN_BYPASS_BRIDGES,
+  type RegistryAgent,
+  registryAgentView,
+  resolveDistribution,
+} from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
 import { LastKnobsStore } from "./stores/last-knobs";
 import { PreferencesStore } from "./stores/preferences";
@@ -56,7 +62,6 @@ import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
-import { loadOverlay, mergeRoster, type RosterAgent } from "./stores/roster";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
@@ -70,21 +75,6 @@ function optionViewsFromAcp(
     label: o.name,
     kind: o.kind as PermissionOptionView["kind"],
   }));
-}
-
-function rosterEntryView(agent: RosterAgent): RosterEntry {
-  const launch = agent.launch;
-  return {
-    id: agent.id,
-    name: agent.name,
-    description: agent.description,
-    icon: agent.icon,
-    assetsMapped: agent.assets !== null,
-    knownBypassBridge: agent.knownBypassBridge,
-    unavailableReason: launch.kind === "unavailable" ? launch.reason : null,
-    registryId: launch.kind === "local" ? null : launch.registryId,
-    registryVersion: launch.kind === "local" ? null : launch.version,
-  };
 }
 
 export class Orchestrator {
@@ -105,9 +95,9 @@ export class Orchestrator {
   readonly machinePermissionRules: MachineRulesStore;
   readonly preferences: PreferencesStore;
   readonly lastKnobs: LastKnobsStore;
-  /** Registry × overlay merge (roster.ts) — recomputed whenever the ACP
-   * registry refreshes; every roster-shaped lookup elsewhere reads this. */
-  roster: RosterAgent[];
+  /** The current ACP registry snapshot (agents + icons) — replaced whenever
+   * the registry refreshes; every agent lookup elsewhere reads this. */
+  private registryData: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
   readonly capabilityTracker: CapabilityTracker;
@@ -133,7 +123,7 @@ export class Orchestrator {
    * confirmation — at most one per agentId in flight. */
   private readonly pendingBinaryConfirms = new Map<
     string,
-    { entry: RosterAgent; verifyAfterConnect: boolean }
+    { agent: RegistryAgent; verifyAfterConnect: boolean }
   >();
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
@@ -229,13 +219,8 @@ export class Orchestrator {
       log,
     );
 
-    // Roster = the official ACP registry (fetched below) merged with our own
-    // adapter-observed overlay (roster.ts). Starts registry-empty — every
-    // registry-backed entry shows "registry not loaded yet" until the first
-    // fetch (cache or network) resolves and republishes via rosterChanged.
-    this.roster = mergeRoster(loadOverlay(), []);
-    const rosterEntries = this.roster.map(rosterEntryView);
-
+    // The registry starts empty — the picker fills when the first fetch
+    // (cache or network) resolves and publishes via registryChanged.
     const onAction = (action: Action) => this.handleAction(action);
     const workspaceRootsView = () =>
       (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
@@ -247,7 +232,6 @@ export class Orchestrator {
         // Hold the loading page only when there is actually a last open
         // session to come back to — startupSettled clears it either way.
         restoring: this.lastActiveSession.get() !== undefined,
-        roster: rosterEntries,
         workspaceRoots: workspaceRootsView(),
       },
       reduceAgentView,
@@ -258,7 +242,6 @@ export class Orchestrator {
     this.settings = new ChannelHost(
       {
         ...initialSettingsState,
-        roster: rosterEntries,
         commandRules: rules.commandRules,
         machineCommandRules: this.machinePermissionRules.get().commandRules,
         fileWriteScope: rules.fileWriteScope,
@@ -597,10 +580,9 @@ export class Orchestrator {
           ],
         };
         const matrix = this.agentView.current.capabilities[agentId];
-        const roster = this.roster.find((a) => a.id === agentId);
         const isFullyBrokered =
           matrix !== undefined &&
-          computeFidelity(matrix, roster?.knownBypassBridge ?? false) === "fully-brokered";
+          computeFidelity(matrix, KNOWN_BYPASS_BRIDGES.has(agentId)) === "fully-brokered";
         const integrationServers = await this.integrations.mcpServersFor(
           agentId,
           isFullyBrokered,
@@ -811,9 +793,9 @@ export class Orchestrator {
       [...ids].map((id) => {
         if (this.configuredAgentSpecs.has(id)) return this.connectFromSource({ configuredId: id });
         // Only the legacy setting can name an agent with no config on this
-        // machine (a stamp or flag implies one was persisted) — the old
-        // roster path covers it, and persists the config it was missing.
-        if (id === legacy) return this.connectFromSource({ rosterId: id });
+        // machine (a stamp or flag implies one was persisted) — the registry
+        // path covers it, and persists the config it was missing.
+        if (id === legacy) return this.connectFromSource({ registryId: id });
         this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
         return Promise.resolve();
       }),
@@ -897,23 +879,23 @@ export class Orchestrator {
   }
 
   /** "Connect agent" — the palette shortcut into the one add path (Settings
-   * § Agents' persist-connect-verify flow, P17): roster or custom command,
+   * § Agents' persist-connect-verify flow, P17): registry or custom command,
    * same `connectFromSource` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
-      ...this.roster
-        .filter((a) => a.launch.kind !== "unavailable")
-        .map((a) => ({ label: a.name, rosterId: a.id as string | undefined })),
-      { label: "Custom command…", rosterId: undefined as string | undefined },
+      ...this.registryData.agents
+        .filter((a) => !("error" in resolveDistribution(a)))
+        .map((a) => ({ label: a.name, registryId: a.id as string | undefined })),
+      { label: "Custom command…", registryId: undefined as string | undefined },
     ];
     const picked = await vscode.window.showQuickPick(items, { placeHolder: "Connect agent…" });
     if (picked === undefined) return;
-    if (picked.rosterId === undefined) {
+    if (picked.registryId === undefined) {
       const command = await vscode.window.showInputBox({ placeHolder: "command that speaks ACP…" });
       if (command === undefined || command.trim() === "") return;
       await this.connectFromSource({ command });
     } else {
-      await this.connectFromSource({ rosterId: picked.rosterId });
+      await this.connectFromSource({ registryId: picked.registryId });
     }
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
@@ -1101,16 +1083,18 @@ export class Orchestrator {
   };
 
   /** Rules/skills/commands (architecture.md § Rules, skills, commands): v1
-   * is management, not delivery — lists what's on disk per the roster's
+   * is management, not delivery — lists what's on disk per the asset table's
    * mapping, an unmapped agent shown as such, never guessed. Runs on every
    * connect and on the Settings section's explicit refresh. */
   private async refreshAgentAssets(agentId: string): Promise<void> {
-    const roster = this.roster.find((a) => a.id === agentId);
+    // Keyed by the registry id when the config records one (heals configs
+    // whose own id predates the registry naming), the agent id otherwise.
+    const key = this.agentConfigs.get(agentId)?.registrySource?.registryId ?? agentId;
     const assets = await resolveAgentAssets(
       this.assetFs,
       this.workspaceRoot ?? process.cwd(),
       agentId,
-      roster?.assets ?? null,
+      ASSET_LOCATIONS[key] ?? null,
     );
     this.settings.emit({ kind: "agentAssetsChanged", assets });
   }
@@ -1519,7 +1503,7 @@ export class Orchestrator {
   }
 
   /** `agentInfo.version` is reality (whoami.md: "reality is the source of
-   * truth") — recorded on the config so the roster's live registry version
+   * truth") — recorded on the config so the registry's live version
    * can be compared against what actually answered, driving "update
    * available" without ever trusting the pinned ask over the wire's fact. */
   private async recordSeenVersion(agentId: string, version: string): Promise<void> {
@@ -1533,16 +1517,17 @@ export class Orchestrator {
   }
 
   private applyRegistryData(data: AcpRegistryData): void {
-    this.roster = mergeRoster(loadOverlay(), data.agents, data.icons);
-    const rosterEntries = this.roster.map(rosterEntryView);
-    this.agentView.emit({ kind: "rosterChanged", roster: rosterEntries });
-    this.settings.emit(
-      { kind: "rosterChanged", roster: rosterEntries },
-      { kind: "registryUpdated", at: data.fetchedAt },
-    );
+    this.registryData = data;
+    const event = {
+      kind: "registryChanged",
+      agents: data.agents.map((a) => registryAgentView(a, data.icons)),
+      fetchedAt: data.fetchedAt,
+    } as const;
+    this.agentView.emit(event);
+    this.settings.emit(event);
   }
 
-  /** Connect an agent from config or roster; upserts it into both channel
+  /** Connect an agent from config or registry; upserts it into both channel
    * states. The single env-injection point: values are read fresh from
    * SecretStorage per connect (stores/agent-env.ts) — the spec maps and the
    * config store never carry them. */
@@ -1580,57 +1565,51 @@ export class Orchestrator {
     await this.pool.restart(agentId, { ...spec, env: { ...spec.env, ...env } });
   }
 
-  /** Resolves a roster entry's declared distribution into a spawnable spec.
-   * npx/uvx are ecosystem-managed installs — spawning them *is* installing,
-   * nothing extra to do. A `binary` distribution not yet cached for this
-   * exact version gates on an explicit download confirmation (no checksum
-   * exists in the registry spec, binary-installer.ts) — `confirmed` skips
-   * that gate once the user has already said yes. Returns null when the
-   * entry can't be resolved right now (unavailable) or a confirmation is
-   * now pending. */
-  private async resolveRosterLaunch(
-    entry: RosterAgent,
+  /** Resolves a registry agent's declared distribution into a spawnable
+   * spec. npx/uvx are ecosystem-managed installs — spawning them *is*
+   * installing, nothing extra to do. A `binary` distribution not yet cached
+   * for this exact version gates on an explicit download confirmation (no
+   * checksum exists in the registry spec, binary-installer.ts) — `confirmed`
+   * skips that gate once the user has already said yes. Returns null when
+   * the agent can't be resolved right now (unavailable on this platform) or
+   * a confirmation is now pending. */
+  private async resolveRegistryLaunch(
+    agent: RegistryAgent,
     verifyAfterConnect: boolean,
     confirmed = false,
   ): Promise<{ spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null> {
-    const launch = entry.launch;
+    const launch = resolveDistribution(agent);
     const cwd = this.workspaceRoot ?? process.cwd();
+    if ("error" in launch) return null; // reason already visible on the picker row
     switch (launch.kind) {
-      case "unavailable":
-        return null; // reason already visible on the roster entry
-      case "local":
-        return {
-          spec: { agentId: entry.id, name: entry.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
-          registrySource: null,
-        };
       case "npx":
       case "uvx":
         return {
-          spec: { agentId: entry.id, name: entry.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
-          registrySource: { registryId: launch.registryId, distributionKind: launch.kind, pinnedVersion: launch.version },
+          spec: { agentId: agent.id, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
+          registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
         };
       case "binary": {
         const installed =
-          confirmed || (await isBinaryInstalled(this.binaryCacheDir, entry.id, launch.version, launch.cmd));
+          confirmed || (await isBinaryInstalled(this.binaryCacheDir, agent.id, agent.version, launch.cmd));
         if (!installed) {
-          this.pendingBinaryConfirms.set(entry.id, { entry, verifyAfterConnect });
+          this.pendingBinaryConfirms.set(agent.id, { agent, verifyAfterConnect });
           this.settings.emit({
             kind: "binaryInstallPending",
-            install: { agentId: entry.id, name: entry.name, archiveUrl: launch.archiveUrl, cmd: launch.cmd },
+            install: { agentId: agent.id, name: agent.name, archiveUrl: launch.archiveUrl, cmd: launch.cmd },
           });
           return null;
         }
         const binary = await installBinary(this.binaryCacheDir, {
-          agentId: entry.id,
-          version: launch.version,
+          agentId: agent.id,
+          version: agent.version,
           archiveUrl: launch.archiveUrl,
           cmd: launch.cmd,
-          args: launch.args,
-          env: launch.env,
+          args: [...launch.args],
+          env: { ...launch.env },
         });
         return {
-          spec: { agentId: entry.id, name: entry.name, command: binary.command, args: [...binary.args], env: { ...binary.env }, cwd: binary.cwd },
-          registrySource: { registryId: launch.registryId, distributionKind: "binary", pinnedVersion: launch.version },
+          spec: { agentId: agent.id, name: agent.name, command: binary.command, args: [...binary.args], env: { ...binary.env }, cwd: binary.cwd },
+          registrySource: { registryId: agent.id, distributionKind: "binary", pinnedVersion: agent.version },
         };
       }
     }
@@ -1781,7 +1760,7 @@ export class Orchestrator {
       case "upgradeAgent":
         void this.upgradeAgent(action.agentId);
         break;
-      case "refreshRoster":
+      case "refreshRegistry":
         void this.acpRegistry.refresh();
         break;
       case "addCommandRule": {
@@ -2071,7 +2050,7 @@ export class Orchestrator {
     this.pendingBinaryConfirms.delete(agentId);
     this.settings.emit({ kind: "binaryInstallResolved", agentId });
     if (pending === undefined) return;
-    await this.connectFromSource({ rosterId: pending.entry.id }, pending.verifyAfterConnect, true);
+    await this.connectFromSource({ registryId: pending.agent.id }, pending.verifyAfterConnect, true);
   }
 
   private cancelBinaryInstall(agentId: string): void {
@@ -2079,7 +2058,7 @@ export class Orchestrator {
     this.settings.emit({ kind: "binaryInstallResolved", agentId });
   }
 
-  /** Re-resolves the roster's current (possibly newer) pinned version and
+  /** Re-resolves the registry's current (possibly newer) pinned version and
    * reconnects — the same path a first Add takes, so the version-keyed
    * used-capability cache and the binary-install confirmation both apply
    * exactly as they would for a brand-new agent. Never silent: a
@@ -2088,7 +2067,7 @@ export class Orchestrator {
     const config = this.agentConfigs.get(agentId);
     if (config === undefined || config.registrySource === null) return;
     if (this.pool.get(agentId)?.status === "running") await this.pool.stop(agentId);
-    await this.connectFromSource({ rosterId: agentId });
+    await this.connectFromSource({ registryId: config.registrySource.registryId });
   }
 
   /** One intent, one click (P17): connect if needed, then create and
@@ -2163,10 +2142,10 @@ export class Orchestrator {
     let spec: LaunchSpec | null = null;
     let registrySource: AgentConfig["registrySource"] = null;
     let shouldPersist = true;
-    if ("rosterId" in source) {
-      const entry = this.roster.find((a) => a.id === source.rosterId);
-      if (entry === undefined) return;
-      const resolved = await this.resolveRosterLaunch(entry, verifyAfterConnect, confirmed);
+    if ("registryId" in source) {
+      const agent = this.registryData.agents.find((a) => a.id === source.registryId);
+      if (agent === undefined) return;
+      const resolved = await this.resolveRegistryLaunch(agent, verifyAfterConnect, confirmed);
       if (resolved === null) return; // unavailable, or a binary install confirmation is now pending
       spec = resolved.spec;
       registrySource = resolved.registrySource;

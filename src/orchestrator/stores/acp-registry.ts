@@ -1,16 +1,18 @@
 // Client for the official ACP agent registry (agentclientprotocol/registry)
-// — the roster's identity/install source (roster.ts overlays our own
-// adapter-observed knowledge on top: assets/metaExtensions/quirks/
-// knownBypassBridge are ours, never upstream's). Cached to disk
-// (globalStorageUri — per-machine, never synced) so a cold start or an
-// offline CDN still has a roster to show; refreshed at activation and on a
-// slow timer. This is a static-data fetch with no agent involved, so the
-// "never on a schedule" rule for diagnostic probes (capability-verification.md)
-// doesn't apply — that rule is about not spending real agent turns silently,
-// not about polling a public manifest.
+// — THE agent source (the pre-registry roster overlay is retired; patchbay's
+// own curation lives in code tables: asset-locations.ts ASSET_LOCATIONS,
+// KNOWN_BYPASS_BRIDGES below). Cached to disk (globalStorageUri —
+// per-machine, never synced) so a cold start or an offline CDN still has
+// agents to show; refreshed at activation and on a slow timer. This is a
+// static-data fetch with no agent involved, so the "never on a schedule"
+// rule for diagnostic probes (capability-verification.md) doesn't apply —
+// that rule is about not spending real agent turns silently, not about
+// polling a public manifest.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import type { RegistryAgentView } from "../../shared/protocol";
+import { ASSET_LOCATIONS } from "../asset-locations";
 
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const CACHE_FILENAME = "acp-registry-cache.json";
@@ -114,6 +116,33 @@ export type ResolvedDistribution =
       args: readonly string[];
       env: Readonly<Record<string, string>>;
     };
+
+/** Bridges observed to act on fs/terminal regardless of client capabilities
+ * (`computeFidelity`'s "acts-outside" override, gating integrations
+ * auto-reach among other things) — patchbay's own curation, in code like
+ * every house table. Empty until the first honest observation; adding an id
+ * is a recorded decision, one line of diff. */
+export const KNOWN_BYPASS_BRIDGES: ReadonlySet<string> = new Set();
+
+/** The registry record as patchbay presents it (protocol.ts
+ * RegistryAgentView): platform launch resolution folded to an honest
+ * unavailable reason, plus the code-table curation joined in. */
+export function registryAgentView(
+  agent: RegistryAgent,
+  icons: Readonly<Record<string, string>>,
+): RegistryAgentView {
+  const resolved = resolveDistribution(agent);
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    icon: icons[agent.id] ?? null,
+    assetsMapped: agent.id in ASSET_LOCATIONS,
+    knownBypassBridge: KNOWN_BYPASS_BRIDGES.has(agent.id),
+    unavailableReason: "error" in resolved ? resolved.error : null,
+    version: agent.version,
+  };
+}
 
 /** npx/uvx first — both are ecosystem-managed installs (npm/PyPI hash-verify
  * their own tarballs, "installing" is just spawning), free and low-risk;

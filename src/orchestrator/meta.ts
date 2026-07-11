@@ -3,7 +3,7 @@
 // discipline: no call site anywhere spells a key. _meta is spec-sanctioned
 // extension space ("reserved for extensibility"), which also makes every
 // payload agent-supplied data crossing a trust boundary — zod-validated
-// like the roster overlay, and a malformed payload degrades to "extension
+// like the registry payload, and a malformed payload degrades to "extension
 // absent", never a crash or a half-parsed value.
 //
 // Two halves that must not drift, so both come from this one table:

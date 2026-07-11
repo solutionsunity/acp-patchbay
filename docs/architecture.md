@@ -242,8 +242,8 @@ declared capability surface, not derived automatically: `fs.readTextFile` /
 `resources.subscribe`, `promptCapabilities.image` / `audio` / `embeddedContext`,
 `session.fork` / `load` / `resume`, `mcp.http` / `sse`, usage/context reporting,
 concurrent-session behavior. One patchbay-side row rides along: rules/skills/
-commands locations (mapped / not mapped), sourced from roster data rather than
-the handshake. A new ACP capability needs a row added here before it can show up
+commands locations (mapped / not mapped), sourced from the asset-location code
+table (`ASSET_LOCATIONS`, asset-locations.ts) rather than the handshake. A new ACP capability needs a row added here before it can show up
 at all — a deliberate scope decision (ACP's capability surface is still
 settling, and rows need human-curated meaning and a check strategy anyway, so a
 schema-driven dynamic list wouldn't remove the manual step), not a limitation.
@@ -313,7 +313,7 @@ protocol-shaped — they don't fork the stream. Token and context reporting is
 standard; only the vendor-specific remainder is extension.
 
 Stance: **core ACP is the floor; extensions are per-agent adapter knowledge**,
-recorded in roster data and consumed only when a features bullet requires what
+recorded in code tables (meta.ts) and consumed only when a features bullet requires what
 core ACP cannot carry. A consumed extension becomes a capability row — present by
 observation, used like everything else. Vendor depth that never reaches the
 wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
@@ -455,10 +455,17 @@ Curated and custom are the same mechanism — MCP servers routed to agents:
   One data file, one entry; every field earned by what GitHub demonstrably needs —
   `id`, `name`, transport, auth type, scopes, bridge launch — nothing speculative.
   Adding a curated integration in v2 is a data change, not code.
-- **Same pattern for the agent roster**: the known-agents list (name, launch
-  command, install hint, asset-convention mapping, known quirks such as bypass
-  bridges) ships as data. Roster and registry are the two shipped-data files —
-  patchbay-side knowledge lives there, never scattered in code.
+- **The agent list is NOT shipped data** *(supersedes the roster-overlay file,
+  2026-07-11)*: the official ACP registry is the one agent source (identity,
+  launch, icon, live-fetched + disk-cached), and patchbay's own per-agent
+  curation lives in code tables where every other house knowledge does —
+  `ASSET_LOCATIONS` (asset-locations.ts), `KNOWN_BYPASS_BRIDGES`
+  (acp-registry.ts), `META_EXTENSIONS` (meta.ts). The overlay JSON was
+  vscode-acp heritage: it *was* the roster until the registry landed, then
+  carried only data the tables now own plus three local-only entries
+  (kiro/hermes/openclaw — unverified claims, retired; the custom-command
+  escape hatch covers them). Terminology followed the collapse: roster =
+  registry, so the word "roster" is gone from the codebase.
 - **Custom escape hatch**: add any MCP server (command or URL, with auth).
 - **Uniform stdio presentation**: agents vary in declared MCP transports, so the
   orchestrator always hands agents a local stdio server; for remote OAuth services
@@ -476,7 +483,7 @@ locations** (`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them
 edits them, per agent, in place. No patchbay dialect (prd: not a new protocol), no
 injection machinery.
 
-- The per-agent location mapping lives in the roster data; v1 ships Claude Code
+- The per-agent location mapping lives in the `ASSET_LOCATIONS` code table; v1 ships Claude Code
   and Augment mappings — the agents in real use. An unmapped agent is shown as
   such — never silently skipped, never guessed.
 - Commands the agent advertises back (`available_commands_update`) appear in the
@@ -502,7 +509,7 @@ injection machinery.
   only because that file could be repo-authored by someone else.)
 - **Fidelity label is a pure function of the matrix (v1):** `fs` and `terminal`
   declared *and used* → fully brokered; a proper subset → partially brokered;
-  neither, or a known-bypass bridge (roster data) → acts outside the permission
+  neither, or a known-bypass bridge (`KNOWN_BYPASS_BRIDGES`) → acts outside the permission
   flow. Observed-violation downgrades arrive only with v2 post-hoc change
   detection (parked).
 - Protocol fact, load-bearing: an agent can route around `fs/write_text_file` via a
