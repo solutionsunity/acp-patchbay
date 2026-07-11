@@ -46,6 +46,34 @@ describe("reducers", () => {
     expect(initialAgentViewState).toEqual(before);
   });
 
+  it("agentAuthRequired carries the agent's own instruction; resolve clears it with needsAuth", () => {
+    const s1 = replay(stateWith([claude]), [
+      {
+        kind: "agentAuthRequired",
+        agentId: "claude",
+        reason: "run `auggie login` from your terminal",
+      },
+    ]);
+    expect(s1.agents[0]).toMatchObject({
+      needsAuth: true,
+      authReason: "run `auggie login` from your terminal",
+    });
+    const s2 = replay(s1, [{ kind: "agentAuthResolved", agentId: "claude" }]);
+    expect(s2.agents[0]?.needsAuth).toBe(false);
+    expect(s2.agents[0]?.authReason).toBeUndefined();
+  });
+
+  it("a reason-less auth_required leaves no stale instruction behind", () => {
+    const withReason = replay(stateWith([claude]), [
+      { kind: "agentAuthRequired", agentId: "claude", reason: "old instruction" },
+    ]);
+    const s = replay(withReason, [
+      { kind: "agentAuthRequired", agentId: "claude", reason: null },
+    ]);
+    expect(s.agents[0]?.needsAuth).toBe(true);
+    expect(s.agents[0]?.authReason).toBeUndefined();
+  });
+
   it("upsert replaces in place, keeping order", () => {
     const s1 = replay(initialAgentViewState, [
       { kind: "agentUpserted", agent: claude },

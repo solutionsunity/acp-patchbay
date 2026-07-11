@@ -65,8 +65,11 @@ export interface PoolHooks {
    * connect-time probe, a mid-session prompt after the agent's credentials
    * expired, or a post-logout session attempt all funnel through here, so
    * "prompt the user to authenticate again" (spec § Authentication) has one
-   * writer. Like onCapabilityEvidence: synchronous, never awaited. */
-  onAuthRequired?(agentId: string): void;
+   * writer. `reason` is the error's own message — the agent's login
+   * instruction, and the only guidance on the wire when `authMethods` is
+   * empty (Auggie); null when blank. Like onCapabilityEvidence:
+   * synchronous, never awaited. */
+  onAuthRequired?(agentId: string, reason: string | null): void;
   /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
    * while false, chunks are dropped without even being decoded. */
   wireLogActive?(): boolean;
@@ -775,7 +778,7 @@ export class AgentPool {
       return result;
     } catch (err) {
       if (err instanceof acp.RequestError && err.code === -32000) {
-        this.hooks.onAuthRequired?.(entry.reportAs);
+        this.hooks.onAuthRequired?.(entry.reportAs, err.message.trim() === "" ? null : err.message);
       } else {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");

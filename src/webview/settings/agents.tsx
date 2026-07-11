@@ -768,6 +768,15 @@ export function AgentsSection(props: {
                 <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
               </Button>
             </div>
+            {/* The auth_required error's own message — the agent's login
+                instruction in its words, and the only guidance there is when
+                it declares no actionable method (Auggie names the exact CLI
+                command here). */}
+            {a?.needsAuth === true && a.authReason !== undefined && (
+              <div className="note mt-1.5">
+                <Icon name="info" /> {a.authReason}
+              </div>
+            )}
             {status === "crashed" && (
               <div className="note crashed-note mt-1.5">
                 <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}

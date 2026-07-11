@@ -343,8 +343,8 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification);
       },
       onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
-      onAuthRequired: (agentId) => {
-        const event = { kind: "agentAuthRequired", agentId } as const;
+      onAuthRequired: (agentId, reason) => {
+        const event = { kind: "agentAuthRequired", agentId, reason } as const;
         this.agentView.emit(event);
         this.settings.emit(event);
       },
@@ -2062,15 +2062,8 @@ export class Orchestrator {
       // needs no extra event.
       await this.sessionManager.createSession(agentId, agentName, this.workspaceRoot ?? process.cwd());
     } catch (err) {
-      // Prefer the pool's own crash detail (spawn failed / initialize
-      // failed with the interactive-setup hint) over a raw wire error; map
-      // auth_required to the action that actually unblocks it.
       const raw = err instanceof Error ? err.message : String(err);
-      const reason =
-        err instanceof RequestError && err.code === -32000
-          ? "needs login first — use Log in on this agent in Settings § Agents"
-          : (this.pool.get(agentId)?.detail ?? raw);
-      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason });
+      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });
       this.log.error(`startChat ${agentId}: ${raw}`);
     }
   }
@@ -2095,11 +2088,12 @@ export class Orchestrator {
       this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      const reason =
-        err instanceof RequestError && err.code === -32000
-          ? "needs login first — use Log in on this agent in Settings § Agents"
-          : (this.pool.get(agentId)?.detail ?? raw);
-      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason, forSessionId: sessionId });
+      this.agentView.emit({
+        kind: "chatConnectFailed",
+        agentId,
+        reason: this.connectFailureReason(agentId, err, raw),
+        forSessionId: sessionId,
+      });
       this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
     }
   }
@@ -2145,6 +2139,21 @@ export class Orchestrator {
     } catch {
       // pool already emitted the crashed status with detail
     }
+  }
+
+  /** Prefer the pool's own crash detail (spawn failed / initialize failed)
+   * over a raw wire error; map auth_required to what actually unblocks it —
+   * the agent's own instruction when it gave one beyond the bare
+   * "authentication required" (an agent with no login methods, like Auggie,
+   * names the exact CLI command there), the Settings § Agents pointer
+   * otherwise. */
+  private connectFailureReason(agentId: string, err: unknown, raw: string): string {
+    if (err instanceof RequestError && err.code === -32000) {
+      const informative =
+        raw.trim() !== "" && !/^authentication required\.?$/i.test(raw.trim());
+      return informative ? raw : "needs login first — use Log in on this agent in Settings § Agents";
+    }
+    return this.pool.get(agentId)?.detail ?? raw;
   }
 
   /** Formats a swallowed action failure for the Output channel — these

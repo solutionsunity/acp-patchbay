@@ -375,6 +375,11 @@ export interface AgentSummary {
    * disconnect. Distinct from the `auth` capability row: this is "blocked
    * right now," that row is "has this ever been used successfully." */
   needsAuth: boolean;
+  /** The `auth_required` error's own message — the agent's login
+   * instruction in its words. The only guidance that exists when an agent
+   * declares no actionable auth method (Auggie logged out: "run `auggie
+   * login` from your terminal"). Cleared with needsAuth. */
+  authReason?: string;
 }
 
 /** The live-selection indicator's data (ui.md § Composer — the ghost chip):
@@ -1087,8 +1092,10 @@ export type AgentViewEvent =
       cost?: { amount: number; currency: string };
     }
   /** A real call (Verify's ephemeral session, or a real one) hit ACP's
-   * `auth_required` — the agent needs `authenticate` before sessions work. */
-  | { kind: "agentAuthRequired"; agentId: string }
+   * `auth_required` — the agent needs `authenticate` before sessions work.
+   * `reason` is the error's own message (agent-authored instruction),
+   * null when the wire carried none. */
+  | { kind: "agentAuthRequired"; agentId: string; reason: string | null }
   | { kind: "agentAuthResolved"; agentId: string }
   /** Full replace — the registry × overlay merge changed (refresh, or a new
    * version landed upstream). */
@@ -1114,9 +1121,15 @@ function reduceAgents(
           : a,
       );
     case "agentAuthRequired":
-      return agents.map((a) => (a.id === event.agentId ? { ...a, needsAuth: true } : a));
+      return agents.map((a) =>
+        a.id === event.agentId
+          ? { ...a, needsAuth: true, authReason: event.reason ?? undefined }
+          : a,
+      );
     case "agentAuthResolved":
-      return agents.map((a) => (a.id === event.agentId ? { ...a, needsAuth: false } : a));
+      return agents.map((a) =>
+        a.id === event.agentId ? { ...a, needsAuth: false, authReason: undefined } : a,
+      );
     default:
       return agents;
   }
