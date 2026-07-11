@@ -11,7 +11,7 @@
 // compensate for the spec's own gap (docs/architecture.md § Agent capability
 // matrix's "never silently trusted" ethos, extended to installs).
 import { spawn } from "node:child_process";
-import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const ARCHIVE_EXTENSIONS = [".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".zip"];
@@ -101,20 +101,36 @@ export async function installBinary(
   const destDir = join(cacheRoot, spec.agentId, spec.version);
   const resolvedCmd = join(destDir, spec.cmd);
   if (!(await pathExists(resolvedCmd))) {
-    await mkdir(destDir, { recursive: true });
+    // Staging + rename-on-success: `resolvedCmd` existing IS the installed
+    // check (isBinaryInstalled), so nothing may appear at that path until
+    // the whole install has succeeded — a killed download or extract must
+    // leave nothing that passes the check (the same interrupted-install
+    // poison the npx cache suffers from, launcher-health.ts; here we own
+    // the disk, so it's prevented rather than repaired). Same parent dir on
+    // purpose: rename stays atomic on one filesystem.
+    const staging = join(cacheRoot, spec.agentId, `.staging-${spec.version}`);
+    await rm(staging, { recursive: true, force: true }); // a prior interrupted attempt
+    await mkdir(staging, { recursive: true });
+    const stagedCmd = join(staging, spec.cmd);
     const bytes = await downloadToBuffer(spec.archiveUrl);
     const ext = archiveExtension(spec.archiveUrl);
     if (ext === null) {
       // A raw binary (FORMAT.md: "or raw binaries") — `cmd` names the
       // downloaded file directly, nothing to extract.
-      await writeFile(resolvedCmd, bytes);
+      await writeFile(stagedCmd, bytes);
     } else {
-      const archivePath = join(destDir, `download${ext}`);
+      const archivePath = join(staging, `download${ext}`);
       await writeFile(archivePath, bytes);
-      await extractArchive(archivePath, destDir);
+      await extractArchive(archivePath, staging);
       await rm(archivePath, { force: true });
     }
-    if (process.platform !== "win32") await chmod(resolvedCmd, 0o755).catch(() => {});
+    if (!(await pathExists(stagedCmd))) {
+      await rm(staging, { recursive: true, force: true });
+      throw new Error(`archive did not contain ${spec.cmd} — the registry's cmd field may be wrong`);
+    }
+    if (process.platform !== "win32") await chmod(stagedCmd, 0o755).catch(() => {});
+    await rm(destDir, { recursive: true, force: true });
+    await rename(staging, destDir);
   }
   return { command: resolvedCmd, args: spec.args, env: spec.env, cwd: destDir };
 }
