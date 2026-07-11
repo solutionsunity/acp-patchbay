@@ -1,7 +1,7 @@
 // § Agents (ui.md § Settings): stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RosterEntry, SettingsState } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 import { capabilityOneLiner } from "../shared/capability-format";
@@ -187,10 +187,23 @@ function updateAvailable(state: SettingsState, config: AgentConfigView | undefin
 /** The registry's own icon for an agent (a host-fetched data URI riding
  * RosterEntry — CSP-safe by the authored `img-src data:`). Renders nothing
  * when there is none: absence over a generic placeholder that would make
- * every local/custom agent wear the same fake brand. */
+ * every local/custom agent wear the same fake brand.
+ *
+ * Drawn as a CSS mask over currentColor, not an <img>: the registry ships
+ * monochrome marks (fixed dark fills — invisible on dark themes as-is), so
+ * the icon takes exactly the color its row's text has, in every theme —
+ * the codicon technique. Deliberate trade: a genuinely multicolor logo
+ * would flatten to a silhouette; theme-correct beats brand-exact here. */
 function AgentIcon({ icon }: { icon: string | null | undefined }) {
   if (icon == null) return null;
-  return <img src={icon} alt="" aria-hidden className="h-4 w-4 shrink-0" />;
+  const mask: CSSProperties = {
+    backgroundColor: "currentColor",
+    maskImage: `url("${icon}")`,
+    maskRepeat: "no-repeat",
+    maskSize: "contain",
+    maskPosition: "center",
+  };
+  return <span aria-hidden className="inline-block h-4 w-4 shrink-0" style={mask} />;
 }
 
 /** Searchable roster picker (ui.md § Settings Agents "Add Agent" — full
