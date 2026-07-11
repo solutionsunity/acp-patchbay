@@ -286,6 +286,96 @@ subtle metadata line under that turn — not loud, but present:
   inherently something the orchestrator is guessing at, not reporting
   authoritatively.
 
+### Transcript scale: three costs, three mechanisms (decided 2026-07-11)
+
+A transcript has three independent rendering costs, and each gets its own
+mechanism — no single tool covers them, and no platform default covers the one
+that hurts most:
+
+| Cost | When it's paid | Handler | Status |
+|---|---|---|---|
+| **Mount** — React reconciliation, Streamdown parse, DOM construction | Every webview show (webviews are disposed when hidden — render-only rule — so this recurs on every tab switch) | **Nothing, by default.** No engine feature skips work explicitly requested on the main thread. → windowed mount, below | decided |
+| **Layout/paint per frame** | Every scroll/update frame | `content-visibility: auto` + `contain-intrinsic-size` on the block wrapper — opt-in, one CSS line; Chromium then skips offscreen subtrees entirely | decided |
+| **Update** — re-render on each streaming delta | Every bus flush during a live turn | `React.memo` on the block renderer; blocks are immutable objects out of the reducer, so identity is the memo key for free — only the streaming block re-renders | decided |
+
+The platform owns exactly one cost: memory of *hidden* webviews (disposal).
+That justifies never unmounting in-session — it does **not** make whole-render
+safe; it makes it worse, because the full mount cost recurs per glance.
+
+#### Windowed mount (reverse infinite scroll)
+
+Opening a session is recency-anchored task resumption — users read the last
+exchange first (the same behavioral fact that makes chat UIs bottom-anchor).
+So mount the tail, extend upward, and engineer for one invariant: **the user
+never sees the window's top edge.** With `H` = viewport height:
+
+- **Initial window** `R = k·H`, `k = 3` (three "pages" of content, mounted
+  bottom-anchored, viewport jumped instantly to the bottom — no smooth scroll).
+- **Extension trigger**: when the viewport enters the top 25 % of the rendered
+  strip — i.e. remaining margin `M = 0.25·R = 0.75·H`. Safety condition
+  `M ≥ v·(t_detect + t_mount)`: fast wheel/trackpad scrolling sustains
+  `v ≈ 3–4·H/s`, one batch commits in `t ≈ 50–100 ms` with memoized blocks →
+  required `M ≈ 0.4·H`; the 25 % rule passes with ~2× headroom.
+- **Batch size**: one viewport-page per trigger, keeping each prepend under the
+  ~100 ms perceptually-instant threshold.
+- **Scroll anchoring on prepend**: manual — record `scrollHeight` before the
+  batch, `scrollTop += Δ` in a layout effect after. (Chromium's native
+  `overflow-anchor` does not survive React list prepends reliably.)
+- **Teleport contract**: scrollbar-drag-to-top / `Ctrl+Home` cannot be beaten
+  by prefetch. Split the promise: *smooth for scrolling, chunked fill for
+  jumps* — rAF-batched mounts behind a slim "loading earlier…" shim, each
+  chunk under 100 ms.
+- **Live appends** are end-anchored and bypass the window entirely.
+- The window index (`windowStart`) is **ephemeral webview state** in chat.tsx —
+  exactly what the render-only-webview rule assigns to the UI. The full
+  transcript still rides the snapshot from the orchestrator; only *mounting*
+  is windowed. No protocol change, no new actions.
+- **Self-scoping**: when the window is larger than the transcript it renders
+  everything and the mechanism is a no-op — it only engages for sessions long
+  enough to hurt.
+
+#### No in-session unmounting (deliberate scope decision)
+
+Blocks, once mounted, stay mounted for the webview's lifetime. Three reasons,
+recorded so this isn't re-litigated as an oversight:
+
+1. `content-visibility: auto` *is* un-rendering, done by the compositor per
+   frame — offscreen blocks cost zero layout/paint; what remains is text DOM,
+   a few MB per thousand blocks.
+2. The platform already un-mounts everything at a coarser grain: these
+   webviews are disposed whenever hidden, so every re-show is a fresh mount
+   where the initial window applies. In-session unmounting would duplicate
+   that while taking on the genuinely hairy part of list virtualization
+   (bidirectional edge anchoring).
+3. Unmounting below the viewport would make jump-to-bottom — the *common*
+   move in a live agent session — the janky path, to save a cost nobody has
+   demonstrated.
+
+Revisit only on evidence. (Corollary: no react-window/virtualization library —
+variable-height blocks with embedded terminals, diffs, and permission cards
+make it a complexity sink; containment gets the paint win for zero deps.)
+
+#### Scroll-follow contract
+
+Force-scrolling to the bottom on every block change (the current effect) is
+wrong during live turns — it makes scrollback physically impossible while
+streaming. The contract: track whether the user is **pinned** to the bottom
+(within a small threshold, from the scroll handler); auto-follow only while
+pinned; on session switch or transcript seed, jump instantly to the bottom
+once. Scrolling up detaches; returning to the bottom re-pins.
+
+#### Hydration delivery (orchestrator side, recorded here for the seam)
+
+`session/load` replay is a bounded window (request sent → RPC resolved).
+Streaming it to the webview as live-style patches is the wrong shape — dozens
+of flushes, each a postMessage + reducer pass + re-parse, pane visibly
+churning. During replay, transcript events reduce into the orchestrator's
+render cache but are withheld from the webview; on completion one
+`transcriptSeeded` swaps the pane wholesale (which is the standing
+rebuilt-wholesale rule expressed in one message), and the old view stays up
+until then — no blank flash. See `docs/acp-compliance.md` § 4 (G1) for the
+replay-correctness side of the same seam.
+
 ### Summary of the ordering principle
 
 Every rule above serves one goal: the transcript should look like *exactly what the
