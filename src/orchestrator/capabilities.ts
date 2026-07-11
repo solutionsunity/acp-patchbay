@@ -10,6 +10,7 @@ import {
   type PromptRequest,
 } from "@agentclientprotocol/sdk";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
+import { clientMetaWire, terminalAuthRecipeOf } from "./meta";
 
 export function declaredFromInitialize(
   init: InitializeResponse,
@@ -34,11 +35,17 @@ export function declaredFromInitialize(
       id: m.id,
       name: m.name,
       description: m.description ?? null,
-      // The wire's `type` field is absent for the stable default ("agent"
-      // handles it itself via `authenticate`); "env_var"/"terminal" are both
-      // UNSTABLE ACP capabilities — declared here, never wired to a Log-in
-      // action (protocol.ts's AuthMethodView docstring).
-      kind: (m as { type?: "env_var" | "terminal" }).type ?? "agent",
+      // A parseable `_meta["terminal-auth"]` recipe wins over the `type`
+      // field: Auggie ships its recipe on a type-less method (schema-default
+      // "agent") whose `authenticate` is a no-op, so type-first would wire a
+      // button to nothing. Otherwise the wire's `type`: absent is the stable
+      // default ("agent" handles it itself via `authenticate`);
+      // "env_var"/"terminal" without a recipe stay declared-but-unwired
+      // (protocol.ts's AuthMethodView docstring).
+      kind:
+        terminalAuthRecipeOf(m._meta) !== null
+          ? "terminal-recipe"
+          : ((m as { type?: "env_var" | "terminal" }).type ?? "agent"),
     })),
     authLogout: caps.auth?.logout != null,
   };
@@ -62,10 +69,14 @@ const CLIENT_DECLARES: { fs: boolean; terminal: boolean; elicitation: boolean } 
  * ACP says "unsupported"); flipping CLIENT_DECLARES.elicitation is the only
  * change P7 needs here. */
 export function clientCapabilitiesWire(): ClientCapabilities {
+  const meta = clientMetaWire();
   return {
     fs: { readTextFile: CLIENT_DECLARES.fs, writeTextFile: CLIENT_DECLARES.fs },
     terminal: CLIENT_DECLARES.terminal,
     ...(CLIENT_DECLARES.elicitation ? { elicitation: {} } : {}),
+    // Adopted _meta extensions (meta.ts — the declare flags there are the
+    // single source; nothing here names a key).
+    ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
 }
 

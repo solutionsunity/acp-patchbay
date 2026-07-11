@@ -398,21 +398,26 @@ function BinaryInstallModal(props: {
   );
 }
 
-/** `needsAuth` gate (protocol.ts): only "agent"-kind auth methods (the
- * stable default — the agent handles auth itself via `authenticate`) are
- * actionable; "env_var"/"terminal" are both UNSTABLE ACP capabilities,
- * declared but never wired to a button. */
+/** `needsAuth` gate (protocol.ts): "agent"-kind methods (the stable
+ * default — the agent handles auth itself via `authenticate`) and
+ * "terminal-recipe" methods (adopted `_meta["terminal-auth"]` extension —
+ * the orchestrator runs the login in a VS Code terminal) are actionable;
+ * recipe-less "env_var"/"terminal" stay declared but never wired to a
+ * button. Same action either way: the orchestrator routes by method. */
 function LoginControl(props: {
   agentId: string;
   methods: readonly AuthMethodView[];
   onAuthenticate(agentId: string, methodId: string): void;
 }) {
-  const actionable = props.methods.filter((m) => m.kind === "agent");
+  const actionable = props.methods.filter(
+    (m) => m.kind === "agent" || m.kind === "terminal-recipe",
+  );
   const [methodId, setMethodId] = useState(actionable[0]?.id ?? "");
   if (actionable.length === 0) {
     return (
       <span className="note crashed-note">
-        <Icon name="warning" /> needs login — no stable auth method available
+        <Icon name="warning" /> needs login — no runnable login method declared (use the agent's
+        own CLI; its instruction, if it gave one, is below)
       </span>
     );
   }

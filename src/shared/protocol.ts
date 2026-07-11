@@ -396,19 +396,23 @@ export interface OpenEditorView {
   dirty: boolean;
 }
 
-/** One of `initialize`'s declared `authMethods` (ACP schema, stable). `kind`
- * discriminates by the wire's `type` field: "agent" (absent/default type,
- * stable — the agent handles auth itself via `authenticate`) is the only
- * one patchbay can act on; "env_var" and "terminal" are both UNSTABLE ACP
- * capabilities (may change/be removed) — shown as declared, never wired to
- * a Log-in button, per "only stable calls are used." */
+/** One of `initialize`'s declared `authMethods` (ACP schema, stable).
+ * `kind` discriminates what patchbay can do with it: "agent" (the wire's
+ * absent/default `type`, stable — the agent handles auth itself via
+ * `authenticate`) and "terminal-recipe" (a parseable `_meta["terminal-auth"]`
+ * recipe — adopted extension, meta.ts; patchbay runs the recipe in a
+ * VS Code terminal, never calls `authenticate` on it) are actionable.
+ * The recipe itself stays orchestrator-side — the UI only needs to know
+ * the method is runnable. "env_var" and "terminal" (the wire's UNSTABLE
+ * `type` values without a recipe) are shown as declared, never wired to a
+ * Log-in button, per "only stable calls are used." */
 export interface AuthMethodView {
   id: string;
   name: string;
   /** The wire's optional `description` — stable on all method shapes, meant
    * for display; normalized to null when the agent omits it. */
   description: string | null;
-  kind: "agent" | "env_var" | "terminal";
+  kind: "agent" | "terminal-recipe" | "env_var" | "terminal";
 }
 
 /**
@@ -552,7 +556,9 @@ export function hasUnusedProbe(
   authMethods: readonly AuthMethodView[],
 ): boolean {
   if (matrix["session.fork"].declared && !matrix["session.fork"].used) return true;
-  return authMethods.some((m) => m.kind === "agent") && !matrix.auth.used;
+  return (
+    authMethods.some((m) => m.kind === "agent" || m.kind === "terminal-recipe") && !matrix.auth.used
+  );
 }
 
 export interface SessionSummary {

@@ -36,6 +36,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
+import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager } from "./session-manager";
@@ -130,6 +131,10 @@ export class Orchestrator {
   >();
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
+  /** agentId → methodId → terminal-auth login recipe (meta.ts), captured
+   * fresh at every connect from the raw initialize response — never
+   * persisted, never sent to a webview. */
+  private readonly authRecipes = new Map<string, ReadonlyMap<string, TerminalAuthRecipe>>();
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
@@ -328,6 +333,15 @@ export class Orchestrator {
         const version = raw.agentInfo?.version ?? null;
         this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
         if (version !== null) void this.recordSeenVersion(agentId, version);
+        // terminal-auth recipes (meta.ts), fresh per connect — command paths
+        // are machine-absolute and never persisted; the webview only ever
+        // sees the method's kind, the recipe stays host-side.
+        const recipes = new Map<string, TerminalAuthRecipe>();
+        for (const m of raw.authMethods ?? []) {
+          const recipe = terminalAuthRecipeOf(m._meta);
+          if (recipe !== null) recipes.set(m.id, recipe);
+        }
+        this.authRecipes.set(agentId, recipes);
       },
       onSessionUpdate: (agentId, notification) => {
         // A throwaway probe session's late config_option_update still counts
@@ -1722,12 +1736,22 @@ export class Orchestrator {
       case "resolveDiff":
         this.broker.resolve(action.requestId, action.accept ? "accept" : "reject");
         break;
-      case "authenticateAgent":
+      case "authenticateAgent": {
         // failure leaves needsAuth set — the honest signal, no separate reply channel
-        void this.capabilityTracker
-          .authenticate(action.agentId, action.methodId)
-          .catch(this.logCatch(`authenticate ${action.agentId}`));
+        const recipe = this.authRecipes.get(action.agentId)?.get(action.methodId);
+        if (recipe !== undefined) {
+          // terminal-recipe method: the login runs in a visible terminal,
+          // `authenticate` is never called on it (meta.ts).
+          void this.loginViaTerminal(action.agentId, recipe).catch(
+            this.logCatch(`terminal login ${action.agentId}`),
+          );
+        } else {
+          void this.capabilityTracker
+            .authenticate(action.agentId, action.methodId)
+            .catch(this.logCatch(`authenticate ${action.agentId}`));
+        }
         break;
+      }
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; the follow-up
         // probe re-raises needsAuth if sessions now need a login again
@@ -2182,6 +2206,30 @@ export class Orchestrator {
    * nothing to debug from. */
   private logCatch(context: string): (err: unknown) => void {
     return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  /** terminal-auth login (meta.ts): runs the method's recipe in a visible
+   * VS Code terminal — the user watches the login happen in the agent's own
+   * flow. The terminal closing is the only "done" signal the convention
+   * gives; whether it *worked* is never guessed: the follow-up re-probe
+   * (same span as Verify, so the card reads "Verifying…") either clears
+   * needsAuth or re-raises it through the one -32000 chokepoint. */
+  private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
+    const terminal = vscode.window.createTerminal({
+      name: recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`,
+      shellPath: recipe.command,
+      shellArgs: [...recipe.args],
+      env: recipe.env,
+    });
+    terminal.show();
+    await new Promise<void>((resolve) => {
+      const sub = vscode.window.onDidCloseTerminal((t) => {
+        if (t !== terminal) return;
+        sub.dispose();
+        resolve();
+      });
+    });
+    await this.runVerify(agentId);
   }
 
   /** Brackets a Verify round-trip (manual click or "Verify after add") with
