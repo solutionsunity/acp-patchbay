@@ -302,19 +302,49 @@ export class SessionManager {
     }
   }
 
+  /** The one attach chokepoint: every wire call that binds a session to a
+   * connection (`session/new`, `session/load`, `session/resume`) rides
+   * through here, so the ceremony — context-token mint + IPC mapping, local
+   * MCP server list, canonical roots, knob normalization — exists exactly
+   * once. Callers own *policy*: which rung, LiveSession bookkeeping, what
+   * the transcript shows, and where the returned knob state is published
+   * (event order is theirs, not this method's). */
+  private async attachSession(
+    target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
+    poolKey: string,
+    agentId: string,
+    opts: { cwd?: string; roots?: readonly string[] } = {},
+  ): Promise<{ sessionId: string; knobs: NormalizedKnobs }> {
+    const contextToken = `ctx-${++this.contextTokenCounter}`;
+    const mcpServers = await this.mcpServersFor(contextToken, agentId);
+    const cwd = opts.cwd ?? this.cwd();
+    // Roots: an explicit override wins (recreate paths); a known session
+    // defaults to its canonical list (AgentViewState-held); a fresh
+    // session has none yet.
+    const roots = [
+      ...(opts.roots ??
+        (target.via !== "new" ? (this.hooks.contextRootsFor?.(target.sessionId) ?? []) : [])),
+    ];
+    if (target.via === "new") {
+      const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
+      this.hooks.mapContextToken?.(contextToken, r.sessionId);
+      return { sessionId: r.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions) };
+    }
+    this.hooks.mapContextToken?.(contextToken, target.sessionId);
+    const r =
+      target.via === "load"
+        ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
+        : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
+    return { sessionId: target.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions) };
+  }
+
   async createSession(
     agentId: string,
     agentName: string,
     cwd: string,
   ): Promise<string> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const { sessionId, modes, configOptions } = await this.pool.newSession(
-      poolKey,
-      cwd,
-      await this.mcpServersFor(contextToken, agentId),
-    );
-    this.hooks.mapContextToken?.(contextToken, sessionId);
+    const { sessionId, knobs } = await this.attachSession({ via: "new" }, poolKey, agentId, { cwd });
     this.sessions.set(sessionId, liveSession(agentId, poolKey, false));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
@@ -328,7 +358,7 @@ export class SessionManager {
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
     this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
-    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
+    this.publishKnobs(sessionId, knobs);
     await this.applyDefaults(agentId, sessionId);
     return sessionId;
   }
@@ -565,18 +595,9 @@ export class SessionManager {
     this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
     this.sessions.get(sessionId)!.everPrompted = true; // came back from history
     this.hooks.emit({ kind: "transcriptReset", sessionId });
-    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    this.hooks.mapContextToken?.(contextToken, sessionId);
-    let response: Awaited<ReturnType<AgentPool["loadSession"]>>;
+    let knobs: NormalizedKnobs;
     try {
-      response = await this.pool.loadSession(
-        poolKey,
-        sessionId,
-        this.cwd(),
-        await this.mcpServersFor(contextToken, agentId),
-        [...roots],
-      );
+      ({ knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId));
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
@@ -587,7 +608,7 @@ export class SessionManager {
     // pool.ts's loadSession already marked "session.load" used the instant
     // the RPC succeeded — this only has to update the render state.
     this.log.info(`session ${sessionId} reopened via session/load on ${agentId}`);
-    this.publishKnobs(sessionId, normalizeKnobs(response.modes, response.configOptions));
+    this.publishKnobs(sessionId, knobs);
   }
 
   /** The attach ladder: `session/load` wherever declared — the only path
@@ -633,16 +654,7 @@ export class SessionManager {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
     this.sessions.get(sessionId)!.everPrompted = true; // came back from history
-    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    this.hooks.mapContextToken?.(contextToken, sessionId);
-    const { modes, configOptions } = await this.pool.resumeSession(
-      poolKey,
-      sessionId,
-      this.cwd(),
-      await this.mcpServersFor(contextToken, agentId),
-      [...roots],
-    );
+    const { knobs } = await this.attachSession({ via: "resume", sessionId }, poolKey, agentId);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
       kind: "notice",
@@ -654,7 +666,7 @@ export class SessionManager {
     };
     this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: [...blocks, notice] });
     this.log.info(`session ${sessionId} resumed (no replay) on ${agentId}`);
-    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
+    this.publishKnobs(sessionId, knobs);
   }
 
   /** The one knob-set entry point (knobs.ts routes it to the wire). A knob
@@ -792,11 +804,8 @@ export class SessionManager {
       return;
     }
     const declared = this.pool.get(session.poolKey)?.declared;
-    const viaLoad = declared?.loadSession === true;
-    if (!viaLoad && declared?.sessionResume !== true) return;
-    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    this.hooks.mapContextToken?.(contextToken, sessionId);
+    const via = declared?.loadSession === true ? ("load" as const) : ("resume" as const);
+    if (via === "resume" && declared?.sessionResume !== true) return;
     // The re-attach resets agent-side knob state to its defaults (observed:
     // claude-agent-acp rebuilds session config on load) — but the user asked
     // to change *roots*, nothing else. Re-seed the confirmed combination
@@ -804,31 +813,16 @@ export class SessionManager {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      if (viaLoad) {
+      if (via === "load") {
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
         session.activeUserBlockId = null;
         this.hooks.emit({ kind: "transcriptReset", sessionId });
-        const { modes, configOptions } = await this.pool.loadSession(
-          session.poolKey,
-          sessionId,
-          this.cwd(),
-          await this.mcpServersFor(contextToken, session.agentId),
-          [...roots],
-        );
-        this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
-      } else {
-        const { modes, configOptions } = await this.pool.resumeSession(
-          session.poolKey,
-          sessionId,
-          this.cwd(),
-          await this.mcpServersFor(contextToken, session.agentId),
-          [...roots],
-        );
-        this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
       }
+      const { knobs } = await this.attachSession({ via, sessionId }, session.poolKey, session.agentId);
+      this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed);
-      this.log.info(`session ${sessionId}: roots re-applied via session/${viaLoad ? "load" : "resume"}`);
+      this.log.info(`session ${sessionId}: roots re-applied via session/${via}`);
     } catch (err) {
       this.sessions.delete(sessionId);
       this.log.info(
@@ -844,14 +838,9 @@ export class SessionManager {
    * where the fresh session doesn't offer them). */
   private async recreateEmpty(oldId: string, old: LiveSession): Promise<void> {
     const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const { sessionId, modes, configOptions } = await this.pool.newSession(
-      old.poolKey,
-      this.cwd(),
-      await this.mcpServersFor(contextToken, old.agentId),
-      [...roots],
-    );
-    this.hooks.mapContextToken?.(contextToken, sessionId);
+    const { sessionId, knobs } = await this.attachSession({ via: "new" }, old.poolKey, old.agentId, {
+      roots,
+    });
     const wasActive = this.hooks.isActiveSession?.(oldId) ?? false;
     const seed = confirmedFromKnobs(old.knobs);
     const fresh = liveSession(old.agentId, old.poolKey, old.titled);
@@ -894,7 +883,7 @@ export class SessionManager {
     } else {
       this.pool.forgetSession(old.poolKey, oldId);
     }
-    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
+    this.publishKnobs(sessionId, knobs);
     await this.applySeed(sessionId, seed);
     this.log.info(`session ${oldId}: zero-turn — recreated as ${sessionId} to apply context roots`);
   }
