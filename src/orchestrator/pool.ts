@@ -17,6 +17,7 @@ import {
   rowsProvenBy,
   type WireFact,
 } from "./capabilities";
+import { isMissingBinSignature, npmNpxRoot, npxPackageName, purgeNpxEntries } from "./launcher-health";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
 export interface LaunchSpec {
@@ -197,6 +198,20 @@ export function resolveSpawn(
   return { command: resolved, args: [...args], shell };
 }
 
+/** The child's exit code once it has actually exited, waited on for at most
+ * `ms` — null when it hasn't exited in time (or died to a signal). */
+function exitCodeWithin(child: ChildProcess, ms: number): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(child.exitCode), ms);
+    t.unref?.();
+    child.once("exit", (code) => {
+      clearTimeout(t);
+      resolve(code);
+    });
+  });
+}
+
 function timeOfDay(): string {
   return new Date().toTimeString().slice(0, 5);
 }
@@ -303,7 +318,14 @@ export class AgentPool {
    * connected. */
   async connect(
     spec: LaunchSpec,
-    opts?: { poolKey?: string; reportAs?: string; isolated?: boolean },
+    opts?: {
+      poolKey?: string;
+      reportAs?: string;
+      isolated?: boolean;
+      /** Internal: set on the one retry after a launcher-cache repair, so a
+       * repair that didn't actually fix things can never loop. */
+      repairAttempted?: boolean;
+    },
   ): Promise<DeclaredCapabilities> {
     const poolKey = opts?.poolKey ?? spec.agentId;
     const reportAs = opts?.reportAs ?? spec.agentId;
@@ -493,6 +515,23 @@ export class AgentPool {
         // Stragglers of a half-started launch (npx → node → …) get the
         // sweep a moment later; unref'd so it never holds the host open.
         setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
+      }
+      // Launcher-cache corruption chokepoint (launcher-health.ts): an npx
+      // launch dying because its bin doesn't exist means a poisoned _npx
+      // entry — npx treats "cache dir exists" as installed and never
+      // self-heals. Purge the attributable entries and retry exactly once;
+      // nothing purged (or any other death shape) rethrows untouched.
+      // The stream's close rejects initialize *before* the child's 'exit'
+      // event lands (observed live: exitCode still null here), so wait
+      // briefly for the real code — the timeout path's SIGTERM above makes
+      // an exit imminent either way.
+      if (
+        opts?.repairAttempted !== true &&
+        isMissingBinSignature(await exitCodeWithin(child, 2_500), entry.stderrTail) &&
+        (await this.repairLauncherCache(spec))
+      ) {
+        this.log.info(`${poolKey}: launcher cache repaired — retrying connect`);
+        return this.connect(spec, { ...opts, repairAttempted: true });
       }
       throw err;
     }
@@ -873,7 +912,9 @@ export class AgentPool {
         () => this.setStatus(entry, "reconnecting", "downloading the agent package…"),
         DOWNLOAD_LABEL_AFTER_MS,
       );
+      let capped = false;
       const cap = setTimeout(() => {
+        capped = true;
         if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
       }, WARMUP_TIMEOUT_MS);
       const settle = (outcome: string) => {
@@ -884,8 +925,38 @@ export class AgentPool {
         resolve();
       };
       child.on("error", (err) => settle(`spawn failed — ${err.message}`));
-      child.on("exit", (code, sig) => settle(code === 0 ? "done" : `ended (code=${code}, sig=${sig})`));
+      child.on("exit", (code, sig) => {
+        // The cap's SIGKILL mid-install is itself the cache-poison mechanism
+        // (npm doesn't roll back) — clean up the entry we just interrupted,
+        // before the real spawn runs, so it never inherits a half-written
+        // cache that npx would forever treat as installed.
+        if (capped) {
+          void this.repairLauncherCache(spec).then(() =>
+            settle(`capped at ${WARMUP_TIMEOUT_MS}ms — interrupted cache entry purged`),
+          );
+          return;
+        }
+        settle(code === 0 ? "done" : `ended (code=${code}, sig=${sig})`);
+      });
     });
+  }
+
+  /** Purges the npx cache entries attributable to this spec's package
+   * (launcher-health.ts). True only when something was actually removed —
+   * the connect retry gates on that, so a cache that wasn't the problem
+   * never triggers a pointless second attempt. Non-npx specs are a no-op:
+   * uvx earns a repair when a corruption signature is observed, not before. */
+  private async repairLauncherCache(spec: LaunchSpec): Promise<boolean> {
+    const pkg = npxPackageName(spec);
+    if (pkg === null) return false;
+    try {
+      const npxRoot = await npmNpxRoot({ ...process.env, ...spec.env });
+      if (npxRoot === null) return false;
+      return (await purgeNpxEntries(npxRoot, pkg, this.log)).length > 0;
+    } catch (err) {
+      this.log.debug(`launcher cache repair failed: ${(err as Error).message}`);
+      return false;
+    }
   }
 
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {

@@ -35,6 +35,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
+import { checkPathDivergence } from "./launcher-health";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
@@ -1546,8 +1547,31 @@ export class Orchestrator {
     this.agentView.emit(upsert);
     this.settings.emit(upsert);
     const env = await this.agentEnv.get(spec.agentId);
-    await this.pool.connect({ ...spec, env: { ...spec.env, ...env } });
+    const merged = { ...spec, env: { ...spec.env, ...env } };
+    await this.pool.connect(merged);
     void this.refreshAgentAssets(spec.agentId);
+    void this.warnOnPathDivergence(merged);
+  }
+
+  /** Two installs, one memory: a PATH-installed sibling CLI shares the
+   * agent's per-user state store with the copy patchbay runs — by design,
+   * but a wide version gap means two writers of different vintages on one
+   * store (launcher-health.ts PATH_SIBLINGS). Warning only, never a gate;
+   * once per exact version pair so reconnects don't nag. */
+  private readonly divergenceWarned = new Set<string>();
+  private async warnOnPathDivergence(spec: LaunchSpec): Promise<void> {
+    try {
+      const d = await checkPathDivergence(spec);
+      if (d === null) return;
+      const key = `${spec.agentId}:${d.pathVersion}:${d.bundledVersion}`;
+      if (this.divergenceWarned.has(key)) return;
+      this.divergenceWarned.add(key);
+      void vscode.window.showWarningMessage(
+        `${spec.name}: the \`${d.bin}\` on your PATH is v${d.pathVersion}, but patchbay runs v${d.bundledVersion}. Both share the same ${d.bin} state (sessions, auth, config) — a wide version gap between the two writers can bite. Consider updating the PATH install.`,
+      );
+    } catch {
+      // A diagnostic nicety must never affect a connect.
+    }
   }
 
   /** Restart is a spawn, so it reads reality like any connect: the current

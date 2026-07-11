@@ -178,6 +178,30 @@ later as an opt-in; the extension point is visible, deliberately unfilled.
   less than fully-replayable would destroy the only copy. "New session" for
   an agent with a never-prompted session focuses it instead of minting a
   sibling. *(Supersedes release-on-switch and the emulated continuation.)*
+- **Launcher health** (launcher-health.ts — one central module, consulted at
+  the chokepoints, never inlined): npx/uvx stay the installers — a
+  patchbay-owned install store was **considered and rejected** (it fixes
+  cache corruption by owning atomicity, but the price is reimplementing the
+  package manager's lifecycle: GC with in-use guards, single-flight,
+  stale-fallback policy, bin resolution; the price exceeds the defect).
+  Instead: (a) an interrupted npx install leaves a partial `_npx` entry that
+  npx forever treats as installed — the bin-missing death (exit 127 /
+  "not found", the launcher-shell's own words in the stderr tail) triggers a
+  purge of *attributable* entries and exactly one retry; the warmup's own
+  180s-cap SIGKILL — itself the poison mechanism — cleans up the entry it
+  interrupted before the real spawn runs. (b) The binary installer, where
+  patchbay *does* own the disk, prevents rather than repairs: staging dir +
+  rename-on-success, so nothing ever exists at the installed-check path
+  unless the whole install succeeded. (c) **Two installs, one memory**: a
+  PATH-installed sibling CLI shares the agent's per-user state store with
+  the copy patchbay runs (by design — never a second history); a
+  major-version divergence between the two writers gets a one-time warning,
+  never a gate. The comparison is like-with-like via a per-agent table
+  (`PATH_SIBLINGS`): the bundled CLI's version, not the adapter's — entries
+  earned by verifying that mapping (claude-acp absent: its adapter bundles
+  the SDK, no honest comparison exists). Patchbay never mutates PATH or
+  installs globally — a user who wants the CLI in their terminal owns that
+  install and its update channel.
 
 ## Agent capability matrix
 
