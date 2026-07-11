@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.8 — 2026-07-11
+
+- Logging in works for agents that hand the login to a terminal (the
+  `_meta["terminal-auth"]` convention — Claude Code and Auggie both use
+  it): the Log in button now opens the agent's own login flow in a
+  VS Code terminal, and the agent's status re-checks itself when the
+  terminal closes.
+- When an agent requires login, its own instruction (e.g. "run `auggie
+  login` from your terminal") now appears on the agent card and in the
+  chat pane, instead of being dropped.
+- Fixed: the connect-time capability check could leave an agent's own
+  permission question (e.g. Auggie's workspace-indexing prompt) hanging
+  unanswered against a hidden throwaway session — it is now declined
+  automatically and re-asked in your first real session.
+- Fixed: on Windows, npx-distributed agents failed to launch at all on
+  current VS Code builds (Node refuses `.cmd` shims without a shell).
+
 ## 0.8.7 — 2026-07-11
 
 - Sessions are now 100% the agent's own — patchbay stores no session
