@@ -402,10 +402,10 @@ export class SessionManager {
     });
   }
 
-  /** Opening a closed session, the whole ladder: `session/load` where
-   * declared (replay = truth); else `session/resume` — the agent's real
-   * context attaches, a seam notice says history replay isn't supported;
-   * with neither there is nothing in hand and nothing to fetch (patchbay
+  /** Opening a closed session: the one attach ladder, with open's
+   * exhaustion policy — a failed rung is logged (blank pane + retry is the
+   * honest degraded state), and no rung at all says so with an inline
+   * notice: there is nothing in hand and nothing to fetch (patchbay
    * persists no transcripts) — said as such, never faked. Both wire paths
    * are free (no LLM turn). Open never mints a session. */
   async hydrate(sessionId: string): Promise<void> {
@@ -414,24 +414,11 @@ export class SessionManager {
     try {
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
-      const agent = this.pool.get(agentId);
-      if (agent?.status !== "running") return; // connect-on-demand re-hydrates after
-      try {
-        if (agent.declared?.loadSession === true) {
-          await this.reopen(sessionId, agentId);
-          return;
-        }
-        if (agent.declared?.sessionResume === true) {
-          await this.resumeReattach(sessionId, agentId);
-          return;
-        }
-      } catch (err) {
-        this.sessions.delete(sessionId);
-        this.log.info(`session ${sessionId}: attach on open failed — ${(err as Error).message}`);
-        return;
-      }
-      // Neither load nor resume declared: this session cannot be reopened.
-      // Reachable only after a crash/reload (the reaper never closes these).
+      if (this.pool.get(agentId)?.status !== "running") return; // connect-on-demand re-hydrates after
+      const outcome = await this.attach(sessionId, agentId);
+      if (outcome.attached || outcome.reason === "failed") return;
+      // No rung declared: this session cannot be reopened. Reachable only
+      // after a crash/reload (the reaper never closes these).
       if ((this.hooks.currentTranscript?.(sessionId) ?? []).length > 0) return;
       this.hooks.emit({
         kind: "transcriptSeeded",
@@ -641,38 +628,60 @@ export class SessionManager {
     this.publishKnobs(sessionId, knobs);
   }
 
-  /** The attach ladder: `session/load` wherever declared — the only path
-   * where what the user sees and what the agent remembers are provably the
-   * same; else `session/resume` — the agent's real memory behind an honest
-   * seam notice. Nothing below: patchbay never mints a session and calls it
-   * a continuation. Throws when no rung holds — the session id never
-   * changes out from under the caller. */
-  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
-    if (this.sessions.has(sessionId)) return;
+  /** THE attach ladder — the rung order exists here and nowhere else:
+   * `session/load` wherever declared (the only path where what the user
+   * sees and what the agent remembers are provably the same), else
+   * `session/resume` (the agent's real memory behind an honest seam
+   * notice). Nothing below: patchbay never mints a session and calls it a
+   * continuation, and the session id never changes out from under the
+   * caller. Exhaustion is the caller's policy, so the outcome is returned,
+   * not thrown: `failed` = a declared rung broke (logged here, suspect mark
+   * already landed at the wire chokepoint); `no-rung` = the agent declares
+   * neither. */
+  private async attach(
+    sessionId: string,
+    agentId: string,
+  ): Promise<
+    | { attached: true }
+    | { attached: false; reason: "failed"; error: Error }
+    | { attached: false; reason: "no-rung" }
+  > {
+    if (this.sessions.has(sessionId)) return { attached: true };
     const declared = this.pool.get(agentId)?.declared;
-    let lastError: Error | null = null;
+    let error: Error | undefined;
     if (declared?.loadSession) {
       try {
         await this.reopen(sessionId, agentId);
-        return;
+        return { attached: true };
       } catch (err) {
         // The agent may no longer hold this session — descend to resume
-        // rather than erroring forever; the suspect mark already landed.
-        lastError = err as Error;
-        this.log.info(`session ${sessionId}: load failed, descending the ladder — ${lastError.message}`);
+        // rather than erroring forever.
+        error = err as Error;
+        this.log.info(`session ${sessionId}: load failed, descending the ladder — ${error.message}`);
       }
     }
     if (declared?.sessionResume) {
       try {
         await this.resumeReattach(sessionId, agentId);
-        return;
+        return { attached: true };
       } catch (err) {
         this.sessions.delete(sessionId);
-        lastError = err as Error;
-        this.log.info(`session ${sessionId}: resume failed — ${lastError.message}`);
+        error = err as Error;
+        this.log.info(`session ${sessionId}: resume failed — ${error.message}`);
       }
     }
-    throw lastError ?? new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
+    if (error !== undefined) return { attached: false, reason: "failed", error };
+    return { attached: false, reason: "no-rung" };
+  }
+
+  /** The prompt/reload exhaustion policy: attach or throw — a prompt with
+   * no session behind it must fail loudly on the caller's error channel. */
+  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
+    const outcome = await this.attach(sessionId, agentId);
+    if (outcome.attached) return;
+    throw outcome.reason === "failed"
+      ? outcome.error
+      : new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
   }
 
   /** The resume rung: re-attaches via `session/resume` — no replay, so the
