@@ -27,7 +27,7 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { resolveAgentAssets, type FsLike } from "./asset-locations";
-import { applyFileWrite, PermissionBroker } from "./broker";
+import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker } from "./capability-tracker";
 import { ChannelHost } from "./channel";
@@ -381,7 +381,7 @@ export class Orchestrator {
       // brokered path firing, and a rejection is the gate working.
       onReadTextFile: async (_agentId, params) => {
         const content = await this.readTextFileLive(params.path);
-        return { content };
+        return { content: sliceTextFileRead(content, params.line, params.limit) };
       },
       onWriteTextFile: async (_agentId, params) => {
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);

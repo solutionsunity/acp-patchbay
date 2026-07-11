@@ -328,3 +328,19 @@ export async function applyFileWrite(path: string, content: string): Promise<voi
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf8");
 }
+
+/** ACP `fs/read_text_file` range params: `line` is 1-based, `limit` is a
+ * max line count. The requested slice is what returns — over-serving the
+ * whole file costs the agent tokens and disobeys the request shape
+ * (acp-compliance.md G3). */
+export function sliceTextFileRead(
+  content: string,
+  line?: number | null,
+  limit?: number | null,
+): string {
+  if (line == null && limit == null) return content;
+  const lines = content.split("\n");
+  const start = Math.max(0, (line ?? 1) - 1);
+  const end = limit != null ? start + limit : lines.length;
+  return lines.slice(start, end).join("\n");
+}

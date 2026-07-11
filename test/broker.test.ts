@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { PermissionBroker } from "../src/orchestrator/broker";
+import { PermissionBroker, sliceTextFileRead } from "../src/orchestrator/broker";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -212,5 +212,29 @@ describe("PermissionBroker audit trail", () => {
     const second = await broker.gateCommand("s1", "npm run lint");
     expect(second.accepted).toBe(true);
     expect(events.slice(events2Before).some((e) => e.kind === "permissionRequested")).toBe(false);
+  });
+});
+
+describe("sliceTextFileRead (fs/read_text_file line/limit — acp-compliance.md G3)", () => {
+  const content = "one\ntwo\nthree\nfour\nfive";
+
+  it("returns the whole content when neither param is given", () => {
+    expect(sliceTextFileRead(content)).toBe(content);
+  });
+
+  it("line is 1-based, reading to the end", () => {
+    expect(sliceTextFileRead(content, 3)).toBe("three\nfour\nfive");
+  });
+
+  it("limit caps the line count from the start line", () => {
+    expect(sliceTextFileRead(content, 2, 2)).toBe("two\nthree");
+  });
+
+  it("limit alone reads from the top", () => {
+    expect(sliceTextFileRead(content, null, 2)).toBe("one\ntwo");
+  });
+
+  it("out-of-range requests degrade to empty, never throw", () => {
+    expect(sliceTextFileRead(content, 99)).toBe("");
   });
 });
