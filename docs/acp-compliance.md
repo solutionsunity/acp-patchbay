@@ -66,7 +66,7 @@ pagination or lazy loading exists anywhere in the chapter**. `session/resume` an
 | Surface | Verdict | Notes |
 |---|---|---|
 | `session/new` | ✅ | `pool.ts:newSession`; cwd, mcpServers, additionalDirectories. |
-| `session/load` full-replay consumption | ❌ | The replay pipe is correct (session registered before the RPC; `handleUpdate` receives every notification) **but `user_message_chunk` has no case in the `handleUpdate` switch** — every replayed user message is silently dropped, and without user blocks interrupting, replayed agent prose merges into single giant blocks. This is the "session shows only the last portion" bug. → Gap Register G1 (top priority). |
+| `session/load` full-replay consumption | ✅ | Fixed 2026-07-11 (G1): `user_message_chunk` consumed with delta semantics (`activeUserBlockId` run, `inFlight` guard against live echo); replay reduces silently into canonical state and lands in the webview as one wholesale swap (`loadSilently`/`ChannelHost.resync`). |
 | `session/resume` (spec-pending) | ✅ | `pool.ts:resumeSession`; adopted ahead of stabilization, gated on declared + used per capability rule; honest seam notice marks where the cached view ends (`session-manager.ts:resumeReattach`). |
 | `session/fork` (spec-pending) | ✅ | Same adoption posture; `session.fork` capability row; native fork gates on *used*. |
 | Roots re-apply (`additionalDirectories` set-complete-list) | ✅ | `session-manager.ts:reapplyRoots` — the three-case rung (recreate / in-place load-or-resume / deferred) is a recorded design. |
@@ -105,7 +105,7 @@ mark incomplete tool calls cancelled, SHOULD still accept trailing tool updates.
 | Duty | Verdict | Notes |
 |---|---|---|
 | `session/cancel` notify | ✅ | `pool.ts:cancel` ← `session-manager.ts:stopTurn`. |
-| **Cancel pending permission requests** | ❌ | `broker.ts` resolves a pending request only on user click (or rule); nothing wires `stopTurn` to outstanding `session/request_permission` promises. An agent awaiting permission when the user hits stop is left hanging against a MUST. → Gap Register G2. |
+| **Cancel pending permission requests** | ✅ | Fixed 2026-07-11 (G2): `broker.cancelPending(sessionId)` sweeps the session's pending requests — agent requests and patchbay's own gates alike — wired from `stopTurn` and `closeSession`; cards close with an honest "Cancelled — turn stopped" label, audited as `turn-cancelled`. |
 | Preemptively mark incomplete tool calls cancelled | 🟡 | Not done (SHOULD). Trailing `tool_call_update`s *are* accepted (no turn-gating in `handleUpdate`), so state converges when the agent reports; the UI just doesn't jump ahead. → G6, low priority. |
 
 ## 8. Content types
@@ -121,7 +121,7 @@ honesty rules, which bind harder than the spec here.
 | Prompt out: audio | ⛔ | Patchbay has no audio capture surface; nothing to send. Revisit only if a recording feature ever exists. |
 | Prompt out: embedded resource (`embeddedContext`) | ⛔ | Mentions deliberately ride as `resource_link` (baseline, uniform across agents) and the agent pulls content through `fs/read_text_file`, which also gets it *live editor state* rather than a stale snapshot. Embedding would trade freshness for nothing. `prompt.embeddedContext` row tracks the declaration regardless. |
 | Receive: text chunks | ✅ | `handleUpdate` text cases. |
-| Receive: non-text in `agent_message_chunk` (image/audio/resource) | 🟡 | Silently dropped (`if content.type !== "text" return`). Agents rarely emit these today, but "silently" violates the honesty bar — at minimum a placeholder block. → G4. |
+| Receive: non-text in `agent_message_chunk` (image/audio/resource) | ✅ | Fixed 2026-07-11 (G4): a closed in-place placeholder block (`*[image content — not rendered]*`) — the honest floor until real rendering is justified. |
 | Annotations / `_meta` on content | ⛔ | Not consumed; no current agent emits meaning patchbay could render. Unknown fields pass through untouched (safe by construction). |
 
 ## 9. Session updates — the full union
@@ -130,18 +130,18 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 
 | Kind | Verdict | Notes |
 |---|---|---|
-| `agent_message_chunk` | ✅ 🟡 | Text ✅; non-text → G4. |
+| `agent_message_chunk` | ✅ | Text streamed; non-text → in-place placeholder (G4, fixed). |
 | `agent_thought_chunk` | ✅ | Block-interruption rule per ui-rendering-strategy. |
-| `user_message_chunk` | ❌ | **G1** — the session/load bug (§4). |
+| `user_message_chunk` | ✅ | Fixed 2026-07-11 — see §4. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
 | `plan_update` / `plan_removed` | ⛔ | Gated behind a *client* capability patchbay does not declare, so a conforming agent never sends them; the whole-replace `plan` model already covers the feature. Adopt only if incremental plans show a real win; declaring without handling would be the capability lie again. |
-| `available_commands_update` | ✅ 🟡 | Name/description consumed; the optional input hint is dropped — cosmetic. → G8. |
+| `available_commands_update` | ✅ | Name/description/input-hint all consumed (G8 fixed 2026-07-11); the hint shows in the composer's slash menu. |
 | `current_mode_update` | ✅ | Modes surface only; config surface deliberately owns its own confirmations (knobs.ts normalizer — spec forbids category as a correctness key). |
 | `config_option_update` | ✅ | Spec: notification carries complete state — consumed as a whole-replace. |
 | `session_info_update` | ✅ | Title-authority rule: agent wins unless user renamed; null title is a clear, not a rename. Handled before the live-session guard (agent may retitle sessions patchbay isn't attached to). |
 | `usage_update` | ✅ | Declared+used marked on first sight at the pool chokepoint (no initialize-time claim exists for usage). |
-| *Unknown / future kinds* | ✅ | Ignored — which **is** the spec-compliant runtime behavior (§18). The defect is that *known* kinds can hide in the same `default`. The fix (G1's companion): exhaustive compile-time classification of the SDK union (`assertNever`) so every kind is consumed or declined **in code**, while runtime stays tolerant of kinds newer than the SDK. Same forcing pattern as `CAPABILITY_PROOFS`. |
+| *Unknown / future kinds* | ✅ | Runtime-ignored per the spec's extensibility rule, and since 2026-07-11 the switch is compile-time exhaustive over the SDK union (`assertUnconsumed` backstop): an SDK upgrade adding a kind fails typecheck and demands a verdict here — consumed or declined, never silent. Same forcing pattern as `CAPABILITY_PROOFS`. |
 
 ## 10. Tool calls
 
@@ -163,14 +163,14 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 | Respond with `selected` / `cancelled` | ✅ | `broker.ts:requestPermission`; dismissal → `{ cancelled: true }`. |
 | Option kinds inform UI | ✅ | allow/reject × once/always rendered distinctly. |
 | Auto-resolution per user settings (MAY) | ✅ | Broker rules; per the capability rule, an auto-*rejection* is patchbay's own gate working and never marks the agent suspect. |
-| Cancelled turn → pending requests must resolve `cancelled` | ❌ | Same wiring hole as §7. → G2. |
+| Cancelled turn → pending requests must resolve `cancelled` | ✅ | Fixed 2026-07-11 — see §7 (G2). |
 
 ## 12. File system (client-exposed)
 
 | Duty | Verdict | Notes |
 |---|---|---|
 | `fs/read_text_file` returns live editor state | ✅ | `orchestrator.ts:readTextFileLive` — open (possibly dirty) buffer wins over disk; "the agent sees what the user sees". |
-| `fs/read_text_file` `line`/`limit` params | ❌ | Ignored — full content returned regardless. Content is *correct* but not the requested slice; costs agent tokens and disobeys the request shape. Small fix. → G3. |
+| `fs/read_text_file` `line`/`limit` params | ✅ | Fixed 2026-07-11 (G3): `sliceTextFileRead` applies the 1-based line and max-line-count limit after the live-buffer read. |
 | `fs/write_text_file` creates file (MUST) | ✅ | `broker.ts:applyFileWrite` — `mkdir -p` + write. |
 | Write vs. open dirty editor | 🟡 | Write goes to disk; an open dirty buffer for the same path keeps its unsaved content until the user reloads — divergence window. Not a spec violation (spec is silent); watch item W1: route writes through `WorkspaceEdit` when an editor is open. |
 | Permission gating | ✅ | Writes gate through the broker; reads are free by design (recorded stance: read = editor state the user already shows the agent). |
@@ -181,7 +181,7 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 |---|---|---|
 | All five methods | ✅ | `pool.ts` handlers → `terminal-runner.ts`; create gates the command through the broker. |
 | Kill ends the whole tree | ✅ | Process-group spawn (`treeSpawnOptions`) — ACP's contract is "the command stops", not "its top process stops". |
-| Truncate from the beginning when over `outputByteLimit` | 🟡 | Tail-keeping is correct, but the limit is enforced in UTF-16 code units, not bytes, and `slice` can split a surrogate pair — both against the letter of the truncation rule. Real-world impact ≈ 0 (ASCII-dominant output), still a cheap correctness fix. → G9. |
+| Truncate from the beginning when over `outputByteLimit` | ✅ | Fixed 2026-07-11 (G9): `tailBytes` counts real bytes and cuts at a UTF-8 code-point boundary — surrogate pairs stay whole by construction. |
 | Output survives release when embedded in tool calls | ✅ | Terminal blocks live in the transcript; release invalidates the id, not the rendered history. |
 | Non-blocking `terminal/output` + `truncated` flag | ✅ | `currentOutput()` is synchronous state. |
 
@@ -206,12 +206,11 @@ whole-replace consumed; seeds/defaults applied through the same guarded route
 (`applySeed`), rejections swallowed because the agent's own responses are the display
 truth. This is the knob architecture (2026-07-09) and it is spec-shaped.
 
-## 17. Slash commands — ✅ (🟡 input hint, G8)
+## 17. Slash commands — ✅
 
 `available_commands_update` consumed dynamically; invocation is plain text in the
 prompt, which works by construction — the composer sends the user's text verbatim.
-The optional per-command input hint is dropped; the composer's command affordance
-could show it.
+The per-command input hint rides through to the slash menu (G8, fixed 2026-07-11).
 
 ## 18. Extensibility
 
@@ -238,19 +237,19 @@ gates UI), never silently.
 
 ## Gap Register
 
-Ordered by severity; each is either scheduled or would need a recorded reason to stay open.
+Ordered by severity. Fixed entries stay listed — decisions are recorded, not deleted.
 
-| # | Level | Gap | Fix shape |
+| # | Level | Gap | Status |
 |---|---|---|---|
-| G1 | MUST-fix bug | `user_message_chunk` unhandled → session/load history loss + block merging (§4, §9) | New case + `activeUserBlockId`; `inFlight` guard against live echo; companion: exhaustive switch with `assertNever` over the SDK union, runtime-tolerant default for unknown kinds. |
-| G2 | MUST | Turn cancellation leaves pending permission requests hanging (§7, §11) | `stopTurn` → broker: resolve all pending requests for the session with `cancelled` outcome. |
-| G3 | MUST-shaped | `fs/read_text_file` ignores `line`/`limit` (§12) | Slice in `onReadTextFile`; 1-based `line`. |
-| G4 | Honesty | Non-text agent message content silently dropped (§8) | Placeholder block ("[image]" etc.) until real rendering is justified. |
-| G5 | SHOULD | Tool-call content: plain content blocks unrendered; embedded terminals not linked to their card (§10) | Render text content on the card; associate `type:"terminal"` content by `terminalId` with the existing live block. |
-| G6 | SHOULD | No preemptive local "cancelled" on incomplete tool calls at cancel (§7) | Mark in-progress tool blocks cancelled on `stopTurn`; trailing agent updates still win. |
-| G7 | SHOULD | No explicit protocol-version compatibility check after initialize (§2) | Compare, refuse/downgrade path with a visible reason. |
-| G8 | Cosmetic | Slash-command input hint dropped (§17) | Carry through `commandsAdvertised`. |
-| G9 | Nit | Terminal truncation counts UTF-16 units, may split surrogates (§13) | Byte accounting + boundary-safe cut. |
+| G1 | MUST-fix bug | `user_message_chunk` unhandled → session/load history loss + block merging (§4, §9) | **Fixed 2026-07-11** — new case + `activeUserBlockId` + `inFlight` guard; switch made compile-time exhaustive (`assertUnconsumed`), runtime tolerant of newer kinds. |
+| G2 | MUST | Turn cancellation left pending permission requests hanging (§7, §11) | **Fixed 2026-07-11** — `broker.cancelPending(sessionId)` from `stopTurn`/`closeSession`; honest card resolution, `turn-cancelled` audit. |
+| G3 | MUST-shaped | `fs/read_text_file` ignored `line`/`limit` (§12) | **Fixed 2026-07-11** — `sliceTextFileRead`, 1-based line, after the live-buffer read. |
+| G4 | Honesty | Non-text agent/user message content silently dropped (§8) | **Fixed 2026-07-11** — closed in-place placeholder block. |
+| G5 | SHOULD | Tool-call content: plain content blocks unrendered; embedded terminals not linked to their card (§10) | Open — phase-B rendering work (ui-rendering-strategy), not a patch. |
+| G6 | SHOULD | No preemptive local "cancelled" on incomplete tool calls at cancel (§7) | Open — the tool-status enum has no `cancelled`; needs its own block state. Trailing agent updates are already accepted, so state converges. |
+| G7 | SHOULD | No explicit protocol-version compatibility check after initialize (§2) | Open — wants a UX decision (what the user sees on refusal/downgrade). |
+| G8 | Cosmetic | Slash-command input hint dropped (§17) | **Fixed 2026-07-11** — rides through to the slash menu. |
+| G9 | Nit | Terminal truncation counted UTF-16 units, could split surrogates (§13) | **Fixed 2026-07-11** — `tailBytes`: byte accounting, code-point-boundary cut. |
 
 **Watch items:** W1 write-vs-dirty-editor divergence (§12). **Verify:** V1 that the SDK
 surfaces load-replay notifications before the `session/load` response resolves in all
