@@ -291,6 +291,10 @@ function AddAgentRow(props: {
 }) {
   const configuredIds = new Set(props.state.agentConfigs.map((c) => c.id));
   const available = props.state.roster.filter((r) => !configuredIds.has(r.id));
+  // registryVersion is non-null exactly for agents in the current registry
+  // snapshot — local-only entries and overlay orphans (curated ids the
+  // registry didn't return) must not inflate the registry's own count.
+  const registryCount = props.state.roster.filter((r) => r.registryVersion !== null).length;
   const [mode, setMode] = useState<"roster" | "custom">("roster");
   const [rosterQuery, setRosterQuery] = useState("");
   const [rosterId, setRosterId] = useState("");
@@ -331,7 +335,8 @@ function AddAgentRow(props: {
       </div>
       {props.state.registryUpdatedAt !== "" && (
         <div className="note mx-0 mb-0 mt-1">
-          registry last checked {new Date(props.state.registryUpdatedAt).toLocaleString()}
+          {registryCount} agent{registryCount === 1 ? "" : "s"} in the ACP registry · last
+          checked {new Date(props.state.registryUpdatedAt).toLocaleString()}
         </div>
       )}
       <div className="connect-form mt-2">
