@@ -10,6 +10,7 @@ import { assertKind } from "./support/assert-kind";
 import { applyFileWrite, PermissionBroker } from "../src/orchestrator/broker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
+import { tailBytes } from "../src/orchestrator/terminal-runner";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -287,3 +288,23 @@ async function waitFor(probe: () => boolean | undefined, timeoutMs = 5000): Prom
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+describe("tailBytes (ACP outputByteLimit — bytes, character-boundary cut)", () => {
+  it("under the limit passes through untouched", () => {
+    expect(tailBytes("hello", 10)).toEqual({ text: "hello", truncated: false });
+  });
+
+  it("truncates from the beginning, keeping the tail", () => {
+    expect(tailBytes("0123456789", 4)).toEqual({ text: "6789", truncated: true });
+  });
+
+  it("counts bytes, not UTF-16 units", () => {
+    // "é" is 2 bytes in UTF-8 — 5 chars = 10 bytes; a 4-byte tail is 2 chars
+    expect(tailBytes("ééééé", 4)).toEqual({ text: "éé", truncated: true });
+  });
+
+  it("never splits a code point — cut lands on the next boundary", () => {
+    // "😀" is 4 bytes; a 6-byte budget over two emoji can hold only one whole
+    expect(tailBytes("😀😀", 6)).toEqual({ text: "😀", truncated: true });
+  });
+});

@@ -39,6 +39,19 @@ export interface TerminalRunner {
 
 const DEFAULT_OUTPUT_LIMIT = 1_000_000;
 
+/** The last ≤ maxBytes *bytes* of s, cut at a character boundary — ACP's
+ * outputByteLimit is bytes, and the spec's truncation rule is "from the
+ * beginning, at a character boundary" (acp-compliance.md G9). Skipping
+ * UTF-8 continuation bytes lands on a code-point start, which also keeps
+ * surrogate pairs whole (one 4-byte code point in UTF-8). */
+export function tailBytes(s: string, maxBytes: number): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(s, "utf8") <= maxBytes) return { text: s, truncated: false };
+  const buf = Buffer.from(s, "utf8");
+  let start = buf.length - maxBytes;
+  while (start < buf.length && (buf[start]! & 0b1100_0000) === 0b1000_0000) start++;
+  return { text: buf.subarray(start).toString("utf8"), truncated: true };
+}
+
 export class NodeTerminalRunner implements TerminalRunner {
   create(params: CreateTerminalParams): TerminalHandle {
     const limit = params.outputByteLimit ?? DEFAULT_OUTPUT_LIMIT;
@@ -61,8 +74,9 @@ export class NodeTerminalRunner implements TerminalRunner {
 
     const append = (chunk: string) => {
       output += chunk;
-      if (output.length > limit) {
-        output = output.slice(output.length - limit);
+      const tail = tailBytes(output, limit);
+      if (tail.truncated) {
+        output = tail.text;
         truncated = true;
       }
       for (const listener of dataListeners) listener(chunk);
