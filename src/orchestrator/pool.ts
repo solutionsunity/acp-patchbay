@@ -201,6 +201,25 @@ function timeOfDay(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
+/** The one spawn-option assembly for anything launched in an agent's
+ * environment — the agent itself and its launcher warmup. One spelling on
+ * purpose, beyond DRY: the env merge MUST be identical in both, or the
+ * warmup could warm a different package cache than the real launch reads
+ * (npm/uv honor cache-location env vars). shell comes from resolveSpawn
+ * (Windows .cmd shims only — stop() still reaches the whole tree there:
+ * killTree is taskkill /T, wrapper included); treeSpawnOptions makes the
+ * child a process-group leader on POSIX (process-tree.ts), what lets
+ * stop() reach grandchildren. */
+function spawnOptions(spec: LaunchSpec, shell: boolean, stdio: "pipe" | "ignore") {
+  return {
+    env: { ...process.env, ...spec.env },
+    cwd: spec.cwd,
+    stdio: [stdio, stdio, stdio] as ["pipe", "pipe", "pipe"] | ["ignore", "ignore", "ignore"],
+    shell,
+    ...treeSpawnOptions,
+  };
+}
+
 /** A cold launcher download can outlive any honest initialize budget; this
  * caps the warmup phase itself so a dead npm registry can't hold connect
  * hostage forever. */
@@ -325,17 +344,7 @@ export class AgentPool {
       this.markDead(entry, launch.error);
       throw new Error(launch.error);
     }
-    const child = spawn(launch.command, launch.args, {
-      env: { ...process.env, ...spec.env },
-      cwd: spec.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      // Windows .cmd shims only (resolveSpawn) — stop() still reaches the
-      // whole tree there: killTree is taskkill /T, wrapper included.
-      shell: launch.shell,
-      // Process-group leader on POSIX (process-tree.ts) — what lets stop()
-      // reach grandchildren (the agent's own mcp-server/bridge children).
-      ...treeSpawnOptions,
-    });
+    const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "pipe"));
     entry.process = child;
 
     child.stderr!.setEncoding("utf8");
@@ -859,13 +868,7 @@ export class AgentPool {
     if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
     this.log.info(`${entry.poolKey}: warming launcher cache (${warm.command} ${warm.args.join(" ")})`);
     return new Promise<void>((resolve) => {
-      const child = spawn(launch.command, launch.args, {
-        env: { ...process.env, ...spec.env },
-        cwd: spec.cwd,
-        stdio: ["ignore", "ignore", "ignore"],
-        shell: launch.shell,
-        ...treeSpawnOptions,
-      });
+      const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "ignore"));
       const label = setTimeout(
         () => this.setStatus(entry, "reconnecting", "downloading the agent package…"),
         DOWNLOAD_LABEL_AFTER_MS,
