@@ -52,7 +52,7 @@ const TOOL_ICON: Record<ToolCallBlock["toolKind"], string> = {
 
 /** Right-side status: blocked-by-permission is its own state, visually
  * distinct from a genuine execution failure — different facts. */
-function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
+function ToolCallStatusTag({ block, turnActive }: { block: ToolCallBlock; turnActive: boolean }) {
   if (block.denied) {
     return (
       <span className="st text-warn">
@@ -74,6 +74,19 @@ function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
       </span>
     );
   }
+  // Incomplete without an active turn: the wire has no "cancelled" tool
+  // status, and a replayed session carries no turn state either — so
+  // "interrupted" is *derived*, never stored. A spinner is a claim that
+  // work is happening; that claim is only true while a turn is in flight,
+  // and this way a live-cancelled turn and its later session/load replay
+  // render identically (agent representation is the truth).
+  if (!turnActive) {
+    return (
+      <span className="st text-muted-foreground">
+        <Icon name="circle-slash" /> interrupted
+      </span>
+    );
+  }
   return (
     <span className="st">
       <span className="spin" /> {block.status === "pending" ? "pending" : "running"}
@@ -85,7 +98,15 @@ function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
  * output — bounded upstream, rendered mono, never through markdown — and,
  * for calls carrying diff content, "Open diff" per file, routed to VS
  * Code's native diff editor rather than any inline diff view. */
-export function ToolCallCard({ block, sessionId }: { block: ToolCallBlock; sessionId: string }) {
+export function ToolCallCard({
+  block,
+  sessionId,
+  turnActive,
+}: {
+  block: ToolCallBlock;
+  sessionId: string;
+  turnActive: boolean;
+}) {
   const send = useActions();
   const [open, setOpen] = useState(false);
   const expandable = block.input !== null || block.output !== null || block.diffFiles.length > 0;
@@ -99,7 +120,7 @@ export function ToolCallCard({ block, sessionId }: { block: ToolCallBlock; sessi
         <Icon name={TOOL_ICON[block.toolKind]} />
         <span className="min-w-0 flex-1 truncate">{block.title}</span>
         {expandable && <Icon name={open ? "chevron-down" : "chevron-right"} />}
-        <ToolCallStatusTag block={block} />
+        <ToolCallStatusTag block={block} turnActive={turnActive} />
       </div>
       {open && (
         <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
@@ -140,7 +161,15 @@ export function ToolCallCard({ block, sessionId }: { block: ToolCallBlock; sessi
  * search-heavy turn doesn't bury the prose — expandable to the individual
  * cards, order intact. The in-flight call's title stays visible on the
  * summary so a live run never reads as a stall. */
-export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBlock[]; sessionId: string }) {
+export function ToolRunCard({
+  calls,
+  sessionId,
+  turnActive,
+}: {
+  calls: readonly ToolCallBlock[];
+  sessionId: string;
+  turnActive: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const running = calls.find((c) => c.status === "pending" || c.status === "in_progress");
   const denied = calls.filter((c) => c.denied).length;
@@ -156,7 +185,7 @@ export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBloc
           <Icon name="tools" /> {calls.length} tool calls <Icon name="chevron-down" />
         </div>
         {calls.map((c) => (
-          <ToolCallCard key={c.id} block={c} sessionId={sessionId} />
+          <ToolCallCard key={c.id} block={c} sessionId={sessionId} turnActive={turnActive} />
         ))}
       </>
     );
@@ -174,8 +203,12 @@ export function ToolRunCard({ calls, sessionId }: { calls: readonly ToolCallBloc
         </span>
         <Icon name="chevron-right" />
         <span className="st">
-          {running !== undefined ? (
+          {running !== undefined && turnActive ? (
             <span className="spin" />
+          ) : running !== undefined ? (
+            <span className="text-muted-foreground">
+              <Icon name="circle-slash" /> interrupted
+            </span>
           ) : denied > 0 ? (
             <span className="text-warn">
               <Icon name="shield" /> {denied} blocked
