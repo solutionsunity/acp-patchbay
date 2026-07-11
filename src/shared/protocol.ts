@@ -785,6 +785,9 @@ export type ChatBlock =
 export interface AvailableCommand {
   name: string;
   description?: string;
+  /** The agent's hint for the command's free-text input (ACP
+   * UnstructuredCommandInput.hint) — shown in the slash menu. */
+  inputHint?: string;
 }
 
 /** The in-pane connect state for a chat being started (P17): "+" on a

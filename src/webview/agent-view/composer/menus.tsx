@@ -82,6 +82,7 @@ export function SlashMenu(props: {
           onClick={() => props.onPick(c.name)}
         >
           <b>/{c.name}</b>
+          {c.inputHint !== undefined && <span className="d">&lt;{c.inputHint}&gt;</span>}
           {c.description !== undefined && <span className="d">{c.description}</span>}
         </div>
       ))}

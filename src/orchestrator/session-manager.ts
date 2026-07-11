@@ -1215,6 +1215,7 @@ export class SessionManager {
           commands: update.availableCommands.map((c) => ({
             name: c.name,
             description: c.description,
+            ...(c.input?.hint !== undefined ? { inputHint: c.input.hint } : {}),
           })),
         });
         break;
