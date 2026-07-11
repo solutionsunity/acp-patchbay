@@ -501,6 +501,15 @@ export class Orchestrator {
           this.relaySettingsDerived(events);
           this.recordLastActive(events);
         },
+        // The session/load replay window: canonical state advances (and the
+        // settings/last-active relays stay truthful) but no patches ride to
+        // the webview — resyncView closes the window with one wholesale swap.
+        emitSilent: (...events) => {
+          this.agentView.emitSilent(...events);
+          this.relaySettingsDerived(events);
+          this.recordLastActive(events);
+        },
+        resyncView: () => this.agentView.resync(),
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
         // From the store-backed spec map, never the pool entry's spec: that

@@ -142,6 +142,31 @@ describe("ChannelHost", () => {
     await expect(wait).resolves.toBe(1);
   });
 
+  it("emitSilent advances canonical state without a patch; resync delivers it wholesale", () => {
+    const { host } = makeHost();
+    const view = new FakeWebview();
+    host.attach(view);
+    host.handleViewMessage({ kind: "ready" });
+    const before = view.messages.length;
+
+    host.emitSilent(upsert("a"), upsert("b"));
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS + 1);
+    expect(view.messages.length).toBe(before); // silent: nothing rode the bus
+    expect(host.current.agents.map((a) => a.id)).toEqual(["a", "b"]); // canonical is truthful
+
+    host.resync();
+    const last = assertKind(view.last(), "snapshot");
+    expect(last.state.agents.map((a) => a.id)).toEqual(["a", "b"]);
+  });
+
+  it("emitSilent still notifies onChange (native surfaces track canonical, not patches)", () => {
+    const { host } = makeHost();
+    let calls = 0;
+    host.onChange(() => calls++);
+    host.emitSilent(upsert("a"));
+    expect(calls).toBe(1);
+  });
+
   it("onChange fires on every emit, independent of any webview attachment (P11 native surfaces)", () => {
     const { host } = makeHost();
     let calls = 0;

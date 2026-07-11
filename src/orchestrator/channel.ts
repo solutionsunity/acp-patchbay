@@ -62,6 +62,24 @@ export class ChannelHost<S, E> {
     for (const listener of this.changeListeners) listener();
   }
 
+  /** Advance canonical state *without* scheduling a patch — a silent window
+   * (session/load replay): the view is brought back in sync wholesale by
+   * `resync()`, never patch-by-patch. Canonical state stays truthful
+   * throughout, so a webview mounting mid-window snapshots honestly. */
+  emitSilent(...events: E[]): void {
+    for (const event of events) {
+      this.state = this.reduce(this.state, event);
+    }
+    for (const listener of this.changeListeners) listener();
+  }
+
+  /** Closes a silent window: the attached webview gets canonical state
+   * wholesale. Snapshot semantics already guarantee the pending patch
+   * buffer is folded in (it reduced into canonical at emit time). */
+  resync(): void {
+    this.sendSnapshot();
+  }
+
   /** Native surfaces (status bar, P11) need to react to canonical state
    * without being a webview — independent of the single `view` attachment
    * above, and of the coalesced patch stream. */

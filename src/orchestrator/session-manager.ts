@@ -37,6 +37,13 @@ import type { AgentPool } from "./pool";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
+  /** Advance canonical render state without a webview patch — the
+   * session/load replay window (ui-rendering-strategy.md § Hydration
+   * delivery). Absent → falls back to `emit` (tests, patch-per-event). */
+  emitSilent?(...events: AgentViewEvent[]): void;
+  /** Closes a silent window: one wholesale webview sync from canonical
+   * state — the replay lands as a single swap, never a patch flood. */
+  resyncView?(): void;
   /** The local MCP server is spawned with `contextToken` as its correlation
    * id (the real ACP sessionId doesn't exist yet when mcpServers must be
    * built — session/new hasn't returned). Lets the orchestrator's IPC host
@@ -171,6 +178,10 @@ export class SessionManager {
   private contextTokenCounter = 0;
   /** Rapid re-clicks must not stack replays — one hydration per session. */
   private hydrating = new Set<string>();
+  /** Sessions inside a session/load replay window: their transcript events
+   * reduce into canonical state silently; `loadSilently` closes the window
+   * with one wholesale resync. */
+  private replaying = new Set<string>();
 
   constructor(
     private readonly pool: AgentPool,
@@ -336,6 +347,26 @@ export class SessionManager {
         ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
         : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
     return { sessionId: target.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions) };
+  }
+
+  /** A `session/load` with its replay window silenced (ui-rendering-
+   * strategy.md § Hydration delivery): the reset and every replayed update
+   * reduce into canonical state only — the old pane content stays up (no
+   * blank flash, no patch flood) until the closing resync swaps the webview
+   * wholesale. The window closes on failure too: canonical was reset, and
+   * the webview must not keep showing blocks canonical no longer holds. */
+  private async loadSilently(sessionId: string, poolKey: string, agentId: string): Promise<NormalizedKnobs> {
+    const silent = (...events: AgentViewEvent[]) =>
+      this.hooks.emitSilent !== undefined ? this.hooks.emitSilent(...events) : this.hooks.emit(...events);
+    this.replaying.add(sessionId);
+    try {
+      silent({ kind: "transcriptReset", sessionId });
+      const { knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId);
+      return knobs;
+    } finally {
+      this.replaying.delete(sessionId);
+      this.hooks.resyncView?.();
+    }
   }
 
   async createSession(
@@ -594,10 +625,9 @@ export class SessionManager {
     // reopened sessions keep whatever title they already have
     this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
     this.sessions.get(sessionId)!.everPrompted = true; // came back from history
-    this.hooks.emit({ kind: "transcriptReset", sessionId });
     let knobs: NormalizedKnobs;
     try {
-      ({ knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId));
+      knobs = await this.loadSilently(sessionId, poolKey, agentId);
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
@@ -813,13 +843,15 @@ export class SessionManager {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
+      let knobs: NormalizedKnobs;
       if (via === "load") {
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
         session.activeUserBlockId = null;
-        this.hooks.emit({ kind: "transcriptReset", sessionId });
+        knobs = await this.loadSilently(sessionId, session.poolKey, session.agentId);
+      } else {
+        ({ knobs } = await this.attachSession({ via, sessionId }, session.poolKey, session.agentId));
       }
-      const { knobs } = await this.attachSession({ via, sessionId }, session.poolKey, session.agentId);
       this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed);
       this.log.info(`session ${sessionId}: roots re-applied via session/${via}`);
@@ -1054,6 +1086,12 @@ export class SessionManager {
     const session = this.sessions.get(sessionId);
     if (!session) return; // update for a session patchbay isn't tracking
     session.lastActivityAt = Date.now(); // any update is activity — the reaper's basis
+    // Replay window (loadSilently): canonical state advances, the webview
+    // waits for the closing wholesale resync instead of a patch flood.
+    const emit =
+      this.replaying.has(sessionId) && this.hooks.emitSilent !== undefined
+        ? this.hooks.emitSilent.bind(this.hooks)
+        : this.hooks.emit.bind(this.hooks);
 
     switch (update.sessionUpdate) {
       // Block-model interruption rule (ui-rendering-strategy.md): a chunk
@@ -1071,7 +1109,7 @@ export class SessionManager {
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
         session.activeUserBlockId ??= newBlockId("user");
-        this.hooks.emit({
+        emit({
           kind: "userTextDelta",
           sessionId,
           blockId: session.activeUserBlockId,
@@ -1084,7 +1122,7 @@ export class SessionManager {
         session.activeThoughtBlockId = null; // prose interrupts the thought run
         session.activeUserBlockId = null; // …and closes a replayed user run
         session.activeTextBlockId ??= newBlockId("text");
-        this.hooks.emit({
+        emit({
           kind: "agentTextDelta",
           sessionId,
           blockId: session.activeTextBlockId,
@@ -1097,7 +1135,7 @@ export class SessionManager {
         session.activeTextBlockId = null; // thinking interrupts the prose run
         session.activeUserBlockId = null;
         session.activeThoughtBlockId ??= newBlockId("thought");
-        this.hooks.emit({
+        emit({
           kind: "agentThoughtDelta",
           sessionId,
           blockId: session.activeThoughtBlockId,
@@ -1109,7 +1147,7 @@ export class SessionManager {
         session.activeTextBlockId = null; // the agent paused to act
         session.activeThoughtBlockId = null;
         session.activeUserBlockId = null;
-        this.hooks.emit({
+        emit({
           kind: "toolCallUpserted",
           sessionId,
           blockId: update.toolCallId,
@@ -1125,7 +1163,7 @@ export class SessionManager {
         });
         break;
       case "tool_call_update":
-        this.hooks.emit({
+        emit({
           kind: "toolCallUpserted",
           sessionId,
           blockId: update.toolCallId,
@@ -1143,14 +1181,14 @@ export class SessionManager {
       case "plan":
         // Session-level state, not a transcript event — replaces the pinned
         // widget's snapshot; it neither appends a block nor interrupts a run.
-        this.hooks.emit({
+        emit({
           kind: "planUpdated",
           sessionId,
           entries: toPlanEntries(update.entries),
         });
         break;
       case "available_commands_update":
-        this.hooks.emit({
+        emit({
           kind: "commandsAdvertised",
           sessionId,
           commands: update.availableCommands.map((c) => ({
@@ -1178,7 +1216,7 @@ export class SessionManager {
         // initialize-time claim exists for usage reporting) already happened
         // in pool.ts's notification handler, right where this same
         // usage_update tag was first seen; this only renders it.
-        this.hooks.emit({
+        emit({
           kind: "usageReported",
           sessionId,
           used: update.used,

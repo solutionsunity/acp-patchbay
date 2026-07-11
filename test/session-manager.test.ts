@@ -55,9 +55,15 @@ function harness(opts?: {
   sessionManager: SessionManager;
   capabilityTracker: CapabilityTracker;
   events: AgentViewEvent[];
+  /** Events delivered through the silent (replay-window) path — also in
+   * `events`, so `state()` stays the full canonical reduction. */
+  silentEvents: AgentViewEvent[];
+  resyncCount(): number;
   state(): AgentViewState;
 } {
   const events: AgentViewEvent[] = [];
+  const silentEvents: AgentViewEvent[] = [];
+  let resyncs = 0;
   let sessionManager!: SessionManager;
   let capabilityTracker!: CapabilityTracker;
   const pool = new AgentPool({
@@ -86,6 +92,13 @@ function harness(opts?: {
     pool,
     {
       emit: (...evs) => events.push(...evs),
+      emitSilent: (...evs) => {
+        events.push(...evs);
+        silentEvents.push(...evs);
+      },
+      resyncView: () => {
+        resyncs += 1;
+      },
       contextRootsFor: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       currentTranscript: (sessionId) =>
@@ -107,6 +120,8 @@ function harness(opts?: {
     sessionManager,
     capabilityTracker,
     events,
+    silentEvents,
+    resyncCount: () => resyncs,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
   };
 }
@@ -243,6 +258,36 @@ describe("SessionManager", () => {
     expect(textOf(blocks[3])).toBe("before crash"); // second turn uses the same script
 
     await h.pool.stop("sm5");
+  });
+
+  it("session/load replay is delivered silently and closed by one resync — never a patch flood", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hello" }] }, "sm5s"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm5s", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "first turn");
+    expect(h.silentEvents).toHaveLength(0); // live streaming patches normally
+    expect(h.resyncCount()).toBe(0);
+
+    await h.pool.restart("sm5s");
+    await h.sessionManager.sendPrompt(sessionId, "second turn");
+
+    // The replay window went silent — reset + the whole replayed first turn —
+    // and closed with exactly one wholesale resync; the live second turn
+    // streamed as patches again.
+    expect(h.silentEvents.map((e) => e.kind)).toEqual([
+      "transcriptReset",
+      "userTextDelta",
+      "agentTextDelta",
+    ]);
+    expect(h.resyncCount()).toBe(1);
+    // canonical state is complete regardless of delivery path
+    const blocks = h.state().transcripts[sessionId]!;
+    expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
+    expect(textOf(blocks[1])).toBe("hello");
+    expect(blocks[2]).toMatchObject({ kind: "user", text: "second turn" });
+    await h.pool.stop("sm5s");
   });
 
   it("a live user_message_chunk echo never duplicates the sent prompt", async () => {
