@@ -4,7 +4,7 @@
 // cannot style ranges, which is what forced the editor swap. Still
 // render-only: the editor state is draft furniture, reset with the webview;
 // every pick and the send itself go up as actions.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
