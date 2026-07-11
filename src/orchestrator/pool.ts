@@ -6,6 +6,7 @@
 // Connection handling approach checked against vscode-acp's ConnectionManager
 // (MIT, formulahendry); rebuilt here on the SDK 1.x client() builder API.
 import { spawn, type ChildProcess } from "node:child_process";
+import { basename } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
@@ -200,6 +201,41 @@ function timeOfDay(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
+/** A cold launcher download can outlive any honest initialize budget; this
+ * caps the warmup phase itself so a dead npm registry can't hold connect
+ * hostage forever. */
+const WARMUP_TIMEOUT_MS = 180_000;
+/** A warm cache resolves in about a second — the "downloading" label waits
+ * this long so it's only ever shown when a download is plausibly happening,
+ * never as a flash of a false claim on a cache hit. */
+const DOWNLOAD_LABEL_AFTER_MS = 1_500;
+
+/** Cache-warm invocation for ecosystem launchers (P16): a cold `npx`/`uvx`
+ * downloads the whole package before the agent can say a byte — in total
+ * silence (`npx -y` prints nothing while fetching; measured 20s+ on a fast
+ * network), which is indistinguishable on the wire from a hung TUI. The
+ * warmup runs the download as its own labeled phase: the same launcher is
+ * asked to resolve the same package but run the runtime's `--version`
+ * instead of the agent, and its exit is the one reliable "cache is ready"
+ * signal. The real spawn then starts warm, so the initialize timeout
+ * measures the agent — not npm's network. Registry arg shapes only
+ * (resolveDistribution builds them); anything unrecognized gets no warmup
+ * and behaves exactly as before. Exported for tests. */
+export function warmupSpawn(spec: LaunchSpec): { command: string; args: string[] } | null {
+  const cmd = basename(spec.command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
+  if (cmd === "npx") {
+    const pkg = spec.args[0] === "-y" ? spec.args[1] : undefined;
+    if (pkg === undefined || pkg.startsWith("-")) return null;
+    return { command: spec.command, args: ["-y", "--package", pkg, "node", "--version"] };
+  }
+  if (cmd === "uvx") {
+    const pkg = spec.args[0];
+    if (pkg === undefined || pkg.startsWith("-")) return null;
+    return { command: spec.command, args: ["--from", pkg, "python", "--version"] };
+  }
+  return null;
+}
+
 export class AgentPool {
   private entries = new Map<string, Entry>();
   private readonly initializeTimeoutMs: number;
@@ -208,9 +244,11 @@ export class AgentPool {
     private readonly hooks: PoolHooks,
     /** Output-channel seam (logger.ts) — argv and env values never logged. */
     private readonly log: Logger = nullLogger,
-    /** The default is generous on purpose: cold `npx`/`uvx` first runs
-     * download whole packages (P16 — a short fuse would false-fail them).
-     * Tests inject a short one to exercise the timeout path itself. */
+    /** Applies to the initialize round-trip only: cold `npx`/`uvx` package
+     * downloads happen in the labeled warmup phase before the real spawn
+     * (warmupSpawn), so this budget measures the agent, not the package
+     * manager's network. Tests inject a short one to exercise the timeout
+     * path itself. */
     opts?: { initializeTimeoutMs?: number },
   ) {
     this.initializeTimeoutMs = opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS;
@@ -272,6 +310,12 @@ export class AgentPool {
     };
     this.entries.set(poolKey, entry);
     this.setStatus(entry, "reconnecting");
+
+    // Ecosystem launchers get their package cache warmed as its own phase —
+    // the "run it once manually" advice, done by patchbay itself, with the
+    // honest "downloading" label while it's genuinely fetching.
+    const warm = warmupSpawn(spec);
+    if (warm !== null) await this.warmLauncherCache(entry, warm, spec);
 
     this.log.info(
       `${poolKey}: spawning ${spec.command} (${spec.args.length} args${isolated ? ", isolated" : ""})`,
@@ -798,6 +842,47 @@ export class AgentPool {
       throw new Error(`agent ${poolKey} is not running`);
     }
     return entry;
+  }
+
+  /** Runs the warmup invocation to completion — best-effort by contract: a
+   * failed or capped warmup never fails the connect (the real spawn tells
+   * the real story with its own error surface); it only means the download
+   * time counts against initialize again, exactly the pre-warmup behavior.
+   * The status detail flips to "downloading…" only once the warmup outlives
+   * a warm-cache resolution, and clears the moment the phase ends. */
+  private warmLauncherCache(
+    entry: Entry,
+    warm: { command: string; args: string[] },
+    spec: LaunchSpec,
+  ): Promise<void> {
+    const launch = resolveSpawn(warm.command, warm.args);
+    if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
+    this.log.info(`${entry.poolKey}: warming launcher cache (${warm.command} ${warm.args.join(" ")})`);
+    return new Promise<void>((resolve) => {
+      const child = spawn(launch.command, launch.args, {
+        env: { ...process.env, ...spec.env },
+        cwd: spec.cwd,
+        stdio: ["ignore", "ignore", "ignore"],
+        shell: launch.shell,
+        ...treeSpawnOptions,
+      });
+      const label = setTimeout(
+        () => this.setStatus(entry, "reconnecting", "downloading the agent package…"),
+        DOWNLOAD_LABEL_AFTER_MS,
+      );
+      const cap = setTimeout(() => {
+        if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
+      }, WARMUP_TIMEOUT_MS);
+      const settle = (outcome: string) => {
+        clearTimeout(label);
+        clearTimeout(cap);
+        if (entry.detail !== undefined) this.setStatus(entry, "reconnecting"); // clear the label
+        this.log.debug(`${entry.poolKey}: launcher warmup ${outcome}`);
+        resolve();
+      };
+      child.on("error", (err) => settle(`spawn failed — ${err.message}`));
+      child.on("exit", (code, sig) => settle(code === 0 ? "done" : `ended (code=${code}, sig=${sig})`));
+    });
   }
 
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {

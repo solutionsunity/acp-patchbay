@@ -782,6 +782,14 @@ export function AgentsSection(props: {
                 <Icon name="info" /> {a.authReason}
               </div>
             )}
+            {/* The connect warmup's honest phase label ("downloading the
+                agent package…") — pool.ts sets it only while a launcher
+                download is genuinely in flight, and clears it itself. */}
+            {status === "reconnecting" && a?.detail !== undefined && (
+              <div className="note mt-1.5">
+                <Icon name="cloud-download" /> {a.detail}
+              </div>
+            )}
             {status === "crashed" && (
               <div className="note crashed-note mt-1.5">
                 <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}

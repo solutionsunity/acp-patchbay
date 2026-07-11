@@ -258,9 +258,21 @@ export function Chat(props: {
   // last-known views survive extension upgrades).
   const connect = props.state.chatConnect ?? null;
   if (connect !== null) {
-    const name = agents.find((a) => a.id === connect.agentId)?.name ?? connect.agentId;
+    const agent = agents.find((a) => a.id === connect.agentId);
+    const name = agent?.name ?? connect.agentId;
     if (connect.status === "connecting") {
-      return <StatePage icon="loading" spin tag={<>Connecting {name}…</>} />;
+      // The pool's warmup phase label rides AgentSummary.detail while a
+      // launcher download is genuinely in flight ("downloading the agent
+      // package…") — the difference between a 20-second silent connect
+      // and a said reason.
+      const phase = agent?.status === "reconnecting" ? agent.detail : undefined;
+      return (
+        <StatePage
+          icon="loading"
+          spin
+          tag={<>Connecting {name}…{phase !== undefined ? ` — ${phase}` : ""}</>}
+        />
+      );
     }
     return (
       <StatePage
