@@ -168,6 +168,36 @@ describe("PermissionBroker audit trail", () => {
     expect(tail[0]).toMatchObject({ kind: "user-allow", command: "curl example.com" });
   });
 
+  it("cancelPending resolves every pending request of the session as cancelled (spec § Cancellation)", async () => {
+    const { broker, events, audit } = harness();
+    // an agent permission request and a command gate, both pending on s1;
+    // an unrelated session's request must survive the sweep
+    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit file", "edit", null, [
+      { optionId: "y", label: "Allow", kind: "allow_once" },
+      { optionId: "n", label: "Reject", kind: "reject_once" },
+    ]);
+    const commandGate = broker.gateCommand("s1", "curl example.com");
+    const otherSession = broker.gateCommand("s2", "npm run lint");
+
+    broker.cancelPending("s1");
+    await expect(agentReq).resolves.toEqual({ cancelled: true });
+    await expect(commandGate).resolves.toEqual({ accepted: false });
+
+    // cards resolved visibly, honestly labeled — never left looking open
+    const resolved = events.filter((e) => e.kind === "permissionResolved");
+    expect(resolved).toHaveLength(2);
+    expect(resolved.every((e) => e.kind === "permissionResolved" && e.label.includes("Cancelled"))).toBe(true);
+    const tail = await audit.tail(10);
+    expect(tail.filter((e) => e.kind === "turn-cancelled")).toHaveLength(2);
+
+    // s2 is untouched and still answerable
+    const requested = events.filter((e) => e.kind === "permissionRequested");
+    const s2Req = requested.find((e) => e.kind === "permissionRequested" && e.sessionId === "s2");
+    if (s2Req?.kind !== "permissionRequested") throw new Error("unreachable");
+    broker.resolve(s2Req.blockId, "allow_once");
+    await expect(otherSession).resolves.toEqual({ accepted: true });
+  });
+
   it("allow_always persists a new rule so the next call auto-allows", async () => {
     const { broker, events, rules } = harness();
     const pending = broker.gateCommand("s1", "npm run lint");

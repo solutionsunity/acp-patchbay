@@ -1612,6 +1612,7 @@ export class Orchestrator {
         break;
       case "closeSession":
         void this.sessionManager.close(action.sessionId);
+        this.broker.cancelPending(action.sessionId); // same duty: an abandoned turn answers cancelled
         break;
       case "reloadSession":
         void this.sessionManager.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
@@ -1637,6 +1638,9 @@ export class Orchestrator {
         break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
+        // Spec § Cancellation (MUST): pending permission requests resolve
+        // with the cancelled outcome — the agent is not left hanging.
+        this.broker.cancelPending(action.sessionId);
         break;
       case "verifyAgent":
         void this.runVerify(action.agentId);

@@ -64,8 +64,13 @@ function isUnder(path: string, root: string): boolean {
 }
 
 interface Pending {
+  sessionId: string;
   resolve(optionId: string): void;
 }
+
+/** Resolution sentinel for a turn-cancelled request — never a real optionId
+ * (agents mint their own ids; this shape is patchbay-reserved). */
+const TURN_CANCELLED = "__patchbay-turn-cancelled__";
 
 export class PermissionBroker {
   private pending = new Map<string, Pending>();
@@ -111,8 +116,20 @@ export class PermissionBroker {
     this.pending.delete(requestId);
   }
 
-  private awaitOption(requestId: string): Promise<string> {
-    return new Promise((resolve) => this.pending.set(requestId, { resolve }));
+  /** Turn cancellation duty (ACP § Cancellation, a MUST): every pending
+   * session/request_permission for the session resolves with the cancelled
+   * outcome — the agent is never left hanging on a stopped turn. Same duty
+   * when the session is closed under an in-flight turn. */
+  cancelPending(sessionId: string): void {
+    for (const [requestId, p] of [...this.pending]) {
+      if (p.sessionId !== sessionId) continue;
+      this.pending.delete(requestId);
+      p.resolve(TURN_CANCELLED);
+    }
+  }
+
+  private awaitOption(requestId: string, sessionId: string): Promise<string> {
+    return new Promise((resolve) => this.pending.set(requestId, { sessionId, resolve }));
   }
 
   private async writeAudit(entry: Record<string, unknown>): Promise<void> {
@@ -160,7 +177,20 @@ export class PermissionBroker {
       options,
     });
     this.hooks.notifyPending?.(blockId, toolTitle, detail, options);
-    const optionId = await this.awaitOption(blockId);
+    const optionId = await this.awaitOption(blockId, sessionId);
+    if (optionId === TURN_CANCELLED) {
+      // The card resolves visibly — an open question the user can no longer
+      // answer must not keep looking open.
+      this.hooks.emit({
+        kind: "permissionResolved",
+        sessionId,
+        blockId,
+        label: "Cancelled — turn stopped",
+        auto: true,
+      });
+      await this.writeAudit({ kind: "turn-cancelled", sessionId, tool: toolTitle, subject });
+      return { cancelled: true };
+    }
     const chosen = options.find((o) => o.optionId === optionId);
     if (chosen === undefined) return { cancelled: true };
     // "always" has a rule shape only for commands — file-write "always" would
@@ -229,11 +259,12 @@ export class PermissionBroker {
       { optionId: "accept", label: "Accept", kind: "allow_once" },
       { optionId: "reject", label: "Reject", kind: "reject_once" },
     ]);
-    const optionId = await this.awaitOption(blockId);
+    const optionId = await this.awaitOption(blockId, sessionId);
+    const cancelled = optionId === TURN_CANCELLED;
     const accepted = optionId === "accept";
-    this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted, auto: false });
+    this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted, auto: cancelled });
     await this.writeAudit({
-      kind: accepted ? "user-allow" : "user-reject",
+      kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
       sessionId,
       file: path,
     });
@@ -266,7 +297,8 @@ export class PermissionBroker {
       options: STANDARD_OPTIONS,
     });
     this.hooks.notifyPending?.(blockId, "Terminal", command, STANDARD_OPTIONS);
-    const optionId = await this.awaitOption(blockId);
+    const optionId = await this.awaitOption(blockId, sessionId);
+    const cancelled = optionId === TURN_CANCELLED;
     const chosen = STANDARD_OPTIONS.find((o) => o.optionId === optionId);
     const accepted = chosen?.kind === "allow_once" || chosen?.kind === "allow_always";
     if (chosen?.kind === "allow_always") await this.persistCommandRule(command, "allow");
@@ -274,11 +306,11 @@ export class PermissionBroker {
       kind: "permissionResolved",
       sessionId,
       blockId,
-      label: chosen?.label ?? "Rejected",
-      auto: false,
+      label: cancelled ? "Cancelled — turn stopped" : (chosen?.label ?? "Rejected"),
+      auto: cancelled,
     });
     await this.writeAudit({
-      kind: accepted ? "user-allow" : "user-reject",
+      kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
       sessionId,
       command,
     });
