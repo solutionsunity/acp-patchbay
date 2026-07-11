@@ -1,6 +1,6 @@
 // P5 gate: fake agent scripted to lie shows declared-but-not-used; branch
 // affordance lights only after the fork is used; reconnect drops used.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,6 +69,13 @@ function harness(kv = new MemoryKV()): {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => state().capabilities[agentId],
     onOfferings: (agentId, modes, configOptions) => offerings.push({ agentId, modes, configOptions }),
+    // Standing probe workspace, orchestrator-style: per agent, created
+    // idempotently, never removed mid-connection.
+    probeRoot: async (agentId) => {
+      const dir = join(cwd, "probe", agentId);
+      await mkdir(dir, { recursive: true });
+      return dir;
+    },
   });
   const seedAgent = (agentId: string) =>
     events.push({
@@ -121,6 +128,19 @@ describe("CapabilityTracker", () => {
     expect(state().capabilities.tidy2!["session.fork"].used).toBe(false);
     expect(pool.get("tidy2")!.sessions).toEqual([]);
     await pool.stop("tidy2");
+  });
+
+  it("the probe root survives the probe — a workspace-aware agent may hold it past session/new", async () => {
+    // Observed with Auggie: workspace validation/indexing runs after the
+    // session/new reply; the old mkdtemp/rm-in-finally deleted the root out
+    // from under it (CLI-fatal agent-side). Lifetime = agent config, not
+    // the probe call.
+    const { pool, state } = harness();
+    await pool.connect(spec({}, "rooted"));
+    await waitFor(() => (state().capabilities.rooted !== undefined ? true : undefined));
+    await new Promise((r) => setTimeout(r, 100)); // let the probe's finally run
+    expect((await stat(join(cwd, "probe", "rooted"))).isDirectory()).toBe(true);
+    await pool.stop("rooted");
   });
 
   it("a lying agent (declares fork, breaks it) reads suspect — indicted, never used", async () => {

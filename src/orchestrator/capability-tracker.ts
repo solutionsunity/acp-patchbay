@@ -21,9 +21,6 @@
 // amended) — a reconnect at the *same* `agentInfo.version` restores what was
 // already proven, and only an actual version change earns a fresh,
 // honestly-unused matrix.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { RequestError, type SessionConfigOption, type SessionModeState } from "@agentclientprotocol/sdk";
 import {
   type AgentViewEvent,
@@ -51,6 +48,14 @@ export interface CapabilityTrackerHooks {
     modes: SessionModeState | null | undefined,
     configOptions: SessionConfigOption[] | null | undefined,
   ): void;
+  /** The agent's standing probe workspace — a real, existing directory,
+   * never the user's workspace roots. Owned by the orchestrator and deleted
+   * only when the agent's config is removed: a probe session may hold this
+   * root agent-side for the connection's life (workspace-aware agents
+   * validate and index it *after* session/new returns — observed: Auggie),
+   * so an ephemeral mkdtemp/rm around the RPCs was patchbay deleting a
+   * directory it had just promised away. */
+  probeRoot(agentId: string): Promise<string>;
 }
 
 export class CapabilityTracker {
@@ -133,8 +138,9 @@ export class CapabilityTracker {
   }
 
   /** Free RPC round-trip: session/new (+ session/fork, while still
-   * declared-but-unused) in a throwaway temp-dir session, never the
-   * workspace, never surfaced as a real session. Doubles as the connect-time
+   * declared-but-unused) in a throwaway session rooted at the agent's
+   * standing probe dir (hooks.probeRoot), never the workspace, never
+   * surfaced as a real session. Doubles as the connect-time
    * offering read: the session/new response's modes/configOptions go out via
    * onOfferings. Marking `auth`/`session.fork` used happens inside pool.ts
    * itself, right where each call succeeds — this only has to make the
@@ -149,7 +155,7 @@ export class CapabilityTracker {
     for (const [sessionId, owner] of this.probeSessions) {
       if (owner === agentId) this.probeSessions.delete(sessionId);
     }
-    const dir = await mkdtemp(join(tmpdir(), "acp-patchbay-verify-"));
+    const dir = await this.hooks.probeRoot(agentId);
     const probeSessionIds: string[] = [];
     try {
       const response = await this.pool.newSession(agentId, dir);
@@ -190,8 +196,9 @@ export class CapabilityTracker {
       // process-policy "auto" reads that set as real concurrent sessions
       // (hasExisting) and would needlessly isolate the user's first
       // top-level session whenever the fork half of the probe failed.
+      // The probe root itself is NOT cleaned here — its lifetime is the
+      // agent's config, not this call (see hooks.probeRoot).
       for (const id of probeSessionIds) this.pool.forgetSession(agentId, id);
-      await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
 

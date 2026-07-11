@@ -84,6 +84,7 @@ function harness(): {
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    probeRoot: async () => cwd, // exists for the test's life — the contract
   });
   const isolationKeys: string[] = [];
   async function resolveProcessFor(agentId: string): Promise<string> {
@@ -363,6 +364,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
     capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    probeRoot: async () => cwd, // exists for the test's life — the contract
   });
     sessionManager = new SessionManager(
       pool,

@@ -87,6 +87,7 @@ function harness(opts?: {
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    probeRoot: async () => cwd, // exists for the test's life — the contract
   });
   sessionManager = new SessionManager(
     pool,

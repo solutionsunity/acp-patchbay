@@ -1,7 +1,7 @@
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { RequestError } from "@agentclientprotocol/sdk";
@@ -119,6 +119,11 @@ export class Orchestrator {
 
   private readonly workspaceRoot: string | null;
   private readonly binaryCacheDir: string;
+  /** Standing probe workspaces, one per agent (`probe/<agentId>`) — created
+   * idempotently at each probe, deleted only with the agent's config. Never
+   * mid-connection: a probe session may hold its root agent-side for the
+   * connection's life (capability-tracker.ts hooks.probeRoot). */
+  private readonly probeRootBase: string;
   private readonly agentNames = new Map<string, string>();
   /** Agents (global — never repo-committed), resolved to a spawnable
    * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
@@ -174,6 +179,7 @@ export class Orchestrator {
       "integration-bridge.js",
     ).fsPath;
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
+    this.probeRootBase = join(context.globalStorageUri.fsPath, "probe");
 
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
     this.machinePermissionRules = new MachineRulesStore(context.globalState);
@@ -631,6 +637,11 @@ export class Orchestrator {
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
         onOfferings: (agentId, modes, configOptions) =>
           this.noteOfferings(agentId, normalizeKnobs(modes, configOptions)),
+        probeRoot: async (agentId) => {
+          const dir = join(this.probeRootBase, agentId);
+          await mkdir(dir, { recursive: true });
+          return dir;
+        },
       },
       log,
     );
@@ -1340,6 +1351,7 @@ export class Orchestrator {
     await this.agentConfigs.remove(agentId);
     await this.usedCapabilities.remove(agentId);
     await this.agentEnv.remove(agentId);
+    await rm(join(this.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
     this.configuredAgentSpecs.delete(agentId);
     this.agentNames.delete(agentId);
     const removed = { kind: "agentRemoved", agentId } as const;

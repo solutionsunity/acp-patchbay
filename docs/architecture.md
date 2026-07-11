@@ -256,10 +256,17 @@ Verification cost splits the triggers:
 | User-run diagnostics (Settings § Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
 | Background schedule | Fine, cheap | Never |
 
-Connect therefore always implies one throwaway temp-dir session — an accepted
+Connect therefore always implies one throwaway probe session — an accepted
 behavioral contract, not an accident: `session/new` is free, the offering read
 needs it every connect (see § Session model), and auth/concurrency proof falls
-out of the same round-trip opportunistically. The *verification* gates keep
+out of the same round-trip opportunistically. The probe session's root is the
+agent's **standing probe workspace** (`globalStorage/probe/<agentId>` — never
+the user's workspace roots), created idempotently per probe and deleted only
+with the agent's config: a workspace-aware agent may validate or index that
+root *after* replying to `session/new` (observed: Auggie, where a vanished
+root is CLI-fatal), so the root's lifetime must cover the agent's use of it,
+not patchbay's RPCs — an ephemeral per-probe temp dir was a promise patchbay
+deleted while the other process still held it. The *verification* gates keep
 their version-keyed skip: `hasUnusedProbe` (protocol.ts) remains the single
 predicate for "a checkable row is still outstanding" — the `session/fork`
 sub-check and the manual `Verify…` control's visibility both gate on it, so
