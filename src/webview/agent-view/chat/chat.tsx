@@ -1,7 +1,10 @@
 // The transcript: renders the view-model's items in arrival order (the
 // ordering principle, ui-rendering-strategy § Summary), the per-turn
-// metadata line, and the live elapsed ticker.
-import { useEffect, useRef, useState } from "react";
+// metadata line, and the live elapsed ticker. Long transcripts ride the
+// three-mechanism scale strategy (ui-rendering-strategy § Transcript
+// scale): windowed mount, content-visibility containment (style.css),
+// and memoized rows.
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentViewState, ChatBlock, SessionSummary, TurnEndBlock } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
@@ -111,6 +114,31 @@ function Block({ block, live, sessionId }: { block: ChatBlock; live: boolean; se
   }
 }
 
+/** Blocks are immutable out of the reducer, so identity is the memo key for
+ * free — only the streaming block re-renders per delta, not the transcript. */
+const MemoBlock = memo(Block);
+const MemoToolRun = memo(
+  ToolRunCard,
+  (a, b) =>
+    a.sessionId === b.sessionId &&
+    a.calls.length === b.calls.length &&
+    a.calls.every((c, i) => c === b.calls[i]),
+);
+
+/** Windowed mount (ui-rendering-strategy § Windowed mount): rows are the
+ * unit — a proxy for the doc's k·H pixels; containment makes generous
+ * over-mounting cheap, so the counts err large. ~60 rows ≈ 3 viewport
+ * pages; one ~page per extension keeps each prepend under the ~100 ms
+ * perceptually-instant budget. */
+const INITIAL_WINDOW = 60;
+const WINDOW_BATCH = 30;
+
+const EMPTY_TRANSCRIPT: ReturnType<typeof deriveTranscript> = {
+  items: [],
+  rollups: new Map(),
+  liveBlockId: null,
+};
+
 export function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
@@ -121,13 +149,80 @@ export function Chat(props: {
   const send = useActions();
   const { agents } = props.state;
   const active = props.activeSession;
+  const activeId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const blocks = active !== null ? (props.state.transcripts[active.id] ?? []) : [];
+  const activeLive = active?.live ?? false;
+  const derived = useMemo(
+    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
+    [blocks, activeLive],
+  );
 
-  useEffect(() => {
+  const [mounted, setMounted] = useState(INITIAL_WINDOW);
+  const hidden = Math.max(0, derived.items.length - mounted);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  /** scrollHeight recorded just before a prepend — restored as a scrollTop
+   * delta so extending the window never shifts what the user is reading.
+   * Null when parked at the very top (a jump-to-start teleport): staying
+   * at 0 lets the fill continue chunk by chunk instead of bouncing. */
+  const pendingAnchor = useRef<number | null>(null);
+  /** Scroll-follow contract (ui-rendering-strategy § Scroll-follow):
+   * auto-follow only while pinned to the bottom — scrollback is never
+   * yanked; returning to the bottom re-pins. */
+  const pinned = useRef(true);
+
+  const grow = useCallback(() => {
+    const el = chatRef.current;
+    if (el !== null && hiddenRef.current > 0) {
+      pendingAnchor.current = el.scrollTop === 0 ? null : el.scrollHeight;
+      setMounted((c) => c + WINDOW_BATCH);
+    }
+  }, []);
+
+  // Session switch: fresh window, pinned, jump (instant, not smooth) to the tail.
+  useLayoutEffect(() => {
+    setMounted(INITIAL_WINDOW);
+    pinned.current = true;
     const el = chatRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+  }, [activeId]);
+
+  // Prepend anchoring + teleport chunk-fill.
+  useLayoutEffect(() => {
+    const el = chatRef.current;
+    if (el === null) return;
+    if (pendingAnchor.current !== null) {
+      el.scrollTop += el.scrollHeight - pendingAnchor.current;
+      pendingAnchor.current = null;
+    } else if (el.scrollTop === 0 && hiddenRef.current > 0) {
+      requestAnimationFrame(grow); // parked at the top — keep filling
+    }
+  }, [mounted, grow]);
+
+  // Follow streaming output only while pinned.
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [blocks.length, blocks[blocks.length - 1]]);
+
+  // The top sentinel extends the window before its edge is ever seen:
+  // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the doc's
+  // safety condition). A callback ref because the sentinel exists only in
+  // the transcript render, not the state pages.
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el === null || sentinel === null) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) grow();
+      },
+      { root: el, rootMargin: "75% 0px 0px 0px" },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [sentinel, grow]);
 
   // The in-pane connect state (P17): a chat being started takes over the
   // pane — "Connecting…" resolving into the session, or the failure with
@@ -203,18 +298,31 @@ export function Chat(props: {
     );
   }
 
-  const { items, rollups, liveBlockId } = deriveTranscript(blocks, active.live);
+  const { items, rollups, liveBlockId } = derived;
+  const visible = hidden > 0 ? items.slice(hidden) : items;
   const activeTurnStartedAt = props.state.activeTurn[active.id];
 
   return (
-    <div className="chat" ref={chatRef}>
-      {items.map((item) =>
+    <div
+      className="chat"
+      ref={chatRef}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      }}
+    >
+      {hidden > 0 && (
+        <div ref={setSentinel} className="py-1 text-center text-[11px] text-muted-foreground">
+          <Icon name="loading" spin /> loading earlier messages…
+        </div>
+      )}
+      {visible.map((item) =>
         item.kind === "toolRun" ? (
-          <ToolRunCard key={item.id} calls={item.calls} sessionId={active.id} />
+          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} />
         ) : item.block.kind === "turnEnd" ? (
           <TurnMetaLine key={item.block.id} block={item.block} rollup={rollups.get(item.block.id)!} />
         ) : (
-          <Block
+          <MemoBlock
             key={item.block.id}
             block={item.block}
             live={item.block.id === liveBlockId}

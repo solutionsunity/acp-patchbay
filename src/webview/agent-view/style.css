@@ -272,6 +272,12 @@ body {
  * output) instead of letting the chat scroll. */
 .chat > * {
   flex-shrink: 0;
+  /* Offscreen transcript rows skip layout and paint entirely
+   * (ui-rendering-strategy § Transcript scale) — the DOM stays real, so
+   * find/copy/selection keep working. The intrinsic-size hint keeps the
+   * scrollbar honest for unrendered rows. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
 }
 
 .chat::-webkit-scrollbar {
