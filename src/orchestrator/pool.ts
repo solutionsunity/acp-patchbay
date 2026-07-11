@@ -163,12 +163,34 @@ const INTERACTIVE_STOP: StopBudget = { eofMs: 500, termMs: 2000, killMs: 500 };
  * across agents (disposeAll). */
 const SHUTDOWN_STOP: StopBudget = { eofMs: 200, termMs: 700, killMs: 300 };
 
-function resolveCommand(command: string): string {
-  // npx/npm are .cmd shims on Windows; spawn without a shell needs the suffix
-  if (process.platform === "win32" && (command === "npx" || command === "npm")) {
-    return `${command}.cmd`;
+/** npx/npm are .cmd shims on Windows, and Node ≥ 20.12 (CVE-2024-27980)
+ * refuses to spawn .cmd/.bat without a shell (EINVAL) — so shims get
+ * `shell: true`, scoped to win32 + shim, never anywhere else. With a shell
+ * Node joins the args unquoted, and registry-supplied args are remote
+ * data: anything shell-active (cmd metacharacters, quotes, whitespace) is
+ * refused outright — as an `error` the caller surfaces honestly, never
+ * quoted-and-hoped. Exported for tests; `platform` injectable for the same
+ * reason. */
+export function resolveSpawn(
+  command: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[]; shell: boolean; error?: string } {
+  const resolved =
+    platform === "win32" && (command === "npx" || command === "npm") ? `${command}.cmd` : command;
+  const shell = platform === "win32" && /\.(cmd|bat)$/i.test(resolved);
+  if (shell) {
+    const active = args.find((a) => /[\s&|<>^%!"']/.test(a));
+    if (active !== undefined) {
+      return {
+        command: resolved,
+        args: [...args],
+        shell,
+        error: `refusing to spawn: argument ${JSON.stringify(active)} is shell-active and ${resolved} needs a Windows shell`,
+      };
+    }
   }
-  return command;
+  return { command: resolved, args: [...args], shell };
 }
 
 function timeOfDay(): string {
@@ -251,10 +273,18 @@ export class AgentPool {
     this.log.info(
       `${poolKey}: spawning ${spec.command} (${spec.args.length} args${isolated ? ", isolated" : ""})`,
     );
-    const child = spawn(resolveCommand(spec.command), spec.args, {
+    const launch = resolveSpawn(spec.command, spec.args);
+    if (launch.error !== undefined) {
+      this.markDead(entry, launch.error);
+      throw new Error(launch.error);
+    }
+    const child = spawn(launch.command, launch.args, {
       env: { ...process.env, ...spec.env },
       cwd: spec.cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      // Windows .cmd shims only (resolveSpawn) — stop() still reaches the
+      // whole tree there: killTree is taskkill /T, wrapper included.
+      shell: launch.shell,
       // Process-group leader on POSIX (process-tree.ts) — what lets stop()
       // reach grandchildren (the agent's own mcp-server/bridge children).
       ...treeSpawnOptions,
