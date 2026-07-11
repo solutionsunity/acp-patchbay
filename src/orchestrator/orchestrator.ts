@@ -41,8 +41,11 @@ import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
+import { playDoneSound } from "./sound";
 import { type AcpRegistryData, AcpRegistryStore } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
+import { LastKnobsStore } from "./stores/last-knobs";
+import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
 import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { DecisionAuditStore } from "./stores/decision-audit";
@@ -98,6 +101,8 @@ export class Orchestrator {
   readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
+  readonly preferences: PreferencesStore;
+  readonly lastKnobs: LastKnobsStore;
   /** Registry × overlay merge (roster.ts) — recomputed whenever the ACP
    * registry refreshes; every roster-shaped lookup elsewhere reads this. */
   roster: RosterAgent[];
@@ -177,6 +182,8 @@ export class Orchestrator {
     // this).
     this.agentConfigs = new AgentConfigStore(context.globalState);
     this.integrationConfigs = new IntegrationConfigStore(context.globalState);
+    this.preferences = new PreferencesStore(context.globalState);
+    this.lastKnobs = new LastKnobsStore(context.globalState);
     this.usedCapabilities = new UsedCapabilityStore(context.globalState);
     this.spawnRegistry = new SpawnRegistryStore(context.globalState);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
@@ -244,6 +251,7 @@ export class Orchestrator {
         machineCommandRules: this.machinePermissionRules.get().commandRules,
         fileWriteScope: rules.fileWriteScope,
         integrationRegistry: this.integrations.registryViews(),
+        preferences: this.preferences.get(),
       },
       reduceSettings,
       coalesceSettingsEvent,
@@ -500,6 +508,7 @@ export class Orchestrator {
           this.agentView.emit(...events);
           this.relaySettingsDerived(events);
           this.recordLastActive(events);
+          this.maybeChime(events);
         },
         // The session/load replay window: canonical state advances (and the
         // settings/last-active relays stay truthful) but no patches ride to
@@ -514,8 +523,16 @@ export class Orchestrator {
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
         // From the store-backed spec map, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
-        // must reach the very next session, not wait for a reconnect.
-        defaultsFor: (agentId) => this.configuredAgentSpecs.get(agentId)?.defaults,
+        // must reach the very next session, not wait for a reconnect. The
+        // knobSource preference is read just as fresh: last-session takes
+        // the recorded combination, falling back to the configured defaults
+        // (a never-used agent has no "last").
+        seedFor: (agentId) => {
+          const defaults = this.configuredAgentSpecs.get(agentId)?.defaults;
+          if (this.preferences.get().knobSource !== "last-session") return defaults;
+          return this.lastKnobs.get(agentId) ?? defaults;
+        },
+        onKnobsConfirmed: (agentId, seed) => void this.lastKnobs.record(agentId, seed),
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         isDeleteUsed: (agentId) =>
@@ -561,6 +578,13 @@ export class Orchestrator {
         return [editorServer, ...integrationServers];
       },
       log,
+      {
+        // Read fresh every sweep (store-truth) — 0 in Preferences disables.
+        idleCloseMs: () => {
+          const minutes = this.preferences.get().idleCloseMinutes;
+          return minutes <= 0 ? null : minutes * 60_000;
+        },
+      },
     );
     this.capabilityTracker = new CapabilityTracker(
       this.pool,
@@ -659,6 +683,8 @@ export class Orchestrator {
       decisionAudit: this.decisionAudit,
       lastActiveSession: this.lastActiveSession,
       lastConnected: this.lastConnected,
+      preferences: this.preferences,
+      lastKnobs: this.lastKnobs,
     });
 
     this.configuredAgentSpecs.clear();
@@ -676,6 +702,8 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
     await this.integrations.refresh();
     this.publishRules();
+    // An open Preferences page settles back to the defaults it now holds.
+    this.settings.emit({ kind: "preferencesChanged", preferences: this.preferences.get() });
     await this.refreshAuditTail();
     // An open Data page should watch its own inventory hit zero.
     await this.publishDataInventory();
@@ -976,6 +1004,18 @@ export class Orchestrator {
     for (const event of events) {
       if (event.kind === "sessionActivated") void this.lastActiveSession.set(event.sessionId);
       else if (event.kind === "sessionClosed") void this.lastActiveSession.clearIf(event.sessionId);
+    }
+  }
+
+  /** Done-sound (Preferences): the system chime as a turn resolves —
+   * host-side (sound.ts header: webviews die when hidden). A cancelled
+   * turn never chimes: the user was present to cancel it. */
+  private maybeChime(events: readonly AgentViewEvent[]): void {
+    for (const event of events) {
+      if (event.kind !== "turnEnded" || event.stopReason === "cancelled") continue;
+      if (!this.preferences.get().soundOnDone) return;
+      playDoneSound(this.log);
+      return; // one chime per batch, however many turns settled together
     }
   }
 
@@ -1384,6 +1424,17 @@ export class Orchestrator {
       { id: "machine-rules", label: "Command rules — this machine", placement: "globalState", detail: n(machineRules.commandRules.length, "rule") },
       { id: "spawn-registry", label: "Spawn registry", placement: "globalState", detail: n(this.spawnRegistry.list().length, "process record") },
       {
+        id: "preferences",
+        label: "Preferences",
+        placement: "globalState",
+        detail: (() => {
+          const p = this.preferences.get();
+          const idle = p.idleCloseMinutes <= 0 ? "never" : `${p.idleCloseMinutes} min`;
+          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle}`;
+        })(),
+      },
+      { id: "last-knobs", label: "Last-used knobs", placement: "globalState", detail: n(this.lastKnobs.count(), "agent record") },
+      {
         id: "secrets",
         label: "Credentials & env values",
         placement: "SecretStorage",
@@ -1714,6 +1765,11 @@ export class Orchestrator {
           .then(() => this.publishRules());
         break;
       }
+      case "setPreferences":
+        void this.preferences
+          .set(action.patch)
+          .then((preferences) => this.settings.emit({ kind: "preferencesChanged", preferences }));
+        break;
       case "resolveElicitation": {
         const pending = this.pendingElicitations.get(action.requestId);
         if (pending === undefined) break;

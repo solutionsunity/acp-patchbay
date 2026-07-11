@@ -57,9 +57,15 @@ export interface SessionManagerHooks {
    * connected a dedicated subprocess for it) when isolating. Absent → always
    * share (pre-P8 behavior — fine for tests that don't exercise policy). */
   resolveProcessFor?(agentId: string): Promise<string>;
-  /** Per-agent knob defaults (folded, knob-id-keyed — knobs.ts foldSeed),
-   * applied once, post-create. */
-  defaultsFor?(agentId: string): KnobSeed | undefined;
+  /** The knob seed a *fresh* session starts from (folded, knob-id-keyed —
+   * knobs.ts foldSeed), applied once, post-create. Which seed that is —
+   * the agent config's defaults or the last confirmed combination — is the
+   * orchestrator's policy (Preferences knobSource), not knowledge held here. */
+  seedFor?(agentId: string): KnobSeed | undefined;
+  /** Fires at the one knob-state exit (publishKnobs) with the agent-confirmed
+   * combination — the "last used" record behind the last-session knobSource
+   * preference (stores/last-knobs.ts). */
+  onKnobsConfirmed?(agentId: string, seed: KnobSeed): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch since ACP has no live-update request for
    * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
@@ -203,20 +209,26 @@ export class SessionManager {
     /** Output-channel seam (logger.ts). */
     private readonly log: Logger = nullLogger,
     /** `idleCloseMs`: attached sessions idle past this are released
-     * (session/close) by the reaper — null disables it entirely. */
-    opts?: { idleCloseMs?: number | null },
+     * (session/close) by the reaper — null disables it entirely. A getter
+     * is read fresh on every sweep (store-truth: the orchestrator hands in
+     * the Preferences read, so an edit applies to the very next sweep,
+     * no reconstruction). */
+    opts?: { idleCloseMs?: number | null | (() => number | null) },
   ) {
-    this.idleCloseMs = opts?.idleCloseMs === undefined ? DEFAULT_IDLE_CLOSE_MS : opts.idleCloseMs;
-    if (this.idleCloseMs !== null) {
+    const idle = opts?.idleCloseMs === undefined ? DEFAULT_IDLE_CLOSE_MS : opts.idleCloseMs;
+    this.idleCloseMs = typeof idle === "function" ? idle : () => idle;
+    if (idle !== null) {
+      // Static values keep their own cadence (tests run ms-scale timers);
+      // a getter sweeps every minute — the setting is minute-grained.
       this.idleTimer = setInterval(
         () => void this.reapIdle(),
-        Math.min(60_000, this.idleCloseMs),
+        typeof idle === "number" ? Math.min(60_000, idle) : 60_000,
       );
       this.idleTimer.unref?.();
     }
   }
 
-  private readonly idleCloseMs: number | null;
+  private readonly idleCloseMs: () => number | null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
 
   dispose(): void {
@@ -303,15 +315,17 @@ export class SessionManager {
    * 3. not unseen (blue mark) — a completed-but-unviewed result stays;
    * 4. prompt box empty — structurally: the composer only exists for the
    *    active session, which is exempt below;
-   * 5. idle past `idleCloseMs` (default 60 min — a user setting soon);
+   * 5. idle past `idleCloseMs` (default 60 min — Preferences
+   *    idleCloseMinutes, read fresh each sweep; 0 there disables);
    * 6. agent declares `session/load` — checked inside `release`; see its
    *    header for why resume is not enough.
    *
    * The active-in-view session is always exempt: visible chat state never
    * changes under the user. */
   private async reapIdle(): Promise<void> {
-    if (this.idleCloseMs === null) return;
-    const cutoff = Date.now() - this.idleCloseMs;
+    const idleCloseMs = this.idleCloseMs();
+    if (idleCloseMs === null) return;
+    const cutoff = Date.now() - idleCloseMs;
     for (const [sessionId, session] of [...this.sessions]) {
       if (!session.everPrompted) continue;
       if (session.lastActivityAt > cutoff) continue;
@@ -412,7 +426,7 @@ export class SessionManager {
     this.hooks.emit({ kind: "sessionCreated", session: summary });
     this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
     this.publishKnobs(sessionId, knobs);
-    await this.applyDefaults(agentId, sessionId);
+    await this.applySeedFor(agentId, sessionId);
     return sessionId;
   }
 
@@ -756,16 +770,21 @@ export class SessionManager {
   private publishKnobs(sessionId: string, knobs: NormalizedKnobs): void {
     const session = this.sessions.get(sessionId);
     if (session) session.knobs = knobs;
+    // An empty surface is not a combination — recording it would erase a
+    // real one with "this agent offered nothing this time".
+    if (session && knobs.knobs.length > 0) {
+      this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(knobs));
+    }
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
   }
 
-  /** Per-agent defaults (architecture.md § Session model, mode, effort):
+  /** Fresh-session seed (architecture.md § Session model, mode, effort):
    * applied once, post-create on a *fresh* session only — never on
    * reopen/reload (the agent's own resumed state is the truth). */
-  private async applyDefaults(agentId: string, sessionId: string): Promise<void> {
-    const defaults = this.hooks.defaultsFor?.(agentId);
-    if (defaults === undefined) return;
-    await this.applySeed(sessionId, defaults);
+  private async applySeedFor(agentId: string, sessionId: string): Promise<void> {
+    const seed = this.hooks.seedFor?.(agentId);
+    if (seed === undefined) return;
+    await this.applySeed(sessionId, seed);
   }
 
   /** Issues the set requests for a knob seed, each routed and guarded by

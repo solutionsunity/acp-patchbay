@@ -13,6 +13,9 @@ import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore, RELOAD_GRACE_MS } from "../src/orchestrator/stores/last-connected";
+import { LastKnobsStore } from "../src/orchestrator/stores/last-knobs";
+import { PreferencesStore } from "../src/orchestrator/stores/preferences";
+import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import {
   DEFAULT_PERMISSION_RULES,
   PermissionRulesStore,
@@ -215,5 +218,51 @@ describe("SecretEnvStore — env values live in SecretStorage, never globalState
 
     await secrets.store("acpPatchbay.agent.bad.env", "{not json");
     expect(await store.get("bad")).toEqual({});
+  });
+});
+
+describe("PreferencesStore — machine-scoped behavior defaults", () => {
+  it("reads complete defaults from an empty store, merges patches over them", async () => {
+    const store = new PreferencesStore(new MemoryKV());
+    expect(store.get()).toEqual(DEFAULT_PREFERENCES);
+
+    await store.set({ soundOnDone: true });
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true });
+
+    // A later patch never clobbers an earlier one.
+    await store.set({ idleCloseMinutes: 0 });
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true, idleCloseMinutes: 0 });
+  });
+
+  it("an older stored object missing newer keys reads as defaults for them", () => {
+    const kv = new MemoryKV();
+    void kv.update("acpPatchbay.preferences", { soundOnDone: true });
+    const store = new PreferencesStore(kv);
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true });
+  });
+
+  it("wipe returns to factory defaults", async () => {
+    const store = new PreferencesStore(new MemoryKV());
+    await store.set({ knobSource: "last-session" });
+    await store.wipe();
+    expect(store.get()).toEqual(DEFAULT_PREFERENCES);
+  });
+});
+
+describe("LastKnobsStore — last confirmed combination per agent", () => {
+  it("records per agent, replaces wholesale, counts records", async () => {
+    const store = new LastKnobsStore(new MemoryKV());
+    expect(store.get("claude")).toBeUndefined();
+    expect(store.count()).toBe(0);
+
+    await store.record("claude", { mode: "code", effort: "high" });
+    await store.record("gemini", { mode: "chat" });
+    expect(store.get("claude")).toEqual({ mode: "code", effort: "high" });
+    expect(store.count()).toBe(2);
+
+    // Each record is the whole combination — no merge with the previous.
+    await store.record("claude", { mode: "plan" });
+    expect(store.get("claude")).toEqual({ mode: "plan" });
+    expect(store.count()).toBe(2);
   });
 });

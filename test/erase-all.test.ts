@@ -14,6 +14,9 @@ import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
+import { LastKnobsStore } from "../src/orchestrator/stores/last-knobs";
+import { PreferencesStore } from "../src/orchestrator/stores/preferences";
+import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
@@ -46,6 +49,8 @@ describe("eraseAllData", () => {
     const decisionAudit = new DecisionAuditStore(dir);
     const lastConnected = new LastConnectedStore(workspaceKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
+    const preferences = new PreferencesStore(globalKv);
+    const lastKnobs = new LastKnobsStore(globalKv);
 
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
@@ -62,12 +67,15 @@ describe("eraseAllData", () => {
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastConnected.write(["claude"]);
     await lastActiveSession.set("s1");
+    await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
+    await lastKnobs.record("claude", { mode: "code" });
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
       spawnRegistry, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastConnected, lastActiveSession,
+      preferences, lastKnobs,
     });
 
     expect(agentConfigs.list()).toEqual([]);
@@ -82,6 +90,9 @@ describe("eraseAllData", () => {
     expect(await decisionAudit.tail(5)).toEqual([]);
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
+    expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
+    expect(lastKnobs.get("claude")).toBeUndefined();
+    expect(lastKnobs.count()).toBe(0);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });

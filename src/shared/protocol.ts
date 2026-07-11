@@ -90,6 +90,10 @@ export type Action =
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
   | { kind: "removeCommandRule"; pattern: string; layer: "workspace" | "machine" }
   | { kind: "setFileWriteScope"; scope: FileWriteScopeView }
+  /** Preferences (Settings § Preferences): partial patch in, the
+   * orchestrator answers `preferencesChanged` with the complete stored
+   * object — the webview never assumes its own write landed. */
+  | { kind: "setPreferences"; patch: Partial<PreferencesView> }
   | { kind: "resolveElicitation"; requestId: string; values: Record<string, unknown> | null }
   | { kind: "addSelectionContext"; sessionId: string }
   | { kind: "addFileContext"; sessionId: string }
@@ -1719,6 +1723,29 @@ export interface PendingBinaryInstallView {
   cmd: string;
 }
 
+/** Machine-scoped behavior defaults (stores/preferences.ts — globalState,
+ * non-sensitive). Read fresh orchestrator-side at each point of use
+ * (store-truth); this view exists so the Preferences page can render and
+ * edit them. */
+export interface PreferencesView {
+  /** System chime when a prompt turn finishes (host-side player — a
+   * cancelled turn never chimes: the user was present to cancel it). */
+  soundOnDone: boolean;
+  /** What a fresh session's knobs are seeded from: the agent config's
+   * defaults, or the last agent-confirmed combination on that agent
+   * (stores/last-knobs.ts, falling back to the defaults when none). */
+  knobSource: "agent-default" | "last-session";
+  /** Idle-release timer (session-manager reapIdle, condition 5) in
+   * minutes; 0 disables the reaper entirely. */
+  idleCloseMinutes: number;
+}
+
+export const DEFAULT_PREFERENCES: PreferencesView = {
+  soundOnDone: false,
+  knobSource: "agent-default",
+  idleCloseMinutes: 60,
+};
+
 export interface SettingsState {
   agents: readonly AgentSummary[];
   roster: readonly RosterEntry[];
@@ -1765,6 +1792,9 @@ export interface SettingsState {
    * recomputed from the stores on request, never cached (reality is the
    * source of truth). */
   dataInventory: readonly DataInventoryRow[] | null;
+  /** Preferences page snapshot — the stored truth as of the last
+   * preferencesChanged; edits round-trip through setPreferences. */
+  preferences: PreferencesView;
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -1800,6 +1830,7 @@ export const initialSettingsState: SettingsState = {
   verifyingAgents: {},
   wireLog: { active: false, until: null },
   dataInventory: null,
+  preferences: DEFAULT_PREFERENCES,
 };
 
 export type SettingsEvent =
@@ -1825,6 +1856,7 @@ export type SettingsEvent =
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
+  | { kind: "preferencesChanged"; preferences: PreferencesView }
   | { kind: "registryUpdated"; at: string }
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
   | { kind: "binaryInstallResolved"; agentId: string }
@@ -1945,6 +1977,8 @@ export function reduceSettings(
       return { ...state, wireLog: { active: event.active, until: event.until } };
     case "dataInventoryChanged":
       return { ...state, dataInventory: event.rows };
+    case "preferencesChanged":
+      return { ...state, preferences: event.preferences };
     default:
       return state;
   }
@@ -1964,6 +1998,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentKnobsObserved",
   "wireLogChanged",
   "dataInventoryChanged",
+  "preferencesChanged",
   "registryUpdated",
   "binaryInstallPending",
   "binaryInstallResolved",

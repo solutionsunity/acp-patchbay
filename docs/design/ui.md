@@ -137,13 +137,18 @@ panel.
 
 Left nav + cards, grouped in three non-collapsing headers that *are* the
 placement contract: **This machine** (Agents · Capability matrix ·
-Integrations — globalState/SecretStorage wiring), **Trust** (Permissions —
-spans the machine floor and this workspace's rules), **This workspace**
-(Rules · skills · commands — files in the workspace itself). Groups don't
-collapse: five items don't earn the interaction. Nav footer restates the
-credential rule: SecretStorage only. *(Supersedes the earlier
-`.vscode/acp-patchbay.json` workspace-config design — binding to workspaces,
-not repos, may return later as an opt-in.)*
+MCP Servers · Preferences — everything global to this machine,
+globalState/SecretStorage), **Trust** (Permissions · Audit · Data — the one
+trust surface: the contract, the evidence, what's held and the way out; one
+verb per page), **This workspace** (Rules · skills · commands — files in the
+workspace itself). Groups don't collapse: eight items don't earn the
+interaction. Nav footer restates the credential rule: SecretStorage only.
+*(Refined 2026-07-11: the interim **Transparency** group (Audit · Data)
+merged into Trust — all three pages are facets of the one trust surface the
+PRD promises; splitting them grouped by verb, which is the page boundary's
+job, not the group's. Supersedes the earlier `.vscode/acp-patchbay.json`
+workspace-config design — binding to workspaces, not repos, may return later
+as an opt-in.)*
 
 ### Agents
 
@@ -248,6 +253,29 @@ incident that shaped this — a production-access MCP server silently following
 a user between repos — is guarded by the credential-never-travels rule, not by
 workspace-scoping the config; binding to workspaces, not repos, may return
 later as an opt-in feature.)*
+
+### Preferences
+
+Machine-scoped behavior defaults (stores/preferences.ts — globalState,
+non-sensitive), three cards, each a full read of the stored truth
+(`setPreferences` patch out, `preferencesChanged` whole-object back — the
+page never assumes its own write landed):
+
+- **Turn end** — done-sound toggle (default off). Host-side player
+  (sound.ts), never webview audio: webviews die when hidden, and the chime
+  matters most when the user is looking elsewhere. OS system chime, no
+  bundled asset; a cancelled turn never chimes; under WSL the sound plays
+  through Windows interop on the machine the user actually sits at.
+- **New sessions** — knob seed source: `agent defaults` (the config's saved
+  defaults, as before) or `last used` (the last agent-confirmed combination,
+  recorded per agent at the session-manager's one knob-state exit —
+  stores/last-knobs.ts; falls back to the defaults when none). Either way
+  the seed rides knobs.ts routing, so a stale knob is skipped, never forced.
+- **Idle sessions** — the reaper's timer (reapIdle condition 5) in minutes,
+  default 60, `0` disables; read fresh every sweep, applies without
+  reconnect. The card restates the reaper's honesty guards: replayable
+  history only, never the open session, an unseen result, or a turn in
+  flight.
 
 ### Permissions
 

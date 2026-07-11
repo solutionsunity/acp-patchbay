@@ -369,7 +369,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       {
         emit: (...evs) => events.push(...evs),
         // Folded seed (knob id → value), as the orchestrator delivers it.
-        defaultsFor: () => ({ mode: "code", "model-opt": "opus" }),
+        seedFor: () => ({ mode: "code", "model-opt": "opus" }),
       },
       () => cwd,
     );

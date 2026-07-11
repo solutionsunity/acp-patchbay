@@ -14,11 +14,12 @@ import { DataSection } from "./data";
 import { IntegrationsSection } from "./integrations";
 import { MatrixSection } from "./matrix";
 import { PermissionsSection } from "./permissions";
+import { PreferencesSection } from "./preferences";
 
-/** Grouped by what the group *is*, not by theme: "This machine" is the
- * global wiring (agents, integrations, and the matrix observing them —
- * globalState/SecretStorage), "Trust" is the permission surface (spans the
- * machine floor and this workspace's rules), "This workspace" is what lives
+/** Grouped by what the group *is*, not by theme: "This machine" is what's
+ * global to this machine (the wiring — agents, integrations, the matrix
+ * observing them — and behavior preferences; globalState/SecretStorage),
+ * "Trust" is the one trust surface (prd.md), "This workspace" is what lives
  * in the workspace itself (asset files the agent reads from its own cwd).
  * The nav teaches the placement contract instead of captioning it. */
 const NAV_GROUPS = [
@@ -28,17 +29,17 @@ const NAV_GROUPS = [
       { id: "agents", icon: "plug", label: "Agents" },
       { id: "matrix", icon: "table", label: "Capability matrix" },
       { id: "integrations", icon: "server", label: "MCP Servers" },
+      { id: "preferences", icon: "settings-gear", label: "Preferences" },
     ],
   },
+  // Formerly two groups (Trust / Transparency) — merged, not deleted: all
+  // three are facets of the one trust surface (Permissions is the contract,
+  // Audit the evidence, Data what's held and the way out). The one-verb-per-
+  // page discipline lives at page boundaries, where it always actually did.
   {
     label: "Trust",
-    items: [{ id: "permissions", icon: "shield", label: "Permissions" }],
-  },
-  // One verb per page: Permissions sets the rules, Audit reviews what
-  // happened (decisions + wire), Data shows what's stored and the way out.
-  {
-    label: "Transparency",
     items: [
+      { id: "permissions", icon: "shield", label: "Permissions" },
       { id: "audit", icon: "eye", label: "Audit" },
       { id: "data", icon: "database", label: "Data" },
     ],
@@ -107,6 +108,12 @@ export function App({ state }: { state: SettingsState }) {
           />
         )}
         {section === "matrix" && <MatrixSection state={state} />}
+        {section === "preferences" && (
+          <PreferencesSection
+            state={state}
+            onSet={(patch) => send({ kind: "setPreferences", patch })}
+          />
+        )}
         {section === "integrations" && (
           <IntegrationsSection
             state={state}

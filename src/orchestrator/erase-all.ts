@@ -33,6 +33,8 @@ export interface EraseTargets {
   decisionAudit: Wipeable;
   lastConnected: Wipeable;
   lastActiveSession: Wipeable;
+  preferences: Wipeable;
+  lastKnobs: Wipeable;
 }
 
 /** Deletes everything patchbay ever stored for this user. Ordering
@@ -68,4 +70,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.decisionAudit.wipe();
   await targets.lastConnected.wipe();
   await targets.lastActiveSession.wipe();
+  await targets.preferences.wipe();
+  await targets.lastKnobs.wipe();
 }
