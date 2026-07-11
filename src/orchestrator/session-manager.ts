@@ -116,6 +116,9 @@ interface LiveSession {
   titled: boolean;
   activeTextBlockId: string | null;
   activeThoughtBlockId: string | null;
+  /** The replayed-user-prose run (session/load `user_message_chunk`) —
+   * live sends never use it (sendPrompt appends its own whole block). */
+  activeUserBlockId: string | null;
   pendingContext: ContextChip[];
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
@@ -145,6 +148,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     titled,
     activeTextBlockId: null,
     activeThoughtBlockId: null,
+    activeUserBlockId: null,
     pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
@@ -803,6 +807,7 @@ export class SessionManager {
       if (viaLoad) {
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
+        session.activeUserBlockId = null;
         this.hooks.emit({ kind: "transcriptReset", sessionId });
         const { modes, configOptions } = await this.pool.loadSession(
           session.poolKey,
@@ -901,6 +906,7 @@ export class SessionManager {
     const session = this.sessions.get(sessionId)!;
     session.activeTextBlockId = null;
     session.activeThoughtBlockId = null;
+    session.activeUserBlockId = null;
     session.inFlight = true;
     session.everPrompted = true;
     session.lastActivityAt = Date.now();
@@ -1065,9 +1071,29 @@ export class SessionManager {
       // merges into the *last* block only if it's the same type — any other
       // block landing in between (the other chunk type, a tool call, a plan)
       // closes it, and a later chunk of the old type starts a fresh block.
+      // Replay-only by design: a live send appends its own whole user block
+      // (sendPrompt), and some agents echo the in-flight prompt back as a
+      // user_message_chunk (observed: slash-command expansion) — consuming
+      // that would duplicate it, hence the inFlight guard. During session/load
+      // replay nothing is in flight, so every historical user message lands.
+      case "user_message_chunk": {
+        if (session.inFlight) return;
+        if (update.content.type !== "text") return;
+        session.activeTextBlockId = null;
+        session.activeThoughtBlockId = null;
+        session.activeUserBlockId ??= newBlockId("user");
+        this.hooks.emit({
+          kind: "userTextDelta",
+          sessionId,
+          blockId: session.activeUserBlockId,
+          text: update.content.text,
+        });
+        break;
+      }
       case "agent_message_chunk": {
         if (update.content.type !== "text") return;
         session.activeThoughtBlockId = null; // prose interrupts the thought run
+        session.activeUserBlockId = null; // …and closes a replayed user run
         session.activeTextBlockId ??= newBlockId("text");
         this.hooks.emit({
           kind: "agentTextDelta",
@@ -1080,6 +1106,7 @@ export class SessionManager {
       case "agent_thought_chunk": {
         if (update.content.type !== "text") return;
         session.activeTextBlockId = null; // thinking interrupts the prose run
+        session.activeUserBlockId = null;
         session.activeThoughtBlockId ??= newBlockId("thought");
         this.hooks.emit({
           kind: "agentThoughtDelta",
@@ -1092,6 +1119,7 @@ export class SessionManager {
       case "tool_call":
         session.activeTextBlockId = null; // the agent paused to act
         session.activeThoughtBlockId = null;
+        session.activeUserBlockId = null;
         this.hooks.emit({
           kind: "toolCallUpserted",
           sessionId,
@@ -1169,8 +1197,19 @@ export class SessionManager {
           cost: update.cost ?? undefined,
         });
         break;
+      case "plan_update":
+      case "plan_removed":
+        // Declined (acp-compliance.md § 9): gated behind a client capability
+        // patchbay does not declare, so a conforming agent never sends them;
+        // the whole-replace `plan` model already covers the feature.
+        break;
       default:
-        break; // unconsumed schema surface — a future capability row, not silently guessed at
+        // Compile-time exhaustive over the SDK's SessionUpdate union: a new
+        // kind on an SDK upgrade fails typecheck here and demands a verdict
+        // in acp-compliance.md — consumed or declined, never silent. Runtime
+        // stays a no-op for kinds newer than the SDK, the spec's own rule
+        // for unrecognized notifications (§ Extensibility).
+        assertUnconsumed(update);
     }
   }
 
@@ -1257,6 +1296,9 @@ function boundedRaw(
   }
   return { [key]: text } as { input: string } | { output: string };
 }
+
+/** Exhaustiveness backstop for handleUpdate's switch — see its default arm. */
+function assertUnconsumed(_update: never): void {}
 
 function toPlanEntries(
   entries: readonly { content: string; status: "pending" | "in_progress" | "completed" }[],

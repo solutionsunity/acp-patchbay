@@ -234,13 +234,34 @@ describe("SessionManager", () => {
     await h.sessionManager.sendPrompt(sessionId, "second turn");
 
     const blocks = h.state().transcripts[sessionId]!;
-    // replay rebuilt the original turn's text (as a fresh block), then the
-    // new user message, then the new turn's text — never merged, always reset
-    expect(textOf(blocks[0])).toBe("before crash");
-    expect(blocks[1]).toMatchObject({ kind: "user", text: "second turn" });
-    expect(textOf(blocks[2])).toBe("before crash"); // second turn uses the same script
+    // replay rebuilt the whole first turn — user message included (the spec
+    // replays the *entire* conversation) — then the new user message, then
+    // the new turn's text — never merged, always reset
+    expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
+    expect(textOf(blocks[1])).toBe("before crash");
+    expect(blocks[2]).toMatchObject({ kind: "user", text: "second turn" });
+    expect(textOf(blocks[3])).toBe("before crash"); // second turn uses the same script
 
     await h.pool.stop("sm5");
+  });
+
+  it("a live user_message_chunk echo never duplicates the sent prompt", async () => {
+    // Some agents echo the in-flight prompt back (slash-command expansion);
+    // sendPrompt already appended the user block, so the echo must drop.
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "userEcho", text: "/cmd expanded" }, { type: "chunk", text: "ok" }] },
+        "sm5e",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm5e", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "/cmd");
+    const blocks = h.state().transcripts[sessionId]!;
+    expect(blocks.filter((b) => b.kind === "user")).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: "user", text: "/cmd" });
+    expect(textOf(blocks[1])).toBe("ok");
+    await h.pool.stop("sm5e");
   });
 
   it("without load or resume declared, a prompt on a dead session fails honestly — never a minted continuation", async () => {

@@ -942,6 +942,10 @@ export type AgentViewEvent =
   /** Replay always wins — the transcript is discarded, never merged. */
   | { kind: "transcriptReset"; sessionId: string }
   | { kind: "userMessageAppended"; sessionId: string; blockId: string; text: string }
+  /** Replayed user prose (session/load `user_message_chunk`) — delta
+   * semantics like the agent chunks, unlike `userMessageAppended` (the
+   * live send, which is whole by construction). */
+  | { kind: "userTextDelta"; sessionId: string; blockId: string; text: string }
   | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
   | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
   | {
@@ -1159,7 +1163,7 @@ function upsertTextBlock(
   state: AgentViewState,
   sessionId: string,
   blockId: string,
-  kind: "text" | "thought",
+  kind: "text" | "thought" | "user",
   delta: string,
 ): AgentViewState {
   const blocks = state.transcripts[sessionId] ?? [];
@@ -1167,7 +1171,7 @@ function upsertTextBlock(
   if (i === -1) {
     return appendBlock(state, sessionId, { kind, id: blockId, text: delta });
   }
-  const existing = blocks[i] as TextBlock | ThoughtBlock;
+  const existing = blocks[i] as TextBlock | ThoughtBlock | UserBlock;
   const updated = { ...existing, text: existing.text + delta };
   return withTranscript(
     state,
@@ -1381,6 +1385,8 @@ export function reduceAgentView(
         id: event.blockId,
         text: event.text,
       });
+    case "userTextDelta":
+      return upsertTextBlock(state, event.sessionId, event.blockId, "user", event.text);
     case "agentTextDelta":
       return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
     case "agentThoughtDelta":
@@ -1569,7 +1575,8 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   // Concatenate text chunks per message (architecture.md § coalescing).
   if (
     (prev.kind === "agentTextDelta" && next.kind === "agentTextDelta") ||
-    (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta")
+    (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta") ||
+    (prev.kind === "userTextDelta" && next.kind === "userTextDelta")
   ) {
     if (prev.sessionId === next.sessionId && prev.blockId === next.blockId) {
       return { ...next, text: prev.text + next.text } as AgentViewEvent;

@@ -20,6 +20,7 @@ import * as acp from "@agentclientprotocol/sdk";
 export type TurnStep =
   | { type: "chunk"; text: string }
   | { type: "thought"; text: string }
+  | { type: "userEcho"; text: string }
   | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: string[] }
   | { type: "toolDone"; id: string; rawOutput?: unknown; diff?: { path: string; oldText?: string; newText: string } }
   | {
@@ -162,6 +163,15 @@ async function runTurn(
       case "thought":
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: step.text },
+        });
+        break;
+      case "userEcho":
+        // Live echo of the in-flight prompt as a user_message_chunk —
+        // observed real-agent behavior (slash-command expansion); patchbay
+        // must not render it twice.
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "user_message_chunk",
           content: { type: "text", text: step.text },
         });
         break;
@@ -504,6 +514,13 @@ const app = acp
     if (!session) throw acp.RequestError.invalidRequest("unknown session");
     session.pending?.abort();
     session.pending = new AbortController();
+    // Spec-faithful replay: session/load MUST replay the *entire*
+    // conversation, user messages included — record (not emit) the prompt
+    // so a later load sends it back as a user_message_chunk.
+    recordUpdate(session.cwd, ctx.params.sessionId, {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: promptText(ctx.params.prompt) },
+    });
     const stopReason = await runTurn(
       ctx.params.sessionId,
       session.cwd,
