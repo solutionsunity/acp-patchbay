@@ -260,6 +260,12 @@ body {
 .chat {
   flex: 1;
   overflow-y: auto;
+}
+
+/* The rows' real container — a distinct element on purpose: the bottom-pin
+ * ResizeObserver (chat.tsx) watches its content-sized box; the scroller's
+ * own box never reflects content height. */
+.chat-body {
   padding: 14px 12px 8px;
   display: flex;
   flex-direction: column;
@@ -270,7 +276,7 @@ body {
  * automatic minimum size, so a taller-than-viewport transcript would
  * compress cards and clip their content (permission buttons, terminal
  * output) instead of letting the chat scroll. */
-.chat > * {
+.chat-body > * {
   flex-shrink: 0;
   /* Offscreen transcript rows skip layout and paint entirely
    * (ui-rendering-strategy § Transcript scale) — the DOM stays real, so

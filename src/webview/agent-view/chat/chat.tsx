@@ -217,6 +217,25 @@ export function Chat(props: {
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [blocks.length, blocks[blocks.length - 1]]);
 
+  // Late layout growth: block heights keep changing *after* the data-event
+  // scrolls above — markdown/highlighting/mermaid render async, fonts land,
+  // content-visibility rows materialize. Scrolling on events therefore
+  // strands the view a few lines short of the tail (seen on session/load
+  // replay). The content's real size is the truth: while pinned, any growth
+  // of the body — or resize of the scroller itself (composer drag) —
+  // re-sticks the tail. Never while unpinned: scrollback is never yanked.
+  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el === null || body === null) return;
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(body);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [body]);
+
   // The top sentinel extends the window before its edge is ever seen:
   // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the doc's
   // safety condition). A callback ref because the sentinel exists only in
@@ -323,6 +342,10 @@ export function Chat(props: {
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
       }}
     >
+      {/* .chat-body exists so the ResizeObserver above has a content-sized
+          element to watch — a scroller's own box never reflects its
+          content's height. */}
+      <div className="chat-body" ref={setBody}>
       {hidden > 0 && (
         <div ref={setSentinel} className="py-1 text-center text-[11px] text-muted-foreground">
           <Icon name="loading" spin /> loading earlier messages…
@@ -344,6 +367,7 @@ export function Chat(props: {
         ),
       )}
       {activeTurnStartedAt !== undefined && <TurnTicker startedAt={activeTurnStartedAt} />}
+      </div>
     </div>
   );
 }
