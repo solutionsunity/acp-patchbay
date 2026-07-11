@@ -609,6 +609,14 @@ export type KnobSeed = Readonly<Record<string, string | boolean>>;
 
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
+/** A status that claims work is still happening — the spinner-truth
+ * predicate. The one spelling of "not yet terminal": the orchestrator's
+ * open-call worklist, the run summary, and the seeded-snapshot normalizer
+ * all mean exactly this. */
+export function isToolCallOpen(status: ToolCallStatus): boolean {
+  return status === "pending" || status === "in_progress";
+}
+
 export interface UserBlock {
   kind: "user";
   id: string;
@@ -665,6 +673,14 @@ export interface ToolCallBlock {
    * session/request_permission — "blocked by permission" and "command
    * failed" are different facts, told apart at a glance. */
   denied: boolean;
+  /** True once the orchestrator has observed the owning turn end (any
+   * stopReason but end_turn, or an error) while this call was still
+   * pending/in_progress — set once, at that real event, never re-derived
+   * from "is some turn active right now" (a later turn in the same session
+   * must not resurrect an old turn's stalled call). A trailing
+   * tool_call_update always wins: any fresh upsert clears it, since the
+   * wire is still talking about this call after all. */
+  interrupted: boolean;
 }
 
 /** The agent-reported token counts for one turn (PromptResponse.usage —
@@ -975,6 +991,10 @@ export type AgentViewEvent =
     }
   /** The broker rejected this tool call's session/request_permission. */
   | { kind: "toolCallDenied"; sessionId: string; blockId: string }
+  /** The owning turn ended (non-end_turn stop reason, or error) while this
+   * call was still open — session-manager's turn-end sweep, the tool-call
+   * analogue of broker.cancelPending for permission requests. */
+  | { kind: "toolCallInterrupted"; sessionId: string; blockId: string }
   /** Replaces the session's pinned plan snapshot — never a transcript block. */
   | { kind: "planUpdated"; sessionId: string; entries: readonly PlanEntry[] }
   /** A prompt turn began (send time) / resolved — the turnEnd block carries
@@ -1209,6 +1229,7 @@ function upsertToolCall(
       locations: event.locations ?? [],
       diffFiles: event.diffFiles ?? [],
       denied: false,
+      interrupted: false,
     });
   }
   const existing = blocks[i] as ToolCallBlock;
@@ -1223,6 +1244,10 @@ function upsertToolCall(
     output: event.output ?? existing.output,
     locations: event.locations ?? existing.locations,
     diffFiles: event.diffFiles ?? existing.diffFiles,
+    // A trailing tool_call_update still wins (acp-compliance.md §7): the
+    // wire is still talking about this call, so the "abandoned" guess is
+    // no longer the freshest fact.
+    interrupted: false,
   };
   return withTranscript(
     state,
@@ -1408,6 +1433,11 @@ export function reduceAgentView(
         ...b,
         denied: true,
       }));
+    case "toolCallInterrupted":
+      return patchBlock<ToolCallBlock>(state, event.sessionId, event.blockId, (b) => ({
+        ...b,
+        interrupted: true,
+      }));
     case "planUpdated":
       return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: event.entries } };
     case "turnStarted":
@@ -1564,6 +1594,12 @@ export function reduceAgentView(
                 locations: b.locations ?? [],
                 diffFiles: b.diffFiles ?? [],
                 denied: b.denied ?? false,
+                // A persisted still-open snapshot survives a reload with no
+                // live turn behind it — the render-only webview holds no
+                // turn state across reloads, so stale opens from a prior
+                // session are interrupted on sight, same as the
+                // orchestrator's own turn-end sweep.
+                interrupted: b.interrupted ?? isToolCallOpen(b.status),
               }
             : b,
         ),

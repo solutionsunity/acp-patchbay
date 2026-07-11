@@ -31,6 +31,7 @@ function tool(id: string, over: Partial<ToolCallBlock> = {}): ToolCallBlock {
     locations: [],
     diffFiles: [],
     denied: false,
+    interrupted: false,
     ...over,
   };
 }
@@ -215,6 +216,47 @@ describe("turn lifecycle reducer (P13c)", () => {
       stopReason: "cancelled",
     });
   });
+
+  it("a stranded tool call stays interrupted once a later turn starts in the same session", () => {
+    // Regression for the bug where "interrupted" was derived from session-
+    // wide turnActive: a cancelled turn's stuck tool call would revive its
+    // spinner the moment a *new* turn began, because turnActive is session-
+    // scoped, not turn-scoped. The orchestrator now marks the call once, at
+    // its own turn's real end (toolCallInterrupted) — a later turnStarted
+    // must not touch it.
+    const events: AgentViewEvent[] = [
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-11T00:00:00Z" } },
+      { kind: "turnStarted", sessionId: S, at: "2026-07-11T10:00:00Z" },
+      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
+      // The orchestrator's turn-end sweep fires before turnEnded lands.
+      { kind: "toolCallInterrupted", sessionId: S, blockId: "t1" },
+      {
+        kind: "turnEnded", sessionId: S, blockId: "e1",
+        startedAt: "2026-07-11T10:00:00Z", at: "2026-07-11T10:00:12Z",
+        stopReason: "cancelled", usage: null,
+      },
+      // A new turn begins in the same session — must not resurrect t1.
+      { kind: "turnStarted", sessionId: S, at: "2026-07-11T10:00:20Z" },
+    ];
+    const state = events.reduce(reduceAgentView, initialAgentViewState);
+    const t1 = assertKind(state.transcripts[S]!.find((b) => b.id === "t1")!, "toolCall");
+    expect(t1.interrupted).toBe(true);
+    expect(t1.status).toBe("in_progress");
+    expect(state.activeTurn[S]).toBe("2026-07-11T10:00:20Z");
+  });
+
+  it("a trailing tool_call_update still wins over a stale interrupted flag", () => {
+    const events: AgentViewEvent[] = [
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-11T00:00:00Z" } },
+      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
+      { kind: "toolCallInterrupted", sessionId: S, blockId: "t1" },
+      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed" },
+    ];
+    const state = events.reduce(reduceAgentView, initialAgentViewState);
+    const t1 = assertKind(state.transcripts[S]!.find((b) => b.id === "t1")!, "toolCall");
+    expect(t1.interrupted).toBe(false);
+    expect(t1.status).toBe("completed");
+  });
 });
 
 describe("transcriptSeeded normalization", () => {
@@ -228,6 +270,17 @@ describe("transcriptSeeded normalization", () => {
     expect(state.transcripts[S]![0]).toEqual({
       kind: "toolCall", id: "t1", title: "Read", status: "completed",
       toolKind: "other", input: null, output: null, locations: [], diffFiles: [], denied: false,
+      interrupted: false,
     });
+  });
+
+  it("a legacy persisted block still pending/in_progress is interrupted on sight — no live turn survives a reload", () => {
+    const legacy = { kind: "toolCall", id: "t1", title: "Write", status: "in_progress" } as unknown as ChatBlock;
+    const state = reduceAgentView(initialAgentViewState, {
+      kind: "transcriptSeeded",
+      sessionId: S,
+      blocks: [legacy],
+    });
+    expect(state.transcripts[S]![0]).toMatchObject({ status: "in_progress", interrupted: true });
   });
 });

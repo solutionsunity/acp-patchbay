@@ -2,7 +2,7 @@
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
 import { useState } from "react";
-import type { ToolCallBlock } from "../../../shared/protocol";
+import { isToolCallOpen, type ToolCallBlock } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { AgentMarkdown } from "./markdown";
@@ -52,7 +52,7 @@ const TOOL_ICON: Record<ToolCallBlock["toolKind"], string> = {
 
 /** Right-side status: blocked-by-permission is its own state, visually
  * distinct from a genuine execution failure — different facts. */
-function ToolCallStatusTag({ block, turnActive }: { block: ToolCallBlock; turnActive: boolean }) {
+function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
   if (block.denied) {
     return (
       <span className="st text-warn">
@@ -74,13 +74,10 @@ function ToolCallStatusTag({ block, turnActive }: { block: ToolCallBlock; turnAc
       </span>
     );
   }
-  // Incomplete without an active turn: the wire has no "cancelled" tool
-  // status, and a replayed session carries no turn state either — so
-  // "interrupted" is *derived*, never stored. A spinner is a claim that
-  // work is happening; that claim is only true while a turn is in flight,
-  // and this way a live-cancelled turn and its later session/load replay
-  // render identically (agent representation is the truth).
-  if (!turnActive) {
+  // Set once by the orchestrator's turn-end sweep (session-manager.ts),
+  // never re-derived from "is some turn active right now" — a later turn
+  // in the same session must not resurrect an old turn's stalled call.
+  if (block.interrupted) {
     return (
       <span className="st text-muted-foreground">
         <Icon name="circle-slash" /> interrupted
@@ -101,11 +98,9 @@ function ToolCallStatusTag({ block, turnActive }: { block: ToolCallBlock; turnAc
 export function ToolCallCard({
   block,
   sessionId,
-  turnActive,
 }: {
   block: ToolCallBlock;
   sessionId: string;
-  turnActive: boolean;
 }) {
   const send = useActions();
   const [open, setOpen] = useState(false);
@@ -120,7 +115,7 @@ export function ToolCallCard({
         <Icon name={TOOL_ICON[block.toolKind]} />
         <span className="min-w-0 flex-1 truncate">{block.title}</span>
         {expandable && <Icon name={open ? "chevron-down" : "chevron-right"} />}
-        <ToolCallStatusTag block={block} turnActive={turnActive} />
+        <ToolCallStatusTag block={block} />
       </div>
       {open && (
         <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
@@ -164,14 +159,13 @@ export function ToolCallCard({
 export function ToolRunCard({
   calls,
   sessionId,
-  turnActive,
 }: {
   calls: readonly ToolCallBlock[];
   sessionId: string;
-  turnActive: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const running = calls.find((c) => c.status === "pending" || c.status === "in_progress");
+  const running = calls.find((c) => isToolCallOpen(c.status) && !c.interrupted);
+  const interrupted = calls.find((c) => isToolCallOpen(c.status) && c.interrupted);
   const denied = calls.filter((c) => c.denied).length;
   const failed = calls.filter((c) => c.status === "failed" && !c.denied).length;
   if (open) {
@@ -185,7 +179,7 @@ export function ToolRunCard({
           <Icon name="tools" /> {calls.length} tool calls <Icon name="chevron-down" />
         </div>
         {calls.map((c) => (
-          <ToolCallCard key={c.id} block={c} sessionId={sessionId} turnActive={turnActive} />
+          <ToolCallCard key={c.id} block={c} sessionId={sessionId} />
         ))}
       </>
     );
@@ -203,9 +197,9 @@ export function ToolRunCard({
         </span>
         <Icon name="chevron-right" />
         <span className="st">
-          {running !== undefined && turnActive ? (
+          {running !== undefined ? (
             <span className="spin" />
-          ) : running !== undefined ? (
+          ) : interrupted !== undefined ? (
             <span className="text-muted-foreground">
               <Icon name="circle-slash" /> interrupted
             </span>

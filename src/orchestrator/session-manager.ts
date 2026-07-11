@@ -13,15 +13,17 @@ import type {
   SessionInfo,
   SessionNotification,
 } from "@agentclientprotocol/sdk";
-import type {
-  AgentViewEvent,
-  ChatBlock,
-  ContextChip,
-  KnobSeed,
-  PlanEntry,
-  PromptPart,
-  SessionSummary,
-  TurnUsage,
+import {
+  isToolCallOpen,
+  type AgentViewEvent,
+  type ChatBlock,
+  type ContextChip,
+  type KnobSeed,
+  type PlanEntry,
+  type PromptPart,
+  type SessionSummary,
+  type ToolCallStatus,
+  type TurnUsage,
 } from "../shared/protocol";
 import {
   applyConfigUpdate,
@@ -146,6 +148,11 @@ interface LiveSession {
   everPrompted: boolean;
   /** Epoch ms of the last prompt or session/update — the idle reaper's basis. */
   lastActivityAt: number;
+  /** toolCallIds seen pending/in_progress and not yet resolved — the turn-end
+   * sweep's worklist (tool-call analogue of broker.cancelPending). Cleared
+   * per id on a terminal status, swept wholesale when the turn ends any way
+   * but end_turn. */
+  openToolCalls: Set<string>;
 }
 
 function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSession {
@@ -162,6 +169,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     rootsDirty: false,
     everPrompted: false,
     lastActivityAt: Date.now(),
+    openToolCalls: new Set(),
   };
 }
 
@@ -356,17 +364,31 @@ export class SessionManager {
    * wholesale. The window closes on failure too: canonical was reset, and
    * the webview must not keep showing blocks canonical no longer holds. */
   private async loadSilently(sessionId: string, poolKey: string, agentId: string): Promise<NormalizedKnobs> {
-    const silent = (...events: AgentViewEvent[]) =>
-      this.hooks.emitSilent !== undefined ? this.hooks.emitSilent(...events) : this.hooks.emit(...events);
     this.replaying.add(sessionId);
     try {
-      silent({ kind: "transcriptReset", sessionId });
+      this.emitterFor(sessionId)({ kind: "transcriptReset", sessionId });
       const { knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId);
+      // A finished replay is the same quiet point as a turn end: nothing is
+      // in flight, so history that stops on a still-open call is stranded —
+      // without this, a replayed cancelled turn would spin forever (live
+      // cancel and its later replay must render identically).
+      const session = this.sessions.get(sessionId);
+      if (session !== undefined) this.sweepOpenToolCalls(sessionId, session);
       return knobs;
     } finally {
       this.replaying.delete(sessionId);
       this.hooks.resyncView?.();
     }
+  }
+
+  /** Replay-window channel pick (ui-rendering-strategy § Hydration
+   * delivery): inside a session's replay window events reduce silently into
+   * canonical state — the closing resync delivers them wholesale; everywhere
+   * else they patch the webview live. */
+  private emitterFor(sessionId: string): (...events: AgentViewEvent[]) => void {
+    return this.replaying.has(sessionId) && this.hooks.emitSilent !== undefined
+      ? this.hooks.emitSilent.bind(this.hooks)
+      : this.hooks.emit.bind(this.hooks);
   }
 
   async createSession(
@@ -1020,7 +1042,16 @@ export class SessionManager {
     } else {
       prompt.push({ type: "text", text });
     }
-    const endTurn = (stopReason: string, usage: TurnUsage | null) =>
+    const endTurn = (stopReason: string, usage: TurnUsage | null) => {
+      // Whatever the stop reason — cancelled, error, even a claimed clean
+      // end_turn — the turn is over and nothing runs on: any still-open
+      // call is stranded. Sweep before the turnEnd block lands, so the
+      // turn's stop reason and its calls' fate are never a render apart.
+      // Current session, not the capture (same rule as the finally below):
+      // a mid-turn reload replaces the object, and its replay repopulates
+      // the fresh worklist — the stale one must not speak for it.
+      const current = this.sessions.get(sessionId);
+      if (current !== undefined) this.sweepOpenToolCalls(sessionId, current);
       this.hooks.emit({
         kind: "turnEnded",
         sessionId,
@@ -1030,6 +1061,7 @@ export class SessionManager {
         stopReason,
         usage,
       });
+    };
     try {
       const response = await this.pool.prompt(session.poolKey, sessionId, prompt);
       // end_turn is the unremarkable outcome; anything else is worth a line.
@@ -1090,6 +1122,30 @@ export class SessionManager {
     return { diffFiles: [...diffs.keys()] };
   }
 
+  /** Worklist maintenance for the sweep (tool-call analogue of
+   * broker.cancelPending) — an open status adds, a terminal one removes. */
+  private trackOpenToolCall(session: LiveSession, toolCallId: string, status: ToolCallStatus): void {
+    if (isToolCallOpen(status)) session.openToolCalls.add(toolCallId);
+    else session.openToolCalls.delete(toolCallId);
+  }
+
+  /** Nothing is in flight anymore (a turn resolved — any stop reason — or a
+   * replay finished) yet these calls never reached a terminal status: they
+   * are stranded, and a spinner would be a false claim. Marked once, at the
+   * real event, never re-derived from "is a turn active right now" (a later
+   * turn in the same session must not resurrect an old turn's stalled
+   * call). A trailing tool_call_update still wins — any fresh upsert clears
+   * the mark. */
+  private sweepOpenToolCalls(sessionId: string, session: LiveSession): void {
+    if (session.openToolCalls.size === 0) return;
+    const emit = this.emitterFor(sessionId);
+    const ids = [...session.openToolCalls];
+    session.openToolCalls.clear();
+    for (const blockId of ids) {
+      emit({ kind: "toolCallInterrupted", sessionId, blockId });
+    }
+  }
+
   /** The stashed texts for one openToolCallDiff action — null when unknown
    * (stale id after a close; the action is simply a no-op then). */
   toolCallDiff(sessionId: string, toolCallId: string, path: string): { oldText: string; newText: string } | null {
@@ -1111,10 +1167,7 @@ export class SessionManager {
     session.lastActivityAt = Date.now(); // any update is activity — the reaper's basis
     // Replay window (loadSilently): canonical state advances, the webview
     // waits for the closing wholesale resync instead of a patch flood.
-    const emit =
-      this.replaying.has(sessionId) && this.hooks.emitSilent !== undefined
-        ? this.hooks.emitSilent.bind(this.hooks)
-        : this.hooks.emit.bind(this.hooks);
+    const emit = this.emitterFor(sessionId);
 
     switch (update.sessionUpdate) {
       // Block-model interruption rule (ui-rendering-strategy.md): a chunk
@@ -1187,16 +1240,18 @@ export class SessionManager {
         });
         break;
       }
-      case "tool_call":
+      case "tool_call": {
         session.activeTextBlockId = null; // the agent paused to act
         session.activeThoughtBlockId = null;
         session.activeUserBlockId = null;
+        const status = update.status ?? "pending";
+        this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
           kind: "toolCallUpserted",
           sessionId,
           blockId: update.toolCallId,
           title: update.title,
-          status: update.status ?? "pending",
+          status,
           toolKind: update.kind ?? "other",
           ...boundedRaw("input", update.rawInput),
           ...boundedRaw("output", update.rawOutput),
@@ -1206,13 +1261,16 @@ export class SessionManager {
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
-      case "tool_call_update":
+      }
+      case "tool_call_update": {
+        const status = update.status ?? "completed";
+        this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
           kind: "toolCallUpserted",
           sessionId,
           blockId: update.toolCallId,
           title: update.title ?? "",
-          status: update.status ?? "completed",
+          status,
           ...(update.kind != null ? { toolKind: update.kind } : {}),
           ...boundedRaw("input", update.rawInput),
           ...boundedRaw("output", update.rawOutput),
@@ -1222,6 +1280,7 @@ export class SessionManager {
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
+      }
       case "plan":
         // Session-level state, not a transcript event — replaces the pinned
         // widget's snapshot; it neither appends a block nor interrupts a run.

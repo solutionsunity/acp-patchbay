@@ -212,6 +212,39 @@ describe("SessionManager", () => {
     await h.pool.stop("sm3");
   });
 
+  it("marks a tool call left open by a cancelled turn interrupted, once, at turn end", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          // No toolDone: the call is still pending/in_progress when the
+          // cancel lands mid-turn.
+          turn: [{ type: "toolCall", id: "t1", title: "Write" }, { type: "chunk", text: "a" }, { type: "chunk", text: "b" }],
+          stepDelayMs: 150,
+        },
+        "sm3b",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm3b", "Fake Agent", cwd);
+
+    // Each step sleeps stepDelayMs *before* acting, so the wait here must
+    // clear the first step's own delay (the toolCall landing) but not the
+    // second's — otherwise there's nothing yet to strand.
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "long turn");
+    await new Promise((r) => setTimeout(r, 220));
+    await h.sessionManager.stopTurn(sessionId);
+    await promptDone;
+
+    const toolBlock = assertKind(
+      h.state().transcripts[sessionId]!.find((b) => b.id === "t1")!,
+      "toolCall",
+    );
+    expect(toolBlock.interrupted).toBe(true);
+    expect(toolBlock.status).toBe("in_progress");
+
+    await h.pool.stop("sm3b");
+  });
+
   it("closes sessions — row and transcript leave the view", async () => {
     const h = harness();
     await h.pool.connect(spec({}, "sm4"));
@@ -288,6 +321,38 @@ describe("SessionManager", () => {
     expect(textOf(blocks[1])).toBe("hello");
     expect(blocks[2]).toMatchObject({ kind: "user", text: "second turn" });
     await h.pool.stop("sm5s");
+  });
+
+  it("session/load replay ending on a still-open tool call marks it interrupted — live cancel and its replay render identically", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true },
+          turn: [{ type: "toolCall", id: "t1", title: "Write" }, { type: "chunk", text: "a" }, { type: "chunk", text: "b" }],
+          stepDelayMs: 150,
+        },
+        "sm5i",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm5i", "Fake Agent", cwd);
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "long turn");
+    await new Promise((r) => setTimeout(r, 220));
+    await h.sessionManager.stopTurn(sessionId);
+    await promptDone;
+
+    // Reload: the recorded history replays and ends on the never-completed
+    // call — no turn end follows, so only the replay-end sweep can mark it.
+    await h.pool.restart("sm5i");
+    await h.sessionManager.hydrate(sessionId);
+
+    const t1 = assertKind(
+      h.state().transcripts[sessionId]!.find((b) => b.id === "t1")!,
+      "toolCall",
+    );
+    expect(t1.interrupted).toBe(true);
+    expect(t1.status).toBe("in_progress");
+    await h.pool.stop("sm5i");
   });
 
   it("a live user_message_chunk echo never duplicates the sent prompt", async () => {

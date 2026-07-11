@@ -83,12 +83,10 @@ function Block({
   block,
   live,
   sessionId,
-  turnActive,
 }: {
   block: ChatBlock;
   live: boolean;
   sessionId: string;
-  turnActive: boolean;
 }) {
   switch (block.kind) {
     case "user":
@@ -102,7 +100,7 @@ function Block({
     case "thought":
       return <Thought text={block.text} live={live} />;
     case "toolCall":
-      return <ToolCallCard block={block} sessionId={sessionId} turnActive={turnActive} />;
+      return <ToolCallCard block={block} sessionId={sessionId} />;
     case "turnEnd":
       return null; // rendered by Chat as TurnMetaLine, with its rollup
     case "permission":
@@ -131,7 +129,6 @@ const MemoToolRun = memo(
   ToolRunCard,
   (a, b) =>
     a.sessionId === b.sessionId &&
-    a.turnActive === b.turnActive &&
     a.calls.length === b.calls.length &&
     a.calls.every((c, i) => c === b.calls[i]),
 );
@@ -331,7 +328,6 @@ export function Chat(props: {
   const { items, rollups, liveBlockId } = derived;
   const visible = hidden > 0 ? items.slice(hidden) : items;
   const activeTurnStartedAt = props.state.activeTurn[active.id];
-  const turnActive = activeTurnStartedAt !== undefined;
 
   return (
     <div
@@ -353,7 +349,7 @@ export function Chat(props: {
       )}
       {visible.map((item) =>
         item.kind === "toolRun" ? (
-          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} turnActive={turnActive} />
+          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} />
         ) : item.block.kind === "turnEnd" ? (
           <TurnMetaLine key={item.block.id} block={item.block} rollup={rollups.get(item.block.id)!} />
         ) : (
@@ -362,7 +358,6 @@ export function Chat(props: {
             block={item.block}
             live={item.block.id === liveBlockId}
             sessionId={active.id}
-            turnActive={turnActive}
           />
         ),
       )}
