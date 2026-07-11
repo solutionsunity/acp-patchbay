@@ -883,6 +883,11 @@ export interface ContextChip {
   label: string;
   /** Text content for selection/file/diagnostics; raw base64 payload for image. */
   content: string;
+  /** The source's uri where one exists (file/selection — selection carries
+   * its line range as a `#L` fragment); absent for aggregates like
+   * diagnostics. Rides the embedded-resource prompt form when the agent
+   * declares `promptCapabilities.embeddedContext`. */
+  sourceUri?: string;
   /** Set only for kind "image" — paste is never disabled (features.md § Chat),
    * so this rides the same chip mechanism as every other explicit context add,
    * sent as a real ImageContent block regardless of what the agent declares. */

@@ -962,16 +962,30 @@ export class SessionManager {
     }
     this.hooks.emit(...events);
 
-    // Image chips ride in the best form the agent accepts (architecture.md §
-    // Local MCP server — "paste is never disabled"): a real ImageContent
-    // block where `promptCapabilities.image` is declared, else the bytes go
-    // to a temp file sent as a ResourceLink — the baseline every agent MUST
-    // support per the ACP prompt contract.
-    const acceptsImages = this.pool.get(session.poolKey)?.declared?.promptImage ?? false;
+    // Chips ride in the best form the agent accepts — capability first,
+    // fallback second, switch at this one chokepoint (the house pattern):
+    // images as ImageContent where `promptCapabilities.image` is declared,
+    // else bytes to a temp file as a ResourceLink; text chips as embedded
+    // `resource` blocks where `promptCapabilities.embeddedContext` is
+    // declared (a chip IS a snapshot the user took — typed, uri-attributed,
+    // the agent weighs it correctly), else the labeled-text fallback that
+    // every agent MUST accept.
+    const declared = this.pool.get(session.poolKey)?.declared;
+    const acceptsImages = declared?.promptImage ?? false;
+    const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
     const prompt: ContentBlock[] = [];
     for (const c of chips) {
       if (c.kind !== "image") {
-        prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
+        if (acceptsEmbedded) {
+          prompt.push({
+            type: "resource",
+            // Aggregates without a single source (diagnostics) name the
+            // chip itself — the uri field is required on the wire.
+            resource: { uri: c.sourceUri ?? `patchbay://context/${c.kind}/${c.id}`, text: c.content },
+          });
+        } else {
+          prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
+        }
       } else if (acceptsImages) {
         prompt.push({ type: "image", data: c.content, mimeType: c.mimeType ?? "image/png" });
       } else {

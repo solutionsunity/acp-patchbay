@@ -1735,6 +1735,7 @@ export class Orchestrator {
           kind: "selection",
           label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
           content: selection.text,
+          sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
         });
         break;
       }
@@ -1746,6 +1747,7 @@ export class Orchestrator {
           kind: "file",
           label: `File: ${file.file}`,
           content: file.content,
+          sourceUri: vscode.Uri.file(file.file).toString(),
         });
         break;
       }
@@ -1921,6 +1923,7 @@ export class Orchestrator {
       kind: "file",
       label: `File: ${uri.fsPath}`,
       content: Buffer.from(bytes).toString("utf8"),
+      sourceUri: uri.toString(),
     });
   }
 

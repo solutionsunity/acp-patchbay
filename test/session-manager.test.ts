@@ -571,6 +571,41 @@ describe("SessionManager", () => {
     await h.pool.stop("img1");
   });
 
+  it("text chips ride as embedded resources when promptCapabilities.embeddedContext is declared", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { declare: { promptCapabilities: { embeddedContext: true } }, turn: [{ type: "echoBlockKinds" }] },
+        "emb1",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("emb1", "Fake Agent", cwd);
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-sel",
+      kind: "selection",
+      label: "Selection: a.ts:1-2",
+      content: "const x = 1;",
+      sourceUri: "file:///ws/a.ts#L1-2",
+    });
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-diag",
+      kind: "diagnostics",
+      label: "Problems (1)",
+      content: "a.ts:3 [error] boom",
+      // no single source — the chip itself is named (uri is wire-required)
+    });
+    await h.sessionManager.sendPrompt(sessionId, "context please");
+
+    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
+    expect(kinds).toEqual([
+      { type: "resource", uri: "file:///ws/a.ts#L1-2" },
+      { type: "resource", uri: "patchbay://context/diagnostics/chip-diag" },
+      { type: "text" },
+    ]);
+    await h.pool.stop("emb1");
+  });
+
   it("image chips fall back to a temp-file ResourceLink when image support is undeclared — paste is never disabled", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "img2"));

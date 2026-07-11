@@ -345,7 +345,9 @@ async function runTurn(
             ? { type: b.type, mimeType: b.mimeType }
             : b.type === "resource_link"
               ? { type: b.type, uri: b.uri, name: b.name, mimeType: b.mimeType }
-              : { type: b.type },
+              : b.type === "resource"
+                ? { type: b.type, uri: b.resource.uri }
+                : { type: b.type },
         );
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
