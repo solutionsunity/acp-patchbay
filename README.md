@@ -36,8 +36,9 @@ registry doesn't list? Add any ACP-compatible command line directly.
   identically to every agent's own permission requests and to the
   extension's own file-write/terminal gates.
 - **Sessions that behave like sessions** — concurrent sessions per agent,
-  branching, one-click reload, and per-agent process policy (share a
-  connection or isolate it).
+  one-click reload, and per-agent process policy (share a connection or
+  isolate it). The agent owns its sessions end to end: the sessions list is
+  read live from the agent's own history, never a local copy.
 - **Integrations, one mechanism** — connect GitHub in a couple of clicks, or
   add any other MCP server by command or URL. Routing is yours, per agent; a
   shared config never carries its credential.
