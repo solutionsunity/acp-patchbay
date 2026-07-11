@@ -1105,9 +1105,20 @@ export class SessionManager {
       // replay nothing is in flight, so every historical user message lands.
       case "user_message_chunk": {
         if (session.inFlight) return;
-        if (update.content.type !== "text") return;
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
+        if (update.content.type !== "text") {
+          // Honesty placeholder (acp-compliance.md G4): unrendered content
+          // says so in place — its own closed block, never a silent drop.
+          session.activeUserBlockId = null;
+          emit({
+            kind: "userTextDelta",
+            sessionId,
+            blockId: newBlockId("user"),
+            text: `*[${update.content.type} content — not rendered]*`,
+          });
+          break;
+        }
         session.activeUserBlockId ??= newBlockId("user");
         emit({
           kind: "userTextDelta",
@@ -1118,9 +1129,19 @@ export class SessionManager {
         break;
       }
       case "agent_message_chunk": {
-        if (update.content.type !== "text") return;
         session.activeThoughtBlockId = null; // prose interrupts the thought run
         session.activeUserBlockId = null; // …and closes a replayed user run
+        if (update.content.type !== "text") {
+          // Same honesty placeholder as the user chunk above (G4).
+          session.activeTextBlockId = null;
+          emit({
+            kind: "agentTextDelta",
+            sessionId,
+            blockId: newBlockId("text"),
+            text: `*[${update.content.type} content — not rendered]*`,
+          });
+          break;
+        }
         session.activeTextBlockId ??= newBlockId("text");
         emit({
           kind: "agentTextDelta",
