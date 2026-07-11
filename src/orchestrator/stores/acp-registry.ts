@@ -71,11 +71,30 @@ export interface AcpRegistryData {
   /** "" = never successfully fetched — cold start with no cache and no network. */
   fetchedAt: string;
   agents: readonly RegistryAgent[];
+  /** registryId → data URI, fetched host-side at refresh and cached with the
+   * registry snapshot. Data URIs on purpose: the authored webview CSP already
+   * allows `img-src data:`, so icons render with zero CSP widening and no
+   * webview ever talks to the CDN. Version-keyed reuse — an unchanged agent
+   * version never refetches; a failed fetch keeps the stale icon (branding,
+   * not truth) or stays absent. */
+  icons: Readonly<Record<string, string>>;
 }
 
-const EMPTY: AcpRegistryData = { fetchedAt: "", agents: [] };
+const EMPTY: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
 
-const cacheFileSchema = z.object({ fetchedAt: z.string(), agents: z.array(registryAgentSchema) });
+/** An icon bigger than this is not an icon — refuse rather than bloat every
+ * state snapshot with it. */
+const ICON_MAX_BYTES = 128 * 1024;
+const ICON_FETCH_TIMEOUT_MS = 10_000;
+
+const cachedIconSchema = z.object({ version: z.string(), dataUri: z.string() });
+
+const cacheFileSchema = z.object({
+  fetchedAt: z.string(),
+  agents: z.array(registryAgentSchema),
+  // default {} keeps pre-icon cache files parsing — icons then refetch.
+  icons: z.record(z.string(), cachedIconSchema).default({}),
+});
 
 export function hostPlatformKey(): PlatformKey | null {
   const os = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : null;
@@ -123,6 +142,9 @@ export function resolveDistribution(
 
 export class AcpRegistryStore {
   private cache: AcpRegistryData = EMPTY;
+  /** Version-keyed icon cache (registryId → {version, dataUri}) — the reuse
+   * ledger behind `AcpRegistryData.icons`; persisted in the one cache file. */
+  private iconCache: Record<string, { version: string; dataUri: string }> = {};
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -150,9 +172,16 @@ export class AcpRegistryStore {
       if (!res.ok) return;
       const parsed = registryFileSchema.safeParse(await res.json());
       if (!parsed.success) return;
-      const data: AcpRegistryData = { fetchedAt: new Date().toISOString(), agents: parsed.data.agents };
+      this.iconCache = await fetchIcons(parsed.data.agents, this.iconCache);
+      const data: AcpRegistryData = {
+        fetchedAt: new Date().toISOString(),
+        agents: parsed.data.agents,
+        icons: Object.fromEntries(
+          Object.entries(this.iconCache).map(([id, i]) => [id, i.dataUri]),
+        ),
+      };
       this.cache = data;
-      await this.writeCacheFile(data);
+      await this.writeCacheFile();
       this.onUpdated(data);
     } catch {
       // offline or the CDN is unreachable — the existing cache (possibly
@@ -172,14 +201,64 @@ export class AcpRegistryStore {
     try {
       const text = await readFile(this.cacheFilePath(), "utf8");
       const parsed = cacheFileSchema.safeParse(JSON.parse(text));
-      return parsed.success ? parsed.data : EMPTY;
+      if (!parsed.success) return EMPTY;
+      this.iconCache = parsed.data.icons;
+      return {
+        fetchedAt: parsed.data.fetchedAt,
+        agents: parsed.data.agents,
+        icons: Object.fromEntries(
+          Object.entries(parsed.data.icons).map(([id, i]) => [id, i.dataUri]),
+        ),
+      };
     } catch {
       return EMPTY;
     }
   }
 
-  private async writeCacheFile(data: AcpRegistryData): Promise<void> {
+  private async writeCacheFile(): Promise<void> {
+    const file: z.infer<typeof cacheFileSchema> = {
+      fetchedAt: this.cache.fetchedAt,
+      agents: [...this.cache.agents],
+      icons: this.iconCache,
+    };
     await mkdir(this.cacheDir, { recursive: true });
-    await writeFile(this.cacheFilePath(), JSON.stringify(data), "utf8");
+    await writeFile(this.cacheFilePath(), JSON.stringify(file), "utf8");
   }
+}
+
+/** One icon fetch pass: version-keyed reuse from `prior`, parallel fetches
+ * for the rest, honest failure handling (a failed fetch keeps the stale
+ * icon — branding, not truth — or stays absent; a non-image content-type or
+ * an oversized body is refused). Agents dropped from the registry fall out
+ * naturally: only current agents enter the result. Exported for tests. */
+export async function fetchIcons(
+  agents: readonly RegistryAgent[],
+  prior: Record<string, { version: string; dataUri: string }>,
+): Promise<Record<string, { version: string; dataUri: string }>> {
+  const next: Record<string, { version: string; dataUri: string }> = {};
+  await Promise.all(
+    agents.map(async (a) => {
+      if (a.icon === undefined) return;
+      const had = prior[a.id];
+      if (had !== undefined && had.version === a.version) {
+        next[a.id] = had;
+        return;
+      }
+      try {
+        const res = await fetch(a.icon, { signal: AbortSignal.timeout(ICON_FETCH_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.byteLength > ICON_MAX_BYTES) throw new Error("not an icon — too large");
+        const declared = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+        const mime = declared.startsWith("image/") ? declared : "image/svg+xml";
+        next[a.id] = {
+          version: a.version,
+          dataUri: `data:${mime};base64,${buf.toString("base64")}`,
+        };
+      } catch {
+        if (had !== undefined) next[a.id] = had;
+      }
+    }),
+  );
+  return next;
 }

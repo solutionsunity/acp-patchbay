@@ -75,6 +75,9 @@ export interface RosterAgent {
   name: string;
   /** Registry description, or the local entry's installHint. */
   description: string;
+  /** Registry icon as a data URI (acp-registry.ts fetchIcons) — null for
+   * local-only entries and while an icon hasn't been fetched yet. */
+  icon: string | null;
   assets: AssetLocations | null;
   metaExtensions: readonly string[];
   quirks: readonly string[];
@@ -89,6 +92,8 @@ export interface RosterAgent {
 export function mergeRoster(
   overlay: readonly OverlayAgent[],
   registryAgents: readonly RegistryAgent[],
+  /** registryId → data URI (AcpRegistryData.icons). */
+  icons: Readonly<Record<string, string>> = {},
 ): RosterAgent[] {
   const overlayByRegistryId = new Map(
     overlay.filter((o): o is OverlayAgent & { registryId: string } => o.registryId !== undefined).map((o) => [o.registryId, o]),
@@ -107,6 +112,7 @@ export function mergeRoster(
       id: o?.id ?? reg.id,
       name: reg.name,
       description: reg.description,
+      icon: icons[reg.id] ?? null,
       assets: o?.assets ?? null,
       metaExtensions: o?.metaExtensions ?? [],
       quirks: o?.quirks ?? [],
@@ -124,6 +130,7 @@ export function mergeRoster(
       id: o.id,
       name: o.id,
       description: "",
+      icon: null,
       assets: o.assets,
       metaExtensions: o.metaExtensions,
       quirks: o.quirks,
@@ -142,6 +149,7 @@ export function mergeRoster(
       id: o.id,
       name: o.local.name,
       description: o.local.installHint,
+      icon: null,
       assets: o.assets,
       metaExtensions: o.metaExtensions,
       quirks: o.quirks,

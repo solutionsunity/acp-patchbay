@@ -78,6 +78,7 @@ function rosterEntryView(agent: RosterAgent): RosterEntry {
     id: agent.id,
     name: agent.name,
     description: agent.description,
+    icon: agent.icon,
     assetsMapped: agent.assets !== null,
     knownBypassBridge: agent.knownBypassBridge,
     unavailableReason: launch.kind === "unavailable" ? launch.reason : null,
@@ -1532,7 +1533,7 @@ export class Orchestrator {
   }
 
   private applyRegistryData(data: AcpRegistryData): void {
-    this.roster = mergeRoster(loadOverlay(), data.agents);
+    this.roster = mergeRoster(loadOverlay(), data.agents, data.icons);
     const rosterEntries = this.roster.map(rosterEntryView);
     this.agentView.emit({ kind: "rosterChanged", roster: rosterEntries });
     this.settings.emit(

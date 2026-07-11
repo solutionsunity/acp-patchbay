@@ -444,6 +444,11 @@ export interface RosterEntry {
   name: string;
   /** Registry description, or a local-only entry's installHint. */
   description: string;
+  /** Registry icon as a data URI — fetched host-side and cached with the
+   * registry snapshot (acp-registry.ts), so the webview renders it under the
+   * already-authored `img-src data:` CSP and never talks to the CDN itself.
+   * Null for local-only entries or before the first fetch. */
+  icon: string | null;
   /** rules/skills/commands locations known for this agent (roster data). */
   assetsMapped: boolean;
   /** A bridge observed to act on fs/terminal regardless of client capabilities. */

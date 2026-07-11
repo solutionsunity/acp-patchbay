@@ -184,6 +184,15 @@ function updateAvailable(state: SettingsState, config: AgentConfigView | undefin
   return { from: config.registrySource.pinnedVersion, to: latest };
 }
 
+/** The registry's own icon for an agent (a host-fetched data URI riding
+ * RosterEntry — CSP-safe by the authored `img-src data:`). Renders nothing
+ * when there is none: absence over a generic placeholder that would make
+ * every local/custom agent wear the same fake brand. */
+function AgentIcon({ icon }: { icon: string | null | undefined }) {
+  if (icon == null) return null;
+  return <img src={icon} alt="" aria-hidden className="h-4 w-4 shrink-0" />;
+}
+
 /** Searchable roster picker (ui.md § Settings Agents "Add Agent" — full
  * scenario: type to filter, click to pick, clear to search again). Fully
  * controlled — the only local state is whether the dropdown is open, so a
@@ -242,6 +251,7 @@ function RosterCombobox(props: {
                   }}
                 >
                   {r.id === props.selectedId && <Icon name="check" />}
+                  <AgentIcon icon={r.icon} />
                   {r.name}
                   {r.unavailableReason !== null && <span className="note"> — {r.unavailableReason}</span>}
                 </CommandItem>
@@ -697,6 +707,7 @@ export function AgentsSection(props: {
                 to its own line instead of pushing past the card border */}
             <div className="row flex-wrap">
               <span className={`dot ${status}`} />
+              <AgentIcon icon={roster?.icon} />
               <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
               {matrix !== undefined && (
                 <FidelityChip matrix={matrix} knownBypassBridge={roster?.knownBypassBridge ?? false} />

@@ -2,9 +2,9 @@
 // as documented: Claude Code and Augment mapped, everything else honestly
 // not. mergeRoster is the registry × overlay join — tested against a fixture
 // registry payload (network-free, same fixture philosophy as the fake agent).
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeRoster, loadOverlay } from "../src/orchestrator/stores/roster";
-import type { RegistryAgent } from "../src/orchestrator/stores/acp-registry";
+import { fetchIcons, type RegistryAgent } from "../src/orchestrator/stores/acp-registry";
 
 describe("roster overlay data", () => {
   const overlay = loadOverlay();
@@ -108,5 +108,60 @@ describe("mergeRoster", () => {
     const merged = mergeRoster(loadOverlay(), []);
     const kiro = merged.find((a) => a.id === "kiro")!;
     expect(kiro.launch).toMatchObject({ kind: "local", command: "kiro-cli" });
+  });
+
+  it("registry icons ride the roster by registryId; everything else is honestly icon-less", () => {
+    const merged = mergeRoster(loadOverlay(), [registryAgent()], {
+      "claude-acp": "data:image/svg+xml;base64,QQ==",
+    });
+    // keyed by the registry's id even where the overlay renames to our own
+    expect(merged.find((a) => a.id === "claude-code")!.icon).toBe("data:image/svg+xml;base64,QQ==");
+    expect(merged.find((a) => a.id === "kiro")!.icon).toBeNull(); // local-only
+  });
+});
+
+// fetchIcons is the one icon pass: version-keyed reuse (an unchanged agent
+// version never refetches), stale-beats-none on failure (branding, not
+// truth), size/type refusal. Network stubbed — same fixture philosophy.
+describe("fetchIcons", () => {
+  const iconAgent = (id: string, version: string): RegistryAgent =>
+    registryAgent({ id, version, icon: `https://cdn.example/${id}.svg` });
+  const svgResponse = (body: string) =>
+    new Response(body, { status: 200, headers: { "content-type": "image/svg+xml" } });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches, encodes, and version-keys a new icon", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => svgResponse("<svg/>")));
+    const out = await fetchIcons([iconAgent("a1", "1.0.0")], {});
+    expect(out.a1).toEqual({
+      version: "1.0.0",
+      dataUri: `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`,
+    });
+  });
+
+  it("an unchanged version reuses the cache without a request", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const prior = { a1: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
+    const out = await fetchIcons([iconAgent("a1", "1.0.0")], prior);
+    expect(out.a1).toBe(prior.a1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("a failed refetch keeps the stale icon; a failed first fetch stays absent", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    const prior = { a1: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
+    const out = await fetchIcons([iconAgent("a1", "2.0.0"), iconAgent("a2", "1.0.0")], prior);
+    expect(out.a1).toBe(prior.a1); // stale beats none
+    expect(out.a2).toBeUndefined();
+  });
+
+  it("refuses an oversized body and a dropped agent falls out of the cache", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => svgResponse("x".repeat(129 * 1024))));
+    const prior = { gone: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
+    const out = await fetchIcons([iconAgent("big", "1.0.0")], prior);
+    expect(out.big).toBeUndefined();
+    expect(out.gone).toBeUndefined();
   });
 });
