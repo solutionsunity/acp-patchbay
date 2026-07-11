@@ -14,7 +14,6 @@ import {
   initialSettingsState,
   reduceAgentView,
   reduceSettings,
-  restoredSessionState,
   type Action,
   type AgentConfigView,
   type AgentViewEvent,
@@ -51,11 +50,9 @@ import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
-import { LastKnownViewStore } from "./stores/last-known-view";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
 import { loadOverlay, mergeRoster, type RosterAgent } from "./stores/roster";
-import { SessionIndexStore } from "./stores/session-index";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
@@ -89,9 +86,7 @@ export class Orchestrator {
   readonly agentView: ChannelHost<AgentViewState, AgentViewEvent>;
   readonly settings: ChannelHost<SettingsState, SettingsEvent>;
 
-  readonly sessionIndex: SessionIndexStore;
   readonly decisionAudit: DecisionAuditStore;
-  readonly lastKnownView: LastKnownViewStore;
   readonly lastConnected: LastConnectedStore;
   readonly lastActiveSession: LastActiveSessionStore;
   readonly agentConfigs: AgentConfigStore;
@@ -133,6 +128,9 @@ export class Orchestrator {
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
+  /** In-flight session/list syncs per agent — awaited by the startup
+   * restore so "found or not" is judged against a settled list. */
+  private readonly pendingSyncs = new Map<string, Promise<void>>();
   private readonly pendingElicitations = new Map<
     string,
     { sessionId: string; resolve(values: Record<string, unknown> | null): void }
@@ -167,11 +165,9 @@ export class Orchestrator {
     ).fsPath;
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
 
-    this.sessionIndex = new SessionIndexStore(context.workspaceState);
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
     this.machinePermissionRules = new MachineRulesStore(context.globalState);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
-    this.lastKnownView = new LastKnownViewStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
     this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
     // Agents and integrations are developer-env, not code-env: global to
@@ -227,9 +223,8 @@ export class Orchestrator {
     this.agentView = new ChannelHost(
       {
         ...initialAgentViewState,
-        // The session list survives a restart: rehydrated from the index,
-        // not-live, transcripts refilled by replay/emulation on first use.
-        ...restoredSessionState(this.sessionIndex.list()),
+        // No session rows here: the agent's own session/list is the only
+        // list — the startup connects repopulate the drawer from the wire.
         // Hold the loading page only when there is actually a last open
         // session to come back to — startupSettled clears it either way.
         restoring: this.lastActiveSession.get() !== undefined,
@@ -288,20 +283,26 @@ export class Orchestrator {
           this.sessionManager.invalidateAgent(agentId);
         }
         // Every connect of a list-capable agent syncs its own session
-        // history into the list — the wire is the truth for who exists;
-        // patchbay's index stays as fallback + overlay (§ Session model).
+        // history into the list — the wire is the ONLY list (patchbay
+        // persists no session records). The promise is tracked so the
+        // startup restore can wait for the lists before deciding whether
+        // the last-active pointer still resolves.
         if (status === "running") {
-          void this.sessionManager
+          const sync = this.sessionManager
             .syncAgentSessions(agentId)
             .then(() => {
               // A session opened before its agent connected sat blank (no
               // replay to run yet) — hydrate it now that one exists.
               const active = this.agentView.current.activeSessionId;
-              if (active !== null && this.sessionIndex.get(active)?.agentId === agentId) {
+              if (active !== null && this.sessionManager.agentFor(active) === agentId) {
                 return this.sessionManager.hydrate(active);
               }
             })
-            .catch(this.logCatch(`session/list sync for ${agentId}`));
+            .catch(this.logCatch(`session/list sync for ${agentId}`))
+            .finally(() => {
+              if (this.pendingSyncs.get(agentId) === sync) this.pendingSyncs.delete(agentId);
+            });
+          this.pendingSyncs.set(agentId, sync);
         }
         // Offerings are connection state (architecture.md § Session model) —
         // the settings reducer drops its copy off this same event, and the
@@ -494,29 +495,25 @@ export class Orchestrator {
 
     this.sessionManager = new SessionManager(
       this.pool,
-      this.sessionIndex,
       {
         emit: (...events) => {
           this.agentView.emit(...events);
-          this.persistLastKnownViewIfNeeded(events);
           this.relaySettingsDerived(events);
           this.recordLastActive(events);
         },
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
-        isForkUsed: (agentId) =>
-          this.agentView.current.capabilities[agentId]?.["session.fork"]?.used ?? false,
         // From the store-backed spec map, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect.
         defaultsFor: (agentId) => this.configuredAgentSpecs.get(agentId)?.defaults,
-        lastKnownView: (sessionId) => this.lastKnownView.load(sessionId),
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         isDeleteUsed: (agentId) =>
           this.agentView.current.capabilities[agentId]?.["session.delete"]?.used ?? false,
-        dropLastKnownView: (sessionId) => this.lastKnownView.remove(sessionId),
         isActiveSession: (sessionId) => this.agentView.current.activeSessionId === sessionId,
+        isUnseen: (sessionId) =>
+          this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
       },
       () => this.workspaceRoot ?? process.cwd(),
       async (contextToken, agentId) => {
@@ -645,7 +642,6 @@ export class Orchestrator {
       integrationConfigs: this.integrationConfigs,
       usedCapabilities: this.usedCapabilities,
       spawnRegistry: this.spawnRegistry,
-      sessionIndex: this.sessionIndex,
       agentEnv: this.agentEnv,
       integrationEnv: this.integrationEnv,
       integrationTokens: this.integrationTokens,
@@ -653,7 +649,6 @@ export class Orchestrator {
       machineRules: this.machinePermissionRules,
       decisionAudit: this.decisionAudit,
       lastActiveSession: this.lastActiveSession,
-      lastKnownView: this.lastKnownView,
       lastConnected: this.lastConnected,
     });
 
@@ -740,23 +735,25 @@ export class Orchestrator {
         return Promise.resolve();
       }),
     );
-    this.restoreLastActiveSession();
+    await this.restoreLastActiveSession();
   }
 
   /** Reload continuity's third rung (flag → list → pointer): return to the
-   * session that was open when the window went down. View restoration only
-   * — activate rides the same open path as a drawer click (load/resume
-   * where the agent is already up from the startup connects, else the
-   * persisted last-known view, read-only), and never spawns a process for
-   * an agent the startup rules didn't start. Runs after the connects so a
-   * running agent's attach wins over the seeded view; skipped if the user
-   * already opened something, or the pointer no longer resolves (session
-   * closed/pruned since — degrades to today's behavior, drawer unselected). */
-  private restoreLastActiveSession(): void {
+   * session that was open when the window went down. One rule, found or
+   * not: the pointer (a bare sessionId) is looked up in what the startup
+   * connects' own session/list syncs brought back — found activates
+   * (load/resume via the same open path as a drawer click), not found
+   * lands on the default screen, regardless of why (agent removed, session
+   * deleted externally, agent that can't list). The pointer itself is left
+   * alone on a miss: not-found ≠ gone — a failed connect this window must
+   * not erase where a later window could still return. Never spawns a
+   * process the startup rules didn't start. */
+  private async restoreLastActiveSession(): Promise<void> {
     const sessionId = this.lastActiveSession.get();
     if (sessionId === undefined) return;
+    await Promise.allSettled([...this.pendingSyncs.values()]);
     if (this.agentView.current.activeSessionId !== null) return;
-    if (this.sessionIndex.get(sessionId) === undefined) return;
+    if (!this.sessionManager.knows(sessionId)) return;
     this.sessionManager.activate(sessionId);
   }
 
@@ -963,10 +960,9 @@ export class Orchestrator {
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).
-   * Every activation flows through the session-manager emit hook — a user
-   * switch, a branch's auto-open, an emulated continuation replacing its
-   * dead parent — so this one chokepoint keeps the pointer honest; close
-   * (user click or prune) clears it only while it still points there. */
+   * Every activation flows through the session-manager emit hook, so this
+   * one chokepoint keeps the pointer honest; close (user click or prune)
+   * clears it only while it still points there. */
   private recordLastActive(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind === "sessionActivated") void this.lastActiveSession.set(event.sessionId);
@@ -975,43 +971,10 @@ export class Orchestrator {
   }
 
   private publishSessionStats(): void {
-    const today = new Date().toDateString();
-    const sessionsToday = this.sessionIndex
-      .list()
-      .filter((e) => new Date(e.createdAt).toDateString() === today).length;
-    this.settings.emit({ kind: "sessionStatsChanged", sessionsToday });
-  }
-
-  /** Persists the render cache to workspace storage for agents that never
-   * declared `session/load` — the only continuation available for them once
-   * their connection dies is the emulated one seeded from this file
-   * (architecture.md § State: "Last-known view... a labeled fallback, not a
-   * competing truth"). Cheap and coarse on purpose: the whole transcript,
-   * rewritten on every event touching a tracked session — same trade P1's
-   * stores already make for workspaceState-sized data. */
-  private persistLastKnownViewIfNeeded(events: readonly AgentViewEvent[]): void {
-    const sessionIds = new Set<string>();
-    for (const event of events) {
-      const sessionId = (event as { sessionId?: string }).sessionId;
-      if (sessionId !== undefined) sessionIds.add(sessionId);
-    }
-    for (const sessionId of sessionIds) {
-      const agentId = this.sessionIndex.get(sessionId)?.agentId;
-      if (agentId === undefined) continue;
-      // "Real replay exists — no fallback needed." Read from the matrix, not
-      // the live connection: pool.get(...)?.declared degrades to undefined
-      // while the agent is down, which used to flip this to "persist anyway"
-      // for load-capable agents. The matrix survives disconnects and is only
-      // dropped with the agent itself.
-      const declaresLoad =
-        this.agentView.current.capabilities[agentId]?.["session.load"]?.declared ??
-        this.pool.get(agentId)?.declared?.loadSession ??
-        false;
-      if (declaresLoad) continue;
-      const blocks = this.agentView.current.transcripts[sessionId];
-      if (blocks === undefined) continue;
-      void this.lastKnownView.save(sessionId, blocks, new Date().toISOString());
-    }
+    this.settings.emit({
+      kind: "sessionStatsChanged",
+      sessionsToday: this.sessionManager.createdTodayCount(),
+    });
   }
 
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
@@ -1281,18 +1244,16 @@ export class Orchestrator {
   }
 
   /** Remove is stop + forget (features.md: "add, edit, and remove agents") —
-   * the process goes down (isolated instances included), its live sessions
-   * are invalidated, the agent leaves both channel states via the
-   * `agentRemoved` event, and its per-agent facts (used capabilities,
-   * observed knobs) are purged so a future re-add starts honest. The
-   * session index is the user's call: it's patchbay's own record of
-   * sessions that happened, but records for an agent that no longer exists
-   * are dead weight in the sessions list — so a modal asks keep or delete
-   * (Esc keeps: destruction is never the default). */
+   * the process goes down (isolated instances included), the agent leaves
+   * both channel states via the `agentRemoved` event, its per-agent facts
+   * (used capabilities, observed knobs) are purged so a future re-add
+   * starts honest, and its session rows leave the drawer. Nothing to ask
+   * the user: patchbay holds no session history — the sessions live on in
+   * the agent's own store and reappear via session/list on a re-add. */
   private async removeAgentConfig(agentId: string): Promise<void> {
-    const name = this.agentNames.get(agentId) ?? agentId;
     await this.pool.stopAllFor(agentId);
     this.sessionManager.invalidateAgent(agentId);
+    this.sessionManager.forgetAgentSessions(agentId);
     await this.agentConfigs.remove(agentId);
     await this.usedCapabilities.remove(agentId);
     await this.agentEnv.remove(agentId);
@@ -1302,21 +1263,6 @@ export class Orchestrator {
     this.agentView.emit(removed);
     this.settings.emit(removed);
     await this.refreshAgentConfigs();
-    const orphaned = this.sessionIndex.list().filter((e) => e.agentId === agentId).length;
-    if (orphaned === 0) return;
-    const DELETE = `Delete ${orphaned === 1 ? "it" : `all ${orphaned}`}`;
-    const pick = await vscode.window.showWarningMessage(
-      `${name} was removed — delete its session history too?`,
-      {
-        modal: true,
-        detail:
-          `${orphaned === 1 ? "1 saved session" : `${orphaned} saved sessions`} from this agent ` +
-          "would otherwise stay in the sessions list as read-only records.",
-      },
-      DELETE,
-      "Keep history",
-    );
-    if (pick === DELETE) await this.sessionManager.purgeAgentSessions(agentId);
   }
 
   /** Enable goes through the disclosure prompt — every entry point (Audit
@@ -1434,7 +1380,6 @@ export class Orchestrator {
         placement: "SecretStorage",
         detail: `${n(agentEnvCount + integrationEnvCount, "env value")} · ${n(tokenCount, "OAuth token")}`,
       },
-      { id: "session-index", label: "Session index — this workspace", placement: "workspaceState", detail: n(this.sessionIndex.list().length, "session") },
       {
         id: "workspace-rules",
         label: "Command rules & file-write scope — this workspace",
@@ -1442,7 +1387,6 @@ export class Orchestrator {
         detail: `${n(rules.commandRules.length, "rule")} · scope: ${rules.fileWriteScope}`,
       },
       { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: n(await this.decisionAudit.count(), "entry") },
-      { id: "last-known-views", label: "Persisted session views", placement: "workspace storage", detail: n(await this.lastKnownView.count(), "session") },
     ];
     this.settings.emit({ kind: "dataInventoryChanged", rows });
   }
@@ -1648,38 +1592,18 @@ export class Orchestrator {
       case "refreshDataInventory":
         void this.publishDataInventory();
         break;
-      case "switchSession": {
-        const previous = this.agentView.current.activeSessionId;
+      case "switchSession":
+        // Switching NEVER closes the session being left — open sessions
+        // stay attached until the idle reaper's full predicate says
+        // otherwise (session-manager.ts reapIdle).
         this.sessionManager.activate(action.sessionId);
         // A session click is a connect trigger — the running agent is the
-        // session's prerequisite (composer stays disabled until then); the
-        // activate above already showed whatever local view exists.
+        // session's prerequisite (composer stays disabled until then).
         void this.connectForSession(action.sessionId);
-        // Looking away frees the previous chat's agent-side resources —
-        // release() itself refuses when a turn is in flight or the agent
-        // offers no way back (no load/resume), so this is always safe.
-        if (previous !== null && previous !== action.sessionId) {
-          void this.sessionManager
-            .release(previous, "switched away")
-            .catch(this.logCatch(`release ${previous}`));
-        }
-        break;
-      }
-      case "renameSession":
-        void this.sessionManager.rename(action.sessionId, action.title);
         break;
       case "closeSession":
-        void this.sessionManager
-          .close(action.sessionId)
-          .then(() => this.lastKnownView.remove(action.sessionId));
+        void this.sessionManager.close(action.sessionId);
         break;
-      case "branchSession": {
-        const transcript = this.agentView.current.transcripts[action.sessionId] ?? [];
-        void this.sessionManager
-          .branch(action.sessionId, transcript)
-          .catch(this.logCatch(`branch ${action.sessionId}`));
-        break;
-      }
       case "reloadSession":
         void this.sessionManager.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
         break;
@@ -2047,6 +1971,13 @@ export class Orchestrator {
   private async startChat(agentId: string): Promise<void> {
     const agentName = this.agentNames.get(agentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
+    // A still-new (never-prompted) session for this agent already IS the
+    // new session — focus it instead of minting a sibling blank shell.
+    const draft = this.sessionManager.findNeverPrompted(agentId);
+    if (draft !== undefined) {
+      this.sessionManager.activate(draft);
+      return;
+    }
     if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId });
     try {
@@ -2080,7 +2011,7 @@ export class Orchestrator {
    * session instead of starting a new chat. Unconfigured agents stay
    * untouched — the row is a readable record, nothing more to offer. */
   private async connectForSession(sessionId: string): Promise<void> {
-    const agentId = this.sessionIndex.get(sessionId)?.agentId;
+    const agentId = this.sessionManager.agentFor(sessionId);
     if (agentId === undefined) return;
     if (this.pool.get(agentId)?.status === "running") return;
     const spec = this.configuredAgentSpecs.get(agentId);

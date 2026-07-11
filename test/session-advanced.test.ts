@@ -1,6 +1,5 @@
-// P8 gate: branch on fake agent with and without fork capability produces
-// correctly labeled graph nodes; policy `isolated` isolates `session/new`
-// only (a fork still rides its parent's process under any policy).
+// P8 gate: process policy (`isolated`/`shared`/`auto`), one-click reload,
+// and the session knob surfaces — minus vscode, over the real fake agent.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +8,6 @@ import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
@@ -87,8 +85,6 @@ function harness(): {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
   });
-  const sessionIndex = new SessionIndexStore(new MemoryKV());
-
   const isolationKeys: string[] = [];
   async function resolveProcessFor(agentId: string): Promise<string> {
     const primary = pool.get(agentId);
@@ -106,11 +102,9 @@ function harness(): {
 
   sessionManager = new SessionManager(
     pool,
-    sessionIndex,
     {
       emit: (...evs) => events.push(...evs),
       resolveProcessFor,
-      isForkUsed: (agentId) => state().capabilities[agentId]?.["session.fork"]?.used ?? false,
     },
     () => cwd,
   );
@@ -126,64 +120,6 @@ function pidOf(sessionId: string): string {
   return match[1]!;
 }
 
-describe("Session graph — branching (P8)", () => {
-  it("native session/fork produces a branch node once the capability is used", async () => {
-    const h = harness();
-    await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "forker"));
-    await waitFor(() => (h.state().capabilities.forker!["session.fork"].used ? true : undefined));
-
-    const parentId = await h.sessionManager.createSession("forker", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(parentId, "hello");
-    const parentTranscript = h.state().transcripts[parentId]!;
-
-    const branchId = await h.sessionManager.branch(parentId, parentTranscript);
-
-    const summary = h.state().sessions.find((s) => s.id === branchId)!;
-    expect(summary.branchOf).toBe(parentId);
-    expect(summary.emulated).toBe(false);
-    // a real fork — the agent's own new session, not a client-side seed
-    expect(pidOf(branchId)).toBe(pidOf(parentId));
-    expect(branchId.startsWith(parentId)).toBe(true);
-
-    await h.pool.stop("forker");
-  });
-
-  it("without fork capability, branching falls back to an emulated continuation seeded from the parent's transcript", async () => {
-    const h = harness();
-    await h.pool.connect(spec({}, "noforker")); // declares nothing — session.fork never verifies
-    const parentId = await h.sessionManager.createSession("noforker", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(parentId, "hello");
-    const parentTranscript = h.state().transcripts[parentId]!;
-    expect(parentTranscript.length).toBeGreaterThan(0);
-
-    const branchId = await h.sessionManager.branch(parentId, parentTranscript);
-
-    const summary = h.state().sessions.find((s) => s.id === branchId)!;
-    expect(summary.branchOf).toBe(parentId);
-    expect(summary.emulated).toBe(true);
-    // seeded wholesale from the parent's current transcript, then nothing
-    // more (no prompt was sent to the branch itself)
-    expect(h.state().transcripts[branchId]).toEqual(parentTranscript);
-
-    await h.pool.stop("noforker");
-  });
-
-  it("a lying agent (declares fork, breaks it) never gets used, so branching stays emulated — declared-but-broken must not be trusted", async () => {
-    const h = harness();
-    await h.pool.connect(
-      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "liar"),
-    );
-    await new Promise((r) => setTimeout(r, 300)); // let the automatic round-trip fail
-    expect(h.state().capabilities.liar!["session.fork"].used).toBe(false);
-
-    const parentId = await h.sessionManager.createSession("liar", "Fake Agent", cwd);
-    const branchId = await h.sessionManager.branch(parentId, h.state().transcripts[parentId]!);
-    expect(h.state().sessions.find((s) => s.id === branchId)!.emulated).toBe(true);
-
-    await h.pool.stop("liar");
-  });
-});
-
 describe("Process policy (P8)", () => {
   it("isolated isolates session/new: two top-level sessions run on distinct subprocesses", async () => {
     const h = harness();
@@ -197,21 +133,6 @@ describe("Process policy (P8)", () => {
     expect(h.pool.get("iso")?.sessions.length ?? 0).toBe(0);
 
     await h.pool.stop("iso");
-    for (const key of h.isolationKeys()) await h.pool.stop(key);
-  });
-
-  it("isolated pins a fork to its parent's process, not a third one", async () => {
-    const h = harness();
-    await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "isofork", "isolated"));
-    await waitFor(() => (h.state().capabilities.isofork!["session.fork"].used ? true : undefined));
-
-    const parentId = await h.sessionManager.createSession("isofork", "Fake Agent", cwd);
-    const branchId = await h.sessionManager.branch(parentId, []);
-
-    expect(pidOf(branchId)).toBe(pidOf(parentId)); // same process — fork can't hop
-    expect(h.isolationKeys().length).toBe(1); // only the parent's own isolated instance was ever created
-
-    await h.pool.stop("isofork");
     for (const key of h.isolationKeys()) await h.pool.stop(key);
   });
 
@@ -445,7 +366,6 @@ describe("Session model/mode/effort knobs (P8)", () => {
   });
     sessionManager = new SessionManager(
       pool,
-      new SessionIndexStore(new MemoryKV()),
       {
         emit: (...evs) => events.push(...evs),
         // Folded seed (knob id → value), as the orchestrator delivers it.
@@ -488,74 +408,4 @@ describe("Session model/mode/effort knobs (P8)", () => {
     await pool.stop("defaulted");
   });
 
-  it("an emulated continuation seeds the parent's confirmed combination — never the defaults the user steered away from", async () => {
-    const events: AgentViewEvent[] = [];
-    let sessionManager!: SessionManager;
-    let capabilityTracker!: CapabilityTracker;
-    const pool = new AgentPool({
-      onStatusChanged: () => {},
-      onDeclaredCaptured: (agentId, declared, raw) =>
-        capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null),
-      onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-      ...stubFsTerminalHooks(),
-    });
-    capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-      emit: (...evs) => events.push(...evs),
-      currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
-    });
-    const sessionIndex = new SessionIndexStore(new MemoryKV());
-    sessionManager = new SessionManager(
-      pool,
-      sessionIndex,
-      {
-        emit: (...evs) => events.push(...evs),
-        // Defaults say sonnet/ask — the continuation must NOT get these.
-        defaultsFor: () => ({ mode: "ask", "model-opt": "sonnet" }),
-      },
-      () => cwd,
-    );
-    await pool.connect(
-      spec(
-        {
-          // no fork, no loadSession — branching can only emulate
-          configOptions: [
-            {
-              id: "mode",
-              name: "Mode",
-              type: "select",
-              currentValue: "ask",
-              options: [{ value: "ask", name: "Ask" }, { value: "code", name: "Code" }],
-            },
-            {
-              id: "model-opt",
-              name: "Model",
-              type: "select",
-              currentValue: "sonnet",
-              options: [{ value: "sonnet", name: "Sonnet" }, { value: "opus", name: "Opus" }],
-            },
-          ],
-        },
-        "steered",
-      ),
-    );
-    const state = () => events.reduce(reduceAgentView, initialAgentViewState);
-    const knobValue = (sessionId: string, knobId: string) =>
-      state().sessionKnobs[sessionId]?.find((k) => k.id === knobId)?.currentValue;
-    const parentId = await sessionManager.createSession("steered", "Fake Agent", cwd);
-    // The user steers the session away from its defaults; the agent confirms.
-    await sessionManager.setKnob(parentId, "mode", "code");
-    await sessionManager.setKnob(parentId, "model-opt", "opus");
-    await waitFor(() => (knobValue(parentId, "model-opt") === "opus" ? true : undefined));
-    expect(sessionIndex.get(parentId)?.lastConfirmed).toMatchObject({
-      options: { mode: "code", "model-opt": "opus" },
-    });
-
-    const branchId = await sessionManager.branch(parentId, []);
-    expect(state().sessions.find((s) => s.id === branchId)?.emulated).toBe(true);
-    // The continuation runs at the parent's confirmed opus/code, not sonnet/ask.
-    await waitFor(() => (knobValue(branchId, "model-opt") === "opus" ? true : undefined));
-    await waitFor(() => (knobValue(branchId, "mode") === "code" ? true : undefined));
-
-    await pool.stop("steered");
-  });
 });

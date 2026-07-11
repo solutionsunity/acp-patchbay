@@ -191,25 +191,6 @@ body {
   color: var(--pb-accent);
 }
 
-.badge {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 9px;
-  border: 1px solid var(--pb-border);
-  color: var(--pb-text-dim);
-  white-space: nowrap;
-}
-
-.badge.emulated {
-  color: var(--pb-warn);
-  border-color: color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
-}
-
-.badge.branch {
-  color: var(--pb-accent);
-  border-color: var(--pb-accent-dim);
-}
-
 /* ── plan strip — present only while the agent maintains a plan ─────── */
 .plan-strip {
   padding: 5px 12px;

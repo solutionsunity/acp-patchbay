@@ -9,7 +9,7 @@ import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/cap
 import { Icon } from "../shared/icon";
 import { timeAgo } from "../shared/time";
 import { Dot } from "./header";
-import { Badges, SessionActions } from "./session-row";
+import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
 
 /** Drawer title row with the explicit way out — clicking the scrim still
@@ -96,7 +96,6 @@ export function AgentsDrawer(props: {
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
-  forkUsed(agentId: string): boolean;
   onNew(): void;
   onDone(): void;
 }) {
@@ -139,8 +138,7 @@ export function SessionsDrawer(props: {
               </div>
             </div>
             <div className="badges" onClick={(e) => e.stopPropagation()}>
-              <Badges session={s} />
-              <SessionActions session={s} forkUsed={props.forkUsed(s.agentId)} />
+              <SessionActions session={s} />
             </div>
           </div>
         );

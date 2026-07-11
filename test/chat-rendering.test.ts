@@ -89,7 +89,7 @@ describe("deriveTranscript: the live-block contract (stream/end)", () => {
 describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   it("marks the block denied in place; a later failed status keeps the denied fact", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "rm -rf", status: "in_progress", toolKind: "execute" },
       { kind: "toolCallDenied", sessionId: S, blockId: "t1" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "failed" },
@@ -118,7 +118,7 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
 describe("toolCallUpserted merge semantics (P13b)", () => {
   it("reducer: absent fields keep what a prior event established", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Read", status: "in_progress", toolKind: "read", input: "{ path }" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed", output: "contents" },
     ];
@@ -198,7 +198,7 @@ describe("deriveTranscript: per-turn rollups", () => {
 describe("turn lifecycle reducer (P13c)", () => {
   it("turnStarted sets the ticker basis; turnEnded clears it and appends the block", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "turnStarted", sessionId: S, at: "2026-07-07T10:00:00Z" },
     ];
     const mid = events.reduce(reduceAgentView, initialAgentViewState);

@@ -27,7 +27,6 @@ import {
   applyConfigUpdate,
   applyModeUpdate,
   confirmedFromKnobs,
-  foldSeed,
   NO_KNOBS,
   normalizeKnobs,
   routeKnobSet,
@@ -35,7 +34,6 @@ import {
 } from "./knobs";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
-import type { SessionIndexStore } from "./stores/session-index";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -50,35 +48,30 @@ export interface SessionManagerHooks {
    * connected a dedicated subprocess for it) when isolating. Absent → always
    * share (pre-P8 behavior — fine for tests that don't exercise policy). */
   resolveProcessFor?(agentId: string): Promise<string>;
-  /** Whether `session.fork` is declared *and used* for this agent — the
-   * one signal that decides native fork vs. emulated seeding (P8). */
-  isForkUsed?(agentId: string): boolean;
   /** Per-agent knob defaults (folded, knob-id-keyed — knobs.ts foldSeed),
    * applied once, post-create. */
   defaultsFor?(agentId: string): KnobSeed | undefined;
-  /** The persisted last-known view (architecture.md § State) — the only
-   * continuation available for a dead session whose agent never declared
-   * `session/load`. */
-  lastKnownView?(sessionId: string): Promise<{ at: string; blocks: readonly ChatBlock[] } | null>;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch since ACP has no live-update request for
    * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
    * not a SessionManager-local one that would vanish with it. */
   contextRootsFor?(sessionId: string): readonly string[];
   /** The render cache as it currently stands (AgentViewState-held) — the
-   * resume rung prefers it over the persisted view file (it's at least as
-   * fresh: the file is written *from* it). */
+   * resume rung shows it behind the seam notice: it's the only history
+   * there is (patchbay persists no transcripts). */
   currentTranscript?(sessionId: string): readonly ChatBlock[];
   /** Whether `session.delete` is declared *and used* — gates the agent-side
    * delete on close (capability-verification.md: features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
-  /** Drops a session's persisted last-known view — fired when the agent's
-   * own `session/list` says the session no longer exists (wire truth wins). */
-  dropLastKnownView?(sessionId: string): Promise<void> | void;
   /** Whether this session is the one currently open in the view — the idle
    * reaper exempts it: the visible chat's state never changes under the
-   * user (a switch already released whatever was looked away from). */
+   * user, and the composer (whose draft must block a close) only exists
+   * for the active session. */
   isActiveSession?(sessionId: string): boolean;
+  /** The blue mark: a turn completed while the session wasn't open in the
+   * view and the user hasn't looked yet — the reaper must not close under
+   * an unseen result (reducer-derived `unseen` on the session summary). */
+  isUnseen?(sessionId: string): boolean;
 }
 
 /** session/list pagination guard: 50 pages of history for one workspace is
@@ -100,11 +93,23 @@ function deriveTitle(promptText: string): string {
   return flat.length > 48 ? `${flat.slice(0, 47)}…` : flat;
 }
 
+/** One session patchbay currently knows to exist — created here this
+ * window, or reported by the agent's own `session/list`. In-memory only,
+ * deliberately: the agent is the source of truth for sessions; this is the
+ * mirror of the last read, repopulated from the wire every connect, never
+ * persisted (no-session-history — patchbay stores no transcripts, no index). */
+interface KnownSession {
+  agentId: string;
+  title: string;
+  createdAt: string; // ISO — session/list rows carry only updatedAt; used for it there
+  updatedAt: string; // ISO — the drawer's sort key
+}
+
 interface LiveSession {
   agentId: string;
   /** Which pool connection this session's requests ride — the agentId
    * itself when sharing, a synthetic instance id when process-policy
-   * isolated it (P8). Forks always inherit their parent's poolKey. */
+   * isolated it (P8). */
   poolKey: string;
   /** True once auto-derived from the first prompt, or explicitly renamed —
    * either way, later auto-titling must not clobber it again. */
@@ -121,10 +126,13 @@ interface LiveSession {
    * instead of yanking the attachment under the in-flight prompt. */
   rootsDirty: boolean;
   /** At least one prompt has been sent on this attachment (or it came back
-   * from history — load/resume/fork/emulated all imply prior turns). Until
-   * then the agent may have persisted nothing: session/load has been
-   * observed to 404 *and kill the live session* on a never-prompted id
-   * (claude-agent-acp), so zero-turn root changes recreate instead. */
+   * from history — load and resume both imply prior turns). This is the
+   * "new session" fact: `!everPrompted` blocks the reaper (a new session
+   * never auto-closes) and makes "add session" focus this one instead of
+   * minting a sibling. Until it's set the agent may have persisted nothing:
+   * session/load has been observed to 404 *and kill the live session* on a
+   * never-prompted id (claude-agent-acp), so zero-turn root changes
+   * recreate instead. */
   everPrompted: boolean;
   /** Epoch ms of the last prompt or session/update — the idle reaper's basis. */
   lastActivityAt: number;
@@ -148,6 +156,8 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
 
 export class SessionManager {
   private sessions = new Map<string, LiveSession>();
+  /** Every session known to exist right now (see KnownSession). */
+  private known = new Map<string, KnownSession>();
   /** Agent-reported diff content per tool call (ToolCallContent "diff") —
    * the texts stay here, never in webview state (they can be whole files);
    * the block carries only the openable paths, and openToolCallDiff reads
@@ -160,7 +170,6 @@ export class SessionManager {
 
   constructor(
     private readonly pool: AgentPool,
-    private readonly sessionIndex: SessionIndexStore,
     private readonly hooks: SessionManagerHooks,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
@@ -195,13 +204,48 @@ export class SessionManager {
     return this.sessions.has(sessionId);
   }
 
-  /** Frees a session's agent-side resources when attention moved elsewhere
-   * (a chat switch, or the idle reaper): `session/close` on the wire, local
-   * bookkeeping dropped, transcript and index row untouched — the row stays
-   * in the list and re-attaches on the next open/prompt. Refuses when a
-   * turn is in flight, and refuses when the agent offers no way back
-   * (neither load nor resume): closing what can't return would downgrade
-   * the user to an emulated continuation for the sake of some memory. */
+  /** Whether this session exists as far as patchbay can tell — created this
+   * window, or present in the agent's own list. The last-active-session
+   * restore is exactly "found or not": found activates, not-found lands on
+   * the default screen, regardless of why. */
+  knows(sessionId: string): boolean {
+    return this.known.has(sessionId);
+  }
+
+  agentFor(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
+  }
+
+  /** The still-new (never-prompted) live session for an agent, if one
+   * exists — "add session" focuses it instead of minting a sibling: a new
+   * session is unclosable and unreopenable (agents 404 load/resume on a
+   * zero-turn id), so stacking blank shells helps no one. */
+  findNeverPrompted(agentId: string): string | undefined {
+    for (const [sessionId, session] of this.sessions) {
+      if (session.agentId === agentId && !session.everPrompted) return sessionId;
+    }
+    return undefined;
+  }
+
+  /** Sessions created today, as currently known — the Settings stat tile.
+   * Wire-listed rows carry only updatedAt; for them createdAt is that stamp
+   * (honest as ordering, nothing more). */
+  createdTodayCount(): number {
+    const today = new Date().toDateString();
+    let count = 0;
+    for (const entry of this.known.values()) {
+      if (new Date(entry.createdAt).toDateString() === today) count++;
+    }
+    return count;
+  }
+
+  /** Frees an idle session's agent-side resources: `session/close` on the
+   * wire, local bookkeeping dropped, the row untouched — it re-attaches on
+   * the next open/prompt. Refuses when a turn is in flight, and requires
+   * declared `session/load` — not load-or-resume: patchbay persists no
+   * transcripts, so closing anything less than fully-replayable would
+   * destroy the only history there is. That one condition is what makes
+   * "no saved history" safe — do not relax it to `load || resume`. */
   async release(sessionId: string, reason: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined || session.inFlight) return;
@@ -209,7 +253,7 @@ export class SessionManager {
     if (agent?.status !== "running") return; // nothing attached to free
     const declared = agent.declared;
     if (declared?.sessionClose !== true) return;
-    if (declared.loadSession !== true && declared.sessionResume !== true) return;
+    if (declared.loadSession !== true) return;
     this.sessions.delete(sessionId);
     try {
       await this.pool.closeSession(session.poolKey, sessionId);
@@ -227,16 +271,29 @@ export class SessionManager {
     }
   }
 
-  /** The resource timer: attached sessions idle past `idleCloseMs` are
-   * released — except the one open in the view, whose state must never
-   * change under the user. `release` itself re-checks every other guard
-   * (in-flight, way back, running connection). */
+  /** The resource timer — the ONLY thing that ever closes an attached
+   * session (switching chats never does). Auto-close requires ALL of:
+   *
+   * 1. not new — `everPrompted`: a never-prompted session never closes,
+   *    period (nothing persisted agent-side; load/resume would 404);
+   * 2. nothing in flight (green mark) — re-checked inside `release`;
+   * 3. not unseen (blue mark) — a completed-but-unviewed result stays;
+   * 4. prompt box empty — structurally: the composer only exists for the
+   *    active session, which is exempt below;
+   * 5. idle past `idleCloseMs` (default 60 min — a user setting soon);
+   * 6. agent declares `session/load` — checked inside `release`; see its
+   *    header for why resume is not enough.
+   *
+   * The active-in-view session is always exempt: visible chat state never
+   * changes under the user. */
   private async reapIdle(): Promise<void> {
     if (this.idleCloseMs === null) return;
     const cutoff = Date.now() - this.idleCloseMs;
     for (const [sessionId, session] of [...this.sessions]) {
+      if (!session.everPrompted) continue;
       if (session.lastActivityAt > cutoff) continue;
       if (this.hooks.isActiveSession?.(sessionId) ?? false) continue;
+      if (this.hooks.isUnseen?.(sessionId) ?? false) continue;
       await this.release(sessionId, "idle");
     }
   }
@@ -257,14 +314,12 @@ export class SessionManager {
     this.sessions.set(sessionId, liveSession(agentId, poolKey, false));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
-    await this.sessionIndex.upsert({ id: sessionId, agentId, title, createdAt: now, updatedAt: now, emulated: false, branchOf: null });
+    this.known.set(sessionId, { agentId, title, createdAt: now, updatedAt: now });
     const summary: SessionSummary = {
       id: sessionId,
       agentId,
       title,
       live: false,
-      emulated: false,
-      branchOf: null,
       updatedAt: now,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
@@ -282,64 +337,57 @@ export class SessionManager {
     });
   }
 
-  /** Opening a session must show its content, not a blank pane, and leave
-   * it ready to prompt. Both wire paths are free (no LLM turn): `load`
-   * replay wherever declared; else `resume` — the agent's context attaches,
-   * with the seam notice saying history replay isn't supported. With
-   * neither (or the agent down), the persisted last-known view seeds the
-   * pane read-only, agent untouched; the first prompt decides continuation.
-   * Open never *emulates* — minting a new session is never a click's job. */
+  /** Opening a closed session, the whole ladder: `session/load` where
+   * declared (replay = truth); else `session/resume` — the agent's real
+   * context attaches, a seam notice says history replay isn't supported;
+   * with neither there is nothing in hand and nothing to fetch (patchbay
+   * persists no transcripts) — said as such, never faked. Both wire paths
+   * are free (no LLM turn). Open never mints a session. */
   async hydrate(sessionId: string): Promise<void> {
     if (this.sessions.has(sessionId) || this.hydrating.has(sessionId)) return;
     this.hydrating.add(sessionId);
     try {
-      const agentId = this.sessionIndex.get(sessionId)?.agentId;
+      const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
       const agent = this.pool.get(agentId);
-      if (agent?.status === "running") {
-        // Wire attach can fail even when declared — the agent may no longer
-        // hold this session (kept-despite-prune rows). Fall through to the
-        // persisted view: open shows the record; the first prompt decides
-        // continuation. Open never emulates — minting a session is no click's job.
-        try {
-          if (agent.declared?.loadSession === true) {
-            await this.reopen(sessionId, agentId);
-            return;
-          }
-          if (agent.declared?.sessionResume === true) {
-            await this.resumeReattach(sessionId, agentId);
-            return;
-          }
-        } catch (err) {
-          this.sessions.delete(sessionId);
-          this.log.info(`session ${sessionId}: attach on open failed — showing the local view (${(err as Error).message})`);
+      if (agent?.status !== "running") return; // connect-on-demand re-hydrates after
+      try {
+        if (agent.declared?.loadSession === true) {
+          await this.reopen(sessionId, agentId);
+          return;
         }
+        if (agent.declared?.sessionResume === true) {
+          await this.resumeReattach(sessionId, agentId);
+          return;
+        }
+      } catch (err) {
+        this.sessions.delete(sessionId);
+        this.log.info(`session ${sessionId}: attach on open failed — ${(err as Error).message}`);
+        return;
       }
-      // No wire path (undeclared, down, or attach failed): the persisted
-      // view is the only content there is — shown as-is.
+      // Neither load nor resume declared: this session cannot be reopened.
+      // Reachable only after a crash/reload (the reaper never closes these).
       if ((this.hooks.currentTranscript?.(sessionId) ?? []).length > 0) return;
-      const view = await this.hooks.lastKnownView?.(sessionId);
-      if (view != null && view.blocks.length > 0) {
-        this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: view.blocks });
-      }
+      this.hooks.emit({
+        kind: "transcriptSeeded",
+        sessionId,
+        blocks: [{
+          kind: "notice",
+          id: newBlockId("notice"),
+          text: "This agent supports neither session/load nor session/resume — this session's history lives only in the agent and can't be reopened here.",
+        }],
+      });
     } finally {
       this.hydrating.delete(sessionId);
     }
   }
 
-  async rename(sessionId: string, title: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session) session.titled = true; // an explicit rename is never overwritten by auto-titling
-    await this.sessionIndex.rename(sessionId, title, true); // …nor by the agent's own title
-    this.hooks.emit({ kind: "sessionRenamed", sessionId, title });
-  }
-
   async close(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
-    const agentId = session?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
+    const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
-    await this.sessionIndex.remove(sessionId);
+    this.known.delete(sessionId);
     this.hooks.emit({ kind: "sessionClosed", sessionId });
     // Honest close: forgetting a session locally while a delete-capable
     // agent keeps it would just resurrect it on the next session/list sync.
@@ -360,27 +408,25 @@ export class SessionManager {
   }
 
   /** "Disconnect & erase all data" (P18): every session's bookkeeping goes
-   * at once — the processes are already down and the session index is wiped
-   * by the erase sweep itself; the UI rows leave via the orchestrator's
-   * sessionClosed events. */
+   * at once — the processes are already down; the UI rows leave via the
+   * orchestrator's sessionClosed events. */
   reset(): void {
     this.sessions.clear();
+    this.known.clear();
     this.toolDiffs.clear();
   }
 
-  /** Removes every durable trace a removed agent's sessions left behind —
-   * index rows, persisted last-known views, UI rows — for the user who
-   * answered "delete" at agent removal. The live-bookkeeping half is
-   * `invalidateAgent`; no agent-side delete here (the process is already
-   * gone, and so is the config to bring it back). */
-  async purgeAgentSessions(agentId: string): Promise<void> {
-    for (const entry of this.sessionIndex.list()) {
+  /** A removed agent's session rows leave the view — nothing of them is
+   * stored anywhere (agent removal removes only patchbay's config; the
+   * sessions live on in the agent and reappear via `session/list` on a
+   * re-add). No agent-side delete: the process is already gone. */
+  forgetAgentSessions(agentId: string): void {
+    for (const [sessionId, entry] of [...this.known]) {
       if (entry.agentId !== agentId) continue;
-      this.sessions.delete(entry.id);
-      this.toolDiffs.delete(entry.id);
-      await this.sessionIndex.remove(entry.id);
-      await this.hooks.dropLastKnownView?.(entry.id);
-      this.hooks.emit({ kind: "sessionClosed", sessionId: entry.id });
+      this.sessions.delete(sessionId);
+      this.toolDiffs.delete(sessionId);
+      this.known.delete(sessionId);
+      this.hooks.emit({ kind: "sessionClosed", sessionId });
     }
   }
 
@@ -405,14 +451,13 @@ export class SessionManager {
     }
   }
 
-  /** Merges the agent's own session history (`session/list`, cwd-filtered
-   * to this workspace) into patchbay's index and the view — run on every
-   * connect of a list-capable agent. The wire list is the truth for who
-   * exists (capability-verification.md); the index survives as the fallback
-   * list for agents without the capability, and as the overlay for facts
-   * the wire can't carry (`emulated`, `branchOf`, user renames). Pruning —
-   * dropping index entries the agent no longer reports — only happens after
-   * a *complete* pagination walk: a truncated read must never erase. */
+  /** Reads the agent's own session history (`session/list`, cwd-filtered
+   * to this workspace) into the view — run on every connect of a
+   * list-capable agent. The wire list is the ONLY list (patchbay persists
+   * no session records): agents without the capability show just their
+   * currently-open sessions — a deliberate scope decision. Pruning —
+   * dropping known rows the agent no longer reports — only happens after a
+   * *complete* pagination walk: a truncated read must never erase. */
   async syncAgentSessions(agentId: string): Promise<void> {
     if (this.pool.get(agentId)?.declared?.sessionList !== true) return;
     const cwd = this.cwd();
@@ -428,7 +473,7 @@ export class SessionManager {
         // Re-filter defensively: the cwd param is a request, not a contract.
         if (info.cwd !== cwd) continue;
         seen.add(info.sessionId);
-        await this.noteListedSession(agentId, info);
+        this.noteListedSession(agentId, info);
       }
       if (response.nextCursor == null) {
         complete = true;
@@ -440,85 +485,62 @@ export class SessionManager {
       this.log.info(`${agentId}: session/list still paging after ${MAX_LIST_PAGES} pages — sync merged, prune skipped`);
       return;
     }
-    for (const entry of this.sessionIndex.list()) {
-      if (entry.agentId !== agentId || seen.has(entry.id) || this.sessions.has(entry.id)) continue;
-      // The wire is the truth for what the *agent* holds — not for what
-      // patchbay recorded. A row with a persisted last-known view survives
-      // the prune: it opens as the seeded read-only view, and the first
-      // prompt continues it through the emulated rung. Only view-less rows
-      // (zero-turn shells, sessions that died before anything persisted)
-      // are genuinely nothing, and go.
-      const view = await this.hooks.lastKnownView?.(entry.id);
-      if (view != null && view.blocks.length > 0) {
-        this.log.info(`session ${entry.id}: gone from ${agentId}'s own list — kept (local view exists)`);
-        continue;
-      }
-      await this.sessionIndex.remove(entry.id);
-      await this.hooks.dropLastKnownView?.(entry.id);
-      this.hooks.emit({ kind: "sessionClosed", sessionId: entry.id });
-      this.log.info(`session ${entry.id}: gone from ${agentId}'s own list — dropped`);
+    for (const [sessionId, entry] of [...this.known]) {
+      if (entry.agentId !== agentId || seen.has(sessionId) || this.sessions.has(sessionId)) continue;
+      // The wire is the truth for who exists — a session the agent no
+      // longer reports (deleted externally, or a zero-turn shell it never
+      // persisted) is gone; live sessions are exempt (a just-created id may
+      // trail the agent's own list).
+      this.known.delete(sessionId);
+      this.toolDiffs.delete(sessionId);
+      this.hooks.emit({ kind: "sessionClosed", sessionId });
+      this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
   }
 
-  /** One listed session into index + view. Title rule: the agent's title
-   * wins over patchbay's auto-derived one, never over an explicit user
-   * rename (`renamedByUser` — rename has no wire request, so it exists only
-   * in the overlay). */
-  private async noteListedSession(agentId: string, info: SessionInfo): Promise<void> {
-    const existing = this.sessionIndex.get(info.sessionId);
+  /** One listed session into the view. Title rule: the agent's title wins
+   * (patchbay-side rename is gone — ACP has no rename request; in-chat
+   * agent commands like /rename round-trip through the agent's own list
+   * and session_info_update). */
+  private noteListedSession(agentId: string, info: SessionInfo): void {
+    const existing = this.known.get(info.sessionId);
     const now = new Date().toISOString();
     if (existing === undefined) {
       // A session patchbay never saw — created externally (CLI, another
-      // editor) or predating patchbay. updatedAt is the only timestamp the
-      // wire offers; honest as createdAt-for-ordering, nothing more.
+      // editor) or in a previous window. updatedAt is the only timestamp
+      // the wire offers; honest as createdAt-for-ordering, nothing more.
       const title = info.title ?? "Untitled session";
       const at = info.updatedAt ?? now;
-      await this.sessionIndex.upsert({
-        id: info.sessionId,
-        agentId,
-        title,
-        createdAt: at,
-        updatedAt: at,
-        emulated: false,
-        branchOf: null,
-      });
+      this.known.set(info.sessionId, { agentId, title, createdAt: at, updatedAt: at });
       this.hooks.emit({
         kind: "sessionListed",
-        session: { id: info.sessionId, agentId, title, live: false, emulated: false, branchOf: null, updatedAt: at },
+        session: { id: info.sessionId, agentId, title, live: false, updatedAt: at },
       });
       return;
     }
-    const title =
-      existing.renamedByUser === true || info.title == null ? existing.title : info.title;
-    await this.sessionIndex.upsert({
-      ...existing,
-      title,
-      updatedAt: info.updatedAt ?? existing.updatedAt,
-    });
+    const title = info.title ?? existing.title;
+    const updatedAt = info.updatedAt ?? existing.updatedAt;
+    this.known.set(info.sessionId, { ...existing, title, updatedAt });
     this.hooks.emit({
       kind: "sessionListed",
       session: {
-        id: existing.id,
+        id: info.sessionId,
         agentId,
         title,
-        live: this.sessions.has(existing.id),
-        emulated: existing.emulated ?? false,
-        branchOf: existing.branchOf ?? null,
-        updatedAt: info.updatedAt ?? existing.updatedAt,
+        live: this.sessions.has(info.sessionId),
+        updatedAt,
       },
     });
   }
 
   /** One-click reload (P8): re-attach on demand, even when the session
-   * isn't currently invalidated — the same continuation ladder as the
-   * automatic path (load > resume > emulated), so a resume-only agent's
-   * reload works too instead of throwing. */
+   * isn't currently invalidated — the same ladder as every attach
+   * (load > resume), so a resume-only agent's reload works too. */
   async reload(sessionId: string): Promise<void> {
     this.sessions.delete(sessionId);
-    const agentId = this.sessionIndex.get(sessionId)?.agentId;
+    const agentId = this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
-    const targetId = await this.reopenOrEmulate(sessionId, agentId);
-    if (targetId !== sessionId) this.hooks.emit({ kind: "sessionActivated", sessionId: targetId });
+    await this.ensureAttached(sessionId, agentId);
   }
 
   /** Re-attaches a session after its connection died, via `session/load`
@@ -553,7 +575,7 @@ export class SessionManager {
       );
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
-      // the fallback (seeded view, emulated continuation), and a lingering
+      // the fallback (the next ladder rung, or an honest failure), and a lingering
       // map entry would make every later prompt hit a session that isn't there.
       this.sessions.delete(sessionId);
       throw err;
@@ -564,49 +586,45 @@ export class SessionManager {
     this.publishKnobs(sessionId, normalizeKnobs(response.modes, response.configOptions));
   }
 
-  /** The continuation ladder (architecture.md § State): `session/load`
-   * wherever declared — the only path where what the user sees and what the
-   * agent remembers are provably the same; `session/resume` when only that
-   * is declared — the agent's real memory, patchbay's cached view shown
-   * behind an honest seam notice; last, an emulated continuation seeded
-   * from the persisted last-known view — a genuinely fresh session, clearly
-   * labeled, never presented as the agent's own memory. Returns the
-   * sessionId that's actually live and ready for a prompt: the same id on
-   * success, a new one when it had to emulate. */
-  private async reopenOrEmulate(sessionId: string, agentId: string): Promise<string> {
-    if (this.sessions.has(sessionId)) return sessionId;
+  /** The attach ladder: `session/load` wherever declared — the only path
+   * where what the user sees and what the agent remembers are provably the
+   * same; else `session/resume` — the agent's real memory behind an honest
+   * seam notice. Nothing below: patchbay never mints a session and calls it
+   * a continuation. Throws when no rung holds — the session id never
+   * changes out from under the caller. */
+  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
+    if (this.sessions.has(sessionId)) return;
     const declared = this.pool.get(agentId)?.declared;
+    let lastError: Error | null = null;
     if (declared?.loadSession) {
       try {
         await this.reopen(sessionId, agentId);
-        return sessionId;
+        return;
       } catch (err) {
-        // The agent no longer holds this session (a kept-despite-prune row,
-        // or its store moved on) — same honest ladder as a failed resume:
-        // fall through to the next rung instead of erroring forever.
-        this.log.info(`session ${sessionId}: load failed, descending the ladder — ${(err as Error).message}`);
+        // The agent may no longer hold this session — descend to resume
+        // rather than erroring forever; the suspect mark already landed.
+        lastError = err as Error;
+        this.log.info(`session ${sessionId}: load failed, descending the ladder — ${lastError.message}`);
       }
     }
     if (declared?.sessionResume) {
       try {
         await this.resumeReattach(sessionId, agentId);
-        return sessionId;
+        return;
       } catch (err) {
-        // The suspect mark already landed at the wire chokepoint; the honest
-        // fallback is the same one a resume-less agent gets.
-        this.log.info(`session ${sessionId}: resume failed, emulating — ${(err as Error).message}`);
         this.sessions.delete(sessionId);
+        lastError = err as Error;
+        this.log.info(`session ${sessionId}: resume failed — ${lastError.message}`);
       }
     }
-    const view = await this.hooks.lastKnownView?.(sessionId);
-    return this.createEmulatedContinuation(sessionId, agentId, view?.blocks ?? []);
+    throw lastError ?? new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
   }
 
   /** The resume rung: re-attaches via `session/resume` — no replay, so the
-   * displayed history is patchbay's own cached view (the live render cache
-   * when present, else the persisted last-known view), closed with a seam
-   * notice marking where the cache ends and the agent's unreplayed memory
-   * continues. Never merged with replay — there is none. */
+   * displayed history is whatever the in-memory render cache still holds
+   * (patchbay persists no transcripts), closed with a seam notice marking
+   * where it ends and the agent's unreplayed memory continues. Never merged
+   * with replay — there is none. */
   private async resumeReattach(sessionId: string, agentId: string): Promise<void> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
@@ -621,143 +639,18 @@ export class SessionManager {
       await this.mcpServersFor(contextToken, agentId),
       [...roots],
     );
-    const cached = this.hooks.currentTranscript?.(sessionId) ?? [];
-    let blocks: readonly ChatBlock[] = cached;
-    let upTo: string | null = null;
-    if (blocks.length === 0) {
-      const view = await this.hooks.lastKnownView?.(sessionId);
-      if (view !== null && view !== undefined) {
-        blocks = view.blocks;
-        upTo = view.at;
-      }
-    }
+    const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
       kind: "notice",
       id: newBlockId("notice"),
       text:
         blocks.length > 0
-          ? `This agent doesn't support replaying history (session/load) — the conversation above is patchbay's view` +
-            `${upTo !== null ? ` up to ${new Date(upTo).toLocaleString()}` : ""}. ` +
-            `The session is resumed: its context is ready and continues from here.`
-          : "This agent doesn't support replaying history (session/load), and no local view of earlier turns exists. The session is resumed: its context is ready and continues from here.",
+          ? "This agent doesn't support replaying history (session/load) — the conversation above is patchbay's view. The session is resumed: its context is ready and continues from here."
+          : "This agent doesn't support replaying history (session/load), so earlier turns can't be shown. The session is resumed: its context is ready and continues from here.",
     };
     this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: [...blocks, notice] });
     this.log.info(`session ${sessionId} resumed (no replay) on ${agentId}`);
     this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
-  }
-
-  /** Shared by the dead-end auto-continuation above and by `branch`'s
-   * emulated path: a fresh top-level session (its own process-policy
-   * decision — an emulated branch is not a real fork, so nothing pins it to
-   * the parent's process), with its transcript seeded wholesale from
-   * `seedBlocks` and labeled `emulated`. */
-  private async createEmulatedContinuation(
-    parentSessionId: string,
-    agentId: string,
-    seedBlocks: readonly ChatBlock[],
-  ): Promise<string> {
-    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const roots = this.hooks.contextRootsFor?.(parentSessionId) ?? [];
-    const { sessionId, modes, configOptions } = await this.pool.newSession(
-      poolKey,
-      this.cwd(),
-      await this.mcpServersFor(contextToken, agentId),
-      [...roots],
-    );
-    this.hooks.mapContextToken?.(contextToken, sessionId);
-    this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
-    this.sessions.get(sessionId)!.everPrompted = true; // a continuation, not a blank shell
-    const now = new Date().toISOString();
-    const parentTitle = this.sessionIndex.get(parentSessionId)?.title ?? "session";
-    const title = `Branch of ${parentTitle}`;
-    await this.sessionIndex.upsert({ id: sessionId, agentId, title, createdAt: now, updatedAt: now, emulated: true, branchOf: parentSessionId });
-    const summary: SessionSummary = {
-      id: sessionId,
-      agentId,
-      title,
-      live: false,
-      emulated: true,
-      branchOf: parentSessionId,
-      updatedAt: now,
-    };
-    this.hooks.emit({ kind: "sessionCreated", session: summary });
-    if (roots.length > 0) this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots });
-    if (seedBlocks.length > 0) {
-      this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: seedBlocks });
-    }
-    this.publishKnobs(sessionId, normalizeKnobs(modes, configOptions));
-    // Semantically a continuation, mechanically a session/new: seed the
-    // parent's last agent-confirmed combination — never the defaults, which
-    // the user may have steered the parent away from (architecture.md
-    // § Session model, seeding table). Knobs the fresh session doesn't
-    // offer are skipped silently inside applySeed.
-    const confirmed = this.sessionIndex.get(parentSessionId)?.lastConfirmed;
-    if (confirmed !== undefined) {
-      await this.applySeed(sessionId, foldSeed(confirmed));
-    }
-    return sessionId;
-  }
-
-  /** Branch (P8): native `session/fork` when the agent's `session.fork`
-   * capability is declared *and used*, else an emulated continuation
-   * seeded from the parent's current transcript — either way, a node in the
-   * session graph (`branchOf`); the UI never has to know which mechanism
-   * produced it (architecture.md § Branching). */
-  async branch(sessionId: string, parentTranscript: readonly ChatBlock[]): Promise<string> {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
-    if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-
-    if (!(this.hooks.isForkUsed?.(agentId) ?? false)) {
-      return this.createEmulatedContinuation(sessionId, agentId, parentTranscript);
-    }
-
-    // Native fork must address the connection holding the parent's live
-    // context — reopen first (throws, rather than silently downgrading to
-    // emulated, if a capability that tested as *used* turns out not to hold up).
-    await this.reopen(sessionId, agentId);
-    const poolKey = this.sessions.get(sessionId)!.poolKey;
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const roots = this.hooks.contextRootsFor?.(sessionId) ?? [];
-    const response = await this.pool.fork(
-      poolKey,
-      sessionId,
-      this.cwd(),
-      await this.mcpServersFor(contextToken, agentId),
-      [...roots],
-    );
-    this.hooks.mapContextToken?.(contextToken, response.sessionId);
-    this.sessions.set(response.sessionId, liveSession(agentId, poolKey, true));
-    this.sessions.get(response.sessionId)!.everPrompted = true; // forked from real history
-    const now = new Date().toISOString();
-    const parentTitle = this.sessionIndex.get(sessionId)?.title ?? "session";
-    const title = `Branch of ${parentTitle}`;
-    await this.sessionIndex.upsert({
-      id: response.sessionId,
-      agentId,
-      title,
-      createdAt: now,
-      updatedAt: now,
-      emulated: false,
-      branchOf: sessionId,
-    });
-    const summary: SessionSummary = {
-      id: response.sessionId,
-      agentId,
-      title,
-      live: false,
-      emulated: false,
-      branchOf: sessionId,
-      updatedAt: now,
-    };
-    this.hooks.emit({ kind: "sessionCreated", session: summary });
-    if (roots.length > 0) {
-      this.hooks.emit({ kind: "contextRootsChanged", sessionId: response.sessionId, roots });
-    }
-    // Native fork: the agent itself decides how much history to replay as
-    // session/update notifications, if any — nothing else to seed here.
-    this.publishKnobs(response.sessionId, normalizeKnobs(response.modes, response.configOptions));
-    return response.sessionId;
   }
 
   /** The one knob-set entry point (knobs.ts routes it to the wire). A knob
@@ -781,25 +674,17 @@ export class SessionManager {
   }
 
   /** The one exit for knob state: stores the normalized truth on the
-   * session (set routing reads the surface from it), emits the full view
-   * replace, and records the agent-confirmed combination on the session
-   * index (the emulated-continuation seed — the one session birth with no
-   * reality left to read). */
+   * session (set routing reads the surface from it) and emits the full
+   * view replace. */
   private publishKnobs(sessionId: string, knobs: NormalizedKnobs): void {
     const session = this.sessions.get(sessionId);
     if (session) session.knobs = knobs;
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
-    if (knobs.surface !== "none") {
-      void this.sessionIndex.recordConfirmed(sessionId, { options: confirmedFromKnobs(knobs) });
-    }
   }
 
   /** Per-agent defaults (architecture.md § Session model, mode, effort):
    * applied once, post-create on a *fresh* session only — never on
-   * reopen/reload/fork (the agent's own resumed state is the truth), and
-   * never on an emulated continuation (which seeds from the parent's
-   * confirmed combination instead — the user may have steered away from
-   * the defaults). */
+   * reopen/reload (the agent's own resumed state is the truth). */
   private async applyDefaults(agentId: string, sessionId: string): Promise<void> {
     const defaults = this.hooks.defaultsFor?.(agentId);
     if (defaults === undefined) return;
@@ -968,20 +853,16 @@ export class SessionManager {
     fresh.pendingContext = old.pendingContext;
     this.sessions.set(sessionId, fresh);
     this.sessions.delete(oldId);
-    const entry = this.sessionIndex.get(oldId);
+    const entry = this.known.get(oldId);
     const now = new Date().toISOString();
     const title = entry?.title ?? "Untitled session";
-    await this.sessionIndex.upsert({
-      id: sessionId,
+    this.known.set(sessionId, {
       agentId: old.agentId,
       title,
       createdAt: entry?.createdAt ?? now,
       updatedAt: now,
-      emulated: entry?.emulated ?? false,
-      branchOf: entry?.branchOf ?? null,
-      renamedByUser: entry?.renamedByUser,
     });
-    await this.sessionIndex.remove(oldId);
+    this.known.delete(oldId);
     this.hooks.emit(
       { kind: "sessionClosed", sessionId: oldId },
       {
@@ -991,8 +872,6 @@ export class SessionManager {
           agentId: old.agentId,
           title,
           live: false,
-          emulated: entry?.emulated ?? false,
-          branchOf: entry?.branchOf ?? null,
           updatedAt: now,
         },
       },
@@ -1016,11 +895,10 @@ export class SessionManager {
   }
 
   async sendPrompt(sessionId: string, text: string, parts?: readonly PromptPart[]): Promise<void> {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.sessionIndex.get(sessionId)?.agentId;
+    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-    const targetId = await this.reopenOrEmulate(sessionId, agentId);
-    if (targetId !== sessionId) this.hooks.emit({ kind: "sessionActivated", sessionId: targetId });
-    const session = this.sessions.get(targetId)!;
+    await this.ensureAttached(sessionId, agentId);
+    const session = this.sessions.get(sessionId)!;
     session.activeTextBlockId = null;
     session.activeThoughtBlockId = null;
     session.inFlight = true;
@@ -1031,19 +909,21 @@ export class SessionManager {
     if (!session.titled) {
       session.titled = true;
       const title = deriveTitle(text);
-      await this.sessionIndex.rename(targetId, title);
-      events.push({ kind: "sessionRenamed", sessionId: targetId, title });
+      this.retitle(sessionId, title);
+      events.push({ kind: "sessionRenamed", sessionId, title });
     }
     // Duration basis is send→stop, deliberately not first-chunk→stop: the
     // live ticker exists so a slow response has visible feedback instead of
     // silence, and the silence starts at send.
     const startedAt = new Date().toISOString();
-    // Activity stamp: the drawer sorts by it, and it must survive a restart.
-    await this.sessionIndex.touch(targetId, startedAt);
+    // Activity stamp — the drawer's sort key. In-memory only; across a
+    // restart the agent's own session/list stamp is the truth.
+    const entry = this.known.get(sessionId);
+    if (entry !== undefined) this.known.set(sessionId, { ...entry, updatedAt: startedAt });
     events.push(
-      { kind: "userMessageAppended", sessionId: targetId, blockId: newBlockId("user"), text },
-      { kind: "sessionLiveChanged", sessionId: targetId, live: true },
-      { kind: "turnStarted", sessionId: targetId, at: startedAt },
+      { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), text },
+      { kind: "sessionLiveChanged", sessionId, live: true },
+      { kind: "turnStarted", sessionId, at: startedAt },
     );
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
@@ -1051,7 +931,7 @@ export class SessionManager {
     const chips = session.pendingContext;
     session.pendingContext = [];
     for (const chip of chips) {
-      events.push({ kind: "contextChipRemoved", sessionId: targetId, chipId: chip.id });
+      events.push({ kind: "contextChipRemoved", sessionId, chipId: chip.id });
     }
     this.hooks.emit(...events);
 
@@ -1093,7 +973,7 @@ export class SessionManager {
     const endTurn = (stopReason: string, usage: TurnUsage | null) =>
       this.hooks.emit({
         kind: "turnEnded",
-        sessionId: targetId,
+        sessionId,
         blockId: newBlockId("turn"),
         startedAt,
         at: new Date().toISOString(),
@@ -1101,12 +981,12 @@ export class SessionManager {
         usage,
       });
     try {
-      const response = await this.pool.prompt(session.poolKey, targetId, prompt);
+      const response = await this.pool.prompt(session.poolKey, sessionId, prompt);
       // end_turn is the unremarkable outcome; anything else is worth a line.
       if (response.stopReason === "end_turn") {
-        this.log.debug(`session ${targetId}: turn ended`);
+        this.log.debug(`session ${sessionId}: turn ended`);
       } else {
-        this.log.info(`session ${targetId}: turn stopped — ${response.stopReason}`);
+        this.log.info(`session ${sessionId}: turn stopped — ${response.stopReason}`);
       }
       endTurn(response.stopReason, toTurnUsage(response.usage));
     } catch (err) {
@@ -1116,16 +996,16 @@ export class SessionManager {
     } finally {
       // The session object may have been replaced under this turn (a
       // reload's fresh LiveSession) — flag the current one, not the capture.
-      const current = this.sessions.get(targetId);
+      const current = this.sessions.get(sessionId);
       if (current !== undefined) {
         current.inFlight = false;
         current.lastActivityAt = Date.now();
         if (current.rootsDirty) {
           current.rootsDirty = false;
-          void this.reapplyRoots(targetId);
+          void this.reapplyRoots(sessionId);
         }
       }
-      this.hooks.emit({ kind: "sessionLiveChanged", sessionId: targetId, live: false });
+      this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
     }
   }
 
@@ -1294,18 +1174,25 @@ export class SessionManager {
     }
   }
 
-  /** `session_info_update`: the agent pushed new title/updatedAt. Same
-   * title-authority rule as the list merge — agent wins unless the user
-   * explicitly renamed. A null title is a clear, not a rename: patchbay
-   * keeps its own (a session list with blank rows helps no one). */
+  /** Title bookkeeping shared by auto-titling and the agent's own pushes —
+   * the known map mirrors what the view shows. */
+  private retitle(sessionId: string, title: string): void {
+    const entry = this.known.get(sessionId);
+    if (entry !== undefined) this.known.set(sessionId, { ...entry, title });
+  }
+
+  /** `session_info_update`: the agent pushed new title/updatedAt. The
+   * agent's title always wins (there is no patchbay-side rename). A null
+   * title is a clear, not a rename: patchbay keeps its own (a session list
+   * with blank rows helps no one). */
   private async noteInfoUpdate(
     sessionId: string,
     update: { title?: string | null; updatedAt?: string | null },
   ): Promise<void> {
-    const entry = this.sessionIndex.get(sessionId);
+    const entry = this.known.get(sessionId);
     if (entry === undefined) return;
-    if (update.title == null || entry.renamedByUser === true || update.title === entry.title) return;
-    await this.sessionIndex.rename(sessionId, update.title);
+    if (update.title == null || update.title === entry.title) return;
+    this.retitle(sessionId, update.title);
     this.hooks.emit({ kind: "sessionRenamed", sessionId, title: update.title });
   }
 }

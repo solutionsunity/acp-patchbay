@@ -59,10 +59,10 @@ const STATE_TEXT = {
 /** Cell tooltips explain consequences (ui.md § Capability matrix) — what a
  * missing/unused row actually costs the user, not just its state. */
 const ROW_CONSEQUENCE: Partial<Record<CapabilityRowId, string>> = {
-  "session.fork": "without it, branching is emulated — seeded from the transcript, labeled",
-  "session.load": "without it, reopening after a restart falls back to an emulated continuation",
+  "session.fork": "native session branching — no patchbay feature rides it yet",
+  "session.load": "full history replay — without it, a closed session reopens context-only (resume) or not at all, and idle sessions are never auto-closed",
   "session.resume": "continues a dead session without replay — real memory, but no visible history; load is preferred",
-  "session.list": "the agent's own session history feeds the list — without it, only sessions patchbay created show",
+  "session.list": "the agent's own session history is the only list — without it, only currently-open sessions show, and nothing survives a reload",
   "session.delete": "without it, removing a session only forgets it in patchbay — the agent's own history keeps it",
   "session.close": "lets patchbay free an idle session's agent-side resources — reopened on demand via load/resume",
   "fs.readTextFile": "brokered read path — gates the fully-brokered fidelity label",

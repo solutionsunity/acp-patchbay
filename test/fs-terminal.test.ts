@@ -13,7 +13,6 @@ import { SessionManager } from "../src/orchestrator/session-manager";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import {
   initialAgentViewState,
   reduceAgentView,
@@ -126,7 +125,6 @@ function harness() {
 
   sessionManager = new SessionManager(
     pool,
-    new SessionIndexStore(new MemoryKV()),
     { emit: (...evs) => events.push(...evs) },
     () => workspaceRoot,
   );

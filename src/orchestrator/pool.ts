@@ -606,9 +606,9 @@ export class AgentPool {
 
   /** Re-attaches to a session *without* replay (`session/resume`): the agent
    * restores its own context and returns immediately — real memory, no
-   * visible history. The ladder rung between load and an emulated
-   * continuation; load is preferred wherever declared (architecture.md
-   * § State: what the user sees and what the agent remembers must match). */
+   * visible history. The attach ladder's last rung; load is preferred
+   * wherever declared (architecture.md § State: what the user sees and
+   * what the agent remembers must match). */
   async resumeSession(
     poolKey: string,
     sessionId: string,

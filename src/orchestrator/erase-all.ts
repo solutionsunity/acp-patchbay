@@ -25,14 +25,12 @@ export interface EraseTargets {
   integrationConfigs: RecordStoreLike;
   usedCapabilities: RecordStoreLike;
   spawnRegistry: RecordStoreLike;
-  sessionIndex: RecordStoreLike;
   agentEnv: SecretsById;
   integrationEnv: SecretsById;
   integrationTokens: SecretsById;
   permissionRules: { set(rules: PermissionRules): Promise<void> };
   machineRules: { set(rules: CommandRule[]): Promise<void> };
   decisionAudit: Wipeable;
-  lastKnownView: Wipeable;
   lastConnected: Wipeable;
   lastActiveSession: Wipeable;
 }
@@ -42,9 +40,8 @@ export interface EraseTargets {
  * lists are the only key index into it, so secrets are deleted while their
  * config records still exist; a config removed first would strand its
  * secret in the OS store forever. Limits (documented in the README): this
- * window's workspaceState only — other workspaces' session indexes and
- * rules are unreachable from here — and only secrets the current config
- * lists still name. */
+ * window's workspaceState only — other workspaces' rules are unreachable
+ * from here — and only secrets the current config lists still name. */
 export async function eraseAllData(targets: EraseTargets): Promise<void> {
   // 1 — secrets, while their key index still exists.
   for (const { id } of targets.agentConfigs.list()) {
@@ -61,7 +58,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     targets.integrationConfigs,
     targets.usedCapabilities,
     targets.spawnRegistry,
-    targets.sessionIndex,
   ];
   for (const store of recordStores) {
     for (const record of store.list()) await store.remove(record.id);
@@ -70,7 +66,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.permissionRules.set(DEFAULT_PERMISSION_RULES);
   await targets.machineRules.set([]);
   await targets.decisionAudit.wipe();
-  await targets.lastKnownView.wipe();
   await targets.lastConnected.wipe();
   await targets.lastActiveSession.wipe();
 }

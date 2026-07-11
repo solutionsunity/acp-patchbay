@@ -1,6 +1,7 @@
 // P4 gate: session/new → prompt → streamed session/update → transcript;
-// stop turn; session index rename/close; slash-command advertisement;
-// render cache rebuilt wholesale from session/load replay after a crash.
+// stop turn; close; slash-command advertisement; render cache rebuilt
+// wholesale from session/load replay after a crash. Sessions are the
+// agent's truth: patchbay persists no index and no transcripts.
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,6 @@ import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
@@ -44,17 +44,15 @@ function spec(script: FakeAgentScript, agentId = "fake"): LaunchSpec {
   };
 }
 
-/** Wires a pool + session manager the way Orchestrator does, minus vscode.
- * `lastKnownView`, when supplied, stands in for the persisted-to-disk store
- * a real Orchestrator would read from (P8's emulated dead-end fallback). */
+/** Wires a pool + session manager the way Orchestrator does, minus vscode. */
 function harness(opts?: {
-  lastKnownView?(sessionId: string): { at: string; blocks: readonly ChatBlock[] } | null;
   /** Idle reaper period — default null (disabled) so tests opt in. */
   idleCloseMs?: number;
+  /** Stand-in for the reducer-derived unseen (blue) mark. */
+  isUnseen?(sessionId: string): boolean;
 }): {
   pool: AgentPool;
   sessionManager: SessionManager;
-  sessionIndex: SessionIndexStore;
   capabilityTracker: CapabilityTracker;
   events: AgentViewEvent[];
   state(): AgentViewState;
@@ -84,13 +82,10 @@ function harness(opts?: {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
   });
-  const sessionIndex = new SessionIndexStore(new MemoryKV());
   sessionManager = new SessionManager(
     pool,
-    sessionIndex,
     {
       emit: (...evs) => events.push(...evs),
-      lastKnownView: async (sessionId) => opts?.lastKnownView?.(sessionId) ?? null,
       contextRootsFor: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       currentTranscript: (sessionId) =>
@@ -100,6 +95,7 @@ function harness(opts?: {
           ?.used ?? false,
       isActiveSession: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
+      isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
     },
     () => cwd,
     undefined,
@@ -109,7 +105,6 @@ function harness(opts?: {
   return {
     pool,
     sessionManager,
-    sessionIndex,
     capabilityTracker,
     events,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
@@ -202,21 +197,16 @@ describe("SessionManager", () => {
     await h.pool.stop("sm3");
   });
 
-  it("renames and closes sessions", async () => {
+  it("closes sessions — row and transcript leave the view", async () => {
     const h = harness();
     await h.pool.connect(spec({}, "sm4"));
     const sessionId = await h.sessionManager.createSession("sm4", "Fake Agent", cwd);
-
-    await h.sessionManager.rename(sessionId, "my custom title");
-    expect(h.state().sessions[0]?.title).toBe("my custom title");
-
-    // an explicit rename is never clobbered by first-prompt auto-titling
-    await h.sessionManager.sendPrompt(sessionId, "irrelevant text");
-    expect(h.state().sessions[0]?.title).toBe("my custom title");
+    await h.sessionManager.sendPrompt(sessionId, "some words");
 
     await h.sessionManager.close(sessionId);
     expect(h.state().sessions).toHaveLength(0);
     expect(h.state().transcripts[sessionId]).toBeUndefined();
+    expect(h.sessionManager.knows(sessionId)).toBe(false);
 
     await h.pool.stop("sm4");
   });
@@ -253,39 +243,27 @@ describe("SessionManager", () => {
     await h.pool.stop("sm5");
   });
 
-  it("without loadSession declared, a crash falls back to an emulated continuation seeded from the last-known view (P8)", async () => {
+  it("without load or resume declared, a prompt on a dead session fails honestly — never a minted continuation", async () => {
     // A sessionId is connection-scoped; without replay there is no
-    // protocol-legal way to resume it on the new connection. The only
-    // continuation left is emulated: a fresh session/new, its transcript
-    // seeded from patchbay's persisted last-known view, clearly labeled —
-    // never presented as the agent's own memory (architecture.md § State).
-    let persisted: readonly ChatBlock[] | null = null;
-    const h = harness({
-      lastKnownView: (sessionId) =>
-        persisted && sessionId === deadSessionId ? { at: "2026-01-01T00:00:00.000Z", blocks: persisted } : null,
-    });
+    // protocol-legal way to continue it on the new connection. Patchbay
+    // never mints a session and calls it a continuation: the prompt
+    // rejects, the transcript stands untouched, no sibling appears.
+    const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "only turn" }] }, "sm6"));
     const deadSessionId = await h.sessionManager.createSession("sm6", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(deadSessionId, "hello");
     const before = h.state().transcripts[deadSessionId]!;
     expect(before.length).toBeGreaterThan(0);
-    persisted = before; // what a real orchestrator would have written to disk by now
 
     await h.pool.restart("sm6");
     expect(h.pool.get("sm6")?.declared?.loadSession).toBe(false);
 
-    await h.sessionManager.sendPrompt(deadSessionId, "after restart");
+    await expect(h.sessionManager.sendPrompt(deadSessionId, "after restart")).rejects.toThrow(
+      /neither session\/load nor session\/resume/,
+    );
 
-    // the dead session's last-known view is untouched
     expect(h.state().transcripts[deadSessionId]).toEqual(before);
-    // a new, labeled continuation exists, branched from the dead session and
-    // seeded from its persisted view
-    const branch = h.state().sessions.find((s) => s.branchOf === deadSessionId);
-    expect(branch?.emulated).toBe(true);
-    expect(h.state().activeSessionId).toBe(branch!.id);
-    const continued = h.state().transcripts[branch!.id]!;
-    expect(continued.slice(0, before.length)).toEqual(before);
-    expect(continued.some((b) => b.kind === "user" && b.text === "after restart")).toBe(true);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([deadSessionId]);
 
     await h.pool.stop("sm6");
   });
@@ -715,36 +693,22 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11p");
   });
 
-  it("a fork inherits its parent's context roots, used on the wire", async () => {
+  it("a still-new session is findable for add-session focus; the first prompt ends that", async () => {
     const h = harness();
-    await h.pool.connect(
-      spec({ declare: { sessionCapabilities: { fork: {} } }, turn: [{ type: "echoRoots" }] }, "sm12"),
-    );
-    const cell = () => h.state().capabilities.sm12?.["session.fork"];
-    const start = Date.now();
-    while (!cell()?.used) {
-      if (Date.now() - start > 3000) throw new Error("fork never used");
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    const created = await h.sessionManager.createSession("sm12", "Fake Agent", cwd);
-    // zero-turn parent: the root add recreates it (the universal rung) —
-    // the branch below must ride the recreated id, exactly as the UI does
-    await h.sessionManager.addRoot(created, "/repo/shared");
-    const parentId = h.state().activeSessionId!;
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm14"));
+    const sessionId = await h.sessionManager.createSession("sm14", "Fake Agent", cwd);
+    expect(h.sessionManager.findNeverPrompted("sm14")).toBe(sessionId);
+    expect(h.sessionManager.findNeverPrompted("other-agent")).toBeUndefined();
 
-    const branchId = await h.sessionManager.branch(parentId, []);
-    expect(h.state().contextRoots[branchId]).toEqual(["/repo/shared"]);
+    await h.sessionManager.sendPrompt(sessionId, "first words");
+    expect(h.sessionManager.findNeverPrompted("sm14")).toBeUndefined();
 
-    await h.sessionManager.sendPrompt(branchId, "roots?");
-    const echoed = h.state().transcripts[branchId]!.filter((b) => b.kind === "text").at(-1);
-    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/shared"]);
-
-    await h.pool.stop("sm12");
+    await h.pool.stop("sm14");
   });
 });
 
-// ── session history: the agent's own session/list is the truth for who
-// exists; patchbay's index is fallback + overlay (emulated/branchOf/renames).
+// ── session history: the agent's own session/list is the only list there
+// is — patchbay persists no session records (no index, no transcripts).
 describe("session history (list / resume / delete)", () => {
   const LIST_CAPS = { sessionCapabilities: { list: {}, delete: {} } };
 
@@ -763,98 +727,62 @@ describe("session history (list / resume / delete)", () => {
     const state = h.state();
     expect(state.sessions.map((s) => s.id)).toContain("ext-1");
     expect(state.sessions.map((s) => s.id)).toContain(mine);
-    const ext = state.sessions.find((s) => s.id === "ext-1")!;
-    expect(ext).toMatchObject({ live: false, emulated: false, branchOf: null });
+    expect(state.sessions.find((s) => s.id === "ext-1")).toMatchObject({ live: false });
     // the sync never activates anything — the user's focus is theirs
     expect(state.activeSessionId).toBe(mine);
-    // and the index (the restart-surviving list) learned it too
-    expect(h.sessionIndex.get("ext-1")?.agentId).toBe("sh1");
+    expect(h.sessionManager.knows("ext-1")).toBe(true);
     // the wire round-trip proved the row
     expect(state.capabilities.sh1?.["session.list"]).toMatchObject({ declared: true, used: true });
 
     await h.pool.stop("sh1");
   });
 
-  it("prunes index entries the agent no longer reports — wire truth wins", async () => {
+  it("prunes rows the agent no longer reports — wire truth wins", async () => {
+    const { mkdir, writeFile, rm: rmFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "gone-1.jsonl"), "", "utf8");
+
     const h = harness();
-    await h.sessionIndex.upsert({
-      id: "gone-1",
-      agentId: "sh2",
-      title: "deleted elsewhere",
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-    });
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh2"));
     await h.sessionManager.syncAgentSessions("sh2");
+    expect(h.sessionManager.knows("gone-1")).toBe(true);
 
-    expect(h.sessionIndex.get("gone-1")).toBeUndefined();
+    // deleted externally (CLI, another editor) — the next sync drops it
+    await rmFile(join(cwd, ".fake-agent-sessions", "gone-1.jsonl"));
+    await h.sessionManager.syncAgentSessions("sh2");
+
+    expect(h.sessionManager.knows("gone-1")).toBe(false);
     expect(h.events.some((e) => e.kind === "sessionClosed" && e.sessionId === "gone-1")).toBe(true);
 
     await h.pool.stop("sh2");
   });
 
-  it("prune spares rows with a local last-known view — patchbay's record is not the wire's to erase", async () => {
-    const h = harness({
-      lastKnownView: (sessionId) =>
-        sessionId === "kept-1"
-          ? { at: "2026-01-01T00:00:00Z", blocks: [{ kind: "user", id: "u1", text: "real content" }] }
-          : null,
-    });
-    for (const id of ["kept-1", "gone-2"]) {
-      await h.sessionIndex.upsert({
-        id,
-        agentId: "sh2b",
-        title: id,
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      });
-    }
-    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh2b"));
-    await h.sessionManager.syncAgentSessions("sh2b");
+  it("a load-declared agent that lost the session: the prompt fails honestly, nothing is minted", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "lost-1.jsonl"), "", "utf8");
 
-    expect(h.sessionIndex.get("kept-1")).toBeDefined(); // survives: it has a record
-    expect(h.sessionIndex.get("gone-2")).toBeUndefined(); // view-less: genuinely nothing
-    expect(h.events.some((e) => e.kind === "sessionClosed" && e.sessionId === "kept-1")).toBe(false);
-
-    await h.pool.stop("sh2b");
-  });
-
-  it("a load-declared agent that lost the session: prompt descends the ladder to an emulated continuation", async () => {
-    const h = harness({
-      lastKnownView: (sessionId) =>
-        sessionId === "lost-1"
-          ? { at: "2026-01-01T00:00:00Z", blocks: [{ kind: "user", id: "u1", text: "earlier words" }] }
-          : null,
-    });
     // failLoad: load 404s and drops the session — the corpse-leaving agent
+    const h = harness();
     await h.pool.connect(
-      spec({ declare: { loadSession: true }, failLoad: true, turn: [{ type: "chunk", text: "ok" }] }, "sh2c"),
+      spec(
+        { declare: { ...LIST_CAPS, loadSession: true }, failLoad: true, turn: [{ type: "chunk", text: "ok" }] },
+        "sh2c",
+      ),
     );
-    await h.sessionIndex.upsert({
-      id: "lost-1",
-      agentId: "sh2c",
-      title: "lost upstream",
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-    });
+    await h.sessionManager.syncAgentSessions("sh2c");
+    const before = h.state().sessions.map((s) => s.id);
 
-    await h.sessionManager.sendPrompt("lost-1", "continue please");
+    await expect(h.sessionManager.sendPrompt("lost-1", "continue please")).rejects.toThrow();
 
-    // a fresh, honestly-labeled continuation took the prompt
-    const newId = h.events
-      .flatMap((e) => (e.kind === "sessionActivated" ? [e.sessionId] : []))
-      .at(-1)!;
-    expect(newId).not.toBe("lost-1");
-    const summary = h.state().sessions.find((s) => s.id === newId);
-    expect(summary?.emulated).toBe(true);
-    const blocks = h.state().transcripts[newId]!;
-    expect(blocks.some((b) => b.kind === "user" && b.text === "earlier words")).toBe(true); // seeded
-    expect(blocks.some((b) => b.kind === "user" && b.text === "continue please")).toBe(true); // and continued
+    // no sibling appeared, nothing activated itself
+    expect(h.state().sessions.map((s) => s.id)).toEqual(before);
+    expect(h.events.some((e) => e.kind === "sessionActivated")).toBe(false);
 
     await h.pool.stop("sh2c");
   });
 
-  it("agent title wins over the auto-derived one, never over a user rename", async () => {
+  it("the agent's title always wins — patchbay-side rename is gone", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS, listWithTitles: true }, "sh3"));
     const sessionId = await h.sessionManager.createSession("sh3", "Fake Agent", cwd);
@@ -864,14 +792,10 @@ describe("session history (list / resume / delete)", () => {
     await h.sessionManager.syncAgentSessions("sh3");
     expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe(`fake:${sessionId}`);
 
-    await h.sessionManager.rename(sessionId, "mine, explicitly");
-    await h.sessionManager.syncAgentSessions("sh3");
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("mine, explicitly");
-
     await h.pool.stop("sh3");
   });
 
-  it("session_info_update retitles live, respecting the same rename rule", async () => {
+  it("session_info_update retitles live", async () => {
     const h = harness();
     await h.pool.connect(
       spec({ declare: LIST_CAPS, turn: [{ type: "infoUpdate", title: "agent named me" }] }, "sh4"),
@@ -881,7 +805,6 @@ describe("session history (list / resume / delete)", () => {
     // noteInfoUpdate is fire-and-forget off the notification — settle it
     await new Promise((r) => setTimeout(r, 50));
     expect(h.state().sessions[0]?.title).toBe("agent named me");
-    expect(h.sessionIndex.get(sessionId)?.title).toBe("agent named me");
 
     await h.pool.stop("sh4");
   });
@@ -946,28 +869,27 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh7");
   });
 
-  it("opening with no replay available seeds the persisted view, agent untouched", async () => {
-    const view = {
-      at: "2026-07-09T10:00:00Z",
-      blocks: [{ kind: "user", id: "u1", text: "from the persisted view" }] as ChatBlock[],
-    };
-    const h = harness({ lastKnownView: (id) => (id === "dead-1" ? view : null) });
-    await h.sessionIndex.upsert({
-      id: "dead-1",
-      agentId: "sh8",
-      title: "old",
-      createdAt: "2026-07-09T09:00:00Z",
-      updatedAt: "2026-07-09T10:00:00Z",
-    });
-    // agent never connected — the view is the only content there is
+  it("opening a session neither load nor resume can reach says so — a notice, never faked content", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "dead-1.jsonl"), "", "utf8");
+
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh8")); // list only — no load, no resume
+    await h.sessionManager.syncAgentSessions("sh8");
+
     h.sessionManager.activate("dead-1");
     const start = Date.now();
     while (!h.events.some((e) => e.kind === "transcriptSeeded" && e.sessionId === "dead-1")) {
-      if (Date.now() - start > 3000) throw new Error("view never seeded");
+      if (Date.now() - start > 3000) throw new Error("notice never seeded");
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(h.state().transcripts["dead-1"]).toEqual(view.blocks);
-    expect(h.sessionManager.isLive("dead-1")).toBe(false); // a read, not a continuation
+    const blocks = h.state().transcripts["dead-1"]!;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.kind === "notice" && blocks[0].text).toContain("can't be reopened");
+    expect(h.sessionManager.isLive("dead-1")).toBe(false);
+
+    await h.pool.stop("sh8");
   });
 
   it("opening a resume-only session attaches it, saying load isn't supported", async () => {
@@ -1006,7 +928,7 @@ describe("session history (list / resume / delete)", () => {
     const sessionId = await h.sessionManager.createSession("sh10", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "work");
 
-    await h.sessionManager.release(sessionId, "switched away");
+    await h.sessionManager.release(sessionId, "idle");
     expect(h.sessionManager.isLive(sessionId)).toBe(false);
     expect(h.state().capabilities.sh10?.["session.close"]).toMatchObject({ declared: true, used: true });
     // the row survives — release frees resources, it never closes the chat
@@ -1022,14 +944,18 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh10");
   });
 
-  it("release refuses when the agent offers no way back — no load, no resume", async () => {
+  it("release requires declared session/load — resume alone is not enough (no saved history to fall back on)", async () => {
     const h = harness();
-    await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sh11"));
+    await h.pool.connect(
+      spec({ declare: { sessionCapabilities: { close: {}, resume: {} } } }, "sh11"),
+    );
     const sessionId = await h.sessionManager.createSession("sh11", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(sessionId, "irreplaceable context");
+    await h.sessionManager.sendPrompt(sessionId, "irreplaceable transcript");
 
-    await h.sessionManager.release(sessionId, "switched away");
-    expect(h.sessionManager.isLive(sessionId)).toBe(true); // kept — closing it would strand the user
+    // resume would bring back the context but not the visible history —
+    // and patchbay persists none, so closing would destroy the only copy.
+    await h.sessionManager.release(sessionId, "idle");
+    expect(h.sessionManager.isLive(sessionId)).toBe(true);
 
     await h.pool.stop("sh11");
   });
@@ -1060,6 +986,56 @@ describe("session history (list / resume / delete)", () => {
 
     h.sessionManager.dispose();
     await h.pool.stop("sh12");
+  });
+
+  it("the reaper never touches a still-new session — new sessions never close, period", async () => {
+    const h = harness({ idleCloseMs: 100 });
+    await h.pool.connect(
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { close: {} } }, turn: [{ type: "chunk", text: "x" }] },
+        "sh13",
+      ),
+    );
+    const fresh = await h.sessionManager.createSession("sh13", "Fake Agent", cwd);
+    const active = await h.sessionManager.createSession("sh13", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(active, "make this one the visible, prompted one");
+    expect(h.state().activeSessionId).toBe(active);
+
+    // well past the idle threshold: the never-prompted session is untouched
+    await new Promise((r) => setTimeout(r, 400));
+    expect(h.sessionManager.isLive(fresh)).toBe(true);
+
+    h.sessionManager.dispose();
+    await h.pool.stop("sh13");
+  });
+
+  it("the reaper never closes under an unseen result — the blue mark blocks it", async () => {
+    let unseenId: string | null = null;
+    const h = harness({ idleCloseMs: 100, isUnseen: (id) => id === unseenId });
+    await h.pool.connect(
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { close: {} } }, turn: [{ type: "chunk", text: "x" }] },
+        "sh14",
+      ),
+    );
+    const idle = await h.sessionManager.createSession("sh14", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(idle, "finished while looking away");
+    unseenId = idle;
+    const active = await h.sessionManager.createSession("sh14", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(active, "the visible one");
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(h.sessionManager.isLive(idle)).toBe(true); // blue mark holds it open
+
+    unseenId = null; // the user looked — first reap after that may release it
+    const start = Date.now();
+    while (h.sessionManager.isLive(idle)) {
+      if (Date.now() - start > 3000) throw new Error("reaper never fired after unseen cleared");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    h.sessionManager.dispose();
+    await h.pool.stop("sh14");
   });
 
   it("close deletes on the agent once session.delete is used — no resurrection on resync", async () => {

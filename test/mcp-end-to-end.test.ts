@@ -25,8 +25,6 @@ import {
 } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
-import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -139,7 +137,6 @@ function harness() {
   });
   const sessionManager = new SessionManager(
     pool,
-    new SessionIndexStore(new MemoryKV()),
     {
       emit: (...evs) => events.push(...evs),
       mapContextToken: (token, sessionId) => host.contextTokenToSession.set(token, sessionId),

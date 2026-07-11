@@ -52,11 +52,7 @@ export function App({ state }: { state: AgentViewState }) {
         onNew={newChat}
       />
       {active !== null && (
-        <SessionRow
-          session={active}
-          forkUsed={state.capabilities[active.agentId]?.["session.fork"]?.used ?? false}
-          onTitle={() => setDrawer("sessions")}
-        />
+        <SessionRow session={active} onTitle={() => setDrawer("sessions")} />
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (
         <div className="crash-banner">
@@ -114,7 +110,6 @@ export function App({ state }: { state: AgentViewState }) {
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
-          forkUsed={(agentId) => state.capabilities[agentId]?.["session.fork"]?.used ?? false}
           onNew={newChat}
           onDone={() => setDrawer(null)}
         />

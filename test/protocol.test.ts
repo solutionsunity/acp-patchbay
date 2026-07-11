@@ -8,7 +8,6 @@ import {
   initialSettingsState,
   reduceAgentView,
   reduceSettings,
-  restoredSessionState,
   type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
@@ -110,7 +109,7 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "t", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1", agentId: "claude", title: "t", live: false, updatedAt: "2026-07-09T00:00:00Z" },
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
@@ -277,7 +276,7 @@ describe("applyHostMessage", () => {
 describe("session activity + unseen (drawer ordering / dots)", () => {
   const mk = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, agentId: "claude", title: id, live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" },
+    session: { id, agentId: "claude", title: id, live: false, updatedAt: "2026-07-09T00:00:00Z" },
   });
 
   it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
@@ -323,52 +322,10 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
       { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
       {
         kind: "sessionListed",
-        session: { id: "a", agentId: "claude", title: "a", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T09:00:00Z" },
+        session: { id: "a", agentId: "claude", title: "a", live: false, updatedAt: "2026-07-09T09:00:00Z" },
       },
     ]);
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
   });
 });
 
-// Restart rehydration: the session index is the only session list there is
-// (ACP has no enumeration), so the initial view state must carry it.
-describe("restoredSessionState", () => {
-  const entries = [
-    { id: "s2", agentId: "gemini", title: "Later", createdAt: "2026-07-09T10:00:00Z", emulated: true, branchOf: "s1" },
-    { id: "s1", agentId: "claude", title: "Earlier", createdAt: "2026-07-08T10:00:00Z" },
-  ];
-
-  it("orders by createdAt ascending — the order the reducer would have built", () => {
-    const s = restoredSessionState(entries);
-    expect(s.sessions.map((x) => x.id)).toEqual(["s1", "s2"]);
-  });
-
-  it("restores not-live summaries, defaulting pre-field entries honestly", () => {
-    const s = restoredSessionState(entries);
-    // updatedAt falls back to createdAt for entries written before the field
-    expect(s.sessions[0]).toEqual({
-      id: "s1", agentId: "claude", title: "Earlier", live: false, emulated: false, branchOf: null,
-      updatedAt: "2026-07-08T10:00:00Z",
-    });
-    expect(s.sessions[1]).toEqual({
-      id: "s2", agentId: "gemini", title: "Later", live: false, emulated: true, branchOf: "s1",
-      updatedAt: "2026-07-09T10:00:00Z",
-    });
-  });
-
-  it("establishes the same per-session collections sessionCreated would", () => {
-    const state: AgentViewState = { ...initialAgentViewState, ...restoredSessionState(entries) };
-    for (const id of ["s1", "s2"]) {
-      expect(state.transcripts[id]).toEqual([]);
-      expect(state.commandsBySession[id]).toEqual([]);
-      expect(state.contextChips[id]).toEqual([]);
-      expect(state.sessionKnobs[id]).toEqual([]);
-      expect(state.contextRoots[id]).toEqual([]);
-    }
-    expect(state.activeSessionId).toBeNull();
-    // A rehydrated session must close cleanly through the ordinary reducer path.
-    const closed = reduceAgentView(state, { kind: "sessionClosed", sessionId: "s1" });
-    expect(closed.sessions.map((x) => x.id)).toEqual(["s2"]);
-    expect(closed.transcripts["s1"]).toBeUndefined();
-  });
-});

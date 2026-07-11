@@ -17,7 +17,7 @@ describe("statusBarContent", () => {
   it("shows the active session's title under the Patchbay mark — running adds no glyph", () => {
     const content = statusBarContent(
       state({
-        sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" }],
+        sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
         agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
       }),
@@ -29,7 +29,7 @@ describe("statusBarContent", () => {
   it("a crashed agent shows an error glyph, not the running one", () => {
     const content = statusBarContent(
       state({
-        sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" }],
+        sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
         agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false }],
       }),
@@ -39,7 +39,7 @@ describe("statusBarContent", () => {
 
   it("appends usage only once reported — absent, never a fake 0%", () => {
     const base = state({
-      sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T00:00:00Z" }],
+      sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
       activeSessionId: "s1",
       agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false }],
     });

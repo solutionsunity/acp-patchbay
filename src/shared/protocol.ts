@@ -61,7 +61,6 @@ export type Action =
    * live stores and answer with dataInventoryChanged. */
   | { kind: "refreshDataInventory" }
   | { kind: "switchSession"; sessionId: string }
-  | { kind: "renameSession"; sessionId: string; title: string }
   | { kind: "closeSession"; sessionId: string }
   /** `text` is the readable form (transcript + title derivation). `parts`,
    * when present, is the same content with inline file mentions kept
@@ -96,7 +95,6 @@ export type Action =
   | { kind: "addFileContext"; sessionId: string }
   | { kind: "addDiagnosticsContext"; sessionId: string }
   | { kind: "removeContextChip"; sessionId: string; chipId: string }
-  | { kind: "branchSession"; sessionId: string }
   | { kind: "reloadSession"; sessionId: string }
   /** One action for every knob — the UI never knows (render-only-webview)
    * whether a knob rides ACP's config-option surface or the legacy modes
@@ -554,10 +552,6 @@ export interface SessionSummary {
   title: string;
   /** Turn in flight. */
   live: boolean;
-  /** Continuation seeded by patchbay, not replayed natively — always labeled. */
-  emulated: boolean;
-  /** Parent session id when this is a branch (⑂ badge names its parent). */
-  branchOf: string | null;
   /** ISO time of the last activity — creation, prompt send, turn end, or
    * the agent's own session/list metadata, whichever is newest. The
    * drawer's sort key ("latest" = last activity, not creation). */
@@ -916,62 +910,6 @@ export const initialAgentViewState: AgentViewState = {
   workspaceFiles: { query: "", files: [], dirs: [] },
 };
 
-/** One persisted session-index entry, as rehydration needs it — structural
- * on purpose so this shared module never imports orchestrator store types. */
-export interface RestorableSessionEntry {
-  id: string;
-  agentId: string;
-  title: string;
-  createdAt: string;
-  updatedAt?: string;
-  emulated?: boolean;
-  branchOf?: string | null;
-}
-
-/** Rehydrates the persisted session index into initial view state, so the
- * session list survives an extension-host restart (ACP has no session
- * enumeration — the index is the only list there is). Every session comes
- * back `live: false` with the same empty per-session collections the
- * `sessionCreated` reducer case establishes; transcripts refill through the
- * normal continuation paths (session/load replay, or the last-known-view
- * emulated seed) on first use — never from here. Nothing activates:
- * `activeSessionId` stays null until the user picks a session. */
-export function restoredSessionState(
-  entries: readonly RestorableSessionEntry[],
-): Pick<
-  AgentViewState,
-  "sessions" | "transcripts" | "commandsBySession" | "contextChips" | "sessionKnobs" | "contextRoots"
-> {
-  // createdAt ascending — the reducer appends new sessions, so newest-last
-  // is the order the list would have had without the restart.
-  const ordered = [...entries].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const state = {
-    sessions: [] as SessionSummary[],
-    transcripts: {} as Record<string, readonly ChatBlock[]>,
-    commandsBySession: {} as Record<string, readonly AvailableCommand[]>,
-    contextChips: {} as Record<string, readonly ContextChip[]>,
-    sessionKnobs: {} as Record<string, readonly SessionKnobView[]>,
-    contextRoots: {} as Record<string, readonly string[]>,
-  };
-  for (const e of ordered) {
-    state.sessions.push({
-      id: e.id,
-      agentId: e.agentId,
-      title: e.title,
-      live: false,
-      emulated: e.emulated ?? false,
-      branchOf: e.branchOf ?? null,
-      updatedAt: e.updatedAt ?? e.createdAt,
-    });
-    state.transcripts[e.id] = [];
-    state.commandsBySession[e.id] = [];
-    state.contextChips[e.id] = [];
-    state.sessionKnobs[e.id] = [];
-    state.contextRoots[e.id] = [];
-  }
-  return state;
-}
-
 export type AgentViewEvent =
   | { kind: "agentUpserted"; agent: AgentSummary }
   | { kind: "agentRemoved"; agentId: string }
@@ -1076,9 +1014,9 @@ export type AgentViewEvent =
    * response, a config_option_update or current_mode_update notification, a
    * set_config_option response) lands here already normalized by knobs.ts. */
   | { kind: "sessionKnobsSet"; sessionId: string; knobs: readonly SessionKnobView[] }
-  /** A branch (native or emulated) or an emulated dead-end continuation
-   * seeding its transcript wholesale — never merged, same "replay always
-   * wins" rule as transcriptReset (architecture.md § Last-known view). */
+  /** The resume rung's seed (cached view + seam notice) or a cannot-reopen
+   * notice — the transcript is replaced wholesale, never merged: same
+   * "replay always wins" rule as transcriptReset. */
   | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
   /** Full replace — the current external-root list for a session. */
   | { kind: "contextRootsChanged"; sessionId: string; roots: readonly string[] }
@@ -1355,8 +1293,6 @@ export function reduceAgentView(
               ? {
                   ...s,
                   title: event.session.title,
-                  emulated: event.session.emulated,
-                  branchOf: event.session.branchOf,
                   updatedAt:
                     event.session.updatedAt > s.updatedAt ? event.session.updatedAt : s.updatedAt,
                 }

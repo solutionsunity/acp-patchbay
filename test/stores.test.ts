@@ -17,7 +17,6 @@ import {
   DEFAULT_PERMISSION_RULES,
   PermissionRulesStore,
 } from "../src/orchestrator/stores/permission-rules";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 
 describe("SpawnRegistryStore", () => {
@@ -95,22 +94,6 @@ describe("LastActiveSessionStore — the last-open-session pointer", () => {
     await new LastActiveSessionStore(kv).set("s1");
     // A fresh store over the same KV (the next activate) still reads it.
     expect(new LastActiveSessionStore(kv).get()).toBe("s1");
-  });
-});
-
-describe("SessionIndexStore", () => {
-  it("upserts, renames, removes", async () => {
-    const store = new SessionIndexStore(new MemoryKV());
-    const ts = new Date().toISOString();
-    await store.upsert({ id: "s1", agentId: "claude", title: "first", createdAt: ts, updatedAt: ts });
-    await store.upsert({ id: "s2", agentId: "gemini", title: "second", createdAt: ts, updatedAt: ts });
-    expect(store.list().map((e) => e.id)).toEqual(["s1", "s2"]);
-
-    await store.rename("s1", "renamed");
-    expect(store.get("s1")?.title).toBe("renamed");
-
-    await store.remove("s2");
-    expect(store.list().map((e) => e.id)).toEqual(["s1"]);
   });
 });
 

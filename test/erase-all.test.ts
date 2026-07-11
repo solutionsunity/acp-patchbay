@@ -14,10 +14,8 @@ import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
-import { LastKnownViewStore } from "../src/orchestrator/stores/last-known-view";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
-import { SessionIndexStore } from "../src/orchestrator/stores/session-index";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
@@ -40,14 +38,12 @@ describe("eraseAllData", () => {
     const integrationConfigs = new IntegrationConfigStore(globalKv);
     const usedCapabilities = new UsedCapabilityStore(globalKv);
     const spawnRegistry = new SpawnRegistryStore(globalKv);
-    const sessionIndex = new SessionIndexStore(workspaceKv);
     const agentEnv = new SecretEnvStore(secrets, "acpPatchbay.agent");
     const integrationEnv = new SecretEnvStore(secrets, "acpPatchbay.integration");
     const integrationTokens = new IntegrationTokenStore(secrets);
     const permissionRules = new PermissionRulesStore(workspaceKv);
     const machineRules = new MachineRulesStore(globalKv);
     const decisionAudit = new DecisionAuditStore(dir);
-    const lastKnownView = new LastKnownViewStore(dir);
     const lastConnected = new LastConnectedStore(workspaceKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
 
@@ -61,33 +57,29 @@ describe("eraseAllData", () => {
     // A stray from a removed agent — no config left, must still go.
     await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false }));
     await spawnRegistry.add(4242, "node agent.js", "agent");
-    await sessionIndex.upsert({ id: "s1", agentId: "claude", title: "work", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
     await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], fileWriteScope: "always-ask" });
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
     await decisionAudit.append({ kind: "permission", decision: "allow" });
-    await lastKnownView.save("s1", [], "2026-01-01T00:00:00Z");
     await lastConnected.write(["claude"]);
     await lastActiveSession.set("s1");
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
-      spawnRegistry, sessionIndex, agentEnv, integrationEnv,
+      spawnRegistry, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
-      decisionAudit, lastKnownView, lastConnected, lastActiveSession,
+      decisionAudit, lastConnected, lastActiveSession,
     });
 
     expect(agentConfigs.list()).toEqual([]);
     expect(integrationConfigs.list()).toEqual([]);
     expect(usedCapabilities.list()).toEqual([]); // ghost gone too
     expect(spawnRegistry.list()).toEqual([]);
-    expect(sessionIndex.list()).toEqual([]);
     expect(await agentEnv.get("claude")).toEqual({});
     expect(await integrationEnv.get("github")).toEqual({});
     expect(await integrationTokens.get("github")).toBeNull();
     expect(permissionRules.get()).toEqual(DEFAULT_PERMISSION_RULES);
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(await decisionAudit.tail(5)).toEqual([]);
-    expect(await lastKnownView.load("s1")).toBeNull();
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();

@@ -34,8 +34,8 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   curated entry reverts to the catalog). Nothing is stored until it can work —
   a cancelled OAuth consent adds nothing.
 - **Branch** — the user-level concept: continue an alternate path from a session.
-  `session/fork` is one mechanism that implements it; emulated seeding is the
-  other. "Fork" only ever names the protocol method.
+  Out of v1 (§ Branching); "fork" only ever names the protocol method
+  `session/fork`, which remains a capability-matrix row.
 - **Routing** — the user's per-agent selection of which integrations that agent
   receives.
 
@@ -56,7 +56,7 @@ flowchart TD
     SET["Settings webview<br/><small>render only</small>"]
 
     subgraph ORCH["Orchestrator — Node, extension host<br/><small>single source of truth</small>"]
-        STATE["State & stores<br/><small>session index, capability tables,<br/>decision audit, config</small>"]
+        STATE["State & stores<br/><small>capability tables,<br/>decision audit, config</small>"]
         POOL["ACP client pool<br/><small>stdio JSON-RPC per agent process</small>"]
         BROKER["Permission broker<br/><small>one rule set, one surface</small>"]
         MCP["Local MCP server<br/><small>editor state, integrations, adapters</small>"]
@@ -136,12 +136,11 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Session index | IDs, titles, timestamps, agent, last agent-confirmed knob state | `workspaceState` | Small, machine-local, non-sensitive; confirmed knob state seeds emulated continuations (§ Session model) |
+| Known sessions | The mirror of the agent's own `session/list` (+ this window's creates): id, title, stamps | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). *(Supersedes the persisted session index and its fallback+overlay role — and the last-known-view files with it: both were caches presented next to truth)* |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
-| Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). Deliberately unbounded, unlike the stamp: reopening a *view* is free and safe at any age (open never emulates, never spawns), resurrecting *processes* is not. Not a session-index column — "last open" is a pointer into the set, not a fact about a session; exactly one may hold it |
+| Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
-| Last-known view | Render cache persisted, labeled "patchbay's view, up to \<time\>" | Files in workspace storage | Only for agents without `session/load`; a labeled fallback, not a competing truth |
 | Agent + integration configs | Agents (launch config, defaults), integrations, routing | `globalState` stores | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
 | Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + `globalState` (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials never ride agent-visible config at all — the bridge IPC-fetches its token at runtime |
@@ -164,12 +163,21 @@ later as an opt-in; the extension point is visible, deliberately unfilled.
 - **Per-agent process policy** (Settings): `auto` (default — share if concurrent
   behavior is *used*, isolate otherwise), `shared` (force, user accepts risk),
   `isolated` (one process per top-level session).
-- Protocol fact: `session/fork` is addressed to the connection holding the parent's
-  context — no cross-process handoff exists. A branched session therefore rides its
-  parent's process under any policy. Shown in the UI, not hidden (features §1).
-- Crash → visible immediately; restart is one action. After reconnect: native
-  restore where the agent supports it, else a fresh session seeded from the
-  last-known view — which kind of continuation happened is shown.
+- Crash → visible immediately; restart is one action. After reconnect: the
+  attach ladder — `session/load` (replay = truth) > `session/resume` (context
+  back, seam notice: no visible history) > honestly not reopenable. Patchbay
+  never mints a session and calls it a continuation.
+- **Session lifecycle**: switching chats never closes anything. The idle
+  reaper is the only closer, and only when *all* hold: not new
+  (`everPrompted` — a never-prompted session never closes, period; agents
+  404 load/resume on zero-turn ids), nothing in flight, not unseen-completed
+  (blue mark), prompt box empty (structural: the composer exists only for
+  the active session, which is always exempt), idle past the auto-close time
+  (default 60 min — a user setting soon), and declared `session/load` —
+  never load-or-resume: patchbay persists no transcripts, so closing anything
+  less than fully-replayable would destroy the only copy. "New session" for
+  an agent with a never-prompted session focuses it instead of minting a
+  sibling. *(Supersedes release-on-switch and the emulated continuation.)*
 
 ## Agent capability matrix
 
@@ -306,12 +314,14 @@ commands surface is its channel, no protocol involved.
 
 ## Branching
 
-- Agent declares `session/fork` *and it's used* → native fork.
-- Otherwise → emulated: fresh `session/new` seeded from the parent's replay (or
-  last-known view for non-replay agents), labeled emulated.
-- Either path is a node in the orchestrator's session graph (parent → branches). The
-  UI never knows which mechanism produced a branch; the capability matrix is where
-  native-vs-emulated honesty lives.
+**Out of v1** — superseded, not deleted: the earlier design (native
+`session/fork` where used, else an emulated `session/new` seeded from the
+parent's transcript, both labeled nodes in a session graph) is retired with the
+emulation machinery: an emulated branch is a cache presented as a
+conversation, and standard-ACP-only is the v1 line. `session/fork` remains a
+capability-matrix row (declared/used honesty about the agent), with no UI
+feature riding it. Native-fork-only branching is the visible extension point
+when a features bullet demands it.
 
 ## Session model, mode, effort
 
@@ -387,12 +397,11 @@ keyed honestly. Therefore:
 | Birth | Seed applied |
 |---|---|
 | Fresh `session/new` | Per-agent defaults, once, via set requests — skipped silently where the option isn't offered |
-| Native `session/load` / `session/fork` | Nothing — the agent's own restored/inherited state is the truth; re-imposing a stored copy would force a cache over reality |
-| Emulated continuation / branch | The parent session's **last confirmed** combination (recorded from agent notifications, never from what patchbay requested) — the same honesty class as the transcript seed; never the defaults, which the user may have steered away from |
+| `session/load` / `session/resume` re-attach | Nothing — the agent's own restored state is the truth; re-imposing a stored copy would force a cache over reality. (The roots re-apply path is the one exception: the user asked to change *roots*, so the session's own confirmed knob values are re-seeded after the re-attach resets them) |
 
-The last-confirmed combination lives on the session-index entry (workspace
-state, tiny, leaves with the session) precisely because emulation is the one
-case with no reality left to read.
+*(The emulated-continuation row and the per-session last-confirmed store it
+seeded from are gone with emulation itself — there is no session birth left
+with "no reality to read".)*
 
 ## Local MCP server — editor depth
 
@@ -507,7 +516,7 @@ size) required, `cost` optional — the numerator and denominator of a context g
 Emitting it remains optional per agent, so population is uneven in practice: show
 what is reported, omit cleanly when absent, never fake it. claude-agent-acp emits
 it live mid-stream, so the gauge is a real-time affordance there, not per-turn.
-The only guaranteed reset lever is a new or branched session — which is why
+The only guaranteed reset lever is a new session — which is why
 concurrent sessions are load-bearing (prd §v1 Scope), not a luxury.
 
 ## Code layout

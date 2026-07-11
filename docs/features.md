@@ -32,10 +32,13 @@ deliverable, owed before implementation.
   own stderr inline; recovery is one action (the crash banner's Restart).
   Stop/restart beyond that are Settings troubleshooting controls — the
   process is normally managed implicitly by session lifecycle.
-- After reconnect, a session continues natively where the agent supports session
-  restore; where it doesn't, patchbay seeds a fresh session from its last-known
-  view. Either way the user continues — which kind of continuation they got is
-  shown, not hidden.
+- After reconnect, a session continues natively where the agent supports it:
+  `session/load` (full replay) or `session/resume` (context back, no visible
+  history — said so with an inline notice). Where it supports neither, the
+  session honestly cannot be reopened — patchbay never mints a new session and
+  presents it as a continuation. *(Supersedes the emulated-continuation
+  fallback: minting a session and seeding it from a cached view was a cache
+  presented as a conversation.)*
 
 ### Sessions
 
@@ -45,19 +48,33 @@ deliverable, owed before implementation.
 - Sessions are cheap to create and never a process-management chore: whether
   concurrent sessions share one agent process or get isolated ones is per-agent
   policy (Settings), decided by used concurrent-session behavior in `auto` mode.
-  One protocol-imposed exception: a branched session rides its parent's process —
-  shown, not hidden.
-- User can switch, rename, and close sessions.
-- User can branch a session — continue an alternate path without polluting the
-  parent's history. Works with every agent; the capability matrix shows whether the
-  agent does this natively.
-- The agent owns the conversation — patchbay never holds a co-equal copy. It holds
-  three honestly different things: a **session index** (IDs, titles, timestamps,
-  agent — ACP has no session enumeration, so finding a session again is patchbay's
-  job), a **decision audit** (permissions granted, tools approved, routing chosen —
-  those events happened in patchbay and belong to it), and a **render cache** —
-  disposable, rebuilt wholesale from `session/load` replay on every reopen, never
-  merged. Replay always wins; there is no reconciliation logic anywhere.
+- A brand-new session knows it is new: clicking "new session" for an agent that
+  already has a never-prompted session focuses that one instead of minting a
+  sibling. The first prompt is what ends newness.
+- User can switch and close sessions. Switching never closes the session being
+  left; an attached session auto-closes (`session/close`, resources freed, row
+  kept) only when *all* hold: not new, nothing in progress, not
+  unseen-completed, prompt box empty, idle past the auto-close time (default
+  60 min, a user setting soon), and the agent declares `session/load` — anything
+  less than full replay would destroy the only transcript, since patchbay
+  persists none. *(Supersedes release-on-switch.)*
+- Renaming lives in the agent, not patchbay: ACP has no rename request, so
+  agents with an in-chat `/rename` round-trip the title through their own
+  `session/list` / `session_info_update` — which patchbay always honors.
+  *(Supersedes the patchbay-side rename and its `renamedByUser` overlay.)*
+- Branching is out of v1. `session/fork` stays a capability-matrix row; no UI
+  feature rides it yet. *(Supersedes the branch menu item and the emulated
+  branch path.)*
+- The agent owns the sessions — 100%. The agent's own `session/list` is the
+  only session list; patchbay persists no session records at all — no index,
+  no transcripts. What patchbay holds: a **decision audit** (permissions
+  granted, tools approved, routing chosen — those events happened in patchbay
+  and belong to it) and an in-memory **render cache** — disposable, rebuilt
+  wholesale from `session/load` replay on every reopen, never merged. Replay
+  always wins; there is no reconciliation logic anywhere. Agents without
+  `session/list` show only their currently-open sessions, and nothing survives
+  a reload — a deliberate scope decision, not a limitation. *(Supersedes the
+  session index as fallback+overlay and the persisted last-known views.)*
 - A session continued outside patchbay (the agent's own CLI, another editor) simply
   appears complete on reopen — the replay carries the detour, because the truth was
   never patchbay's.
@@ -67,11 +84,10 @@ deliverable, owed before implementation.
   reload (re-`load` from the agent) to rejoin truth. Driving one session from two
   places simultaneously is agent-side undefined behavior, out of scope and stated
   as such.
-- For agents that cannot replay (`session/load` undeclared): patchbay keeps its
-  last-known view, labeled exactly as that — "patchbay's view, up to \<time\>" —
-  and continuation means a new session seeded from it, labeled emulated. A
-  fallback, not a competing truth. This view is also what seeds branch-emulation
-  for these agents.
+- Opening a closed session rides the ladder: `session/load` (replay = truth) >
+  `session/resume` (context live, a notice says history can't be shown) >
+  cannot open — nothing in hand, nothing to fetch, said as such. *(Supersedes
+  the persisted last-known view and its read-only seeding.)*
 - User can see and change the session's model, mode, and effort when the agent
   offers them, and the result reflects what actually happened — not what was
   requested.
