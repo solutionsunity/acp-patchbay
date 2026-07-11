@@ -39,7 +39,7 @@ close the connection if the agent answers with a version it can't speak.
 | `initialize` first, version + capabilities | ✅ | `pool.ts:connect` — `acp.PROTOCOL_VERSION`, `clientCapabilitiesWire()`. |
 | `clientInfo` name/version | ✅ | `pool.ts:connect` sends `{ name: "acp-patchbay", version }`. |
 | Honest capability advertisement | ✅ | `capabilities.ts:CLIENT_DECLARES` is the single source for both the wire claim and the matrix's client-side cells — they cannot drift. `elicitation` stays `false` until actually wired (declaring it earlier is exactly the lie the capability-verification rule exists to prevent). |
-| Close on unsupported agent version | 🟡 | Agent's `protocolVersion` is read and logged; no explicit version-compatibility check/refusal path found. SHOULD-level. → Gap Register G7. |
+| Close on unsupported agent version | ✅ | Fixed 2026-07-11 (G7): pool refuses a mismatched negotiated version with a named reason (`markDead`); the negotiated version is agent-level truth, shown as an "ACP vN" badge in the Settings capability matrix, refreshed per connect. |
 | Record agent capabilities per connect | ✅ | `capabilities.ts:matrixFromDeclared`, rebuilt wholesale every connect (reset-on-reconnect by construction); *used* state is version-keyed per the capability-verification rule. |
 
 ## 3. Authentication
@@ -106,7 +106,7 @@ mark incomplete tool calls cancelled, SHOULD still accept trailing tool updates.
 |---|---|---|
 | `session/cancel` notify | ✅ | `pool.ts:cancel` ← `session-manager.ts:stopTurn`. |
 | **Cancel pending permission requests** | ✅ | Fixed 2026-07-11 (G2): `broker.cancelPending(sessionId)` sweeps the session's pending requests — agent requests and patchbay's own gates alike — wired from `stopTurn` and `closeSession`; cards close with an honest "Cancelled — turn stopped" label, audited as `turn-cancelled`. |
-| Preemptively mark incomplete tool calls cancelled | 🟡 | Not done (SHOULD). Trailing `tool_call_update`s *are* accepted (no turn-gating in `handleUpdate`), so state converges when the agent reports; the UI just doesn't jump ahead. → G6, low priority. |
+| Preemptively mark incomplete tool calls cancelled | ✅ | Fixed 2026-07-11 (G6) — as a *derivation*, not stored state: the wire has no cancelled tool status and a replayed session carries no turn state, so an incomplete tool call renders "interrupted" whenever no turn is in flight. Live-cancel and its later replay render identically (agent representation is the truth); trailing `tool_call_update`s still win. |
 
 ## 8. Content types
 
@@ -119,7 +119,7 @@ honesty rules, which bind harder than the spec here.
 | Prompt out: text | ✅ | Baseline. |
 | Prompt out: image | ✅ | Capability-gated with `resource_link` fallback (§6). |
 | Prompt out: audio | ⛔ | Patchbay has no audio capture surface; nothing to send. Revisit only if a recording feature ever exists. |
-| Prompt out: embedded resource (`embeddedContext`) | ⛔ | Mentions deliberately ride as `resource_link` (baseline, uniform across agents) and the agent pulls content through `fs/read_text_file`, which also gets it *live editor state* rather than a stale snapshot. Embedding would trade freshness for nothing. `prompt.embeddedContext` row tracks the declaration regardless. |
+| Prompt out: embedded resource (`embeddedContext`) | ✅ ⛔ | Split by semantics (2026-07-11): **context chips** are snapshots the user took — they ride as embedded `resource` blocks where the capability is declared (uri-attributed; selections carry a `#L` fragment), labeled-text fallback otherwise — capability first, fallback second, switched at the `sendPrompt` chokepoint. **@mentions** deliberately stay `resource_link` even when declared: a mention is a reference, not a snapshot — the agent pulls the slice it wants through brokered fs (live buffer, `line`/`limit`). |
 | Receive: text chunks | ✅ | `handleUpdate` text cases. |
 | Receive: non-text in `agent_message_chunk` (image/audio/resource) | ✅ | Fixed 2026-07-11 (G4): a closed in-place placeholder block (`*[image content — not rendered]*`) — the honest floor until real rendering is justified. |
 | Annotations / `_meta` on content | ⛔ | Not consumed; no current agent emits meaning patchbay could render. Unknown fields pass through untouched (safe by construction). |
@@ -135,7 +135,7 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 | `user_message_chunk` | ✅ | Fixed 2026-07-11 — see §4. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
-| `plan_update` / `plan_removed` | ⛔ | Gated behind a *client* capability patchbay does not declare, so a conforming agent never sends them; the whole-replace `plan` model already covers the feature. Adopt only if incremental plans show a real win; declaring without handling would be the capability lie again. |
+| `plan_update` / `plan_removed` | ⛔ | **SDK ahead of spec** (verified 2026-07-11): both kinds are marked UNSTABLE — "not part of the spec yet, may be removed or changed at any point" — and they model a *different* plan system than the stable whole-replace `plan`: multi-plan (`PlanId`-keyed), three content forms (structured items / file / markdown). Gated behind a client capability patchbay does not declare, so no conforming agent sends them; the stable `plan` already covers the feature. Watch each SDK bump (the exhaustive `handleUpdate` switch forces the look); adopt when it lands in the published spec — contribution upstream is an option if the shape stalls. |
 | `available_commands_update` | ✅ | Name/description/input-hint all consumed (G8 fixed 2026-07-11); the hint shows in the composer's slash menu. |
 | `current_mode_update` | ✅ | Modes surface only; config surface deliberately owns its own confirmations (knobs.ts normalizer — spec forbids category as a correctness key). |
 | `config_option_update` | ✅ | Spec: notification carries complete state — consumed as a whole-replace. |
@@ -246,8 +246,8 @@ Ordered by severity. Fixed entries stay listed — decisions are recorded, not d
 | G3 | MUST-shaped | `fs/read_text_file` ignored `line`/`limit` (§12) | **Fixed 2026-07-11** — `sliceTextFileRead`, 1-based line, after the live-buffer read. |
 | G4 | Honesty | Non-text agent/user message content silently dropped (§8) | **Fixed 2026-07-11** — closed in-place placeholder block. |
 | G5 | SHOULD | Tool-call content: plain content blocks unrendered; embedded terminals not linked to their card (§10) | Open — phase-B rendering work (ui-rendering-strategy), not a patch. |
-| G6 | SHOULD | No preemptive local "cancelled" on incomplete tool calls at cancel (§7) | Open — the tool-status enum has no `cancelled`; needs its own block state. Trailing agent updates are already accepted, so state converges. |
-| G7 | SHOULD | No explicit protocol-version compatibility check after initialize (§2) | Open — wants a UX decision (what the user sees on refusal/downgrade). |
+| G6 | SHOULD | No preemptive local "cancelled" on incomplete tool calls at cancel (§7) | **Fixed 2026-07-11** — derived, not stored: "interrupted" renders whenever a tool call is incomplete with no turn in flight; identical for live cancel and session/load replay. |
+| G7 | SHOULD | No explicit protocol-version compatibility check after initialize (§2) | **Fixed 2026-07-11** — mismatch refused at connect with a named reason; negotiated version badged per agent in the Settings matrix. |
 | G8 | Cosmetic | Slash-command input hint dropped (§17) | **Fixed 2026-07-11** — rides through to the slash menu. |
 | G9 | Nit | Terminal truncation counted UTF-16 units, could split surrogates (§13) | **Fixed 2026-07-11** — `tailBytes`: byte accounting, code-point-boundary cut. |
 
