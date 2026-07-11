@@ -110,9 +110,11 @@ mark incomplete tool calls cancelled, SHOULD still accept trailing tool updates.
 
 ## 8. Content types
 
-Spec: six ContentBlock types. Client-side receive support is not individually
-mandated, but silently dropping renderable content is against this project's own
-honesty rules, which bind harder than the spec here.
+Spec: five ContentBlock types — six shapes: an embedded `resource` is
+text-formed (`TextResourceContents`) or blob-formed (`BlobResourceContents`).
+Client-side receive support is not individually mandated, but silently dropping
+renderable content is against this project's own honesty rules, which bind
+harder than the spec here.
 
 | Direction / type | Verdict | Notes |
 |---|---|---|
@@ -121,7 +123,7 @@ honesty rules, which bind harder than the spec here.
 | Prompt out: audio | ⛔ | Patchbay has no audio capture surface; nothing to send. Revisit only if a recording feature ever exists. |
 | Prompt out: embedded resource (`embeddedContext`) | ✅ ⛔ | Split by semantics (2026-07-11): **context chips** are snapshots the user took — they ride as embedded `resource` blocks where the capability is declared (uri-attributed; selections carry a `#L` fragment), labeled-text fallback otherwise — capability first, fallback second, switched at the `sendPrompt` chokepoint. **@mentions** deliberately stay `resource_link` even when declared: a mention is a reference, not a snapshot — the agent pulls the slice it wants through brokered fs (live buffer, `line`/`limit`). |
 | Receive: text chunks | ✅ | `handleUpdate` text cases. |
-| Receive: non-text in `agent_message_chunk` (image/audio/resource) | ✅ | Fixed 2026-07-11 (G4): a closed in-place placeholder block (`*[image content — not rendered]*`) — the honest floor until real rendering is justified. |
+| Receive: non-text in `agent_message_chunk` (image/audio/resource_link/resource) | 🟡 | The *silent drop* is fixed (2026-07-11, G4): a closed in-place placeholder block, type-labeled (`*[image content — not rendered]*`). That is the floor, not receive support — no non-text type actually renders, and each rendering is its own design discussion (→ G10). The gap is not uniform: an embedded **text-formed resource is renderable text being floored** (the closest thing to a violation of this section's preamble in the codebase), and a **resource_link** is a one-line name+uri render away; audio and blob-formed resources are the only shapes where a placeholder genuinely is the floor. |
 | Annotations / `_meta` on content | ⛔ | Not consumed; no current agent emits meaning patchbay could render. Unknown fields pass through untouched (safe by construction). |
 
 ## 9. Session updates — the full union
@@ -130,7 +132,7 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 
 | Kind | Verdict | Notes |
 |---|---|---|
-| `agent_message_chunk` | ✅ | Text streamed; non-text → in-place placeholder (G4, fixed). |
+| `agent_message_chunk` | ✅ | The update kind is fully consumed: text streamed; non-text → type-labeled placeholder. Rendering the non-text types is §8's 🟡 (G10), not a consumption gap. |
 | `agent_thought_chunk` | ✅ | Block-interruption rule per ui-rendering-strategy. |
 | `user_message_chunk` | ✅ | Fixed 2026-07-11 — see §4. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
@@ -244,12 +246,13 @@ Ordered by severity. Fixed entries stay listed — decisions are recorded, not d
 | G1 | MUST-fix bug | `user_message_chunk` unhandled → session/load history loss + block merging (§4, §9) | **Fixed 2026-07-11** — new case + `activeUserBlockId` + `inFlight` guard; switch made compile-time exhaustive (`assertUnconsumed`), runtime tolerant of newer kinds. |
 | G2 | MUST | Turn cancellation left pending permission requests hanging (§7, §11) | **Fixed 2026-07-11** — `broker.cancelPending(sessionId)` from `stopTurn`/`closeSession`; honest card resolution, `turn-cancelled` audit. |
 | G3 | MUST-shaped | `fs/read_text_file` ignored `line`/`limit` (§12) | **Fixed 2026-07-11** — `sliceTextFileRead`, 1-based line, after the live-buffer read. |
-| G4 | Honesty | Non-text agent/user message content silently dropped (§8) | **Fixed 2026-07-11** — closed in-place placeholder block. |
+| G4 | Honesty | Non-text agent/user message content silently dropped (§8) | **Fixed 2026-07-11** — closed in-place placeholder block, type-labeled. Scope was the *silent drop* only; rendering is G10. |
 | G5 | SHOULD | Tool-call content: plain content blocks unrendered; embedded terminals not linked to their card (§10) | Open — phase-B rendering work (ui-rendering-strategy), not a patch. |
 | G6 | SHOULD | No preemptive local "cancelled" on incomplete tool calls at cancel (§7) | **Fixed 2026-07-11** — derived, not stored: "interrupted" renders whenever a tool call is incomplete with no turn in flight; identical for live cancel and session/load replay. |
 | G7 | SHOULD | No explicit protocol-version compatibility check after initialize (§2) | **Fixed 2026-07-11** — mismatch refused at connect with a named reason; negotiated version badged per agent in the Settings matrix. |
 | G8 | Cosmetic | Slash-command input hint dropped (§17) | **Fixed 2026-07-11** — rides through to the slash menu. |
 | G9 | Nit | Terminal truncation counted UTF-16 units, could split surrogates (§13) | **Fixed 2026-07-11** — `tailBytes`: byte accounting, code-point-boundary cut. |
+| G10 | SHOULD | Non-text message content renders as placeholder only (§8) | Open — each type is its own design discussion, priority by what's being floored: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(b)** `resource_link` — name+uri line, optionally openable through the existing path machinery; **(c)** image — needs an actual rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. Not a patch — sequence alongside G5's phase-B rendering work. |
 
 **Watch items:** W1 write-vs-dirty-editor divergence (§12). **Verify:** V1 that the SDK
 surfaces load-replay notifications before the `session/load` response resolves in all
