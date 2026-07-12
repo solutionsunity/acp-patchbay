@@ -64,7 +64,7 @@ export function agentViewState({ live }) {
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
     capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
-    contextChips: { s1: [] }, sessionKnobs: { s1: [] },
+    contextChips: { s1: [] }, sessionKnobs: { s1: [] }, promptQueue: {},
     contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
