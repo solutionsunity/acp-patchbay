@@ -1230,44 +1230,44 @@ export class Orchestrator {
 </html>`;
   }
 
-  /** Agent-reported tool-call diffs open in VS Code's native diff editor,
-   * never an inline webview diff (ui-rendering-strategy § tool call card
-   * design) — the texts come back from the session-manager's stash, written
-   * to temp files so vscode.diff has real URIs to compare. */
+  /** One stash text → one temp file with a real URI, for vscode.diff — both
+   * native-diff openers share this (diffs always open in VS Code's own diff
+   * editor, never an inline webview diff; ui-rendering-strategy § tool call
+   * card design). */
+  private async diffTempFile(scope: string, fileName: string, content: string): Promise<vscode.Uri> {
+    const dir = join(tmpdir(), "acp-patchbay-diffs", scope.replace(/[^a-zA-Z0-9_-]/g, "_"));
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, fileName);
+    await writeFile(file, content, "utf8");
+    return vscode.Uri.file(file);
+  }
+
+  /** Agent-reported tool-call diffs — the texts come back from the
+   * session-manager's stash; both sides are snapshots, so both ride temp files. */
   private async openToolCallDiff(sessionId: string, toolCallId: string, path: string): Promise<void> {
     const diff = this.sessionManager.toolCallDiff(sessionId, toolCallId, path);
     if (diff === null) return; // stale id after a close — nothing to show
-    const dir = join(tmpdir(), "acp-patchbay-diffs", toolCallId.replace(/[^a-zA-Z0-9_-]/g, "_"));
-    await mkdir(dir, { recursive: true });
     const name = basename(path);
-    const left = join(dir, `before-${name}`);
-    const right = join(dir, `after-${name}`);
-    await writeFile(left, diff.oldText, "utf8");
-    await writeFile(right, diff.newText, "utf8");
     await vscode.commands.executeCommand(
       "vscode.diff",
-      vscode.Uri.file(left),
-      vscode.Uri.file(right),
+      await this.diffTempFile(toolCallId, `before-${name}`, diff.oldText),
+      await this.diffTempFile(toolCallId, `after-${name}`, diff.newText),
       `${name} — agent-proposed change`,
     );
   }
 
-  /** The files panel's ± — left: the session's first-touch pre-image
+  /** The files panel's diff — left: the session's first-touch pre-image
    * (session-manager fileBaselines), right: the live file itself, so the
    * diff keeps tracking reality as work continues. Null baseline is a stale
-   * click (the ± only renders for diff-bearing paths) — no-op, like
+   * click (the row only offers a diff for diff-bearing paths) — no-op, like
    * openToolCallDiff. */
   private async openSessionFileDiff(sessionId: string, path: string): Promise<void> {
     const baseline = this.sessionManager.fileBaseline(sessionId, path);
     if (baseline === null) return;
-    const dir = join(tmpdir(), "acp-patchbay-diffs", `session-${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}`);
-    await mkdir(dir, { recursive: true });
     const name = basename(path);
-    const left = join(dir, `baseline-${name}`);
-    await writeFile(left, baseline, "utf8");
     await vscode.commands.executeCommand(
       "vscode.diff",
-      vscode.Uri.file(left),
+      await this.diffTempFile(`session-${sessionId}`, `baseline-${name}`, baseline),
       vscode.Uri.file(path),
       `${name} — since first agent touch (this session)`,
     );
