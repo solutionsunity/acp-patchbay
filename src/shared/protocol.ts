@@ -948,6 +948,12 @@ export interface AgentViewState {
   authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Present only once `usage` is used — absence over fake (ui.md § gauge). */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
+  /** Per session, per path: cumulative +/- since the session's first-touch
+   * baseline (fileBaselines) — the same numbers the files panel's ± opens
+   * to, computed orchestrator-side (computeLineDiff) since the texts never
+   * reach the webview. Absent for a path until a real change is known
+   * (session-manager.noteFileChange) — absence over fake. */
+  fileDiffStats: Readonly<Record<string, Readonly<Record<string, { additions: number; deletions: number }>>>>;
   /** Explicitly attached context, pending inclusion in the next prompt
    * (features.md § Chat: "explicitly add editor state to the prompt"). */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
@@ -1024,6 +1030,7 @@ export const initialAgentViewState: AgentViewState = {
   capabilitiesResetAt: {},
   authMethods: {},
   sessionUsage: {},
+  fileDiffStats: {},
   contextChips: {},
   promptQueue: {},
   sessionKnobs: {},
@@ -1133,6 +1140,10 @@ export type AgentViewEvent =
       lines: readonly { kind: DiffLineKind; text: string }[];
     }
   | { kind: "diffResolved"; sessionId: string; blockId: string; accepted: boolean; auto: boolean }
+  /** Cumulative baseline-vs-latest +/- for one file this session (the files
+   * panel's ± badge) — recomputed on every real content advance: an
+   * agent-reported tool_call diff, or an accepted gate write. */
+  | { kind: "fileDiffStatChanged"; sessionId: string; path: string; additions: number; deletions: number }
   | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
   | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
@@ -1501,6 +1512,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
+      const { [event.sessionId]: _fds, ...fileDiffStats } = state.fileDiffStats;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
       // sibling: a session click is the one hydrate/connect trigger, so a
@@ -1519,6 +1531,7 @@ export function reduceAgentView(
         contextRoots,
         sessionUsage,
         promptQueue,
+        fileDiffStats,
         activeSessionId,
       };
     }
@@ -1656,6 +1669,17 @@ export function reduceAgentView(
         ...b,
         resolution: { accepted: event.accepted, auto: event.auto },
       }));
+    case "fileDiffStatChanged":
+      return {
+        ...state,
+        fileDiffStats: {
+          ...state.fileDiffStats,
+          [event.sessionId]: {
+            ...state.fileDiffStats[event.sessionId],
+            [event.path]: { additions: event.additions, deletions: event.deletions },
+          },
+        },
+      };
     case "terminalStarted":
       return appendBlock(state, event.sessionId, {
         kind: "terminal",

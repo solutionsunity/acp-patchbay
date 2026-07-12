@@ -121,6 +121,7 @@ export function App({
           plan={state.activePlan[active.id] ?? null}
           files={derived.totals.files}
           diffable={derived.diffableFiles}
+          diffStats={state.fileDiffStats[active.id] ?? {}}
           openEditors={state.openEditors}
           roots={state.workspaceRoots}
         />

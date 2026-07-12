@@ -432,7 +432,13 @@ export class Orchestrator {
         const pre = await this.readTextFileLive(params.path).catch(() => "");
         this.sessionManager.noteFileBaseline(params.sessionId, params.path, pre);
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
-        if (accepted) await this.writeTextFileLive(params.path, params.content);
+        if (accepted) {
+          await this.writeTextFileLive(params.path, params.content);
+          // Only once the content actually landed — a rejected write left
+          // disk (and the baseline) untouched, so its ± badge stays absent
+          // rather than claiming a change that never happened.
+          this.sessionManager.noteFileWrite(params.sessionId, params.path, params.content);
+        }
         return {};
       },
       onCreateTerminal: async (_agentId, params) => {

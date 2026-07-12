@@ -7,7 +7,10 @@
 // Click opens an overlay panel growing up from the strip over the chat;
 // X/Escape/re-click close; one panel at a time. Expand is manual, never
 // forced — a task completing mid-turn pulses the collapsed plan chip as a
-// peripheral signal instead of yanking the view open.
+// peripheral signal instead of yanking the view open. In the files panel, a
+// row's own click is the diff (the panel's main intention) when one is
+// answerable; a dedicated go-to-file button on the right always opens the
+// file plainly.
 import { useEffect, useRef, useState } from "react";
 import type { OpenEditorView, PlanEntry } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
@@ -30,6 +33,7 @@ export function ReadoutStrip({
   plan,
   files,
   diffable,
+  diffStats,
   openEditors,
   roots,
 }: {
@@ -37,8 +41,12 @@ export function ReadoutStrip({
   plan: readonly PlanEntry[] | null;
   files: readonly string[];
   /** Paths the orchestrator holds a first-touch baseline for (view-model
-   * diffableFiles) — exactly these rows get the ± diff affordance. */
+   * diffableFiles) — exactly these rows' main click opens the diff instead
+   * of the file. */
   diffable: ReadonlySet<string>;
+  /** Cumulative +/- since first touch, per path — the row's badge; absent
+   * until a real change is known (protocol fileDiffStats). */
+  diffStats: Readonly<Record<string, { additions: number; deletions: number }>>;
   openEditors: readonly OpenEditorView[];
   roots: readonly string[];
 }) {
@@ -119,28 +127,46 @@ export function ReadoutStrip({
                 // in the open buffer (compliance §12/W1), dirty here means the
                 // user's own unsaved edits sit on an agent-touched file.
                 const dirty = openEditors.some((e) => e.file === path && e.dirty);
+                const canDiff = diffable.has(path);
+                const stat = diffStats[path];
                 return (
                   <div
                     key={path}
                     className="file-row"
-                    title={path}
-                    onClick={() => send({ kind: "openFile", path })}
+                    title={canDiff ? "Diff — since first agent touch (this session)" : path}
+                    // Main click is the diff — that's the row's point.
+                    // Non-diffable rows (locations-only) fall back to open.
+                    onClick={() =>
+                      send(
+                        canDiff
+                          ? { kind: "openSessionFileDiff", sessionId, path }
+                          : { kind: "openFile", path },
+                      )
+                    }
                   >
-                    <Icon name="file" /> <span className="base">{base}</span>
+                    <Icon name={canDiff ? "diff" : "file"} /> <span className="base">{base}</span>
                     {dir !== "" && <span className="dir">{dir}</span>}
-                    {dirty && <span className="dirty" title="unsaved changes in editor" />}
-                    {diffable.has(path) && (
+                    {/* always-present right cluster: whichever of stat/dirty
+                        are absent this session, the button still anchors right */}
+                    <span className="right">
+                      {stat !== undefined && (stat.additions > 0 || stat.deletions > 0) && (
+                        <span className="stat">
+                          {stat.additions > 0 && <span className="add">+{stat.additions}</span>}
+                          {stat.deletions > 0 && <span className="del">-{stat.deletions}</span>}
+                        </span>
+                      )}
+                      {dirty && <span className="dirty" title="unsaved changes in editor" />}
                       <button
-                        className="diffbtn"
-                        title="Diff — since first agent touch (this session)"
+                        className="gotofile"
+                        title="Open file"
                         onClick={(e) => {
                           e.stopPropagation();
-                          send({ kind: "openSessionFileDiff", sessionId, path });
+                          send({ kind: "openFile", path });
                         }}
                       >
-                        <Icon name="diff" />
+                        <Icon name="go-to-file" />
                       </button>
-                    )}
+                    </span>
                   </div>
                 );
               })}

@@ -114,7 +114,11 @@ for (const theme of Object.keys(THEMES)) {
   await p.click(".readout-strip .chip.files");
   check(`[${theme}] files panel swaps in (one at a time)`, (await p.waitForSelector(".readout-panel .file-row", { timeout: 3000 })) !== null);
   check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".readout-panel .file-row .dirty")) !== null);
-  check(`[${theme}] ± diff affordance on the diff-bearing row`, (await p.$(".readout-panel .file-row .diffbtn")) !== null);
+  check(`[${theme}] diff-bearing row shows the diff icon (row click IS the diff)`, (await p.$(".readout-panel .file-row .codicon-diff")) !== null);
+  const stat = await p.$eval(".readout-panel .file-row .stat", (el) => el.textContent.trim());
+  check(`[${theme}] +/- badge shows cumulative stat ("${stat}")`, stat === "+12-4");
+  check(`[${theme}] go-to-file button always present`, (await p.$(".readout-panel .file-row .gotofile")) !== null);
+  await p.screenshot({ path: `${OUT}/readout-files-${theme}.png` });
   await p.click(".readout-panel .head .close");
   check(`[${theme}] X closes the panel`, (await p.$(".readout-panel")) === null);
 

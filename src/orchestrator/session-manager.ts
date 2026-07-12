@@ -35,6 +35,7 @@ import {
   routeKnobSet,
   type NormalizedKnobs,
 } from "./knobs";
+import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 
@@ -237,6 +238,11 @@ export class SessionManager {
    * the agent's replay re-reports comes back, by design (a loaded session
    * must not look like it remembers more than the wire told it). */
   private fileBaselines = new Map<string, Map<string, string>>();
+  /** Cumulative +/- since the baseline, per session/path — the same numbers
+   * the files panel's ± opens to, kept alongside the texts so the badge
+   * next to the filename never has to guess. Same lifecycle as
+   * fileBaselines (dies with the session). */
+  private fileStats = new Map<string, Map<string, { additions: number; deletions: number }>>();
   private contextTokenCounter = 0;
   /** Prompts accepted while a turn was in flight (QueuedPrompt) — drained
    * one per turn end. Ephemeral bookkeeping like everything here: Stop and
@@ -563,6 +569,7 @@ export class SessionManager {
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
     this.fileBaselines.delete(sessionId);
+    this.fileStats.delete(sessionId);
     this.known.delete(sessionId);
     this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
     this.hooks.emit({ kind: "sessionClosed", sessionId });
@@ -592,6 +599,7 @@ export class SessionManager {
     this.known.clear();
     this.toolDiffs.clear();
     this.fileBaselines.clear();
+    this.fileStats.clear();
     this.promptQueues.clear();
   }
 
@@ -605,6 +613,7 @@ export class SessionManager {
       this.sessions.delete(sessionId);
       this.toolDiffs.delete(sessionId);
       this.fileBaselines.delete(sessionId);
+      this.fileStats.delete(sessionId);
       this.known.delete(sessionId);
       this.promptQueues.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
@@ -675,6 +684,7 @@ export class SessionManager {
       this.known.delete(sessionId);
       this.toolDiffs.delete(sessionId);
       this.fileBaselines.delete(sessionId);
+      this.fileStats.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
       this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
@@ -1343,6 +1353,7 @@ export class SessionManager {
     sessionId: string,
     toolCallId: string,
     content: readonly { type: string; path?: string; oldText?: string | null; newText?: string }[] | null | undefined,
+    emit: (...events: AgentViewEvent[]) => void,
   ): { diffFiles: readonly string[] } | Record<string, never> {
     if (content == null) return {};
     const diffs = new Map<string, { oldText: string; newText: string }>();
@@ -1357,7 +1368,10 @@ export class SessionManager {
       this.toolDiffs.set(sessionId, perSession);
     }
     perSession.set(toolCallId, diffs);
-    for (const [path, d] of diffs) this.noteFileBaseline(sessionId, path, d.oldText);
+    for (const [path, d] of diffs) {
+      this.noteFileBaseline(sessionId, path, d.oldText);
+      this.noteFileChange(sessionId, path, d.newText, emit);
+    }
     return { diffFiles: [...diffs.keys()] };
   }
 
@@ -1379,6 +1393,38 @@ export class SessionManager {
    * session whose replay carried no diff content; the ± never rendered). */
   fileBaseline(sessionId: string, path: string): string | null {
     return this.fileBaselines.get(sessionId)?.get(path) ?? null;
+  }
+
+  /** Recomputes the cumulative +/- (baseline vs newText) and emits it —
+   * called wherever a path's applied content actually advances: an
+   * agent-reported diff (below) or an accepted gate write (orchestrator's
+   * noteFileWrite). Baseline must already be noted (noteFileBaseline runs
+   * first at both call sites) — falls back to "" only for the pathological
+   * case of a stat computed before any baseline, which never happens on
+   * either call path today. */
+  private noteFileChange(
+    sessionId: string,
+    path: string,
+    newText: string,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    const baseline = this.fileBaselines.get(sessionId)?.get(path) ?? "";
+    const { additions, deletions } = computeLineDiff(baseline, newText);
+    let perSession = this.fileStats.get(sessionId);
+    if (perSession === undefined) {
+      perSession = new Map();
+      this.fileStats.set(sessionId, perSession);
+    }
+    perSession.set(path, { additions, deletions });
+    emit({ kind: "fileDiffStatChanged", sessionId, path, additions, deletions });
+  }
+
+  /** Gate-write counterpart of stashToolDiffs' per-diff noteFileChange calls
+   * — orchestrator calls this once a write is accepted and applied. Direct
+   * hooks.emit: a gate write only ever happens live, never inside a replay
+   * window, so the emitterFor silence logic doesn't apply. */
+  noteFileWrite(sessionId: string, path: string, content: string): void {
+    this.noteFileChange(sessionId, path, content, this.hooks.emit.bind(this.hooks));
   }
 
   /** Worklist maintenance for the sweep (tool-call analogue of
@@ -1536,7 +1582,7 @@ export class SessionManager {
           ...(update.locations != null
             ? { locations: update.locations.map((l) => l.path) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });
         break;
       }
@@ -1555,7 +1601,7 @@ export class SessionManager {
           ...(update.locations != null
             ? { locations: update.locations.map((l) => l.path) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });
         break;
       }

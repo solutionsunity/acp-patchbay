@@ -367,6 +367,32 @@ body {
   white-space: nowrap;
 }
 
+/* right-anchored cluster: +n/-m badge, dirty dot, go-to-file — whichever of
+   the first two are absent this session, the button still sits flush right */
+.readout-panel .file-row .right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+}
+
+/* cumulative +/- since first agent touch (fileDiffStats) — same numbers the
+   row's own click (the ± diff) opens to */
+.readout-panel .file-row .stat {
+  display: flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout-panel .file-row .stat .add {
+  color: var(--pb-ok);
+}
+
+.readout-panel .file-row .stat .del {
+  color: var(--pb-err);
+}
+
 /* user's unsaved edits sitting on an agent-touched file (compliance §12) */
 .readout-panel .file-row .dirty {
   flex: none;
@@ -374,14 +400,12 @@ body {
   height: 7px;
   border-radius: 50%;
   background: var(--pb-consumed);
-  margin-left: auto;
 }
 
-/* ± — native diff, session first-touch baseline vs the live file; rendered
-   only for paths the orchestrator can answer (diffableFiles) */
-.readout-panel .file-row .diffbtn {
+/* go-to-file — always present; the row's main click is the diff (when
+   diffable), so opening the file plainly needs its own explicit target */
+.readout-panel .file-row .gotofile {
   flex: none;
-  margin-left: auto;
   background: none;
   border: none;
   border-radius: 4px;
@@ -390,11 +414,7 @@ body {
   padding: 1px 3px;
 }
 
-.readout-panel .file-row .dirty ~ .diffbtn {
-  margin-left: 6px;
-}
-
-.readout-panel .file-row .diffbtn:hover {
+.readout-panel .file-row .gotofile:hover {
   color: var(--pb-text);
   background: var(--pb-panel);
 }
