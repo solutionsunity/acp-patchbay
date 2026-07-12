@@ -188,6 +188,28 @@ Rules for appending vs. updating:
 - **Icon by `kind`** (ACP's own taxonomy: read, edit, delete, move, search,
   execute, think, fetch, other) rather than a generic spinner-only look — lets
   users pattern-match at a glance without reading the title.
+- **Icon color by weight, one axis (decided 2026-07-11, palette refined
+  2026-07-12)**: did this call change reality or observe it? Observing kinds
+  stay chrome-dim; mutating (edit, move, execute) and destructive (delete)
+  kinds take one cold hue — `editorInfo` blue — at two intensity steps: mutate
+  at 55% alpha, destroy at full (`TOOL_WEIGHT`, blocks.tsx; contract rows in
+  theme.css). The axis is ordinal, so it's a ramp within one hue, not a hue
+  pair — CVD-safe by construction, and "more weight, more ink" is the honest
+  mapping. *Supersedes the original `gitDecoration` orange/red palette: its
+  zero-learning-cost rationale didn't survive the base rate — mutate is the
+  majority class for a coding agent, so a warm saturated glyph at the row's
+  scan entry point lit nearly every row and out-shouted the content it was
+  meant to annotate. git's vocabulary works because modified files are a
+  minority; ours aren't. A referential note must rank below the row text:
+  cold hue, and the alpha step doubles as the salience reducer.* Weight, not
+  verdict:
+  the status tag keeps ok/warn/err, so a full-ink trash icon on a successful
+  delete marks the kind's gravity, not an error. Never a color per kind (decoration, and it
+  collides with status colors on the same row), and never a whole-line tint —
+  card-vs-prose shape already says "tool call", and full-width tints fight the
+  theme bridge across light/dark. A grouped run's header takes the heaviest
+  weight present (destroy > mutate > observe), same precedence idea as its
+  status tag.
 - **Collapsed by default**, showing only title + status. A tool call's `output`
   can be arbitrarily large (a full file read, a long command's stdout) and
   shouldn't dominate the transcript unless the user asks to see it. Expand reveals

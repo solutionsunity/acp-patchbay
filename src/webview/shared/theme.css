@@ -106,6 +106,21 @@
   --pb-ok: var(--vscode-acpPatchbay-ok, #4ec9a0);
   --pb-warn: var(--vscode-acpPatchbay-warn, #e5a830);
   --pb-err: var(--vscode-acpPatchbay-err, #e06c75);
+
+  /* ── tool-call weight accents ← VS Code's "info" severity, as a ramp ──
+   * The reality-changing axis (blocks.tsx TOOL_WEIGHT) is ordinal
+   * (observe < mutate < destroy), so it's one cold hue at two intensity
+   * steps — more weight, more ink — not a hue pair: CVD-safe by
+   * construction, and a referential note must not out-shout the row it
+   * annotates (the earlier gitDecoration orange/red did — warm, fully
+   * saturated, at the scan entry point). editorInfo is the one token whose
+   * semantics already say "annotation, not a problem"; cold, themed by
+   * every theme (squiggles, Problems panel), and collision-free with the
+   * row's verdict colors (ok/warn/err stay owned by the status tag).
+   * Observing kinds stay chrome-dim — the noise floor. Fallback is VS
+   * Code's dark+ default for the token. */
+  --pb-mutate: color-mix(in srgb, var(--vscode-editorInfo-foreground, #3794ff) 55%, transparent);
+  --pb-destroy: var(--vscode-editorInfo-foreground, #3794ff);
 }
 
 /* Card = the page surface nudged one elevation step: darker than the page
@@ -200,6 +215,8 @@ a[data-streamdown="link"]:active {
   --color-warn: var(--pb-warn);
   --color-err: var(--pb-err);
   --color-consumed: var(--pb-consumed);
+  --color-mutate: var(--pb-mutate);
+  --color-destroy: var(--pb-destroy);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

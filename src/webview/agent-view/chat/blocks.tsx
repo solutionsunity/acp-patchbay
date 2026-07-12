@@ -50,6 +50,46 @@ const TOOL_ICON: Record<ToolCallBlock["toolKind"], string> = {
   other: "tools",
 };
 
+/** The one semantic color axis on tool-call icons: did this call change
+ * reality or observe it? (theme.css § tool-call weight accents — one cold
+ * info-blue hue at two intensity steps; the axis is ordinal, so it's a
+ * ramp, not a hue pair.) Weight, not verdict: the status tag owns
+ * ok/warn/err. Observing kinds stay chrome-dim — the noise floor. Never a
+ * color per kind: that's decoration, and it collides with the status
+ * colors on the same row. */
+type ToolWeight = "observe" | "mutate" | "destroy";
+const TOOL_WEIGHT: Record<ToolCallBlock["toolKind"], ToolWeight> = {
+  read: "observe",
+  edit: "mutate",
+  delete: "destroy",
+  move: "mutate",
+  search: "observe",
+  execute: "mutate",
+  think: "observe",
+  fetch: "observe",
+  switch_mode: "observe",
+  other: "observe",
+};
+const WEIGHT_CLASS: Record<ToolWeight, string> = {
+  observe: "", // inherits the .tool-hd chrome dim
+  mutate: "text-mutate",
+  destroy: "text-destroy",
+};
+
+/** A run's heaviest weight — destructive > mutating > observing, the same
+ * precedence idea as the run status tag below (running > interrupted >
+ * denied > failed > ok): the collapsed header summarizes, expansion shows
+ * each card's own color. */
+function heaviestWeight(calls: readonly ToolCallBlock[]): ToolWeight {
+  let heaviest: ToolWeight = "observe";
+  for (const c of calls) {
+    const w = TOOL_WEIGHT[c.toolKind];
+    if (w === "destroy") return "destroy";
+    if (w === "mutate") heaviest = "mutate";
+  }
+  return heaviest;
+}
+
 /** Right-side status: blocked-by-permission is its own state, visually
  * distinct from a genuine execution failure — different facts. */
 function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
@@ -112,7 +152,9 @@ export function ToolCallCard({
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
         aria-expanded={expandable ? open : undefined}
       >
-        <Icon name={TOOL_ICON[block.toolKind]} />
+        <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]}>
+          <Icon name={TOOL_ICON[block.toolKind]} />
+        </span>
         <span className="min-w-0 flex-1 truncate">{block.title}</span>
         {expandable && <Icon name={open ? "chevron-down" : "chevron-right"} />}
         <ToolCallStatusTag block={block} />
@@ -168,6 +210,11 @@ export function ToolRunCard({
   const interrupted = calls.find((c) => isToolCallOpen(c.status) && c.interrupted);
   const denied = calls.filter((c) => c.denied).length;
   const failed = calls.filter((c) => c.status === "failed" && !c.denied).length;
+  const weightedIcon = (
+    <span className={WEIGHT_CLASS[heaviestWeight(calls)]}>
+      <Icon name="tools" />
+    </span>
+  );
   if (open) {
     return (
       <>
@@ -176,7 +223,7 @@ export function ToolRunCard({
           onClick={() => setOpen(false)}
           aria-expanded={true}
         >
-          <Icon name="tools" /> {calls.length} tool calls <Icon name="chevron-down" />
+          {weightedIcon} {calls.length} tool calls <Icon name="chevron-down" />
         </div>
         {calls.map((c) => (
           <ToolCallCard key={c.id} block={c} sessionId={sessionId} />
@@ -191,7 +238,7 @@ export function ToolRunCard({
         onClick={() => setOpen(true)}
         aria-expanded={false}
       >
-        <Icon name="tools" />
+        {weightedIcon}
         <span className="min-w-0 flex-1 truncate">
           {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}
         </span>
