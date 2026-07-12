@@ -386,6 +386,23 @@ streaming. The contract: track whether the user is **pinned** to the bottom
 pinned; on session switch or transcript seed, jump instantly to the bottom
 once. Scrolling up detaches; returning to the bottom re-pins.
 
+The two directions use different signals — the asymmetry is the design.
+**Unpin on intent** (upward wheel, touch drag), not position: under a fast
+stream the first few upward pixels are still inside the bottom band, so a
+threshold-only unpin loses the race — the next re-stick yanks the gesture
+back and the user can never escape. **Re-pin on position**, direction-guarded:
+reaching the bottom band while not moving up re-pins. Programmatic sticks
+scroll downward, so they re-affirm an existing pin but can never re-pin over
+a user's upward intent; the wheel gesture's own scroll event moves up, so it
+can't undo the unpin it just caused. Whenever unpinned, a "jump to latest"
+control floats at the scrollport's bottom corner — the way back without
+scrolling through a long transcript, and during a live turn the visible
+read-out of pin state. Because it is present during plain scrollback reading
+too, it is a corner nav control, dimmed at rest — never a centered banner in
+the reading path. *(Refined from live-turn-only: the teleport is wanted for
+idle scrollback as well; the placement/weight change is what keeps the
+always-on variant from being a nag.)*
+
 #### Hydration delivery (orchestrator side, recorded here for the seam)
 
 `session/load` replay is a bounded window (request sent → RPC resolved).

@@ -286,6 +286,36 @@ body {
   contain-intrinsic-size: auto 32px;
 }
 
+/* Jump-to-latest control (chat.tsx): sticks to the scrollport's bottom
+ * edge while the user is scrolled up. Zero height keeps it out of the
+ * scroll math — it must never grow scrollHeight, or showing it would move
+ * the very bottom it offers to jump to. The button is lifted out of the
+ * zero-height box with a transform. Corner-placed and dimmed at rest: it
+ * is always present while unpinned, so it must stay out of the reading
+ * path — a nav control, not a banner. */
+.chat-jump {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 16px;
+  overflow: visible;
+  z-index: 10;
+}
+
+.chat-jump > * {
+  transform: translateY(calc(-100% - 10px));
+  border-radius: 9999px;
+  opacity: 0.65;
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  transition: opacity 0.15s ease;
+}
+
+.chat-jump > *:hover {
+  opacity: 1;
+}
+
 .chat::-webkit-scrollbar {
   width: 8px;
 }

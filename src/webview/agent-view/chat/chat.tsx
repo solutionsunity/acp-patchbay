@@ -147,6 +147,11 @@ const EMPTY_TRANSCRIPT: ReturnType<typeof deriveTranscript> = {
   liveBlockId: null,
 };
 
+/** The bottom band: within this many pixels of the tail counts as "at the
+ * bottom" for re-pinning — wide enough that a sub-line overshoot doesn't
+ * break follow, narrow enough that "reading the last message" isn't it. */
+const PIN_BAND_PX = 48;
+
 export function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
@@ -177,8 +182,27 @@ export function Chat(props: {
   const pendingAnchor = useRef<number | null>(null);
   /** Scroll-follow contract (ui-rendering-strategy § Scroll-follow):
    * auto-follow only while pinned to the bottom — scrollback is never
-   * yanked; returning to the bottom re-pins. */
+   * yanked. Unpin is intent-based (upward wheel, touch drag): a position
+   * threshold alone loses the race under a fast stream — the first few
+   * upward pixels stay inside the bottom band, so the next re-stick yanks
+   * the gesture back and the user can never escape. Re-pin is
+   * position-based and direction-guarded: reaching the bottom band while
+   * not moving up re-pins. Programmatic sticks scroll downward, so they
+   * re-affirm the pin but can never re-pin over a user's upward intent.
+   * The ref is the hot-path truth; the state mirror exists only so the
+   * jump-to-latest control can render on pin changes. */
   const pinned = useRef(true);
+  const [pinnedView, setPinnedView] = useState(true);
+  const setPin = useCallback((v: boolean) => {
+    pinned.current = v;
+    setPinnedView(v);
+  }, []);
+  const lastScrollTop = useRef(0);
+  /** The one stick-to-tail move (instant, not smooth). */
+  const stick = useCallback(() => {
+    const el = chatRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
 
   const grow = useCallback(() => {
     const el = chatRef.current;
@@ -188,13 +212,13 @@ export function Chat(props: {
     }
   }, []);
 
-  // Session switch: fresh window, pinned, jump (instant, not smooth) to the tail.
+  // Session switch: fresh window, pinned, jump to the tail.
   useLayoutEffect(() => {
     setMounted(INITIAL_WINDOW);
-    pinned.current = true;
-    const el = chatRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [activeId]);
+    setPin(true);
+    lastScrollTop.current = 0;
+    stick();
+  }, [activeId, setPin, stick]);
 
   // Prepend anchoring + teleport chunk-fill.
   useLayoutEffect(() => {
@@ -210,9 +234,8 @@ export function Chat(props: {
 
   // Follow streaming output only while pinned.
   useEffect(() => {
-    const el = chatRef.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [blocks.length, blocks[blocks.length - 1]]);
+    if (pinned.current) stick();
+  }, [blocks.length, blocks[blocks.length - 1], stick]);
 
   // Late layout growth: block heights keep changing *after* the data-event
   // scrolls above — markdown/highlighting/mermaid render async, fonts land,
@@ -226,12 +249,12 @@ export function Chat(props: {
     const el = chatRef.current;
     if (el === null || body === null) return;
     const ro = new ResizeObserver(() => {
-      if (pinned.current) el.scrollTop = el.scrollHeight;
+      if (pinned.current) stick();
     });
     ro.observe(body);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [body]);
+  }, [body, stick]);
 
   // The top sentinel extends the window before its edge is ever seen:
   // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the doc's
@@ -347,8 +370,16 @@ export function Chat(props: {
       ref={chatRef}
       onScroll={(e) => {
         const el = e.currentTarget;
-        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        const up = el.scrollTop < lastScrollTop.current;
+        lastScrollTop.current = el.scrollTop;
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < PIN_BAND_PX;
+        if (!atBottom) setPin(false);
+        else if (!up) setPin(true);
       }}
+      onWheel={(e) => {
+        if (e.deltaY < 0) setPin(false);
+      }}
+      onTouchMove={() => setPin(false)}
     >
       {/* .chat-body exists so the ResizeObserver above has a content-sized
           element to watch — a scroller's own box never reflects its
@@ -375,6 +406,28 @@ export function Chat(props: {
       )}
       {activeTurnStartedAt !== undefined && <TurnTicker startedAt={activeTurnStartedAt} />}
       </div>
+      {/* The way back to the tail, whenever unpinned: a corner nav
+          control, not a banner — long transcripts make the manual scroll
+          back genuinely tedious, and during a live turn the same control
+          doubles as the pin state's read-out (clicking re-pins, follow
+          resumes). Sticky + zero-height so it floats over the tail
+          without adding scroll height. */}
+      {!pinnedView && (
+        <div className="chat-jump">
+          <Button
+            size="icon"
+            variant="secondary"
+            title="Jump to latest"
+            aria-label="Jump to latest"
+            onClick={() => {
+              stick();
+              setPin(true);
+            }}
+          >
+            <Icon name="arrow-down" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
