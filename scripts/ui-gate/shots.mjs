@@ -105,6 +105,18 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] composer stats counts prompts+tools ("${stats}")`, stats === "2 5");
   check(`[${theme}] no gauge without usage reported`, (await p.$(".composer-stats .gauge")) === null);
 
+  // ── read-out strip: plan chip left, files chip right; overlay panels ──
+  check(`[${theme}] plan chip shows fraction`, (await p.$(".readout-strip .chip.plan .frac")) !== null);
+  const filesChip = await p.$eval(".readout-strip .chip.files", (el) => el.textContent.trim());
+  check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file");
+  await p.click(".readout-strip .chip.plan");
+  check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".readout-panel .items .in_progress", { timeout: 3000 })) !== null);
+  await p.click(".readout-strip .chip.files");
+  check(`[${theme}] files panel swaps in (one at a time)`, (await p.waitForSelector(".readout-panel .file-row", { timeout: 3000 })) !== null);
+  check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".readout-panel .file-row .dirty")) !== null);
+  await p.click(".readout-panel .head .close");
+  check(`[${theme}] X closes the panel`, (await p.$(".readout-panel")) === null);
+
   // ── composer typed triggers (Lexical): keyboard-driven, tokens inline ──
   await p.click(".prompt-editor");
   await p.keyboard.type("/");

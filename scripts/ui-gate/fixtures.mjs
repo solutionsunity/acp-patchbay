@@ -20,7 +20,9 @@ export const chatTranscript = [
   tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", diffFiles: ["/ws/a.ts"] }),
   tool("g1", { title: "Read a.ts", toolKind: "read" }),
   tool("g2", { title: "Read b.ts", toolKind: "read" }),
-  tool("g3", { title: "Read c.ts", toolKind: "read" }),
+  // file-touching + matching the dirty openEditors entry below — lights the
+  // read-out strip's files chip and its dirty dot; keeps the run at 5 calls
+  tool("g3", { title: "Edit api.ts", toolKind: "edit", locations: ["/ws/src/api.ts"] }),
   tool("t9", { title: "rm -rf ./cache", toolKind: "execute", status: "failed", denied: true }),
   {
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
