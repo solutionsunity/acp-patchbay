@@ -1462,10 +1462,11 @@ export function reduceAgentView(
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
+      // Closing the active session lands on home ("+ New chat"), never on a
+      // sibling: a session click is the one hydrate/connect trigger, so a
+      // silently auto-activated row would render its title over an empty pane.
       const activeSessionId =
-        state.activeSessionId === event.sessionId
-          ? (sessions[sessions.length - 1]?.id ?? null)
-          : state.activeSessionId;
+        state.activeSessionId === event.sessionId ? null : state.activeSessionId;
       return {
         ...state,
         sessions,

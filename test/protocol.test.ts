@@ -145,6 +145,28 @@ describe("reducers", () => {
     expect(succeeded.activeSessionId).toBe("s1");
   });
 
+  // Closing the active session must land on home, never silently activate a
+  // sibling: a session click is the one hydrate trigger, so an auto-activated
+  // row would show its title over an empty pane.
+  it("closing the active session falls back to home, not a sibling", () => {
+    const two = replay(initialAgentViewState, [
+      {
+        kind: "sessionCreated",
+        session: { id: "s1", agentId: "claude", title: "one", live: false, updatedAt: "2026-07-09T00:00:00Z" },
+      },
+      {
+        kind: "sessionCreated",
+        session: { id: "s2", agentId: "claude", title: "two", live: false, updatedAt: "2026-07-09T00:00:01Z" },
+      },
+    ]);
+    expect(two.activeSessionId).toBe("s2");
+    const closed = replay(two, [{ kind: "sessionClosed", sessionId: "s2" }]);
+    expect(closed.activeSessionId).toBeNull();
+    // Closing a background session leaves the active one alone.
+    const other = replay(two, [{ kind: "sessionClosed", sessionId: "s1" }]);
+    expect(other.activeSessionId).toBe("s2");
+  });
+
   it("chatConnect carries forSessionId through connecting and failed — the Retry-as-same-click hook", () => {
     const connecting = replay(initialAgentViewState, [
       { kind: "chatConnectStarted", agentId: "claude", forSessionId: "s9" },
