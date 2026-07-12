@@ -40,10 +40,11 @@ export function ComposerStats({
   totals: SessionTotals;
   usage: UsageInfo | null;
 }) {
+  // No edited-files count here: the read-out strip's files chip is that
+  // number's one surface — same derivation, interactive, never disagreeing.
   const counts: { icon: string; n: number; tip: string }[] = [
     { icon: "comment", n: totals.prompts, tip: `${count(totals.prompts, "prompt")} this session` },
     { icon: "tools", n: totals.toolCalls, tip: `${count(totals.toolCalls, "tool call")} this session` },
-    { icon: "edit", n: totals.filesTouched, tip: `${count(totals.filesTouched, "file")} edited this session` },
   ];
   return (
     // mr-6 ≈ one counter's width of air before the send button — the strip is

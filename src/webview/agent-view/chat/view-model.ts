@@ -36,8 +36,9 @@ export interface SessionTotals {
   /** Total tool_call blocks across the session. */
   toolCalls: number;
   /** Distinct file paths across edit/delete/move calls, deduped across the
-   * whole session — the same file edited in three turns is 1, not 3. */
-  filesTouched: number;
+   * whole session (the same file edited in three turns appears once), in
+   * first-touch order — the read-out strip's files panel renders this list. */
+  files: readonly string[];
 }
 
 export interface TranscriptView {
@@ -62,7 +63,7 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
   items: [],
   rollups: new Map(),
   liveRollup: { toolCalls: 0, filesTouched: 0, byKind: {} },
-  totals: { prompts: 0, toolCalls: 0, filesTouched: 0 },
+  totals: { prompts: 0, toolCalls: 0, files: [] },
   liveBlockId: null,
 };
 
@@ -139,7 +140,7 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
     items,
     rollups,
     liveRollup: { toolCalls, filesTouched: files.size, byKind },
-    totals: { prompts, toolCalls: totalCalls, filesTouched: allFiles.size },
+    totals: { prompts, toolCalls: totalCalls, files: [...allFiles] },
     liveBlockId,
   };
 }

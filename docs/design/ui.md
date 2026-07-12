@@ -31,9 +31,10 @@ surface · a crash is visible the moment it happens and recovery is one action.
 
 ## Agent View (sidebar)
 
-Vertical order: **header → session row → plan strip (conditional) → chat →
-composer**. Two drawers overlay from the top. Chat is home; agents and sessions
-are one gesture away — drawers, never split panels.
+Vertical order: **header → session row → chat → read-out strip (conditional) →
+composer**. Two drawers overlay from the top; the read-out strip's panels overlay
+from the bottom. Chat is home; agents and sessions are one gesture away — drawers,
+never split panels.
 
 ### 1 · Header
 
@@ -52,12 +53,26 @@ are one gesture away — drawers, never split panels.
 | Badges | `emulated` / `⑂ branch` per Shared vocabulary — always visible, never hover-only |
 | Kebab ⋯ | rename · branch (labeled `native fork ✓` or `emulated` per used matrix) · reload from agent (re-`load` replay — rejoin truth) · close |
 
-### 3 · Plan strip
+### 3 · Read-out strip
 
-Present **only** while the agent maintains a plan (`agent-plan` updates). One line,
-sticky under the session row — survives chat scroll: `▸ Plan n/m — current step`.
-Click toggles the full checklist inline (✓ done, ▸ active, ○ pending). Absent
-entirely otherwise — no empty placeholder.
+One row between chat and composer — live-turn read-outs at the eye's resting
+point, deliberately **outside** the composer: its binding rule ("above the input =
+what the agent will see") stays intact because nothing here is context. Two chips,
+each absent when empty; the row itself absent when both are — no placeholder.
+*(Position supersedes the top-pinned plan strip — re-derived 2026-07-12,
+ui-rendering-strategy § Plans.)*
+
+| Chip | Where | Behavior |
+|---|---|---|
+| Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
+| Edited files | right | `✎ n files` — the session's distinct agent-touched files (view-model totals, same pass as the rollups) |
+
+Click opens that chip's **panel** overlaying the chat, growing up from the strip
+(the drawers' mechanic, mirrored) — X, Escape, or re-click closes; one panel at a
+time. Plan panel: the full checklist (✓ done, ▸ active, ○ pending). Files panel:
+one row per file, click opens it in the editor; a dot marks a file whose open
+editor holds unsaved changes — editor reality read from the snapshot's
+`openEditors`, never a stored flag (compliance §12).
 
 ### 4 · Chat blocks
 
@@ -105,7 +120,7 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; change shows ⏳ until the agent's state notification confirms; display never optimistic |
-| Stats strip | 💬 🛠 ✎ counts + ring | the one read-out in the dials row: whole-session prompt / tool-call / edited-file counts (view-model totals, same single pass as the rollups; files deduped across turns) and the usage gauge — ring, orange arc, arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences § Composer stats, default shown) |
+| Stats strip | 💬 🛠 counts + ring | the one read-out in the dials row: whole-session prompt / tool-call counts (view-model totals, same single pass as the rollups; the edited-file count moved to the read-out strip's files chip — one number, one surface) and the usage gauge — ring, orange arc, arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences § Composer stats, default shown) |
 | Send / Stop | ↑ / ■ | send prompt / `session/cancel` mid-turn |
 
 ### 6 · Drawers

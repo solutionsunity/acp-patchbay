@@ -1,5 +1,5 @@
 // Agent View shell — the single blend: agents + sessions + chat (features §1).
-// Vertical order per ui.md: header → session row → plan strip → chat → composer;
+// Vertical order per ui.md: header → session row → chat → read-out strip → composer;
 // drawers overlay from the top. Render-only: the shell owns only local UI
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
@@ -12,7 +12,7 @@ import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
-import { PlanStrip } from "./plan-strip";
+import { ReadoutStrip } from "./readout-strip";
 import { SessionRow } from "./session-row";
 import { Button } from "@/components/ui/button";
 
@@ -111,8 +111,18 @@ export function App({
           )}
         </div>
       )}
-      {active !== null && <PlanStrip entries={state.activePlan[active.id] ?? null} />}
       <Chat state={state} activeSession={active} blocks={blocks} derived={derived} onNewChat={newChat} />
+      {active !== null && (
+        // keyed by session: which panel is open is per-session render state,
+        // not something a session switch should inherit
+        <ReadoutStrip
+          key={active.id}
+          plan={state.activePlan[active.id] ?? null}
+          files={derived.totals.files}
+          openEditors={state.openEditors}
+          roots={state.workspaceRoots}
+        />
+      )}
       <Composer
         agent={activeAgent}
         session={active}

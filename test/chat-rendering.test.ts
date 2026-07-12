@@ -217,7 +217,8 @@ describe("deriveTranscript: per-turn rollups", () => {
       tool("t4", { toolKind: "read", status: "in_progress" }),
     ];
     const { totals } = deriveTranscript(blocks, true);
-    expect(totals).toEqual({ prompts: 3, toolCalls: 4, filesTouched: 2 });
+    // files list is deduped in first-touch order — the read-out strip's panel
+    expect(totals).toEqual({ prompts: 3, toolCalls: 4, files: ["/ws/a.ts", "/ws/b.ts"] });
   });
 
   it("formatDuration: seconds, minutes, hours", () => {

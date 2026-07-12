@@ -143,6 +143,9 @@ export type Action =
   | { kind: "openAssetFile"; agentId: string; path: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
+  /** Open a file in the editor by absolute path — the read-out strip's
+   * files-panel rows (render-only-webview: the view never touches fs). */
+  | { kind: "openFile"; path: string }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
    * big diagram can breathe. */

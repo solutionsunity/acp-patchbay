@@ -1974,6 +1974,12 @@ export class Orchestrator {
       case "openAssetFile":
         this.openAssetFile(action.path);
         break;
+      case "openFile":
+        // read-out strip files panel — path is absolute (tool-call locations)
+        void vscode.window
+          .showTextDocument(vscode.Uri.file(action.path))
+          .then(undefined, this.logCatch(`openFile ${action.path}`));
+        break;
       case "addOrUpdateAgentConfig":
         void this.addOrUpdateAgentConfig(action.config, action.env);
         break;

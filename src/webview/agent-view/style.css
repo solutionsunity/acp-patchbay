@@ -195,37 +195,172 @@ body {
   color: var(--pb-accent);
 }
 
-/* ── plan strip — present only while the agent maintains a plan ─────── */
-.plan-strip {
-  padding: 5px 12px;
-  font-size: 11.5px;
-  color: var(--pb-text-dim);
-  border-bottom: 1px solid var(--pb-border);
-  border-left: 2px solid var(--pb-accent-dim);
-  cursor: pointer;
+/* ── read-out strip — between chat and composer (ui.md § Read-out strip):
+   plan chip left, edited-files chip right; a chip's panel overlays the chat,
+   growing up from the strip (bottom: 100% of the relative wrapper). Read-outs
+   only — never context, so it lives outside the composer's binding rule. ── */
+.readout-strip {
+  position: relative;
+  border-top: 1px solid var(--pb-border);
 }
 
-.plan-strip:hover {
+.readout-strip .chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+}
+
+.readout-strip .chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.readout-strip .chip:hover,
+.readout-strip .chip.active {
   color: var(--pb-text);
   background: var(--pb-panel);
 }
 
-.plan-strip .frac {
+.readout-strip .chip.plan {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.readout-strip .chip .current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* right-anchored with or without a plan chip beside it */
+.readout-strip .chip.files {
+  margin-left: auto;
+  flex: none;
+}
+
+.readout-strip .frac {
   color: var(--pb-accent);
   font-weight: 600;
 }
 
-.plan-strip .items div {
+.readout-panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: var(--pb-panel);
+  border-top: 1px solid var(--pb-border);
+  border-bottom: 1px solid var(--pb-border);
+  z-index: 50; /* over chat, under the top drawers (60/61) */
+  animation: rise 0.16s ease-out;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
+
+.readout-panel .head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 4px;
+  background: var(--pb-panel);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--pb-text-faint);
+  font-weight: 600;
+}
+
+.readout-panel .head .close {
+  background: none;
+  border: none;
+  color: var(--pb-text-dim);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.readout-panel .head .close:hover {
+  color: var(--pb-text);
+}
+
+.readout-panel .items {
+  padding: 0 10px 8px;
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+}
+
+.readout-panel .items div {
   padding: 2px 0 2px 8px;
 }
 
-.plan-strip .items .completed {
+.readout-panel .items .completed {
   color: var(--pb-text-faint);
   text-decoration: line-through;
 }
 
-.plan-strip .items .in_progress {
+.readout-panel .items .in_progress {
   color: var(--pb-accent);
+}
+
+.readout-panel .file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--pb-text-dim);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+.readout-panel .file-row:hover {
+  color: var(--pb-text);
+  background: var(--pb-bg);
+}
+
+.readout-panel .file-row .base {
+  color: var(--pb-text);
+  flex: none;
+}
+
+.readout-panel .file-row .dir {
+  color: var(--pb-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* user's unsaved edits sitting on an agent-touched file (compliance §12) */
+.readout-panel .file-row .dirty {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pb-consumed);
+  margin-left: auto;
 }
 
 /* ── crash banner (ui.md § Chat blocks: shown the moment the agent dies;

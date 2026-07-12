@@ -240,9 +240,18 @@ with the answer once it exists.
 
 `session/update` `plan` events represent persistent **session-level** state, not a
 per-turn transcript event — a plan spans many prompts, so it must not reset or
-repeat each turn. Render it as a single widget pinned at the top of the session
-(only when a plan exists and has more than one task), independent of the per-turn
-timeline below it.
+repeat each turn. Render it as a single widget anchored to the read-out strip
+above the composer (only when a plan exists and has more than one task),
+independent of the per-turn timeline.
+
+*Position superseded 2026-07-12: originally pinned at the top of the session. The
+"session-level, not per-turn" argument only rules the widget out of the transcript;
+it never forced the top. Re-derived: plan ticks are live-turn signals, and during a
+turn the eye rests at the bottom of the stream — so the widget moved to the
+read-out strip between chat and composer (ui.md § Read-out strip), alongside the
+edited-files chip. Expansion became an overlay panel over the chat (X/Escape
+closes) instead of inline growth, which would shove the composer around from the
+new position.*
 
 - **Collapsed state** (default): just the fraction (`2/16`) plus the current
   in-progress task's title, truncated.
