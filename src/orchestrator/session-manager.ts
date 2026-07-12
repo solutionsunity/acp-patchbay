@@ -159,6 +159,12 @@ interface LiveSession {
    * per id on a terminal status, swept wholesale when the turn ends any way
    * but end_turn. */
   openToolCalls: Set<string>;
+  /** Replay-window only: agent activity observed since the last turn
+   * boundary. A replayed user message arriving with this set means a turn
+   * just ended structurally — synthesize its TurnEndBlock (nullable timing;
+   * see protocol.ts) so loaded history keeps its per-turn rollup lines.
+   * Live turns never touch it: their boundary is the real turnEnded. */
+  replayTurnDirty: boolean;
 }
 
 function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSession {
@@ -176,6 +182,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     everPrompted: false,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
+    replayTurnDirty: false,
   };
 }
 
@@ -387,12 +394,44 @@ export class SessionManager {
       // without this, a replayed cancelled turn would spin forever (live
       // cancel and its later replay must render identically).
       const session = this.sessions.get(sessionId);
-      if (session !== undefined) this.sweepOpenToolCalls(sessionId, session);
+      if (session !== undefined) {
+        this.sweepOpenToolCalls(sessionId, session);
+        // The trailing turn has no next user message to flush it — the end
+        // of the replay is its boundary (sweep first: same live rule, the
+        // stranded calls' fate lands before the turnEnd block). Skipped when
+        // a turn is genuinely in flight (mid-turn reload): that turn's real
+        // turnEnded is still coming, and one honest line beats two — the
+        // flag is dropped instead, never leaking past the window.
+        if (session.inFlight) session.replayTurnDirty = false;
+        else this.flushReplayBoundary(sessionId, session, this.emitterFor(sessionId));
+      }
       return knobs;
     } finally {
       this.replaying.delete(sessionId);
       this.hooks.resyncView?.();
     }
+  }
+
+  /** Emits the replay-synthesized turn boundary (nullable timing/stop/usage
+   * — see TurnEndBlock) if agent activity is pending, else no-ops. The flag
+   * is only ever set inside a replay window, so this can never fire on a
+   * live turn. */
+  private flushReplayBoundary(
+    sessionId: string,
+    session: LiveSession,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    if (!session.replayTurnDirty) return;
+    session.replayTurnDirty = false;
+    emit({
+      kind: "turnEnded",
+      sessionId,
+      blockId: newBlockId("turn"),
+      startedAt: null,
+      at: null,
+      stopReason: null,
+      usage: null,
+    });
   }
 
   /** Replay-window channel pick (ui-rendering-strategy § Hydration
@@ -1188,6 +1227,21 @@ export class SessionManager {
     // waits for the closing wholesale resync instead of a patch flood.
     const emit = this.emitterFor(sessionId);
 
+    // Replay boundary tracking: the replay wire carries no turn-resolution
+    // events, so turn structure is reconstructed here — agent activity marks
+    // the segment dirty, and the next user message (or the end of the replay,
+    // in loadSilently) flushes it as a synthesized TurnEndBlock. Only ever
+    // set inside the window: live turns get their real turnEnded (sendPrompt).
+    if (
+      this.replaying.has(sessionId) &&
+      (update.sessionUpdate === "agent_message_chunk" ||
+        update.sessionUpdate === "agent_thought_chunk" ||
+        update.sessionUpdate === "tool_call" ||
+        update.sessionUpdate === "tool_call_update")
+    ) {
+      session.replayTurnDirty = true;
+    }
+
     switch (update.sessionUpdate) {
       // Block-model interruption rule (ui-rendering-strategy.md): a chunk
       // merges into the *last* block only if it's the same type — any other
@@ -1200,6 +1254,10 @@ export class SessionManager {
       // replay nothing is in flight, so every historical user message lands.
       case "user_message_chunk": {
         if (session.inFlight) return;
+        // A replayed user message with agent activity pending = the previous
+        // turn just ended structurally — its boundary lands first, so the
+        // rollup derivation sees the same shape a live turn left behind.
+        this.flushReplayBoundary(sessionId, session, emit);
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
         if (update.content.type !== "text") {

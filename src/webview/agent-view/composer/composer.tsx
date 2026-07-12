@@ -11,10 +11,13 @@ import type {
   PromptPart,
   SessionKnobView,
   SessionSummary,
+  UsageInfo,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
+import type { SessionTotals } from "../chat/view-model";
 import { Knobs } from "./knobs";
+import { ComposerStats } from "./stats";
 import { basename } from "./menus";
 import { PromptEditor } from "./prompt-editor";
 import { RootsChip } from "./roots-chip";
@@ -36,6 +39,10 @@ export function Composer(props: {
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   knobs: readonly SessionKnobView[];
+  /** Session stats strip (Preferences composerStats gates it off entirely). */
+  showStats: boolean;
+  totals: SessionTotals;
+  usage: UsageInfo | null;
 }) {
   const send = useActions();
   const [adderOpen, setAdderOpen] = useState(false);
@@ -207,6 +214,9 @@ export function Composer(props: {
       <div className="input-foot">
         <Knobs sessionId={sessionId} knobs={props.knobs} />
         <span className="flex-1" />
+        {props.showStats && props.session !== null && (
+          <ComposerStats totals={props.totals} usage={props.usage} />
+        )}
         {/* theme-token primary (brand fills superseded — theme.css
             § identity palette); while a turn is live it becomes Stop,
             which is destructive. */}

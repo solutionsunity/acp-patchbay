@@ -27,14 +27,44 @@ export interface TurnRollup {
   byKind: Partial<Record<ToolCallKind, number>>;
 }
 
+/** Whole-session counters (composer stats strip) — accumulated in the same
+ * forward pass as the per-turn rollups, never a second traversal. */
+export interface SessionTotals {
+  /** User prompts in the transcript — what the wire replayed or streamed;
+   * an externally-continued session honestly shows only what came back. */
+  prompts: number;
+  /** Total tool_call blocks across the session. */
+  toolCalls: number;
+  /** Distinct file paths across edit/delete/move calls, deduped across the
+   * whole session — the same file edited in three turns is 1, not 3. */
+  filesTouched: number;
+}
+
 export interface TranscriptView {
   items: readonly TranscriptItem[];
   /** Per-turn rollup, keyed by the turnEnd block that closes the turn. */
   rollups: ReadonlyMap<string, TurnRollup>;
+  /** The trailing open segment's rollup — the same accumulator the next
+   * turnEnd would snapshot, exposed so the live ticker can show counts as
+   * they happen. Meaningful only while a turn is in flight; one derivation,
+   * never a second traversal. */
+  liveRollup: TurnRollup;
+  /** Whole-session counters — live blocks tick these as they land. */
+  totals: SessionTotals;
   /** The one live block (last block, text/thought, turn in flight) — null
    * when nothing is receiving deltas. */
   liveBlockId: string | null;
 }
+
+/** The no-transcript view — one shared instance so an empty session never
+ * re-derives (and consumers can rely on reference equality). */
+export const EMPTY_TRANSCRIPT: TranscriptView = {
+  items: [],
+  rollups: new Map(),
+  liveRollup: { toolCalls: 0, filesTouched: 0, byKind: {} },
+  totals: { prompts: 0, toolCalls: 0, filesTouched: 0 },
+  liveBlockId: null,
+};
 
 /** "Several" starts at 3 — two cards aren't the wall the grouping exists to
  * prevent, and hiding a pair costs more clicks than it saves reading.
@@ -69,17 +99,31 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
     files = new Set();
   };
 
+  // whole-session counters — never reset at turn boundaries
+  let prompts = 0;
+  let totalCalls = 0;
+  const allFiles = new Set<string>();
+
   for (const block of blocks) {
     if (block.kind === "toolCall") {
       run.push(block);
       toolCalls++;
+      totalCalls++;
       byKind[block.toolKind] = (byKind[block.toolKind] ?? 0) + 1;
-      if (FILE_TOUCHING.has(block.toolKind)) for (const path of block.locations) files.add(path);
+      if (FILE_TOUCHING.has(block.toolKind)) {
+        for (const path of block.locations) {
+          files.add(path);
+          allFiles.add(path);
+        }
+      }
       continue;
     }
     flushRun();
     items.push({ kind: "single", block });
-    if (block.kind === "user") resetTurn();
+    if (block.kind === "user") {
+      prompts++;
+      resetTurn();
+    }
     if (block.kind === "turnEnd") {
       rollups.set(block.id, { toolCalls, filesTouched: files.size, byKind });
       resetTurn();
@@ -91,7 +135,20 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   const liveBlockId =
     live && last !== undefined && (last.kind === "text" || last.kind === "thought") ? last.id : null;
 
-  return { items, rollups, liveBlockId };
+  return {
+    items,
+    rollups,
+    liveRollup: { toolCalls, filesTouched: files.size, byKind },
+    totals: { prompts, toolCalls: totalCalls, filesTouched: allFiles.size },
+    liveBlockId,
+  };
+}
+
+/** "1 tool call" / "3 tool calls" — the one pluralizer for count read-outs
+ * (turn line, composer stats). Naive s-suffix, which every counted noun
+ * here satisfies. */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 /** "1m 29s" (or "12s", "1h 02m") — duration between two ISO timestamps. */

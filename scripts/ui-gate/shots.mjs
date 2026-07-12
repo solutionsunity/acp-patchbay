@@ -99,6 +99,12 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);
   check(`[${theme}] tool run grouped`, (await p.$("text=5 tool calls")) !== null);
 
+  // ── composer stats strip: whole-session counts (2 prompts, 5 tool calls
+  // in the fixture; no files touched, no usage reported → no gauge) ──
+  const stats = await p.$eval(".composer-stats", (el) => el.textContent.replace(/\s+/g, " ").trim());
+  check(`[${theme}] composer stats counts prompts+tools ("${stats}")`, stats === "2 5");
+  check(`[${theme}] no gauge without usage reported`, (await p.$(".composer-stats .gauge")) === null);
+
   // ── composer typed triggers (Lexical): keyboard-driven, tokens inline ──
   await p.click(".prompt-editor");
   await p.keyboard.type("/");

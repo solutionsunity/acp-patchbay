@@ -4,77 +4,92 @@
 // three-mechanism scale strategy (ui-rendering-strategy § Transcript
 // scale): windowed mount, content-visibility containment (style.css),
 // and memoized rows.
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AgentViewState, ChatBlock, SessionSummary, TurnEndBlock } from "../../../shared/protocol";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AgentViewState, ChatBlock, SessionSummary, TurnUsage } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
-import { deriveTranscript, formatDuration, type TurnRollup } from "./view-model";
+import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
 import { Thought, ToolCallCard, ToolRunCard } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
 import { Button } from "@/components/ui/button";
 
-/** Per-turn metadata line (ui-rendering-strategy § Per-turn summary /
- * completion metadata): subtle one-liner under the turn — counts only when
- * nonzero, tokens only when the agent reported them (absence over fake),
- * completion wall-clock as a hover tooltip, and a stop-reason chip only
- * when the turn didn't end cleanly. Click expands the by-kind breakdown. */
-function TurnMetaLine({ block, rollup }: { block: TurnEndBlock; rollup: TurnRollup }) {
+/** THE turn line (ui-rendering-strategy § Per-turn summary / completion
+ * metadata) — one component, live and settled: while the turn runs it is
+ * the ticker (accent spinner + climbing elapsed + counts as they happen);
+ * on turn end it settles in place into the metadata line, same shape, same
+ * order. Time ALWAYS leads when known — it is the one always-present part
+ * of a live turn, so every line has a uniform anchor and the elapsed
+ * counter freezes where it ticked. Counts only when nonzero, tokens only
+ * when the agent reported them, duration only when observed (a
+ * replay-synthesized boundary has no timing — absence over fake), a
+ * stop-reason chip only when the turn didn't end cleanly. Click expands
+ * the by-kind breakdown. */
+function TurnLine({
+  live,
+  startedAt,
+  endedAt,
+  stopReason,
+  usage,
+  rollup,
+}: {
+  live: boolean;
+  startedAt: string | null;
+  endedAt: string | null;
+  stopReason: string | null;
+  usage: TurnUsage | null;
+  rollup: TurnRollup;
+}) {
   const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [live]);
+  const end = live ? new Date(now).toISOString() : endedAt;
   const parts: string[] = [];
-  if (rollup.toolCalls > 0) parts.push(`${rollup.toolCalls} tool call${rollup.toolCalls === 1 ? "" : "s"}`);
-  if (rollup.filesTouched > 0) parts.push(`${rollup.filesTouched} file${rollup.filesTouched === 1 ? "" : "s"}`);
-  parts.push(formatDuration(block.startedAt, block.endedAt));
-  if (block.usage !== null) parts.push(`${block.usage.total.toLocaleString()} tokens`);
+  if (startedAt !== null && end !== null) parts.push(formatDuration(startedAt, end));
+  if (rollup.toolCalls > 0) parts.push(count(rollup.toolCalls, "tool call"));
+  if (rollup.filesTouched > 0) parts.push(count(rollup.filesTouched, "file"));
+  if (usage !== null) parts.push(`${usage.total.toLocaleString()} tokens`);
+  const chip = stopReason !== null && stopReason !== "end_turn";
+  // A boundary with nothing observable to say (replayed prose-only turn:
+  // no timing, no calls, no usage) renders nothing rather than a blank line.
+  if (parts.length === 0 && !chip && !live) return null;
   const breakdown = Object.entries(rollup.byKind)
     .map(([kind, n]) => `${n} ${kind}`)
     .join(" · ");
   return (
     <div
       className="cursor-pointer select-none py-0.5 text-[11px] text-muted-foreground"
-      title={`completed ${new Date(block.endedAt).toLocaleString()}`}
+      title={!live && endedAt !== null ? `completed ${new Date(endedAt).toLocaleString()}` : undefined}
       onClick={() => setOpen((v) => !v)}
       aria-expanded={open}
     >
+      {live && <span className="spin mr-1.5 inline-block align-middle" />}
       {parts.join(" · ")}
-      {block.stopReason !== "end_turn" && (
+      {chip && (
         <span
-          className={`badge ml-1.5 ${block.stopReason === "error" ? "text-err" : "text-warn"}`}
+          className={`badge ml-1.5 ${stopReason === "error" ? "text-err" : "text-warn"}`}
           title="the turn did not end cleanly — this is the agent's stop reason"
         >
-          {block.stopReason}
+          {stopReason}
         </span>
       )}
       {open && (
         <div className="pt-0.5">
           {breakdown !== "" ? breakdown : "no tool calls this turn"}
-          {block.usage !== null && (
+          {usage !== null && (
             <>
               {" · "}
-              {block.usage.input.toLocaleString()} in · {block.usage.output.toLocaleString()} out
-              {block.usage.cached !== undefined ? ` · ${block.usage.cached.toLocaleString()} cached` : ""}
+              {usage.input.toLocaleString()} in · {usage.output.toLocaleString()} out
+              {usage.cached !== undefined ? ` · ${usage.cached.toLocaleString()} cached` : ""}
             </>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/** Live elapsed ticker while a turn is in flight — visible feedback for a
- * slow response instead of silence. Client-side seconds; ephemeral. A
- * spinner, not a clock glyph: animation is the "something is happening"
- * signal, the digits already say how long. */
-function TurnTicker({ startedAt }: { startedAt: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(t);
-  }, []);
-  return (
-    <div className="py-0.5 text-[11px] text-muted-foreground">
-      <Icon name="loading" spin /> {formatDuration(startedAt, new Date(now).toISOString())}
     </div>
   );
 }
@@ -102,7 +117,7 @@ function Block({
     case "toolCall":
       return <ToolCallCard block={block} sessionId={sessionId} />;
     case "turnEnd":
-      return null; // rendered by Chat as TurnMetaLine, with its rollup
+      return null; // rendered by Chat as TurnLine, with its rollup
     case "permission":
       return <PermissionCard block={block} />;
     case "diff":
@@ -141,12 +156,6 @@ const MemoToolRun = memo(
 const INITIAL_WINDOW = 60;
 const WINDOW_BATCH = 30;
 
-const EMPTY_TRANSCRIPT: ReturnType<typeof deriveTranscript> = {
-  items: [],
-  rollups: new Map(),
-  liveBlockId: null,
-};
-
 /** The bottom band: within this many pixels of the tail counts as "at the
  * bottom" for re-pinning — wide enough that a sub-line overshoot doesn't
  * break follow, narrow enough that "reading the last message" isn't it. */
@@ -155,6 +164,12 @@ const PIN_BAND_PX = 48;
 export function Chat(props: {
   state: AgentViewState;
   activeSession: SessionSummary | null;
+  /** The active session's blocks and their derived view — App owns the one
+   * transcript read and the one derivation (view-model.ts) because the
+   * composer's stats strip consumes the same pass's session totals; passing
+   * both keeps them in lockstep by construction. */
+  blocks: readonly ChatBlock[];
+  derived: TranscriptView;
   /** The shell's smart "+" (P17): zero agents → Settings, one → straight
    * to it, several → the picker. */
   onNewChat(): void;
@@ -164,12 +179,7 @@ export function Chat(props: {
   const active = props.activeSession;
   const activeId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
-  const blocks = active !== null ? (props.state.transcripts[active.id] ?? []) : [];
-  const activeLive = active?.live ?? false;
-  const derived = useMemo(
-    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
-    [blocks, activeLive],
-  );
+  const { blocks, derived } = props;
 
   const [mounted, setMounted] = useState(INITIAL_WINDOW);
   const hidden = Math.max(0, derived.items.length - mounted);
@@ -187,7 +197,7 @@ export function Chat(props: {
    * upward pixels stay inside the bottom band, so the next re-stick yanks
    * the gesture back and the user can never escape. Re-pin is
    * position-based and direction-guarded: reaching the bottom band while
-   * not moving up re-pins. Programmatic sticks scroll downward, so they
+   * not moving up re-pins; programmatic sticks scroll downward, so they
    * re-affirm the pin but can never re-pin over a user's upward intent.
    * The ref is the hot-path truth; the state mirror exists only so the
    * jump-to-latest control can render on pin changes. */
@@ -360,7 +370,7 @@ export function Chat(props: {
     );
   }
 
-  const { items, rollups, liveBlockId } = derived;
+  const { items, rollups, liveRollup, liveBlockId } = derived;
   const visible = hidden > 0 ? items.slice(hidden) : items;
   const activeTurnStartedAt = props.state.activeTurn[active.id];
 
@@ -394,7 +404,15 @@ export function Chat(props: {
         item.kind === "toolRun" ? (
           <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} />
         ) : item.block.kind === "turnEnd" ? (
-          <TurnMetaLine key={item.block.id} block={item.block} rollup={rollups.get(item.block.id)!} />
+          <TurnLine
+            key={item.block.id}
+            live={false}
+            startedAt={item.block.startedAt}
+            endedAt={item.block.endedAt}
+            stopReason={item.block.stopReason}
+            usage={item.block.usage}
+            rollup={rollups.get(item.block.id)!}
+          />
         ) : (
           <MemoBlock
             key={item.block.id}
@@ -404,7 +422,16 @@ export function Chat(props: {
           />
         ),
       )}
-      {activeTurnStartedAt !== undefined && <TurnTicker startedAt={activeTurnStartedAt} />}
+      {activeTurnStartedAt !== undefined && (
+        <TurnLine
+          live
+          startedAt={activeTurnStartedAt}
+          endedAt={null}
+          stopReason={null}
+          usage={null}
+          rollup={liveRollup}
+        />
+      )}
       </div>
       {/* The way back to the tail, whenever unpinned: a corner nav
           control, not a banner — long transcripts make the manual scroll

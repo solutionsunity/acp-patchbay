@@ -336,6 +336,18 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     expect(seen.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
   });
 
+  it("a replay-synthesized boundary (at: null) is history, not news — block lands, no updatedAt bump, no unseen dot", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      mk("b"),
+      { kind: "sessionActivated", sessionId: "b" },
+      { kind: "turnEnded", sessionId: "a", blockId: "t1", startedAt: null, at: null, stopReason: null, usage: null },
+    ]);
+    expect(s.transcripts["a"]![0]).toMatchObject({ kind: "turnEnd", startedAt: null, endedAt: null, stopReason: null });
+    expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T00:00:00Z");
+    expect(s.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
+  });
+
   it("a turn ending on the active session is already seen — watching it complete counts", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),

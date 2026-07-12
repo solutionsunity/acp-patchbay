@@ -40,6 +40,11 @@ export const chatPlan = [
   { content: "run the suite", status: "pending" },
 ];
 
+/** Complete stored-preferences object, as every snapshot carries. */
+const preferences = {
+  soundOnDone: false, knobSource: "agent-default", idleCloseMinutes: 60, composerStats: true,
+};
+
 /** live=true streams the last block (caret, ticker); live=false is the
  * completed-turn view — where the RTL regression hid. */
 export function agentViewState({ live }) {
@@ -48,12 +53,12 @@ export function agentViewState({ live }) {
     // s2: newer activity + unseen — must sort above the active s1 and show
     // the blue dot in the sessions drawer.
     sessions: [
-      { id: "s1", agentId: "fake", title: "find foo", live, emulated: false, branchOf: null, updatedAt: "2026-07-09T10:00:00Z" },
-      { id: "s2", agentId: "fake", title: "refactor bar", live: false, emulated: false, branchOf: null, updatedAt: "2026-07-09T11:00:00Z", unseen: true },
+      { id: "s1", agentId: "fake", title: "find foo", live, updatedAt: "2026-07-09T10:00:00Z" },
+      { id: "s2", agentId: "fake", title: "refactor bar", live: false, updatedAt: "2026-07-09T11:00:00Z", unseen: true },
     ],
     activeSessionId: "s1",
     chatConnect: null,
-    roster: [],
+    registryAgents: [],
     transcripts: { s1: chatTranscript },
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
@@ -63,6 +68,7 @@ export function agentViewState({ live }) {
     contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
+    preferences,
   };
 }
 
@@ -72,10 +78,10 @@ export function settingsState() {
       { id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false },
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false },
     ],
-    roster: [
-      { id: "claude", name: "Claude Code", description: "Anthropic", registryVersion: "1.0.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: true },
-      { id: "gemini", name: "Gemini CLI", description: "Google", registryVersion: "0.9.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: false },
-      { id: "aug", name: "Augment", description: "Augment Code", registryVersion: "2.1.0", unavailableReason: "requires login", knownBypassBridge: true, assetsMapped: true },
+    registryAgents: [
+      { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: true },
+      { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: false },
+      { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login", knownBypassBridge: true, assetsMapped: true },
     ],
     capabilities: {
       claude: {
@@ -89,14 +95,15 @@ export function settingsState() {
         auth: { declared: true, used: true },
       },
     },
-    capabilitiesResetAt: {}, authMethods: {},
+    capabilitiesResetAt: {}, agentProtocol: { claude: 1 }, authMethods: {},
     commandRules: [], machineCommandRules: [], fileWriteScope: "workspace",
     auditTail: [], integrationRegistry: [], integrations: [], connectFlow: {}, assets: {},
     agentConfigs: [{
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       envKeys: ["API_KEY"], processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,
     }],
-    sessionsToday: 7, agentKnobs: {}, registryUpdatedAt: "", pendingBinaryInstall: null, verifyingAgents: {},
+    sessionsToday: 7, agentKnobs: {}, registryFetchedAt: "", pendingBinaryInstall: null, verifyingAgents: {},
     wireLog: { active: false, until: null }, dataInventory: null,
+    preferences,
   };
 }

@@ -150,7 +150,9 @@ a[data-streamdown="link"]:active {
  * text-muted-foreground utilities, and codicon.css's size pin
  * (.codicon[class*=codicon-] { font: … 16px/1 codicon }, itself unlayered)
  * are both unbeatable from inside the utilities layer. Opt-in hooks:
- * .fence-hd (mermaid block header), .tool-hd (tool-call rows). */
+ * .fence-hd (mermaid block header), .tool-hd (tool-call rows),
+ * .composer-stats (the composer foot's session read-out, icons only —
+ * its 11px text is a Tailwind utility since nothing unlayered fights it). */
 [data-streamdown="code-block-header"],
 [data-streamdown="mermaid-block"] > div:first-child, /* the "mermaid" label row — Streamdown gives it no data attribute of its own */
 .fence-hd,
@@ -163,7 +165,8 @@ a[data-streamdown="link"]:active {
 [data-streamdown="mermaid-block-actions"] .codicon[class*="codicon-"],
 [data-streamdown="table-wrapper"] button .codicon[class*="codicon-"],
 .fence-hd .codicon[class*="codicon-"],
-.tool-hd .codicon[class*="codicon-"] {
+.tool-hd .codicon[class*="codicon-"],
+.composer-stats .codicon[class*="codicon-"] {
   font-size: 12px;
 }
 /* Streamdown's action buttons carry their own text-muted-foreground /

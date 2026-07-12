@@ -288,8 +288,18 @@ describe("SessionManager", () => {
     // the new turn's text — never merged, always reset
     expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
     expect(textOf(blocks[1])).toBe("before crash");
-    expect(blocks[2]).toMatchObject({ kind: "user", text: "second turn" });
-    expect(textOf(blocks[3])).toBe("before crash"); // second turn uses the same script
+    // the replayed turn keeps its boundary — synthesized, since the replay
+    // wire carries no turn resolution: structure recovered, timing/stop/usage
+    // honestly absent (never re-attached from a patchbay-side store)
+    expect(blocks[2]).toMatchObject({
+      kind: "turnEnd",
+      startedAt: null,
+      endedAt: null,
+      stopReason: null,
+      usage: null,
+    });
+    expect(blocks[3]).toMatchObject({ kind: "user", text: "second turn" });
+    expect(textOf(blocks[4])).toBe("before crash"); // second turn uses the same script
 
     await h.pool.stop("sm5");
   });
@@ -307,21 +317,49 @@ describe("SessionManager", () => {
     await h.pool.restart("sm5s");
     await h.sessionManager.sendPrompt(sessionId, "second turn");
 
-    // The replay window went silent — reset + the whole replayed first turn —
-    // and closed with exactly one wholesale resync; the live second turn
-    // streamed as patches again.
+    // The replay window went silent — reset + the whole replayed first turn,
+    // closed by its synthesized boundary — and one wholesale resync; the
+    // live second turn streamed as patches again.
     expect(h.silentEvents.map((e) => e.kind)).toEqual([
       "transcriptReset",
       "userTextDelta",
       "agentTextDelta",
+      "turnEnded",
     ]);
     expect(h.resyncCount()).toBe(1);
     // canonical state is complete regardless of delivery path
     const blocks = h.state().transcripts[sessionId]!;
     expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
     expect(textOf(blocks[1])).toBe("hello");
-    expect(blocks[2]).toMatchObject({ kind: "user", text: "second turn" });
+    expect(blocks[2]).toMatchObject({ kind: "turnEnd", startedAt: null });
+    expect(blocks[3]).toMatchObject({ kind: "user", text: "second turn" });
     await h.pool.stop("sm5s");
+  });
+
+  it("a multi-turn replay gets a synthesized boundary per turn — the next user message flushes one, the end of the replay flushes the last", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "reply" }] }, "sm5m"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm5m", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "one");
+    await h.sessionManager.sendPrompt(sessionId, "two");
+
+    await h.pool.restart("sm5m");
+    await h.sessionManager.sendPrompt(sessionId, "three");
+
+    // two replayed turns, each closed by a synthesized boundary (nullable
+    // timing), then the live third turn closed by its real one
+    const shape = h.state().transcripts[sessionId]!.map((b) =>
+      b.kind === "turnEnd" ? `turnEnd:${b.startedAt === null ? "synthesized" : "real"}` : b.kind,
+    );
+    expect(shape).toEqual([
+      "user", "text", "turnEnd:synthesized",
+      "user", "text", "turnEnd:synthesized",
+      "user", "text", "turnEnd:real",
+    ]);
+
+    await h.pool.stop("sm5m");
   });
 
   it("session/load replay ending on a still-open tool call marks it interrupted — live cancel and its replay render identically", async () => {
@@ -495,7 +533,7 @@ describe("SessionManager", () => {
     const blocks = state.transcripts[sessionId]!;
     const end = assertKind(blocks[blocks.length - 1], "turnEnd");
     expect(end.stopReason).toBe("end_turn");
-    expect(Date.parse(end.endedAt)).toBeGreaterThanOrEqual(Date.parse(end.startedAt));
+    expect(Date.parse(end.endedAt!)).toBeGreaterThanOrEqual(Date.parse(end.startedAt!));
     expect(end.usage).toEqual({ total: 1200, input: 1000, output: 200, cached: 800 });
     // the ticker's basis is cleared the moment the turn resolves
     expect(state.activeTurn[sessionId]).toBeUndefined();

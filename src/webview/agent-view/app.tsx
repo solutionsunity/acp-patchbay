@@ -3,11 +3,12 @@
 // drawers overlay from the top. Render-only: the shell owns only local UI
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { AgentViewState } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
+import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
@@ -24,6 +25,18 @@ export function App({ state }: { state: AgentViewState }) {
 
   const active = state.sessions.find((s) => s.id === state.activeSessionId) ?? null;
   const activeAgent = active ? (state.agents.find((a) => a.id === active.agentId) ?? null) : null;
+
+  // The one transcript derivation (view-model.ts), hoisted here because two
+  // siblings consume it: Chat renders the items/rollups, the composer's
+  // stats strip the same pass's session totals.
+  const blocks = active !== null ? (state.transcripts[active.id] ?? []) : [];
+  const activeLive = active?.live ?? false;
+  const derived = useMemo(
+    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
+    [blocks, activeLive],
+  );
+  // `?? true` guards snapshots minted before the preferences field existed.
+  const showStats = state.preferences?.composerStats ?? true;
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -45,12 +58,7 @@ export function App({ state }: { state: AgentViewState }) {
 
   return (
     <div className="sidebar">
-      <Header
-        agent={activeAgent}
-        usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
-        onSessions={() => setDrawer("sessions")}
-        onNew={newChat}
-      />
+      <Header agent={activeAgent} onSessions={() => setDrawer("sessions")} onNew={newChat} />
       {active !== null && (
         <SessionRow session={active} onTitle={() => setDrawer("sessions")} />
       )}
@@ -74,7 +82,7 @@ export function App({ state }: { state: AgentViewState }) {
         </div>
       )}
       {active !== null && <PlanStrip entries={state.activePlan[active.id] ?? null} />}
-      <Chat state={state} activeSession={active} onNewChat={newChat} />
+      <Chat state={state} activeSession={active} blocks={blocks} derived={derived} onNewChat={newChat} />
       <Composer
         agent={activeAgent}
         session={active}
@@ -96,6 +104,9 @@ export function App({ state }: { state: AgentViewState }) {
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
+        showStats={showStats}
+        totals={derived.totals}
+        usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (

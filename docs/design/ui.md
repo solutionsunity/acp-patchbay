@@ -40,7 +40,6 @@ are one gesture away — drawers, never split panels.
 | Control | Glyph | Behavior |
 |---|---|---|
 | Agent chip | ● dot + name + ▾ | live status of the session's agent; click → **Agents drawer** |
-| Usage gauge | ring, orange arc | arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet |
 | Sessions | 🕘 | click → **Sessions drawer** |
 | New chat | ＋ | one intent, one click (P17): zero agents → Settings; exactly one → starts it directly, connecting in-pane if needed; several → Agents drawer as the picker |
 | Settings | ⚙ | opens the Settings editor tab **directly** — no menu until a menu earns it |
@@ -106,6 +105,7 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; change shows ⏳ until the agent's state notification confirms; display never optimistic |
+| Stats strip | 💬 🛠 ✎ counts + ring | the one read-out in the dials row: whole-session prompt / tool-call / edited-file counts (view-model totals, same single pass as the rollups; files deduped across turns) and the usage gauge — ring, orange arc, arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences § Composer stats, default shown) |
 | Send / Stop | ↑ / ■ | send prompt / `session/cancel` mid-turn |
 
 ### 6 · Drawers
@@ -257,9 +257,10 @@ later as an opt-in feature.)*
 ### Preferences
 
 Machine-scoped behavior defaults (stores/preferences.ts — globalState,
-non-sensitive), three cards, each a full read of the stored truth
+non-sensitive), four cards, each a full read of the stored truth
 (`setPreferences` patch out, `preferencesChanged` whole-object back — the
-page never assumes its own write landed):
+page never assumes its own write landed; the same event feeds the agent
+view, whose composer gates its stats strip on it):
 
 - **Turn end** — done-sound toggle (default off). Host-side player
   (sound.ts), never webview audio: webviews die when hidden, and the chime
@@ -276,6 +277,9 @@ page never assumes its own write landed):
   reconnect. The card restates the reaper's honesty guards: replayable
   history only, never the open session, an unseen result, or a turn in
   flight.
+- **Composer stats** — show/hide the composer's session-stats strip
+  (default shown). Pure render furniture: hiding it stores nothing less,
+  changes nothing else.
 
 ### Permissions
 

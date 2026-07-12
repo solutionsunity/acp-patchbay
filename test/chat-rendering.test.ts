@@ -189,6 +189,37 @@ describe("deriveTranscript: per-turn rollups", () => {
     expect(rollups.get("e1")).toEqual({ toolCalls: 1, filesTouched: 0, byKind: { execute: 1 } });
   });
 
+  it("liveRollup exposes the trailing open segment — the ticker's counts, same accumulator, no second traversal", () => {
+    const blocks: ChatBlock[] = [
+      user("u1"),
+      tool("t1", { toolKind: "execute" }),
+      turnEnd("e1"),
+      user("u2"), // in-flight turn: no turnEnd yet
+      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"], status: "in_progress" }),
+      tool("t3", { toolKind: "read" }),
+    ];
+    const { liveRollup, rollups } = deriveTranscript(blocks, true);
+    expect(liveRollup).toEqual({ toolCalls: 2, filesTouched: 1, byKind: { edit: 1, read: 1 } });
+    // the settled turn is untouched by the open segment
+    expect(rollups.get("e1")).toEqual({ toolCalls: 1, filesTouched: 0, byKind: { execute: 1 } });
+  });
+
+  it("totals span the whole session — prompts counted, files deduped ACROSS turns, live turn included", () => {
+    const blocks: ChatBlock[] = [
+      user("u1"),
+      tool("t1", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      turnEnd("e1"),
+      user("u2"),
+      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"] }), // same file, later turn: still 1
+      tool("t3", { toolKind: "edit", locations: ["/ws/b.ts"] }),
+      turnEnd("e2"),
+      user("u3"), // in-flight turn ticks the totals too
+      tool("t4", { toolKind: "read", status: "in_progress" }),
+    ];
+    const { totals } = deriveTranscript(blocks, true);
+    expect(totals).toEqual({ prompts: 3, toolCalls: 4, filesTouched: 2 });
+  });
+
   it("formatDuration: seconds, minutes, hours", () => {
     expect(formatDuration("2026-07-07T10:00:00Z", "2026-07-07T10:00:12Z")).toBe("12s");
     expect(formatDuration("2026-07-07T10:00:00Z", "2026-07-07T10:01:29Z")).toBe("1m 29s");

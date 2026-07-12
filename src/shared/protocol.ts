@@ -721,18 +721,27 @@ export interface TurnUsage {
 
 /** Appended when a turn resolves — the per-turn metadata line's source.
  * Counts/files are NOT stored here: the rollup derives from the turn's own
- * blocks in the transcript (ui-rendering-strategy § Per-turn summary). */
+ * blocks in the transcript (ui-rendering-strategy § Per-turn summary).
+ *
+ * Nullable trio = a boundary synthesized during session/load replay: the
+ * turn's *structure* is recoverable from the wire (a turn ends where the
+ * next user message begins), but its timing, stop reason, and usage were
+ * observations made at the original PromptResponse and are not on the
+ * replay wire — absent over fake, never re-attached from a patchbay-side
+ * store (turns have no wire identity; an externally-continued session
+ * would misalign every line). */
 export interface TurnEndBlock {
   kind: "turnEnd";
   id: string;
   /** ISO — when the prompt was sent (send→stop is the duration basis;
-   * deliberate: the ticker must fill the silence *before* a first chunk). */
-  startedAt: string;
+   * deliberate: the ticker must fill the silence *before* a first chunk).
+   * null = replay-synthesized boundary, timing never observed. */
+  startedAt: string | null;
   /** ISO — when the PromptResponse (or the turn's error) was observed. */
-  endedAt: string;
+  endedAt: string | null;
   /** ACP StopReason, or "error" when the turn threw — chip shown only when
-   * not a clean end_turn. */
-  stopReason: string;
+   * not a clean end_turn. null = unknown (replay-synthesized). */
+  stopReason: string | null;
   usage: TurnUsage | null;
 }
 
@@ -846,6 +855,35 @@ export interface ChatConnectView {
   forSessionId?: string;
 }
 
+/** Machine-scoped behavior defaults (stores/preferences.ts — globalState,
+ * non-sensitive). Read fresh orchestrator-side at each point of use
+ * (store-truth); this view exists so the Preferences page can render and
+ * edit them, and so the agent view can gate its own furniture (composer
+ * stats). Declared above AgentViewState because initialAgentViewState
+ * seeds from DEFAULT_PREFERENCES. */
+export interface PreferencesView {
+  /** System chime when a prompt turn finishes (host-side player — a
+   * cancelled turn never chimes: the user was present to cancel it). */
+  soundOnDone: boolean;
+  /** What a fresh session's knobs are seeded from: the agent config's
+   * defaults, or the last agent-confirmed combination on that agent
+   * (stores/last-knobs.ts, falling back to the defaults when none). */
+  knobSource: "agent-default" | "last-session";
+  /** Idle-release timer (session-manager reapIdle, condition 5) in
+   * minutes; 0 disables the reaper entirely. */
+  idleCloseMinutes: number;
+  /** The composer's session-stats strip (prompts, tool calls, files,
+   * context gauge) — pure render furniture, so hiding it loses nothing. */
+  composerStats: boolean;
+}
+
+export const DEFAULT_PREFERENCES: PreferencesView = {
+  soundOnDone: false,
+  knobSource: "agent-default",
+  idleCloseMinutes: 60,
+  composerStats: true,
+};
+
 export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
@@ -910,6 +948,10 @@ export interface AgentViewState {
    * `query` rides along so the picker can tell a stale answer from the one
    * matching what's typed now. */
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
+  /** The stored preferences truth as of the last preferencesChanged —
+   * same event feeds the Settings channel; the agent view reads only what
+   * gates its own rendering (composerStats). */
+  preferences: PreferencesView;
 }
 
 export interface UsageInfo {
@@ -957,6 +999,7 @@ export const initialAgentViewState: AgentViewState = {
   liveSelection: null,
   openEditors: [],
   workspaceFiles: { query: "", files: [], dirs: [] },
+  preferences: DEFAULT_PREFERENCES,
 };
 
 export type AgentViewEvent =
@@ -1023,15 +1066,18 @@ export type AgentViewEvent =
   /** Replaces the session's pinned plan snapshot — never a transcript block. */
   | { kind: "planUpdated"; sessionId: string; entries: readonly PlanEntry[] }
   /** A prompt turn began (send time) / resolved — the turnEnd block carries
-   * both timestamps so the reducer never has to reconstruct them. */
+   * both timestamps so the reducer never has to reconstruct them. The
+   * nullable trio is the replay-synthesized boundary (see TurnEndBlock):
+   * `at: null` also tells the reducer this is history landing, not news —
+   * no updatedAt bump, no unseen dot. */
   | { kind: "turnStarted"; sessionId: string; at: string }
   | {
       kind: "turnEnded";
       sessionId: string;
       blockId: string;
-      startedAt: string;
-      at: string;
-      stopReason: string;
+      startedAt: string | null;
+      at: string | null;
+      stopReason: string | null;
       usage: TurnUsage | null;
     }
   | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
@@ -1115,7 +1161,11 @@ export type AgentViewEvent =
   | { kind: "agentAuthResolved"; agentId: string }
   /** Full replace — the registry × overlay merge changed (refresh, or a new
    * version landed upstream). */
-  | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string };
+  | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string }
+  /** The complete stored preferences (never a patch) — one event, both
+   * channels: the Preferences page renders it, the agent view gates its
+   * composer stats on it. */
+  | { kind: "preferencesChanged"; preferences: PreferencesView };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -1486,22 +1536,28 @@ export function reduceAgentView(
       };
     case "turnEnded": {
       const { [event.sessionId]: _t, ...activeTurn } = state.activeTurn;
+      const appended = appendBlock(state, event.sessionId, {
+        kind: "turnEnd",
+        id: event.blockId,
+        startedAt: event.startedAt,
+        endedAt: event.at,
+        stopReason: event.stopReason,
+        usage: event.usage,
+      });
+      // Replay-synthesized boundary (at: null): history landing, not news —
+      // the block appends, but "latest activity" and the unseen dot are
+      // live-turn facts and must not fire off a load replay.
+      if (event.at === null) return { ...appended, activeTurn };
+      const at = event.at;
       return {
-        ...appendBlock(state, event.sessionId, {
-          kind: "turnEnd",
-          id: event.blockId,
-          startedAt: event.startedAt,
-          endedAt: event.at,
-          stopReason: event.stopReason,
-          usage: event.usage,
-        }),
+        ...appended,
         activeTurn,
         // A turn finished while the user was looking elsewhere → the blue
         // dot (unseen) until the session is next activated. Watching it
         // complete counts as seen.
         sessions: state.sessions.map((s) =>
           s.id === event.sessionId
-            ? { ...s, updatedAt: event.at, unseen: state.activeSessionId !== event.sessionId || undefined }
+            ? { ...s, updatedAt: at, unseen: state.activeSessionId !== event.sessionId || undefined }
             : s,
         ),
       };
@@ -1647,6 +1703,8 @@ export function reduceAgentView(
       return { ...state, liveSelection: event.selection, openEditors: event.openEditors };
     case "workspaceFilesListed":
       return { ...state, workspaceFiles: { query: event.query, files: event.files, dirs: event.dirs } };
+    case "preferencesChanged":
+      return { ...state, preferences: event.preferences };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -1753,29 +1811,6 @@ export interface PendingBinaryInstallView {
   archiveUrl: string;
   cmd: string;
 }
-
-/** Machine-scoped behavior defaults (stores/preferences.ts — globalState,
- * non-sensitive). Read fresh orchestrator-side at each point of use
- * (store-truth); this view exists so the Preferences page can render and
- * edit them. */
-export interface PreferencesView {
-  /** System chime when a prompt turn finishes (host-side player — a
-   * cancelled turn never chimes: the user was present to cancel it). */
-  soundOnDone: boolean;
-  /** What a fresh session's knobs are seeded from: the agent config's
-   * defaults, or the last agent-confirmed combination on that agent
-   * (stores/last-knobs.ts, falling back to the defaults when none). */
-  knobSource: "agent-default" | "last-session";
-  /** Idle-release timer (session-manager reapIdle, condition 5) in
-   * minutes; 0 disables the reaper entirely. */
-  idleCloseMinutes: number;
-}
-
-export const DEFAULT_PREFERENCES: PreferencesView = {
-  soundOnDone: false,
-  knobSource: "agent-default",
-  idleCloseMinutes: 60,
-};
 
 export interface SettingsState {
   agents: readonly AgentSummary[];
@@ -1887,7 +1922,6 @@ export type SettingsEvent =
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
-  | { kind: "preferencesChanged"; preferences: PreferencesView }
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
   | { kind: "binaryInstallResolved"; agentId: string }
   | { kind: "agentVerifyStarted"; agentId: string }
@@ -2026,7 +2060,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentKnobsObserved",
   "wireLogChanged",
   "dataInventoryChanged",
-  "preferencesChanged",
   "binaryInstallPending",
   "binaryInstallResolved",
   "agentVerifyStarted",

@@ -237,6 +237,7 @@ export class Orchestrator {
         // session to come back to — startupSettled clears it either way.
         restoring: this.lastActiveSession.get() !== undefined,
         workspaceRoots: workspaceRootsView(),
+        preferences: this.preferences.get(),
       },
       reduceAgentView,
       coalesceAgentViewEvent,
@@ -734,8 +735,11 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
     await this.integrations.refresh();
     this.publishRules();
-    // An open Preferences page settles back to the defaults it now holds.
-    this.settings.emit({ kind: "preferencesChanged", preferences: this.preferences.get() });
+    // An open Preferences page settles back to the defaults it now holds
+    // (and the agent view's composer stats with it).
+    const preferences = this.preferences.get();
+    this.settings.emit({ kind: "preferencesChanged", preferences });
+    this.agentView.emit({ kind: "preferencesChanged", preferences });
     await this.refreshAuditTail();
     // An open Data page should watch its own inventory hit zero.
     await this.publishDataInventory();
@@ -1465,7 +1469,7 @@ export class Orchestrator {
         detail: (() => {
           const p = this.preferences.get();
           const idle = p.idleCloseMinutes <= 0 ? "never" : `${p.idleCloseMinutes} min`;
-          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle}`;
+          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${p.composerStats ? "shown" : "hidden"}`;
         })(),
       },
       { id: "last-knobs", label: "Last-used knobs", placement: "globalState", detail: n(this.lastKnobs.count(), "agent record") },
@@ -1828,9 +1832,12 @@ export class Orchestrator {
         break;
       }
       case "setPreferences":
-        void this.preferences
-          .set(action.patch)
-          .then((preferences) => this.settings.emit({ kind: "preferencesChanged", preferences }));
+        void this.preferences.set(action.patch).then((preferences) => {
+          // One truth, both channels: the Preferences page and the agent
+          // view (composer stats) render the same stored object.
+          this.settings.emit({ kind: "preferencesChanged", preferences });
+          this.agentView.emit({ kind: "preferencesChanged", preferences });
+        });
         break;
       case "resolveElicitation": {
         const pending = this.pendingElicitations.get(action.requestId);

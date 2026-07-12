@@ -44,6 +44,20 @@ export function PreferencesSection(props: {
       </div>
 
       <div className="card">
+        <h2 className="mt-0">Composer stats</h2>
+        <div className="note mx-0 mt-0 mb-2">
+          A read-out strip at the composer's foot: this session's prompt, tool-call, and edited-file
+          counts, plus the context-window gauge when the agent reports usage. Pure display — hiding
+          it changes nothing else.
+        </div>
+        <Toggle
+          checked={prefs.composerStats}
+          label={prefs.composerStats ? "shown" : "hidden"}
+          onChange={(composerStats) => props.onSet({ composerStats })}
+        />
+      </div>
+
+      <div className="card">
         <h2 className="mt-0">New sessions</h2>
         <div className="note mx-0 mt-0 mb-2">
           What a fresh session's knobs (mode, model, effort…) start from: the defaults saved on the
