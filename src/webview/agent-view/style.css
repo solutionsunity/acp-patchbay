@@ -140,20 +140,24 @@ body {
 
 
 /* usage gauge — rendered only where usage reporting is used */
+/* Sized to its ring (16px): the box was 26px from its header days, which
+   top-pinned the svg and stretched the stats strip below the other counters. */
 .gauge {
   position: relative;
-  width: 26px;
-  height: 26px;
+  width: 16px;
+  height: 16px;
 }
 
 .gauge svg {
   transform: rotate(-90deg);
+  display: block; /* no inline baseline gap under the ring */
 }
 
+/* Opens upward: the gauge sits at the composer's foot now, not the header. */
 .gauge .tip {
   display: none;
   position: absolute;
-  top: 30px;
+  bottom: 22px;
   right: 0;
   z-index: 40;
   background: var(--pb-panel);
