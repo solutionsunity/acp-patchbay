@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.82.0 — 2026-07-12
+
+- New: MCP transport overhaul — the integration bridge is rebuilt on the MCP
+  SDK's own transports, with `mcp.http` passthrough for agents that declare
+  it and a connect-time tool probe shown right on the integration cards.
+- Fixed: `session/load` replay could fuse two distinct messages into one
+  chat bubble whenever nothing else separated them — most visibly, a
+  cancelled turn followed by the next prompt. Replay now follows the
+  protocol's own message identity (`ContentChunk.messageId`) instead of
+  guessing from block type alone.
+- Chunk-rendering sweep: blank "Thought" accordions from whitespace-only
+  replay chunks are gone, non-text thought content no longer drops
+  silently, and `resource_link` content renders for real (inline `@name`
+  mentions in prompts, markdown links in agent replies).
+- Bumped the ACP SDK to 1.2.1 and declared the now-stable
+  `session.configOptions` client capability — patchbay already supported
+  boolean and select config options end to end; the wire claim now matches.
+- Removed the retired capability-fidelity aggregate; auto agent routing
+  now covers every connected agent, not just ones scored above a threshold.
+
 ## 0.8.9 — 2026-07-11
 
 - Fixed: adding Codex (or any npx-distributed agent) could fail forever

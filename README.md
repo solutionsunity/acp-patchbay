@@ -81,3 +81,5 @@ configs still exist.
 ## License
 
 Proprietary — see [LICENSE](LICENSE).
+
+Built by [Solutions Unity](https://solutionsunity.com).
