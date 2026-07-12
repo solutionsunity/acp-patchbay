@@ -669,6 +669,14 @@ export interface UserBlock {
   kind: "user";
   id: string;
   text: string;
+  /** True when the whole message is a harness-injected envelope riding the
+   * user role on the wire (task notifications, system reminders, command
+   * echoes — agent-quirks.md § Injected user-role messages). A real
+   * transcript fact, but not something the human typed: rendered as a dim
+   * collapsed line, never a prompt bubble, and never counted as a prompt.
+   * Classified orchestrator-side (session-manager harnessEnvelopeTag) —
+   * the webview only reads the flag. */
+  injected?: boolean;
 }
 
 export interface TextBlock {
@@ -1077,7 +1085,7 @@ export type AgentViewEvent =
   /** Replayed user prose (session/load `user_message_chunk`) — delta
    * semantics like the agent chunks, unlike `userMessageAppended` (the
    * live send, which is whole by construction). */
-  | { kind: "userTextDelta"; sessionId: string; blockId: string; text: string }
+  | { kind: "userTextDelta"; sessionId: string; blockId: string; text: string; injected?: boolean }
   | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
   | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
   | {
@@ -1328,11 +1336,17 @@ function upsertTextBlock(
   blockId: string,
   kind: "text" | "thought" | "user",
   delta: string,
+  injected?: boolean,
 ): AgentViewState {
   const blocks = state.transcripts[sessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === blockId);
   if (i === -1) {
-    return appendBlock(state, sessionId, { kind, id: blockId, text: delta });
+    return appendBlock(state, sessionId, {
+      kind,
+      id: blockId,
+      text: delta,
+      ...(injected === true ? { injected: true } : {}),
+    });
   }
   const existing = blocks[i] as TextBlock | ThoughtBlock | UserBlock;
   const updated = { ...existing, text: existing.text + delta };
@@ -1561,7 +1575,7 @@ export function reduceAgentView(
         text: event.text,
       });
     case "userTextDelta":
-      return upsertTextBlock(state, event.sessionId, event.blockId, "user", event.text);
+      return upsertTextBlock(state, event.sessionId, event.blockId, "user", event.text, event.injected);
     case "agentTextDelta":
       return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
     case "agentThoughtDelta":

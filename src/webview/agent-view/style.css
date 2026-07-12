@@ -599,6 +599,27 @@ body {
   color: var(--pb-text-dim);
 }
 
+/* harness-injected user-role envelope (UserBlock.injected) — dim collapsed
+   line like a thought, never a prompt bubble */
+.injected {
+  color: var(--pb-text-faint);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.injected .body {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--pb-border);
+  color: var(--pb-text-dim);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 .card {
   background: var(--pb-panel);
   border: 1px solid var(--pb-border);

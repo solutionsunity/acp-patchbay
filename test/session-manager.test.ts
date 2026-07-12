@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { SessionManager } from "../src/orchestrator/session-manager";
+import { harnessEnvelopeTag, SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
@@ -1362,5 +1362,32 @@ describe("session history (list / resume / delete)", () => {
     expect(h.state().sessions.map((s) => s.id)).not.toContain(sessionId);
 
     await h.pool.stop("sh6");
+  });
+});
+
+describe("harnessEnvelopeTag — injected user-role envelope classification", () => {
+  it("matches a single harness envelope (nested foreign tags included)", () => {
+    const text =
+      "<task-notification>\n<task-id>abc</task-id>\n<output-file>/tmp/x.output</output-file>\n<result>done</result>\n</task-notification>";
+    expect(harnessEnvelopeTag(text)).toBe("task-notification");
+  });
+
+  it("matches a sequence of sibling envelopes (slash-command echo shape)", () => {
+    const text =
+      '<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>\n<local-command-stdout>Set model</local-command-stdout>';
+    expect(harnessEnvelopeTag(text)).toBe("command-name");
+  });
+
+  it("matches system-reminder with surrounding whitespace and self-closing elements", () => {
+    expect(harnessEnvelopeTag("  <system-reminder>context</system-reminder>\n")).toBe("system-reminder");
+    expect(harnessEnvelopeTag("<command-args/>")).toBe("command-args");
+  });
+
+  it("rejects anything a human plausibly typed — conservative by design", () => {
+    expect(harnessEnvelopeTag("fix the login bug")).toBeNull();
+    expect(harnessEnvelopeTag("what does <b>bold</b> mean here, in this html?")).toBeNull();
+    expect(harnessEnvelopeTag("<div>some pasted html</div> plus my question")).toBeNull();
+    expect(harnessEnvelopeTag("<unclosed>never ends")).toBeNull();
+    expect(harnessEnvelopeTag("")).toBeNull();
   });
 });

@@ -141,7 +141,9 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
       }
     }
     if (block.kind === "user") {
-      prompts++;
+      // A harness-injected envelope started a real turn (the agent answered
+      // it), so it still resets the segment — but it isn't a human prompt.
+      if (block.injected !== true) prompts++;
       resetTurn();
     }
     if (block.kind === "turnEnd") {

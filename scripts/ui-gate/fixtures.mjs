@@ -28,6 +28,12 @@ export const chatTranscript = [
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
     stopReason: "max_tokens", usage: { total: 12025, input: 9800, output: 2225, cached: 7200 },
   },
+  // harness envelope riding the user role (agent-quirks.md § Injected
+  // user-role messages) — dim collapsed line, never a bubble, not a prompt
+  {
+    kind: "user", id: "inj1", injected: true,
+    text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>",
+  },
   { kind: "user", id: "u2", text: "keep going" },
   { kind: "text", id: "xbroke", text: "broken-mermaid case:\n\n```mermaid\ngraph LR\n  A[unclosed --> ???blah{{\n```" },
   {

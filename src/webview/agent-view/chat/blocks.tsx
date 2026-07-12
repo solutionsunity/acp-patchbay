@@ -35,6 +35,24 @@ export function Thought({ text, live }: { text: string; live: boolean }) {
   );
 }
 
+/** A harness-injected message that rode the user role on the wire (UserBlock
+ * `injected`, classified orchestrator-side) — a real transcript fact, but not
+ * something the human typed: a dim collapsed line, never a prompt bubble.
+ * The tag slice is display-only; the classification itself never happens here. */
+export function InjectedUser({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const tag = /^<([a-z][a-z0-9-]*)/.exec(text.trim())?.[1] ?? "envelope";
+  return (
+    <div className={`injected ${open ? "open" : ""}`}>
+      <div className="cursor-pointer select-none" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Icon name="gear" /> {tag} — injected by the agent harness{" "}
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+      </div>
+      {open && <pre className="body">{text}</pre>}
+    </div>
+  );
+}
+
 /** Icon by ACP's own tool-call taxonomy — pattern-matchable at a glance,
  * not a generic spinner-only look. */
 const TOOL_ICON: Record<ToolCallBlock["toolKind"], string> = {

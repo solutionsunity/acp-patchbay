@@ -111,6 +111,32 @@ function newBlockId(prefix: string): string {
   return `${prefix}-${++blockCounter}`;
 }
 
+/** One XML-ish element (open…close on the same tag, first close wins — the
+ * harness envelopes never nest their own tag) or a self-closing one. */
+const ENVELOPE_ELEMENT = /^<([a-z][a-z0-9-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>|^<([a-z][a-z0-9-]*)(?:\s[^>]*)?\/>/;
+
+/** Agent harnesses inject machine messages into the conversation on the
+ * *user* role — task notifications, system reminders, slash-command echoes
+ * (observed: claude-agent-acp session/load replay; agent-quirks.md
+ * § Injected user-role messages). Their common shape: the entire message is
+ * one or more XML-ish envelope elements, nothing else — no human prompt
+ * looks like that end-to-end. Returns the first tag name for a matching
+ * text, null otherwise; anything unparseable renders as the ordinary user
+ * message the wire claims it is (conservative: misclassifying a real prompt
+ * dim is worse than showing an envelope as a bubble). */
+export function harnessEnvelopeTag(text: string): string | null {
+  let rest = text.trim();
+  if (!rest.startsWith("<")) return null;
+  let first: string | null = null;
+  while (rest.length > 0) {
+    const m = ENVELOPE_ELEMENT.exec(rest);
+    if (m === null) return null;
+    first ??= m[1] ?? m[2] ?? null;
+    rest = rest.slice(m[0].length).trimStart();
+  }
+  return first;
+}
+
 function deriveTitle(promptText: string): string {
   const flat = promptText.trim().replace(/\s+/g, " ");
   if (flat === "") return "Untitled session";
@@ -1516,6 +1542,21 @@ export class SessionManager {
             sessionId,
             blockId: newBlockId("user"),
             text: `*[${update.content.type} content — not rendered]*`,
+          });
+          break;
+        }
+        if (harnessEnvelopeTag(update.content.text) !== null) {
+          // Harness-injected envelope riding the user role: its own closed,
+          // flagged block — never merged into the prose run (an injection
+          // between two real messages must not fuse them into one bubble,
+          // and the injection itself is not the user's prompt).
+          session.activeUserBlockId = null;
+          emit({
+            kind: "userTextDelta",
+            sessionId,
+            blockId: newBlockId("user"),
+            text: update.content.text,
+            injected: true,
           });
           break;
         }

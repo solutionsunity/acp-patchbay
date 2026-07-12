@@ -32,6 +32,20 @@ adapter-observation work.)*
   `_claude/rateLimit`, `_claude/askUserQuestionOption`; terminal-output
   `_meta` channel (convention shared with codex-acp — architecture.md § the
   extension landscape).
+- **Injected user-role messages** (observed 2026-07-12 on `session/load`
+  replay): the harness injects machine messages into the conversation on the
+  *user* role — `<task-notification>` blobs, `<system-reminder>` context,
+  slash-command echoes (`<command-name>`/`<local-command-stdout>` sequences).
+  They replay as ordinary `user_message_chunk`s, indistinguishable by role
+  from what the human typed, and consecutive user chunks would otherwise fuse
+  them with a real prompt into one bubble. Consumed (graduated to mechanism):
+  `session-manager.harnessEnvelopeTag` classifies a whole-message XML-ish
+  envelope at the chunk chokepoint and flags the block `injected` — its own
+  closed block, rendered dim/collapsed, never counted as a prompt.
+  Conservative on purpose: any text a human plausibly typed (prose around
+  XML, unbalanced tags) stays a normal user bubble. Likely generic across
+  bridge-based harnesses, not just this one — the rule is structural, not
+  vendor-gated.
 
 ## codex-acp (`codex-acp`)
 

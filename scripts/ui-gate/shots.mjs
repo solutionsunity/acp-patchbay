@@ -99,6 +99,12 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);
   check(`[${theme}] tool run grouped`, (await p.$("text=5 tool calls")) !== null);
 
+  // ── injected user-role envelope: dim collapsed line, never a bubble,
+  // and it must not tick the prompt count (stats stay "2 5" below) ──
+  check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
+  const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
+  check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
+
   // ── composer stats strip: whole-session counts (2 prompts, 5 tool calls
   // in the fixture; no files touched, no usage reported → no gauge) ──
   const stats = await p.$eval(".composer-stats", (el) => el.textContent.replace(/\s+/g, " ").trim());

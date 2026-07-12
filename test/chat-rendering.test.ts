@@ -116,6 +116,23 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   });
 });
 
+describe("userTextDelta injected flag (harness envelopes on the user role)", () => {
+  it("an injected envelope lands as its own flagged block; the real prompt around it stays a clean bubble", () => {
+    const events: AgentViewEvent[] = [
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "userTextDelta", sessionId: S, blockId: "u1", text: "fix the bug" },
+      { kind: "userTextDelta", sessionId: S, blockId: "u2", text: "<system-reminder>x</system-reminder>", injected: true },
+      { kind: "userTextDelta", sessionId: S, blockId: "u3", text: "and add a test" },
+    ];
+    const state = events.reduce(reduceAgentView, initialAgentViewState);
+    expect(state.transcripts[S]).toEqual([
+      { kind: "user", id: "u1", text: "fix the bug" },
+      { kind: "user", id: "u2", text: "<system-reminder>x</system-reminder>", injected: true },
+      { kind: "user", id: "u3", text: "and add a test" },
+    ]);
+  });
+});
+
 describe("toolCallUpserted merge semantics (P13b)", () => {
   it("reducer: absent fields keep what a prior event established", () => {
     const events: AgentViewEvent[] = [
@@ -242,6 +259,25 @@ describe("deriveTranscript: per-turn rollups", () => {
     const { totals, diffableFiles } = deriveTranscript(blocks, false);
     expect(totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
     expect(diffableFiles).toEqual(new Set(["/ws/rich.ts", "/ws/gate.ts", "/ws/rejected.ts", "/ws/pending.ts"]));
+  });
+
+  it("injected user envelopes reset the turn but never count as prompts", () => {
+    const injected = (id: string): ChatBlock => ({
+      kind: "user", id, text: "<task-notification>done</task-notification>", injected: true,
+    });
+    const blocks: ChatBlock[] = [
+      user("u1"),
+      tool("t1", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      turnEnd("e1"),
+      injected("i1"), // harness woke the agent — a turn, not a prompt
+      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      turnEnd("e2"),
+      user("u2"),
+    ];
+    const { totals, rollups } = deriveTranscript(blocks, false);
+    expect(totals.prompts).toBe(2);
+    // the injected boundary still scopes the turn segment
+    expect(rollups.get("e2")).toEqual({ toolCalls: 1, filesTouched: 1, byKind: { edit: 1 } });
   });
 
   it("formatDuration: seconds, minutes, hours", () => {
