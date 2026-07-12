@@ -80,6 +80,6 @@ configs still exist.
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE).
+Proprietary — see the LICENSE file included with this extension.
 
 Built by [Solutions Unity](https://solutionsunity.com).
