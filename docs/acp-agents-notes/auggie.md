@@ -46,6 +46,23 @@ support@augmentcode.com / Discord.
 
 ## Behavioral notes
 
+- **`models` root field on `session/new`/`session/load` responses** (observed
+  2026-07-12, v0.32.0): `{ availableModels, currentModelId }` — not in SDK
+  1.1.0's response types nor the published v1 schema — and **checked at the
+  1.2.1 bump (2026-07-12): still absent there too**. So it is ahead of even
+  the latest SDK: a preview/fork surface, not something patchbay can consume
+  from schema (benefit of the doubt per the false-accusation lesson in
+  claude-agent-acp.md — not calling it an invention, but it is outside every
+  published shape we can pin). Ignored harmlessly; revisit only if a models
+  surface lands in the SDK.
+- **Replay carries no messageId and no interruption trace** (wire-verified
+  2026-07-12): `user_message_chunk`s arrive id-less, one whole message per
+  chunk; a cancelled turn's exchange is stored `completed: false` with an
+  empty response and replays as nothing at all — adjacent cancelled prompts
+  arrive as back-to-back user chunks. Patchbay renders them as separate
+  bubbles (G12 rule: id-less chunks never merge); the cancellation itself is
+  unrecoverable from this wire — upstream ask if replay-visible turn
+  resolution ever matters.
 - Requests a "Workspace Indexing Permission" on fresh sessions — patchbay
   auto-declines it on probe sessions (probe etiquette: never grant on the
   user's behalf).
