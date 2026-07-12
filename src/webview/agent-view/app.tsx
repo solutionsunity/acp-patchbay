@@ -110,6 +110,7 @@ export function App({ state }: { state: AgentViewState }) {
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
+          activeSessionId={state.activeSessionId}
           onNew={newChat}
           onDone={() => setDrawer(null)}
         />

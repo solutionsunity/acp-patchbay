@@ -96,6 +96,7 @@ export function AgentsDrawer(props: {
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
+  activeSessionId: string | null;
   onNew(): void;
   onDone(): void;
 }) {
@@ -113,10 +114,12 @@ export function SessionsDrawer(props: {
       )}
       {ordered.map((s) => {
         const agent = props.agents.find((a) => a.id === s.agentId);
+        const isActive = s.id === props.activeSessionId;
         return (
           <div
-            className="s-row relative"
+            className={`s-row relative${isActive ? " active" : ""}`}
             key={s.id}
+            aria-current={isActive ? "true" : undefined}
             onClick={() => {
               send({ kind: "switchSession", sessionId: s.id });
               props.onDone();

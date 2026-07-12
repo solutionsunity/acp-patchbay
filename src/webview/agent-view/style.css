@@ -776,6 +776,22 @@ body {
   background: var(--pb-panel-2);
 }
 
+/* reserves the active row's border width so non-active rows don't shift */
+.s-row {
+  border-left: 2px solid transparent;
+}
+
+/* the session currently open in the chat pane — distinct channel from the
+ * live/unseen dot (orthogonal facts: a session can be active AND live) */
+.s-row.active {
+  border-left: 2px solid var(--pb-accent);
+  background: color-mix(in srgb, var(--pb-accent) 8%, transparent);
+}
+
+.s-row.active:hover {
+  background: color-mix(in srgb, var(--pb-accent) 14%, transparent);
+}
+
 .a-row .nm,
 .s-row .nm {
   font-weight: 600;
