@@ -13,8 +13,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/** Ellipsis menu shared by the session row and sessions-drawer rows. */
-export function SessionActions({ session }: { session: SessionSummary }) {
+/** Ellipsis menu shared by the session row and sessions-drawer rows.
+ * `detach` mirrors the detachWindows preference — off hides the entry point. */
+export function SessionActions({ session, detach }: { session: SessionSummary; detach: boolean }) {
   const send = useActions();
   return (
     <DropdownMenu>
@@ -24,9 +25,11 @@ export function SessionActions({ session }: { session: SessionSummary }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => send({ kind: "detachSession", sessionId: session.id })}>
-          Open in new window
-        </DropdownMenuItem>
+        {detach && (
+          <DropdownMenuItem onSelect={() => send({ kind: "detachSession", sessionId: session.id })}>
+            Open in new window
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}>
           Reload from agent
         </DropdownMenuItem>
@@ -38,14 +41,14 @@ export function SessionActions({ session }: { session: SessionSummary }) {
   );
 }
 
-export function SessionRow(props: { session: SessionSummary; onTitle(): void }) {
+export function SessionRow(props: { session: SessionSummary; onTitle(): void; detach: boolean }) {
   return (
     <div className="sess-row">
       <span className="sess-title" onClick={props.onTitle}>
         {props.session.title}
       </span>
       <div className="spacer flex-1" />
-      <SessionActions session={props.session} />
+      <SessionActions session={props.session} detach={props.detach} />
     </div>
   );
 }

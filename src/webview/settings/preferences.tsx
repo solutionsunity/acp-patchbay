@@ -58,6 +58,20 @@ export function PreferencesSection(props: {
       </div>
 
       <div className="card">
+        <h2 className="mt-0">Detached windows</h2>
+        <div className="note mx-0 mt-0 mb-2">
+          Open a session — or the whole agent view — in its own floating window (the session
+          menu&apos;s &quot;Open in new window&quot; and the view&apos;s detach command), multi-screen
+          usable. Turning this off hides the entry points; windows already open stay open.
+        </div>
+        <Toggle
+          checked={prefs.detachWindows}
+          label={prefs.detachWindows ? "enabled" : "disabled"}
+          onChange={(detachWindows) => props.onSet({ detachWindows })}
+        />
+      </div>
+
+      <div className="card">
         <h2 className="mt-0">New sessions</h2>
         <div className="note mx-0 mt-0 mb-2">
           What a session's knobs (mode, model, effort…) start from when you enter one — a fresh

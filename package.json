@@ -145,6 +145,12 @@
           "group": "9_cutcopypaste"
         }
       ],
+      "commandPalette": [
+        {
+          "command": "acpPatchbay.detachAgentView",
+          "when": "acpPatchbay.detachEnabled"
+        }
+      ],
       "view/title": [
         {
           "command": "acpPatchbay.openSettings",
@@ -153,7 +159,7 @@
         },
         {
           "command": "acpPatchbay.detachAgentView",
-          "when": "view == acpPatchbay.agentView",
+          "when": "view == acpPatchbay.agentView && acpPatchbay.detachEnabled",
           "group": "navigation"
         }
       ]

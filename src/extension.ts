@@ -47,8 +47,14 @@ export function activate(context: vscode.ExtensionContext): {
       settingsPanelHost.openOrReveal(),
     ),
     { dispose: unsubscribePanelSync },
-    vscode.commands.registerCommand("acpPatchbay.detachAgentView", () => agentPanelHost.openMain()),
+    // Both re-check the preference: when-clauses hide the entry points, but
+    // keybindings and programmatic invocation bypass menus.
+    vscode.commands.registerCommand("acpPatchbay.detachAgentView", () => {
+      if (!orchestrator.preferences.get().detachWindows) return;
+      void agentPanelHost.openMain();
+    }),
     vscode.commands.registerCommand("acpPatchbay.detachSession", (sessionId: string) => {
+      if (!orchestrator.preferences.get().detachWindows) return;
       const session = orchestrator.agentView.current.sessions.find((s) => s.id === sessionId);
       if (session === undefined) return;
       void agentPanelHost.openPinned(session.id, session.title);

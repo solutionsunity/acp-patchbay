@@ -669,6 +669,7 @@ export class Orchestrator {
     this.statusBarItem.show();
     this.agentView.onChange(() => this.refreshStatusBar());
     this.refreshStatusBar();
+    this.syncDetachContext();
 
     // Orphan reaping strictly before any startup agent spawns (P15c): the
     // registry must be settled before new pids start landing in it.
@@ -748,6 +749,7 @@ export class Orchestrator {
     const preferences = this.preferences.get();
     this.settings.emit({ kind: "preferencesChanged", preferences });
     this.agentView.emit({ kind: "preferencesChanged", preferences });
+    this.syncDetachContext();
     await this.refreshAuditTail();
     // An open Data page should watch its own inventory hit zero.
     await this.publishDataInventory();
@@ -840,6 +842,17 @@ export class Orchestrator {
 
   /** Active session · agent health · usage when reported (features.md § 3) —
    * click jumps to the Agent View, which already shows that same session. */
+  /** Mirrors the detachWindows preference into a when-clause context key —
+   * package.json gates the view-title button and the palette command on it
+   * (native surfaces can't read the store; this is their one bridge). */
+  private syncDetachContext(): void {
+    void vscode.commands.executeCommand(
+      "setContext",
+      "acpPatchbay.detachEnabled",
+      this.preferences.get().detachWindows,
+    );
+  }
+
   private refreshStatusBar(): void {
     const { text, tooltip } = statusBarContent(this.agentView.current);
     this.statusBarItem.text = text;
@@ -1752,6 +1765,9 @@ export class Orchestrator {
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
       case "detachSession":
+        // Preference-gated at the source of truth, not only in the menu
+        // that hid itself (render-only webviews don't get to be the gate).
+        if (!this.preferences.get().detachWindows) break;
         // The panel host lives in extension.ts (like Settings) — reach it by
         // command. A detached session is being opened to be used: connect,
         // same as a session click, but without stealing the active pointer.
@@ -1855,6 +1871,7 @@ export class Orchestrator {
           // view (composer stats) render the same stored object.
           this.settings.emit({ kind: "preferencesChanged", preferences });
           this.agentView.emit({ kind: "preferencesChanged", preferences });
+          this.syncDetachContext();
         });
         break;
       case "resolveElicitation": {

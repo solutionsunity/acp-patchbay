@@ -891,6 +891,10 @@ export interface PreferencesView {
   /** The composer's session-stats strip (prompts, tool calls, files,
    * context gauge) — pure render furniture, so hiding it loses nothing. */
   composerStats: boolean;
+  /** Detached windows (AgentPanelHost): the session menu's "Open in new
+   * window" and the whole-view detach command. Off hides the entry points;
+   * panels already open stay open — the pref gates opening, not existence. */
+  detachWindows: boolean;
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
@@ -898,6 +902,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   knobSource: "agent-default",
   idleCloseMinutes: 60,
   composerStats: true,
+  detachWindows: true,
 };
 
 export interface AgentViewState {

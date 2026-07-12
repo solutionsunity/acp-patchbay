@@ -97,6 +97,8 @@ export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
   activeSessionId: string | null;
+  /** detachWindows preference — off hides "Open in new window". */
+  detach: boolean;
   onNew(): void;
   onDone(): void;
 }) {
@@ -141,7 +143,7 @@ export function SessionsDrawer(props: {
               </div>
             </div>
             <div className="badges" onClick={(e) => e.stopPropagation()}>
-              <SessionActions session={s} />
+              <SessionActions session={s} detach={props.detach} />
             </div>
           </div>
         );

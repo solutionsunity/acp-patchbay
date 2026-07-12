@@ -49,6 +49,7 @@ export function App({
   );
   // `?? true` guards snapshots minted before the preferences field existed.
   const showStats = state.preferences?.composerStats ?? true;
+  const detach = state.preferences?.detachWindows ?? true;
 
   // A pinned panel whose session closed is about to be disposed by the host
   // (AgentPanelHost follows the sessions list) — say so for the render or
@@ -85,7 +86,11 @@ export function App({
         <Header agent={activeAgent} onSessions={() => setDrawer("sessions")} onNew={newChat} />
       )}
       {active !== null && (
-        <SessionRow session={active} onTitle={pinned ? () => {} : () => setDrawer("sessions")} />
+        <SessionRow
+          session={active}
+          onTitle={pinned ? () => {} : () => setDrawer("sessions")}
+          detach={detach && !pinned}
+        />
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (
         <div className="crash-banner">
@@ -148,6 +153,7 @@ export function App({
           sessions={state.sessions}
           agents={state.agents}
           activeSessionId={state.activeSessionId}
+          detach={detach}
           onNew={newChat}
           onDone={() => setDrawer(null)}
         />
