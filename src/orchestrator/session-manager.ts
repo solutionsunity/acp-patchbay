@@ -96,6 +96,10 @@ export interface SessionManagerHooks {
  * beyond any honest agent — past it, merge what arrived but never prune. */
 const MAX_LIST_PAGES = 50;
 
+/** How long an honest close/reload waits for a cancelled turn to settle
+ * before proceeding anyway (interruptTurn). */
+const CANCEL_SETTLE_MS = 3000;
+
 /** Attached-but-idle sessions release their agent-side resources after an
  * hour — the row stays listed and re-attaches on the next open/prompt. */
 const DEFAULT_IDLE_CLOSE_MS = 60 * 60_000;
@@ -152,6 +156,11 @@ interface LiveSession {
   knobs: NormalizedKnobs;
   /** A prompt turn is in flight — release/reap must never close under it. */
   inFlight: boolean;
+  /** Settles when the in-flight prompt resolves, any stop reason — what an
+   * honest close/reload awaits after cancelling, so the turn's own end
+   * (turnEnded, the tool-call sweep) lands before the session is ripped
+   * out from under it. Null between turns. */
+  turnSettled: Promise<void> | null;
   /** A root change landed mid-turn — re-applied (reapplyRoots) on turn end
    * instead of yanking the attachment under the in-flight prompt. */
   rootsDirty: boolean;
@@ -198,6 +207,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
+    turnSettled: null,
     rootsDirty: false,
     everPrompted: false,
     lastActivityAt: Date.now(),
@@ -531,6 +541,9 @@ export class SessionManager {
   }
 
   async close(sessionId: string): Promise<void> {
+    // Closing while streaming means stop, then close — never a session/delete
+    // fired under a live turn.
+    await this.interruptTurn(sessionId);
     const session = this.sessions.get(sessionId);
     const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     this.sessions.delete(sessionId);
@@ -685,6 +698,10 @@ export class SessionManager {
    * isn't currently invalidated — the same ladder as every attach
    * (load > resume), so a resume-only agent's reload works too. */
   async reload(sessionId: string): Promise<void> {
+    // Reload discards the render cache and replays from the agent — a turn
+    // still streaming into that cache is stopped first, so replay and live
+    // stream never interleave.
+    await this.interruptTurn(sessionId);
     this.sessions.delete(sessionId);
     const agentId = this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
@@ -1090,6 +1107,9 @@ export class SessionManager {
     session.inFlight = true;
     session.everPrompted = true;
     session.lastActivityAt = Date.now();
+    let settleTurn!: () => void;
+    const turnSettled = new Promise<void>((resolve) => (settleTurn = resolve));
+    session.turnSettled = turnSettled;
 
     const events: AgentViewEvent[] = [];
     if (!session.titled) {
@@ -1210,12 +1230,14 @@ export class SessionManager {
       if (current !== undefined) {
         current.inFlight = false;
         current.lastActivityAt = Date.now();
+        if (current.turnSettled === turnSettled) current.turnSettled = null;
         if (current.rootsDirty) {
           current.rootsDirty = false;
           void this.reapplyRoots(sessionId);
         }
       }
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
+      settleTurn();
     }
   }
 
@@ -1223,6 +1245,24 @@ export class SessionManager {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     await this.pool.cancel(session.poolKey, sessionId);
+  }
+
+  /** Honest interruption: a live turn is cancelled (spec § Cancellation)
+   * and awaited to settle before the caller rips the session out from under
+   * it — the turn's own end (turnEnded, the tool-call sweep) must land
+   * first, or it would write into a session that no longer exists. Bounded:
+   * a hung agent gets CANCEL_SETTLE_MS, then the caller proceeds anyway —
+   * a wedged process must not make a session unclosable. */
+  private async interruptTurn(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (session === undefined || !session.inFlight) return;
+    await this.stopTurn(sessionId).catch(() => {}); // a dead connection stops nothing — proceed
+    const settled = session.turnSettled;
+    if (settled === null) return;
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => setTimeout(resolve, CANCEL_SETTLE_MS).unref()),
+    ]);
   }
 
   /** Pulls type:"diff" entries out of a tool call's content: texts stashed

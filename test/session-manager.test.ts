@@ -213,6 +213,57 @@ describe("SessionManager", () => {
     await h.pool.stop("sm3");
   });
 
+  // Honest close: closing mid-stream stops the turn (spec cancel) and lets
+  // it settle — turnEnded lands before sessionClosed, never a delete fired
+  // under a live turn.
+  it("closing mid-turn cancels first — turnEnded lands before sessionClosed", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }, { type: "chunk", text: "c" }], stepDelayMs: 150 },
+        "sm3c",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm3c", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "long turn");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.close(sessionId);
+    await promptDone;
+
+    const kinds = h.events.map((e) => e.kind);
+    expect(kinds).toContain("turnEnded");
+    expect(kinds.indexOf("turnEnded")).toBeLessThan(kinds.indexOf("sessionClosed"));
+    await h.pool.stop("sm3c");
+  });
+
+  it("reloading mid-turn cancels first — the replay never interleaves a live stream", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true },
+          turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }, { type: "chunk", text: "c" }],
+          stepDelayMs: 150,
+        },
+        "sm3d",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm3d", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "long turn");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.reload(sessionId);
+    await promptDone;
+
+    // The cancelled turn ended before the replay's transcriptReset — nothing
+    // streamed into the rebuilt cache.
+    const kinds = h.events.map((e) => e.kind);
+    expect(kinds.indexOf("turnEnded")).toBeLessThan(kinds.indexOf("transcriptReset"));
+    expect(h.state().sessions[0]?.live).toBe(false);
+    await h.pool.stop("sm3d");
+  });
+
   it("marks a tool call left open by a cancelled turn interrupted, once, at turn end", async () => {
     const h = harness();
     await h.pool.connect(
