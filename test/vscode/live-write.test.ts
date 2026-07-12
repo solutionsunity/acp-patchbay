@@ -28,6 +28,7 @@ interface Internal {
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
+      fileBaseline(sessionId: string, path: string): string | null;
     };
     pool: { stop(agentId: string): Promise<void> };
   };
@@ -88,6 +89,13 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.getText(), "from agent\n", "open buffer got the write");
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
+      // the gate noted the pre-image (buffer truth, dirty edit included)
+      // before anything moved — the files panel's ± baseline
+      assert.strictEqual(
+        orchestrator.sessionManager.fileBaseline(sessionId, target),
+        "user unsaved on disk\n",
+        "first-touch baseline is the buffer content before the write",
+      );
     } finally {
       await orchestrator.pool.stop("live-write-e2e");
       await rm(cwd, { recursive: true, force: true });

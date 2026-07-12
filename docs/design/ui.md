@@ -72,7 +72,14 @@ Click opens that chip's **panel** overlaying the chat, growing up from the strip
 time. Plan panel: the full checklist (✓ done, ▸ active, ○ pending). Files panel:
 one row per file, click opens it in the editor; a dot marks a file whose open
 editor holds unsaved changes — editor reality read from the snapshot's
-`openEditors`, never a stored flag (compliance §12).
+`openEditors`, never a stored flag (compliance §12). Rows whose diff texts the
+orchestrator can answer for (agent-reported `tool_call` diffs + the fs/write
+gate's own cards — view-model `diffableFiles`) carry a **±** that opens VS Code's
+native diff: left = the session's first-touch pre-image (`fileBaselines`,
+session-scoped, dies with the session; a cold load recovers only what the
+agent's replay re-reports — by design), right = the live file, so the diff keeps
+tracking reality. Per-write diffs stay on their transcript cards; rows without
+texts (locations-only, terminal-side edits) get no ± — absence over fake.
 
 ### 4 · Chat blocks
 

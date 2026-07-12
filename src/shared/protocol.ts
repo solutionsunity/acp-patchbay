@@ -146,6 +146,10 @@ export type Action =
   /** Open a file in the editor by absolute path — the read-out strip's
    * files-panel rows (render-only-webview: the view never touches fs). */
   | { kind: "openFile"; path: string }
+  /** The files panel's ± — native diff of the session's first-touch
+   * pre-image against the live file. Texts stay orchestrator-side
+   * (fileBaselines); the view only ever names the path. */
+  | { kind: "openSessionFileDiff"; sessionId: string; path: string }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
    * big diagram can breathe. */

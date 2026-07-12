@@ -221,6 +221,29 @@ describe("deriveTranscript: per-turn rollups", () => {
     expect(totals).toEqual({ prompts: 3, toolCalls: 4, files: ["/ws/a.ts", "/ws/b.ts"] });
   });
 
+  it("diffableFiles ⟺ answerable baseline: tool_call diffFiles and gate diff cards; gate writes count as files only when accepted", () => {
+    const diff = (id: string, file: string, accepted: boolean | null): ChatBlock => ({
+      kind: "diff", id, file, additions: 1, deletions: 0, lines: [],
+      resolution: accepted === null ? null : { accepted, auto: false },
+    });
+    const blocks: ChatBlock[] = [
+      user("u1"),
+      // locations-only edit: a row, but no ± (no texts anywhere to answer with)
+      tool("t1", { toolKind: "edit", locations: ["/ws/plain.ts"] }),
+      // agent-reported diff content: ± via diffFiles
+      tool("t2", { toolKind: "edit", locations: ["/ws/rich.ts"], diffFiles: ["/ws/rich.ts"] }),
+      // gate cards: accepted counts as a touched file; rejected and pending
+      // don't (nothing was written) — ± regardless, baseline noted at card time
+      diff("d1", "/ws/gate.ts", true),
+      diff("d2", "/ws/rejected.ts", false),
+      diff("d3", "/ws/pending.ts", null),
+      turnEnd("e1"),
+    ];
+    const { totals, diffableFiles } = deriveTranscript(blocks, false);
+    expect(totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
+    expect(diffableFiles).toEqual(new Set(["/ws/rich.ts", "/ws/gate.ts", "/ws/rejected.ts", "/ws/pending.ts"]));
+  });
+
   it("formatDuration: seconds, minutes, hours", () => {
     expect(formatDuration("2026-07-07T10:00:00Z", "2026-07-07T10:00:12Z")).toBe("12s");
     expect(formatDuration("2026-07-07T10:00:00Z", "2026-07-07T10:01:29Z")).toBe("1m 29s");

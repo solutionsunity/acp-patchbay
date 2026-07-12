@@ -114,6 +114,7 @@ for (const theme of Object.keys(THEMES)) {
   await p.click(".readout-strip .chip.files");
   check(`[${theme}] files panel swaps in (one at a time)`, (await p.waitForSelector(".readout-panel .file-row", { timeout: 3000 })) !== null);
   check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".readout-panel .file-row .dirty")) !== null);
+  check(`[${theme}] ± diff affordance on the diff-bearing row`, (await p.$(".readout-panel .file-row .diffbtn")) !== null);
   await p.click(".readout-panel .head .close");
   check(`[${theme}] X closes the panel`, (await p.$(".readout-panel")) === null);
 

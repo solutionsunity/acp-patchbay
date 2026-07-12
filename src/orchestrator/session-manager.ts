@@ -228,6 +228,15 @@ export class SessionManager {
    * back through `toolCallDiff`. Cleared with the session; a replay
    * re-sends tool_call content, so it repopulates itself. */
   private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
+  /** Per session: each agent-touched path's content before the FIRST touch
+   * — the baseline for the files panel's "since first agent touch" diff.
+   * Fed by both diff sources (agent-reported tool_call diffs here via
+   * stashToolDiffs; the fs/write gate notes its pre-image at the
+   * orchestrator chokepoint); first note wins. Same lifecycle as toolDiffs:
+   * dies with the session, never persisted — after a cold load only what
+   * the agent's replay re-reports comes back, by design (a loaded session
+   * must not look like it remembers more than the wire told it). */
+  private fileBaselines = new Map<string, Map<string, string>>();
   private contextTokenCounter = 0;
   /** Prompts accepted while a turn was in flight (QueuedPrompt) — drained
    * one per turn end. Ephemeral bookkeeping like everything here: Stop and
@@ -553,6 +562,7 @@ export class SessionManager {
     const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
+    this.fileBaselines.delete(sessionId);
     this.known.delete(sessionId);
     this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
     this.hooks.emit({ kind: "sessionClosed", sessionId });
@@ -581,6 +591,7 @@ export class SessionManager {
     this.sessions.clear();
     this.known.clear();
     this.toolDiffs.clear();
+    this.fileBaselines.clear();
     this.promptQueues.clear();
   }
 
@@ -593,6 +604,7 @@ export class SessionManager {
       if (entry.agentId !== agentId) continue;
       this.sessions.delete(sessionId);
       this.toolDiffs.delete(sessionId);
+      this.fileBaselines.delete(sessionId);
       this.known.delete(sessionId);
       this.promptQueues.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
@@ -662,6 +674,7 @@ export class SessionManager {
       // trail the agent's own list).
       this.known.delete(sessionId);
       this.toolDiffs.delete(sessionId);
+      this.fileBaselines.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
       this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
@@ -1344,7 +1357,28 @@ export class SessionManager {
       this.toolDiffs.set(sessionId, perSession);
     }
     perSession.set(toolCallId, diffs);
+    for (const [path, d] of diffs) this.noteFileBaseline(sessionId, path, d.oldText);
     return { diffFiles: [...diffs.keys()] };
+  }
+
+  /** First note wins: the earliest known pre-image IS the session baseline
+   * for that path — later writes only move the file further from it. Both
+   * diff sources call in (agent-reported diffs above, the fs/write gate via
+   * the orchestrator); on replay the same route repopulates in wire order. */
+  noteFileBaseline(sessionId: string, path: string, oldText: string): void {
+    let perSession = this.fileBaselines.get(sessionId);
+    if (perSession === undefined) {
+      perSession = new Map();
+      this.fileBaselines.set(sessionId, perSession);
+    }
+    if (!perSession.has(path)) perSession.set(path, oldText);
+  }
+
+  /** The "since first agent touch" left side for one files-panel diff —
+   * null when no pre-image is known (locations-only path, or a cold-loaded
+   * session whose replay carried no diff content; the ± never rendered). */
+  fileBaseline(sessionId: string, path: string): string | null {
+    return this.fileBaselines.get(sessionId)?.get(path) ?? null;
   }
 
   /** Worklist maintenance for the sweep (tool-call analogue of

@@ -26,13 +26,19 @@ function splitPath(path: string, roots: readonly string[]): { base: string; dir:
 }
 
 export function ReadoutStrip({
+  sessionId,
   plan,
   files,
+  diffable,
   openEditors,
   roots,
 }: {
+  sessionId: string;
   plan: readonly PlanEntry[] | null;
   files: readonly string[];
+  /** Paths the orchestrator holds a first-touch baseline for (view-model
+   * diffableFiles) — exactly these rows get the ± diff affordance. */
+  diffable: ReadonlySet<string>;
   openEditors: readonly OpenEditorView[];
   roots: readonly string[];
 }) {
@@ -114,7 +120,7 @@ export function ReadoutStrip({
                 // user's own unsaved edits sit on an agent-touched file.
                 const dirty = openEditors.some((e) => e.file === path && e.dirty);
                 return (
-                  <button
+                  <div
                     key={path}
                     className="file-row"
                     title={path}
@@ -123,7 +129,19 @@ export function ReadoutStrip({
                     <Icon name="file" /> <span className="base">{base}</span>
                     {dir !== "" && <span className="dir">{dir}</span>}
                     {dirty && <span className="dirty" title="unsaved changes in editor" />}
-                  </button>
+                    {diffable.has(path) && (
+                      <button
+                        className="diffbtn"
+                        title="Diff — since first agent touch (this session)"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          send({ kind: "openSessionFileDiff", sessionId, path });
+                        }}
+                      >
+                        <Icon name="diff" />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>

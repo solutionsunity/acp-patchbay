@@ -117,8 +117,10 @@ export function App({
         // not something a session switch should inherit
         <ReadoutStrip
           key={active.id}
+          sessionId={active.id}
           plan={state.activePlan[active.id] ?? null}
           files={derived.totals.files}
+          diffable={derived.diffableFiles}
           openEditors={state.openEditors}
           roots={state.workspaceRoots}
         />

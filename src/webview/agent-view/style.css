@@ -377,6 +377,28 @@ body {
   margin-left: auto;
 }
 
+/* ± — native diff, session first-touch baseline vs the live file; rendered
+   only for paths the orchestrator can answer (diffableFiles) */
+.readout-panel .file-row .diffbtn {
+  flex: none;
+  margin-left: auto;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--pb-text-dim);
+  cursor: pointer;
+  padding: 1px 3px;
+}
+
+.readout-panel .file-row .dirty ~ .diffbtn {
+  margin-left: 6px;
+}
+
+.readout-panel .file-row .diffbtn:hover {
+  color: var(--pb-text);
+  background: var(--pb-panel);
+}
+
 /* ── crash banner (ui.md § Chat blocks: shown the moment the agent dies;
    Restart is the one action) ─────────────────────────────────────────── */
 .crash-banner {

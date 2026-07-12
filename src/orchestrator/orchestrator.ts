@@ -425,6 +425,12 @@ export class Orchestrator {
         return { content: sliceTextFileRead(content, params.line, params.limit) };
       },
       onWriteTextFile: async (_agentId, params) => {
+        // Pre-image captured before anything moves — the gate-side baseline
+        // source for "since first agent touch" diffs. Buffer truth, same
+        // lookup the write itself uses; noted at card time (not acceptance)
+        // so every diff card the user can see has an answerable baseline.
+        const pre = await this.readTextFileLive(params.path).catch(() => "");
+        this.sessionManager.noteFileBaseline(params.sessionId, params.path, pre);
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
         if (accepted) await this.writeTextFileLive(params.path, params.content);
         return {};
@@ -1240,6 +1246,27 @@ export class Orchestrator {
     );
   }
 
+  /** The files panel's ± — left: the session's first-touch pre-image
+   * (session-manager fileBaselines), right: the live file itself, so the
+   * diff keeps tracking reality as work continues. Null baseline is a stale
+   * click (the ± only renders for diff-bearing paths) — no-op, like
+   * openToolCallDiff. */
+  private async openSessionFileDiff(sessionId: string, path: string): Promise<void> {
+    const baseline = this.sessionManager.fileBaseline(sessionId, path);
+    if (baseline === null) return;
+    const dir = join(tmpdir(), "acp-patchbay-diffs", `session-${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}`);
+    await mkdir(dir, { recursive: true });
+    const name = basename(path);
+    const left = join(dir, `baseline-${name}`);
+    await writeFile(left, baseline, "utf8");
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      vscode.Uri.file(left),
+      vscode.Uri.file(path),
+      `${name} — since first agent touch (this session)`,
+    );
+  }
+
   /** Real editing happens in VS Code's own editor, never a webview dialect
    * (render-only-webview.md) — Settings is a navigational index onto files
    * that already live in the agent's own native locations. */
@@ -2003,6 +2030,11 @@ export class Orchestrator {
         void vscode.window
           .showTextDocument(vscode.Uri.file(action.path))
           .then(undefined, this.logCatch(`openFile ${action.path}`));
+        break;
+      case "openSessionFileDiff":
+        void this.openSessionFileDiff(action.sessionId, action.path).catch(
+          this.logCatch(`openSessionFileDiff ${action.path}`),
+        );
         break;
       case "addOrUpdateAgentConfig":
         void this.addOrUpdateAgentConfig(action.config, action.env);

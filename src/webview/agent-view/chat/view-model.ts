@@ -52,6 +52,12 @@ export interface TranscriptView {
   liveRollup: TurnRollup;
   /** Whole-session counters — live blocks tick these as they land. */
   totals: SessionTotals;
+  /** Paths whose diff texts the orchestrator can answer for — agent-reported
+   * tool_call diffs (diffFiles) plus the fs/write gate's own diff cards. The
+   * files panel renders its ± exactly for these: presence here ⟺ a baseline
+   * exists orchestrator-side, by construction (both derive from the same
+   * wire/gate events), so the button is never a dead click. */
+  diffableFiles: ReadonlySet<string>;
   /** The one live block (last block, text/thought, turn in flight) — null
    * when nothing is receiving deltas. */
   liveBlockId: string | null;
@@ -64,6 +70,7 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
   rollups: new Map(),
   liveRollup: { toolCalls: 0, filesTouched: 0, byKind: {} },
   totals: { prompts: 0, toolCalls: 0, files: [] },
+  diffableFiles: new Set(),
   liveBlockId: null,
 };
 
@@ -104,6 +111,7 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   let prompts = 0;
   let totalCalls = 0;
   const allFiles = new Set<string>();
+  const diffableFiles = new Set<string>();
 
   for (const block of blocks) {
     if (block.kind === "toolCall") {
@@ -117,10 +125,21 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
           allFiles.add(path);
         }
       }
+      for (const path of block.diffFiles) diffableFiles.add(path);
       continue;
     }
     flushRun();
     items.push({ kind: "single", block });
+    if (block.kind === "diff") {
+      // the fs/write gate's own card: an agent file write even when no
+      // tool_call named the path — counted only once actually written
+      // (accepted); ± regardless, its baseline was noted at card time
+      diffableFiles.add(block.file);
+      if (block.resolution?.accepted === true) {
+        files.add(block.file);
+        allFiles.add(block.file);
+      }
+    }
     if (block.kind === "user") {
       prompts++;
       resetTurn();
@@ -141,6 +160,7 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
     rollups,
     liveRollup: { toolCalls, filesTouched: files.size, byKind },
     totals: { prompts, toolCalls: totalCalls, files: [...allFiles] },
+    diffableFiles,
     liveBlockId,
   };
 }
