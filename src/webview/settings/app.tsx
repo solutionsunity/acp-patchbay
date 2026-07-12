@@ -112,6 +112,7 @@ export function App({ state }: { state: SettingsState }) {
           <PreferencesSection
             state={state}
             onSet={(patch) => send({ kind: "setPreferences", patch })}
+            onPreview={(sound) => send({ kind: "previewDoneSound", sound })}
           />
         )}
         {section === "integrations" && (
@@ -140,6 +141,10 @@ export function App({ state }: { state: SettingsState }) {
             onSetRouting={(integrationId, routing) =>
               send({ kind: "setIntegrationRouting", integrationId, routing })
             }
+            onSetTransport={(integrationId, transport) =>
+              send({ kind: "setIntegrationTransport", integrationId, transport })
+            }
+            onProbe={(integrationId) => send({ kind: "probeIntegration", integrationId })}
             onShare={(integrationId) => send({ kind: "shareIntegrationConfig", integrationId })}
           />
         )}

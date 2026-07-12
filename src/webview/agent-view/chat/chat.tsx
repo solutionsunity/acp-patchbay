@@ -9,7 +9,7 @@ import type { AgentViewState, ChatBlock, SessionSummary, TurnUsage } from "../..
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
-import { InjectedUser, Thought, ToolCallCard, ToolRunCard } from "./blocks";
+import { InjectedUser, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
@@ -108,7 +108,7 @@ function Block({
       return block.injected === true ? (
         <InjectedUser text={block.text} />
       ) : (
-        <div className="msg-user">{block.text}</div>
+        <UserMessage text={block.text} />
       );
     case "text":
       return (

@@ -311,9 +311,6 @@ input:focus {
 
 
 
-/* fidelity chip retired — FidelityChip is a Badge with utility colors
-   (controls.tsx); the agent-view copy keeps its own .fid rules. */
-
 /* capability matrix table */
 
 
@@ -510,12 +507,5 @@ tr.sep td {
 
 /* ── diagnostics cost-disclosure modal (ui.md: cost before running) ──── */
 
-
-/* ── explicit plug-in confirmation (routing onto < fully brokered) ───── */
-.plug-in-confirm {
-  flex-basis: 100%;
-  color: var(--pb-warn);
-  margin: 4px 0 0;
-}
 
 }

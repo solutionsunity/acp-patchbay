@@ -196,9 +196,10 @@ body {
 }
 
 /* ── read-out strip — between chat and composer (ui.md § Read-out strip):
-   plan chip left, edited-files chip right; a chip's panel overlays the chat,
-   growing up from the strip (bottom: 100% of the relative wrapper). Read-outs
-   only — never context, so it lives outside the composer's binding rule. ── */
+   plan chip only; its panel overlays the chat, growing up from the strip
+   (bottom: 100% of the relative wrapper). Read-out only — never context, so
+   it lives outside the composer's binding rule. The edited-files chip moved
+   into the composer's foot row (files-chip.tsx) — see .files-chip-wrap. ── */
 .readout-strip {
   position: relative;
   border-top: 1px solid var(--pb-border);
@@ -242,26 +243,6 @@ body {
   text-overflow: ellipsis;
 }
 
-/* right-anchored with or without a plan chip beside it */
-.readout-strip .chip.files {
-  margin-left: auto;
-  flex: none;
-}
-
-/* both chips present: a divider marks where plan ends and file writes begin;
-   it takes the auto margin so the files chip hugs it */
-.readout-strip .sep {
-  width: 1px;
-  align-self: stretch;
-  background: var(--pb-border);
-  margin-left: auto;
-  flex: none;
-}
-
-.readout-strip .sep + .chip.files {
-  margin-left: 0;
-}
-
 .readout-strip .frac {
   color: var(--pb-accent);
   font-weight: 600;
@@ -272,11 +253,54 @@ body {
   bottom: 100%;
   left: 0;
   right: 0;
+  border-top: 1px solid var(--pb-border);
+  border-bottom: 1px solid var(--pb-border);
+}
+
+/* Anchored to the composer foot's files chip (files-chip.tsx) instead of
+   spanning full-width like the strip's panel — it opens upward from its own
+   button, so it's a floating card, not a strip attachment. */
+.files-chip-wrap {
+  position: relative;
+}
+
+.files-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--pb-text-dim);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.files-btn:hover,
+.files-btn.active {
+  color: var(--pb-warn);
+  background: var(--pb-panel-2);
+}
+
+.files-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  max-width: 85vw;
+  border-radius: 8px;
+  border: 1px solid var(--pb-border);
+  box-shadow: 0 6px 24px #000a;
+}
+
+/* shared by .readout-panel (plan) and .files-panel (files) — the overlay
+   card's internal structure: sticky header, scrollable item list. */
+.overlay-panel {
   max-height: 55vh;
   overflow-y: auto;
   background: var(--pb-panel);
-  border-top: 1px solid var(--pb-border);
-  border-bottom: 1px solid var(--pb-border);
   z-index: 50; /* over chat, under the top drawers (60/61) */
   animation: rise 0.16s ease-out;
 }
@@ -288,7 +312,7 @@ body {
   }
 }
 
-.readout-panel .head {
+.overlay-panel .head {
   position: sticky;
   top: 0;
   display: flex;
@@ -303,7 +327,7 @@ body {
   font-weight: 600;
 }
 
-.readout-panel .head .close {
+.overlay-panel .head .close {
   background: none;
   border: none;
   color: var(--pb-text-dim);
@@ -311,30 +335,30 @@ body {
   padding: 2px;
 }
 
-.readout-panel .head .close:hover {
+.overlay-panel .head .close:hover {
   color: var(--pb-text);
 }
 
-.readout-panel .items {
+.overlay-panel .items {
   padding: 0 10px 8px;
   font-size: 11.5px;
   color: var(--pb-text-dim);
 }
 
-.readout-panel .items div {
+.overlay-panel .items div {
   padding: 2px 0 2px 8px;
 }
 
-.readout-panel .items .completed {
+.overlay-panel .items .completed {
   color: var(--pb-text-faint);
   text-decoration: line-through;
 }
 
-.readout-panel .items .in_progress {
+.overlay-panel .items .in_progress {
   color: var(--pb-accent);
 }
 
-.readout-panel .file-row {
+.overlay-panel .file-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -346,17 +370,17 @@ body {
   min-width: 0;
 }
 
-.readout-panel .file-row:hover {
+.overlay-panel .file-row:hover {
   color: var(--pb-text);
   background: var(--pb-bg);
 }
 
-.readout-panel .file-row .base {
+.overlay-panel .file-row .base {
   color: var(--pb-text);
   flex: none;
 }
 
-.readout-panel .file-row .dir {
+.overlay-panel .file-row .dir {
   color: var(--pb-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -365,7 +389,7 @@ body {
 
 /* right-anchored cluster: +n/-m badge, dirty dot, go-to-file — whichever of
    the first two are absent this session, the button still sits flush right */
-.readout-panel .file-row .right {
+.overlay-panel .file-row .right {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -375,22 +399,22 @@ body {
 
 /* cumulative +/- since first agent touch (fileDiffStats) — same numbers the
    row's own click (the ± diff) opens to */
-.readout-panel .file-row .stat {
+.overlay-panel .file-row .stat {
   display: flex;
   gap: 4px;
   font-variant-numeric: tabular-nums;
 }
 
-.readout-panel .file-row .stat .add {
+.overlay-panel .file-row .stat .add {
   color: var(--pb-ok);
 }
 
-.readout-panel .file-row .stat .del {
+.overlay-panel .file-row .stat .del {
   color: var(--pb-err);
 }
 
 /* user's unsaved edits sitting on an agent-touched file (compliance §12) */
-.readout-panel .file-row .dirty {
+.overlay-panel .file-row .dirty {
   flex: none;
   width: 7px;
   height: 7px;
@@ -400,7 +424,7 @@ body {
 
 /* go-to-file — always present; the row's main click is the diff (when
    diffable), so opening the file plainly needs its own explicit target */
-.readout-panel .file-row .gotofile {
+.overlay-panel .file-row .gotofile {
   flex: none;
   background: none;
   border: none;
@@ -410,7 +434,7 @@ body {
   padding: 1px 3px;
 }
 
-.readout-panel .file-row .gotofile:hover {
+.overlay-panel .file-row .gotofile:hover {
   color: var(--pb-text);
   background: var(--pb-panel);
 }
@@ -875,6 +899,17 @@ body {
   word-break: break-word;
 }
 
+/* Type-to-grow cap: while the composer hasn't been manually dragged
+ * (input-shell.auto-grow, composer.tsx height===null), the editor stops
+ * growing at 2x its min-height and scrolls instead — a 50-line paste
+ * shouldn't push the composer off-screen. Once the user drags the composer
+ * (height leaves null), this rule stops applying and the editor's flex: 1
+ * fills whatever height the drag handle granted, uncapped except by that
+ * handle's own bound (composer.tsx: window.innerHeight * 0.8). */
+.input-shell.auto-grow .prompt-editor {
+  max-height: 15em;
+}
+
 .prompt-editor[contenteditable="false"] {
   color: var(--pb-text-faint);
 }
@@ -1075,29 +1110,6 @@ body {
 .s-row .sub {
   font-size: 11px;
   color: var(--pb-text-faint);
-}
-
-/* fidelity chip — pure function of the used capability matrix */
-.fid {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 8px;
-  white-space: nowrap;
-}
-
-.fid.full {
-  color: var(--pb-ok);
-  border: 1px solid color-mix(in srgb, var(--pb-ok) 30%, var(--pb-bg));
-}
-
-.fid.partial {
-  color: var(--pb-warn);
-  border: 1px solid color-mix(in srgb, var(--pb-warn) 30%, var(--pb-bg));
-}
-
-.fid.outside {
-  color: var(--pb-err);
-  border: 1px solid color-mix(in srgb, var(--pb-err) 30%, var(--pb-bg));
 }
 
 .drawer .foot {

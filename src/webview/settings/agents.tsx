@@ -6,7 +6,7 @@ import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, 
 import { hasUnusedProbe } from "../../shared/protocol";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
-import { ConfirmButton, Field, FidelityChip, Toggle } from "./controls";
+import { ConfirmButton, Field, Toggle } from "./controls";
 import { parseEnvLines } from "./parse-env";
 import {
   AlertDialog,
@@ -21,7 +21,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Dialog,
@@ -383,13 +382,11 @@ function AddAgentRow(props: {
         >
           {mode === "registry" ? "Add custom…" : "Add from registry"}
         </Button>
-        <label className="row gap-1.5">
-          <Checkbox
-            checked={verifyAfterAdd}
-            onCheckedChange={(v) => setVerifyAfterAdd(v === true)}
-          />
-          Verify after add
-        </label>
+        <Toggle
+          checked={verifyAfterAdd}
+          label="Verify after add"
+          onChange={setVerifyAfterAdd}
+        />
       </div>
     </div>
   );
@@ -731,9 +728,6 @@ export function AgentsSection(props: {
               <span className={`dot ${status}`} />
               <AgentIcon icon={registry?.icon} />
               <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
-              {matrix !== undefined && (
-                <FidelityChip matrix={matrix} knownBypassBridge={registry?.knownBypassBridge ?? false} />
-              )}
               {upgrade !== null && (
                 <Badge className="border-warn/40 text-warn" title={`registry has v${upgrade.to}, pinned to v${upgrade.from}`}>
                   update available

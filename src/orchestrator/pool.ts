@@ -864,7 +864,13 @@ export class AgentPool {
     params: acp.AgentRequestParamsByMethod[M],
   ): Promise<acp.AgentRequestResponsesByMethod[M]> {
     const priorSessionCount = entry.sessions.size;
-    const fact: WireFact = { via: "agentRequest", method, params, priorSessionCount };
+    const fact: WireFact = {
+      via: "agentRequest",
+      method,
+      params,
+      priorSessionCount,
+      declared: entry.declared,
+    };
     try {
       const result = await entry.connection!.agent.request(method, params);
       this.markProven(entry.reportAs, fact);

@@ -9,7 +9,6 @@ import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
   coalesceSettingsEvent,
-  computeFidelity,
   initialAgentViewState,
   initialSettingsState,
   reduceAgentView,
@@ -42,11 +41,10 @@ import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
-import { playDoneSound } from "./sound";
+import { listDoneSounds, playDoneSound } from "./sound";
 import {
   type AcpRegistryData,
   AcpRegistryStore,
-  KNOWN_BYPASS_BRIDGES,
   type RegistryAgent,
   registryAgentView,
   resolveDistribution,
@@ -256,6 +254,7 @@ export class Orchestrator {
         fileWriteScope: rules.fileWriteScope,
         integrationRegistry: this.integrations.registryViews(),
         preferences: this.preferences.get(),
+        doneSounds: listDoneSounds(),
       },
       reduceSettings,
       coalesceSettingsEvent,
@@ -592,9 +591,11 @@ export class Orchestrator {
       },
       () => this.workspaceRoot ?? process.cwd(),
       async (contextToken, agentId) => {
-        // McpServerStdio is the untagged union member (architecture.md's
-        // "uniform stdio presentation" — no discriminant needed since it's
-        // the only variant every agent is guaranteed to accept).
+        // McpServerStdio is the untagged union member — no discriminant
+        // needed since it's the only variant every agent is guaranteed to
+        // accept, which is also why the editor server itself always rides
+        // stdio (integrations get capability-conditional transport;
+        // architecture.md § Integrations).
         const editorServer = {
           name: "patchbay",
           command: process.execPath,
@@ -605,22 +606,27 @@ export class Orchestrator {
           ],
         };
         const matrix = this.agentView.current.capabilities[agentId];
-        const isFullyBrokered =
-          matrix !== undefined &&
-          computeFidelity(matrix, KNOWN_BYPASS_BRIDGES.has(agentId)) === "fully-brokered";
+        // Declared, not used, and that's correct here (prompt.image
+        // mechanics): passthrough is how the mcp.http claim gets exercised
+        // at all — a used-gate would deadlock the row forever.
+        const declaresHttp = matrix?.["mcp.http"]?.declared === true;
         const integrationServers = await this.integrations.mcpServersFor(
           agentId,
-          isFullyBrokered,
           this.integrationBridgeScriptPath,
           this.editorStateHost.socketPath,
+          declaresHttp,
         );
-        // Env values are secrets by classification (no-secret-exposure.md),
-        // and this is the one place they cross to the wire — register every
-        // one with the wire log's redaction set. Over-redaction (plumbing
-        // values like socket paths get masked too) is the safe direction.
+        // Env and header values are secrets by classification
+        // (no-secret-exposure.md), and this is the one place they cross to
+        // the wire — register every one with the wire log's redaction set.
+        // Over-redaction (plumbing values like socket paths get masked too)
+        // is the safe direction.
         for (const server of [editorServer, ...integrationServers]) {
           if ("env" in server && server.env !== undefined) {
             for (const { value } of server.env) this.wireLog.registerSecret(value);
+          }
+          if ("headers" in server && server.headers !== undefined) {
+            for (const { value } of server.headers) this.wireLog.registerSecret(value);
           }
         }
         return [editorServer, ...integrationServers];
@@ -1082,8 +1088,9 @@ export class Orchestrator {
   private maybeChime(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind !== "turnEnded" || event.stopReason === "cancelled") continue;
-      if (!this.preferences.get().soundOnDone) return;
-      playDoneSound(this.log);
+      const prefs = this.preferences.get();
+      if (!prefs.soundOnDone) return;
+      playDoneSound(this.log, prefs.doneSound);
       return; // one chime per batch, however many turns settled together
     }
   }
@@ -1931,6 +1938,11 @@ export class Orchestrator {
           this.syncDetachContext();
         });
         break;
+      case "previewDoneSound":
+        // Preview only — plays exactly what a finishing turn would, stores
+        // nothing (the selection persists via setPreferences on change).
+        playDoneSound(this.log, action.sound);
+        break;
       case "resolveElicitation": {
         const pending = this.pendingElicitations.get(action.requestId);
         if (pending === undefined) break;
@@ -2008,6 +2020,12 @@ export class Orchestrator {
         break;
       case "setIntegrationRouting":
         void this.integrations.setRouting(action.integrationId, action.routing);
+        break;
+      case "setIntegrationTransport":
+        void this.integrations.setTransport(action.integrationId, action.transport);
+        break;
+      case "probeIntegration":
+        void this.integrations.probe(action.integrationId);
         break;
       case "shareIntegrationConfig":
         void this.shareIntegrationConfig(action.integrationId);

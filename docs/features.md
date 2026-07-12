@@ -123,8 +123,12 @@ deliverable, owed before implementation.
   declared / declared but not used / used. Refreshes on every connect. Rows are
   hand-picked against the ACP spec's declared capability surface, not derived
   automatically.
-- Each agent carries a permission-fidelity label: fully brokered / partially
-  brokered / acts outside the permission flow. Never silently trusted.
+- ~~Each agent carries a permission-fidelity label~~ *(removed 2026-07-12: the
+  label aggregated data-plane rows — do fs/terminal bytes proxy through
+  patchbay — into a conduct verdict, and read "not exercised yet" as "acts
+  outside"; structurally wrong for SDK-CLI agents whose consent still routes
+  through the permission broker. The capability matrix rows carry the honesty
+  unaggregated.)*
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
 - User can set per-agent process policy: auto / shared / isolated.
@@ -156,9 +160,12 @@ deliverable, owed before implementation.
   simply returning to the catalog ready for a fresh connect. Nothing is stored
   until it can actually work: a cancelled OAuth consent means nothing was added.
 - User owns the routing: which servers each agent receives is the user's
-  choice, per agent, not all-or-nothing. Default: a new server auto-attaches
-  only to fully-brokered agents; anything less than fully-brokered requires an
-  explicit plug-in.
+  choice, per agent, not all-or-nothing. Default ("auto"): a new server
+  attaches to every agent; "only" pins an explicit list; "except" attaches to
+  all minus the listed. *(Supersedes the fully-brokered auto-gate + explicit
+  plug-in confirmation, 2026-07-12 — the gate conflated data-plane fidelity
+  with control-plane consent; per-tool consent already rides the permission
+  broker for every request_permission-routing agent.)*
 - Servers are global to this machine, and a shared config never carries its
   credential — connecting is always the user's own explicit, visible act. (The
   real incident behind this rule — a production-access MCP server silently
@@ -197,8 +204,9 @@ deliverable, owed before implementation.
 
 - Agents that route file changes through patchbay get native diff views — user
   accepts or rejects before anything touches disk. The capability matrix shows
-  which agents deliver this brokered tier; for agents that write on their own, the
-  permission-fidelity label and live terminal visibility carry the honesty in v1.
+  which agents deliver this brokered tier row by row; for agents that write on
+  their own, the matrix's honest ◌ cells and live terminal visibility carry the
+  honesty in v1.
 - The agent sees what the user sees: unsaved buffers, not just disk state.
 - The agent can read the problems panel (diagnostics) — current, not stale.
 - Right-click on a selection: add to context / ask the agent about it.

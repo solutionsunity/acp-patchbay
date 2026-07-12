@@ -55,12 +55,12 @@ describe("eraseAllData", () => {
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
-    await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true });
+    await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
     await integrationEnv.set("github", { GITHUB_PAT: "ghp-secret" });
     await integrationTokens.set("github", { accessToken: "gho-secret" });
-    await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false }));
+    await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // A stray from a removed agent — no config left, must still go.
-    await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false }));
+    await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     await spawnRegistry.add(4242, "node agent.js", "agent");
     await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], fileWriteScope: "always-ask" });
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);

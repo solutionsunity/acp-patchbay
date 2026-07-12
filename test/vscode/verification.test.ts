@@ -2,8 +2,8 @@
 // (architecture.md § Agent capability matrix; plan.md P5's "first fs
 // success" hooks, wired in P6's handlers): an agent that genuinely routes
 // fs reads/writes and terminal commands through patchbay's gates earns
-// used on those rows — which is also the only path to the
-// "fully brokered" fidelity label and to auto-attach integration routing.
+// used on those rows — the matrix's honest data-plane record (the fidelity
+// aggregate that once hung off these rows is removed, 2026-07-12).
 import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

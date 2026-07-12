@@ -10,17 +10,19 @@
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type {
+  IntegrationProbeView,
   IntegrationRoutingView,
   IntegrationSourceView,
   IntegrationView,
   RegistryEntryView,
   SettingsEvent,
 } from "../shared/protocol";
+import { probeMcpServer, type ProbeFn, type ProbeTarget } from "./integration-probe";
 import { parseCommandLine } from "./command-line";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { IntegrationTokenStore, type StoredToken } from "./stores/integration-tokens";
-import { IntegrationConfigStore, type IntegrationSource } from "./stores/integration-configs";
+import { IntegrationConfigStore, type IntegrationConfig, type IntegrationSource } from "./stores/integration-configs";
 import { isConnectable, type RegistryEntry } from "./stores/registry";
 import type { SecretEnvStore } from "./stores/secret-env";
 
@@ -125,7 +127,15 @@ export class IntegrationsManager {
     /** Output-channel seam (logger.ts) — hosts and key *names* only, never
      * tokens, env values, or full URLs (query strings can embed secrets). */
     private readonly log: Logger = nullLogger,
+    /** The connect-time tool probe (integration-probe.ts) — injected so
+     * tests fake the handshake instead of hitting network/spawning. */
+    private readonly probeFn: ProbeFn = probeMcpServer,
   ) {}
+
+  /** Latest probe per integration id — session-lived, never persisted: a
+   * tool list is a point-in-time read of the server, so a fresh window
+   * re-reads reality instead of trusting last week's snapshot. */
+  private readonly probes = new Map<string, IntegrationProbeView>();
 
   /** In-flight browser flows by integration id — each holds its own
    * cancel trigger, so an abandoned browser tab isn't a forever-pending
@@ -178,6 +188,8 @@ export class IntegrationsManager {
     return this.registry.map((r) => ({
       id: r.id,
       name: r.name,
+      icon: r.icon,
+      brandIcon: r.brandIcon,
       connectable: isConnectable(r),
       note: r.note,
       docsUrl: r.docsUrl,
@@ -231,6 +243,8 @@ export class IntegrationsManager {
         connected,
         active: integration.active,
         routing: integration.routing,
+        transport: integration.transport,
+        probe: this.probes.get(integration.id),
         editJson: await this.editJsonFor(integration.id, source),
       });
     }
@@ -320,8 +334,10 @@ export class IntegrationsManager {
       },
       routing: "auto",
       active: true,
+      transport: "auto",
     });
     await this.refresh();
+    void this.probe(registryId);
   }
 
   /** MCP-spec OAuth connect (docs/reference-mcp-oauth.md §2): URL-only —
@@ -368,6 +384,7 @@ export class IntegrationsManager {
         },
         routing: "auto",
         active: true,
+        transport: "auto",
       });
       this.log.info(`${registryId}: connected via OAuth`);
       await this.refresh();
@@ -446,9 +463,11 @@ export class IntegrationsManager {
       source: configSource,
       routing: cloneRouting(routing),
       active: true,
+      transport: "auto",
     });
     this.log.info(`${id}: custom ${configSource.kind} added`);
     await this.refresh();
+    void this.probe(id);
     return id;
   }
 
@@ -577,6 +596,7 @@ export class IntegrationsManager {
    * connect; a custom one is simply gone. The non-destructive option is
    * `setActive(false)`, which keeps everything and only unroutes. */
   async remove(id: string): Promise<void> {
+    this.probes.delete(id);
     await this.tokens.remove(id);
     await this.envStore.remove(id);
     await this.integrationStore.remove(id);
@@ -589,6 +609,75 @@ export class IntegrationsManager {
     if (existing === undefined) return;
     await this.integrationStore.upsert({ ...existing, active });
     await this.refresh();
+    if (active) void this.probe(id);
+  }
+
+  async setTransport(id: string, transport: "auto" | "bridge"): Promise<void> {
+    const existing = this.integrationStore.get(id);
+    if (existing === undefined) return;
+    await this.integrationStore.upsert({ ...existing, transport });
+    await this.refresh();
+  }
+
+  /** Runs the connect-time tool probe and caches the outcome on the card
+   * (protocol.ts IntegrationProbeView — provider-side truth, timestamped).
+   * Explicit-trigger only (connect, power-on, refresh button): probing a
+   * custom-stdio server executes its command, and even http shouldn't fire
+   * on background sweeps — reality is read when the user acts on it. */
+  async probe(id: string): Promise<void> {
+    const integration = this.integrationStore.get(id);
+    if (integration === undefined) return;
+    this.probes.set(id, { status: "probing", at: new Date().toISOString() });
+    await this.refresh();
+    try {
+      const target = await this.probeTargetFor(integration);
+      if (target === null) {
+        // Nothing reachable to probe (no endpoint / missing credential) —
+        // the card's connected flag already tells that story.
+        this.probes.delete(id);
+      } else {
+        const outcome = await this.probeFn(target);
+        this.probes.set(id, {
+          status: "ok",
+          at: new Date().toISOString(),
+          serverName: outcome.serverName,
+          serverVersion: outcome.serverVersion,
+          tools: outcome.tools,
+        });
+        this.log.info(`${id}: probe ok — ${outcome.tools.length} tool(s)`);
+      }
+    } catch (err) {
+      this.probes.set(id, {
+        status: "failed",
+        at: new Date().toISOString(),
+        reason: (err as Error).message,
+      });
+      this.log.info(`${id}: probe failed — ${(err as Error).message}`);
+    }
+    await this.refresh();
+  }
+
+  /** The probe's connection recipe for one integration — same resolution as
+   * mcpServersFor (registry entry URL, header shape, fresh token), pointed
+   * at patchbay's own MCP client instead of an agent's. */
+  private async probeTargetFor(integration: IntegrationConfig): Promise<ProbeTarget | null> {
+    const source = integration.source;
+    if (source.kind === "custom-stdio") {
+      return {
+        kind: "stdio",
+        command: source.command,
+        args: source.args,
+        env: await this.envStore.get(integration.id),
+      };
+    }
+    const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
+    const url = source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
+    if (url === "") return null;
+    const shape = headerShapeOf(source, entry);
+    if (shape === null) return { kind: "http", url, header: null };
+    const token = (await this.getToken(integration.id))?.accessToken ?? null;
+    if (token === null) return null; // needs a credential, none stored
+    return { kind: "http", url, header: { name: shape.headerName, value: `${shape.valuePrefix}${token}` } };
   }
 
   async setRouting(id: string, routing: IntegrationRoutingView): Promise<void> {
@@ -629,28 +718,33 @@ export class IntegrationsManager {
   }
 
   /** The mcpServers entries a session for `agentId` should get: every
-   * integration routed to it (explicit id list, or "auto" once the agent is
-   * fully brokered) and actually usable (connected where a credential is
-   * needed, a real endpoint where one is required). custom-stdio needs no
-   * bridge — handed straight through; registry/custom-http ride the generic
-   * stdio-to-HTTP bridge, "just another local MCP server" either way. */
+   * integration routed to it ("auto" = every agent; explicit id list;
+   * "except" = every agent minus the listed — protocol.ts records the
+   * fidelity-gate supersession) and actually usable (connected where a
+   * credential is needed, a real endpoint where one is required).
+   * custom-stdio needs no bridge — handed straight through.
+   * registry/custom-http go one of two ways (prompt.image mechanics —
+   * capability-conditional delivery): `declaresHttp` and transport "auto" ⇒
+   * a real `type: "http"` entry, the agent's own MCP client connects (token
+   * read here, at attach — it rides agent-visible config, ephemeral per
+   * session, exactly like a CLI-added server; the recorded trade superseding
+   * no-secret-exposure's bridge-only rule). Otherwise the stdio-to-HTTP
+   * bridge, the guaranteed floor. */
   async mcpServersFor(
     agentId: string,
-    isFullyBrokered: boolean,
     bridgeScriptPath: string,
     ipcSocketPath: string,
+    declaresHttp: boolean,
   ): Promise<McpServer[]> {
     const servers: McpServer[] = [];
     for (const integration of this.integrationStore.list()) {
       if (!integration.active) continue; // muted — configured, credential intact, not routed
-      // "except" narrows the auto set, never widens it: a less-than-brokered
-      // agent stays outside whether or not it's listed (protocol.ts).
       const routed =
         integration.routing === "auto"
-          ? isFullyBrokered
+          ? true
           : Array.isArray(integration.routing)
             ? integration.routing.includes(agentId)
-            : isFullyBrokered && !integration.routing.except.includes(agentId);
+            : !integration.routing.except.includes(agentId);
       if (!routed) continue;
 
       const source = integration.source;
@@ -677,6 +771,23 @@ export class IntegrationsManager {
       if (needsToken(source) && (await this.tokens.get(integration.id)) === null) continue;
 
       const header = headerShapeOf(source, entry);
+      if (declaresHttp && integration.transport === "auto") {
+        // getToken refreshes transparently, so the agent starts the session
+        // with the freshest credential we can mint — but passthrough is a
+        // snapshot: a token expiring mid-session is the agent's 401 to
+        // surface, not ours to fix (the bridge path re-reads per request).
+        const token = header !== null ? (await this.getToken(integration.id))?.accessToken : null;
+        servers.push({
+          type: "http",
+          name: integration.name,
+          url,
+          headers:
+            header !== null && token != null
+              ? [{ name: header.headerName, value: `${header.valuePrefix}${token}` }]
+              : [],
+        });
+        continue;
+      }
       servers.push({
         name: integration.name,
         command: process.execPath,

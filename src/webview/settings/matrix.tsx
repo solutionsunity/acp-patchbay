@@ -26,6 +26,9 @@ const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
   { id: "session.fork", label: "session.fork" },
   { id: "session.close", label: "session.close" },
   { id: "session.delete", label: "session.delete" },
+  // …plus the one session-scope field that rides those lifecycle requests
+  // rather than being a step itself.
+  { id: "session.additionalDirectories", label: "session.additionalDirectories" },
   { id: "mcp.http", label: "mcp.http" },
   { id: "mcp.sse", label: "mcp.sse" },
   { id: "usage", label: "usage reporting" },
@@ -65,9 +68,11 @@ const ROW_CONSEQUENCE: Partial<Record<CapabilityRowId, string>> = {
   "session.list": "the agent's own session history is the only list — without it, only currently-open sessions show, and nothing survives a reload",
   "session.delete": "without it, removing a session only forgets it in patchbay — the agent's own history keeps it",
   "session.close": "lets patchbay free an idle session's agent-side resources — reopened on demand via load/resume",
-  "fs.readTextFile": "brokered read path — gates the fully-brokered fidelity label",
+  "session.additionalDirectories":
+    "extra workspace roots on session requests — the composer's roots chip only provably widens a session's filesystem scope where this fired",
+  "fs.readTextFile": "brokered read path — file reads patchbay can see and serve",
   "fs.writeTextFile": "brokered write path — routed writes arrive as native diffs",
-  terminal: "brokered command execution — gates the fully-brokered fidelity label",
+  terminal: "brokered command execution — terminal runs stream through patchbay",
   usage: "without it, no usage gauge is shown — absence over fake",
   concurrentSessions: "process policy `auto` isolates new sessions until this is proven",
   auth: "a working session/new — proven by the free check at add/Verify, or by the first real session",

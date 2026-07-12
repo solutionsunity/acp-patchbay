@@ -3,9 +3,8 @@
 // `onDone(toast?)` closes the drawer — drawer visibility and toasts are the
 // shell's local UI state.
 import type { AgentViewState, AgentSummary, SessionSummary } from "../../shared/protocol";
-import { computeFidelity } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
-import { capabilityOneLiner, FIDELITY_CLASS, FIDELITY_TEXT } from "../shared/capability-format";
+import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { timeAgo } from "../shared/time";
 import { Dot } from "./header";
@@ -33,7 +32,6 @@ function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
  * banner's Restart. */
 export function AgentsDrawer(props: {
   agents: readonly AgentSummary[];
-  registryAgents: AgentViewState["registryAgents"];
   capabilities: AgentViewState["capabilities"];
   onDone(toast?: string): void;
 }) {
@@ -48,9 +46,6 @@ export function AgentsDrawer(props: {
       )}
       {props.agents.map((a) => {
         const matrix = props.capabilities[a.id];
-        const registry = props.registryAgents.find((r) => r.id === a.id);
-        const fidelity =
-          matrix !== undefined ? computeFidelity(matrix, registry?.knownBypassBridge ?? false) : null;
         return (
           <div
             className="a-row"
@@ -74,9 +69,6 @@ export function AgentsDrawer(props: {
                         : "")}
               </div>
             </div>
-            {fidelity !== null && (
-              <span className={`fid ${FIDELITY_CLASS[fidelity]}`}>{FIDELITY_TEXT[fidelity]}</span>
-            )}
           </div>
         );
       })}

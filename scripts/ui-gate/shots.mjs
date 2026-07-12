@@ -100,33 +100,41 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] tool run grouped`, (await p.$("text=5 tool calls")) !== null);
 
   // ── injected user-role envelope: dim collapsed line, never a bubble,
-  // and it must not tick the prompt count (stats stay "2 5" below) ──
+  // and it must not tick the prompt count (stats row stays "2 5 1 file") ──
   check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
 
   // ── composer stats strip: whole-session counts (2 prompts, 5 tool calls
-  // in the fixture; no files touched, no usage reported → no gauge) ──
+  // in the fixture) with the files chip slotted between counts and gauge
+  // (files-chip.tsx — moved down from the read-out strip); no usage
+  // reported → no gauge ──
   const stats = await p.$eval(".composer-stats", (el) => el.textContent.replace(/\s+/g, " ").trim());
-  check(`[${theme}] composer stats counts prompts+tools ("${stats}")`, stats === "2 5");
+  check(`[${theme}] composer stats counts prompts+tools+files ("${stats}")`, stats === "2 5 1 file");
   check(`[${theme}] no gauge without usage reported`, (await p.$(".composer-stats .gauge")) === null);
 
-  // ── read-out strip: plan chip left, files chip right; overlay panels ──
+  // ── read-out strip: plan chip only (files chip moved to the composer) ──
   check(`[${theme}] plan chip shows fraction`, (await p.$(".readout-strip .chip.plan .frac")) !== null);
-  const filesChip = await p.$eval(".readout-strip .chip.files", (el) => el.textContent.trim());
-  check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file");
+  check(`[${theme}] no files chip left in the strip`, (await p.$(".readout-strip .chip.files")) === null);
   await p.click(".readout-strip .chip.plan");
   check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".readout-panel .items .in_progress", { timeout: 3000 })) !== null);
-  await p.click(".readout-strip .chip.files");
-  check(`[${theme}] files panel swaps in (one at a time)`, (await p.waitForSelector(".readout-panel .file-row", { timeout: 3000 })) !== null);
-  check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".readout-panel .file-row .dirty")) !== null);
-  check(`[${theme}] diff-bearing row shows the diff icon (row click IS the diff)`, (await p.$(".readout-panel .file-row .codicon-diff")) !== null);
-  const stat = await p.$eval(".readout-panel .file-row .stat", (el) => el.textContent.trim());
-  check(`[${theme}] +/- badge shows cumulative stat ("${stat}")`, stat === "+12-4");
-  check(`[${theme}] go-to-file button always present`, (await p.$(".readout-panel .file-row .gotofile")) !== null);
-  await p.screenshot({ path: `${OUT}/readout-files-${theme}.png` });
   await p.click(".readout-panel .head .close");
-  check(`[${theme}] X closes the panel`, (await p.$(".readout-panel")) === null);
+  check(`[${theme}] X closes the plan panel`, (await p.$(".readout-panel")) === null);
+
+  // ── files chip: its own button in the stats row, panel anchored to the
+  // composer (same content as the old strip panel — only the anchor moved) ──
+  const filesChip = await p.$eval(".composer-stats .files-btn", (el) => el.textContent.trim());
+  check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file");
+  await p.click(".composer-stats .files-btn");
+  check(`[${theme}] files panel opens from the composer`, (await p.waitForSelector(".files-panel .file-row", { timeout: 3000 })) !== null);
+  check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".files-panel .file-row .dirty")) !== null);
+  check(`[${theme}] diff-bearing row shows the diff icon (row click IS the diff)`, (await p.$(".files-panel .file-row .codicon-diff")) !== null);
+  const stat = await p.$eval(".files-panel .file-row .stat", (el) => el.textContent.trim());
+  check(`[${theme}] +/- badge shows cumulative stat ("${stat}")`, stat === "+12-4");
+  check(`[${theme}] go-to-file button always present`, (await p.$(".files-panel .file-row .gotofile")) !== null);
+  await p.screenshot({ path: `${OUT}/readout-files-${theme}.png` });
+  await p.click(".files-panel .head .close");
+  check(`[${theme}] X closes the files panel`, (await p.$(".files-panel")) === null);
 
   // ── composer typed triggers (Lexical): keyboard-driven, tokens inline ──
   await p.click(".prompt-editor");

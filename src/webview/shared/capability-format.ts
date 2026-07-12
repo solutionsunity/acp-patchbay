@@ -1,18 +1,6 @@
 // Shared render helpers for the capability matrix — used by both webviews so
-// the fidelity chip and one-liner read identically wherever they appear.
-import type { CapabilityCell, CapabilityMatrix, FidelityLabel } from "../../shared/protocol";
-
-export const FIDELITY_TEXT: Record<FidelityLabel, string> = {
-  "fully-brokered": "fully brokered",
-  "partially-brokered": "partially brokered",
-  "acts-outside": "acts outside",
-};
-
-export const FIDELITY_CLASS: Record<FidelityLabel, string> = {
-  "fully-brokered": "full",
-  "partially-brokered": "partial",
-  "acts-outside": "outside",
-};
+// the one-liner reads identically wherever it appears.
+import type { CapabilityCell, CapabilityMatrix } from "../../shared/protocol";
 
 function rowText(label: string, cell: CapabilityCell, usedSuffix = ""): string {
   if (cell.used) return `${label} ✓${usedSuffix}`;

@@ -58,6 +58,8 @@ describe("registry", () => {
     const gated: RegistryEntry = {
       id: "gated",
       name: "Gated",
+      icon: "server",
+      brandIcon: null,
       url: "https://example.test/mcp",
       userUrl: false,
       docsUrl: "https://example.test/docs",

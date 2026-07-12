@@ -117,7 +117,7 @@ const ENVELOPE_ELEMENT = /^<([a-z][a-z0-9-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>|^<([a-z
 
 /** Agent harnesses inject machine messages into the conversation on the
  * *user* role — task notifications, system reminders, slash-command echoes
- * (observed: claude-agent-acp session/load replay; agent-quirks.md
+ * (observed: claude-agent-acp session/load replay; docs/acp-agents-notes/claude-agent-acp.md
  * § Injected user-role messages). Their common shape: the entire message is
  * one or more XML-ish envelope elements, nothing else — no human prompt
  * looks like that end-to-end. Returns the first tag name for a matching

@@ -15,7 +15,6 @@ this file says what each surface does; that one says what it's made of.
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected — P16) |
-| Fidelity chip | `fully brokered` green · `partially brokered` amber · `acts outside` red | pure function of the used capability matrix — never hand-assigned |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | `emulated` badge | amber outline | continuation or branch seeded by patchbay, not replayed natively — always labeled |
@@ -57,19 +56,24 @@ never split panels.
 
 One row between chat and composer — live-turn read-outs at the eye's resting
 point, deliberately **outside** the composer: its binding rule ("above the input =
-what the agent will see") stays intact because nothing here is context. Two chips,
-each absent when empty; the row itself absent when both are — no placeholder.
+what the agent will see") stays intact because nothing here is context.
 *(Position supersedes the top-pinned plan strip — re-derived 2026-07-12,
-ui-rendering-strategy § Plans.)*
+ui-rendering-strategy § Plans. Amended same day: the strip holds the **plan chip
+only** — the edited-files chip moved into the composer's stats row (§ 5,
+files-chip.tsx), where it reads as one of the session's counts; the strip is a
+live-turn narration surface and the plan is its one narration, while the file
+count is a session total and belongs with the totals. Same view-model pass, same
+panel content — only the anchor moved.)* The strip is absent without a plan — no
+placeholder.
 
 | Chip | Where | Behavior |
 |---|---|---|
 | Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
-| Edited files | right | `✎ n files` — the session's distinct agent-touched files (view-model totals, same pass as the rollups) |
 
-Click opens that chip's **panel** overlaying the chat, growing up from the strip
-(the drawers' mechanic, mirrored) — X, Escape, or re-click closes; one panel at a
-time. Plan panel: the full checklist (✓ done, ▸ active, ○ pending). Files panel:
+Click opens the **plan panel** overlaying the chat, growing up from the strip
+(the drawers' mechanic, mirrored) — X, Escape, or re-click closes. Plan panel:
+the full checklist (✓ done, ▸ active, ○ pending). The **files panel** (opened
+from the stats row's files chip) anchors to the composer instead:
 one row per file, click opens it in the editor; a dot marks a file whose open
 editor holds unsaved changes — editor reality read from the snapshot's
 `openEditors`, never a stored flag (compliance §12). Rows whose diff texts the
@@ -127,15 +131,16 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; change shows ⏳ until the agent's state notification confirms; display never optimistic |
-| Stats strip | 💬 🛠 counts + ring | the one read-out in the dials row: whole-session prompt / tool-call counts (view-model totals, same single pass as the rollups; the edited-file count moved to the read-out strip's files chip — one number, one surface) and the usage gauge — ring, orange arc, arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences § Composer stats, default shown) |
+| Stats strip | 💬 🛠 counts + ring | the one read-out in the dials row: whole-session prompt / tool-call counts and the files chip (view-model totals, same single pass as the rollups; the files chip came *down* from the read-out strip 2026-07-12 — one number, one surface, and this row is where session totals live; its panel anchors here too) and the usage gauge — ring, orange arc, arc = `used/size` from `usage_update`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences § Composer stats, default shown) |
 | Send / Stop | ↑ / ■ | send prompt / `session/cancel` mid-turn |
 
 ### 6 · Drawers
 
 **Agents drawer** — the picker (P17): one row per **configured** agent —
 status dot · name · readiness sub-line (crash reason when crashed; else
-`ready` / `never connected` / capability one-liner) · fidelity chip; clicking
+`ready` / `never connected` / capability one-liner); clicking
 the row starts a chat with it, connecting in-pane when it isn't running.
+*(Fidelity chip removed 2026-07-12 — see architecture.md § Permission broker.)*
 Footer: `＋ Add or manage agents — Settings…` — adding lives in Settings only
 (the in-view connect form is gone, superseded 2026-07-08, features.md §1);
 stop/restart are Settings troubleshooting controls plus the crash banner's
@@ -265,9 +270,10 @@ ready for a fresh connect). No third state: a custom OAuth add runs the
 browser flow *before* storing anything, so cancelled consent means nothing
 was added — never a stranded credential-less record.
 
-**Routing table**: servers × agents as toggles; toggling onto a
-less-than-fully-brokered agent interrupts with the **explicit plug-in
-confirmation** (auto-attach covers fully-brokered only). Per-server
+**Routing table**: servers × agents as toggles — auto = every agent, only =
+the ticked list, except = every agent minus the ticked. *(The fully-brokered
+auto-gate and its plug-in confirmation are removed, 2026-07-12 — routing is
+reach; consent rides the permission broker per tool call.)* Per-server
 `Share…` — the explicit, visible act of copying its config for someone else;
 the credential never travels with it, reattaching only when its recipient
 explicitly connects. Servers are global to this machine. *(The real

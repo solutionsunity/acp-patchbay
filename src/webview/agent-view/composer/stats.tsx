@@ -1,8 +1,11 @@
 // The composer's session-stats strip (Preferences § composerStats): whole-
-// session counts from the view-model's single pass, plus the context-window
-// gauge (moved from the header, smaller). Pure read-out — counts render only
-// when nonzero, the gauge only when the agent reports usage (absence over
-// fake, ui.md § gauge); a fresh session shows nothing at all.
+// session counts from the view-model's single pass, the files chip
+// (children — files-chip.tsx, the one interactive member of this row) slotted
+// between counts and the context-window gauge (moved from the header,
+// smaller). Counts render only when nonzero, the gauge only when the agent
+// reports usage (absence over fake, ui.md § gauge); a fresh session shows
+// nothing at all.
+import type { ReactNode } from "react";
 import type { UsageInfo } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
 import { count, type SessionTotals } from "../chat/view-model";
@@ -36,12 +39,15 @@ function Gauge({ usage }: { usage: UsageInfo }) {
 export function ComposerStats({
   totals,
   usage,
+  children,
 }: {
   totals: SessionTotals;
   usage: UsageInfo | null;
+  /** The files chip (composer.tsx) — slotted here, between counts and the
+   * gauge, so the row's order (prompts, tool calls, files, context window)
+   * lives in one place and the icon inherits this span's 12px sizing. */
+  children?: ReactNode;
 }) {
-  // No edited-files count here: the read-out strip's files chip is that
-  // number's one surface — same derivation, interactive, never disagreeing.
   const counts: { icon: string; n: number; tip: string }[] = [
     { icon: "comment", n: totals.prompts, tip: `${count(totals.prompts, "prompt")} this session` },
     { icon: "tools", n: totals.toolCalls, tip: `${count(totals.toolCalls, "tool call")} this session` },
@@ -59,6 +65,7 @@ export function ComposerStats({
             </span>
           ),
       )}
+      {children}
       {/* sessionUsage only ever gets an entry alongside marking "usage"
           used (pool.ts's notification handler and this both fire off the
           same usage_update), so presence here already means used — absent,

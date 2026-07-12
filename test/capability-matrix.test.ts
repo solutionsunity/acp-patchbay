@@ -1,11 +1,10 @@
-// Pure-function coverage: capabilityState, computeFidelity, matrixFromDeclared,
+// Pure-function coverage: capabilityState, matrixFromDeclared,
 // and the reducer's capability handling — the parts of P5 that don't need a
 // live agent at all.
 import { describe, expect, it } from "vitest";
 import { matrixFromDeclared, rowsProvenBy } from "../src/orchestrator/capabilities";
 import {
   capabilityState,
-  computeFidelity,
   hasUnusedProbe,
   initialAgentViewState,
   reduceAgentView,
@@ -29,6 +28,7 @@ const noDeclared: DeclaredCapabilities = {
   mcpSse: false,
   authMethods: [],
   authLogout: false,
+  sessionAdditionalDirectories: false,
 };
 
 describe("capabilityState", () => {
@@ -105,6 +105,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       method: "session/prompt",
       params: { sessionId: "s1", prompt: blocks },
       priorSessionCount: 1,
+      declared: null,
     });
 
   it("session/new proves auth; concurrentSessions only with a prior session", () => {
@@ -113,6 +114,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       method: "session/new",
       params: { cwd: "/" },
       priorSessionCount: 0,
+      declared: null,
     });
     expect(first).toEqual(["auth"]);
     const second = rowsProvenBy({
@@ -120,6 +122,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       method: "session/new",
       params: { cwd: "/" },
       priorSessionCount: 1,
+      declared: null,
     });
     expect(second.sort()).toEqual(["auth", "concurrentSessions"]);
   });
@@ -130,6 +133,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       method: "logout",
       params: {},
       priorSessionCount: 0,
+      declared: null,
     });
     expect(rows).toEqual(["auth.logout"]);
   });
@@ -140,6 +144,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       method: "session/fork",
       params: { sessionId: "s1", cwd: "/" },
       priorSessionCount: 1,
+      declared: null,
     });
     expect(rows.sort()).toEqual(["concurrentSessions", "session.fork"]);
   });
@@ -168,34 +173,6 @@ describe("rowsProvenBy — the one used-proof table", () => {
   it("usage_update is the only session/update kind that proves a row", () => {
     expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "usage_update" })).toEqual(["usage"]);
     expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "agent_message_chunk" })).toEqual([]);
-  });
-});
-
-describe("computeFidelity", () => {
-  const full: CapabilityMatrix = matrixFromDeclared({ ...noDeclared });
-  const brokered = (m: CapabilityMatrix, ...rows: Array<keyof CapabilityMatrix>) => {
-    const copy = { ...m };
-    for (const r of rows) copy[r] = { declared: true, used: true };
-    return copy;
-  };
-
-  it("fully brokered only when fs.read, fs.write, and terminal are all used", () => {
-    const matrix = brokered(full, "fs.readTextFile", "fs.writeTextFile", "terminal");
-    expect(computeFidelity(matrix, false)).toBe("fully-brokered");
-  });
-
-  it("partially brokered when only a subset is used", () => {
-    const matrix = brokered(full, "terminal");
-    expect(computeFidelity(matrix, false)).toBe("partially-brokered");
-  });
-
-  it("acts outside when none of fs/terminal are used", () => {
-    expect(computeFidelity(full, false)).toBe("acts-outside");
-  });
-
-  it("a known-bypass bridge always reads acts outside, even fully used", () => {
-    const matrix = brokered(full, "fs.readTextFile", "fs.writeTextFile", "terminal");
-    expect(computeFidelity(matrix, true)).toBe("acts-outside");
   });
 });
 

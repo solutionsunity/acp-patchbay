@@ -2,13 +2,11 @@
 // agent; a shared config never carries its credential (no-secret-exposure).
 import { useState } from "react";
 import type {
-  FidelityLabel,
+  IntegrationProbeView,
   IntegrationRoutingView,
   IntegrationSourceView,
   SettingsState,
 } from "../../shared/protocol";
-import { computeFidelity } from "../../shared/protocol";
-import { FIDELITY_TEXT } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { ConfirmButton, Field } from "./controls";
 import { parseEnvLines } from "./parse-env";
@@ -18,19 +16,39 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
-/** The three reaches (protocol.ts), stated as the three sentences they are —
- * one mode per line, the agent tick-list indented under whichever list mode
- * is active, never an undifferentiated wrap of radios and checkboxes:
- *   auto    — every fully-brokered agent (the safety gate);
- *   only    — exactly the ticked agents, any fidelity (confirmation below);
- *   except  — the auto set minus the ticked agents (narrowing is always
- *             safe, so no confirmation exists in this mode). */
+/** A curated entry's icon: the verified brand glyph where one exists
+ * (registry.ts's curated-only exception — inline SVG, fill=currentColor, so
+ * it themes exactly like a codicon), else the entry's codicon fallback.
+ * Sized to the codicon grid so both spellings sit identically in a row. */
+function EntryIcon(props: { icon: string; brandIcon: { viewBox: string; path: string } | null }) {
+  if (props.brandIcon === null) return <Icon name={props.icon} />;
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox={props.brandIcon.viewBox}
+      fill="currentColor"
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <path d={props.brandIcon.path} />
+    </svg>
+  );
+}
+
+/** The three reaches (protocol.ts — the fidelity gate is superseded; auto
+ * means every agent), stated as the three sentences they are — one mode per
+ * line, the agent tick-list indented under whichever list mode is active,
+ * never an undifferentiated wrap of radios and checkboxes:
+ *   auto    — every agent;
+ *   only    — exactly the ticked agents;
+ *   except  — every agent minus the ticked ones. */
 function RoutingEditor(props: {
   agents: SettingsState["agents"];
   routing: IntegrationRoutingView;
-  fidelityOf(agentId: string): FidelityLabel | null;
   onChange(routing: IntegrationRoutingView): void;
 }) {
   const mode: "auto" | "only" | "except" =
@@ -41,13 +59,8 @@ function RoutingEditor(props: {
       : Array.isArray(props.routing)
         ? props.routing
         : (props.routing as { except: readonly string[] }).except;
-  // ui.md § Integrations: ticking a less-than-fully-brokered agent in "only"
-  // mode interrupts with the explicit plug-in confirmation — auto-attach
-  // covers fully-brokered only, so anything less is a deliberate act.
-  const [pendingPlugIn, setPendingPlugIn] = useState<{ agentId: string; name: string; label: FidelityLabel | null } | null>(null);
   const setMode = (m: "auto" | "only" | "except") => {
     if (m === mode) return;
-    setPendingPlugIn(null);
     // A list never carries across modes — the same ids mean the opposite
     // thing in "only" vs "except".
     props.onChange(m === "auto" ? "auto" : m === "only" ? [] : { except: [] });
@@ -73,59 +86,124 @@ function RoutingEditor(props: {
       <RadioGroup className="flex flex-col gap-1" value={mode} onValueChange={(v) => setMode(v as "auto" | "only" | "except")}>
         <label
           className="flex items-center gap-1.5"
-          title="attaches automatically, but only to agents whose fs/terminal actually route through patchbay's permission gate (fully brokered) — an agent acting outside the gate never gets it silently"
+          title="attaches to every agent, current and future — tool calls still pass the permission broker per agent"
         >
-          <RadioGroupItem value="auto" /> all fully-brokered agents (auto)
+          <RadioGroupItem value="auto" /> all agents (auto)
         </label>
-        <label
-          className="flex items-center gap-1.5"
-          title="an explicit list — exactly the agents you tick, regardless of fidelity (less-than-brokered ones ask for confirmation)"
-        >
+        <label className="flex items-center gap-1.5" title="an explicit list — exactly the agents you tick">
           <RadioGroupItem value="only" /> only these agents
         </label>
         {mode === "only" &&
-          tickList((agentId, checked) => {
-            if (checked) {
-              props.onChange(list.filter((id) => id !== agentId));
-            } else if (props.fidelityOf(agentId) === "fully-brokered") {
-              props.onChange([...list, agentId]);
-            } else {
-              const agent = props.agents.find((a) => a.id === agentId);
-              setPendingPlugIn({ agentId, name: agent?.name ?? agentId, label: props.fidelityOf(agentId) });
-            }
-          })}
+          tickList((agentId, checked) =>
+            props.onChange(checked ? list.filter((id) => id !== agentId) : [...list, agentId]),
+          )}
         <label
           className="flex items-center gap-1.5"
-          title="the auto set minus the ticked agents — excluding only ever narrows reach, so less-than-brokered agents stay outside either way"
+          title="every agent minus the ticked ones — new agents attach until excluded"
         >
-          <RadioGroupItem value="except" /> all fully-brokered agents except these
+          <RadioGroupItem value="except" /> all agents except these
         </label>
         {mode === "except" &&
           tickList((agentId, checked) =>
             props.onChange({ except: checked ? list.filter((id) => id !== agentId) : [...list, agentId] }),
           )}
       </RadioGroup>
-      {pendingPlugIn !== null && (
-        <div className="note plug-in-confirm">
-          <Icon name="warning" /> <b>{pendingPlugIn.name}</b> is{" "}
-          {pendingPlugIn.label === null ? "not yet determined" : FIDELITY_TEXT[pendingPlugIn.label]} — tools
-          this integration exposes may be used outside patchbay's permission flow. Plug in anyway?
-          <Button
-            variant="outline" size="sm" className="ml-2"
-            onClick={() => {
-              props.onChange([...list, pendingPlugIn.agentId]);
-              setPendingPlugIn(null);
-            }}
-          >
-            Plug in
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPendingPlugIn(null)}>
-            Cancel
-          </Button>
-        </div>
-      )}
     </div>
   );
+}
+
+/** The connect-time probe read-out (protocol.ts IntegrationProbeView) —
+ * provider-side truth, always timestamped: "reachable, N tools", never
+ * "working in your sessions". The count expands to the tool list; failed
+ * shows the reason inline (the state that used to be invisible: a card
+ * looking connected while its server 400s on every handshake). */
+function ProbeStrip(props: {
+  probe: IntegrationProbeView | undefined;
+  /** Probing needs something to reach — no endpoint/credential, no button. */
+  probeable: boolean;
+  expanded: boolean;
+  onToggleTools(): void;
+  onProbe(): void;
+}) {
+  const { probe } = props;
+  const asOf = (at: string) =>
+    new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (probe === undefined) {
+    if (!props.probeable) return null;
+    return (
+      <div className="row mt-1 text-[12px] text-muted-foreground">
+        tools not checked yet
+        <Button variant="outline" size="sm" onClick={props.onProbe} title="patchbay's own handshake with this server — initialize + tools/list, no agent involved">
+          <Icon name="search" /> Check server
+        </Button>
+      </div>
+    );
+  }
+  if (probe.status === "probing") {
+    return (
+      <div className="row mt-1 text-[12px] text-muted-foreground">
+        <Icon name="loading" spin /> checking server…
+      </div>
+    );
+  }
+  if (probe.status === "failed") {
+    return (
+      <div className="row mt-1 flex-wrap text-[12px]">
+        <span className="text-destructive">
+          <Icon name="warning" /> unreachable ({asOf(probe.at)}): {probe.reason}
+        </span>
+        <Button variant="outline" size="sm" onClick={props.onProbe} title="try the handshake again">
+          <Icon name="refresh" /> Retry
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="row mt-1 text-[12px] text-muted-foreground">
+        <button
+          type="button"
+          className="row cursor-pointer gap-1 border-0 bg-transparent p-0 text-[12px] text-foreground hover:underline"
+          aria-expanded={props.expanded}
+          title={`${probe.serverName} ${probe.serverVersion} — as of ${asOf(probe.at)}; reachable from patchbay, not proof of any agent's session`}
+          onClick={props.onToggleTools}
+        >
+          <Icon name={props.expanded ? "chevron-down" : "chevron-right"} />
+          {probe.tools.length} tool{probe.tools.length === 1 ? "" : "s"}
+        </button>
+        <span>as of {asOf(probe.at)}</span>
+        <Button
+          variant="outline" size="icon" className="size-6"
+          title="re-read the server's tool list now"
+          aria-label="Refresh tools"
+          onClick={props.onProbe}
+        >
+          <Icon name="refresh" />
+        </Button>
+      </div>
+      {props.expanded && (
+        <div className="mt-1 flex flex-col gap-0.5 border-l-2 border-border pl-2.5 text-[12px]">
+          {probe.tools.map((tool) => (
+            <div key={tool.name} title={tool.description}>
+              <span className="font-mono">{tool.name}</span>
+              {tool.description !== "" && (
+                <span className="text-muted-foreground"> — {firstLine(tool.description)}</span>
+              )}
+            </div>
+          ))}
+          {probe.tools.length === 0 && <span className="text-muted-foreground">no tools listed</span>}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Tool descriptions run to paragraphs (GitHub ships selection guidance in
+ * them) — the list shows the first sentence-ish line, the full text rides
+ * the title. */
+function firstLine(text: string): string {
+  const line = text.split("\n", 1)[0] ?? "";
+  return line.length > 140 ? `${line.slice(0, 140)}…` : line;
 }
 
 /** One compact catalog row: name · mechanism chips · Docs · `Connect…`
@@ -156,6 +234,8 @@ function CatalogRow(props: {
   return (
     <div className="cat-row">
       <div className="row flex-wrap">
+        {/* no color class — inherits the row's text color either way */}
+        <EntryIcon icon={entry.icon} brandIcon={entry.brandIcon} />
         <span className="nm min-w-0">{entry.name}</span>
         {/* mechanism chips — each mechanism keeps one color everywhere */}
         {entry.headerAuth !== null && <Badge className="border-consumed/40 text-consumed">key</Badge>}
@@ -302,14 +382,11 @@ export function IntegrationsSection(props: {
   onSetActive(integrationId: string, active: boolean): void;
   onRemove(integrationId: string): void;
   onSetRouting(integrationId: string, routing: IntegrationRoutingView): void;
+  onSetTransport(integrationId: string, transport: "auto" | "bridge"): void;
+  onProbe(integrationId: string): void;
   onShare(integrationId: string): void;
 }) {
   const { state } = props;
-  const fidelityOf = (agentId: string): FidelityLabel | null => {
-    const matrix = state.capabilities[agentId];
-    if (matrix === undefined) return null;
-    return computeFidelity(matrix, state.registryAgents.find((r) => r.id === agentId)?.knownBypassBridge ?? false);
-  };
   const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
   const [adding, setAdding] = useState<"stdio" | "http" | "json" | null>(null);
   /** The name of the last submitted custom add — the form clears on submit,
@@ -322,6 +399,8 @@ export function IntegrationsSection(props: {
   // Card body (command line, JSON edit, routing) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
+  // The probe strip's tool list — its own toggle, independent of the gear.
+  const [openTools, setOpenTools] = useState<Record<string, boolean>>({});
   const [jsonDraft, setJsonDraft] = useState("");
   const [importText, setImportText] = useState("");
   const [name, setName] = useState("");
@@ -422,30 +501,33 @@ export function IntegrationsSection(props: {
       {state.integrations.map((integration) => {
         // Editing JSON forces the body open — the form lives there.
         const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
+        // A connected curated server keeps its catalog icon (the registry
+        // entry is still the id's source of truth; custom servers have none).
+        const catalogEntry = state.integrationRegistry.find((r) => r.id === integration.registryId);
         return (
         <div className="card" key={integration.id}>
           <div className="row flex-wrap">
             <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
+            {catalogEntry !== undefined && (
+              <EntryIcon icon={catalogEntry.icon} brandIcon={catalogEntry.brandIcon} />
+            )}
             <span className="nm min-w-0">{integration.name}</span>
             <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
               {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
             </Badge>
             <span className="flex-1" />
-            <Button
-              variant="outline" size="icon" className="size-8"
+            {/* on/off is a state, not an act — a switch says so (a power
+                *button* read as "do something", not "currently on") */}
+            <Switch
+              checked={integration.active}
               title={
                 integration.active
-                  ? "on — power off keeps the credential but the server reaches no agent until powered back"
-                  : "off — power on to route this server again"
+                  ? "on — switching off keeps the credential but the server reaches no agent until switched back"
+                  : "off — switch on to route this server again"
               }
-              aria-label={integration.active ? "Power off" : "Power on"}
-              aria-pressed={integration.active}
-              onClick={() => props.onSetActive(integration.id, !integration.active)}
-            >
-              <span className={integration.active ? "text-ok" : "text-muted-foreground"}>
-                <Icon name={integration.active ? "zap" : "circle-slash"} />
-              </span>
-            </Button>
+              aria-label={integration.active ? "Switch off" : "Switch on"}
+              onCheckedChange={(checked) => props.onSetActive(integration.id, checked === true)}
+            />
             <Button
               variant="outline" size="icon" className="size-8"
               title="Copy config… (never the credential)"
@@ -477,6 +559,15 @@ export function IntegrationsSection(props: {
               <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
             </Button>
           </div>
+          <ProbeStrip
+            probe={integration.probe}
+            probeable={integration.connected && integration.active}
+            expanded={openTools[integration.id] === true}
+            onToggleTools={() =>
+              setOpenTools({ ...openTools, [integration.id]: openTools[integration.id] !== true })
+            }
+            onProbe={() => props.onProbe(integration.id)}
+          />
           {detailsOpen && integration.command !== undefined && (
             <div className="mono mt-1.5 break-all">
               {integration.command}
@@ -484,7 +575,7 @@ export function IntegrationsSection(props: {
           )}
           {!integration.active && (
             <div className="note mt-1.5">
-              powered off — configured with its credential intact, reaching no agent
+              switched off — configured with its credential intact, reaching no agent
             </div>
           )}
           {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
@@ -542,10 +633,23 @@ export function IntegrationsSection(props: {
               <RoutingEditor
                 agents={state.agents}
                 routing={integration.routing}
-                fidelityOf={fidelityOf}
                 onChange={(routing) => props.onSetRouting(integration.id, routing)}
               />
             </div>
+          )}
+          {detailsOpen && integration.sourceKind !== "custom-stdio" && (
+            <label
+              className="row mt-2 gap-1.5 text-[12px]"
+              title="normally an agent that declares http support connects to this server itself (its own MCP client, upstream-maintained); pin the bridge when that declared support turns out broken in practice — every non-declaring agent rides the bridge either way"
+            >
+              <Checkbox
+                checked={integration.transport === "bridge"}
+                onCheckedChange={(checked) =>
+                  props.onSetTransport(integration.id, checked === true ? "bridge" : "auto")
+                }
+              />
+              always attach through patchbay's stdio bridge
+            </label>
           )}
         </div>
         );

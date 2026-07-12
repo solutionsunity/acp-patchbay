@@ -33,6 +33,11 @@ export function SessionActions({ session, detach }: { session: SessionSummary; d
         <DropdownMenuItem onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}>
           Reload from agent
         </DropdownMenuItem>
+        {/* Bare clipboard write, not useCopy: the menu closes on select, so
+            there's no surface for the check-mark feedback to live on. */}
+        <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(session.id)}>
+          Copy session ID
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => send({ kind: "closeSession", sessionId: session.id })}>
           Close
         </DropdownMenuItem>

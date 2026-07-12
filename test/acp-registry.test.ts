@@ -31,7 +31,6 @@ describe("registryAgentView", () => {
       description: "ACP wrapper for Anthropic's Claude",
       icon: "data:image/svg+xml;base64,QQ==",
       assetsMapped: true, // ASSET_LOCATIONS ships a claude-acp mapping
-      knownBypassBridge: false,
       unavailableReason: null,
       version: "0.56.0",
     });

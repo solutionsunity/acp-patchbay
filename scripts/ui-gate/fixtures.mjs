@@ -28,7 +28,7 @@ export const chatTranscript = [
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
     stopReason: "max_tokens", usage: { total: 12025, input: 9800, output: 2225, cached: 7200 },
   },
-  // harness envelope riding the user role (agent-quirks.md § Injected
+  // harness envelope riding the user role (acp-agents-notes/claude-agent-acp.md § Injected
   // user-role messages) — dim collapsed line, never a bubble, not a prompt
   {
     kind: "user", id: "inj1", injected: true,
@@ -89,9 +89,9 @@ export function settingsState() {
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false },
     ],
     registryAgents: [
-      { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: true },
-      { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null, knownBypassBridge: false, assetsMapped: false },
-      { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login", knownBypassBridge: true, assetsMapped: true },
+      { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null, assetsMapped: true },
+      { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null, assetsMapped: false },
+      { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login", assetsMapped: true },
     ],
     capabilities: {
       claude: {

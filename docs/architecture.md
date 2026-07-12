@@ -22,8 +22,10 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   replay. Never merged, never reconciled.
 - **Declared / used** — the two capability states: claimed at `initialize` vs.
   observed firing on the wire.
-- **Brokered** — routed through the permission broker. Fidelity labels: fully
-  brokered / partially brokered / acts outside the permission flow.
+- **Brokered** — routed through the permission broker. *(The derived fidelity
+  label — fully/partially brokered/acts outside — is removed, 2026-07-12: it
+  aggregated three data-plane rows into a control-plane trust verdict the rows
+  never supported; see § Permission broker.)*
 - **Integration** — the *record*: a configured MCP-server connection (curated or
   custom) with its credential, env, routing, and active state. The UI calls the
   surface "MCP Servers" (that's what they are); the internal type keeps the name
@@ -143,7 +145,7 @@ each with different truth semantics, so each gets different placement:
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Agent + integration configs | Agents (launch config, defaults), integrations, routing | `globalState` stores | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
 | Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + `globalState` (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
-| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials never ride agent-visible config at all — the bridge IPC-fetches its token at runtime |
+| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than its at-rest plaintext; decided 2026-07-12, superseding "never ride agent-visible config": that rule assumed the bridge was the only delivery, and capability-conditional transport ended that); on the bridge path the credential still never touches agent-visible config — the bridge IPC-fetches its token per request |
 
 Agents and integrations are deliberately global-only. (This supersedes the
 earlier `.vscode/acp-patchbay.json` workspace-config design and the
@@ -511,21 +513,43 @@ Curated and custom are the same mechanism — MCP servers routed to agents:
   2026-07-11)*: the official ACP registry is the one agent source (identity,
   launch, icon, live-fetched + disk-cached), and patchbay's own per-agent
   curation lives in code tables where every other house knowledge does —
-  `ASSET_LOCATIONS` (asset-locations.ts), `KNOWN_BYPASS_BRIDGES`
-  (acp-registry.ts), `META_EXTENSIONS` (meta.ts). The overlay JSON was
+  `ASSET_LOCATIONS` (asset-locations.ts), `META_EXTENSIONS` (meta.ts).
+  *(`KNOWN_BYPASS_BRIDGES` retired with the fidelity label, 2026-07-12.)* The overlay JSON was
   vscode-acp heritage: it *was* the roster until the registry landed, then
   carried only data the tables now own plus three local-only entries
   (kiro/hermes/openclaw — unverified claims, retired; the custom-command
   escape hatch covers them). Terminology followed the collapse: roster =
   registry, so the word "roster" is gone from the codebase.
 - **Custom escape hatch**: add any MCP server (command or URL, with auth).
-- **Uniform stdio presentation**: agents vary in declared MCP transports, so the
-  orchestrator always hands agents a local stdio server; for remote OAuth services
-  it owns a small stdio-to-HTTP bridge process that handles token refresh. Every
-  agent sees "just another local MCP server" — no per-agent branching.
-- **Routing is the user's, per agent.** Default: a new integration auto-attaches
-  only to *fully brokered* agents; anything less requires an explicit plug-in
-  (features §2).
+- **Capability-conditional transport** *(supersedes "uniform stdio presentation",
+  2026-07-12 — prompt.image mechanics, decided when the v1 bridge crashed on the
+  first spec-compliant Streamable HTTP server)*: an agent declaring `mcp.http`
+  gets the remote server passed through as a real `type: "http"` entry — its own
+  MCP client connects, upstream-maintained transport, the declared path actually
+  exercised. Everything else rides the stdio-to-HTTP bridge, now a pipe between
+  two `@modelcontextprotocol/sdk` transports (never hand-rolled again): the
+  guaranteed floor for non-declaring agents and the per-integration `transport:
+  "bridge"` escape hatch for an agent whose declared http support is broken in
+  practice. The superseded rule's motive — no per-agent branching — lost to a
+  stronger one: a broker that routes around its counterparty's declared
+  capability never lets the claim be tested. Passthrough traffic is agent↔provider
+  direct (dark to patchbay); bridge traffic passes through us. Custom-stdio is
+  handed through as-is, both worlds.
+- **Connect-time tool probe** *(2026-07-12)*: the orchestrator runs its own MCP
+  handshake (initialize + tools/list — a free read, no agent, no LLM turn) on
+  connect, power-on, and manual refresh; the card shows "N tools" expandable,
+  timestamped, or the failure reason. Provider-side truth only — "reachable,
+  these tools exist", never "working in an agent's session"; the same
+  declared≠used discipline one layer down. Session-lived cache, never persisted:
+  a fresh window re-reads reality.
+- **Routing is the user's, per agent.** "auto" (default) = every agent; an
+  explicit id list pins exactly; "except" = every agent minus the listed.
+  *(Supersedes the fully-brokered auto-gate, 2026-07-12: the gate consulted the
+  fidelity label — a data-plane measure (do file/terminal bytes proxy through
+  patchbay) — for a control-plane question (does consent cross before acting),
+  which the permission broker answers for every request_permission-routing
+  agent anyway. The conflation structurally excluded the whole SDK-CLI agent
+  class from auto forever; caught live on the first real integration.)*
 
 ## Rules, skills, commands
 
@@ -559,17 +583,20 @@ injection machinery.
   no repo-authored launch command exists to adopt. (This supersedes the
   workspace-config-file design and its one-time adoption gate, which existed
   only because that file could be repo-authored by someone else.)
-- **Fidelity label is a pure function of the matrix (v1):** `fs` and `terminal`
-  declared *and used* → fully brokered; a proper subset → partially brokered;
-  neither, or a known-bypass bridge (`KNOWN_BYPASS_BRIDGES`) → acts outside the permission
-  flow. Observed-violation downgrades arrive only with v2 post-hoc change
-  detection (parked).
+- **Fidelity label: REMOVED (2026-07-12; was v1's aggregate of fs/terminal
+  used-rows, plus `KNOWN_BYPASS_BRIDGES`, both deleted).** The aggregate read
+  used=false ("hasn't crossed the wire yet") as "acts outside" (a conduct
+  verdict) — false for the entire SDK-CLI class, which does fs/terminal
+  internally while routing *consent* through `request_permission` faithfully.
+  The per-row matrix keeps carrying the honest data-plane facts (e.g.
+  `fs.writeTextFile` used ⇒ live diff cards work); no aggregate replaces it.
+  If a summary ever returns it must be born as a data-plane *visibility*
+  read-out ("patchbay sees this agent's edits"), never a gate.
 - Protocol fact, load-bearing: an agent can route around `fs/write_text_file` via a
   shell command, and at least one bridge does file I/O invisibly regardless of
   client capabilities. `fs/*` is therefore **not a security boundary** — terminal
-  gating carries equal rigor, and each agent wears its permission-fidelity label
-  (fully brokered / partially brokered / acts outside) rather than being silently
-  trusted.
+  gating carries equal rigor, and the matrix shows each agent's actual wire
+  conduct row by row rather than silently trusting any of it.
 - Allow-once / allow-always / reject inline in chat; when the Agent View is hidden,
   the same request surfaces as a native notification. One approval surface,
   wherever the user is looking.

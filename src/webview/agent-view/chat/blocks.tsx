@@ -5,8 +5,34 @@ import { useState } from "react";
 import { isToolCallOpen, type ToolCallBlock } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
+import { useCopy } from "../../shared/use-copy";
 import { AgentMarkdown } from "./markdown";
 import { Button } from "@/components/ui/button";
+
+/** The human's own prompt bubble, with a hover-revealed copy affordance to
+ * its left — outside the bubble so it never overlaps the text; while the
+ * check-mark feedback shows, it stays visible regardless of hover. */
+export function UserMessage({ text }: { text: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <div className="group flex max-w-[85%] items-start gap-1.5 self-end">
+      <button
+        type="button"
+        className={`mt-1.5 cursor-pointer border-none bg-transparent p-0.5 text-muted-foreground hover:text-foreground ${
+          copied ? "" : "opacity-0 group-hover:opacity-100"
+        }`}
+        title="Copy prompt"
+        aria-label="Copy prompt"
+        onClick={() => copy(text)}
+      >
+        <Icon name={copied ? "check" : "copy"} size={12} />
+      </button>
+      {/* max-w-full neutralizes .msg-user's own 85% cap (style.css) — the
+          wrapper already carries it; 85% of 85% would double-shrink. */}
+      <div className="msg-user max-w-full">{text}</div>
+    </div>
+  );
+}
 
 /** agent_thought_chunk feed — not the final answer, and reads that way:
  * muted, collapsed into a "Thinking…" accordion the moment the real answer

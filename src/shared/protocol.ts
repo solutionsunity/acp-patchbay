@@ -100,6 +100,10 @@ export type Action =
    * orchestrator answers `preferencesChanged` with the complete stored
    * object — the webview never assumes its own write landed. */
   | { kind: "setPreferences"; patch: Partial<PreferencesView> }
+  /** Preferences § Turn end play button — plays the given sound ("" = the
+   * platform default chime) host-side, exactly as a finishing turn would.
+   * Preview only: nothing is stored. */
+  | { kind: "previewDoneSound"; sound: string }
   | { kind: "resolveElicitation"; requestId: string; values: Record<string, unknown> | null }
   | { kind: "addSelectionContext"; sessionId: string }
   | { kind: "addFileContext"; sessionId: string }
@@ -138,6 +142,13 @@ export type Action =
   | { kind: "removeIntegration"; integrationId: string }
   | { kind: "setIntegrationActive"; integrationId: string; active: boolean }
   | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
+  /** Pins an http-backed integration to patchbay's stdio bridge ("bridge")
+   * or lets declaring agents connect directly ("auto") — the escape hatch
+   * for an agent whose declared mcp.http support is broken in practice. */
+  | { kind: "setIntegrationTransport"; integrationId: string; transport: "auto" | "bridge" }
+  /** Re-runs the connect-time tool probe (patchbay's own MCP client
+   * handshake with the server) — a free read, no agent involved. */
+  | { kind: "probeIntegration"; integrationId: string }
   | { kind: "shareIntegrationConfig"; integrationId: string }
   | { kind: "refreshAgentAssets"; agentId: string }
   | { kind: "openAssetFile"; agentId: string; path: string }
@@ -232,10 +243,13 @@ export interface AgentConfigView {
 
 // ── integrations (architecture.md § Integrations) ───────────────────────────
 
-/** Three reaches: "auto" = every fully-brokered agent (the safety gate);
- * an id list = exactly these agents; `{ except }` = the auto set minus the
- * listed agents. Excluding never widens reach — a less-than-brokered agent
- * stays outside the auto set whether or not it's listed. */
+/** Three reaches: "auto" = every agent; an id list = exactly these agents;
+ * `{ except }` = every agent minus the listed ones. *(Supersedes the
+ * fully-brokered gate, 2026-07-12: fidelity measured the data plane — do the
+ * agent's file/terminal bytes proxy through patchbay — while the gate's
+ * motive was control-plane consent, which the permission broker already
+ * carries for every request_permission-routing agent; the conflation
+ * structurally excluded the whole SDK-CLI class from auto forever.)* */
 export type IntegrationRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
 
 /** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
@@ -259,6 +273,20 @@ export type IntegrationSourceView =
       token?: string;
     };
 
+/** Result of patchbay's own connect-time MCP handshake with an integration
+ * (initialize + tools/list, no agent, no LLM turn). A point-in-time read of
+ * the server — always shown with its timestamp, never as a timeless fact. */
+export type IntegrationProbeView =
+  | { status: "probing"; at: string }
+  | {
+      status: "ok";
+      at: string;
+      serverName: string;
+      serverVersion: string;
+      tools: readonly { name: string; description: string }[];
+    }
+  | { status: "failed"; at: string; reason: string };
+
 export interface IntegrationView {
   id: string;
   name: string;
@@ -275,6 +303,14 @@ export interface IntegrationView {
    * excluded from every agent's mcpServers until toggled back. */
   active: boolean;
   routing: IntegrationRoutingView;
+  /** "auto" = agents declaring mcp.http connect directly (URL passed
+   * through); "bridge" = pinned to patchbay's stdio bridge. Absent meaning
+   * for custom-stdio (always handed through as-is). */
+  transport: "auto" | "bridge";
+  /** Last tool probe — patchbay's own MCP handshake with this server
+   * (provider-side truth: "reachable, N tools", never "working in your
+   * sessions"). Absent = never probed this session. */
+  probe?: IntegrationProbeView;
   /** Present for custom servers only: the editable mcpServers-fragment JSON.
    * Env values never ride it — keys appear with "" (write-only: blank keeps
    * the stored value, filled overwrites, removed key deletes). */
@@ -284,6 +320,13 @@ export interface IntegrationView {
 export interface RegistryEntryView {
   id: string;
   name: string;
+  /** Codicon name for the entry (registry data) — the fallback when
+   * `brandIcon` is null. Rendered plain so it inherits the row's text color. */
+  icon: string;
+  /** Verified monochrome brand glyph (registry.ts — the curated-only
+   * exception to the Codicons rule): inline SVG path data rendered with
+   * fill=currentColor, so color follows text either way. */
+  brandIcon: { viewBox: string; path: string } | null;
   /** At least one auth mechanism is open to us and an endpoint can exist
    * (fixed or user-supplied). Figma remote is the honest false today. */
   connectable: boolean;
@@ -449,6 +492,9 @@ export interface DeclaredCapabilities {
   sessionList: boolean;
   sessionDelete: boolean;
   sessionClose: boolean;
+  /** `sessionCapabilities.additionalDirectories` — extra workspace roots may
+   * ride session lifecycle requests (new/load/resume/fork). */
+  sessionAdditionalDirectories: boolean;
   promptImage: boolean;
   promptAudio: boolean;
   promptEmbeddedContext: boolean;
@@ -482,8 +528,6 @@ export interface RegistryAgentView {
   /** rules/skills/commands locations known for this agent (asset-locations.ts
    * code table). */
   assetsMapped: boolean;
-  /** A bridge observed to act on fs/terminal regardless of client capabilities. */
-  knownBypassBridge: boolean;
   /** Not addable right now — no distribution published for this platform.
    * Shown on the Add Agent picker, never silently hidden. */
   unavailableReason: string | null;
@@ -518,6 +562,7 @@ export type CapabilityRowId =
   | "session.list"
   | "session.delete"
   | "session.close"
+  | "session.additionalDirectories"
   | "mcp.http"
   | "mcp.sse"
   | "usage"
@@ -553,25 +598,6 @@ function dropKey<V>(record: Readonly<Record<string, V>>, key: string): Readonly<
   if (!(key in record)) return record;
   const { [key]: _dropped, ...rest } = record;
   return rest;
-}
-
-export type FidelityLabel = "fully-brokered" | "partially-brokered" | "acts-outside";
-
-/**
- * Pure function of the matrix (architecture.md § Permission broker): fs and
- * terminal declared *and* used → fully brokered; a proper subset →
- * partially brokered; neither, or a known-bypass bridge → acts outside.
- * Never hand-assigned.
- */
-export function computeFidelity(
-  matrix: CapabilityMatrix,
-  knownBypassBridge: boolean,
-): FidelityLabel {
-  if (knownBypassBridge) return "acts-outside";
-  const brokered = (row: CapabilityRowId) => matrix[row].declared && matrix[row].used;
-  const rows = [brokered("fs.readTextFile"), brokered("fs.writeTextFile"), brokered("terminal")];
-  if (rows.every(Boolean)) return "fully-brokered";
-  return rows.some(Boolean) ? "partially-brokered" : "acts-outside";
 }
 
 /**
@@ -671,7 +697,7 @@ export interface UserBlock {
   text: string;
   /** True when the whole message is a harness-injected envelope riding the
    * user role on the wire (task notifications, system reminders, command
-   * echoes — agent-quirks.md § Injected user-role messages). A real
+   * echoes — acp-agents-notes/claude-agent-acp.md § Injected user-role messages). A real
    * transcript fact, but not something the human typed: rendered as a dim
    * collapsed line, never a prompt bubble, and never counted as a prompt.
    * Classified orchestrator-side (session-manager harnessEnvelopeTag) —
@@ -896,6 +922,10 @@ export interface PreferencesView {
   /** System chime when a prompt turn finishes (host-side player — a
    * cancelled turn never chimes: the user was present to cancel it). */
   soundOnDone: boolean;
+  /** Which system sound the done-chime plays — a basename from the
+   * platform's own sound directory (sound.ts enumerates it; SettingsState
+   * carries the list as `doneSounds`). "" = the platform default chime. */
+  doneSound: string;
   /** What a fresh session's knobs are seeded from: the agent config's
    * defaults, or the last agent-confirmed combination on that agent
    * (stores/composer-knobs.ts, falling back to the defaults when none). */
@@ -914,6 +944,7 @@ export interface PreferencesView {
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
   soundOnDone: false,
+  doneSound: "",
   knobSource: "agent-default",
   idleCloseMinutes: 60,
   composerStats: true,
@@ -1963,6 +1994,10 @@ export interface SettingsState {
   /** Preferences page snapshot — the stored truth as of the last
    * preferencesChanged; edits round-trip through setPreferences. */
   preferences: PreferencesView;
+  /** This machine's system sounds (basenames, sound.ts enumerates the
+   * platform's own sound directory at activation) — the Turn-end picker's
+   * options. Empty on platforms with no enumerable set. */
+  doneSounds: readonly string[];
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -1999,6 +2034,7 @@ export const initialSettingsState: SettingsState = {
   wireLog: { active: false, until: null },
   dataInventory: null,
   preferences: DEFAULT_PREFERENCES,
+  doneSounds: [],
 };
 
 export type SettingsEvent =

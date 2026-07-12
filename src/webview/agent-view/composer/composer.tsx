@@ -17,6 +17,7 @@ import type {
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
+import { FilesChip } from "./files-chip";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
 import { basename } from "./menus";
@@ -36,6 +37,11 @@ export function Composer(props: {
   /** Whether a root change re-applies to the live session (agent declares
    * session/load or session/resume) — drives the roots chip's honesty note. */
   rootsApplyLive: boolean;
+  /** Paths the orchestrator holds a first-touch baseline for — feeds the
+   * files chip's diff-vs-open-file row behavior. */
+  diffableFiles: ReadonlySet<string>;
+  /** Cumulative +/- since first touch, per path — the files chip's badges. */
+  fileDiffStats: Readonly<Record<string, { additions: number; deletions: number }>>;
   liveSelection: LiveSelectionView | null;
   /** Prompts sent mid-turn, waiting for the turn to end — removable rows. */
   queued: readonly QueuedPrompt[];
@@ -193,7 +199,9 @@ export function Composer(props: {
           )}
         </div>
       )}
-      <div className="input-shell relative flex min-h-0 flex-1 flex-col">
+      <div
+        className={`input-shell relative flex min-h-0 flex-1 flex-col ${height === null ? "auto-grow" : ""}`}
+      >
         <PromptEditor
           enabled={enabled}
           placeholder={
@@ -227,7 +235,16 @@ export function Composer(props: {
         <Knobs sessionId={sessionId} knobs={props.knobs} />
         <span className="flex-1" />
         {props.showStats && props.session !== null && (
-          <ComposerStats totals={props.totals} usage={props.usage} />
+          <ComposerStats totals={props.totals} usage={props.usage}>
+            <FilesChip
+              sessionId={sessionId}
+              files={props.totals.files}
+              diffable={props.diffableFiles}
+              diffStats={props.fileDiffStats}
+              openEditors={props.openEditors}
+              roots={props.workspaceRoots}
+            />
+          </ComposerStats>
         )}
         {/* theme-token primary (brand fills superseded — theme.css
             § identity palette); while a turn is live it becomes Stop,

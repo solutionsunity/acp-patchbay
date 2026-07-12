@@ -45,10 +45,11 @@ export const integrationConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   source: integrationSourceSchema,
-  /** "auto" (default) attaches only to agents whose fidelity is fully
-   * brokered (features.md § Integrations); an explicit id list pins exactly
-   * which agents receive it; `{ except }` is the auto set minus the listed
-   * agents — the user's routing, never all-or-nothing. */
+  /** "auto" (default) attaches to every agent (the fidelity gate is
+   * superseded — protocol.ts IntegrationRoutingView records why); an
+   * explicit id list pins exactly which agents receive it; `{ except }` is
+   * every agent minus the listed — the user's routing, never
+   * all-or-nothing. */
   routing: z
     .union([z.literal("auto"), z.array(z.string()), z.object({ except: z.array(z.string()) })])
     .default("auto"),
@@ -57,6 +58,13 @@ export const integrationConfigSchema = z.object({
    * Disconnect is the full clear (config + credential + env); a curated
    * entry then simply reappears in the catalog, ready for a fresh connect. */
   active: z.boolean().default(true),
+  /** How an http-backed integration reaches agents that declare mcp.http:
+   * "auto" passes the URL through and the agent's own MCP client connects
+   * (prompt.image mechanics — the declared path gets exercised); "bridge"
+   * pins patchbay's stdio bridge regardless — the user's escape hatch for
+   * an agent whose declared http support turns out broken. Agents without
+   * the declaration always ride the bridge; custom-stdio ignores this. */
+  transport: z.enum(["auto", "bridge"]).default("auto"),
 });
 export type IntegrationConfig = z.infer<typeof integrationConfigSchema>;
 

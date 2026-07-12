@@ -36,6 +36,18 @@ export const registryAuthSchema = z.object({
 export const registryEntrySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  /** Codicon name for the catalog row — the fallback when no verified
+   * brand glyph exists below. Rendered plain, so it inherits the row's
+   * text color. */
+  icon: z.string().default("server"),
+  /** The curated-only exception to stack.md's Codicons rule (recorded
+   * decision, 2026-07-12): a verified monochrome brand glyph as inline SVG
+   * path data, source-copied from simple-icons (CC0) — shipped data, never
+   * fetched at runtime, rendered with fill=currentColor so color follows
+   * text exactly like a codicon, no CSP change (inline SVG needs none).
+   * Null = no verified art exists (Stitch, Augment today); the codicon
+   * above is the honest fallback, never guessed art. */
+  brandIcon: z.object({ viewBox: z.string(), path: z.string() }).nullable().default(null),
   /** Remote MCP endpoint. "" when `userUrl` — per-account/per-project
    * services (Supabase, Augment) have no fixed public URL to ship. */
   url: z.string(),

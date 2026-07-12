@@ -1,7 +1,7 @@
 // Client for the official ACP agent registry (agentclientprotocol/registry)
 // — THE agent source (the pre-registry roster overlay is retired; patchbay's
-// own curation lives in code tables: asset-locations.ts ASSET_LOCATIONS,
-// KNOWN_BYPASS_BRIDGES below). Cached to disk (globalStorageUri —
+// own curation lives in code tables: asset-locations.ts ASSET_LOCATIONS).
+// Cached to disk (globalStorageUri —
 // per-machine, never synced) so a cold start or an offline CDN still has
 // agents to show; refreshed at activation and on a slow timer. This is a
 // static-data fetch with no agent involved, so the "never on a schedule"
@@ -117,13 +117,6 @@ export type ResolvedDistribution =
       env: Readonly<Record<string, string>>;
     };
 
-/** Bridges observed to act on fs/terminal regardless of client capabilities
- * (`computeFidelity`'s "acts-outside" override, gating integrations
- * auto-reach among other things) — patchbay's own curation, in code like
- * every house table. Empty until the first honest observation; adding an id
- * is a recorded decision, one line of diff. */
-export const KNOWN_BYPASS_BRIDGES: ReadonlySet<string> = new Set();
-
 /** The registry record as patchbay presents it (protocol.ts
  * RegistryAgentView): platform launch resolution folded to an honest
  * unavailable reason, plus the code-table curation joined in. */
@@ -138,7 +131,6 @@ export function registryAgentView(
     description: agent.description,
     icon: icons[agent.id] ?? null,
     assetsMapped: agent.id in ASSET_LOCATIONS,
-    knownBypassBridge: KNOWN_BYPASS_BRIDGES.has(agent.id),
     unavailableReason: "error" in resolved ? resolved.error : null,
     version: agent.version,
   };

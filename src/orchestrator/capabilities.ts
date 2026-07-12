@@ -26,6 +26,7 @@ export function declaredFromInitialize(
     sessionList: session.list != null,
     sessionDelete: session.delete != null,
     sessionClose: session.close != null,
+    sessionAdditionalDirectories: session.additionalDirectories != null,
     promptImage: prompt.image === true,
     promptAudio: prompt.audio === true,
     promptEmbeddedContext: prompt.embeddedContext === true,
@@ -109,6 +110,7 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     "session.list": cell(declared.sessionList),
     "session.delete": cell(declared.sessionDelete),
     "session.close": cell(declared.sessionClose),
+    "session.additionalDirectories": cell(declared.sessionAdditionalDirectories),
     "mcp.http": cell(declared.mcpHttp),
     "mcp.sse": cell(declared.mcpSse),
     // No initialize-time claim exists for these — only ever observed directly.
@@ -138,8 +140,15 @@ export type CapabilityProof =
       via: "agentRequest";
       method: string;
       /** Extra condition on the successful call (e.g. the prompt actually
-       * carried an image block). Omitted = the method resolving is enough. */
-      when?: (params: unknown, prior: { sessionCount: number }) => boolean;
+       * carried an image block). `prior` is the connection as it stood when
+       * the call was made — session count, and the declared table for rows
+       * whose wire field rides requests unconditionally (a success must not
+       * upgrade a claim the agent never made). Omitted = the method
+       * resolving is enough. */
+      when?: (
+        params: unknown,
+        prior: { sessionCount: number; declared: DeclaredCapabilities | null },
+      ) => boolean;
     }
   | {
       /** The agent called one of patchbay's client methods and the handler
@@ -154,6 +163,13 @@ export type CapabilityProof =
       via: "sessionUpdate";
       updateKind: string;
     };
+
+/** The capability is about the *field*, not any one method — proven the
+ * moment any lifecycle request actually carried extra roots. */
+const carriesAdditionalDirectories = (params: unknown): boolean => {
+  const dirs = (params as { additionalDirectories?: readonly string[] }).additionalDirectories;
+  return Array.isArray(dirs) && dirs.length > 0;
+};
 
 const promptCarries =
   (blockType: "image" | "audio" | "resource") =>
@@ -187,6 +203,25 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   "session.list": [{ via: "agentRequest", method: methods.agent.session.list }],
   "session.delete": [{ via: "agentRequest", method: methods.agent.session.delete }],
   "session.close": [{ via: "agentRequest", method: methods.agent.session.close }],
+  // Pool sends the field on every lifecycle request regardless of the claim
+  // (best-effort roots), so the declared check lives in the proof: a
+  // non-declaring agent resolving a request that happened to carry dirs
+  // proves nothing — it may have silently ignored the field (the exact
+  // bridge behavior this table exists to catch).
+  "session.additionalDirectories": (
+    [
+      methods.agent.session.new,
+      methods.agent.session.load,
+      methods.agent.session.resume,
+      methods.agent.session.fork,
+    ] as const
+  ).map((method) => ({
+    via: "agentRequest" as const,
+    method,
+    when: (params: unknown, prior: { declared: DeclaredCapabilities | null }) =>
+      prior.declared?.sessionAdditionalDirectories === true &&
+      carriesAdditionalDirectories(params),
+  })),
   // Proof would be the agent connecting to an attached http/sse server —
   // not visible on the ACP wire.
   "mcp.http": [],
@@ -211,7 +246,13 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
 
 /** One wire fact, as observed by a pool.ts chokepoint. */
 export type WireFact =
-  | { via: "agentRequest"; method: string; params: unknown; priorSessionCount: number }
+  | {
+      via: "agentRequest";
+      method: string;
+      params: unknown;
+      priorSessionCount: number;
+      declared: DeclaredCapabilities | null;
+    }
   | { via: "clientRequest"; method: string }
   | { via: "sessionUpdate"; updateKind: string };
 
@@ -226,7 +267,10 @@ export function rowsProvenBy(fact: WireFact): CapabilityRowId[] {
           const f = fact as Extract<WireFact, { via: "agentRequest" }>;
           return (
             proof.method === f.method &&
-            (proof.when?.(f.params, { sessionCount: f.priorSessionCount }) ?? true)
+            (proof.when?.(f.params, {
+              sessionCount: f.priorSessionCount,
+              declared: f.declared,
+            }) ?? true)
           );
         }
         case "clientRequest":

@@ -1,18 +1,26 @@
 #!/usr/bin/env node
-// Standalone stdio-to-HTTP bridge (architecture.md § Integrations — "the
-// orchestrator always hands agents a local stdio server; for remote OAuth
-// services it owns a small stdio-to-HTTP bridge process that handles token
-// refresh"). Spawned by the *agent* as an mcpServers entry, exactly like
+// Standalone stdio-to-HTTP bridge (architecture.md § Integrations,
+// capability-conditional transport — the guaranteed floor for agents that
+// don't declare mcp.http, and the pinnable escape hatch for ones whose
+// declared support is broken). Spawned by the *agent* as an mcpServers
+// entry, exactly like
 // src/mcp/server-main.ts — plain Node, no vscode import, reaches the
 // orchestrator only through the same IPC socket for a fresh token.
 //
-// Transparent proxy: every JSON-RPC message the agent sends over stdio is
-// POSTed as-is to the integration's HTTP endpoint; the response (if the
-// message was a request, not a notification) is written back as-is. v1
-// speaks the plain request/response flavor of streamable-HTTP MCP transport
-// — no SSE upgrade — sufficient for tool listing/calling, which is what
-// every registry/custom-http integration needs (scoped in plan.md P9).
-import { encodeLine, parseLines } from "../mcp/ipc-protocol";
+// A pipe between two MCP SDK transports, not a protocol implementation:
+// StdioServerTransport faces the agent, StreamableHTTPClientTransport faces
+// the provider. The SDK owns the transport contract patchbay must not
+// hand-roll — accept-header negotiation, SSE-framed responses,
+// Mcp-Session-Id echo, reconnects (the naive JSON-POST v1 crashed on the
+// first spec-compliant server: GitHub 400s without `text/event-stream` in
+// accept, then answers in SSE frames). The credential still never rides
+// agent-visible config: it's injected here, per request, via the custom
+// fetch below. This bridge is the guaranteed-floor path for agents that
+// don't declare mcp.http — declaring agents get the URL passed through and
+// connect themselves (integrations.mcpServersFor).
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { IpcClient } from "../mcp/ipc-client";
 
 const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
@@ -33,46 +41,73 @@ async function currentToken(): Promise<string | null> {
   return result?.accessToken ?? null;
 }
 
-async function postJson(body: unknown, token: string | null): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
-      ...(token !== null ? { [authHeader]: `${authPrefix}${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-}
-
-function hasId(message: unknown): boolean {
-  return typeof message === "object" && message !== null && "id" in message;
-}
-
-async function forward(message: unknown): Promise<void> {
-  const token = await currentToken();
-  let response = await postJson(message, token);
+/** The SDK transport's fetch, with the credential injected fresh per request
+ * — the token never sits in a header object that outlives one call. On 401
+ * the orchestrator refreshes transparently inside getIntegrationToken, so
+ * one immediate retry distinguishes "patchbay held a stale token" from "the
+ * integration rejected a fresh one". */
+async function authedFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  const attempt = async (token: string | null) =>
+    fetch(input, {
+      ...init,
+      headers: {
+        ...Object.fromEntries(new Headers(init?.headers).entries()),
+        ...(token !== null ? { [authHeader]: `${authPrefix}${token}` } : {}),
+      },
+    });
+  let response = await attempt(await currentToken());
   if (response.status === 401 && authHeader !== "") {
-    // The orchestrator refreshes transparently on every getIntegrationToken
-    // call — a second 401 right after a fresh token means the integration
-    // itself rejected it, not that patchbay was holding a stale one.
-    response = await postJson(message, await currentToken());
+    response = await attempt(await currentToken());
   }
-  if (!hasId(message)) return; // a notification — no response is ever sent back
-  const body: unknown = await response.json();
-  process.stdout.write(encodeLine(body));
+  return response;
 }
 
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk: string) => {
-  buffer += chunk;
-  const { messages, rest } = parseLines(buffer);
-  buffer = rest;
-  for (const message of messages) void forward(message);
+function isRequest(message: JSONRPCMessage): message is JSONRPCMessage & { id: string | number } {
+  return "id" in message && "method" in message;
+}
+
+async function main(): Promise<void> {
+  const agentSide = new StdioServerTransport();
+  const providerSide = new StreamableHTTPClientTransport(new URL(url), { fetch: authedFetch });
+
+  agentSide.onmessage = (message) => {
+    void providerSide.send(message).catch((err: unknown) => {
+      // A failed round trip answers the agent's request as a JSON-RPC error
+      // — never kills the bridge (v1 died by unhandled rejection here, and
+      // the agent saw only a silently absent server).
+      if (isRequest(message)) {
+        void agentSide.send({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32603, message: `bridge: ${(err as Error).message}` },
+        });
+      }
+    });
+  };
+  providerSide.onmessage = (message) => {
+    void agentSide.send(message).catch(() => {});
+  };
+  providerSide.onerror = () => {
+    // Transport-level noise (e.g. a provider without the optional GET SSE
+    // stream) — per-request failures already answer through the catch above.
+  };
+
+  // The agent that spawned this bridge owns its lifetime: stdin EOF means
+  // that agent is gone (clean exit or kill), so exit instead of lingering as
+  // an orphan — same rule as server-main.ts, and the defense that still
+  // works when patchbay itself died without running any cleanup (P15a).
+  // close() aborts in-flight provider requests; their responses have no
+  // reader anymore. The SDK's stdio transport only fires onclose from its
+  // own close() — the EOF event needs wiring by hand.
+  const shutdown = () => void providerSide.close().finally(() => process.exit(0));
+  agentSide.onclose = shutdown;
+  process.stdin.on("end", shutdown);
+
+  await providerSide.start();
+  await agentSide.start();
+}
+
+void main().catch((err: unknown) => {
+  process.stderr.write(`bridge failed to start: ${(err as Error).message}\n`);
+  process.exit(1);
 });
-// The agent that spawned this bridge owns its lifetime: stdin EOF means that
-// agent is gone (clean exit or kill), so exit instead of lingering as an
-// orphan — same rule as server-main.ts, and the defense that still works
-// when patchbay itself died without running any cleanup (plan.md P15a).
-process.stdin.on("end", () => process.exit(0));

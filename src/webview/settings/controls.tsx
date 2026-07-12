@@ -1,10 +1,7 @@
 // Shared settings controls — the 1:1 shadcn mappings of the original
 // hand-built trio (ui-rendering-strategy: Field/Toggle/ConfirmButton →
-// labeled row / Switch / AlertDialog) plus the fidelity chip.
+// labeled row / Switch / AlertDialog).
 import type { ReactNode } from "react";
-import type { CapabilityMatrix, FidelityLabel } from "../../shared/protocol";
-import { computeFidelity } from "../../shared/protocol";
-import { FIDELITY_TEXT } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import {
   AlertDialog,
@@ -17,7 +14,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
@@ -92,16 +88,3 @@ export function Toggle(props: {
   );
 }
 
-/** Badge's own utilities outrank the components-layer hand CSS, so the
- * status colors are utilities on the theme contract's tokens — the .fid
- * rules retired with this (CSS ledger). */
-const FIDELITY_BADGE: Record<FidelityLabel, string> = {
-  "fully-brokered": "border-ok/40 text-ok",
-  "partially-brokered": "border-warn/40 text-warn",
-  "acts-outside": "border-err/40 text-err",
-};
-
-export function FidelityChip({ matrix, knownBypassBridge }: { matrix: CapabilityMatrix; knownBypassBridge: boolean }) {
-  const label = computeFidelity(matrix, knownBypassBridge);
-  return <Badge className={FIDELITY_BADGE[label]}>{FIDELITY_TEXT[label]}</Badge>;
-}

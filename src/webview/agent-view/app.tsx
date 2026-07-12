@@ -115,16 +115,7 @@ export function App({
       {active !== null && (
         // keyed by session: which panel is open is per-session render state,
         // not something a session switch should inherit
-        <ReadoutStrip
-          key={active.id}
-          sessionId={active.id}
-          plan={state.activePlan[active.id] ?? null}
-          files={derived.totals.files}
-          diffable={derived.diffableFiles}
-          diffStats={state.fileDiffStats[active.id] ?? {}}
-          openEditors={state.openEditors}
-          roots={state.workspaceRoots}
-        />
+        <ReadoutStrip key={active.id} plan={state.activePlan[active.id] ?? null} />
       )}
       <Composer
         agent={activeAgent}
@@ -133,6 +124,8 @@ export function App({
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         workspaceRoots={state.workspaceRoots}
+        diffableFiles={derived.diffableFiles}
+        fileDiffStats={active !== null ? (state.fileDiffStats[active.id] ?? {}) : {}}
         rootsApplyLive={
           // declared drives the mechanism itself (the continuation ladder is
           // declared-gated), so the honesty note follows declared too; a
@@ -156,7 +149,6 @@ export function App({
       {drawer === "agents" && (
         <AgentsDrawer
           agents={state.agents}
-          registryAgents={state.registryAgents}
           capabilities={state.capabilities}
           onDone={closeDrawer}
         />
