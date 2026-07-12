@@ -11,13 +11,29 @@ import {
   bundledVersionInNpxCache,
   findNpxEntries,
   isMissingBinSignature,
+  launcherKind,
   npxPackageName,
+  npxPackageSpec,
   purgeNpxEntries,
   versionsDiverge,
 } from "../src/orchestrator/launcher-health";
 import { nullLogger } from "../src/orchestrator/logger";
 
+describe("launcherKind", () => {
+  it("normalizes paths and Windows shims — the one spelling warmupSpawn shares", () => {
+    expect(launcherKind("npx")).toBe("npx");
+    expect(launcherKind("/usr/local/bin/npx")).toBe("npx");
+    expect(launcherKind("npx.CMD")).toBe("npx");
+    expect(launcherKind("uvx")).toBe("uvx");
+    expect(launcherKind("kiro-cli")).toBeNull();
+  });
+});
+
 describe("npxPackageName", () => {
+  it("npxPackageSpec keeps the version — what warmup installs", () => {
+    expect(npxPackageSpec({ command: "npx", args: ["-y", "@scope/pkg@1.1.2"] })).toBe("@scope/pkg@1.1.2");
+  });
+
   it("extracts the package from the registry's npx shape, version stripped", () => {
     expect(npxPackageName({ command: "npx", args: ["-y", "@agentclientprotocol/codex-acp@1.1.2"] }))
       .toBe("@agentclientprotocol/codex-acp");

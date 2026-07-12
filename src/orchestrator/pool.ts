@@ -6,7 +6,6 @@
 // Connection handling approach checked against vscode-acp's ConnectionManager
 // (MIT, formulahendry); rebuilt here on the SDK 1.x client() builder API.
 import { spawn, type ChildProcess } from "node:child_process";
-import { basename } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
@@ -17,7 +16,7 @@ import {
   rowsProvenBy,
   type WireFact,
 } from "./capabilities";
-import { isMissingBinSignature, npmNpxRoot, npxPackageName, purgeNpxEntries } from "./launcher-health";
+import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
 export interface LaunchSpec {
@@ -256,13 +255,15 @@ const DOWNLOAD_LABEL_AFTER_MS = 1_500;
  * (resolveDistribution builds them); anything unrecognized gets no warmup
  * and behaves exactly as before. Exported for tests. */
 export function warmupSpawn(spec: LaunchSpec): { command: string; args: string[] } | null {
-  const cmd = basename(spec.command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
-  if (cmd === "npx") {
-    const pkg = spec.args[0] === "-y" ? spec.args[1] : undefined;
-    if (pkg === undefined || pkg.startsWith("-")) return null;
+  const kind = launcherKind(spec.command);
+  if (kind === "npx") {
+    // Registry shape only (`-y` present) — user-typed commands get no
+    // warmup, a deliberate scope decision pinned by spawn-resolve tests.
+    const pkg = spec.args[0] === "-y" ? npxPackageSpec(spec) : null;
+    if (pkg === null) return null;
     return { command: spec.command, args: ["-y", "--package", pkg, "node", "--version"] };
   }
-  if (cmd === "uvx") {
+  if (kind === "uvx") {
     const pkg = spec.args[0];
     if (pkg === undefined || pkg.startsWith("-")) return null;
     return { command: spec.command, args: ["--from", pkg, "python", "--version"] };

@@ -117,6 +117,9 @@ export class Orchestrator {
    * connection's life (capability-tracker.ts hooks.probeRoot). */
   private readonly probeRootBase: string;
   private readonly agentNames = new Map<string, string>();
+  /** agentId:pathVersion:bundledVersion triples already warned about —
+   * warnOnPathDivergence fires once per exact pair, never per reconnect. */
+  private readonly divergenceWarned = new Set<string>();
   /** Agents (global — never repo-committed), resolved to a spawnable
    * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
   private readonly configuredAgentSpecs = new Map<string, LaunchSpec>();
@@ -1558,7 +1561,6 @@ export class Orchestrator {
    * but a wide version gap means two writers of different vintages on one
    * store (launcher-health.ts PATH_SIBLINGS). Warning only, never a gate;
    * once per exact version pair so reconnects don't nag. */
-  private readonly divergenceWarned = new Set<string>();
   private async warnOnPathDivergence(spec: LaunchSpec): Promise<void> {
     try {
       const d = await checkPathDivergence(spec);

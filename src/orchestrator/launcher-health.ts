@@ -28,24 +28,40 @@
 //    its CLI's version.
 import { spawn } from "node:child_process";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Logger } from "./logger";
 
-/** Extracts the package name from an npx launch (`npx -y <pkg>[@version]
- * …`), the registry's arg shape (resolveDistribution builds it). Anything
- * else → null: uvx has no known corruption signature yet, so it earns an
- * entry when one is observed, not before. */
+/** Normalized launcher name from a command that may be a path or a Windows
+ * shim — THE one spelling of "is this an ecosystem launcher", shared by
+ * warmupSpawn (pool.ts) and every capability here. */
+export function launcherKind(command: string): "npx" | "uvx" | null {
+  const cmd = basename(command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
+  return cmd === "npx" || cmd === "uvx" ? cmd : null;
+}
+
+/** The package spec (version kept) an npx launch would install — registry
+ * shape (`npx -y <pkg> …`) or user-typed (`npx <pkg> …`): both hit the same
+ * npx cache, so both concern launcher health. Null for anything else: uvx
+ * has no known corruption signature yet, so it earns handling when one is
+ * observed, not before. */
+export function npxPackageSpec(spec: {
+  command: string;
+  args: readonly string[];
+}): string | null {
+  if (launcherKind(spec.command) !== "npx") return null;
+  const pkg = spec.args[0] === "-y" ? spec.args[1] : spec.args[0];
+  if (pkg === undefined || pkg.startsWith("-")) return null;
+  return pkg;
+}
+
+/** The bare package name of an npx launch — what cache attribution and
+ * manifest lookups key on. */
 export function npxPackageName(spec: {
   command: string;
   args: readonly string[];
 }): string | null {
-  const cmd = spec.command
-    .slice(spec.command.lastIndexOf("/") + 1)
-    .replace(/\.(cmd|bat|exe)$/i, "")
-    .toLowerCase();
-  if (cmd !== "npx") return null;
-  const pkg = spec.args[0] === "-y" ? spec.args[1] : spec.args[0];
-  if (pkg === undefined || pkg.startsWith("-")) return null;
+  const pkg = npxPackageSpec(spec);
+  if (pkg === null) return null;
   // Strip a version suffix; the scope's leading @ is index 0, never a hit.
   const at = pkg.lastIndexOf("@");
   return at > 0 ? pkg.slice(0, at) : pkg;
@@ -153,7 +169,7 @@ export async function purgeNpxEntries(
  * @openai/codex). Entries are earned by verifying that mapping, never
  * guessed: claude-acp is absent because its adapter bundles the agent SDK,
  * not the claude CLI — no honest comparison exists. */
-export const PATH_SIBLINGS: Readonly<Record<string, { bundledPkg: string; bin: string }>> = {
+const PATH_SIBLINGS: Readonly<Record<string, { bundledPkg: string; bin: string }>> = {
   "codex-acp": { bundledPkg: "@openai/codex", bin: "codex" },
   gemini: { bundledPkg: "@google/gemini-cli", bin: "gemini" },
 };
