@@ -60,8 +60,11 @@ export function webviewHtml(
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="patchbay-out-base" content="${outBase}/">
-${pinSessionId !== undefined ? `  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinSessionId)}">\n` : ""}
+  <meta name="patchbay-out-base" content="${outBase}/">${
+    pinSessionId !== undefined
+      ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinSessionId)}">`
+      : ""
+  }
   <link rel="stylesheet" href="${codiconStyle}">
   <link rel="stylesheet" href="${style}">
 </head>
@@ -116,6 +119,31 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       for (const d of disposables) d.dispose();
     });
   }
+}
+
+/** An editor-area panel bound to its channel for the panel's lifetime
+ * (attach on create, detach + disposable sweep on dispose) — the one
+ * WebviewPanel constructor, shared by Settings and the detached agent-view
+ * surfaces. */
+function boundPanel(
+  viewType: string,
+  title: string,
+  channel: ChannelEndpoint,
+  extensionUri: vscode.Uri,
+  bundle: Bundle,
+  pinSessionId?: string,
+): vscode.WebviewPanel {
+  const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, {
+    enableScripts: true,
+  });
+  const disposables: vscode.Disposable[] = [];
+  const webview = panel.webview; // .webview throws once disposed — capture now
+  bind(webview, channel, extensionUri, bundle, disposables, pinSessionId);
+  panel.onDidDispose(() => {
+    channel.detach(webview);
+    for (const d of disposables) d.dispose();
+  });
+  return panel;
 }
 
 /** Detached agent-view surfaces (editor-area WebviewPanels, floatable into
@@ -177,20 +205,7 @@ export class AgentPanelHost {
   }
 
   private createPanel(title: string, pinSessionId: string | undefined): vscode.WebviewPanel {
-    const panel = vscode.window.createWebviewPanel(
-      "acpPatchbay.agentPanel",
-      title,
-      vscode.ViewColumn.Active,
-      { enableScripts: true },
-    );
-    const disposables: vscode.Disposable[] = [];
-    const webview = panel.webview; // .webview throws once disposed — capture now
-    bind(webview, this.channel, this.extensionUri, "agent-view", disposables, pinSessionId);
-    panel.onDidDispose(() => {
-      this.channel.detach(webview);
-      for (const d of disposables) d.dispose();
-    });
-    return panel;
+    return boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinSessionId);
   }
 
   /** The just-created panel is the active editor — moving it out gives the
@@ -222,18 +237,8 @@ export class SettingsPanelHost {
       this.panel.reveal();
       return;
     }
-    const panel = vscode.window.createWebviewPanel(
-      "acpPatchbay.settings",
-      "Patchbay — Settings",
-      vscode.ViewColumn.Active,
-      { enableScripts: true },
-    );
-    const disposables: vscode.Disposable[] = [];
-    const webview = panel.webview; // .webview throws once disposed — capture now
-    bind(webview, this.channel, this.extensionUri, "settings", disposables);
+    const panel = boundPanel("acpPatchbay.settings", "Patchbay — Settings", this.channel, this.extensionUri, "settings");
     panel.onDidDispose(() => {
-      this.channel.detach(webview);
-      for (const d of disposables) d.dispose();
       if (this.panel === panel) this.panel = null;
     });
     this.panel = panel;

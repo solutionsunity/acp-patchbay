@@ -28,6 +28,8 @@ export class ChannelHost<S, E> {
    * a snapshot also broadcasts (it discards the shared patch buffer, so a
    * one-view snapshot would silently starve the others). */
   private views = new Set<WebviewLike>();
+  /** Highest rev acked by any view — a test-surface signal (waitForApplied,
+   * electron roundtrip tests run one view), deliberately not per-view. */
   private lastAckedRev = -1;
   private readonly bus: CoalescingBus<E>;
   private ackWaiters: Array<{ rev: number; resolve: (rev: number) => void }> = [];

@@ -1269,9 +1269,12 @@ export class SessionManager {
       const next = this.promptQueues.get(sessionId)?.shift();
       if (next !== undefined && this.sessions.has(sessionId)) {
         this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId: next.id });
-        void this.sendPrompt(sessionId, next.text, next.parts).catch((err: Error) =>
-          this.log.info(`session ${sessionId}: queued prompt failed — ${err.message}`),
-        );
+        void this.sendPrompt(sessionId, next.text, next.parts).catch((err: Error) => {
+          // A failed drain ends the drain: nothing is left to fire the rest,
+          // so holding them would show rows that can never send.
+          this.log.info(`session ${sessionId}: queued prompt failed — ${err.message}`);
+          this.clearPromptQueue(sessionId);
+        });
       }
     }
   }

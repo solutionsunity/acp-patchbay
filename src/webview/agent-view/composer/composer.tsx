@@ -65,13 +65,11 @@ export function Composer(props: {
     if (live) send({ kind: "stopTurn", sessionId });
     else submitRef.current?.();
   };
-  const onSubmit = (text: string, parts?: readonly PromptPart[]): boolean => {
-    // Enter during a live turn queues (the orchestrator holds it until the
-    // turn ends); the Stop button is the only stop — Enter-as-stop would be
-    // too easy to trip once sending mid-turn is legal.
+  // Enter during a live turn queues (the orchestrator holds it until the
+  // turn ends); the Stop button is the only stop — Enter-as-stop would be
+  // too easy to trip once sending mid-turn is legal.
+  const onSubmit = (text: string, parts?: readonly PromptPart[]): void =>
     send({ kind: "sendPrompt", sessionId, text, parts });
-    return true;
-  };
 
   /** The adder's entries — also reused by the `@` mention picker's fixed rows. */
   const addSelection = () => send({ kind: "addSelectionContext", sessionId });

@@ -62,9 +62,9 @@ export interface PromptEditorProps {
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   hasSelection: boolean;
   /** `parts` present only when the prompt carries inline file mentions.
-   * Returns whether the draft was consumed (false: keep it). Enter during a
-   * live turn queues the prompt — only the Stop button stops. */
-  onSubmit(text: string, parts?: readonly PromptPart[]): boolean;
+   * Always consumes the draft: Enter during a live turn queues the prompt
+   * (orchestrator-side) — only the Stop button stops. */
+  onSubmit(text: string, parts?: readonly PromptPart[]): void;
   onPasteImage(base64: string, mimeType: string): void;
   onPickSelection(): void;
   onPickProblems(): void;
@@ -263,7 +263,7 @@ function EditorCore(props: PromptEditorProps) {
       return { text: $getRoot().getTextContent(), parts: collected };
     });
     if (text.trim() === "") return;
-    if (!props.onSubmit(text, parts.some((p) => p.kind === "fileRef") ? parts : undefined)) return;
+    props.onSubmit(text, parts.some((p) => p.kind === "fileRef") ? parts : undefined);
     editor.update(() => {
       $getRoot().clear();
     });
