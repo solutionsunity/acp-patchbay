@@ -13,7 +13,7 @@ import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore, RELOAD_GRACE_MS } from "../src/orchestrator/stores/last-connected";
-import { LastKnobsStore } from "../src/orchestrator/stores/last-knobs";
+import { ComposerKnobsStore } from "../src/orchestrator/stores/composer-knobs";
 import { PreferencesStore } from "../src/orchestrator/stores/preferences";
 import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import {
@@ -249,9 +249,9 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
   });
 });
 
-describe("LastKnobsStore — last confirmed combination per agent", () => {
+describe("ComposerKnobsStore — the composer combination per agent", () => {
   it("records per agent, replaces wholesale, counts records", async () => {
-    const store = new LastKnobsStore(new MemoryKV());
+    const store = new ComposerKnobsStore(new MemoryKV());
     expect(store.get("claude")).toBeUndefined();
     expect(store.count()).toBe(0);
 

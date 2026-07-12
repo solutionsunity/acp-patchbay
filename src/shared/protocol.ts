@@ -867,7 +867,7 @@ export interface PreferencesView {
   soundOnDone: boolean;
   /** What a fresh session's knobs are seeded from: the agent config's
    * defaults, or the last agent-confirmed combination on that agent
-   * (stores/last-knobs.ts, falling back to the defaults when none). */
+   * (stores/composer-knobs.ts, falling back to the defaults when none). */
   knobSource: "agent-default" | "last-session";
   /** Idle-release timer (session-manager reapIdle, condition 5) in
    * minutes; 0 disables the reaper entirely. */

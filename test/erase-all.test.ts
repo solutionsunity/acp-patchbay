@@ -14,7 +14,7 @@ import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
-import { LastKnobsStore } from "../src/orchestrator/stores/last-knobs";
+import { ComposerKnobsStore } from "../src/orchestrator/stores/composer-knobs";
 import { PreferencesStore } from "../src/orchestrator/stores/preferences";
 import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -50,7 +50,7 @@ describe("eraseAllData", () => {
     const lastConnected = new LastConnectedStore(workspaceKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
-    const lastKnobs = new LastKnobsStore(globalKv);
+    const composerKnobs = new ComposerKnobsStore(globalKv);
 
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
@@ -68,14 +68,14 @@ describe("eraseAllData", () => {
     await lastConnected.write(["claude"]);
     await lastActiveSession.set("s1");
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
-    await lastKnobs.record("claude", { mode: "code" });
+    await composerKnobs.record("claude", { mode: "code" });
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
       spawnRegistry, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastConnected, lastActiveSession,
-      preferences, lastKnobs,
+      preferences, composerKnobs,
     });
 
     expect(agentConfigs.list()).toEqual([]);
@@ -91,8 +91,8 @@ describe("eraseAllData", () => {
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
-    expect(lastKnobs.get("claude")).toBeUndefined();
-    expect(lastKnobs.count()).toBe(0);
+    expect(composerKnobs.get("claude")).toBeUndefined();
+    expect(composerKnobs.count()).toBe(0);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });

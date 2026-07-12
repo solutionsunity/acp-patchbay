@@ -60,10 +60,11 @@ export function PreferencesSection(props: {
       <div className="card">
         <h2 className="mt-0">New sessions</h2>
         <div className="note mx-0 mt-0 mb-2">
-          What a fresh session's knobs (mode, model, effort…) start from: the defaults saved on the
-          agent's config, or whatever combination the agent last confirmed for you. A knob the
-          agent no longer offers is skipped either way — the agent's own state is never overridden,
-          only seeded.
+          What a session's knobs (mode, model, effort…) start from when you enter one — a fresh
+          session, or an old one opened with nothing in hand: the defaults saved on the agent's
+          config, or the combination you last set for that agent. A session you're already working
+          in always keeps its own knobs, and a knob the agent no longer offers is skipped either
+          way.
         </div>
         <Field label="Knobs start from">
           <Select

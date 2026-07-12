@@ -57,14 +57,17 @@ export interface SessionManagerHooks {
    * connected a dedicated subprocess for it) when isolating. Absent → always
    * share (pre-P8 behavior — fine for tests that don't exercise policy). */
   resolveProcessFor?(agentId: string): Promise<string>;
-  /** The knob seed a *fresh* session starts from (folded, knob-id-keyed —
-   * knobs.ts foldSeed), applied once, post-create. Which seed that is —
-   * the agent config's defaults or the last confirmed combination — is the
+  /** The knob seed a session starts from on *entry* — a fresh session, or a
+   * history session attached with no live combination in hand (folded,
+   * knob-id-keyed — knobs.ts foldSeed). Which seed that is — the agent
+   * config's defaults or the composer's per-agent combination — is the
    * orchestrator's policy (Preferences knobSource), not knowledge held here. */
   seedFor?(agentId: string): KnobSeed | undefined;
-  /** Fires at the one knob-state exit (publishKnobs) with the agent-confirmed
-   * combination — the "last used" record behind the last-session knobSource
-   * preference (stores/last-knobs.ts). */
+  /** Fires when the *user* sets a knob and the agent confirms it — the
+   * composer-knobs record behind the last-session knobSource preference
+   * (stores/composer-knobs.ts). Deliberately not wired to publishKnobs:
+   * attach-time publishes carry agent-reset state, and recording those made
+   * "last used" mean "last attached". */
   onKnobsConfirmed?(agentId: string, seed: KnobSeed): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch since ACP has no live-update request for
@@ -118,6 +121,15 @@ interface KnownSession {
   title: string;
   createdAt: string; // ISO — session/list rows carry only updatedAt; used for it there
   updatedAt: string; // ISO — the drawer's sort key
+  /** The session's last agent-confirmed knob combination — written at every
+   * publishKnobs, so it outlives the LiveSession (detach on connection
+   * death, idle release, reload) and re-seeds any *involuntary* re-attach:
+   * the user asked to change nothing, so the session's combination must
+   * survive the agent resetting knob state on session/load. In-memory like
+   * the rest of this row — after a window reload the session re-enters as a
+   * deliberate open and the composer combination wins instead
+   * (reseedAfterAttach). */
+  knobs?: KnobSeed;
 }
 
 interface LiveSession {
@@ -165,6 +177,14 @@ interface LiveSession {
    * see protocol.ts) so loaded history keeps its per-turn rollup lines.
    * Live turns never touch it: their boundary is the real turnEnded. */
   replayTurnDirty: boolean;
+  /** A user knob set went out via session/set_mode and its confirmation —
+   * the agent's own current_mode_update — hasn't arrived yet. That
+   * notification is when the composer-knobs record fires for the modes
+   * surface (set_mode's response carries no state, and bridges have
+   * reported rejected changes as succeeded — the notification is the only
+   * honest confirmation). The config surface records straight off the
+   * set_config_option response and never sets this. */
+  userModeSetPending: boolean;
 }
 
 function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSession {
@@ -183,6 +203,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
     replayTurnDirty: false,
+    userModeSetPending: false,
   };
 }
 
@@ -723,10 +744,14 @@ export class SessionManager {
   > {
     if (this.sessions.has(sessionId)) return { attached: true };
     const declared = this.pool.get(agentId)?.declared;
+    // Read before any rung publishes: the attach's own publishKnobs
+    // overwrites this snapshot with the agent's reset state.
+    const remembered = this.known.get(sessionId)?.knobs;
     let error: Error | undefined;
     if (declared?.loadSession) {
       try {
         await this.reopen(sessionId, agentId);
+        await this.reseedAfterAttach(sessionId, agentId, remembered);
         return { attached: true };
       } catch (err) {
         // The agent may no longer hold this session — descend to resume
@@ -738,6 +763,7 @@ export class SessionManager {
     if (declared?.sessionResume) {
       try {
         await this.resumeReattach(sessionId, agentId);
+        await this.reseedAfterAttach(sessionId, agentId, remembered);
         return { attached: true };
       } catch (err) {
         this.sessions.delete(sessionId);
@@ -796,34 +822,78 @@ export class SessionManager {
     const route = routeKnobSet(session.knobs, knobId, value);
     if (route === null) return;
     if (route.via === "setMode") {
-      await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId);
+      // Composer recording waits for the agent's current_mode_update — the
+      // response carries no state (see userModeSetPending). Flag first: the
+      // notification may land before the response resolves.
+      session.userModeSetPending = true;
+      try {
+        await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId);
+      } catch (err) {
+        session.userModeSetPending = false;
+        throw err;
+      }
       return;
     }
     const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-    this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions));
+    const next = applyConfigUpdate(response.configOptions);
+    this.publishKnobs(sessionId, next);
+    // A user set, agent-confirmed: this — and only this — is what the
+    // composer's per-agent combination records. Attach-time publishes never
+    // do (they carry agent-reset state).
+    this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
   }
 
   /** The one exit for knob state: stores the normalized truth on the
-   * session (set routing reads the surface from it) and emits the full
-   * view replace. */
+   * session (set routing reads the surface from it), snapshots the
+   * combination on the KnownSession row (what reseedAfterAttach restores),
+   * and emits the full view replace. */
   private publishKnobs(sessionId: string, knobs: NormalizedKnobs): void {
     const session = this.sessions.get(sessionId);
     if (session) session.knobs = knobs;
-    // An empty surface is not a combination — recording it would erase a
+    // An empty surface is not a combination — snapshotting it would erase a
     // real one with "this agent offered nothing this time".
-    if (session && knobs.knobs.length > 0) {
-      this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(knobs));
+    if (knobs.knobs.length > 0) {
+      const entry = this.known.get(sessionId);
+      if (entry !== undefined) entry.knobs = confirmedFromKnobs(knobs);
     }
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
   }
 
-  /** Fresh-session seed (architecture.md § Session model, mode, effort):
-   * applied once, post-create on a *fresh* session only — never on
-   * reopen/reload (the agent's own resumed state is the truth). */
+  /** Entry seed (architecture.md § Session model, mode, effort): applied
+   * post-create on a fresh session, and by reseedAfterAttach on a history
+   * session entered with no combination in hand. */
   private async applySeedFor(agentId: string, sessionId: string): Promise<void> {
     const seed = this.hooks.seedFor?.(agentId);
     if (seed === undefined) return;
     await this.applySeed(sessionId, seed);
+  }
+
+  /** The post-attach knob policy — the two-fold rule in one place.
+   * Agents reset knob state to their defaults on session/load (observed:
+   * claude-agent-acp rebuilds session config), so every attach of an
+   * existing session decides whose combination stands:
+   *
+   * - **Involuntary re-attach** (reload, connection death, idle release —
+   *   anything where this window already held the session's combination,
+   *   snapshotted on the KnownSession row): the session's own knobs win.
+   *   The user asked to change nothing.
+   * - **Deliberate entry** (opened from history — no combination in hand,
+   *   including after a window reload): the entry seed wins, same as a
+   *   fresh session (seedFor: agent defaults or the composer's per-agent
+   *   combination, by the knobSource preference). This knowingly overrides
+   *   an agent that honestly restores per-session knob state on load —
+   *   entry is deliberate, the user's current combination wins.
+   *
+   * Both routes ride applySeed: agent-confirmed responses stay the
+   * displayed truth, and entries the session no longer offers are silently
+   * skipped. */
+  private async reseedAfterAttach(
+    sessionId: string,
+    agentId: string,
+    remembered: KnobSeed | undefined,
+  ): Promise<void> {
+    if (remembered !== undefined) await this.applySeed(sessionId, remembered);
+    else await this.applySeedFor(agentId, sessionId);
   }
 
   /** Issues the set requests for a knob seed, each routed and guarded by
@@ -1384,8 +1454,18 @@ export class SessionManager {
         // would need category as a correctness key — spec-forbidden; the
         // agent's transition duty confirms via config_option_update).
         const next = applyModeUpdate(session.knobs, update.currentModeId);
-        if (next !== null) this.publishKnobs(sessionId, next);
-        else this.log.debug(`session ${sessionId}: current_mode_update dropped (config surface owns the knob state)`);
+        if (next !== null) {
+          this.publishKnobs(sessionId, next);
+          // The confirmation a user set_mode was waiting on (setKnob) —
+          // record the composer combination now, from the agent's own
+          // notification, never from set_mode's stateless response.
+          if (session.userModeSetPending) {
+            session.userModeSetPending = false;
+            this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
+          }
+        } else {
+          this.log.debug(`session ${sessionId}: current_mode_update dropped (config surface owns the knob state)`);
+        }
         break;
       }
       case "config_option_update":

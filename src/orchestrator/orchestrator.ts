@@ -52,7 +52,7 @@ import {
   resolveDistribution,
 } from "./stores/acp-registry";
 import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
-import { LastKnobsStore } from "./stores/last-knobs";
+import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
 import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
@@ -95,7 +95,7 @@ export class Orchestrator {
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
   readonly preferences: PreferencesStore;
-  readonly lastKnobs: LastKnobsStore;
+  readonly composerKnobs: ComposerKnobsStore;
   /** The current ACP registry snapshot (agents + icons) — replaced whenever
    * the registry refreshes; every agent lookup elsewhere reads this. */
   private registryData: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
@@ -189,7 +189,7 @@ export class Orchestrator {
     this.agentConfigs = new AgentConfigStore(context.globalState);
     this.integrationConfigs = new IntegrationConfigStore(context.globalState);
     this.preferences = new PreferencesStore(context.globalState);
-    this.lastKnobs = new LastKnobsStore(context.globalState);
+    this.composerKnobs = new ComposerKnobsStore(context.globalState);
     this.usedCapabilities = new UsedCapabilityStore(context.globalState);
     this.spawnRegistry = new SpawnRegistryStore(context.globalState);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
@@ -554,14 +554,16 @@ export class Orchestrator {
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect. The
         // knobSource preference is read just as fresh: last-session takes
-        // the recorded combination, falling back to the configured defaults
-        // (a never-used agent has no "last").
+        // the composer's per-agent combination, falling back to the
+        // configured defaults (an agent whose knobs were never touched has
+        // no composer record). Defaults themselves are written only by the
+        // Settings save path — read-only to everything here.
         seedFor: (agentId) => {
           const defaults = this.configuredAgentSpecs.get(agentId)?.defaults;
           if (this.preferences.get().knobSource !== "last-session") return defaults;
-          return this.lastKnobs.get(agentId) ?? defaults;
+          return this.composerKnobs.get(agentId) ?? defaults;
         },
-        onKnobsConfirmed: (agentId, seed) => void this.lastKnobs.record(agentId, seed),
+        onKnobsConfirmed: (agentId, seed) => void this.composerKnobs.record(agentId, seed),
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         isDeleteUsed: (agentId) =>
@@ -717,7 +719,7 @@ export class Orchestrator {
       lastActiveSession: this.lastActiveSession,
       lastConnected: this.lastConnected,
       preferences: this.preferences,
-      lastKnobs: this.lastKnobs,
+      composerKnobs: this.composerKnobs,
     });
 
     this.configuredAgentSpecs.clear();
@@ -1472,7 +1474,7 @@ export class Orchestrator {
           return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${p.composerStats ? "shown" : "hidden"}`;
         })(),
       },
-      { id: "last-knobs", label: "Last-used knobs", placement: "globalState", detail: n(this.lastKnobs.count(), "agent record") },
+      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalState", detail: n(this.composerKnobs.count(), "agent record") },
       {
         id: "secrets",
         label: "Credentials & env values",

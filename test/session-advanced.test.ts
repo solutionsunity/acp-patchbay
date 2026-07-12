@@ -55,7 +55,10 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
 /** Wires pool + verifier + session manager the way Orchestrator does, minus
  * vscode — including a real `resolveProcessFor` (architecture.md § process
  * model) instead of a stub, since that's exactly what this file tests. */
-function harness(): {
+function harness(extraHooks: {
+  seedFor?(agentId: string): Record<string, string | boolean> | undefined;
+  onKnobsConfirmed?(agentId: string, seed: Record<string, string | boolean>): void;
+} = {}): {
   pool: AgentPool;
   sessionManager: SessionManager;
   state(): AgentViewState;
@@ -106,6 +109,7 @@ function harness(): {
     {
       emit: (...evs) => events.push(...evs),
       resolveProcessFor,
+      ...extraHooks,
     },
     () => cwd,
   );
@@ -410,4 +414,109 @@ describe("Session model/mode/effort knobs (P8)", () => {
     await pool.stop("defaulted");
   });
 
+});
+
+/** The two-fold knob rule (reseedAfterAttach): a session's own combination
+ * survives involuntary re-attach; entry — fresh or from history with
+ * nothing in hand — starts from the entry seed; and the composer's
+ * per-agent record (onKnobsConfirmed) is written only by a user set,
+ * never by an attach. The fake agent, like claude-agent-acp, resets knob
+ * state to its script defaults on session/load — exactly the reset the
+ * rule exists to survive. */
+describe("Knob two-fold rule (composer vs session)", () => {
+  const MODEL_KNOB = {
+    id: "model-opt",
+    name: "Model",
+    type: "select" as const,
+    currentValue: "sonnet",
+    options: [{ value: "sonnet", name: "Sonnet" }, { value: "opus", name: "Opus" }],
+  };
+
+  it("composer recording fires on a user set only — create, reload, and re-attach publishes never record", async () => {
+    const records: Record<string, string | boolean>[] = [];
+    const h = harness({ onKnobsConfirmed: (_agentId, seed) => records.push(seed) });
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "rec"),
+    );
+    const sessionId = await h.sessionManager.createSession("rec", "Fake Agent", cwd);
+    expect(records).toEqual([]); // the attach publish carries agent state, not a use
+
+    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    expect(records).toEqual([{ "model-opt": "opus" }]);
+
+    await h.sessionManager.sendPrompt(sessionId, "hello");
+    await h.sessionManager.reload(sessionId);
+    expect(records).toHaveLength(1); // reload re-published and re-seeded — still not a use
+
+    await h.pool.stop("rec");
+  });
+
+  it("a modes-surface user set records from the agent's own current_mode_update — a lying no-op set_mode records nothing", async () => {
+    const records: Record<string, string | boolean>[] = [];
+    const modes = { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] };
+    const h = harness({ onKnobsConfirmed: (_agentId, seed) => records.push(seed) });
+    await h.pool.connect(spec({ modes }, "modes-rec"));
+    const sessionId = await h.sessionManager.createSession("modes-rec", "Fake Agent", cwd);
+    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    await waitFor(() => (records.length > 0 ? true : undefined));
+    expect(records).toEqual([{ mode: "code" }]);
+    await h.pool.stop("modes-rec");
+
+    const liar = harness({ onKnobsConfirmed: (_agentId, seed) => records.push(seed) });
+    await liar.pool.connect(spec({ modes, lies: { modeChangeNoop: true } }, "modes-liar"));
+    const liarSession = await liar.sessionManager.createSession("modes-liar", "Fake Agent", cwd);
+    await liar.sessionManager.setKnob(liarSession, "mode", "code");
+    await new Promise((r) => setTimeout(r, 100)); // no confirmation will come
+    expect(records).toHaveLength(1); // the lying success response recorded nothing
+    await liar.pool.stop("modes-liar");
+  });
+
+  it("involuntary re-attach (reload, connection loss) re-seeds the session's own combination over the agent's load-time reset", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "reseed"),
+    );
+    const sessionId = await h.sessionManager.createSession("reseed", "Fake Agent", cwd);
+    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    await h.sessionManager.sendPrompt(sessionId, "hello");
+
+    await h.sessionManager.reload(sessionId); // agent resets to sonnet on load
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+
+    h.sessionManager.invalidateAgent("reseed"); // connection death
+    await h.sessionManager.sendPrompt(sessionId, "again"); // prompt path re-attaches
+    expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+
+    await h.pool.stop("reseed");
+  });
+
+  it("deliberate entry (history session, no combination in hand) seeds from seedFor over the agent's restored state", async () => {
+    // Window one: the session exists and was prompted (the fake agent
+    // records it durably), knob left at the agent default.
+    const w1 = harness();
+    await w1.pool.connect(
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { list: {} } }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] },
+        "entry",
+      ),
+    );
+    const sessionId = await w1.sessionManager.createSession("entry", "Fake Agent", cwd);
+    await w1.sessionManager.sendPrompt(sessionId, "hello");
+    await w1.pool.stop("entry");
+
+    // Window two: known only via session/list — no combination in hand, so
+    // the entry seed (composer/defaults, per knobSource) wins the attach.
+    const w2 = harness({ seedFor: () => ({ "model-opt": "opus" }) });
+    await w2.pool.connect(
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { list: {} } }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] },
+        "entry",
+      ),
+    );
+    await w2.sessionManager.syncAgentSessions("entry");
+    await w2.sessionManager.hydrate(sessionId);
+    expect(w2.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+
+    await w2.pool.stop("entry");
+  });
 });

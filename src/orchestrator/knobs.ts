@@ -149,9 +149,10 @@ export function routeKnobSet(
     : { via: "setConfigOption", configId: knobId };
 }
 
-/** The agent-confirmed combination a normalized state represents — what
- * session-index.recordConfirmed persists (id-keyed; the modes-surface knob
- * lands under MODE_KNOB_ID). */
+/** The agent-confirmed combination a normalized state represents (id-keyed;
+ * the modes-surface knob lands under MODE_KNOB_ID) — what the KnownSession
+ * row snapshots for involuntary re-attach, and what the composer-knobs
+ * store records on a user set. */
 export function confirmedFromKnobs(current: NormalizedKnobs): KnobSeed {
   return Object.fromEntries(current.knobs.map((k) => [k.id, k.currentValue]));
 }

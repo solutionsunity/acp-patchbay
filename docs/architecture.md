@@ -423,16 +423,44 @@ keyed honestly. Therefore:
   for rejected mode changes. What the user sees is the last agent-confirmed
   state, which is the honest one.
 
-**Seeding at session birth** — what gets applied, by how the session came to be:
+**Two knob holders, one seeding rule.** A knob combination lives in exactly
+two places, and every attach decides between them by one question — *did the
+user just do something, or did plumbing?*
 
-| Birth | Seed applied |
+- **Session knobs** — the session's own agent-confirmed combination, held
+  in-memory only (snapshotted per publish onto the known-session row, which
+  outlives the attachment but not the window). An **involuntary re-attach** —
+  one-click reload, connection death, idle release, the roots re-apply — must
+  re-seed it after the wire attach: agents reset knob state to their defaults
+  on `session/load` (observed: claude-agent-acp rebuilds session config), and
+  the user asked to change nothing. This *refines* the old "the agent's own
+  restored state is the truth — re-imposing a stored copy would force a cache
+  over reality" rule: the reset made "restored state" mean "agent defaults",
+  so honoring it was forcing the agent's cache-miss over the user's reality.
+  What made the roots path an exception is in fact the general rule.
+- **Composer knobs** — the user's current working combination *per agent*
+  (`stores/composer-knobs.ts`, globalState), written only when the user sets
+  a knob and the agent confirms it (config surface: off the set response;
+  modes surface: off the agent's own `current_mode_update` — set responses
+  are never trusted). Never written at attach time — recording attach
+  publishes made "last used" mean "last attached", and opening any old
+  session overwrote the record with agent defaults.
+
+**Seeding at session birth/attach** — one policy (`reseedAfterAttach`):
+
+| Attach | Seed applied |
 |---|---|
-| Fresh `session/new` | Per-agent defaults, once, via set requests — skipped silently where the option isn't offered |
-| `session/load` / `session/resume` re-attach | Nothing — the agent's own restored state is the truth; re-imposing a stored copy would force a cache over reality. (The roots re-apply path is the one exception: the user asked to change *roots*, so the session's own confirmed knob values are re-seeded after the re-attach resets them) |
+| Fresh `session/new` | Entry seed: per-agent defaults, or the composer combination, by the `knobSource` preference — once, via set requests, skipped silently where the option isn't offered |
+| Involuntary re-attach (reload, connection death, idle release, roots re-apply) — the window holds the session's combination | The session's own combination, re-seeded over the agent's load-time reset |
+| Deliberate entry from history — nothing in hand (fresh window, or never opened here) | Entry seed, same as fresh. This knowingly overrides an agent that honestly restores per-session knob state on load: entry is deliberate, the user's current combination wins |
+
+Per-agent defaults themselves are written only by the Settings save path —
+read-only to the session layer, the seed's fallback, never its record.
 
 *(The emulated-continuation row and the per-session last-confirmed store it
-seeded from are gone with emulation itself — there is no session birth left
-with "no reality to read".)*
+seeded from are gone with emulation itself; the known-session snapshot above
+is deliberately not its return — in-memory, window-scoped, a mirror of
+agent-confirmed state rather than a persisted claim.)*
 
 ## Local MCP server — editor depth
 
