@@ -248,6 +248,20 @@ body {
   flex: none;
 }
 
+/* both chips present: a divider marks where plan ends and file writes begin;
+   it takes the auto margin so the files chip hugs it */
+.readout-strip .sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--pb-border);
+  margin-left: auto;
+  flex: none;
+}
+
+.readout-strip .sep + .chip.files {
+  margin-left: 0;
+}
+
 .readout-strip .frac {
   color: var(--pb-accent);
   font-weight: 600;

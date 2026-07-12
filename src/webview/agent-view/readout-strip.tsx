@@ -141,6 +141,7 @@ export function ReadoutStrip({
             <span className="current"> — {current}</span>
           </button>
         )}
+        {hasPlan && hasFiles && <span className="sep" />}
         {hasFiles && (
           <button
             className={`chip files ${open === "files" ? "active" : ""}`}
