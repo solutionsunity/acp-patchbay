@@ -21,6 +21,7 @@ import {
   type KnobSeed,
   type PlanEntry,
   type PromptPart,
+  type QueuedPrompt,
   type SessionSummary,
   type ToolCallStatus,
   type TurnUsage,
@@ -228,6 +229,10 @@ export class SessionManager {
    * re-sends tool_call content, so it repopulates itself. */
   private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   private contextTokenCounter = 0;
+  /** Prompts accepted while a turn was in flight (QueuedPrompt) — drained
+   * one per turn end. Ephemeral bookkeeping like everything here: Stop and
+   * close clear it, a crash loses it, said as such — never persisted. */
+  private promptQueues = new Map<string, QueuedPrompt[]>();
   /** Rapid re-clicks must not stack replays — one hydration per session. */
   private hydrating = new Set<string>();
   /** Sessions inside a session/load replay window: their transcript events
@@ -549,6 +554,7 @@ export class SessionManager {
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
     this.known.delete(sessionId);
+    this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
     this.hooks.emit({ kind: "sessionClosed", sessionId });
     // Honest close: forgetting a session locally while a delete-capable
     // agent keeps it would just resurrect it on the next session/list sync.
@@ -575,6 +581,7 @@ export class SessionManager {
     this.sessions.clear();
     this.known.clear();
     this.toolDiffs.clear();
+    this.promptQueues.clear();
   }
 
   /** A removed agent's session rows leave the view — nothing of them is
@@ -587,6 +594,7 @@ export class SessionManager {
       this.sessions.delete(sessionId);
       this.toolDiffs.delete(sessionId);
       this.known.delete(sessionId);
+      this.promptQueues.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
     }
   }
@@ -1097,6 +1105,23 @@ export class SessionManager {
   }
 
   async sendPrompt(sessionId: string, text: string, parts?: readonly PromptPart[]): Promise<void> {
+    // A prompt landing mid-turn queues instead of refusing (ACP is one
+    // prompt per turn) — drained at turn end, cleared by Stop/close.
+    if (this.sessions.get(sessionId)?.inFlight === true) {
+      const queued: QueuedPrompt = {
+        id: newBlockId("queued"),
+        text,
+        ...(parts !== undefined ? { parts } : {}),
+      };
+      let queue = this.promptQueues.get(sessionId);
+      if (queue === undefined) {
+        queue = [];
+        this.promptQueues.set(sessionId, queue);
+      }
+      queue.push(queued);
+      this.hooks.emit({ kind: "promptQueued", sessionId, prompt: queued });
+      return;
+    }
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
     await this.ensureAttached(sessionId, agentId);
@@ -1238,13 +1263,42 @@ export class SessionManager {
       }
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
       settleTurn();
+      // Drain: one queued prompt per turn end. Stop/close/reload cleared the
+      // queue before their cancel went out, so a non-empty queue here means
+      // the turn ended on its own and the next send is still wanted.
+      const next = this.promptQueues.get(sessionId)?.shift();
+      if (next !== undefined && this.sessions.has(sessionId)) {
+        this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId: next.id });
+        void this.sendPrompt(sessionId, next.text, next.parts).catch((err: Error) =>
+          this.log.info(`session ${sessionId}: queued prompt failed — ${err.message}`),
+        );
+      }
     }
   }
 
   async stopTurn(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Stop means stop: queued prompts go with the cancelled turn — draining
+    // them after a deliberate stop would restart what the user just ended.
+    this.clearPromptQueue(sessionId);
     await this.pool.cancel(session.poolKey, sessionId);
+  }
+
+  /** Drops one still-queued prompt (composer row × button). */
+  removeQueuedPrompt(sessionId: string, promptId: string): void {
+    const queue = this.promptQueues.get(sessionId);
+    const index = queue?.findIndex((q) => q.id === promptId) ?? -1;
+    if (queue === undefined || index === -1) return;
+    queue.splice(index, 1);
+    this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId });
+  }
+
+  private clearPromptQueue(sessionId: string): void {
+    if ((this.promptQueues.get(sessionId)?.length ?? 0) > 0) {
+      this.hooks.emit({ kind: "promptQueueCleared", sessionId });
+    }
+    this.promptQueues.delete(sessionId);
   }
 
   /** Honest interruption: a live turn is cancelled (spec § Cancellation)

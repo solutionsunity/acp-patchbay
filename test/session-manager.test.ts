@@ -213,6 +213,55 @@ describe("SessionManager", () => {
     await h.pool.stop("sm3");
   });
 
+  // ACP is one prompt per turn: a send landing mid-turn queues (removable
+  // row), drains one per turn end, and Stop clears the whole queue.
+  it("a prompt sent mid-turn queues and fires when the turn ends", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 },
+        "smq1",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smq1", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.sendPrompt(sessionId, "second"); // resolves immediately: queued
+    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "second" }]);
+    await promptDone;
+
+    // the drain fired the queued prompt as a real turn
+    await new Promise((r) => setTimeout(r, 500));
+    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(users.map((b) => (b as { text: string }).text)).toEqual(["first", "second"]);
+    await h.pool.stop("smq1");
+  });
+
+  it("stop clears the queue — a deliberate stop never restarts from it", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 },
+        "smq2",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smq2", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.sendPrompt(sessionId, "second");
+    await h.sessionManager.stopTurn(sessionId);
+    await promptDone;
+
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(users).toHaveLength(1); // "second" never fired
+    await h.pool.stop("smq2");
+  });
+
   // Honest close: closing mid-stream stops the turn (spec cancel) and lets
   // it settle — turnEnded lands before sessionClosed, never a delete fired
   // under a live turn.

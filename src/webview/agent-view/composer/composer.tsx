@@ -9,6 +9,7 @@ import type {
   LiveSelectionView,
   OpenEditorView,
   PromptPart,
+  QueuedPrompt,
   SessionKnobView,
   SessionSummary,
   UsageInfo,
@@ -36,6 +37,8 @@ export function Composer(props: {
    * session/load or session/resume) — drives the roots chip's honesty note. */
   rootsApplyLive: boolean;
   liveSelection: LiveSelectionView | null;
+  /** Prompts sent mid-turn, waiting for the turn to end — removable rows. */
+  queued: readonly QueuedPrompt[];
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   knobs: readonly SessionKnobView[];
@@ -63,11 +66,9 @@ export function Composer(props: {
     else submitRef.current?.();
   };
   const onSubmit = (text: string, parts?: readonly PromptPart[]): boolean => {
-    if (live) {
-      // Enter during a live turn = Stop (same as the button); draft stays.
-      send({ kind: "stopTurn", sessionId });
-      return false;
-    }
+    // Enter during a live turn queues (the orchestrator holds it until the
+    // turn ends); the Stop button is the only stop — Enter-as-stop would be
+    // too easy to trip once sending mid-turn is legal.
     send({ kind: "sendPrompt", sessionId, text, parts });
     return true;
   };
@@ -103,6 +104,19 @@ export function Composer(props: {
         {/* the grabber pill — the visible "hold here" affordance */}
         <div className="h-[3px] w-10 rounded-full bg-border transition-colors group-hover:bg-muted-foreground group-active:bg-muted-foreground" />
       </div>
+      {props.queued.map((q) => (
+        <div className="queue-row" key={q.id} title={q.text}>
+          <Icon name="history" />
+          <span className="txt">{q.text}</span>
+          <span
+            className="x"
+            title="Remove from queue"
+            onClick={() => send({ kind: "removeQueuedPrompt", sessionId, promptId: q.id })}
+          >
+            ×
+          </span>
+        </div>
+      ))}
       {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
         <div className="ctx-row">
           {enabled && (

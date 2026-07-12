@@ -62,8 +62,8 @@ export interface PromptEditorProps {
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   hasSelection: boolean;
   /** `parts` present only when the prompt carries inline file mentions.
-   * Returns whether the draft was consumed (false: keep it — e.g. Enter
-   * during a live turn routes to Stop instead). */
+   * Returns whether the draft was consumed (false: keep it). Enter during a
+   * live turn queues the prompt — only the Stop button stops. */
   onSubmit(text: string, parts?: readonly PromptPart[]): boolean;
   onPasteImage(base64: string, mimeType: string): void;
   onPickSelection(): void;

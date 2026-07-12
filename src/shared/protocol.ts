@@ -69,6 +69,8 @@ export type Action =
    * a chip riding ahead of the prose. Absent for plain text prompts. */
   | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[] }
   | { kind: "stopTurn"; sessionId: string }
+  /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
+  | { kind: "removeQueuedPrompt"; sessionId: string; promptId: string }
   | { kind: "verifyAgent"; agentId: string }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
@@ -158,6 +160,16 @@ export type Action =
    * filesystem (render-only-webview) — it asks, the orchestrator runs
    * `workspace.findFiles` and answers with workspaceFilesListed. */
   | { kind: "queryWorkspaceFiles"; query: string };
+
+/** A prompt sent while a turn was already in flight — held orchestrator-side
+ * (session-manager bookkeeping, ephemeral) and fired when the turn ends. The
+ * view carries it only to render removable pending rows; Stop clears the
+ * whole queue. */
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  parts?: readonly PromptPart[];
+}
 
 /** One positional piece of a composed prompt (sendPrompt `parts`). */
 export type PromptPart =
@@ -923,6 +935,10 @@ export interface AgentViewState {
   /** Explicitly attached context, pending inclusion in the next prompt
    * (features.md § Chat: "explicitly add editor state to the prompt"). */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
+  /** Prompts accepted mid-turn, waiting for the turn to end (QueuedPrompt).
+   * Orchestrator-owned like everything else here — rendered as removable
+   * pending rows above the composer. */
+  promptQueue: Readonly<Record<string, readonly QueuedPrompt[]>>;
   /** Normalized knobs per session (knobs.ts is the only producer) — empty
    * when the agent offers none. */
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
@@ -993,6 +1009,7 @@ export const initialAgentViewState: AgentViewState = {
   authMethods: {},
   sessionUsage: {},
   contextChips: {},
+  promptQueue: {},
   sessionKnobs: {},
   contextRoots: {},
   workspaceRoots: [],
@@ -1113,6 +1130,12 @@ export type AgentViewEvent =
   | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
+  /** A prompt landed while a turn was in flight — queued, not refused. */
+  | { kind: "promptQueued"; sessionId: string; prompt: QueuedPrompt }
+  /** One queued prompt left the queue — fired (drain) or removed by hand. */
+  | { kind: "promptUnqueued"; sessionId: string; promptId: string }
+  /** Stop means stop: the whole queue goes with the cancelled turn. */
+  | { kind: "promptQueueCleared"; sessionId: string }
   /** Full replace, always — every knob-bearing wire fact (a create/load/fork
    * response, a config_option_update or current_mode_update notification, a
    * set_config_option response) lands here already normalized by knobs.ts. */
@@ -1461,6 +1484,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
+      const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
       // sibling: a session click is the one hydrate/connect trigger, so a
@@ -1478,6 +1502,7 @@ export function reduceAgentView(
         sessionKnobs,
         contextRoots,
         sessionUsage,
+        promptQueue,
         activeSessionId,
       };
     }
@@ -1666,6 +1691,28 @@ export function reduceAgentView(
           ),
         },
       };
+    case "promptQueued":
+      return {
+        ...state,
+        promptQueue: {
+          ...state.promptQueue,
+          [event.sessionId]: [...(state.promptQueue[event.sessionId] ?? []), event.prompt],
+        },
+      };
+    case "promptUnqueued":
+      return {
+        ...state,
+        promptQueue: {
+          ...state.promptQueue,
+          [event.sessionId]: (state.promptQueue[event.sessionId] ?? []).filter(
+            (q) => q.id !== event.promptId,
+          ),
+        },
+      };
+    case "promptQueueCleared": {
+      const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
+      return { ...state, promptQueue };
+    }
     case "sessionKnobsSet":
       return { ...state, sessionKnobs: { ...state.sessionKnobs, [event.sessionId]: event.knobs } };
     case "transcriptSeeded":

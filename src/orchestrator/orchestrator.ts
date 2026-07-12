@@ -1745,6 +1745,9 @@ export class Orchestrator {
           .sendPrompt(action.sessionId, action.text, action.parts)
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
+      case "removeQueuedPrompt":
+        this.sessionManager.removeQueuedPrompt(action.sessionId, action.promptId);
+        break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
         // Spec § Cancellation (MUST): pending permission requests resolve

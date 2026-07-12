@@ -101,6 +101,7 @@ export function App({ state }: { state: AgentViewState }) {
           false
         }
         liveSelection={state.liveSelection}
+        queued={active !== null ? (state.promptQueue[active.id] ?? []) : []}
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}

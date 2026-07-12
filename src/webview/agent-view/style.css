@@ -554,6 +554,37 @@ body {
   background: var(--card);
 }
 
+/* Queued prompts (sent mid-turn, waiting for the turn to end) — full-width
+   rows above the context row; removable until they fire. */
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--pb-text-dim);
+  border: 1px dashed var(--pb-border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  margin-bottom: 4px;
+}
+
+.queue-row .txt {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-row .x {
+  cursor: pointer;
+  color: var(--pb-text-faint);
+}
+
+.queue-row .x:hover {
+  color: var(--pb-err);
+}
+
 .ctx-row {
   display: flex;
   gap: 6px;
