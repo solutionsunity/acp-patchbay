@@ -1408,16 +1408,46 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   });
 
   it("a replayed user resource_link mention merges INTO the prompt bubble as @name (G10b)", async () => {
+    // Parts of one message share a messageId on the wire (verified:
+    // claude-agent-acp replays composer positional parts under one id).
     const { h, push, blocks } = await chunkHarness("ch3");
-    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "please read " } });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "please read " }, messageId: "m1" });
     push({
       sessionUpdate: "user_message_chunk",
       content: { type: "resource_link", uri: "file:///ws/a.ts", name: "a.ts" },
+      messageId: "m1",
     });
-    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: " and fix it" } });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: " and fix it" }, messageId: "m1" });
     expect(blocks()).toHaveLength(1);
     expect(blocks()[0]).toMatchObject({ kind: "user", text: "please read @a.ts and fix it" });
     await h.pool.stop("ch3");
+  });
+
+  it("a messageId change splits adjacent user messages — cancelled turns never fuse", async () => {
+    // The cancelled-turn shape: two prompts with nothing between them (the
+    // turn produced no output). Claude additionally interleaves its own
+    // interruption marker as a separate message — three ids, three bubbles.
+    const { h, push, blocks } = await chunkHarness("ch5");
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "in this starting" }, messageId: "m1" });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "[Request interrupted by user]" }, messageId: "m2" });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "again?" }, messageId: "m3" });
+    expect(blocks()).toHaveLength(3);
+    expect(blocks()[0]).toMatchObject({ kind: "user", text: "in this starting" });
+    expect(blocks()[1]).toMatchObject({ kind: "user", text: "[Request interrupted by user]" });
+    expect(blocks()[2]).toMatchObject({ kind: "user", text: "again?" });
+    await h.pool.stop("ch5");
+  });
+
+  it("id-less user chunks never merge — one bubble per message (auggie shape)", async () => {
+    // Agents that omit messageId replay whole messages per chunk; merging
+    // them fused adjacent cancelled prompts into one bubble.
+    const { h, push, blocks } = await chunkHarness("ch6");
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "still same?" } });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "?" } });
+    expect(blocks()).toHaveLength(2);
+    expect(blocks()[0]).toMatchObject({ kind: "user", text: "still same?" });
+    expect(blocks()[1]).toMatchObject({ kind: "user", text: "?" });
+    await h.pool.stop("ch6");
   });
 
   it("an agent resource_link renders as a markdown link in the prose run (G10b)", async () => {

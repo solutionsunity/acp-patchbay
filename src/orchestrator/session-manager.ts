@@ -178,6 +178,11 @@ interface LiveSession {
   /** The replayed-user-prose run (session/load `user_message_chunk`) —
    * live sends never use it (sendPrompt appends its own whole block). */
   activeUserBlockId: string | null;
+  /** The ACP `messageId` the open user run belongs to (ContentChunk: chunks
+   * of one message share it; a change means a new message). Null = the run
+   * was opened by an id-less chunk, which never continues — see the
+   * user_message_chunk arm. */
+  activeUserMessageId: string | null;
   pendingContext: ContextChip[];
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
@@ -232,6 +237,7 @@ function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSes
     activeTextBlockId: null,
     activeThoughtBlockId: null,
     activeUserBlockId: null,
+    activeUserMessageId: null,
     pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
@@ -1533,6 +1539,23 @@ export class SessionManager {
         this.flushReplayBoundary(sessionId, session, emit);
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
+        // Message identity governs the run (ACP ContentChunk.messageId:
+        // chunks of one message share it, a change means a new message —
+        // verified on the wire 2026-07-12: multi-part prompts replay as
+        // several chunks under ONE id; adjacent messages carry distinct
+        // ids). Same id continues the run; a new id — or no id at all —
+        // closes it. Id-less chunks never merging is the one uniform rule
+        // for agents that omit the field: they replay whole messages per
+        // chunk (an agent splitting one message across id-less chunks
+        // would be unreconstructable by any client), and merging them
+        // fused adjacent messages — two cancelled prompts back to back
+        // rendered as one bubble. Type alternation alone cannot tell the
+        // two cases apart; only this field can.
+        const messageId = update.messageId ?? null;
+        if (messageId === null || messageId !== session.activeUserMessageId) {
+          session.activeUserBlockId = null;
+        }
+        session.activeUserMessageId = messageId;
         if (update.content.type === "resource_link") {
           // Our own positional file mentions come back like this on replay
           // (the composer sends them as resource_link parts inline) — so
