@@ -426,7 +426,7 @@ export class Orchestrator {
       },
       onWriteTextFile: async (_agentId, params) => {
         const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
-        if (accepted) await applyFileWrite(params.path, params.content);
+        if (accepted) await this.writeTextFileLive(params.path, params.content);
         return {};
       },
       onCreateTerminal: async (_agentId, params) => {
@@ -1092,6 +1092,30 @@ export class Orchestrator {
     if (open !== undefined) return open.getText();
     const bytes = await vscode.workspace.fs.readFile(uri);
     return Buffer.from(bytes).toString("utf8");
+  }
+
+  /** Live-buffer write — the mirror of readTextFileLive (acp-compliance §12,
+   * W1 resolved): when the file is open in an editor the write lands in that
+   * buffer via WorkspaceEdit, then saves — the user sees the change, it joins
+   * the undo stack, and disk matches the buffer at once. This closes the
+   * divergence window both ways: no more agent write silently lost to a stale
+   * dirty buffer's next save, no more terminal reading a disk the buffer
+   * contradicts. Falls back to a plain disk write when no editor holds the
+   * file. A failed apply throws — the agent must know the write didn't land;
+   * a silent disk fallback would recreate the divergence. */
+  private async writeTextFileLive(path: string, content: string): Promise<void> {
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === path);
+    if (open === undefined) return applyFileWrite(path, content);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(open.uri, new vscode.Range(open.positionAt(0), open.positionAt(open.getText().length)), content);
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      throw new Error(`failed to apply write to the open editor for ${path}`);
+    }
+    // save() resolves false for a non-dirty doc (identical content → no-op
+    // edit), which is success here, not failure — only save a dirty buffer.
+    if (open.isDirty && !(await open.save())) {
+      throw new Error(`failed to save ${path} after write`);
+    }
   }
 
   /** vscode.workspace.fs, shaped to asset-locations.ts's vscode-free FsLike

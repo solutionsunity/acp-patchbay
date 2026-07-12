@@ -174,7 +174,7 @@ SDK 1.1.0 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 | `fs/read_text_file` returns live editor state | ✅ | `orchestrator.ts:readTextFileLive` — open (possibly dirty) buffer wins over disk; "the agent sees what the user sees". |
 | `fs/read_text_file` `line`/`limit` params | ✅ | Fixed 2026-07-11 (G3): `sliceTextFileRead` applies the 1-based line and max-line-count limit after the live-buffer read. |
 | `fs/write_text_file` creates file (MUST) | ✅ | `broker.ts:applyFileWrite` — `mkdir -p` + write. |
-| Write vs. open dirty editor | 🟡 | Write goes to disk; an open dirty buffer for the same path keeps its unsaved content until the user reloads — divergence window. Not a spec violation (spec is silent); watch item W1: route writes through `WorkspaceEdit` when an editor is open. |
+| Write vs. open dirty editor | ✅ | **W1 resolved 2026-07-12**: `orchestrator.ts:writeTextFileLive` — the mirror of `readTextFileLive`. An open editor gets the write via `WorkspaceEdit` + save: visible, undoable, buffer and disk agree at once (previously the disk write silently lost to a stale dirty buffer's next save). No editor → plain disk write as before. Failed apply throws to the agent — a silent disk fallback would recreate the divergence. Covered end-to-end in `test/vscode/live-write.test.ts`. |
 | Permission gating | ✅ | Writes gate through the broker; reads are free by design (recorded stance: read = editor state the user already shows the agent). |
 
 ## 13. Terminals (client-exposed)
@@ -254,7 +254,8 @@ Ordered by severity. Fixed entries stay listed — decisions are recorded, not d
 | G9 | Nit | Terminal truncation counted UTF-16 units, could split surrogates (§13) | **Fixed 2026-07-11** — `tailBytes`: byte accounting, code-point-boundary cut. |
 | G10 | SHOULD | Non-text message content renders as placeholder only (§8) | Open — each type is its own design discussion, priority by what's being floored: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(b)** `resource_link` — name+uri line, optionally openable through the existing path machinery; **(c)** image — needs an actual rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. Not a patch — sequence alongside G5's phase-B rendering work. |
 
-**Watch items:** W1 write-vs-dirty-editor divergence (§12). **Verify:** V1 that the SDK
+**Watch items:** ~~W1 write-vs-dirty-editor divergence (§12)~~ — resolved 2026-07-12
+(`writeTextFileLive`, §12). **Verify:** V1 that the SDK
 surfaces load-replay notifications before the `session/load` response resolves in all
 transports we use (stdio: confirmed by design); V2 `-32601` for unknown methods (§18).
 
