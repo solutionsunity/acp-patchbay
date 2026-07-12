@@ -1533,6 +1533,21 @@ export class SessionManager {
         this.flushReplayBoundary(sessionId, session, emit);
         session.activeTextBlockId = null;
         session.activeThoughtBlockId = null;
+        if (update.content.type === "resource_link") {
+          // Our own positional file mentions come back like this on replay
+          // (the composer sends them as resource_link parts inline) — so
+          // render the mention the way the user typed it, INTO the same
+          // prose run: a placeholder block here would sever one prompt
+          // into bubble + placeholder + bubble.
+          session.activeUserBlockId ??= newBlockId("user");
+          emit({
+            kind: "userTextDelta",
+            sessionId,
+            blockId: session.activeUserBlockId,
+            text: `@${update.content.name}`,
+          });
+          break;
+        }
         if (update.content.type !== "text") {
           // Honesty placeholder (acp-compliance.md G4): unrendered content
           // says so in place — its own closed block, never a silent drop.
@@ -1545,6 +1560,8 @@ export class SessionManager {
           });
           break;
         }
+        // whitespace-only never opens a run (see the thought chunk below)
+        if (session.activeUserBlockId === null && update.content.text.trim() === "") break;
         if (harnessEnvelopeTag(update.content.text) !== null) {
           // Harness-injected envelope riding the user role: its own closed,
           // flagged block — never merged into the prose run (an injection
@@ -1570,10 +1587,24 @@ export class SessionManager {
         break;
       }
       case "agent_message_chunk": {
-        session.activeThoughtBlockId = null; // prose interrupts the thought run
-        session.activeUserBlockId = null; // …and closes a replayed user run
+        if (update.content.type === "resource_link") {
+          // Renderable, so render it (G10b): a markdown link into the prose
+          // run — never a placeholder for content the reader can use.
+          session.activeThoughtBlockId = null;
+          session.activeUserBlockId = null;
+          session.activeTextBlockId ??= newBlockId("text");
+          emit({
+            kind: "agentTextDelta",
+            sessionId,
+            blockId: session.activeTextBlockId,
+            text: `[${update.content.name}](${update.content.uri})`,
+          });
+          break;
+        }
         if (update.content.type !== "text") {
           // Same honesty placeholder as the user chunk above (G4).
+          session.activeThoughtBlockId = null;
+          session.activeUserBlockId = null;
           session.activeTextBlockId = null;
           emit({
             kind: "agentTextDelta",
@@ -1583,6 +1614,10 @@ export class SessionManager {
           });
           break;
         }
+        // whitespace-only never opens a run (see the thought chunk below)
+        if (session.activeTextBlockId === null && update.content.text.trim() === "") break;
+        session.activeThoughtBlockId = null; // prose interrupts the thought run
+        session.activeUserBlockId = null; // …and closes a replayed user run
         session.activeTextBlockId ??= newBlockId("text");
         emit({
           kind: "agentTextDelta",
@@ -1593,7 +1628,26 @@ export class SessionManager {
         break;
       }
       case "agent_thought_chunk": {
-        if (update.content.type !== "text") return;
+        if (update.content.type !== "text") {
+          // Same honesty placeholder as the message chunks (G4) — this was
+          // a silent drop once, the one chunk path that didn't say so.
+          session.activeTextBlockId = null;
+          session.activeUserBlockId = null;
+          session.activeThoughtBlockId = null;
+          emit({
+            kind: "agentThoughtDelta",
+            sessionId,
+            blockId: newBlockId("thought"),
+            text: `*[${update.content.type} content — not rendered]*`,
+          });
+          break;
+        }
+        // Never OPEN a run on whitespace-only (observed: replayed thinking
+        // can arrive as empty chunks — a blank "Thought" accordion
+        // otherwise); an already-open run still takes it, mid-stream
+        // spacing is real content. Skipping entirely also means a no-op
+        // chunk never severs the neighboring prose run.
+        if (session.activeThoughtBlockId === null && update.content.text.trim() === "") break;
         session.activeTextBlockId = null; // thinking interrupts the prose run
         session.activeUserBlockId = null;
         session.activeThoughtBlockId ??= newBlockId("thought");

@@ -1365,6 +1365,74 @@ describe("session history (list / resume / delete)", () => {
   });
 });
 
+describe("chunk rendering honesty (G4/G10/G11)", () => {
+  async function chunkHarness(agentId: string) {
+    const h = harness();
+    await h.pool.connect(spec({ declare: {}, turn: [] }, agentId));
+    const sessionId = await h.sessionManager.createSession(agentId, "Fake Agent", cwd);
+    const push = (update: Record<string, unknown>) =>
+      h.sessionManager.handleUpdate(agentId, {
+        sessionId,
+        update,
+      } as Parameters<typeof h.sessionManager.handleUpdate>[1]);
+    return { h, sessionId, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
+  }
+
+  it("whitespace-only chunks never open a run — no blank Thought accordion (G11)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch1");
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "" } });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "\n\n  " } });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } });
+    expect(blocks()).toEqual([]);
+    // …but an open run still takes mid-stream whitespace: real spacing
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "part one" } });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "\n\n" } });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "part two" } });
+    expect(blocks()).toHaveLength(1);
+    expect(textOf(blocks()[0])).toBe("part one\n\npart two");
+    // and a no-op chunk must not sever a neighboring prose run
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answer " } });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "" } });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "continues" } });
+    expect(blocks()).toHaveLength(2);
+    expect(textOf(blocks()[1])).toBe("answer continues");
+    await h.pool.stop("ch1");
+  });
+
+  it("non-text thought content gets the type-labeled placeholder, never a silent drop (G11)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch2");
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "image", data: "x", mimeType: "image/png" } });
+    expect(blocks()).toHaveLength(1);
+    expect(blocks()[0]).toMatchObject({ kind: "thought", text: "*[image content — not rendered]*" });
+    await h.pool.stop("ch2");
+  });
+
+  it("a replayed user resource_link mention merges INTO the prompt bubble as @name (G10b)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch3");
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "please read " } });
+    push({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "resource_link", uri: "file:///ws/a.ts", name: "a.ts" },
+    });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: " and fix it" } });
+    expect(blocks()).toHaveLength(1);
+    expect(blocks()[0]).toMatchObject({ kind: "user", text: "please read @a.ts and fix it" });
+    await h.pool.stop("ch3");
+  });
+
+  it("an agent resource_link renders as a markdown link in the prose run (G10b)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch4");
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "see " } });
+    push({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "resource_link", uri: "file:///ws/b.ts", name: "b.ts" },
+    });
+    expect(blocks()).toHaveLength(1);
+    expect(textOf(blocks()[0])).toBe("see [b.ts](file:///ws/b.ts)");
+    await h.pool.stop("ch4");
+  });
+});
+
 describe("harnessEnvelopeTag — injected user-role envelope classification", () => {
   it("matches a single harness envelope (nested foreign tags included)", () => {
     const text =

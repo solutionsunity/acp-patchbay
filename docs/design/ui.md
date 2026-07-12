@@ -88,7 +88,7 @@ texts (locations-only, terminal-side edits) get no ± — absence over fake.
 | User message | right-aligned bubble | plain content |
 | Agent text | flat, no bubble | markdown, streams live |
 | Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text |
-| Plan card | 📋 | inline snapshot of the plan at that point in the transcript (the strip is the live one) |
+| Plan card | 📋 | *not built — refined 2026-07-12*: plan updates fire per task-status change, so per-update snapshot cards would spam the transcript; the read-out strip is the one plan surface (live, whole-replace per spec). Revisit only if a real need for point-in-time plan history shows |
 | Tool call | 🛠 card | title + spinner while running → ✓/✗; collapsible |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header |
 | Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when the view is hidden the same request surfaces as a native notification |
