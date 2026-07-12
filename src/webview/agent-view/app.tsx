@@ -18,12 +18,24 @@ import { Button } from "@/components/ui/button";
 
 type Drawer = "agents" | "sessions" | null;
 
-export function App({ state }: { state: AgentViewState }) {
+export function App({
+  state,
+  pinnedSessionId,
+}: {
+  state: AgentViewState;
+  /** Detached session panel: render exactly this session, ignore the shared
+   * active-session pointer, and drop the shell furniture (header, drawers,
+   * new-chat) — those belong to the full view. */
+  pinnedSessionId?: string;
+}) {
   const send = useActions();
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const active = state.sessions.find((s) => s.id === state.activeSessionId) ?? null;
+  const pinned = pinnedSessionId !== undefined;
+  const active =
+    state.sessions.find((s) => s.id === (pinned ? pinnedSessionId : state.activeSessionId)) ??
+    null;
   const activeAgent = active ? (state.agents.find((a) => a.id === active.agentId) ?? null) : null;
 
   // The one transcript derivation (view-model.ts), hoisted here because two
@@ -37,6 +49,17 @@ export function App({ state }: { state: AgentViewState }) {
   );
   // `?? true` guards snapshots minted before the preferences field existed.
   const showStats = state.preferences?.composerStats ?? true;
+
+  // A pinned panel whose session closed is about to be disposed by the host
+  // (AgentPanelHost follows the sessions list) — say so for the render or
+  // two it exists.
+  if (pinned && active === null) {
+    return (
+      <div className="sidebar">
+        <div className="p-4 text-sm opacity-70">This session is closed.</div>
+      </div>
+    );
+  }
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -58,9 +81,11 @@ export function App({ state }: { state: AgentViewState }) {
 
   return (
     <div className="sidebar">
-      <Header agent={activeAgent} onSessions={() => setDrawer("sessions")} onNew={newChat} />
+      {!pinned && (
+        <Header agent={activeAgent} onSessions={() => setDrawer("sessions")} onNew={newChat} />
+      )}
       {active !== null && (
-        <SessionRow session={active} onTitle={() => setDrawer("sessions")} />
+        <SessionRow session={active} onTitle={pinned ? () => {} : () => setDrawer("sessions")} />
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (
         <div className="crash-banner">

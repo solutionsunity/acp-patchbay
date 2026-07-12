@@ -61,6 +61,10 @@ export type Action =
    * live stores and answer with dataInventoryChanged. */
   | { kind: "refreshDataInventory" }
   | { kind: "switchSession"; sessionId: string }
+  /** Open the session in its own editor panel, floated to a new (auxiliary)
+   * window — detached from the sidebar, multi-screen usable. Does not touch
+   * the shared active-session pointer. */
+  | { kind: "detachSession"; sessionId: string }
   | { kind: "closeSession"; sessionId: string }
   /** `text` is the readable form (transcript + title derivation). `parts`,
    * when present, is the same content with inline file mentions kept

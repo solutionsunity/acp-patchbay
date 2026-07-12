@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { Orchestrator } from "./orchestrator/orchestrator";
-import { AgentViewProvider, SettingsPanelHost } from "./orchestrator/webview-host";
+import { AgentPanelHost, AgentViewProvider, SettingsPanelHost } from "./orchestrator/webview-host";
 
 export interface ExtensionInternal {
   orchestrator: Orchestrator;
@@ -26,6 +26,14 @@ export function activate(context: vscode.ExtensionContext): {
     context.extensionUri,
     orchestrator.settings,
   );
+  // Detached agent-view surfaces (editor panels floated to aux windows) —
+  // same channel as the sidebar; pinned panels follow the sessions list
+  // (dispose on close, retitle on rename) and are idle-reaper exempt.
+  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView);
+  orchestrator.pinnedSessions = () => agentPanelHost.pinnedSessionIds();
+  const unsubscribePanelSync = orchestrator.agentView.onChange(() =>
+    agentPanelHost.syncSessions(orchestrator.agentView.current.sessions),
+  );
 
   context.subscriptions.push(
     orchestrator,
@@ -38,6 +46,13 @@ export function activate(context: vscode.ExtensionContext): {
     vscode.commands.registerCommand("acpPatchbay.openSettings", () =>
       settingsPanelHost.openOrReveal(),
     ),
+    { dispose: unsubscribePanelSync },
+    vscode.commands.registerCommand("acpPatchbay.detachAgentView", () => agentPanelHost.openMain()),
+    vscode.commands.registerCommand("acpPatchbay.detachSession", (sessionId: string) => {
+      const session = orchestrator.agentView.current.sessions.find((s) => s.id === sessionId);
+      if (session === undefined) return;
+      void agentPanelHost.openPinned(session.id, session.title);
+    }),
     vscode.commands.registerCommand("acpPatchbay.newSession", () => orchestrator.newSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.switchSession", () => orchestrator.switchSessionCommand()),
     vscode.commands.registerCommand("acpPatchbay.connectAgent", () => orchestrator.connectAgentCommand()),

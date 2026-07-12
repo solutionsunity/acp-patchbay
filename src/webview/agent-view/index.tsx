@@ -21,4 +21,14 @@ installErrorCollector((message) =>
   channel.sendAction({ kind: "reportWebviewError", view: "agent-view", message }),
 );
 syncDarkClass();
-mount(channel, App, document.getElementById("root")!);
+
+// Same bundle, two hostings: the sidebar/full panel, or a detached panel
+// pinned to one session (meta tag authored by webview-host.ts).
+const pinMeta = document
+  .querySelector('meta[name="patchbay-pin-session"]')
+  ?.getAttribute("content");
+const pinnedSessionId = pinMeta != null ? decodeURIComponent(pinMeta) : undefined;
+const PinnableApp = ({ state }: { state: AgentViewState }) => (
+  <App state={state} pinnedSessionId={pinnedSessionId} />
+);
+mount(channel, PinnableApp, document.getElementById("root")!);

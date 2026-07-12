@@ -35,6 +35,9 @@ export function webviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   bundle: Bundle,
+  /** Pins the agent-view bundle to one session (detached session panel) —
+   * rides in as a meta tag, URI-encoded (session ids are agent-authored). */
+  pinSessionId?: string,
 ): string {
   const script = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "out", `${bundle}.js`),
@@ -58,6 +61,7 @@ export function webviewHtml(
         content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="patchbay-out-base" content="${outBase}/">
+${pinSessionId !== undefined ? `  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinSessionId)}">\n` : ""}
   <link rel="stylesheet" href="${codiconStyle}">
   <link rel="stylesheet" href="${style}">
 </head>
@@ -75,12 +79,13 @@ function bind(
   extensionUri: vscode.Uri,
   bundle: Bundle,
   disposables: vscode.Disposable[],
+  pinSessionId?: string,
 ): void {
   webview.options = {
     enableScripts: true,
     localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out")],
   };
-  webview.html = webviewHtml(webview, extensionUri, bundle);
+  webview.html = webviewHtml(webview, extensionUri, bundle, pinSessionId);
   channel.attach(webview);
   disposables.push(
     webview.onDidReceiveMessage((msg: ViewToHost) =>
@@ -110,6 +115,93 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
       this.channel.detach(webview);
       for (const d of disposables) d.dispose();
     });
+  }
+}
+
+/** Detached agent-view surfaces (editor-area WebviewPanels, floatable into
+ * auxiliary windows for multi-screen): one optional full agent view, plus
+ * any number of per-session pinned panels. All of them are ordinary
+ * render-only webviews on the same multi-view channel — the sidebar keeps
+ * working alongside; a pinned panel merely renders one session and ignores
+ * the shared active-session pointer. */
+export class AgentPanelHost {
+  private main: vscode.WebviewPanel | null = null;
+  private pinned = new Map<string, vscode.WebviewPanel>();
+
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly channel: ChannelEndpoint,
+  ) {}
+
+  /** The reaper-exemption surface: a session shown in its own window is
+   * being looked at, active-pointer or not. */
+  pinnedSessionIds(): readonly string[] {
+    return [...this.pinned.keys()];
+  }
+
+  /** The whole agent view as an editor panel, floated into a new window. */
+  async openMain(): Promise<void> {
+    if (this.main !== null) {
+      this.main.reveal();
+      return;
+    }
+    this.main = this.createPanel("Patchbay — Agents", undefined);
+    this.main.onDidDispose(() => (this.main = null));
+    await this.floatActiveEditor();
+  }
+
+  /** One session in its own window; a second open reveals the existing one. */
+  async openPinned(sessionId: string, title: string): Promise<void> {
+    const existing = this.pinned.get(sessionId);
+    if (existing !== undefined) {
+      existing.reveal();
+      return;
+    }
+    const panel = this.createPanel(title, sessionId);
+    this.pinned.set(sessionId, panel);
+    panel.onDidDispose(() => {
+      if (this.pinned.get(sessionId) === panel) this.pinned.delete(sessionId);
+    });
+    await this.floatActiveEditor();
+  }
+
+  /** Mirror of the sessions list (wired to channel.onChange in extension.ts):
+   * a pinned panel whose session closed disposes — nothing to render, and
+   * agent-truth says the session is gone; titles follow renames. */
+  syncSessions(sessions: ReadonlyArray<{ id: string; title: string }>): void {
+    for (const [sessionId, panel] of [...this.pinned]) {
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session === undefined) panel.dispose();
+      else if (panel.title !== session.title) panel.title = session.title;
+    }
+  }
+
+  private createPanel(title: string, pinSessionId: string | undefined): vscode.WebviewPanel {
+    const panel = vscode.window.createWebviewPanel(
+      "acpPatchbay.agentPanel",
+      title,
+      vscode.ViewColumn.Active,
+      { enableScripts: true },
+    );
+    const disposables: vscode.Disposable[] = [];
+    const webview = panel.webview; // .webview throws once disposed — capture now
+    bind(webview, this.channel, this.extensionUri, "agent-view", disposables, pinSessionId);
+    panel.onDidDispose(() => {
+      this.channel.detach(webview);
+      for (const d of disposables) d.dispose();
+    });
+    return panel;
+  }
+
+  /** The just-created panel is the active editor — moving it out gives the
+   * detached, multi-screen window in one gesture. Best-effort: on a VS Code
+   * without auxiliary windows the panel simply stays an editor tab. */
+  private async floatActiveEditor(): Promise<void> {
+    try {
+      await vscode.commands.executeCommand("workbench.action.moveEditorToNewWindow");
+    } catch {
+      /* editor tab is the honest fallback */
+    }
   }
 }
 

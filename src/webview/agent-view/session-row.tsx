@@ -24,6 +24,9 @@ export function SessionActions({ session }: { session: SessionSummary }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => send({ kind: "detachSession", sessionId: session.id })}>
+          Open in new window
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}>
           Reload from agent
         </DropdownMenuItem>

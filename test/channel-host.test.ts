@@ -63,6 +63,35 @@ describe("ChannelHost", () => {
     });
   });
 
+  // Detached panels: several webviews mirror one canonical state. Patches
+  // broadcast; a snapshot rebroadcasts to all (it discards the shared patch
+  // buffer, so a one-view snapshot would silently starve the others).
+  it("broadcasts patches and snapshots to every attached view", () => {
+    const { host } = makeHost();
+    const sidebar = new FakeWebview();
+    const panel = new FakeWebview();
+    host.attach(sidebar);
+    host.attach(panel);
+
+    host.emit(upsert("a"));
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    expect(sidebar.last()).toMatchObject({ kind: "patch", rev: 1 });
+    expect(panel.last()).toMatchObject({ kind: "patch", rev: 1 });
+
+    // one view remounting resnapshots — both views land on the same rev
+    host.handleViewMessage({ kind: "resnapshot" });
+    expect(sidebar.last()).toMatchObject({ kind: "snapshot", rev: 1 });
+    expect(panel.last()).toMatchObject({ kind: "snapshot", rev: 1 });
+
+    // detaching one leaves the other attached and receiving
+    host.detach(panel);
+    expect(host.attached).toBe(true);
+    host.emit(upsert("b"));
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    expect(sidebar.last()).toMatchObject({ kind: "patch", rev: 2 });
+    expect(panel.last()).toMatchObject({ kind: "snapshot", rev: 1 });
+  });
+
   it("sends patches with consecutive revisions", () => {
     const { host } = makeHost();
     const view = new FakeWebview();

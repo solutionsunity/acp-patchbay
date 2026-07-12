@@ -153,6 +153,10 @@ export class Orchestrator {
    * signal, P6); defaults to "visible" so native notifications don't fire
    * spuriously before that's connected. */
   isAgentViewVisible: () => boolean = () => true;
+  /** Sessions shown in their own detached panels (AgentPanelHost, assigned
+   * in extension.ts) — reaper-exempt like the active-in-view session: a
+   * session in its own window is being looked at. */
+  pinnedSessions: () => readonly string[] = () => [];
   private statusBarItem!: vscode.StatusBarItem;
   /** Wire log (Audit page): channel and status pill exist only while it's
    * ever been / is on — a transient state gets transient surfaces. */
@@ -568,7 +572,9 @@ export class Orchestrator {
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         isDeleteUsed: (agentId) =>
           this.agentView.current.capabilities[agentId]?.["session.delete"]?.used ?? false,
-        isActiveSession: (sessionId) => this.agentView.current.activeSessionId === sessionId,
+        isActiveSession: (sessionId) =>
+          this.agentView.current.activeSessionId === sessionId ||
+          this.pinnedSessions().includes(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
       },
@@ -1744,6 +1750,13 @@ export class Orchestrator {
         void this.sessionManager
           .sendPrompt(action.sessionId, action.text, action.parts)
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
+        break;
+      case "detachSession":
+        // The panel host lives in extension.ts (like Settings) — reach it by
+        // command. A detached session is being opened to be used: connect,
+        // same as a session click, but without stealing the active pointer.
+        void vscode.commands.executeCommand("acpPatchbay.detachSession", action.sessionId);
+        void this.connectForSession(action.sessionId);
         break;
       case "removeQueuedPrompt":
         this.sessionManager.removeQueuedPrompt(action.sessionId, action.promptId);

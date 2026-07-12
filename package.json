@@ -129,6 +129,12 @@
         "command": "acpPatchbay.wireLog",
         "title": "Wire Log — Toggle / Extend",
         "category": "Patchbay"
+      },
+      {
+        "command": "acpPatchbay.detachAgentView",
+        "title": "Open Agent View in New Window",
+        "category": "Patchbay",
+        "icon": "$(multiple-windows)"
       }
     ],
     "menus": {
@@ -142,6 +148,11 @@
       "view/title": [
         {
           "command": "acpPatchbay.openSettings",
+          "when": "view == acpPatchbay.agentView",
+          "group": "navigation"
+        },
+        {
+          "command": "acpPatchbay.detachAgentView",
           "when": "view == acpPatchbay.agentView",
           "group": "navigation"
         }

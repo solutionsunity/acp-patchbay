@@ -23,7 +23,11 @@ export interface ChannelEndpoint {
 export class ChannelHost<S, E> {
   private state: S;
   private rev = 0;
-  private view: WebviewLike | null = null;
+  /** Every attached webview mirrors the same canonical state — the sidebar
+   * view, a detached editor panel, pinned session panels. Patches broadcast;
+   * a snapshot also broadcasts (it discards the shared patch buffer, so a
+   * one-view snapshot would silently starve the others). */
+  private views = new Set<WebviewLike>();
   private lastAckedRev = -1;
   private readonly bus: CoalescingBus<E>;
   private ackWaiters: Array<{ rev: number; resolve: (rev: number) => void }> = [];
@@ -95,19 +99,17 @@ export class ChannelHost<S, E> {
   /** True while a webview is attached — the disposal-settled signal the
    * electron tests poll instead of guessing with fixed sleeps. */
   get attached(): boolean {
-    return this.view !== null;
+    return this.views.size > 0;
   }
 
   attach(view: WebviewLike): void {
-    this.view = view;
+    this.views.add(view);
     this.lastAckedRev = -1;
   }
 
   detach(view: WebviewLike): void {
-    if (this.view === view) {
-      this.view = null;
-      this.lastAckedRev = -1;
-    }
+    this.views.delete(view);
+    if (this.views.size === 0) this.lastAckedRev = -1;
   }
 
   handleViewMessage(msg: ViewToHost): void {
@@ -139,7 +141,7 @@ export class ChannelHost<S, E> {
   }
 
   private sendSnapshot(): void {
-    if (this.view === null) return;
+    if (this.views.size === 0) return;
     // Buffered events are already folded into canonical state — a patch after
     // this snapshot would double-apply them. Recovery is always "resnapshot".
     this.bus.discard();
@@ -148,13 +150,24 @@ export class ChannelHost<S, E> {
       rev: this.rev,
       state: this.state,
     };
-    void this.view.postMessage(msg);
+    this.broadcast(msg);
   }
 
   private sendPatch(events: E[]): void {
     this.rev += 1;
-    if (this.view === null) return; // canonical rev still advances; remount resnapshots
-    const msg: HostToView<S, E> = { kind: "patch", rev: this.rev, events };
-    void this.view.postMessage(msg);
+    if (this.views.size === 0) return; // canonical rev still advances; remount resnapshots
+    this.broadcast({ kind: "patch", rev: this.rev, events });
+  }
+
+  private broadcast(msg: HostToView<S, E>): void {
+    for (const view of this.views) {
+      // A disposed-but-not-yet-detached webview throws on postMessage
+      // (dispose events race attach on remount) — its detach follows.
+      try {
+        void view.postMessage(msg);
+      } catch {
+        /* disposed race */
+      }
+    }
   }
 }
