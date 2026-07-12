@@ -178,7 +178,7 @@
     "check": "node scripts/check.mjs"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^1.1.0",
+    "@agentclientprotocol/sdk": "^1.2.1",
     "@lexical/react": "^0.46.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@radix-ui/react-alert-dialog": "^1.1.19",

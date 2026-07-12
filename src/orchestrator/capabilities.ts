@@ -59,10 +59,22 @@ export function declaredFromInitialize(
  * drift. `elicitation` stays false until P7 wires the adapter — declaring it
  * earlier would be the exact lie bet #2 exists to prevent.
  */
-const CLIENT_DECLARES: { fs: boolean; terminal: boolean; elicitation: boolean } = {
+const CLIENT_DECLARES: {
+  fs: boolean;
+  terminal: boolean;
+  elicitation: boolean;
+  sessionConfigOptions: boolean;
+} = {
   fs: true,
   terminal: true,
   elicitation: false,
+  // Stabilized in SDK 1.2.1 (compliance G14): patchbay consumes config
+  // options end to end — knobs.ts normalizes select AND boolean types — so
+  // not declaring was the honesty gap in reverse: an agent honoring
+  // "omitted = unsupported" would have withheld the whole knob surface. No
+  // matrix row: the row list is hand-picked (capability-verification.md),
+  // and this claim's visible proof is the composer knob strip itself.
+  sessionConfigOptions: true,
 };
 
 /** CLIENT_DECLARES in its wire form. Elicitation is UNSTABLE and
@@ -75,6 +87,11 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     fs: { readTextFile: CLIENT_DECLARES.fs, writeTextFile: CLIENT_DECLARES.fs },
     terminal: CLIENT_DECLARES.terminal,
     ...(CLIENT_DECLARES.elicitation ? { elicitation: {} } : {}),
+    // `{ boolean: {} }` = "agents may include type:'boolean' entries" —
+    // knobs.ts supports them, so the claim is the truth.
+    ...(CLIENT_DECLARES.sessionConfigOptions
+      ? { session: { configOptions: { boolean: {} } } }
+      : {}),
     // Adopted _meta extensions (meta.ts — the declare flags there are the
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
