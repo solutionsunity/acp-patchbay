@@ -803,6 +803,9 @@ body {
    * light themes, lighter in dark) — the input-shell keeps --pb-panel, so
    * the prompt box reads as its own surface on top of the composer */
   background: var(--card);
+  /* the foot's narrow-width queries measure THIS box, not the window —
+   * detached panels and sidebar splits size the composer, not the viewport */
+  container-type: inline-size;
 }
 
 /* Queued prompts (sent mid-turn, waiting for the turn to end) — full-width
@@ -964,6 +967,35 @@ body {
   /* sits on the composer surface now, below the input-shell — the
    * composer's own side padding frames it, no bottom inset needed */
   padding: 4px 0 0;
+}
+
+/* Narrow composer: the foot's read-outs (composer-stats) relocate to their
+ * own line ABOVE the controls row — controls (knobs, send) never leave the
+ * bottom edge, and Send keeps the bottom-right anchor at every width.
+ * Read-outs above, controls below: the same vertical grammar as the
+ * read-out strip over the composer. 480px ≈ the worst realistic single row
+ * (full knob set + every counter lit) at default font; when stats are
+ * hidden (composerStats pref, fresh session) nothing renders and the foot
+ * stays one row at any width. */
+@container (max-width: 480px) {
+  .input-foot {
+    flex-wrap: wrap;
+  }
+  .input-foot .composer-stats {
+    order: -1;
+    flex-basis: 100%;
+    justify-content: flex-end; /* stays in the right visual column it owned */
+    margin-right: 0; /* the mr-6 send-button air is a same-row concern */
+  }
+}
+
+/* Deep-narrow: the knob row itself degrades by truncation — labels
+ * ellipsize (the trigger's own line-clamp takes over once max-width binds),
+ * never by pushing Send off-screen. */
+@container (max-width: 260px) {
+  .knob [data-slot="select-trigger"] {
+    max-width: 88px;
+  }
 }
 
 .knob {
