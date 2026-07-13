@@ -1450,6 +1450,49 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch6");
   });
 
+  it("a messageId change splits adjacent agent messages — a closing fence never glues to the next heading", async () => {
+    // The mermaid-corruption shape: message N ends with ``` (no trailing
+    // newline — models end fenced blocks at the fence), message N+1 opens
+    // with a heading. Fused into one block, the glued ```## line un-closes
+    // the fence and the code block swallows the following prose.
+    const { h, push, blocks } = await chunkHarness("ch7");
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "```mermaid\nflowchart TD\n" }, messageId: "a1" });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "A --> B\n```" }, messageId: "a1" });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "## 4. Next section" }, messageId: "a2" });
+    expect(blocks()).toHaveLength(2);
+    expect(textOf(blocks()[0])).toBe("```mermaid\nflowchart TD\nA --> B\n```");
+    expect(textOf(blocks()[1])).toBe("## 4. Next section");
+    await h.pool.stop("ch7");
+  });
+
+  it("a messageId change splits adjacent thought messages the same way", async () => {
+    const { h, push, blocks } = await chunkHarness("ch8");
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "first thought" }, messageId: "t1" });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "second thought" }, messageId: "t2" });
+    expect(blocks()).toHaveLength(2);
+    expect(textOf(blocks()[0])).toBe("first thought");
+    expect(textOf(blocks()[1])).toBe("second thought");
+    await h.pool.stop("ch8");
+  });
+
+  it("id-less agent chunks keep merging — no boundary on the wire means no guessed split", async () => {
+    // Live they're stream deltas; replayed they may lawfully be the recorded
+    // chunk log played back. Splitting on a guess shreds prose mid-fence —
+    // only a proven messageId change splits (runBlockFor).
+    const { h, push, blocks } = await chunkHarness("ch9");
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "one " } });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "message" } });
+    expect(blocks()).toHaveLength(1);
+    expect(textOf(blocks()[0])).toBe("one message");
+    // …and an id arriving mid-run pins the run: the next id change splits
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " with id" }, messageId: "a1" });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "new message" }, messageId: "a2" });
+    expect(blocks()).toHaveLength(2);
+    expect(textOf(blocks()[0])).toBe("one message with id");
+    expect(textOf(blocks()[1])).toBe("new message");
+    await h.pool.stop("ch9");
+  });
+
   it("an agent resource_link renders as a markdown link in the prose run (G10b)", async () => {
     const { h, push, blocks } = await chunkHarness("ch4");
     push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "see " } });

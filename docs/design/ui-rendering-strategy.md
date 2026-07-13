@@ -220,11 +220,18 @@ type Block =
 
 Rules for appending vs. updating:
 
-- **Text/thought chunks**: append to the *last* block if it's the same type and
-  nothing has interrupted it since (no tool call in between); otherwise start a new
-  block. This merges "stream / stream" into one continuous flowing paragraph
-  instead of fragmenting every chunk into its own component — a common bug in other
-  ACP clients.
+- **Text/thought chunks**: append to the *last* block if it's the same type,
+  nothing has interrupted it since (no tool call in between), and message identity
+  continues — two non-null `ContentChunk.messageId`s that differ mean a new message
+  and split the block (fused boundaries corrupt markdown: a message ending ``` `` ``
+  glued to the next message's heading un-closes the fence). Id-less chunks keep
+  merging: no boundary on the wire means no guessed split (live they're stream
+  deltas; replayed they may lawfully be the recorded chunk log). User chunks are
+  stricter — id-less never merges (whole-message-per-chunk, wire-verified). One
+  gate owns this rule: `runBlockFor`, session-manager.ts. This merges "stream /
+  stream" into one continuous flowing paragraph instead of fragmenting every chunk
+  into its own component — a common bug in other ACP clients — without fusing what
+  the wire proves separate.
 - **Tool calls are updated in place, never appended twice.** `tool_call` creates the
   block keyed by `tool_call_id`; a later `tool_call_update` for the same ID mutates
   that same block's `status`/`output`, it does not create a second card. This is

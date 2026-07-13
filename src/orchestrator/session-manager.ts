@@ -182,16 +182,12 @@ interface LiveSession {
   /** True once auto-derived from the first prompt, or explicitly renamed —
    * either way, later auto-titling must not clobber it again. */
   titled: boolean;
-  activeTextBlockId: string | null;
-  activeThoughtBlockId: string | null;
-  /** The replayed-user-prose run (session/load `user_message_chunk`) —
-   * live sends never use it (sendPrompt appends its own whole block). */
-  activeUserBlockId: string | null;
-  /** The ACP `messageId` the open user run belongs to (ContentChunk: chunks
-   * of one message share it; a change means a new message). Null = the run
-   * was opened by an id-less chunk, which never continues — see the
-   * user_message_chunk arm. */
-  activeUserMessageId: string | null;
+  /** The at-most-one open prose run — every chunk arm continues or replaces
+   * it through `runBlockFor` (the one place the continuation rule lives);
+   * everything that interrupts prose (a tool call, a placeholder, a prompt
+   * send, a re-attach) closes it in one assignment. `messageId` is the ACP
+   * ContentChunk id the run belongs to (null = opened by an id-less chunk). */
+  openRun: { channel: RunChannel; blockId: string; messageId: string | null } | null;
   pendingContext: ContextChip[];
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
@@ -238,15 +234,16 @@ interface LiveSession {
   userModeSetPending: boolean;
 }
 
+/** The chunk families that render as prose runs — doubles as the block-id
+ * prefix each family's blocks carry. */
+type RunChannel = "user" | "text" | "thought";
+
 function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSession {
   return {
     agentId,
     poolKey,
     titled,
-    activeTextBlockId: null,
-    activeThoughtBlockId: null,
-    activeUserBlockId: null,
-    activeUserMessageId: null,
+    openRun: null,
     pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
@@ -1136,9 +1133,7 @@ export class SessionManager {
     try {
       let knobs: NormalizedKnobs;
       if (via === "load") {
-        session.activeTextBlockId = null;
-        session.activeThoughtBlockId = null;
-        session.activeUserBlockId = null;
+        session.openRun = null;
         knobs = await this.loadSilently(sessionId, session.poolKey, session.agentId);
       } else {
         ({ knobs } = await this.attachSession({ via, sessionId }, session.poolKey, session.agentId));
@@ -1233,9 +1228,7 @@ export class SessionManager {
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
     await this.ensureAttached(sessionId, agentId);
     const session = this.sessions.get(sessionId)!;
-    session.activeTextBlockId = null;
-    session.activeThoughtBlockId = null;
-    session.activeUserBlockId = null;
+    session.openRun = null;
     session.inFlight = true;
     session.everPrompted = true;
     session.lastActivityAt = Date.now();
@@ -1541,6 +1534,59 @@ export class SessionManager {
     return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
   }
 
+  /** The one prose-run gate: every chunk arm asks it where its text lands.
+   * Returns the block id to append to, or null for a whitespace-only chunk
+   * with no run to continue — dropped, deliberately without touching the
+   * open run (a no-op chunk never severs neighboring prose, and never OPENS
+   * a run either: replayed thinking arrives as empty chunks — a blank
+   * Thought accordion otherwise; an already-open run still takes it,
+   * mid-stream spacing is real content).
+   *
+   * A chunk continues the open run iff the channel matches and message
+   * identity continues (ACP ContentChunk.messageId: chunks of one message
+   * share it, a change means a new message — wire-verified 2026-07-12).
+   * Two non-null ids decide alone: equal continues, different splits — a
+   * fused boundary corrupts markdown (message N ending ``` glued to message
+   * N+1's heading un-closes the fence). With an id missing on either side
+   * the channels honestly differ:
+   * - user: never continues. Every user chunk that reaches its arm is a
+   *   whole message — live sends render via sendPrompt, live echoes die at
+   *   the inFlight guard, and id-less replay is whole-message-per-chunk
+   *   (auggie, wire-verified: merging fused adjacent cancelled prompts).
+   * - text/thought: always continues. An id-less agent wire carries no
+   *   boundary at all, and both of its realities demand merging: live
+   *   chunks are stream deltas of the in-flight turn, and an id-less
+   *   replay may lawfully be the recorded chunk log played back (our own
+   *   fake agent does exactly that) — splitting on a guess shreds prose
+   *   mid-fence, strictly worse than fusing. The cost is honest and open:
+   *   an id-less agent's real message boundaries stay invisible until a
+   *   wire capture proves its replay granularity (auggie's agent-chunk
+   *   side is uncaptured — dossier note when it lands). */
+  private runBlockFor(
+    sessionId: string,
+    session: LiveSession,
+    channel: RunChannel,
+    messageId: string | null,
+    text: string,
+  ): string | null {
+    const run = session.openRun;
+    if (run !== null && run.channel === channel) {
+      const continues =
+        run.messageId !== null && messageId !== null
+          ? run.messageId === messageId
+          : channel !== "user";
+      if (continues) {
+        // an id arriving mid-run pins the run to it (id-less opener, ids
+        // later) so the NEXT id change still splits
+        if (messageId !== null) run.messageId = messageId;
+        return run.blockId;
+      }
+    }
+    if (text.trim() === "") return null;
+    session.openRun = { channel, blockId: newBlockId(channel), messageId };
+    return session.openRun.blockId;
+  }
+
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
   handleUpdate(_agentId: string, notification: SessionNotification): void {
@@ -1574,59 +1620,37 @@ export class SessionManager {
     }
 
     switch (update.sessionUpdate) {
-      // Block-model interruption rule (ui-rendering-strategy.md): a chunk
-      // merges into the *last* block only if it's the same type — any other
-      // block landing in between (the other chunk type, a tool call, a plan)
-      // closes it, and a later chunk of the old type starts a fresh block.
-      // Replay-only by design: a live send appends its own whole user block
-      // (sendPrompt), and some agents echo the in-flight prompt back as a
-      // user_message_chunk (observed: slash-command expansion) — consuming
-      // that would duplicate it, hence the inFlight guard. During session/load
-      // replay nothing is in flight, so every historical user message lands.
+      // Block-model rule (ui-rendering-strategy.md) for all three chunk
+      // arms: runBlockFor above is the one place a chunk's block is decided.
+      // This arm is replay-only by design: a live send appends its own whole
+      // user block (sendPrompt), and some agents echo the in-flight prompt
+      // back as a user_message_chunk (observed: slash-command expansion) —
+      // consuming that would duplicate it, hence the inFlight guard. During
+      // session/load replay nothing is in flight, so every historical user
+      // message lands.
       case "user_message_chunk": {
         if (session.inFlight) return;
         // A replayed user message with agent activity pending = the previous
         // turn just ended structurally — its boundary lands first, so the
         // rollup derivation sees the same shape a live turn left behind.
         this.flushReplayBoundary(sessionId, session, emit);
-        session.activeTextBlockId = null;
-        session.activeThoughtBlockId = null;
-        // Message identity governs the run (ACP ContentChunk.messageId:
-        // chunks of one message share it, a change means a new message —
-        // verified on the wire 2026-07-12: multi-part prompts replay as
-        // several chunks under ONE id; adjacent messages carry distinct
-        // ids). Same id continues the run; a new id — or no id at all —
-        // closes it. Id-less chunks never merging is the one uniform rule
-        // for agents that omit the field: they replay whole messages per
-        // chunk (an agent splitting one message across id-less chunks
-        // would be unreconstructable by any client), and merging them
-        // fused adjacent messages — two cancelled prompts back to back
-        // rendered as one bubble. Type alternation alone cannot tell the
-        // two cases apart; only this field can.
         const messageId = update.messageId ?? null;
-        if (messageId === null || messageId !== session.activeUserMessageId) {
-          session.activeUserBlockId = null;
-        }
-        session.activeUserMessageId = messageId;
         if (update.content.type === "resource_link") {
           // Our own positional file mentions come back like this on replay
           // (the composer sends them as resource_link parts inline) — so
           // render the mention the way the user typed it, INTO the same
           // prose run: a placeholder block here would sever one prompt
           // into bubble + placeholder + bubble.
-          session.activeUserBlockId ??= newBlockId("user");
-          emit({
-            kind: "userTextDelta",
-            sessionId,
-            blockId: session.activeUserBlockId,
-            text: `@${update.content.name}`,
-          });
+          const text = `@${update.content.name}`;
+          const blockId = this.runBlockFor(sessionId, session, "user", messageId, text);
+          if (blockId === null) break;
+          emit({ kind: "userTextDelta", sessionId, blockId, text });
           break;
         }
         if (update.content.type !== "text") {
           // Honesty placeholder (acp-compliance.md G4): unrendered content
           // says so in place — its own closed block, never a silent drop.
-          session.activeUserBlockId = null;
+          session.openRun = null;
           emit({
             kind: "userTextDelta",
             sessionId,
@@ -1635,14 +1659,12 @@ export class SessionManager {
           });
           break;
         }
-        // whitespace-only never opens a run (see the thought chunk below)
-        if (session.activeUserBlockId === null && update.content.text.trim() === "") break;
         if (harnessEnvelopeTag(update.content.text) !== null) {
           // Harness-injected envelope riding the user role: its own closed,
           // flagged block — never merged into the prose run (an injection
           // between two real messages must not fuse them into one bubble,
           // and the injection itself is not the user's prompt).
-          session.activeUserBlockId = null;
+          session.openRun = null;
           emit({
             kind: "userTextDelta",
             sessionId,
@@ -1652,35 +1674,25 @@ export class SessionManager {
           });
           break;
         }
-        session.activeUserBlockId ??= newBlockId("user");
-        emit({
-          kind: "userTextDelta",
-          sessionId,
-          blockId: session.activeUserBlockId,
-          text: update.content.text,
-        });
+        const blockId = this.runBlockFor(sessionId, session, "user", messageId, update.content.text);
+        if (blockId === null) break;
+        emit({ kind: "userTextDelta", sessionId, blockId, text: update.content.text });
         break;
       }
       case "agent_message_chunk": {
+        const messageId = update.messageId ?? null;
         if (update.content.type === "resource_link") {
           // Renderable, so render it (G10b): a markdown link into the prose
           // run — never a placeholder for content the reader can use.
-          session.activeThoughtBlockId = null;
-          session.activeUserBlockId = null;
-          session.activeTextBlockId ??= newBlockId("text");
-          emit({
-            kind: "agentTextDelta",
-            sessionId,
-            blockId: session.activeTextBlockId,
-            text: `[${update.content.name}](${update.content.uri})`,
-          });
+          const text = `[${update.content.name}](${update.content.uri})`;
+          const blockId = this.runBlockFor(sessionId, session, "text", messageId, text);
+          if (blockId === null) break;
+          emit({ kind: "agentTextDelta", sessionId, blockId, text });
           break;
         }
         if (update.content.type !== "text") {
           // Same honesty placeholder as the user chunk above (G4).
-          session.activeThoughtBlockId = null;
-          session.activeUserBlockId = null;
-          session.activeTextBlockId = null;
+          session.openRun = null;
           emit({
             kind: "agentTextDelta",
             sessionId,
@@ -1689,26 +1701,16 @@ export class SessionManager {
           });
           break;
         }
-        // whitespace-only never opens a run (see the thought chunk below)
-        if (session.activeTextBlockId === null && update.content.text.trim() === "") break;
-        session.activeThoughtBlockId = null; // prose interrupts the thought run
-        session.activeUserBlockId = null; // …and closes a replayed user run
-        session.activeTextBlockId ??= newBlockId("text");
-        emit({
-          kind: "agentTextDelta",
-          sessionId,
-          blockId: session.activeTextBlockId,
-          text: update.content.text,
-        });
+        const blockId = this.runBlockFor(sessionId, session, "text", messageId, update.content.text);
+        if (blockId === null) break;
+        emit({ kind: "agentTextDelta", sessionId, blockId, text: update.content.text });
         break;
       }
       case "agent_thought_chunk": {
         if (update.content.type !== "text") {
           // Same honesty placeholder as the message chunks (G4) — this was
           // a silent drop once, the one chunk path that didn't say so.
-          session.activeTextBlockId = null;
-          session.activeUserBlockId = null;
-          session.activeThoughtBlockId = null;
+          session.openRun = null;
           emit({
             kind: "agentThoughtDelta",
             sessionId,
@@ -1717,27 +1719,19 @@ export class SessionManager {
           });
           break;
         }
-        // Never OPEN a run on whitespace-only (observed: replayed thinking
-        // can arrive as empty chunks — a blank "Thought" accordion
-        // otherwise); an already-open run still takes it, mid-stream
-        // spacing is real content. Skipping entirely also means a no-op
-        // chunk never severs the neighboring prose run.
-        if (session.activeThoughtBlockId === null && update.content.text.trim() === "") break;
-        session.activeTextBlockId = null; // thinking interrupts the prose run
-        session.activeUserBlockId = null;
-        session.activeThoughtBlockId ??= newBlockId("thought");
-        emit({
-          kind: "agentThoughtDelta",
+        const blockId = this.runBlockFor(
           sessionId,
-          blockId: session.activeThoughtBlockId,
-          text: update.content.text,
-        });
+          session,
+          "thought",
+          update.messageId ?? null,
+          update.content.text,
+        );
+        if (blockId === null) break;
+        emit({ kind: "agentThoughtDelta", sessionId, blockId, text: update.content.text });
         break;
       }
       case "tool_call": {
-        session.activeTextBlockId = null; // the agent paused to act
-        session.activeThoughtBlockId = null;
-        session.activeUserBlockId = null;
+        session.openRun = null; // the agent paused to act
         const status = update.status ?? "pending";
         this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
