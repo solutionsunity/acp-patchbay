@@ -121,11 +121,15 @@ support@augmentcode.com / Discord.
 
 ## Communication log
 
-- **2026-07-13** — combined compliance report drafted for
-  support@augmentcode.com, covering both open issues: (1) the mcpServers
-  first-session latch — re-verified same day with a fresh marker-server
-  capture, named the higher-impact fix; (2) model selection on the removed
-  draft API (root `models` field + `session/set_model`, no confirmation
-  channel) — asks migration to Session Config Options. Full text + verbatim
-  wire transcripts:
-  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md). Not yet sent.
+- **2026-07-13** — combined compliance report **submitted as TKT-66153**,
+  covering both open issues: (1) the mcpServers first-session latch —
+  re-verified same day with a fresh marker-server capture, named the
+  higher-impact fix; (2) model selection on the removed draft API (root
+  `models` field + `session/set_model`, no confirmation channel) — asks
+  migration to Session Config Options. Plus one rider request (spec-legal
+  omission, not a compliance issue): emit `ContentChunk.messageId` — or
+  minimally confirm agent/thought replay granularity, the fact that decides
+  whether patchbay's id-less merge rule (`runBlockFor`) can tighten for
+  replay. Full text + verbatim wire transcripts:
+  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+  Awaiting vendor response.

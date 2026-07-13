@@ -3,6 +3,7 @@
 **To:** Augment Code support (support@augmentcode.com)
 **From:** acp-patchbay (VS Code ACP client), Solutions Unity — solutionsunity.com
 **Date:** 2026-07-13
+**Ticket:** TKT-66153 (submitted 2026-07-13)
 **Product tested:** `auggie` 0.32.0 (commit eb99b871), spawned as `auggie --acp`, ACP protocol version 1
 **Environment:** Linux (WSL2), Node stdio transport, logged-in account
 
@@ -25,6 +26,11 @@ a minute over stdio):
 
 We maintain an ACP client and would genuinely like both surfaces to work;
 issue 1 in particular we currently have no clean workaround for.
+
+A third item rides along as a **request, not a compliance issue** — omitting
+the optional `ContentChunk.messageId` is spec-legal, but it makes message
+boundaries unreconstructable by any client (§ "Request — emit
+`ContentChunk.messageId`" below).
 
 `C→A` = client to agent, `A→C` = agent to client, frames verbatim from
 captures taken 2026-07-13. Model list and mode list truncated by us for
@@ -159,6 +165,48 @@ the set response is empty, no notification confirms or corrects it, and
 
 ---
 
+## Request — emit `ContentChunk.messageId` (spec-legal omission, fidelity cap)
+
+### Observed wire behavior
+
+All of Auggie's `session/update` chunks — `user_message_chunk`,
+`agent_message_chunk`, `agent_thought_chunk`, live and in `session/load`
+replay — omit the optional `ContentChunk.messageId` (wire-verified
+2026-07-12 on 0.32.0).
+
+### Why it matters
+
+`messageId` is the only signal the spec provides for message boundaries:
+chunks of one message share it, a change means a new message. Without it a
+client cannot tell "next delta of the same message" from "first chunk of a
+new message" — the information does not exist anywhere else on the wire,
+so no client can reconstruct it:
+
+- Merging adjacent messages corrupts rendered markdown at the seam: a
+  message ending with a closing ``` ``` ``` fence glued to the next
+  message's opening line un-closes the fence and the code block swallows
+  the following prose (we hit exactly this shape with an agent that does
+  emit ids — fixable there, unfixable where ids are absent).
+- Splitting on a guess is worse: a real delta stream cut mid-fence breaks
+  well-formed single messages.
+- On the user side the consequence is already visible on your replay wire:
+  adjacent prompts arrive as back-to-back id-less chunks, and only the
+  whole-message-per-chunk convention keeps them apart.
+
+To be clear: this is not a spec violation — the field is optional. It is
+the one field that caps every client's rendering fidelity for Auggie.
+
+### Two useful levels of fix
+
+1. **Full:** emit `messageId` on every chunk, live and replay — boundaries
+   become exact everywhere.
+2. **Minimal (replay only):** confirm that replayed agent/thought chunks
+   are one whole message per chunk (as your `user_message_chunk` replay
+   already is). Even just this confirmation lets clients adopt a safe
+   per-chunk boundary rule for replay without guessing.
+
+---
+
 ## Requests
 
 1. **Honor `mcpServers` on every `session/new`/`session/load`**, not just
@@ -168,6 +216,10 @@ the set response is empty, no notification confirms or corrects it, and
    schema conformance in one move — the June 1 removal notice names exactly
    this path. If the legacy surface will remain for a while, a note on its
    intended lifetime would help us scope our compatibility shim honestly.
+3. **Emit `ContentChunk.messageId` on chunks** (or, minimally, confirm the
+   replay granularity of agent/thought chunks) — see the request section
+   above; without it message boundaries are unreconstructable by any
+   client.
 
 We're happy to re-verify either fix against a build — both reproductions
 are a handful of JSON-RPC frames over stdio and take under a minute. And to
