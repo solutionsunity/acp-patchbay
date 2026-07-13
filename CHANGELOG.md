@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.82.4 — 2026-07-13
+
+- Refactored chat's chunk-to-block accumulation into one message-identity gate,
+  fixing adjacent agent messages fusing into a single markdown block (e.g. a
+  closing code fence gluing to the next heading, breaking mermaid rendering).
+- Fixed the composer footer clipping at narrow widths: session read-outs now
+  wrap to their own line, so the knobs and the Send button always stay on
+  screen.
+
 ## 0.82.3 — 2026-07-13
 
 - Refactored core to handle non-ACP Auggie's MCP-server and model-list onto a new
