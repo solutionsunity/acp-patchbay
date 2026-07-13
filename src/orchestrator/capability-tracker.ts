@@ -21,7 +21,7 @@
 // amended) — a reconnect at the *same* `agentInfo.version` restores what was
 // already proven, and only an actual version change earns a fresh,
 // honestly-unused matrix.
-import { RequestError, type SessionConfigOption, type SessionModeState } from "@agentclientprotocol/sdk";
+import { RequestError, type NewSessionResponse } from "@agentclientprotocol/sdk";
 import {
   type AgentViewEvent,
   type CapabilityMatrix,
@@ -29,6 +29,7 @@ import {
   type DeclaredCapabilities,
 } from "../shared/protocol";
 import { matrixFromDeclared } from "./capabilities";
+import { probeDeferredFor } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
@@ -41,13 +42,11 @@ export interface CapabilityTrackerHooks {
   currentMatrix(agentId: string): CapabilityMatrix | undefined;
   /** Connect-time knob-offering read (architecture.md § Session model:
    * offerings are read, never stored) — the probe's session/new response
-   * carries the agent's current knob surface; follow-up notifications for
-   * the probe session route here via `agentForProbeSession`. */
-  onOfferings?(
-    agentId: string,
-    modes: SessionModeState | null | undefined,
-    configOptions: SessionConfigOption[] | null | undefined,
-  ): void;
+   * carries the agent's current knob surface. Passed raw (spec-pure-core:
+   * a new surface — spec or extension — must never ripple this signature);
+   * the receiver normalizes. Follow-up notifications for the probe session
+   * route here via `agentForProbeSession`. */
+  onOfferings?(agentId: string, response: NewSessionResponse): void;
   /** The agent's standing probe workspace — a real, existing directory,
    * never the user's workspace roots. Owned by the orchestrator and deleted
    * only when the agent's config is removed: a probe session may hold this
@@ -62,6 +61,10 @@ export class CapabilityTracker {
   /** agentId → the `agentInfo.version` its current connection reported —
    * what persisted used state gets saved and seeded against. */
   private versions = new Map<string, string>();
+  /** Agents whose connect-time probe is parked until the first real
+   * session (extensions/first-session-mcp-latch) — armed per connect,
+   * spent by noteRealSessionOpened. */
+  private deferredProbes = new Set<string>();
   /** Probe sessionId → agentId — lets the orchestrator route an agent's
    * late config_option_update notifications for a throwaway probe session
    * into the offerings instead of dropping them (some agents deliver the
@@ -106,7 +109,27 @@ export class CapabilityTracker {
     // (offerings are connection state — architecture.md § Session model),
     // with auth proof falling out of the same free round-trip. Only the
     // fork sub-check keeps a version-keyed skip, inside probe() itself.
+    // Exception: a latched agent's probe waits for the first real session
+    // (extensions/first-session-mcp-latch — the probe must not spend the
+    // process's one honored mcpServers slot); re-armed on every connect
+    // because the latch is per-process.
+    if (probeDeferredFor(agentId)) {
+      this.deferredProbes.add(agentId);
+      this.log.info(`${agentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
+      return;
+    }
     this.log.debug(`${agentId}: connect-time probe starting (offering read; fork where still unproven)`);
+    void this.probe(agentId);
+  }
+
+  /** The deferred-probe trigger: a real session opened on this agent's
+   * connection (session-manager's attach ceremony fires this via the
+   * orchestrator), so the first-session privilege is spent where it belongs
+   * and the probe can run. Once per connect — onDeclared re-arms the
+   * deferral on reconnect. No-op for agents that probed at connect. */
+  noteRealSessionOpened(agentId: string): void {
+    if (!this.deferredProbes.delete(agentId)) return;
+    this.log.debug(`${agentId}: deferred probe starting (first real session opened)`);
     void this.probe(agentId);
   }
 
@@ -161,7 +184,7 @@ export class CapabilityTracker {
       const response = await this.pool.newSession(agentId, dir);
       probeSessionIds.push(response.sessionId);
       this.probeSessions.set(response.sessionId, agentId);
-      this.hooks.onOfferings?.(agentId, response.modes, response.configOptions);
+      this.hooks.onOfferings?.(agentId, response);
       this.hooks.emit({ kind: "agentAuthResolved", agentId });
       const forkStillUnproven =
         declared.sessionFork && !(this.hooks.currentMatrix(agentId)?.["session.fork"].used ?? false);

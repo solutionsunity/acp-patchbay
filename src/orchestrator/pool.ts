@@ -797,6 +797,17 @@ export class AgentPool {
     return this.request(entry, acp.methods.agent.session.setConfigOption, params);
   }
 
+  /** The one untracked escape hatch for wire-extension modules
+   * (architecture.md § Protocol extensions, "Wire-extension modules"):
+   * sends an extension-owned method via the SDK's generic string-method
+   * overload, deliberately outside the capability-tracked `request()` —
+   * extension methods bear on no matrix row, and pool.ts never learns
+   * their names (they arrive from orchestrator/extensions/ modules). */
+  async unstableRequest(poolKey: string, method: string, params: unknown): Promise<unknown> {
+    const entry = this.running(poolKey);
+    return entry.connection!.agent.request<unknown>(method, params);
+  }
+
   /** Attaches the wire-log tap to one direction of a connection's stdio.
    * Zero-cost while the log is off: chunks are dropped before decode, and
    * the partial-line buffer resets so a mid-frame enable never emits a torn

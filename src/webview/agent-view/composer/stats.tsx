@@ -6,9 +6,72 @@
 // reports usage (absence over fake, ui.md § gauge); a fresh session shows
 // nothing at all.
 import type { ReactNode } from "react";
-import type { UsageInfo } from "../../../shared/protocol";
+import type { PlanUsageInfo, UsageInfo } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
 import { count, type SessionTotals } from "../chat/view-model";
+
+/** Known plan-window tags → short labels; an unknown tag renders raw
+ * (labels are UX-only, never gating). Unqualified windows are
+ * account-wide; model-tagged ones name their model. */
+const WINDOW_LABELS: Record<string, string> = {
+  five_hour: "5h",
+  seven_day: "7d",
+  seven_day_opus: "7d Opus",
+  seven_day_sonnet: "7d Sonnet",
+  seven_day_overage_included: "7d+",
+  overage: "overage",
+};
+
+const STATUS_RANK: Record<PlanUsageInfo["status"], number> = { limited: 0, warning: 1, ok: 2 };
+
+function windowLabel(reading: PlanUsageInfo): string {
+  return reading.window === undefined ? "plan" : (WINDOW_LABELS[reading.window] ?? reading.window);
+}
+
+/** ≤1 reads as a fraction — the unit is unverified upstream
+ * (protocol.ts PlanUsageInfo). */
+function pctOf(reading: PlanUsageInfo): number | null {
+  return reading.utilization === undefined
+    ? null
+    : Math.round(reading.utilization <= 1 ? reading.utilization * 100 : reading.utilization);
+}
+
+function lineOf(reading: PlanUsageInfo): string {
+  const pct = pctOf(reading);
+  const resets =
+    reading.resetsAt === undefined
+      ? ""
+      : ` · resets ${new Date(reading.resetsAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+  return `${windowLabel(reading)}${pct !== null ? ` ${pct}%` : ""}${resets}${reading.status === "limited" ? " · limit reached" : ""}`;
+}
+
+/** The plan-usage read-out — the context gauge's sibling (UsageInfo.plan:
+ * one sticky reading per parallel window). The chip shows the most severe
+ * window, always qualified by its label — a bare percentage would hide
+ * whether it's account-wide or one model's weekly window. The tooltip
+ * lists every window's standing reading. */
+function PlanGauge({ plan }: { plan: Readonly<Record<string, PlanUsageInfo>> }) {
+  const readings = Object.values(plan).sort(
+    (a, b) =>
+      STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
+      (pctOf(b) ?? -1) - (pctOf(a) ?? -1),
+  );
+  const worst = readings[0];
+  if (worst === undefined) return null;
+  const pct = pctOf(worst);
+  const tip = `Plan usage\n${readings.map(lineOf).join("\n")}`;
+  return (
+    <span
+      className={`flex items-center gap-0.5${worst.status === "limited" ? " text-destructive" : ""}`}
+      style={worst.status === "warning" ? { color: "var(--pb-warn)" } : undefined}
+      title={tip}
+    >
+      <Icon name="pulse" />
+      {windowLabel(worst)}
+      {pct !== null ? ` ${pct}%` : ""}
+    </span>
+  );
+}
 
 function Gauge({ usage }: { usage: UsageInfo }) {
   const frac = Math.max(0, Math.min(1, usage.used / usage.size));
@@ -69,8 +132,9 @@ export function ComposerStats({
       {/* sessionUsage only ever gets an entry alongside marking "usage"
           used (pool.ts's notification handler and this both fire off the
           same usage_update), so presence here already means used — absent,
-          never grayed, until then. */}
+          never grayed, until then. Same rule for the plan reading. */}
       {usage !== null && <Gauge usage={usage} />}
+      {usage?.plan !== undefined && Object.keys(usage.plan).length > 0 && <PlanGauge plan={usage.plan} />}
     </span>
   );
 }

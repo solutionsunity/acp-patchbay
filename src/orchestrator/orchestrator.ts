@@ -34,6 +34,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
+import { sessionKnobExtras } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, type LaunchSpec } from "./pool";
@@ -565,6 +566,9 @@ export class Orchestrator {
         resyncView: () => this.agentView.resync(),
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
+        // The deferred-probe trigger for latched agents
+        // (extensions/first-session-mcp-latch) — no-op for everyone else.
+        onRealSessionAttached: (agentId) => this.capabilityTracker.noteRealSessionOpened(agentId),
         // From the store-backed spec map, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect. The
@@ -649,8 +653,11 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
-        onOfferings: (agentId, modes, configOptions) =>
-          this.noteOfferings(agentId, normalizeKnobs(modes, configOptions)),
+        onOfferings: (agentId, response) =>
+          this.noteOfferings(
+            agentId,
+            normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response)),
+          ),
         probeRoot: async (agentId) => {
           const dir = join(this.probeRootBase, agentId);
           await mkdir(dir, { recursive: true });

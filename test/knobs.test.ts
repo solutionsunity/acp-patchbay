@@ -13,8 +13,10 @@ import {
   MODE_KNOB_ID,
   normalizeKnobs,
   routeKnobSet,
-  toOfferedKnobs,
+  withKnobValue,
+  type KnobExtra,
 } from "../src/orchestrator/knobs";
+import { toOfferedKnobs } from "../src/orchestrator/knobs";
 
 const MODES: SessionModeState = {
   currentModeId: "ask",
@@ -141,6 +143,90 @@ describe("routeKnobSet", () => {
       },
     ]);
     expect(routeKnobSet(grouped, "model", "opus")).toEqual({ via: "setConfigOption", configId: "model" });
+  });
+});
+
+// A fabricated extension extra (spec-pure-core: knobs.ts only ever sees
+// this opaque shape — the real modules are tested in extensions tests).
+function fakeExtra(id: string): { extra: KnobExtra; sent: unknown[] } {
+  const sent: unknown[] = [];
+  return {
+    sent,
+    extra: {
+      knob: {
+        id,
+        name: "Extra",
+        category: "model",
+        type: "select",
+        currentValue: "",
+        options: [
+          { value: "a", name: "A" },
+          { value: "b", name: "B" },
+        ],
+      },
+      execute: async (deps, value) => {
+        sent.push({ sessionId: deps.sessionId, value });
+        return typeof value === "string" ? withKnobValue(deps.current, id, value) : null;
+      },
+    },
+  };
+}
+
+describe("extension extras (the wire-extension door)", () => {
+  it("accepted extras append to the surface and are remembered for routing", () => {
+    const { extra } = fakeExtra("model");
+    const n = normalizeKnobs(MODES, null, [extra]);
+    expect(n.surface).toBe("modes");
+    expect(n.knobs.map((k) => k.id)).toEqual([MODE_KNOB_ID, "model"]);
+    expect(n.extras).toEqual([extra]);
+  });
+
+  it("an extra whose id a spec-surface knob owns is dropped — the spec surface wins", () => {
+    const { extra } = fakeExtra("model");
+    const n = normalizeKnobs(MODES, [MODEL_OPTION], [extra]);
+    expect(n.surface).toBe("config");
+    expect(n.knobs.filter((k) => k.id === "model")).toHaveLength(1);
+    expect(n.extras).toBeUndefined();
+    // ...and its set routes as an ordinary config option, never an extension.
+    expect(routeKnobSet(n, "model", "opus")).toEqual({ via: "setConfigOption", configId: "model" });
+  });
+
+  it("routes an extension knob to its own executor, value-guarded like any knob", async () => {
+    const { extra, sent } = fakeExtra("model");
+    const n = normalizeKnobs(MODES, null, [extra]);
+    const route = routeKnobSet(n, "model", "a");
+    expect(route).toEqual({ via: "extension", extra });
+    expect(routeKnobSet(n, "model", "unoffered")).toBeNull();
+    expect(routeKnobSet(n, "model", true)).toBeNull();
+    if (route?.via !== "extension") throw new Error("unreachable");
+    const next = await route.extra.execute({ sessionId: "s1", send: async () => ({}), current: n }, "a");
+    expect(sent).toEqual([{ sessionId: "s1", value: "a" }]);
+    expect(next?.knobs.find((k) => k.id === "model")).toMatchObject({ currentValue: "a" });
+  });
+
+  it("survives a current_mode_update and a config_option_update untouched", () => {
+    const { extra } = fakeExtra("model");
+    const n = normalizeKnobs(MODES, null, [extra]);
+    const afterMode = applyModeUpdate(n, "code");
+    expect(afterMode?.extras).toEqual([extra]);
+    expect(afterMode?.knobs.map((k) => k.id)).toEqual([MODE_KNOB_ID, "model"]);
+    // A config replace carries the prior state so the independent axis stays.
+    const afterConfig = applyConfigUpdate([UNCATEGORIZED_MODE_OPTION], n);
+    expect(afterConfig.surface).toBe("config");
+    expect(afterConfig.knobs.map((k) => k.id)).toEqual(["perm", "model"]);
+    expect(afterConfig.extras).toEqual([extra]);
+    // ...unless the new config surface takes the id over.
+    const collided = applyConfigUpdate([MODEL_OPTION], n);
+    expect(collided.knobs.filter((k) => k.id === "model")).toHaveLength(1);
+    expect(collided.extras).toBeUndefined();
+  });
+
+  it("withKnobValue advances only the named select knob", () => {
+    const { extra } = fakeExtra("model");
+    const n = normalizeKnobs(MODES, null, [extra]);
+    const advanced = withKnobValue(n, "model", "b");
+    expect(advanced.knobs.find((k) => k.id === "model")).toMatchObject({ currentValue: "b" });
+    expect(advanced.knobs.find((k) => k.id === MODE_KNOB_ID)).toMatchObject({ currentValue: "ask" });
   });
 });
 

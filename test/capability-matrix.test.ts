@@ -289,6 +289,31 @@ describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
       used: 100,
       size: 200,
     });
-    expect(state.sessionUsage.s1).toEqual({ used: 100, size: 200, cost: undefined });
+    expect(state.sessionUsage.s1).toEqual({ used: 100, size: 200, cost: undefined, plan: undefined });
+  });
+
+  it("plan readings are sticky per window — parallel axes never clobber each other", () => {
+    const opusWarning = { status: "warning" as const, window: "seven_day_opus", utilization: 0.79 };
+    let state = reduceAgentView(initialAgentViewState, {
+      kind: "usageReported",
+      sessionId: "s1",
+      used: 100,
+      size: 200,
+      plan: opusWarning,
+    });
+    // A plain usage_update (no _meta reading) must not erase anything —
+    // agents emit plan info only when it changes.
+    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 150, size: 200 });
+    expect(state.sessionUsage.s1).toMatchObject({ used: 150, plan: { seven_day_opus: opusWarning } });
+    // A calm reading for a DIFFERENT window lands beside the warning, not
+    // over it (the wire-observed case: five_hour allowed arriving after a
+    // seven_day_opus warning).
+    const fiveHourOk = { status: "ok" as const, window: "five_hour" };
+    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 160, size: 200, plan: fiveHourOk });
+    expect(state.sessionUsage.s1!.plan).toEqual({ seven_day_opus: opusWarning, five_hour: fiveHourOk });
+    // A fresh reading for the SAME window replaces it.
+    const opusLimited = { status: "limited" as const, window: "seven_day_opus" };
+    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 170, size: 200, plan: opusLimited });
+    expect(state.sessionUsage.s1!.plan).toEqual({ seven_day_opus: opusLimited, five_hour: fiveHourOk });
   });
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.82.3 — 2026-07-13
+
+- Refactored core to handle non-ACP Auggie's MCP-server and model-list onto a new
+  extendable wire-extension architecture (fixing both along the way), also
+  now used for `_meta` processing — e.g. Claude's plan/rate-limit readout.
+
 ## 0.82.2 — 2026-07-13
 
 - Fixed the composer's / and @ suggestion menu: it now opens at the line

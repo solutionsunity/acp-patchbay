@@ -6,7 +6,7 @@ import {
   clientCapabilitiesWire,
   declaredFromInitialize,
 } from "../src/orchestrator/capabilities";
-import { clientMetaWire, terminalAuthRecipeOf } from "../src/orchestrator/meta";
+import { clientMetaWire, planUsageOf, terminalAuthRecipeOf } from "../src/orchestrator/meta";
 import { hasUnusedProbe, type CapabilityMatrix } from "../src/shared/protocol";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 
@@ -40,8 +40,54 @@ describe("terminalAuthRecipeOf", () => {
   });
 });
 
+describe("planUsageOf (usageUpdate site: _claude/rateLimit)", () => {
+  it("normalizes a full reading — status mapped, epoch-seconds resetsAt to ISO", () => {
+    expect(
+      planUsageOf({
+        "_claude/rateLimit": {
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          utilization: 0.82,
+          resetsAt: 1_784_000_000, // seconds — year 2026
+        },
+      }),
+    ).toEqual({
+      status: "warning",
+      window: "five_hour",
+      utilization: 0.82,
+      resetsAt: new Date(1_784_000_000 * 1000).toISOString(),
+    });
+  });
+
+  it("disambiguates a milliseconds epoch by magnitude", () => {
+    const ms = 1_784_000_000_000;
+    expect(planUsageOf({ "_claude/rateLimit": { status: "allowed", resetsAt: ms } })).toEqual({
+      status: "ok",
+      window: undefined,
+      utilization: undefined,
+      resetsAt: new Date(ms).toISOString(),
+    });
+  });
+
+  it("maps rejected to limited; extra vendor fields are stripped, not fatal", () => {
+    expect(
+      planUsageOf({
+        "_claude/rateLimit": { status: "rejected", overageStatus: "rejected", isUsingOverage: false },
+      }),
+    ).toMatchObject({ status: "limited" });
+  });
+
+  it("degrades to absent on malformed payloads — including an unknown status", () => {
+    expect(planUsageOf({ "_claude/rateLimit": { status: "throttled" } })).toBeNull(); // unclassifiable gauge
+    expect(planUsageOf({ "_claude/rateLimit": {} })).toBeNull();
+    expect(planUsageOf({ other: { status: "allowed" } })).toBeNull();
+    expect(planUsageOf(undefined)).toBeNull();
+    expect(planUsageOf(null)).toBeNull();
+  });
+});
+
 describe("client _meta declaration", () => {
-  it("clientMetaWire carries every adopted key", () => {
+  it("clientMetaWire carries every adopted key — consume-only entries stay undeclared", () => {
     expect(clientMetaWire()).toEqual({ "terminal-auth": true });
   });
 

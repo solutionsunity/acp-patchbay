@@ -345,6 +345,52 @@ observation, used like everything else. Vendor depth that never reaches the
 wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
 commands surface is its channel, no protocol involved.
 
+### Wire-extension modules — decided 2026-07-13
+
+The spec-pure-core rule, generalizing meta.ts's discipline from the `_meta`
+site to every out-of-spec adoption (extra response fields, undeclared
+methods, removed-draft surfaces, behavioral quirk workarounds):
+
+- **Core stays spec-pure.** No core file (pool, session-manager, knobs,
+  capability-tracker, orchestrator) may contain a deviation's shape, wire
+  method name, or display policy — and never a vendor name; adoption is
+  always shape-gated, like everything else in patchbay.
+- **One deviation = one module** under `orchestrator/extensions/`, owning:
+  the zod schema (trust boundary, degrade-to-absent), the method string,
+  the policy decisions the quirk forces, the adoption date, and a **retire
+  condition** in its header. Retirement is mechanical: delete the module
+  and its one compose line.
+- **Core exposes declared doors, not interception points:**
+  `pool.unstableRequest(poolKey, method, params)` — the one untracked
+  escape hatch (extension-owned methods bear on no capability row);
+  `normalizeKnobs(..., extras?)` where an extra is `{ knob, execute }` —
+  knobs.ts applies one generic rule (extras append unless a spec-surface
+  knob owns the id) and knows nothing of any shape; session-manager runs
+  extension routes through one generic branch forever (the route executes
+  itself and returns the next state to publish, or null to wait for a
+  notification); offering chokepoints pass the raw response through, so a
+  new surface never ripples a hook signature.
+- **Shape-gated wherever shape exists; id-keyed only where it can't.** A
+  silent behavioral quirk (nothing on the wire announces it before it bites
+  — e.g. Auggie's first-session mcpServers latch) cannot be shape-gated, so
+  its extension module carries an id-keyed curated entry, the
+  ASSET_LOCATIONS discipline: earned by reproduction, version-stamped,
+  dated. Core still never names the vendor — the id lives in the module.
+- **Deliberately NOT a hook/plugin framework.** Function-extension systems
+  (Odoo-style inheritance, hook buses) earn their complexity from third-party
+  module ecosystems; patchbay's deviations are first-party and curated —
+  two at this writing (`_meta` terminal-auth; Auggie's removed-draft models
+  surface). Free interception would dissolve the one-door discipline
+  (knobs.ts, CAPABILITY_PROOFS) that this codebase is built on. If a third
+  and fourth extension start demanding shared machinery, a registry earns
+  itself then — extension point visible, not filled prematurely.
+
+Origin: the 2026-07-13 models-field adoption (auggie.md § Model selection
+rides a removed draft API) landed inline first and smeared six touchpoints
+across five core files — the failure this rule exists to prevent. Its
+refactor into `extensions/session-models-field.ts` is the pilot.
+Binding summary: `.dotagent/rules/spec-pure-core.md`.
+
 ## Branching
 
 **Out of v1** — superseded, not deleted: the earlier design (native

@@ -30,11 +30,63 @@ support@augmentcode.com / Discord.
   MCP servers only in the first. In patchbay the connect-time capability
   probe session runs first, so **every real auggie session got zero MCP
   servers** — silently.
-- **Patchbay workaround:** none yet. Planned: defer the connect-time probe
-  until after the first real session for quirk-listed agents (giving the
-  probe session real servers is worse — the process-wide latch would bind
-  all later sessions to the probe's stale editor-server session token).
-- **Status:** observed 2026-07-12 — not yet reported.
+- **Re-verified:** 2026-07-13, same version, fresh capture for the vendor
+  report — control (marker on first session/new) spawns within ~10s of the
+  response (not ~3s: spawn trails the session-open indexing), latch run
+  (marker on second) never spawns. Verbatim frames in
+  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+- **Patchbay workaround:** implemented 2026-07-13 —
+  `extensions/first-session-mcp-latch.ts` (id-keyed curated entry; the
+  capability probe defers until the first real session attaches, which then
+  triggers it via session-manager's attach ceremony). Giving the probe
+  session real servers was rejected as worse: the process-wide latch would
+  bind all later sessions to the probe's stale editor-server session token.
+  Cost while latched: matrix/offerings stay declared-only until first real
+  use, and a logged-out auggie's needsAuth surfaces at first session
+  instead of at connect.
+- **Status:** observed 2026-07-12 → report drafted 2026-07-13
+  ([auggie-acp-compliance-report.md](auggie-acp-compliance-report.md),
+  combined with the models issue), pending send.
+
+### Model selection rides a removed draft API (root `models` field + `session/set_model`)
+
+- **Observed:** 2026-07-12 (field), 2026-07-13 (set path + confirmation-channel
+  audit), v0.32.0. Found live: no model picker appeared for Auggie in any
+  spec-faithful rendering.
+- **Spec:** the surface was a real draft — never stabilized, **removed from
+  the protocol artifacts June 1, 2026** with the guidance "Agents should
+  continue to expose model selection through Session Config Options"
+  (https://agentclientprotocol.com/rfds/updates). Under current v1 it is
+  also non-conforming on its own terms: root custom fields on spec types
+  are MUST NOT (extensibility § `_meta`), custom methods are reserved the
+  `_` prefix (`session/set_model` squats the protocol namespace), and the
+  extension is undeclared in `initialize`. The stable replacement —
+  `configOptions` with `category: "model"` — landed February 4, 2026.
+- **Repro:** three frames over stdio — `initialize` → `session/new` (response
+  carries root `models: { availableModels: [28 entries], currentModelId: "" }`)
+  → `session/set_model { sessionId, modelId }` → response `{}`; then silence
+  (no notification within 3s; Auggie's `session/update` vocabulary has no
+  model variant and `usage_update` carries only `{ cost, size, used }`).
+  Verbatim transcript in [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+- **Impact:** generic ACP clients show no model selector at all; clients that
+  adopt the legacy surface cannot display honest state — nothing on the wire
+  ever confirms the active model (`currentModelId` is readable only at
+  session-open, where it is `""`; empty sessions aren't persisted, so no
+  reload-reconfirm either).
+- **Patchbay workaround:** adopted 2026-07-13 as a scoped wire-extension
+  (architecture.md § Protocol extensions): knobs.ts `sessionModelsOf` /
+  `withModelField` parses the field at the trust boundary (zod,
+  degrade-to-absent) and synthesizes one "model" knob — deduped by id, so an
+  agent whose configOptions already carry model (claude-agent-acp) never
+  collides. Sets ride `session/set_model` via pool.ts `setSessionModel`,
+  outside the capability-tracked path. Display is advanced optimistically
+  from the user's own pick (knobs.ts `applyModelSet`) — the sole fact in
+  existence on an axis with no confirmation channel; the one deliberate
+  exception to display-from-agent-state, scoped here. **Retire when Auggie
+  migrates to configOptions** — the draft surface is removed upstream, so it
+  will never appear in any SDK; vendor migration is the only exit.
+- **Status:** observed 2026-07-12 → report drafted 2026-07-13
+  ([auggie-acp-compliance-report.md](auggie-acp-compliance-report.md)), pending send.
 
 ## Capability gaps
 
@@ -46,15 +98,11 @@ support@augmentcode.com / Discord.
 
 ## Behavioral notes
 
-- **`models` root field on `session/new`/`session/load` responses** (observed
-  2026-07-12, v0.32.0): `{ availableModels, currentModelId }` — not in SDK
-  1.1.0's response types nor the published v1 schema — and **checked at the
-  1.2.1 bump (2026-07-12): still absent there too**. So it is ahead of even
-  the latest SDK: a preview/fork surface, not something patchbay can consume
-  from schema (benefit of the doubt per the false-accusation lesson in
-  claude-agent-acp.md — not calling it an invention, but it is outside every
-  published shape we can pin). Ignored harmlessly; revisit only if a models
-  surface lands in the SDK.
+- **Model surface:** graduated to Compliance issues 2026-07-13 (§ Model
+  selection rides a removed draft API) once the June 1, 2026 upstream
+  removal notice was found — the earlier benefit-of-the-doubt read
+  ("preview/fork surface") turned out precisely right: it *was* a draft,
+  never stabilized, since removed.
 - **Replay carries no messageId and no interruption trace** (wire-verified
   2026-07-12): `user_message_chunk`s arrive id-less, one whole message per
   chunk; a cancelled turn's exchange is stored `completed: false` with an
@@ -73,4 +121,11 @@ support@augmentcode.com / Discord.
 
 ## Communication log
 
-- *(empty — first report pending)*
+- **2026-07-13** — combined compliance report drafted for
+  support@augmentcode.com, covering both open issues: (1) the mcpServers
+  first-session latch — re-verified same day with a fresh marker-server
+  capture, named the higher-impact fix; (2) model selection on the removed
+  draft API (root `models` field + `session/set_model`, no confirmation
+  channel) — asks migration to Session Config Options. Full text + verbatim
+  wire transcripts:
+  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md). Not yet sent.

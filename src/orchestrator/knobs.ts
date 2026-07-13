@@ -1,7 +1,7 @@
 // Normalizes every knob-shaped wire fact into one view, and routes every
 // knob set back to the wire — the knob sibling of capabilities.ts. This is
-// the only module that reads the modes/configOptions relationship; no other
-// file (and no webview) may distinguish the two surfaces.
+// the only module that reads how the wire's knob surfaces relate; no other
+// file (and no webview) may distinguish them.
 //
 // The spec rule this encodes (ACP v1 § Session Config Options, "Relationship
 // to Session Modes"): config options supersede modes — a client that
@@ -14,6 +14,15 @@
 // category:'mode' option exists"), which depended on a field ACP forbids as
 // a correctness dependency ("categories… MUST NOT be required for
 // correctness") and was fitted to one bridge's observed shape.
+//
+// A THIRD source: wire-extension modules (orchestrator/extensions/ —
+// architecture.md § Protocol extensions, "Wire-extension modules") may
+// synthesize additional knobs from out-of-spec surfaces. knobs.ts stays
+// spec-pure: it accepts opaque `KnobExtra`s — a knob view plus a
+// self-executing set route — applies one generic rule (an extra whose id a
+// spec-surface knob already owns is dropped; the spec surface is the
+// confirming one), and never learns any extension's shape, wire method, or
+// display policy.
 import type {
   SessionConfigOption,
   SessionModeState,
@@ -30,13 +39,37 @@ import type {
  * selections (foldSeed). */
 export const MODE_KNOB_ID = "mode";
 
+/** What an extension route receives at execute time — session-manager
+ * supplies these at its one generic branch; the extension owns everything
+ * else (method name, params, display policy). */
+export interface KnobExecuteDeps {
+  sessionId: string;
+  /** Raw wire sender (pool.unstableRequest bound to the session's
+   * connection) — the one escape hatch for extension-owned methods. */
+  send: (method: string, params: unknown) => Promise<unknown>;
+  /** The session's normalized knob state as it stands at execute time. */
+  current: NormalizedKnobs;
+}
+
+/** One extension-owned knob: the view to offer plus its self-executing set
+ * route (spec-pure-core: core never learns the wire method or policy — the
+ * executor returns the next display state, or null to wait for the agent's
+ * own notification). Produced only by orchestrator/extensions/ modules. */
+export interface KnobExtra {
+  knob: SessionKnobView;
+  execute: (deps: KnobExecuteDeps, value: string | boolean) => Promise<NormalizedKnobs | null>;
+}
+
 /** A session's normalized knob state. `surface` records which wire API
- * drives sets — orchestrator-side routing state, deliberately not part of
- * the webview view (render-only-webview: the UI renders knobs, it never
- * knows which protocol surface they came from). */
+ * drives mode/config sets; `extras` holds the extension-owned knobs that
+ * were accepted into `knobs` (routing state for routeKnobSet). Both are
+ * orchestrator-side only, deliberately not part of the webview view
+ * (render-only-webview: the UI renders knobs, it never knows which
+ * protocol surface they came from). */
 export interface NormalizedKnobs {
   surface: "config" | "modes" | "none";
   knobs: readonly SessionKnobView[];
+  extras?: readonly KnobExtra[];
 }
 
 export const NO_KNOBS: NormalizedKnobs = { surface: "none", knobs: [] };
@@ -62,8 +95,17 @@ function toKnobView(opt: SessionConfigOption): SessionKnobView {
 }
 
 /** The one entry point for a session response's knob surface
- * (session/new, /load, /fork). Exclusivity applies here. */
+ * (session/new, /load, /resume). Exclusivity applies to modes/config here;
+ * extension-owned extras are independent axes folded in afterward. */
 export function normalizeKnobs(
+  modes: SessionModeState | null | undefined,
+  configOptions: readonly SessionConfigOption[] | null | undefined,
+  extras?: readonly KnobExtra[],
+): NormalizedKnobs {
+  return withExtras(baseKnobs(modes, configOptions), extras);
+}
+
+function baseKnobs(
   modes: SessionModeState | null | undefined,
   configOptions: readonly SessionConfigOption[] | null | undefined,
 ): NormalizedKnobs {
@@ -92,13 +134,43 @@ export function normalizeKnobs(
   return NO_KNOBS;
 }
 
+/** Appends extension-owned knobs to a base surface. One generic rule: an
+ * extra whose id a spec-surface knob already owns is dropped — the spec
+ * surface is the confirming one (e.g. an agent that carries model inside
+ * configOptions wins over any legacy model field). Accepted extras are
+ * remembered for routing; their views join the uniform knob list. */
+function withExtras(
+  base: NormalizedKnobs,
+  extras: readonly KnobExtra[] | undefined,
+): NormalizedKnobs {
+  const accepted = (extras ?? []).filter((e) => !base.knobs.some((k) => k.id === e.knob.id));
+  if (accepted.length === 0) return base;
+  return { ...base, knobs: [...base.knobs, ...accepted.map((e) => e.knob)], extras: accepted };
+}
+
+/** A local value advance for one select knob — the helper extension
+ * executors use when their axis has no confirmation channel and the user's
+ * own pick is the only fact there is to display. */
+export function withKnobValue(current: NormalizedKnobs, knobId: string, value: string): NormalizedKnobs {
+  return {
+    ...current,
+    knobs: current.knobs.map((k) =>
+      k.id === knobId && k.type === "select" ? { ...k, currentValue: value } : k,
+    ),
+  };
+}
+
 /** A `config_option_update` notification or a set_config_option response —
  * both carry the complete config state per spec, so this always yields (or
- * upgrades to) the config surface, wholesale. */
+ * upgrades to) the config surface, wholesale. `prior` carries the session's
+ * standing state so accepted extras survive: they ride the session response,
+ * not config updates — a config replace must not silently drop an
+ * extension's independent axis. */
 export function applyConfigUpdate(
   configOptions: readonly SessionConfigOption[],
+  prior?: NormalizedKnobs,
 ): NormalizedKnobs {
-  return { surface: "config", knobs: configOptions.map(toKnobView) };
+  return withExtras({ surface: "config", knobs: configOptions.map(toKnobView) }, prior?.extras);
 }
 
 /** A `current_mode_update` notification. Only meaningful on the modes
@@ -113,6 +185,7 @@ export function applyModeUpdate(
 ): NormalizedKnobs | null {
   if (current.surface !== "modes") return null;
   return {
+    ...current, // preserve extras — a mode update never touches an extension's axis
     surface: "modes",
     knobs: current.knobs.map((k) =>
       k.id === MODE_KNOB_ID && k.type === "select" ? { ...k, currentValue: modeId } : k,
@@ -120,10 +193,12 @@ export function applyModeUpdate(
   };
 }
 
-/** How one knob set reaches the wire. */
+/** How one knob set reaches the wire. Extension routes carry their own
+ * executor — core runs it without knowing what it does. */
 export type KnobSetRoute =
   | { via: "setMode"; modeId: string }
-  | { via: "setConfigOption"; configId: string };
+  | { via: "setConfigOption"; configId: string }
+  | { via: "extension"; extra: KnobExtra };
 
 function offeredValues(knob: SessionKnobView): string[] {
   if (knob.type !== "select") return [];
@@ -140,13 +215,21 @@ export function routeKnobSet(
 ): KnobSetRoute | null {
   const knob = current.knobs.find((k) => k.id === knobId);
   if (knob === undefined) return null;
-  if (knob.type === "boolean") {
-    return typeof value === "boolean" ? { via: "setConfigOption", configId: knobId } : null;
+  const valid =
+    knob.type === "boolean"
+      ? typeof value === "boolean"
+      : typeof value === "string" && offeredValues(knob).includes(value);
+  if (!valid) return null;
+  // Extension-owned knobs execute themselves; provenance is the accepted
+  // extras list, never an id or category — a spec-surface knob that happens
+  // to share an extension's id was already deduped at normalize, so it
+  // cannot reach this branch.
+  const extra = current.extras?.find((e) => e.knob.id === knobId);
+  if (extra !== undefined) return { via: "extension", extra };
+  if (typeof value === "string" && current.surface === "modes" && knobId === MODE_KNOB_ID) {
+    return { via: "setMode", modeId: value };
   }
-  if (typeof value !== "string" || !offeredValues(knob).includes(value)) return null;
-  return current.surface === "modes" && knobId === MODE_KNOB_ID
-    ? { via: "setMode", modeId: value }
-    : { via: "setConfigOption", configId: knobId };
+  return { via: "setConfigOption", configId: knobId };
 }
 
 /** The agent-confirmed combination a normalized state represents (id-keyed;

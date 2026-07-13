@@ -18,6 +18,7 @@
 // effects stay at the chokepoints that own each site (pool.ts captures
 // auth-method recipes, the orchestrator runs them).
 import { z } from "zod";
+import type { PlanUsageInfo } from "../shared/protocol";
 
 /** The Zed-ecosystem terminal-auth convention (not in the ACP v1 stable
  * schema — see the authMethod entry below): an auth method carrying a
@@ -32,9 +33,25 @@ const terminalAuthRecipeSchema = z.object({
 });
 export type TerminalAuthRecipe = z.infer<typeof terminalAuthRecipeSchema>;
 
+/** A subscription/plan window reading riding a `usage_update`'s `_meta`
+ * (claude-agent-acp: the SDK's `rate_limit_event`, forwarded verbatim as
+ * `_claude/rateLimit` — emission shape verified on 0.55.0 source and
+ * 0.58.1 dist, 2026-07-13). The SDK emits it only when the info *changes*,
+ * so a reading is sticky until the next one (the reducer keeps it across
+ * plain usage updates). Schema kept to the fields patchbay renders; zod
+ * strips the rest (overage/credits detail — adopt when a feature needs
+ * them). An unknown `status` value fails the parse and degrades to absent:
+ * a gauge patchbay can't classify is not shown, never guessed. */
+const rateLimitInfoSchema = z.object({
+  status: z.enum(["allowed", "allowed_warning", "rejected"]),
+  rateLimitType: z.string().optional(),
+  utilization: z.number().optional(),
+  resetsAt: z.number().optional(),
+});
+
 /** Where in the protocol a `_meta` blob may carry an extension patchbay
- * understands. One site today; the key exists so the table stays site-keyed
- * as more arrive (sessionUpdate channels, agentCapabilities, …). */
+ * understands. Site-keyed: the same mechanism carries unrelated shapes for
+ * unrelated consumers depending on where it appears. */
 const META_EXTENSIONS = {
   authMethod: {
     // Adopted 2026-07-11: without it a logged-out Claude/Auggie has no
@@ -43,6 +60,12 @@ const META_EXTENSIONS = {
     // terminal and re-probes; `authenticate` is never called on a recipe
     // method (Claude's throws, Auggie's no-ops).
     "terminal-auth": { schema: terminalAuthRecipeSchema, declare: true },
+  },
+  usageUpdate: {
+    // Adopted 2026-07-13: the plan-usage gauge (features: context window's
+    // sibling readout). Consume-only — the bridge emits unconditionally,
+    // nothing is gated on patchbay declaring it.
+    "_claude/rateLimit": { schema: rateLimitInfoSchema, declare: false },
   },
 } as const satisfies Record<string, Record<string, { schema: z.ZodType; declare: boolean }>>;
 
@@ -73,4 +96,30 @@ export function terminalAuthRecipeOf(meta: unknown): TerminalAuthRecipe | null {
   const entry = META_EXTENSIONS.authMethod["terminal-auth"];
   const parsed = entry.schema.safeParse(payloadOf(meta, "terminal-auth"));
   return parsed.success ? parsed.data : null;
+}
+
+/** usageUpdate-site processor: `_meta["_claude/rateLimit"]` → the neutral
+ * plan-usage shape (shared/protocol.ts PlanUsageInfo — the webview renders
+ * it with no idea which vendor key fed it). Normalizations, each from a
+ * verified fact, none a guess:
+ * - status → ok/warning/limited (three-state gauge color);
+ * - `resetsAt` epoch → ISO; seconds vs milliseconds disambiguated by
+ *   magnitude (the two encodings are cleanly separable for any real date —
+ *   1e11 sits at year 5138 in seconds and 1973 in ms);
+ * - `utilization` passes through raw — its unit (fraction vs percent) is
+ *   not derivable from the SDK types; the renderer owns the display rule. */
+export function planUsageOf(meta: unknown): PlanUsageInfo | null {
+  const entry = META_EXTENSIONS.usageUpdate["_claude/rateLimit"];
+  const parsed = entry.schema.safeParse(payloadOf(meta, "_claude/rateLimit"));
+  if (!parsed.success) return null;
+  const { status, rateLimitType, utilization, resetsAt } = parsed.data;
+  return {
+    status: status === "allowed" ? "ok" : status === "allowed_warning" ? "warning" : "limited",
+    window: rateLimitType,
+    utilization,
+    resetsAt:
+      resetsAt === undefined
+        ? undefined
+        : new Date(resetsAt > 1e11 ? resetsAt : resetsAt * 1000).toISOString(),
+  };
 }

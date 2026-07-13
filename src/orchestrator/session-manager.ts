@@ -33,8 +33,11 @@ import {
   NO_KNOBS,
   normalizeKnobs,
   routeKnobSet,
+  type KnobExecuteDeps,
   type NormalizedKnobs,
 } from "./knobs";
+import { sessionKnobExtras } from "./extensions";
+import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
@@ -71,6 +74,12 @@ export interface SessionManagerHooks {
    * attach-time publishes carry agent-reset state, and recording those made
    * "last used" mean "last attached". */
   onKnobsConfirmed?(agentId: string, seed: KnobSeed): void;
+  /** Fires when a real session attaches on an agent (new/load/resume, at
+   * the one attach ceremony) — the deferred-probe trigger for latched
+   * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
+   * extensions/first-session-mcp-latch). Probe sessions never pass through
+   * here, which is exactly what makes this the honest "real session" fact. */
+  onRealSessionAttached?(agentId: string): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch since ACP has no live-update request for
    * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
@@ -451,14 +460,19 @@ export class SessionManager {
     if (target.via === "new") {
       const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
-      return { sessionId: r.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions) };
+      this.hooks.onRealSessionAttached?.(agentId);
+      return { sessionId: r.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r)) };
     }
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
     const r =
       target.via === "load"
         ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
         : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
-    return { sessionId: target.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions) };
+    this.hooks.onRealSessionAttached?.(agentId);
+    return {
+      sessionId: target.sessionId,
+      knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r)),
+    };
   }
 
   /** A `session/load` with its replay window silenced (ui-rendering-
@@ -914,13 +928,42 @@ export class SessionManager {
       }
       return;
     }
+    if (route.via === "extension") {
+      // Extension routes execute themselves (spec-pure-core): the module
+      // owns the wire method and the display policy; this branch only
+      // supplies the wire and publishes whatever state the executor returns
+      // (null = the agent's own notification will confirm). A throw
+      // propagates (the caller shows the error); a published state is what
+      // the composer records and reseeds, same as a config response.
+      const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
+      if (next !== null) {
+        this.publishKnobs(sessionId, next);
+        this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
+      }
+      return;
+    }
     const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-    const next = applyConfigUpdate(response.configOptions);
+    const next = applyConfigUpdate(response.configOptions, session.knobs);
     this.publishKnobs(sessionId, next);
     // A user set, agent-confirmed: this — and only this — is what the
     // composer's per-agent combination records. Attach-time publishes never
     // do (they carry agent-reset state).
     this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
+  }
+
+  /** The deps an extension route's executor receives (spec-pure-core): the
+   * wire — pool's untracked escape hatch bound to this session's connection
+   * — and the standing knob state. Built at execute time, not route time:
+   * `current` must be the state the executor advances from. */
+  private knobExecuteDeps(
+    sessionId: string,
+    session: { poolKey: string; knobs: NormalizedKnobs },
+  ): KnobExecuteDeps {
+    return {
+      sessionId,
+      send: (method, params) => this.pool.unstableRequest(session.poolKey, method, params),
+      current: session.knobs,
+    };
   }
 
   /** The one exit for knob state: stores the normalized truth on the
@@ -990,9 +1033,18 @@ export class SessionManager {
         await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId).catch(() => {});
         continue;
       }
+      if (route.via === "extension") {
+        try {
+          const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
+          if (next !== null) this.publishKnobs(sessionId, next);
+        } catch {
+          // rejected seed entry — the extension's axis stands, nothing to repair
+        }
+        continue;
+      }
       try {
         const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-        this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions));
+        this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions, session.knobs));
       } catch {
         // rejected seed entry — the agent's state stands, nothing to repair
       }
@@ -1765,19 +1817,25 @@ export class SessionManager {
       }
       case "config_option_update":
         // Spec: the notification carries the complete configuration state.
-        this.publishKnobs(sessionId, applyConfigUpdate(update.configOptions));
+        // (`session.knobs` prior keeps accepted extension extras — they ride
+        // the session response, not config updates.)
+        this.publishKnobs(sessionId, applyConfigUpdate(update.configOptions, session.knobs));
         break;
       case "usage_update":
         // Capability marking (declared+used together, on first sight — no
         // initialize-time claim exists for usage reporting) already happened
         // in pool.ts's notification handler, right where this same
-        // usage_update tag was first seen; this only renders it.
+        // usage_update tag was first seen; this only renders it. The
+        // update's `_meta` goes through meta.ts's usageUpdate site — a
+        // recognized extension (plan-usage reading) rides along; anything
+        // else degrades to absent.
         emit({
           kind: "usageReported",
           sessionId,
           used: update.used,
           size: update.size,
           cost: update.cost ?? undefined,
+          plan: planUsageOf((update as { _meta?: unknown })._meta) ?? undefined,
         });
         break;
       case "plan_update":

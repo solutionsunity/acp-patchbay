@@ -1054,6 +1054,28 @@ export interface UsageInfo {
   used: number;
   size: number;
   cost?: { amount: number; currency: string };
+  /** Last reading per plan window, when the agent reports any (meta.ts
+   * usageUpdate site — vendor `_meta` normalized to this neutral shape).
+   * Keyed by window tag because the windows are parallel, independent
+   * axes (wire-observed: Claude runs 5h overall, 7d overall, and 7d
+   * per-model concurrently) — one slot would let a calm window's reading
+   * erase another window's warning. Each entry is sticky: agents emit a
+   * reading only when that window's info changes. */
+  plan?: Readonly<Record<string, PlanUsageInfo>>;
+}
+
+/** One plan window's state — the context gauge's sibling. */
+export interface PlanUsageInfo {
+  status: "ok" | "warning" | "limited";
+  /** Vendor window tag (e.g. "five_hour", "seven_day_opus") — label-mapped
+   * in the UI, never gating anything. Absent when the agent didn't say. */
+  window?: string;
+  /** Raw utilization as reported; unit unverified upstream (fraction vs
+   * percent), so the renderer owns the display rule (≤1 reads as a
+   * fraction). */
+  utilization?: number;
+  /** ISO timestamp of the window reset, when reported. */
+  resetsAt?: string;
 }
 
 export interface ContextChip {
@@ -1260,6 +1282,8 @@ export type AgentViewEvent =
       used: number;
       size: number;
       cost?: { amount: number; currency: string };
+      /** Present only on the updates that carry a fresh plan reading. */
+      plan?: PlanUsageInfo;
     }
   /** A real call (Verify's ephemeral session, or a real one) hit ACP's
    * `auth_required` — the agent needs `authenticate` before sessions work.
@@ -1696,14 +1720,23 @@ export function reduceAgentView(
     case "capabilityUsed":
     case "capabilitySuspect":
       return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
-    case "usageReported":
+    case "usageReported": {
+      // A fresh reading lands under its own window key; every other
+      // window's standing reading survives (parallel axes), and a plain
+      // usage update (no reading) erases nothing.
+      const priorPlan = state.sessionUsage[event.sessionId]?.plan;
+      const plan =
+        event.plan === undefined
+          ? priorPlan
+          : { ...priorPlan, [event.plan.window ?? ""]: event.plan };
       return {
         ...state,
         sessionUsage: {
           ...state.sessionUsage,
-          [event.sessionId]: { used: event.used, size: event.size, cost: event.cost },
+          [event.sessionId]: { used: event.used, size: event.size, cost: event.cost, plan },
         },
       };
+    }
     case "permissionRequested":
       return appendBlock(state, event.sessionId, {
         kind: "permission",
