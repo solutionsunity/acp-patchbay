@@ -2,6 +2,21 @@
  * inventory: docs/design/ui.md). Theme-aware via --vscode-* variables; the
  * patchbay identity accents (teal, consumed-orange) stay fixed. */
 
+/* ── Z LADDER ──────────────────────────────────────────────────────────
+ * App-authored z-index lives strictly below 50. The 50+ band belongs to
+ * portaled Radix/shadcn content (components/ui — dropdowns, popovers,
+ * dialogs all ship at z 50): portals mount at document.body, so any app
+ * layer at ≥ 50 paints over them while Radix's modal lock still routes
+ * every pointer event to the now-invisible menu — the "blind menu" bug.
+ * Enforced by test/z-ladder.test.ts. The rungs:
+ *   10     floating controls inside content (chat-jump, mermaid toolbar)
+ *   20     composer gauge tooltip
+ *   30     chat overlay cards (.overlay-panel, .pop)
+ *   40/41  drawer scrim / top drawers
+ *   44     fullscreen takeover (mermaid)
+ *   46     toast
+ *   50+    RESERVED — portal band, never authored here */
+
 /* Layered below Tailwind's utilities (theme.css declares the order:
  * theme, base, components, utilities) so the shadcn/Streamdown surfaces
  * can override the hand CSS where they collide — most importantly the
@@ -159,7 +174,7 @@ body {
   position: absolute;
   bottom: 22px;
   right: 0;
-  z-index: 40;
+  z-index: 20;
   background: var(--pb-panel);
   border: 1px solid var(--pb-border);
   border-radius: 6px;
@@ -301,7 +316,7 @@ body {
   max-height: 55vh;
   overflow-y: auto;
   background: var(--pb-panel);
-  z-index: 50; /* over chat, under the top drawers (60/61) */
+  z-index: 30; /* over chat, under the top drawers (40/41) */
   animation: rise 0.16s ease-out;
 }
 
@@ -995,7 +1010,7 @@ body {
   border: 1px solid var(--pb-border);
   border-radius: var(--pb-radius);
   box-shadow: 0 6px 24px #000a;
-  z-index: 50;
+  z-index: 30;
   min-width: 210px;
   overflow: hidden;
 }
@@ -1035,7 +1050,7 @@ body {
   position: absolute;
   inset: 0;
   background: #0008;
-  z-index: 60;
+  z-index: 40;
 }
 
 .drawer {
@@ -1048,7 +1063,7 @@ body {
   background: var(--pb-panel);
   border-bottom: 1px solid var(--pb-border);
   border-radius: 0 0 12px 12px;
-  z-index: 61;
+  z-index: 41;
   padding: 10px;
   animation: drop 0.16s ease-out;
 }
@@ -1185,7 +1200,7 @@ body {
   bottom: 90px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 70;
+  z-index: 46;
   background: var(--pb-panel);
   border: 1px solid var(--pb-accent-dim);
   border-radius: 8px;

@@ -4,7 +4,7 @@
 // panel content; only the anchor changed — it opens upward from its own
 // button instead of spanning the strip. A row's own click is the diff when
 // answerable; the go-to-file button always opens the file plainly.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { OpenEditorView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
@@ -39,19 +39,30 @@ export function FilesChip({
 }) {
   const send = useActions();
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
+    // Plain overlay, not a Radix portal — outside-click has to be hand-rolled.
+    // The toggle/close buttons are inside wrapRef, so their own onClick
+    // handles the close there; this only fires for a click elsewhere.
+    const onPointerDown = (e: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
   }, [open]);
 
   if (files.length === 0) return null;
 
   return (
-    <span className="files-chip-wrap">
+    <span className="files-chip-wrap" ref={wrapRef}>
       {open && (
         <div className="overlay-panel files-panel">
           <div className="head">

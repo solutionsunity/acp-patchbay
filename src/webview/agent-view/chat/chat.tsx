@@ -334,7 +334,7 @@ export function Chat(props: {
         >
           Retry
         </Button>
-        <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings" })}>
+        <Button variant="outline" size="sm" onClick={() => send({ kind: "openSettings", section: "agents" })}>
           Settings
         </Button>
         <Button variant="ghost" size="sm" onClick={() => send({ kind: "dismissChatConnect" })}>

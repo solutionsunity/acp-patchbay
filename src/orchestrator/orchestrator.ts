@@ -885,7 +885,7 @@ export class Orchestrator {
     const agents = this.agentView.current.agents;
     if (agents.length === 0) {
       void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings § Agents.");
-      await vscode.commands.executeCommand("acpPatchbay.openSettings");
+      this.handleAction({ kind: "openSettings", section: "agents" });
       return;
     }
     let agentId = agents[0]!.id;
@@ -1766,7 +1766,18 @@ export class Orchestrator {
   private handleAction(action: Action): void {
     switch (action.kind) {
       case "openSettings":
-        void vscode.commands.executeCommand("acpPatchbay.openSettings");
+        // Navigate after the reveal settles: an already-open panel keeps its
+        // section, so without this a deep-linking caller ("Add or manage
+        // agents") reads as a dead click.
+        void vscode.commands
+          .executeCommand("acpPatchbay.openSettings")
+          .then(() => {
+            if (action.section !== undefined)
+              this.settings.emit({ kind: "sectionChanged", section: action.section });
+          }, this.logCatch("openSettings"));
+        break;
+      case "setSettingsSection":
+        this.settings.emit({ kind: "sectionChanged", section: action.section });
         break;
       case "connectAgent":
         void this.connectFromSource(action.source, action.verifyAfterConnect ?? false);
@@ -2366,6 +2377,7 @@ export class Orchestrator {
       shellPath: recipe.command,
       shellArgs: [...recipe.args],
       env: recipe.env,
+      location: vscode.TerminalLocation.Editor,
     });
     terminal.show();
     await new Promise<void>((resolve) => {

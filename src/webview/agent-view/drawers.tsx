@@ -2,6 +2,7 @@
 // shells are presentational; every control inside is the shared layer.
 // `onDone(toast?)` closes the drawer — drawer visibility and toasts are the
 // shell's local UI state.
+import { useState } from "react";
 import type { AgentViewState, AgentSummary, SessionSummary } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { capabilityOneLiner } from "../shared/capability-format";
@@ -75,7 +76,7 @@ export function AgentsDrawer(props: {
       <div
         className="foot"
         onClick={() => {
-          send({ kind: "openSettings" });
+          send({ kind: "openSettings", section: "agents" });
           props.onDone();
         }}
       >
@@ -95,6 +96,10 @@ export function SessionsDrawer(props: {
   onDone(): void;
 }) {
   const send = useActions();
+  // One id, not one bool per row: switching straight from one row's menu to
+  // another's needs a single state transition (session-row.tsx), not two
+  // independent Radix instances racing to close/open on the same click.
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   // Latest activity on top — sorted here in the view, so the reducer stays
   // append-only and wire-merge arrival order stops mattering.
   const ordered = [...props.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -135,7 +140,23 @@ export function SessionsDrawer(props: {
               </div>
             </div>
             <div className="badges" onClick={(e) => e.stopPropagation()}>
-              <SessionActions session={s} detach={props.detach} />
+              <SessionActions
+                session={s}
+                detach={props.detach}
+                open={openMenuId === s.id}
+                // Radix's DismissableLayer defers an outside-pointerdown
+                // dismiss to the following click event (deferPointerDownOutside,
+                // Menu's default) — so clicking straight from row A's open
+                // menu into row B's trigger opens B first (React's click
+                // handler, reached while bubbling through the root
+                // container) and only then fires A's deferred dismiss
+                // (reached bubbling further up to document). An unconditional
+                // clear here would let A's stale close stomp B's fresh open.
+                // Only clear when this row is still the one recorded open.
+                onOpenChange={(o) =>
+                  setOpenMenuId((cur) => (o ? s.id : cur === s.id ? null : cur))
+                }
+              />
             </div>
           </div>
         );

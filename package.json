@@ -2,7 +2,7 @@
   "name": "acp-patchbay",
   "displayName": "ACP Patchbay",
   "description": "Any ACP agent. Every integration it can accept. Shown exactly as it is.",
-  "version": "0.82.0",
+  "version": "0.82.1",
   "publisher": "solutionsunity",
   "license": "SEE LICENSE IN LICENSE",
   "engines": {

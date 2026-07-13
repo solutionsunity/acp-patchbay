@@ -14,11 +14,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /** Ellipsis menu shared by the session row and sessions-drawer rows.
- * `detach` mirrors the detachWindows preference — off hides the entry point. */
-export function SessionActions({ session, detach }: { session: SessionSummary; detach: boolean }) {
+ * `detach` mirrors the detachWindows preference — off hides the entry point.
+ * `open`/`onOpenChange` are optional: omitted, Radix manages its own state
+ * (fine for the lone active-session row); a list of rows (SessionsDrawer)
+ * must pass them, controlled from one shared "which id is open" state — two
+ * independent uncontrolled menus race their pointerdown handlers when you
+ * click straight from one row's trigger to another's, and the second row's
+ * own open can lose to the first row's dismiss. One piece of state removes
+ * the race instead of chasing it. */
+export function SessionActions({
+  session,
+  detach,
+  open,
+  onOpenChange,
+}: {
+  session: SessionSummary;
+  detach: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const send = useActions();
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="h-6 w-6" title="Session actions" aria-label="Session actions">
           <Icon name="ellipsis" />

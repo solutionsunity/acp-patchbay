@@ -34,8 +34,27 @@ export type ConnectAgentSource =
   | { command: string } // custom command line that speaks ACP
   | { configuredId: string }; // a saved workspace agent config (Settings § Agents)
 
+/** The Settings shell's section ids — protocol-level because the open
+ * section is host-owned state (render-only-webview.md: webviews rehydrate
+ * from the orchestrator), and because openSettings deep-links by it. */
+export type SettingsSectionId =
+  | "agents"
+  | "matrix"
+  | "integrations"
+  | "preferences"
+  | "permissions"
+  | "audit"
+  | "data"
+  | "assets";
+
 export type Action =
-  | { kind: "openSettings" }
+  /** Opens (or reveals) the Settings panel; `section` additionally navigates
+   * it — without it an already-open panel stays on whatever it showed, which
+   * reads as a dead click from anywhere that promises a destination. */
+  | { kind: "openSettings"; section?: SettingsSectionId }
+  /** The Settings nav itself — section state lives host-side so a disposed
+   * webview (hidden tab) comes back where the user left it. */
+  | { kind: "setSettingsSection"; section: SettingsSectionId }
   /** `verifyAfterConnect` (Settings § Agents' "Verify after add", default
    * checked) auto-runs the free protocol-level Verify once the connection —
    * and any required login — succeeds. Absent → false (existing callers:
@@ -1946,6 +1965,9 @@ export interface PendingBinaryInstallView {
 }
 
 export interface SettingsState {
+  /** The open section — host-owned so it survives webview disposal and so
+   * openSettings can deep-link (e.g. the Agent View's "Add or manage"). */
+  section: SettingsSectionId;
   agents: readonly AgentSummary[];
   registryAgents: readonly RegistryAgentView[];
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
@@ -2011,6 +2033,7 @@ export interface DataInventoryRow {
 }
 
 export const initialSettingsState: SettingsState = {
+  section: "agents",
   agents: [],
   registryAgents: [],
   capabilities: {},
@@ -2063,7 +2086,8 @@ export type SettingsEvent =
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
   | { kind: "binaryInstallResolved"; agentId: string }
   | { kind: "agentVerifyStarted"; agentId: string }
-  | { kind: "agentVerifyFinished"; agentId: string };
+  | { kind: "agentVerifyFinished"; agentId: string }
+  | { kind: "sectionChanged"; section: SettingsSectionId };
 
 export function reduceSettings(
   state: SettingsState,
@@ -2179,6 +2203,8 @@ export function reduceSettings(
       return { ...state, dataInventory: event.rows };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
+    case "sectionChanged":
+      return { ...state, section: event.section };
     default:
       return state;
   }
@@ -2202,6 +2228,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "binaryInstallResolved",
   "agentVerifyStarted",
   "agentVerifyFinished",
+  "sectionChanged",
 ]);
 
 export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {

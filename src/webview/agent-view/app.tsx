@@ -75,7 +75,7 @@ export function App({
   // routes to Settings (where adding lives); only real choice opens the picker.
   const newChat = () => {
     setDrawer(null);
-    if (state.agents.length === 0) send({ kind: "openSettings" });
+    if (state.agents.length === 0) send({ kind: "openSettings", section: "agents" });
     else if (state.agents.length === 1) send({ kind: "startChat", agentId: state.agents[0]!.id });
     else setDrawer("agents");
   };

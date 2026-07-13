@@ -240,7 +240,7 @@ function FullscreenButton({ svg }: { svg: string }) {
       </button>
       {open &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex flex-col bg-background/95">
+          <div className="fixed inset-0 z-[44] flex flex-col bg-background/95">
             <button
               type="button"
               className="absolute top-4 right-4 z-10 rounded-md p-2 text-muted-foreground transition-all hover:bg-muted hover:text-foreground"

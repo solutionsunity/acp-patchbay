@@ -1,9 +1,9 @@
 // Settings shell — left nav + one section at a time (ui.md § Settings).
-// Render-only: the shell owns only which section is open; each section
-// module owns its markup and wiring. Empty states are honest, never
+// Render-only: the open section is host-owned state (state.section), so it
+// survives webview disposal and openSettings can deep-link to it; each
+// section module owns its markup and wiring. Empty states are honest, never
 // placeholders pretending to be data.
-import { useState } from "react";
-import type { SettingsState } from "../../shared/protocol";
+import type { SettingsSectionId, SettingsState } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
@@ -48,13 +48,14 @@ const NAV_GROUPS = [
     label: "This workspace",
     items: [{ id: "assets", icon: "note", label: "Rules · skills · commands" }],
   },
-] as const;
-
-type SectionId = (typeof NAV_GROUPS)[number]["items"][number]["id"];
+] as const satisfies ReadonlyArray<{
+  label: string;
+  items: ReadonlyArray<{ id: SettingsSectionId; icon: string; label: string }>;
+}>;
 
 export function App({ state }: { state: SettingsState }) {
   const send = useActions();
-  const [section, setSection] = useState<SectionId>("agents");
+  const section = state.section;
 
   return (
     <div className="layout">
@@ -66,7 +67,7 @@ export function App({ state }: { state: SettingsState }) {
               <div
                 key={s.id}
                 className={`it ${section === s.id ? "on" : ""}`}
-                onClick={() => setSection(s.id)}
+                onClick={() => send({ kind: "setSettingsSection", section: s.id })}
               >
                 <Icon name={s.icon} /> {s.label}
               </div>
