@@ -105,6 +105,59 @@ Practical notes:
 - The theme bridge is written once, as a shared stylesheet/module, imported by
   every webview's entry point — not duplicated per surface.
 
+### Overlay surfaces — one behavior, one owner (decided 2026-07-13)
+
+A transient overlay (a menu, a popover, a tooltip, a confirm dialog) is not a
+`<div>` you position and toggle. It is four hard problems braided together —
+**z-escaping** (rendering above whatever it overlaps regardless of stacking
+context), **dismissal** (outside-click and Escape, without swallowing the next
+click), **placement** (anchored to a trigger, flipping/shifting to stay
+on-screen), and **focus/keyboard/ARIA**. Radix already solves all four,
+uniformly, for every primitive; that is the load-bearing reason it's the
+chosen primitive layer, not the component styling. So the rule:
+
+- **Every transient overlay is a Radix primitive** — `DropdownMenu`,
+  `Popover`, `Tooltip`, `ContextMenu`, `Dialog`, `Select`. Building one from a
+  bare `useState(open)` + a positioned `<div>` re-implements those four
+  problems by hand, always incompletely: the recurring failures we hit — a
+  menu painting *behind* a drawer, a panel that only Escape (never an outside
+  click) would close, a popup pinned to a fixed corner instead of the caret —
+  were each a surface that opted out of Radix, not a gap in Radix.
+
+- **App CSS never enters the `z-index ≥ 50` band.** That band is Radix's
+  portal band (its content mounts at `document.body` at `z-50` to escape
+  stacking contexts). An app layer that climbs into it wins the paint but
+  loses the interaction: the portal's modal lock still routes pointer events
+  to the now-invisible overlay, so clicks fire blind. App layers occupy the
+  documented ladder below 50 (agent-view `style.css` § Z LADDER); the boundary
+  is enforced by `test/z-ladder.test.ts` — a new violation fails CI, not a
+  reviewer's memory.
+
+- **Sibling overlays coordinate through one controlled open-state**, never N
+  independent uncontrolled instances. A list of row-action menus rendered as N
+  self-managed `DropdownMenu`s races on a cross-row click — Radix defers an
+  outside-pointerdown dismiss to the following `click`, which reaches the
+  next row's open handler first, so the fresh open is then stomped by the
+  stale dismiss. Lift to a single `openId`, and guard the close so only the
+  currently-open row can clear it.
+
+- **The one recorded exception is editor-anchored autocomplete** — the
+  composer's `/` and `@` menus. These *cannot* be a `DropdownMenu`/`Popover`,
+  because those move focus into the overlay (FocusScope + roving tabindex),
+  which breaks typing; the caret must stay in the editor while the list is
+  open (the combobox pattern, which Radix ships no primitive for). There, and
+  only there, the interaction is hand-rolled — but the **placement still is
+  not**: it uses `@floating-ui/react` (the same engine Radix wraps internally
+  via `@radix-ui/react-popper`), a virtual anchor at the caret rect with
+  `flip`/`shift`/`size` middleware. The result is that no bespoke
+  popup-positioning math exists anywhere in the tree; the exception is scoped
+  to *focus behavior*, not to reinventing collision handling.
+
+Flag as an architecture violation, in review: a webview overlay assembled from
+raw open-state + a positioned `<div>`; a hand-written outside-click or Escape
+handler; an app `z-index ≥ 50`; or popup positioning math written outside the
+Radix / Floating-UI path.
+
 ## Agent Rendering Strategy (chat view)
 
 ### Markdown rendering — solved
