@@ -1012,7 +1012,17 @@ body {
   box-shadow: 0 6px 24px #000a;
   z-index: 30;
   min-width: 210px;
+  /* Cap the popover and scroll the rows, not the whole card: the `.src`
+     provenance footer stays pinned while a long `/` or `@` list scrolls. */
+  display: flex;
+  flex-direction: column;
+  max-height: 45vh;
   overflow: hidden;
+}
+
+.pop .rows {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* rows shared with Radix popover panels (the composer's context adder) */
@@ -1039,6 +1049,7 @@ body {
 }
 
 .pop .src {
+  flex: none; /* pinned footer — never shrinks under a scrolling row list */
   padding: 5px 11px;
   font-size: 10.5px;
   color: var(--pb-text-faint);

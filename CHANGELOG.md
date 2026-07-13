@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.82.2 — 2026-07-13
+
+- Fixed the composer's / and @ suggestion menu: it now opens at the line
+  you're typing and keeps the keyboard selection in view.
+
 ## 0.82.1 — 2026-07-13
 
 - Fixed z-index layering across the sidebar so overlay menus can no longer
