@@ -64,7 +64,24 @@ async function page(browser, themeName, { width, height }) {
     <style>:root{${THEMES[themeName]}}</style>
     <style>${codiconCss}</style>
   </head><body class="${bodyClass(themeName)}"><div id="root"></div></body></html>`);
-  await p.evaluate("window.acquireVsCodeApi = () => ({ postMessage: () => {} }); undefined");
+  // The fake host answers the ONE action a fixture page can't render
+  // without: the settings nav's setSettingsSection (section state is
+  // host-owned since the deep-link work — the view correctly refuses to
+  // move on its own). Everything else stays a no-op sink.
+  await p.evaluate(`
+    let rev = 1;
+    window.acquireVsCodeApi = () => ({
+      postMessage: (msg) => {
+        if (msg?.kind === "action" && msg.action?.kind === "setSettingsSection") {
+          window.postMessage(
+            { kind: "patch", rev: ++rev, events: [{ kind: "sectionChanged", section: msg.action.section }] },
+            "*",
+          );
+        }
+      },
+    });
+    undefined
+  `);
   return p;
 }
 
@@ -97,6 +114,20 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] katex rendered`, (await p.$(".katex")) !== null);
   check(`[${theme}] currency $ not eaten by math`, (await p.$("text=$5 and $10 stay currency")) !== null);
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);
+  // path= fence: caption row renders, and the block keeps its lines (each
+  // code line must start at the same x — one-lined code puts line 2 to the
+  // right of line 1 instead of below it)
+  check(`[${theme}] excerpt fence renders path caption + badge`, (await p.$('text=src/deep/thing.ts')) !== null && (await p.$("text=EXCERPT")) !== null);
+  const codeLines = await p.$$eval(
+    '[data-language="ts"][data-streamdown="code-block-body"] > pre > code',
+    (els) =>
+      els.some((el) => {
+        if (!el.textContent.includes("const two")) return false; // the excerpt fixture
+        const xs = [...el.children].map((s) => s.getBoundingClientRect());
+        return xs.length === 2 && xs[0].left === xs[1].left && xs[1].top > xs[0].top;
+      }),
+  );
+  check(`[${theme}] multi-line fence keeps its lines`, codeLines);
   check(`[${theme}] tool run grouped`, (await p.$("text=5 tool calls")) !== null);
 
   // ── injected user-role envelope: dim collapsed line, never a bubble,

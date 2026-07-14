@@ -5,9 +5,10 @@
 import { Streamdown, type ThemeInput } from "streamdown";
 import { Icon } from "../../shared/icon";
 import { cjkPlugin } from "../cjk-plugin";
-import { shikiPlugin, SHIKI_THEMES } from "../highlighter";
+import { shikiPlugin, SHIKI_THEMES, SUPPORTED } from "../highlighter";
 import { katexPlugin } from "../math-plugin";
 import { MermaidBlock } from "../mermaid-block";
+import { ChatCodeBlock } from "./code-block";
 
 /** Streamdown's control icons re-pointed at Codicons — one icon set across
  * the whole extension (ui-rendering-strategy: no second icon set), same
@@ -26,8 +27,14 @@ const SD_ICONS = {
 };
 
 /** Module-level so Streamdown's memo isn't broken by a fresh array per
- * render (same rule as SD_ICONS). */
-const RENDERERS = [{ language: "mermaid", component: MermaidBlock }];
+ * render (same rule as SD_ICONS). ChatCodeBlock takes every highlighted
+ * language because custom renderers are the only path Streamdown hands the
+ * fence's meta to — it renders the built-in block unless the fence carries
+ * `path=` attributes (code-block.tsx). */
+const RENDERERS = [
+  { language: "mermaid", component: MermaidBlock },
+  { language: [...SUPPORTED], component: ChatCodeBlock },
+];
 
 export function AgentMarkdown({ text, live }: { text: string; live: boolean }) {
   return (

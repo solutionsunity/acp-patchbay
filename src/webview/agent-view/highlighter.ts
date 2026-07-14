@@ -43,8 +43,11 @@ const LANGS = [
   langYaml,
 ];
 
-/** Every name + alias the loaded grammars answer to (sh, py, ts, …). */
-const SUPPORTED = new Set(
+/** Every name + alias the loaded grammars answer to (sh, py, ts, …).
+ * Exported for the code-block custom renderer's language list — the two
+ * must cover the same set or a fence would highlight but lose its
+ * path/excerpt attributes (or vice versa). */
+export const SUPPORTED = new Set(
   LANGS.flatMap((l) => l.flatMap((g) => [g.name, ...(g.aliases ?? [])])),
 );
 

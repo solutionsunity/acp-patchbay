@@ -42,17 +42,21 @@ export function ConfirmButton(props: {
   variant?: "outline" | "destructive";
   confirmLabel?: string;
   title?: string;
+  /** In-flight guard: dims the trigger instead of unmounting it — removing
+   * an open Radix AlertDialog from the tree mid-interaction can strand the
+   * body's pointer-events lock and freeze the whole webview. */
+  disabled?: boolean;
   onConfirm(): void;
 }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
         {props.icon !== undefined ? (
-          <Button variant={props.variant ?? "outline"} size="icon" className="size-8" title={props.label} aria-label={props.label}>
+          <Button variant={props.variant ?? "outline"} size="icon" className="size-8" title={props.label} aria-label={props.label} disabled={props.disabled}>
             <Icon name={props.icon} />
           </Button>
         ) : (
-          <Button variant={props.variant ?? "outline"} size="sm">{props.label}</Button>
+          <Button variant={props.variant ?? "outline"} size="sm" disabled={props.disabled}>{props.label}</Button>
         )}
       </AlertDialogTrigger>
       <AlertDialogContent>

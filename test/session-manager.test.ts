@@ -836,6 +836,36 @@ describe("SessionManager", () => {
     await h.pool.stop("img2");
   });
 
+  it("attachment chips ride as resource_link to their real path — baseline, no capability consulted", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "att1"));
+    const sessionId = await h.sessionManager.createSession("att1", "Fake Agent", cwd);
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-att",
+      kind: "attachment",
+      label: "File: report.pdf",
+      path: "/ws/docs/report.pdf",
+      mimeType: "application/pdf",
+    });
+    h.sessionManager.addContext(sessionId, {
+      id: "chip-att-2",
+      kind: "attachment",
+      label: "File: blob.bin",
+      path: "/ws/blob.bin",
+      // no mimeType: the producer didn't know one — absent stays absent
+    });
+    await h.sessionManager.sendPrompt(sessionId, "what are these?");
+
+    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
+    expect(kinds).toEqual([
+      { type: "resource_link", uri: "file:///ws/docs/report.pdf", name: "report.pdf", mimeType: "application/pdf" },
+      { type: "resource_link", uri: "file:///ws/blob.bin", name: "blob.bin" },
+      { type: "text" },
+    ]);
+    await h.pool.stop("att1");
+  });
+
   it("removeContext drops a chip before it's ever sent", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
@@ -1405,6 +1435,24 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     expect(blocks()).toHaveLength(1);
     expect(blocks()[0]).toMatchObject({ kind: "thought", text: "*[image content — not rendered]*" });
     await h.pool.stop("ch2");
+  });
+
+  it("agent prose rides the wire-extension rewriter: a chunk-split vendor wrapper lands as fence attributes", async () => {
+    // The rewrite itself is gated in augment-code-snippet.test.ts; this
+    // locks the DOOR — deltas route through the run's rewriter (split
+    // anywhere), and sealRun flushes a withheld tail when a tool call
+    // interrupts the run instead of letting it vanish.
+    const { h, push, blocks } = await chunkHarness("ch7");
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Look:\n\n<augment_code_sni" } });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: 'ppet path="a.ts" mode="EXCERPT">\n```ts\n1\n' } });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "```\n</augment_code_snippet>" } });
+    expect(textOf(blocks()[0])).toBe('Look:\n\n```ts path="a.ts" excerpt\n1\n```\n');
+    // a tail the rewriter is still withholding when prose is interrupted:
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "\n\ntail <augment_code" } });
+    expect(textOf(blocks()[0])).toBe('Look:\n\n```ts path="a.ts" excerpt\n1\n```\n\n\ntail ');
+    push({ sessionUpdate: "tool_call", toolCallId: "t1", title: "read", status: "pending" });
+    expect(textOf(blocks()[0])).toBe('Look:\n\n```ts path="a.ts" excerpt\n1\n```\n\n\ntail <augment_code');
+    await h.pool.stop("ch7");
   });
 
   it("a replayed user resource_link mention merges INTO the prompt bubble as @name (G10b)", async () => {

@@ -3,7 +3,7 @@
 // knobs offering only what the agent actually offered.
 import { useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
-import { hasUnusedProbe } from "../../shared/protocol";
+import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { ConfirmButton, Field, Toggle } from "./controls";
@@ -171,18 +171,6 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
     registrySource: null,
     lastSeenVersion: null,
   };
-}
-
-/** Registry version vs. what this config is pinned to — null when there's
- * nothing to compare (custom command, or already current). Never
- * auto-applied: Upgrade is always the user's own click. Linked through the
- * config's own registrySource.registryId — never the config id, which may
- * predate the registry naming. */
-function updateAvailable(state: SettingsState, config: AgentConfigView | undefined): { from: string; to: string } | null {
-  if (config?.registrySource == null) return null;
-  const latest = state.registryAgents.find((r) => r.id === config.registrySource!.registryId)?.version;
-  if (latest == null || latest === config.registrySource.pinnedVersion) return null;
-  return { from: config.registrySource.pinnedVersion, to: latest };
 }
 
 /** The registry's own icon for an agent (a host-fetched data URI riding
@@ -422,20 +410,17 @@ function BinaryInstallModal(props: {
   );
 }
 
-/** `needsAuth` gate (protocol.ts): "agent"-kind methods (the stable
- * default — the agent handles auth itself via `authenticate`) and
- * "terminal-recipe" methods (adopted `_meta["terminal-auth"]` extension —
- * the orchestrator runs the login in a VS Code terminal) are actionable;
- * recipe-less "env_var"/"terminal" stay declared but never wired to a
- * button. Same action either way: the orchestrator routes by method. */
+/** `needsAuth` gate — runnable methods per card-controls.ts's
+ * `runnableLoginMethods` (the one filter for "can patchbay drive a login
+ * here?"); recipe-less "env_var"/"terminal" stay declared but never wired
+ * to a button. Same action either way: the orchestrator routes by method. */
 function LoginControl(props: {
   agentId: string;
   methods: readonly AuthMethodView[];
+  disabled: boolean;
   onAuthenticate(agentId: string, methodId: string): void;
 }) {
-  const actionable = props.methods.filter(
-    (m) => m.kind === "agent" || m.kind === "terminal-recipe",
-  );
+  const actionable = runnableLoginMethods(props.methods);
   const [methodId, setMethodId] = useState(actionable[0]?.id ?? "");
   if (actionable.length === 0) {
     return (
@@ -466,6 +451,7 @@ function LoginControl(props: {
       <Button
         size="sm"
         title={selected.description ?? undefined}
+        disabled={props.disabled}
         onClick={() => props.onAuthenticate(props.agentId, selected.id)}
       >
         Log in
@@ -676,19 +662,20 @@ export function AgentsSection(props: {
         // honest unknown is "untested", never a claimed "stopped" (P16).
         const status = a?.status ?? "untested";
         const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
-        const upgrade = updateAvailable(state, config);
         // Editing forces the body open — the form lives there.
         const detailsOpen = openDetails[id] === true || editing === id;
-        // Same predicate the orchestrator's own automatic post-connect/
-        // reconnect retry gates on (capability-tracker.ts) — centralized in
-        // protocol.ts so "does this still need a check" can't drift between
-        // the two call sites. needsAuth is folded in on top: even with no
-        // outstanding probe row, an agent stuck needing auth (e.g. no stable
-        // login method for patchbay to drive) still needs a manual escape
-        // hatch to re-check once the user resolves it out of band.
-        const needsVerify =
-          a?.needsAuth === true ||
-          (matrix !== undefined && hasUnusedProbe(matrix, state.authMethods[id] ?? []));
+        // The action cluster's one derivation (card-controls.ts) — every
+        // show/disabled rule lives there, unit-tested; the JSX below reads
+        // `controls.x` and nothing else (ui-rendering-strategy.md § Control
+        // logic).
+        const controls = agentCardControls({
+          agent: a,
+          config,
+          matrix,
+          authMethods: state.authMethods[id] ?? [],
+          registryAgents: state.registryAgents,
+          verifying: state.verifyingAgents[id] === true,
+        });
         // Inline knob/policy edits never touch env — submit every existing
         // key blank, the "keep the stored value" signal (write-only env).
         const saveConfig = (patch: Partial<AgentConfigView>) =>
@@ -728,58 +715,59 @@ export function AgentsSection(props: {
               <span className={`dot ${status}`} />
               <AgentIcon icon={registry?.icon} />
               <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
-              {upgrade !== null && (
-                <Badge className="border-warn/40 text-warn" title={`registry has v${upgrade.to}, pinned to v${upgrade.from}`}>
+              {controls.upgrade !== null && (
+                <Badge className="border-warn/40 text-warn" title={`registry has v${controls.upgrade.to}, pinned to v${controls.upgrade.from}`}>
                   update available
                 </Badge>
               )}
               <span className="flex-1" />
-              {a?.needsAuth === true && (
-                <LoginControl agentId={id} methods={state.authMethods[id] ?? []} onAuthenticate={props.onAuthenticate} />
+              {controls.login.show && (
+                <LoginControl agentId={id} methods={state.authMethods[id] ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
               )}
-              {status === "running" && (
-                <>
-                  {/* Offered only on a declared auth.logout — the spec's
-                      "Clients MUST NOT call it" otherwise. Hidden while
-                      needsAuth: nothing to log out of. */}
-                  {a?.needsAuth !== true && matrix?.["auth.logout"]?.declared === true && (
-                    <ConfirmButton
-                      label="Log out"
-                      icon="sign-out"
-                      title="Active sessions may start failing with auth errors until you log in again."
-                      onConfirm={() => props.onLogout(id)}
-                    />
-                  )}
-                  <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
-                    <Icon name="debug-stop" />
-                  </Button>
-                  {needsVerify && (
-                    <Button
-                      variant="outline" size="icon" className="size-8"
-                      title={state.verifyingAgents[id] === true ? "Verifying…" : "Verify…"}
-                      aria-label="Verify"
-                      disabled={state.verifyingAgents[id] === true}
-                      onClick={() => setDiagFor(id)}
-                    >
-                      <Icon name={state.verifyingAgents[id] === true ? "loading" : "beaker"} spin={state.verifyingAgents[id] === true} />
-                    </Button>
-                  )}
-                </>
+              {/* Log out is *disabled* — never unmounted — while in flight,
+                  so the open AlertDialog is never yanked from the tree
+                  (ui-rendering-strategy.md § Overlay surfaces). */}
+              {controls.logout.show && (
+                <ConfirmButton
+                  label="Log out"
+                  icon="sign-out"
+                  title="Active sessions may start failing with auth errors until you log in again."
+                  disabled={controls.logout.disabled}
+                  onConfirm={() => props.onLogout(id)}
+                />
               )}
-              {status !== "running" && config !== undefined && (
+              {controls.stop.show && (
+                <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
+                  <Icon name="debug-stop" />
+                </Button>
+              )}
+              {controls.verify.show && (
+                <Button
+                  variant="outline" size="icon" className="size-8"
+                  title={controls.verify.busy ? "Verifying…" : "Verify…"}
+                  aria-label="Verify"
+                  disabled={controls.verify.disabled}
+                  onClick={() => setDiagFor(id)}
+                >
+                  <Icon name={controls.verify.busy ? "loading" : "beaker"} spin={controls.verify.busy} />
+                </Button>
+              )}
+              {controls.connect.show && (
                 <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
                   <Icon name="plug" />
                 </Button>
               )}
-              {upgrade !== null && (
-                <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${upgrade.to}`} aria-label={`Upgrade to v${upgrade.to}`} onClick={() => props.onUpgrade(id)}>
+              {controls.upgrade !== null && (
+                <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${controls.upgrade.to}`} aria-label={`Upgrade to v${controls.upgrade.to}`} onClick={() => props.onUpgrade(id)}>
                   <Icon name="arrow-circle-up" />
                 </Button>
               )}
-              <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
-                <Icon name="edit" />
-              </Button>
-              {config !== undefined && (
+              {controls.edit.show && (
+                <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
+                  <Icon name="edit" />
+                </Button>
+              )}
+              {controls.remove.show && (
                 <ConfirmButton
                   label="Remove"
                   icon="trash"

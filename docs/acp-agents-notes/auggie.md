@@ -88,6 +88,39 @@ support@augmentcode.com / Discord.
 - **Status:** observed 2026-07-12 → report drafted 2026-07-13
   ([auggie-acp-compliance-report.md](auggie-acp-compliance-report.md)), pending send.
 
+### Unknown image format kills the whole turn with an opaque 400
+
+- **Observed:** 2026-07-14, v0.32.0 (commit eb99b871). `promptCapabilities.image`
+  is declared `true`, and png/jpeg/gif/webp ImageContent works end-to-end
+  (wire-verified same day, including a 153KB png on `claude-fable-5` and a
+  `session/load`ed history session). But auggie maps the block's `mimeType`
+  to a private format enum — `jpeg/jpg→2, png→1, gif→3, webp→4, else→0` —
+  and ships the enum; the backend rejects format 0 by failing the **entire
+  prompt** with `-32603 "Internal error: HTTP error: 400 Bad Request"`
+  (`apiStatus: invalidArgument`, `/chat-stream`).
+- **Repro:** `session/prompt` with `{type:"image", data:<png b64>,
+  mimeType:"image/bmp"}` → the 400 above. Same block with
+  `mimeType:"image/png"` → `end_turn`. (Bytes are never sniffed; the
+  mimeType string alone decides.) Note `image/svg+xml` also lands on 0 —
+  `split("/")[1]` is `"svg+xml"`.
+- **Spec:** ImageContent's `mimeType` is a free string ("MIME type
+  describing the encoded media payload") — no format enumeration; format
+  scoping of a declared capability has no wire surface. Quality-of-
+  implementation aside, the *conduct* gap is unmistakable: auggie's own
+  oversize gate degrades gracefully (skip + local warn), while unknown
+  format detonates the turn with an error that names nothing.
+- **Impact on patchbay:** none since 2026-07-14 — the composer's attachment
+  ingress normalizes every decodable image outside {png, jpeg, gif, webp}
+  to PNG before a chip exists (architecture.md § one attachment ingress),
+  chosen as the industry-universal set, not as an auggie workaround — so no
+  extension module, no retire condition. This entry documents the vendor
+  behavior, not a live dependency.
+- **Ask:** degrade unknown formats the way oversize already degrades (skip
+  the block, warn, let the turn run) — or at minimum return an error that
+  names the offending block and format.
+- **Status:** observed + wire-verified 2026-07-14; to ride the TKT-66153
+  channel as a follow-up.
+
 ## Capability gaps
 
 - `mcpCapabilities` absent (no http/sse): honest — auggie takes stdio
@@ -98,6 +131,101 @@ support@augmentcode.com / Discord.
 
 ## Behavioral notes
 
+- **ACP auth surface not implemented at all** (wire-observed 2026-07-14,
+  v0.32.0): `initialize` declares `authMethods: []`, and the -32000 error
+  text says it plainly — *"Auggie does not currently support authenticating
+  over ACP. Please run `auggie login` from your terminal then try again."*
+  No `authenticate`, no `auth.logout`; login and logout exist only as
+  out-of-band CLI commands (`auggie login` / `auggie logout`). Every auth
+  transition therefore happens outside the running ACP process — which is
+  exactly what makes the two findings below bite.
+- **Auth state is read at spawn, never re-read — in both directions**
+  (observed live 2026-07-14, v0.32.0):
+  - **Login side:** with a running `auggie --acp` in `auth_required` state,
+    a successful out-of-band `auggie login` (exit 0, credentials on disk)
+    does not unlock it — the very next session/new still answers -32000; a
+    fresh spawn of the same version is authenticated immediately. UX bug:
+    any client offering a terminal-recipe login must restart the process
+    after a successful login or the login appears to do nothing. Patchbay:
+    `loginViaTerminal` (orchestrator.ts) probes after exit 0 and, on a
+    still-`auth_required` answer, restarts the process — shape-gated
+    (out-of-band login + still-locked probe), not vendor-gated.
+  - **Logout side (the security half), now observed:** process spawned
+    while logged in, then `auggie logout` out of band, then session/prompt
+    driven on the running process — on both a *fresh* session and a
+    *continuation of an already-loaded* session. Both stalled for **exactly
+    4m39s, then errored out**. At no point did the agent raise
+    `auth_required` (-32000) or any auth-shaped notification: the client
+    sees a silent multi-minute stall indistinguishable from a long turn,
+    then a generic failure. Server-side revocation does eventually bite
+    (the error proves the token stopped working upstream), so this is not
+    an indefinitely-authenticated actor — but the logged-out state is
+    simply unhandled in the agent's ACP layer: auth is checked at spawn
+    and at session/new only; the prompt path has no auth handling at all
+    (consistent with the "does not support authenticating over ACP"
+    stance). The precise 4m39s (279s) smells like an internal
+    retry/timeout budget, not a decision. Candidate addition to the
+    TKT-66153 thread.
+  - Patchbay defense (policy, all agents, not auggie-gated): patchbay's
+    own logout disconnects every process for the agent
+    (orchestrator.logoutAgent) — a process that has held credentials is
+    never trusted to shed them. Moot for auggie specifically (no
+    `auth.logout` to offer, so the control never shows) — the exposure
+    here is out-of-band logout, which only a process restart clears.
+- **Permission declines persist globally and durably** (on-disk evidence
+  2026-07-14): `~/.augment/settings.json` `indexingDenyDirs` carried
+  `/tmp/acp-cancel-test/ws` — a patchbay throwaway test dir whose
+  session's "Workspace Indexing Permission" was auto-declined. A
+  session-scoped answer written as permanent global config is the same
+  scope-latch family as the mcpServers bug: consent broadened past the
+  session that gave it. Client consequence: auto-declining a probe
+  session's indexing question mutates the user's global auggie config —
+  patchbay's probe etiquette (auto-decline, never grant on the user's
+  behalf) is still right, but the decline should be scoped once auggie's
+  options allow it; worth checking which reject kinds auggie actually
+  offers on that request. Also noted the same day: a broad `/opt` deny
+  entry covering the live workspace — origin not pinned down, listed here
+  so a future indexing-related stall checks this file first (and see the
+  next bullet: that entry also defeated the workspace's exact allow).
+- **Ancestor deny overrides exact allow in indexing config** (observed
+  live 2026-07-14, v0.32.0): `~/.augment/settings.json` carried
+  `/opt/vscode-extensions` in `indexingAllowDirs` *and* `/opt` in
+  `indexingDenyDirs` — and `codebase-retrieval` against
+  `/opt/vscode-extensions` failed with *"This directory is in your
+  indexing deny list and cannot be indexed."* The resolver walks
+  ancestors on the deny side without letting a more specific allow entry
+  punch through, so an explicitly allowed workspace is unindexable while
+  the config plainly says it's allowed. Broken precedence: an exact
+  allow is the user's explicit consent for that directory and should win
+  over a broader ancestor deny (most-specific-rule-wins, the standard
+  allow/deny resolution order). Consequence compounds with the previous
+  bullet: auto-written deny entries land in this same global file, so a
+  single broad decline can silently disable indexing for workspaces the
+  user separately allowed. Fixed locally by removing `/opt` from
+  `indexingDenyDirs` (2026-07-14). Vendor-reportable; product config
+  bug, not ACP-layer — separate from the TKT-66153 thread.
+
+- **Proprietary render directive in message text** (wire-verified
+  2026-07-14, v0.32.0): agent message chunks wrap code excerpts in
+  `<augment_code_snippet path="…" mode="EXCERPT">` around a normal fence,
+  closed with `</augment_code_snippet>` — Augment's own client renders this
+  as an excerpt card; every other ACP client shows the tag as literal text
+  (markdown renderers with raw HTML off — the safe default — pass unknown
+  tags through as prose). **Authored by the model, not by any tool:**
+  across a full session store the tag appears 9× in assistant
+  `response_nodes` and 0× in any tool result, including runs where
+  `codebase-retrieval` wasn't even attached (`Tool codebase-retrieval not
+  found`) and the model read files via `view` — so it's the system
+  prompt's presentation convention, emitted on any wire including ACP.
+  Recommendation for the vendor report: an ACP-bound agent should suppress
+  client-proprietary output conventions on the protocol wire — ACP message
+  content is plain markdown by contract, and a directive only one client
+  can render is noise on every other. Patchbay honors rather than strips
+  it: `extensions/augment-code-snippet.ts` (streaming rewriter — chunk
+  boundaries can split the tag) drops the wrapper and hoists `path`/`mode`
+  onto the fence info string, which the chat code block renders as a
+  file-path caption + EXCERPT badge, vendor-free. Candidate addition to
+  the TKT-66153 thread.
 - **Model surface:** graduated to Compliance issues 2026-07-13 (§ Model
   selection rides a removed draft API) once the June 1, 2026 upstream
   removal notice was found — the earlier benefit-of-the-doubt read

@@ -36,7 +36,7 @@ import {
   type KnobExecuteDeps,
   type NormalizedKnobs,
 } from "./knobs";
-import { sessionKnobExtras } from "./extensions";
+import { createProseRewriter, sessionKnobExtras, type ProseRewriter } from "./extensions";
 import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
@@ -185,9 +185,17 @@ interface LiveSession {
   /** The at-most-one open prose run — every chunk arm continues or replaces
    * it through `runBlockFor` (the one place the continuation rule lives);
    * everything that interrupts prose (a tool call, a placeholder, a prompt
-   * send, a re-attach) closes it in one assignment. `messageId` is the ACP
-   * ContentChunk id the run belongs to (null = opened by an id-less chunk). */
-  openRun: { channel: RunChannel; blockId: string; messageId: string | null } | null;
+   * send, a re-attach) closes it through `sealRun` (the close-side twin).
+   * `messageId` is the ACP ContentChunk id the run belongs to (null =
+   * opened by an id-less chunk). `rewriter` is the wire-extension prose
+   * filter the run's agent-text deltas pass through (extensions/index.ts —
+   * opaque to this file); it may withhold a tail that sealRun flushes. */
+  openRun: {
+    channel: RunChannel;
+    blockId: string;
+    messageId: string | null;
+    rewriter?: ProseRewriter;
+  } | null;
   pendingContext: ContextChip[];
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
@@ -490,6 +498,9 @@ export class SessionManager {
       const session = this.sessions.get(sessionId);
       if (session !== undefined) {
         this.sweepOpenToolCalls(sessionId, session);
+        // end of replay = end of the trailing prose run: its rewriter tail
+        // lands in canonical state before the closing resync ships it
+        this.sealRun(sessionId, session);
         // The trailing turn has no next user message to flush it — the end
         // of the replay is its boundary (sweep first: same live rule, the
         // stranded calls' fate lands before the turnEnd block). Skipped when
@@ -1133,6 +1144,9 @@ export class SessionManager {
     try {
       let knobs: NormalizedKnobs;
       if (via === "load") {
+        // plain null, not sealRun: the replay rebuilds the transcript
+        // wholesale and re-delivers the run's text — a flushed tail here
+        // would land on a block the reset is about to erase
         session.openRun = null;
         knobs = await this.loadSilently(sessionId, session.poolKey, session.agentId);
       } else {
@@ -1228,7 +1242,7 @@ export class SessionManager {
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
     await this.ensureAttached(sessionId, agentId);
     const session = this.sessions.get(sessionId)!;
-    session.openRun = null;
+    this.sealRun(sessionId, session);
     session.inFlight = true;
     session.everPrompted = true;
     session.lastActivityAt = Date.now();
@@ -1269,31 +1283,42 @@ export class SessionManager {
     // Chips ride in the best form the agent accepts — capability first,
     // fallback second, switch at this one chokepoint (the house pattern):
     // images as ImageContent where `promptCapabilities.image` is declared,
-    // else bytes to a temp file as a ResourceLink; text chips as embedded
+    // else bytes to a temp file as a ResourceLink; attachment chips as the
+    // resource_link they already are (a real file the agent reads itself —
+    // baseline, no capability to consult); text chips as embedded
     // `resource` blocks where `promptCapabilities.embeddedContext` is
     // declared (a chip IS a snapshot the user took — typed, uri-attributed,
     // the agent weighs it correctly), else the labeled-text fallback that
-    // every agent MUST accept.
+    // every agent MUST accept. mimeTypes come with the chip or not at all —
+    // the ingress that produced the bytes was the last honest source, so
+    // nothing here ever defaults one.
     const declared = this.pool.get(session.poolKey)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
     const prompt: ContentBlock[] = [];
     for (const c of chips) {
-      if (c.kind !== "image") {
-        if (acceptsEmbedded) {
-          prompt.push({
-            type: "resource",
-            // Aggregates without a single source (diagnostics) name the
-            // chip itself — the uri field is required on the wire.
-            resource: { uri: c.sourceUri ?? `patchbay://context/${c.kind}/${c.id}`, text: c.content },
-          });
+      if (c.kind === "image") {
+        if (acceptsImages) {
+          prompt.push({ type: "image", data: c.content, mimeType: c.mimeType });
         } else {
-          prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
+          prompt.push(await imageAsResourceLink(c));
         }
-      } else if (acceptsImages) {
-        prompt.push({ type: "image", data: c.content, mimeType: c.mimeType ?? "image/png" });
+      } else if (c.kind === "attachment") {
+        prompt.push({
+          type: "resource_link",
+          uri: pathToFileURL(c.path).toString(),
+          name: basename(c.path),
+          ...(c.mimeType !== undefined ? { mimeType: c.mimeType } : {}),
+        });
+      } else if (acceptsEmbedded) {
+        prompt.push({
+          type: "resource",
+          // Aggregates without a single source (diagnostics) name the
+          // chip itself — the uri field is required on the wire.
+          resource: { uri: c.sourceUri ?? `patchbay://context/${c.kind}/${c.id}`, text: c.content },
+        });
       } else {
-        prompt.push(await imageAsResourceLink(c));
+        prompt.push({ type: "text", text: `[${c.label}]\n${c.content}` });
       }
     }
     // Positional prompt parts (composer mentions): each inline `@file`
@@ -1324,7 +1349,12 @@ export class SessionManager {
       // a mid-turn reload replaces the object, and its replay repopulates
       // the fresh worklist — the stale one must not speak for it.
       const current = this.sessions.get(sessionId);
-      if (current !== undefined) this.sweepOpenToolCalls(sessionId, current);
+      if (current !== undefined) {
+        this.sweepOpenToolCalls(sessionId, current);
+        // turn end interrupts prose like anything else — and the run's
+        // rewriter tail must land before the turnEnd block, not after
+        this.sealRun(sessionId, current);
+      }
       this.hooks.emit({
         kind: "turnEnded",
         sessionId,
@@ -1583,8 +1613,50 @@ export class SessionManager {
       }
     }
     if (text.trim() === "") return null;
+    this.sealRun(sessionId, session);
     session.openRun = { channel, blockId: newBlockId(channel), messageId };
     return session.openRun.blockId;
+  }
+
+  /** The close-side twin of runBlockFor — the ONE place an open prose run
+   * ends. A run's rewriter may be withholding a tail mid-shape; it lands
+   * here (raw, honestly) before the run closes, so no close path can make
+   * wire text vanish. Every site that used to null openRun directly routes
+   * through this, except the pre-replay reset (reapplyRoots), where the
+   * transcript is about to be rebuilt wholesale and the replay re-delivers
+   * the same text. */
+  private sealRun(sessionId: string, session: LiveSession): void {
+    const run = session.openRun;
+    session.openRun = null;
+    if (run === null) return;
+    const tail = run.rewriter?.flush() ?? "";
+    if (tail === "") return;
+    // rewriter rides only agent-text runs (the one arm that attaches it)
+    this.emitterFor(sessionId)({
+      kind: "agentTextDelta",
+      sessionId,
+      blockId: run.blockId,
+      text: tail,
+    });
+  }
+
+  /** Agent prose delta → its run's block, through the run's wire-extension
+   * rewriter (attached lazily on first prose; extensions/index.ts). May
+   * emit nothing when the rewriter withholds the whole delta mid-shape —
+   * sealRun flushes the tail wherever the run ends. */
+  private emitAgentProse(
+    sessionId: string,
+    session: LiveSession,
+    messageId: string | null,
+    raw: string,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    const blockId = this.runBlockFor(sessionId, session, "text", messageId, raw);
+    if (blockId === null) return;
+    const run = session.openRun!; // runBlockFor just returned this run's id
+    run.rewriter ??= createProseRewriter();
+    const text = run.rewriter.push(raw);
+    if (text !== "") emit({ kind: "agentTextDelta", sessionId, blockId, text });
   }
 
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
@@ -1650,7 +1722,7 @@ export class SessionManager {
         if (update.content.type !== "text") {
           // Honesty placeholder (acp-compliance.md G4): unrendered content
           // says so in place — its own closed block, never a silent drop.
-          session.openRun = null;
+          this.sealRun(sessionId, session);
           emit({
             kind: "userTextDelta",
             sessionId,
@@ -1664,7 +1736,7 @@ export class SessionManager {
           // flagged block — never merged into the prose run (an injection
           // between two real messages must not fuse them into one bubble,
           // and the injection itself is not the user's prompt).
-          session.openRun = null;
+          this.sealRun(sessionId, session);
           emit({
             kind: "userTextDelta",
             sessionId,
@@ -1683,16 +1755,21 @@ export class SessionManager {
         const messageId = update.messageId ?? null;
         if (update.content.type === "resource_link") {
           // Renderable, so render it (G10b): a markdown link into the prose
-          // run — never a placeholder for content the reader can use.
-          const text = `[${update.content.name}](${update.content.uri})`;
-          const blockId = this.runBlockFor(sessionId, session, "text", messageId, text);
-          if (blockId === null) break;
-          emit({ kind: "agentTextDelta", sessionId, blockId, text });
+          // run — never a placeholder for content the reader can use. Rides
+          // through the run's rewriter like any prose delta: a bypass would
+          // reorder it ahead of text the rewriter is still withholding.
+          this.emitAgentProse(
+            sessionId,
+            session,
+            messageId,
+            `[${update.content.name}](${update.content.uri})`,
+            emit,
+          );
           break;
         }
         if (update.content.type !== "text") {
           // Same honesty placeholder as the user chunk above (G4).
-          session.openRun = null;
+          this.sealRun(sessionId, session);
           emit({
             kind: "agentTextDelta",
             sessionId,
@@ -1701,16 +1778,14 @@ export class SessionManager {
           });
           break;
         }
-        const blockId = this.runBlockFor(sessionId, session, "text", messageId, update.content.text);
-        if (blockId === null) break;
-        emit({ kind: "agentTextDelta", sessionId, blockId, text: update.content.text });
+        this.emitAgentProse(sessionId, session, messageId, update.content.text, emit);
         break;
       }
       case "agent_thought_chunk": {
         if (update.content.type !== "text") {
           // Same honesty placeholder as the message chunks (G4) — this was
           // a silent drop once, the one chunk path that didn't say so.
-          session.openRun = null;
+          this.sealRun(sessionId, session);
           emit({
             kind: "agentThoughtDelta",
             sessionId,
@@ -1731,7 +1806,7 @@ export class SessionManager {
         break;
       }
       case "tool_call": {
-        session.openRun = null; // the agent paused to act
+        this.sealRun(sessionId, session); // the agent paused to act
         const status = update.status ?? "pending";
         this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
@@ -1871,25 +1946,29 @@ export class SessionManager {
   }
 }
 
+/** Exactly the ingress's wire set — an image chip can't carry anything
+ * else (composer/ingress.ts admits or re-encodes; lane-1 drops map from
+ * the same set), so the "img" fallback below is a can't-happen guard, not
+ * a live path. */
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/gif": "gif",
   "image/webp": "webp",
-  "image/svg+xml": "svg",
 };
 
 /** The image-paste fallback for agents that never declared
  * `promptCapabilities.image`: bytes to a temp file, sent as a ResourceLink
  * (with ContentBlock::Text, the baseline every agent must accept). */
-async function imageAsResourceLink(chip: ContextChip): Promise<ContentBlock> {
-  const mimeType = chip.mimeType ?? "image/png";
+async function imageAsResourceLink(
+  chip: Extract<ContextChip, { kind: "image" }>,
+): Promise<ContentBlock> {
   const dir = join(tmpdir(), "acp-patchbay-attachments");
   await mkdir(dir, { recursive: true });
-  const name = `${chip.id}.${IMAGE_EXTENSIONS[mimeType] ?? "img"}`;
+  const name = `${chip.id}.${IMAGE_EXTENSIONS[chip.mimeType] ?? "img"}`;
   const file = join(dir, name);
   await writeFile(file, Buffer.from(chip.content, "base64"));
-  return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType };
+  return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType: chip.mimeType };
 }
 
 /** PromptResponse.usage (UNSTABLE in ACP, optional per agent) → the view's

@@ -18,6 +18,7 @@ import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
 import { FilesChip } from "./files-chip";
+import { extractUris, ingestFiles } from "./ingress";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
 import { basename } from "./menus";
@@ -52,9 +53,18 @@ export function Composer(props: {
   showStats: boolean;
   totals: SessionTotals;
   usage: UsageInfo | null;
+  /** Ingress cap (Preferences attachmentMaxMB) — policy is host-owned; the
+   * webview only applies the snapshot's value at the admission point. */
+  attachmentMaxMB: number;
+  /** Ingress refusals surface through the app's toast. */
+  onNotice(message: string): void;
 }) {
   const send = useActions();
   const [adderOpen, setAdderOpen] = useState(false);
+  // Drop-target affordance only — a state-styled region, not an overlay
+  // (no z-escape, no dismissal, no placement, no focus: none of the four
+  // problems overlay-surfaces exists for).
+  const [dragOver, setDragOver] = useState(false);
   // The resize surface is the whole composer block (context row → send row),
   // dragged from its top edge — the input itself never grows a resizer.
   // Ephemeral by design: render furniture, reset with the webview.
@@ -82,11 +92,57 @@ export function Composer(props: {
   const addDiagnostics = () => send({ kind: "addDiagnosticsContext", sessionId });
   const addFilePicker = () => send({ kind: "addFilePickerContext", sessionId });
 
+  /** Byte-carrying attachments (paste, external drop) → the one ingress
+   * processor; admitted images/files go up as actions, refusals surface as
+   * toasts. Fire-and-forget: ingest never throws. */
+  const ingest = (files: File[]) => {
+    void ingestFiles(files, props.attachmentMaxMB * 1024 * 1024).then((out) => {
+      for (const img of out.images) {
+        send({ kind: "addImageContext", sessionId, base64: img.base64, mimeType: img.mimeType, label: img.label });
+      }
+      for (const f of out.files) {
+        send({ kind: "addDroppedFileContext", sessionId, name: f.name, mimeType: f.mimeType, base64: f.base64 });
+      }
+      for (const r of out.refusals) props.onNotice(r);
+    });
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    setDragOver(false);
+    if (!enabled) return;
+    e.preventDefault();
+    // Directories are refused deliberately (v1 scope decision): expanding a
+    // tree is a policy question — depth, excludes — not a default. The
+    // entry API is the only place a dropped directory is distinguishable.
+    const items = [...e.dataTransfer.items];
+    const dirs = items.filter((it) => it.webkitGetAsEntry?.()?.isDirectory === true).length;
+    if (dirs > 0) props.onNotice("Folders can't be attached — drop files individually");
+    const files = items
+      .map((it) => (it.kind === "file" && it.webkitGetAsEntry?.()?.isDirectory !== true ? it.getAsFile() : null))
+      .filter((f): f is File => f !== null);
+    if (files.length > 0) return ingest(files);
+    // No bytes → a URI drop (VS Code explorer / editor tabs); the
+    // orchestrator resolves paths host-side (lane 1, render-only-webview).
+    const uris = extractUris(e.dataTransfer);
+    if (uris.length > 0) send({ kind: "addPathContext", sessionId, uris });
+  };
+
   return (
     <div
-      className="composer flex flex-col"
+      className={`composer flex flex-col ${dragOver && enabled ? "drop-target" : ""}`}
       ref={shellRef}
       style={height !== null ? { height } : undefined}
+      onDragOver={(e) => {
+        if (!enabled) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        // Only when the pointer truly leaves the composer — child hops fire
+        // dragleave too and would flicker the affordance.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
+      }}
+      onDrop={onDrop}
     >
       <div
         className="group absolute inset-x-0 -top-[5px] z-10 flex h-[10px] cursor-ns-resize items-center justify-center"
@@ -144,7 +200,13 @@ export function Composer(props: {
             </span>
           )}
           {props.contextChips.map((c) => (
-            <span className="ctx-chip" key={c.id} title={c.kind === "image" ? c.label : c.content.slice(0, 300)}>
+            <span
+              className="ctx-chip"
+              key={c.id}
+              title={
+                c.kind === "image" ? c.label : c.kind === "attachment" ? c.path : c.content.slice(0, 300)
+              }
+            >
               <Icon
                 name={
                   c.kind === "selection"
@@ -153,7 +215,9 @@ export function Composer(props: {
                       ? "file"
                       : c.kind === "image"
                         ? "file-media"
-                        : "warning"
+                        : c.kind === "attachment"
+                          ? "attach"
+                          : "warning"
                 }
               />{" "}
               {c.label}
@@ -214,15 +278,7 @@ export function Composer(props: {
           workspaceFiles={props.workspaceFiles}
           hasSelection={enabled && props.liveSelection !== null}
           onSubmit={onSubmit}
-          onPasteImage={(base64, mimeType) =>
-            send({
-              kind: "addImageContext",
-              sessionId,
-              dataUrl: base64,
-              mimeType,
-              label: `Image (${mimeType})`,
-            })
-          }
+          onPasteFiles={ingest}
           onPickSelection={addSelection}
           onPickProblems={addDiagnostics}
           onPickAttach={addFilePicker}

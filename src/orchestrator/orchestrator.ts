@@ -3,7 +3,7 @@
 // configuration. Webviews only ever see its snapshots and patches.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
@@ -27,7 +27,7 @@ import {
 import { ASSET_LOCATIONS, resolveAgentAssets, type FsLike } from "./asset-locations";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
-import { CapabilityTracker } from "./capability-tracker";
+import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
@@ -66,6 +66,25 @@ import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
+
+/** Context-chip id mint. The timestamp alone collided once a multi-file
+ * drop started dispatching several adds in the same millisecond (duplicate
+ * React keys; removeContextChip pulling the wrong chip) — the counter makes
+ * every id unique for the process's lifetime, which is exactly a chip's. */
+let chipSeq = 0;
+const chipId = () => `chip-${Date.now()}-${chipSeq++}`;
+
+/** Extension → mime for images every major LLM API accepts (the same set
+ * the composer ingress passes through unconverted) — an industry constant,
+ * not any one agent's. Outside it, a dropped path stays an attachment
+ * chip: the honest resource_link, never a guessed ImageContent. */
+const WIRE_IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
 function optionViewsFromAcp(
   options: readonly { optionId: string; name: string; kind: string }[],
@@ -1891,11 +1910,9 @@ export class Orchestrator {
         break;
       }
       case "logoutAgent":
-        // the UI only offers this on a declared auth.logout; the follow-up
-        // probe re-raises needsAuth if sessions now need a login again
-        void this.capabilityTracker
-          .logout(action.agentId)
-          .catch(this.logCatch(`logout ${action.agentId}`));
+        // the UI only offers this on a declared auth.logout; a successful
+        // logout raises needsAuth directly (capability-tracker.logout)
+        void this.logoutAgent(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
         break;
       case "confirmBinaryInstall":
         void this.confirmBinaryInstall(action.agentId);
@@ -1978,7 +1995,7 @@ export class Orchestrator {
         const selection = this.editorStateHost.getSelection();
         if (selection === null) break;
         this.sessionManager.addContext(action.sessionId, {
-          id: `chip-${Date.now()}`,
+          id: chipId(),
           kind: "selection",
           label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
           content: selection.text,
@@ -1990,7 +2007,7 @@ export class Orchestrator {
         const file = this.editorStateHost.getCurrentFile();
         if (file === null) break;
         this.sessionManager.addContext(action.sessionId, {
-          id: `chip-${Date.now()}`,
+          id: chipId(),
           kind: "file",
           label: `File: ${file.file}`,
           content: file.content,
@@ -2002,7 +2019,7 @@ export class Orchestrator {
         const diagnostics = this.editorStateHost.getDiagnostics();
         if (diagnostics.length === 0) break;
         this.sessionManager.addContext(action.sessionId, {
-          id: `chip-${Date.now()}`,
+          id: chipId(),
           kind: "diagnostics",
           label: `Problems (${diagnostics.length})`,
           content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
@@ -2094,12 +2111,22 @@ export class Orchestrator {
         break;
       case "addImageContext":
         this.sessionManager.addContext(action.sessionId, {
-          id: `chip-${Date.now()}`,
+          id: chipId(),
           kind: "image",
           label: action.label,
-          content: action.dataUrl,
+          content: action.base64,
           mimeType: action.mimeType,
         });
+        break;
+      case "addDroppedFileContext":
+        void this.addDroppedFileContext(action).catch(
+          this.logCatch(`addDroppedFileContext ${action.name}`),
+        );
+        break;
+      case "addPathContext":
+        void this.addPathContext(action.sessionId, action.uris).catch(
+          this.logCatch("addPathContext"),
+        );
         break;
       case "addFilePickerContext":
         void this.addFilePickerContext(action.sessionId);
@@ -2172,6 +2199,80 @@ export class Orchestrator {
    * context-chip mechanism the composer's "current file" adder already
    * uses, just for an arbitrary file the user picks rather than the active
    * editor. */
+  /** Composer drop, lane 3 (external non-image file): the webview holds
+   * bytes with no host path — browsers hide dropped files' paths, and in a
+   * remote setup the client-side path would be meaningless here anyway.
+   * Staged to a temp file once, at add time; the chip rides the prompt as a
+   * resource_link to it (session-manager's attachment arm). The ingress
+   * processor already validated and size-capped the bytes webview-side. */
+  private async addDroppedFileContext(action: {
+    sessionId: string;
+    name: string;
+    mimeType: string;
+    base64: string;
+  }): Promise<void> {
+    const dir = join(tmpdir(), "acp-patchbay-attachments");
+    await mkdir(dir, { recursive: true });
+    // The original name stays visible in the staged filename (the agent sees
+    // it in the resource_link) — id-prefixed so two drops of "notes.txt"
+    // never overwrite each other.
+    const safe = action.name.replace(/[^\w.-]+/g, "_");
+    const path = join(dir, `${chipId()}-${safe}`);
+    await writeFile(path, Buffer.from(action.base64, "base64"));
+    this.sessionManager.addContext(action.sessionId, {
+      id: chipId(),
+      kind: "attachment",
+      label: `File: ${action.name}`,
+      path,
+      // "" = the platform didn't know the type; absent stays absent.
+      ...(action.mimeType !== "" ? { mimeType: action.mimeType } : {}),
+    });
+  }
+
+  /** Composer drop, lane 1 (URIs — VS Code explorer, editor tabs): the file
+   * already has a host path, so no bytes cross the webview. Images in the
+   * universally-accepted wire set ride as image chips (bytes read here,
+   * host-side); everything else — including images too big or too exotic
+   * for the wire — becomes an attachment chip whose resource_link the agent
+   * reads itself. That fallback is strictly honest, so nothing in this lane
+   * is ever refused. */
+  private async addPathContext(sessionId: string, uris: readonly string[]): Promise<void> {
+    const maxBytes = this.preferences.get().attachmentMaxMB * 1024 * 1024;
+    for (const raw of uris) {
+      let uri: vscode.Uri;
+      try {
+        uri = vscode.Uri.parse(raw, true);
+      } catch {
+        continue;
+      }
+      const stat = await vscode.workspace.fs.stat(uri).then(
+        (s) => s,
+        () => null,
+      );
+      if (stat === null || (stat.type & vscode.FileType.Directory) !== 0) continue;
+      const path = uri.fsPath;
+      const mime = WIRE_IMAGE_MIME[extname(path).toLowerCase()];
+      if (mime !== undefined && stat.size <= maxBytes) {
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        this.sessionManager.addContext(sessionId, {
+          id: chipId(),
+          kind: "image",
+          label: `Image: ${basename(path)}`,
+          content: Buffer.from(bytes).toString("base64"),
+          mimeType: mime,
+        });
+      } else {
+        this.sessionManager.addContext(sessionId, {
+          id: chipId(),
+          kind: "attachment",
+          label: `File: ${basename(path)}`,
+          path,
+          ...(mime !== undefined ? { mimeType: mime } : {}),
+        });
+      }
+    }
+  }
+
   private async addFilePickerContext(sessionId: string): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: false,
@@ -2183,7 +2284,7 @@ export class Orchestrator {
     if (uri === undefined) return;
     const bytes = await vscode.workspace.fs.readFile(uri);
     this.sessionManager.addContext(sessionId, {
-      id: `chip-${Date.now()}`,
+      id: chipId(),
       kind: "file",
       label: `File: ${uri.fsPath}`,
       content: Buffer.from(bytes).toString("utf8"),
@@ -2372,43 +2473,153 @@ export class Orchestrator {
     return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  /** terminal-auth login (meta.ts): runs the method's recipe in a visible
-   * VS Code terminal — the user watches the login happen in the agent's own
-   * flow. The terminal closing is the only "done" signal the convention
-   * gives; whether it *worked* is never guessed: the follow-up re-probe
-   * (same span as Verify, so the card reads "Verifying…") either clears
-   * needsAuth or re-raises it through the one -32000 chokepoint. */
+  /** terminal-auth login (meta.ts): runs the method's recipe in an
+   * Editor-pane terminal running the user's *default shell* — the login
+   * happens front and center in the agent's own flow, and the shell keeps
+   * stdin open after the command exits. (The earlier read-only-Editor
+   * hazard was specific to `shellPath: recipe.command` — the pane dies
+   * with the process, so an auth code could never be pasted; a default
+   * shell has no such cliff.)
+   *
+   * The command's *result* is listened to, never guessed: with shell
+   * integration the exit code is real evidence. Zero → re-probe (same
+   * span as Verify, so the card reads "Verifying…"; the probe, not the
+   * exit code, is what clears needsAuth) — and if the probe *still* says
+   * auth_required, restart the process: the recipe wrote credentials
+   * outside it, and a CLI that reads auth at spawn never re-reads them.
+   * Non-zero → re-raise needsAuth with the code as the card's reason, and
+   * deliberately NO probe — a lazy-auth agent (Claude passes session/new
+   * without credentials) would "verify away" the still-logged-out state.
+   * Where shell integration never activates, the fallback is the old
+   * convention: sendText, wait for the terminal to close, probe — the
+   * only signal available. */
   private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
+    const name = recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`;
     const terminal = vscode.window.createTerminal({
-      name: recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`,
-      shellPath: recipe.command,
-      shellArgs: [...recipe.args],
+      name,
       env: recipe.env,
       location: vscode.TerminalLocation.Editor,
     });
     terminal.show();
-    await new Promise<void>((resolve) => {
-      const sub = vscode.window.onDidCloseTerminal((t) => {
-        if (t !== terminal) return;
-        sub.dispose();
-        resolve();
+    // POSIX single-quote each token so paths with spaces and special
+    // characters survive the shell pass-through unchanged.
+    const cmd = [recipe.command, ...recipe.args]
+      .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+    const exitCode = await this.runLoginCommand(terminal, cmd);
+    this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
+    if (exitCode !== undefined && exitCode !== 0) {
+      const event = {
+        kind: "agentAuthRequired",
+        agentId,
+        reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
+      } as const;
+      this.agentView.emit(event);
+      this.settings.emit(event);
+      return;
+    }
+    const outcome = await this.runVerify(agentId);
+    if (outcome === "auth_required") {
+      // The recipe wrote credentials *outside* the running process, and the
+      // process still answers auth_required: a CLI that reads auth state at
+      // spawn never re-reads it (observed: auggie 0.32.0, dossier). The only
+      // honest re-check is the one the user would do by hand — a fresh
+      // spawn. One restart per login attempt, no loop: if the new process
+      // still needs auth, the wire chokepoint re-raises it and the card
+      // shows Log in again.
+      this.log.info(
+        `${agentId}: login succeeded but the running process still reports auth_required — restarting it to pick up the fresh credentials`,
+      );
+      await this.restartAgent(agentId);
+    }
+  }
+
+  /** Runs `cmd` in the login terminal and resolves with its exit code —
+   * `undefined` only when the answer is honestly unknown: shell
+   * integration never activated (sendText; "done" = terminal closed), the
+   * shell reported no code, or the user closed the terminal mid-run. */
+  private async runLoginCommand(terminal: vscode.Terminal, cmd: string): Promise<number | undefined> {
+    const shellIntegration = await new Promise<vscode.TerminalShellIntegration | undefined>(
+      (resolve) => {
+        if (terminal.shellIntegration !== undefined) return resolve(terminal.shellIntegration);
+        const timer = setTimeout(() => {
+          sub.dispose();
+          resolve(undefined);
+        }, 5000);
+        const sub = vscode.window.onDidChangeTerminalShellIntegration((e) => {
+          if (e.terminal !== terminal) return;
+          clearTimeout(timer);
+          sub.dispose();
+          resolve(e.shellIntegration);
+        });
+      },
+    );
+    if (shellIntegration === undefined) {
+      terminal.sendText(cmd);
+      await new Promise<void>((resolve) => {
+        const sub = vscode.window.onDidCloseTerminal((t) => {
+          if (t !== terminal) return;
+          sub.dispose();
+          resolve();
+        });
+      });
+      return undefined;
+    }
+    const execution = shellIntegration.executeCommand(cmd);
+    return await new Promise<number | undefined>((resolve) => {
+      const settle = (code: number | undefined): void => {
+        ended.dispose();
+        closed.dispose();
+        resolve(code);
+      };
+      const ended = vscode.window.onDidEndTerminalShellExecution((e) => {
+        if (e.execution === execution) settle(e.exitCode);
+      });
+      const closed = vscode.window.onDidCloseTerminal((t) => {
+        if (t === terminal) settle(undefined);
       });
     });
-    await this.runVerify(agentId);
+  }
+
+  /** THE in-flight bracket for every tracker round-trip the settings card
+   * reflects (verify, logout): emits agentVerifyStarted/Finished around the
+   * work so the card's controls dim for exactly its span — one writer for
+   * the signal, so the two flows can never drift apart. */
+  private async withVerifySignal<T>(agentId: string, label: string, work: () => Promise<T>): Promise<T> {
+    this.settings.emit({ kind: "agentVerifyStarted", agentId });
+    this.log.debug(`${agentId}: ${label} started`);
+    try {
+      return await work();
+    } finally {
+      this.settings.emit({ kind: "agentVerifyFinished", agentId });
+      this.log.debug(`${agentId}: ${label} finished`);
+    }
+  }
+
+  /** Logout round-trip under the shared in-flight signal — the card's
+   * controls dim for the RPC's span, needsAuth is raised by the tracker
+   * itself (a successful logout IS the auth state; no probe) — then every
+   * process for the agent is disconnected. Policy, not a quirk workaround:
+   * a process that has held credentials is never trusted to shed them
+   * (spawn-time-only auth reads are live behavior — auggie dossier), so
+   * killing it is the only clear-out that needs no agent cooperation.
+   * `stopAllFor`, not `stop`: isolated-spawn clones share the same
+   * credentials. The card lands on stopped + the logout reason; the next
+   * Connect re-derives auth state from the wire, fresh. */
+  private async logoutAgent(agentId: string): Promise<void> {
+    await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
+    await this.pool.stopAllFor(agentId);
   }
 
   /** Brackets a Verify round-trip (manual click or "Verify after add") with
    * the settings-only in-flight signal — the card's Verify control dims and
-   * reads "Verifying…" for exactly the span of the free protocol check. */
-  private async runVerify(agentId: string): Promise<void> {
-    this.settings.emit({ kind: "agentVerifyStarted", agentId });
-    this.log.debug(`${agentId}: verify started`);
-    try {
-      await this.capabilityTracker.verify(agentId);
-    } finally {
-      this.settings.emit({ kind: "agentVerifyFinished", agentId });
-      this.log.debug(`${agentId}: verify finished`);
-    }
+   * reads "Verifying…" for exactly the span of the free protocol check.
+   * Returns what the probe observed so the terminal-login flow can react
+   * to a still-locked agent. */
+  private async runVerify(agentId: string): Promise<ProbeOutcome> {
+    return await this.withVerifySignal(agentId, "verify", () =>
+      this.capabilityTracker.verify(agentId),
+    );
   }
 
   dispose(): void {

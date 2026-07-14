@@ -543,8 +543,35 @@ The differentiator (prd §v1 Scope), shipped complete:
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a
   `ResourceLink`. Same data, best form the agent accepts (features §1).
-- **File attach** (drag-drop or picker): inline `ContentBlock::Resource` when
-  `promptCapabilities.embeddedContext` is declared, `ResourceLink` otherwise.
+- **One attachment ingress** (composer/ingress.ts, decided 2026-07-14): every byte
+  entering from the composer — paste or external drop — passes one admission point
+  that owns the size cap (Preferences, default 10MB), the image pass-through set
+  {png, jpeg, gif, webp} (the set every major LLM API accepts — an industry
+  constant, not any agent's quirk table), PNG re-encoding for other decodable
+  image types (decodable = Chromium's `createImageBitmap`: bmp/ico/avif in
+  practice; svg blobs notably fail it), and every refusal message. An image the
+  platform can't re-encode degrades to the file lane — original bytes, original
+  type, attached as a resource_link the agent reads itself — so refusal is
+  size-only. Nothing is ever guessed: the image chip's `mimeType` is a required
+  field with no defaults
+  anywhere downstream, because the platform that produced the bytes is the only
+  honest source (the spec requires the field to *describe the payload*).
+  Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s the whole
+  turn on formats outside that set (dossier).
+- **File attach** (drag-drop or picker): picker reads ride inline
+  `ContentBlock::Resource` when `promptCapabilities.embeddedContext` is declared,
+  `ResourceLink` otherwise. Drops split by what arrives: URI drops (VS Code
+  explorer/tabs) resolve host-side — wire-set images become image chips, all else
+  an attachment chip whose `ResourceLink` points at the real path; external drops
+  carry bytes only (browsers hide paths; a client path means nothing to a remote
+  host), so non-images are staged to a temp file at add time and linked from
+  there. Directory drops are refused in v1 — a deliberate scope decision:
+  expanding a tree is policy (depth, excludes), not a default. Observed in
+  practice (2026-07-14): the VS Code workbench claims OS-file drops on the
+  editor area for its own drop-to-open before a webview sees them — so the
+  bytes lanes are exercised by *paste* (screenshots, copied files), and the
+  drops that actually reach the composer are the explorer/tab URI kind.
+  Accepted, not a bug: both entry points land in the same ingress.
 
 ## Integrations
 

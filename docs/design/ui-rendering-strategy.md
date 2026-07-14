@@ -158,6 +158,52 @@ raw open-state + a positioned `<div>`; a hand-written outside-click or Escape
 handler; an app `z-index ≥ 50`; or popup positioning math written outside the
 Radix / Floating-UI path.
 
+### Control logic — derived once, rendered dumb (decided 2026-07-14)
+
+A control cluster (a card's action row, a toolbar, any group of buttons whose
+show/disabled/label rules read shared state) is not a set of inline JSX
+conditionals. The chat view already votes for the alternative:
+`agent-view/chat/view-model.ts` is "the ONE derivation between reducer state
+and chat components — components consume the result and stay dumb." The
+settings agents card was the surface that never got this, and it produced
+three shipped bugs in one week — Verify surviving logout (predicate drift
+between two buttons), the logout `AlertDialog` unmounted mid-close (in-flight
+handled per-button), and Verify offered as a logout bypass (an escape-hatch
+clause nobody re-derived when a second condition arrived). Each was the same
+structural failure: rules about *one* cluster scattered across *N* inline
+predicates with no place to state cross-control invariants. So the rule:
+
+- **Every control whose rules read domain state goes through the surface's
+  derivation function** — a pure function (e.g. `settings/card-controls.ts`'s
+  `agentCardControls`) taking the state slices and returning the complete
+  controls contract: an entry per control with `show`/`disabled`/whatever
+  that control's JSX needs. The line is **provenance, not complexity**: a
+  trivial `upgrade !== null` still goes through the derivation (one line
+  there), because thresholds that depend on counting conditions erode — the
+  next condition gets bolted onto the inline predicate instead of graduated
+  into the pattern. With the derivation in place, the JSX literally has
+  nowhere to put a second condition.
+- **Cross-control invariants live — and are unit-tested — in the derivation**,
+  never implied by predicates that happen to agree: Log in and Log out are
+  mutually exclusive; every auth-adjacent control disables while the shared
+  in-flight signal is up; Stop stays enabled always (the escape hatch).
+  Pure function → vitest covers the state matrix without rendering.
+- **Local ephemeral UI state stays local.** `useState` that is born and dies
+  inside the component and observed by no other control's rules — an open
+  accordion, a form draft, which row is editing — does not thread through
+  the derivation; forcing it there inverts the pattern (the derivation stops
+  being pure over domain state).
+- Shared predicates the **orchestrator also gates on** stay in
+  `shared/protocol.ts` (e.g. `hasUnusedProbe`) and the derivation calls
+  them; webview-only derivations live next to their surface, parallel to
+  chat's `view-model.ts`.
+
+Flag as an architecture violation, in review: a JSX conditional in a control
+cluster that reads `state.` / a capability matrix / an agent summary instead
+of the derived `controls.x`; a show/disabled rule added inline "because it's
+just one condition"; a cross-control invariant enforced only by two inline
+predicates happening to test the same field.
+
 ## Agent Rendering Strategy (chat view)
 
 ### Markdown rendering — solved

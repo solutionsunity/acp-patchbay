@@ -195,7 +195,20 @@ export type Action =
   | { kind: "removeAgentConfig"; agentId: string }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
-  | { kind: "addImageContext"; sessionId: string; dataUrl: string; mimeType: string; label: string }
+  /** Byte-carrying attachment adds, both produced by the composer's one
+   * ingress processor (composer/ingress.ts) — validated, size-capped, and
+   * (for images) normalized there, so the orchestrator never receives bytes
+   * it would have to guess about. `base64` is always the raw payload. */
+  | { kind: "addImageContext"; sessionId: string; base64: string; mimeType: string; label: string }
+  /** An externally-dropped non-image file: bytes with no host path (browsers
+   * hide dropped files' paths, and a client-side path means nothing to a
+   * remote host anyway) — the orchestrator stages them to a temp file and
+   * the chip rides the prompt as a resource_link to it. Empty mimeType =
+   * the platform didn't know; it stays unknown, never guessed. */
+  | { kind: "addDroppedFileContext"; sessionId: string; name: string; mimeType: string; base64: string }
+  /** Drops that arrive as URIs (VS Code explorer, editor tabs): no bytes
+   * cross the webview — the orchestrator resolves each path host-side. */
+  | { kind: "addPathContext"; sessionId: string; uris: readonly string[] }
   | { kind: "addFilePickerContext"; sessionId: string }
   /** The `@` mention picker's workspace tier: the webview never touches the
    * filesystem (render-only-webview) — it asks, the orchestrator runs
@@ -959,6 +972,11 @@ export interface PreferencesView {
    * window" and the whole-view detach command. Off hides the entry points;
    * panels already open stay open — the pref gates opening, not existence. */
   detachWindows: boolean;
+  /** Per-attachment size cap in MB (pre-encode bytes), enforced at the
+   * composer's ingress — oversize is refused with a visible message, never
+   * silently truncated. Bytes travel the webview bridge as base64, so the
+   * cap is also what keeps a stray 200MB drop from stalling the view. */
+  attachmentMaxMB: number;
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
@@ -968,6 +986,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   idleCloseMinutes: 60,
   composerStats: true,
   detachWindows: true,
+  attachmentMaxMB: 10,
 };
 
 export interface AgentViewState {
@@ -1078,22 +1097,47 @@ export interface PlanUsageInfo {
   resetsAt?: string;
 }
 
-export interface ContextChip {
+interface ContextChipBase {
   id: string;
-  kind: "selection" | "file" | "diagnostics" | "image";
   label: string;
-  /** Text content for selection/file/diagnostics; raw base64 payload for image. */
-  content: string;
-  /** The source's uri where one exists (file/selection — selection carries
-   * its line range as a `#L` fragment); absent for aggregates like
-   * diagnostics. Rides the embedded-resource prompt form when the agent
-   * declares `promptCapabilities.embeddedContext`. */
-  sourceUri?: string;
-  /** Set only for kind "image" — paste is never disabled (features.md § Chat),
-   * so this rides the same chip mechanism as every other explicit context add,
-   * sent as a real ImageContent block regardless of what the agent declares. */
-  mimeType?: string;
 }
+
+/** Discriminated by kind so each arm carries exactly what its prompt form
+ * needs — an image chip without a mimeType is unrepresentable: the spec
+ * requires the field, so a send-time default would fabricate it, and the
+ * ingress that produced the bytes is the only honest source. */
+export type ContextChip =
+  | (ContextChipBase & {
+      kind: "selection" | "file" | "diagnostics";
+      /** Text content, as captured. */
+      content: string;
+      /** The source's uri where one exists (file/selection — selection carries
+       * its line range as a `#L` fragment); absent for aggregates like
+       * diagnostics. Rides the embedded-resource prompt form when the agent
+       * declares `promptCapabilities.embeddedContext`. */
+      sourceUri?: string;
+    })
+  | (ContextChipBase & {
+      kind: "image";
+      /** Raw base64 payload — a real ImageContent block where the agent
+       * declares `promptCapabilities.image`, the temp-file ResourceLink
+       * fallback otherwise (paste is never disabled, features.md § Chat). */
+      content: string;
+      /** Describes the payload, always from the platform that produced the
+       * bytes (clipboard item type, drop file type, extension map) — never
+       * defaulted downstream. */
+      mimeType: string;
+    })
+  | (ContextChipBase & {
+      kind: "attachment";
+      /** A real file on this machine — an IDE drop's own path, or the temp
+       * file an external drop was staged to at ingress. Rides the prompt as
+       * a resource_link (the baseline every agent MUST accept); the agent
+       * reads the content itself through the brokered fs path. */
+      path: string;
+      /** Present only when the producer knew it — never guessed. */
+      mimeType?: string;
+    });
 
 export const initialAgentViewState: AgentViewState = {
   agents: [],

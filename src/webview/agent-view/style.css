@@ -594,6 +594,17 @@ body {
   margin-top: 6px;
 }
 
+/* Streamdown 2.5.0 upstream defect: code-block lines are <span>s whose
+ * display:block rides ONLY on the line-numbers class bundle, and non-empty
+ * lines carry no newline text node — with lineNumbers={false} (markdown.tsx)
+ * every fence collapses onto one line. One-line repair until upstream
+ * renders the numberless path; RETIRE on a streamdown bump that fixes it
+ * (probe: any multi-line fence in the chat). Scoped to the block body so
+ * inline code and empty-line "\n" spans are untouched. */
+[data-streamdown="code-block-body"] > pre > code > span {
+  display: block;
+}
+
 .msg-agent code,
 .msg-agent pre {
   font-family: var(--vscode-editor-font-family, monospace);
@@ -899,6 +910,14 @@ body {
 }
 
 .input-shell:focus-within {
+  border-color: var(--pb-accent-dim);
+}
+
+/* Drop-target affordance (composer.tsx dragOver) — a state-styled region,
+ * deliberately not an overlay: nothing floats, nothing to dismiss, so the
+ * whole prompt surface just reads as "droppable" while a drag is over it. */
+.composer.drop-target .input-shell {
+  border-style: dashed;
   border-color: var(--pb-accent-dim);
 }
 
@@ -1250,6 +1269,17 @@ body {
   padding: 6px 14px;
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* warning arm (ingress refusals): red border + text and a warning icon —
+ * an unexpected "didn't happen" must not dress like a confirmation. Long
+ * refusal messages (filename + both sizes) may wrap; nowrap would clip. */
+.toast.warning {
+  border-color: var(--pb-err);
+  color: var(--pb-err);
+  white-space: normal;
+  max-width: 80%;
+  text-align: center;
 }
 
 }

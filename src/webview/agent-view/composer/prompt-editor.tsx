@@ -65,7 +65,10 @@ export interface PromptEditorProps {
    * Always consumes the draft: Enter during a live turn queues the prompt
    * (orchestrator-side) — only the Stop button stops. */
   onSubmit(text: string, parts?: readonly PromptPart[]): void;
-  onPasteImage(base64: string, mimeType: string): void;
+  /** Files lifted off the clipboard — a pasted bitmap (Chromium exposes it
+   * as an image/png File) or copied files. The composer runs them through
+   * the attachment ingress (ingress.ts); nothing is decided here. */
+  onPasteFiles(files: File[]): void;
   onPickSelection(): void;
   onPickProblems(): void;
   onPickAttach(): void;
@@ -403,8 +406,10 @@ function EditorCore(props: PromptEditorProps) {
       ),
   );
 
-  // Image paste — same contract as before: one image per paste, never
-  // disabled; non-image pastes fall through to the plain-text handler.
+  // File paste — a bitmap (screenshots arrive as one image/png File, by
+  // Chromium's own clipboard normalization) or copied files; never
+  // disabled. Plain-text pastes carry no file items and fall through to
+  // the plain-text handler untouched.
   useEffect(
     () =>
       editor.registerCommand(
@@ -412,20 +417,15 @@ function EditorCore(props: PromptEditorProps) {
         (event) => {
           const items = event instanceof ClipboardEvent ? event.clipboardData?.items : undefined;
           if (items === undefined) return false;
+          const files: File[] = [];
           for (const item of items) {
-            if (!item.type.startsWith("image/")) continue;
-            const file = item.getAsFile();
-            if (file === null) continue;
-            event.preventDefault();
-            const reader = new FileReader();
-            reader.onload = () => {
-              const dataUrl = String(reader.result); // "data:image/png;base64,...."
-              props.onPasteImage(dataUrl.slice(dataUrl.indexOf(",") + 1), item.type);
-            };
-            reader.readAsDataURL(file);
-            return true;
+            const file = item.kind === "file" ? item.getAsFile() : null;
+            if (file !== null) files.push(file);
           }
-          return false;
+          if (files.length === 0) return false;
+          event.preventDefault();
+          props.onPasteFiles(files);
+          return true;
         },
         COMMAND_PRIORITY_HIGH,
       ),

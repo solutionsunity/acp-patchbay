@@ -36,6 +36,14 @@ export const chatTranscript = [
   },
   { kind: "user", id: "u2", text: "keep going" },
   { kind: "text", id: "xbroke", text: "broken-mermaid case:\n\n```mermaid\ngraph LR\n  A[unclosed --> ???blah{{\n```" },
+  // path=/excerpt fence attributes (the shape the wire-extension rewriter
+  // emits — code-block.tsx caption) on a MULTI-LINE fence: line integrity
+  // regressed once (streamdown 2.5.0 one-lines fences under
+  // lineNumbers={false}; style.css repair rule)
+  {
+    kind: "text", id: "x4",
+    text: 'excerpt case:\n\n```ts path="src/deep/thing.ts" excerpt\nconst one = 1;\nconst two = 2;\n```',
+  },
   {
     kind: "text", id: "x3",
     text: "Ohm: $$V = I \\cdot R$$ — but $5 and $10 stay currency.\n\nIntro line in English.\n\nالنتيجة **جاهزة** للمراجعة وهذا نص عربي.\n\nこの**変更**は完了した。\n\n| item | qty |\n|---|---|\n| bolts | 40 |\n| nuts | 80 |",
@@ -84,6 +92,10 @@ export function agentViewState({ live }) {
 
 export function settingsState() {
   return {
+    // Host-owned since the deep-link work — a snapshot REPLACES state, so a
+    // fixture without it renders no section at all (the gate's own
+    // regression: it timed out on `.section h1` when this field landed).
+    section: "agents",
     agents: [
       { id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false },
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false },

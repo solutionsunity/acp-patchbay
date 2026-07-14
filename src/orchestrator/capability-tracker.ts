@@ -34,6 +34,13 @@ import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
 
+/** What the free probe actually observed — callers that need to react to
+ * auth state (terminal-recipe login's restart escalation) read this instead
+ * of guessing from side effects. "skipped" = no connection/declared caps to
+ * probe against; "failed" = round-trip broke for a non-auth reason (an
+ * honest declared-but-unproven state, not an error to surface). */
+export type ProbeOutcome = "ok" | "auth_required" | "failed" | "skipped";
+
 export interface CapabilityTrackerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Reads the matrix as it stands *after* an emit already applied — lets
@@ -172,9 +179,9 @@ export class CapabilityTracker {
    * not "broken" — it's the honest, expected outcome for an agent that
    * needs `authenticate` first, surfaced as its own state rather than
    * folded into "check failed". */
-  private async probe(agentId: string): Promise<void> {
+  private async probe(agentId: string): Promise<ProbeOutcome> {
     const declared = this.pool.get(agentId)?.declared;
-    if (declared === undefined || declared === null) return;
+    if (declared === undefined || declared === null) return "skipped";
     for (const [sessionId, owner] of this.probeSessions) {
       if (owner === agentId) this.probeSessions.delete(sessionId);
     }
@@ -204,16 +211,18 @@ export class CapabilityTracker {
       if (declared.sessionDelete) {
         for (const id of probeSessionIds) await this.pool.deleteSession(agentId, id);
       }
+      return "ok";
     } catch (err) {
       if (err instanceof RequestError && err.code === -32000) {
         // needsAuth itself was already raised by pool.ts's wire chokepoint
         // (onAuthRequired — one writer for every auth_required, probe or
         // real usage); this only names the friendly next step in the log.
         this.log.info(`${agentId}: probe hit auth_required — Log in to proceed`);
-      } else {
-        // declared but the round-trip failed — an honest state, not an error to surface
-        this.log.debug(`${agentId}: probe round-trip failed — ${(err as Error).message}`);
+        return "auth_required";
       }
+      // declared but the round-trip failed — an honest state, not an error to surface
+      this.log.debug(`${agentId}: probe round-trip failed — ${(err as Error).message}`);
+      return "failed";
     } finally {
       // Probe sessions must not linger in the connection's session set:
       // process-policy "auto" reads that set as real concurrent sessions
@@ -231,8 +240,8 @@ export class CapabilityTracker {
    * anything honest to exercise, so running them now would spend a real
    * agent turn probing capabilities patchbay itself doesn't implement yet.
    * Re-runs the free checks only. */
-  async verify(agentId: string): Promise<void> {
-    await this.probe(agentId);
+  async verify(agentId: string): Promise<ProbeOutcome> {
+    return await this.probe(agentId);
   }
 
   /** Stable `authenticate` round trip, then retries the probe so a
@@ -245,13 +254,27 @@ export class CapabilityTracker {
     await this.probe(agentId);
   }
 
-  /** Stable `logout` round trip, then re-probes: whether the agent now
-   * requires auth again isn't guessed at — the probe's session/new either
-   * works (agent allows unauthenticated sessions) or hits `auth_required`,
-   * which raises `needsAuth` and the Log in control through the same path
-   * the connect-time check uses. */
+  /** Stable `logout` round trip — and no probe after it. A successful
+   * logout IS the auth state: the user explicitly logged out, so
+   * `agentAuthRequired` is emitted directly. Probing here would ask the
+   * agent a question we already know the answer to, and for agents that
+   * only raise `auth_required` at prompt time (Claude: session/new succeeds
+   * without credentials) the probe's success would immediately overwrite
+   * the logged-out state with `agentAuthResolved` — the "logout does
+   * nothing" bug.
+   *
+   * The orchestrator disconnects the agent's processes right after this
+   * returns (logoutAgent): a process that has held credentials is never
+   * trusted to shed them — auth state read at spawn and never re-read is
+   * live agent behavior (auggie dossier, 2026-07-14), and its logout-side
+   * mirror (a process that keeps working after revocation) is a security
+   * hazard. The reason string doubles as the stopped card's explanation. */
   async logout(agentId: string): Promise<void> {
     await this.pool.logout(agentId);
-    await this.probe(agentId);
+    this.hooks.emit({
+      kind: "agentAuthRequired",
+      agentId,
+      reason: "logged out — the process was disconnected to clear its session; Connect to use this agent again",
+    });
   }
 }

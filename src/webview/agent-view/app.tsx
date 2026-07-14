@@ -30,7 +30,7 @@ export function App({
 }) {
   const send = useActions();
   const [drawer, setDrawer] = useState<Drawer>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: "info" | "warning" } | null>(null);
 
   const pinned = pinnedSessionId !== undefined;
   const active =
@@ -62,9 +62,11 @@ export function App({
     );
   }
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2600);
+  // Warnings (ingress refusals) hold a second longer than confirmations —
+  // the user wasn't expecting them, so the read starts later.
+  const showToast = (msg: string, kind: "info" | "warning" = "info") => {
+    setToast({ msg, kind });
+    window.setTimeout(() => setToast(null), kind === "warning" ? 3600 : 2600);
   };
   const closeDrawer = (msg?: string) => {
     setDrawer(null);
@@ -144,6 +146,8 @@ export function App({
         showStats={showStats}
         totals={derived.totals}
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
+        attachmentMaxMB={state.preferences?.attachmentMaxMB ?? 10}
+        onNotice={(msg) => showToast(msg, "warning")}
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (
@@ -163,7 +167,11 @@ export function App({
           onDone={() => setDrawer(null)}
         />
       )}
-      {toast !== null && <div className="toast">{toast}</div>}
+      {toast !== null && (
+        <div className={`toast ${toast.kind === "warning" ? "warning" : ""}`}>
+          {toast.kind === "warning" && <Icon name="warning" />} {toast.msg}
+        </div>
+      )}
     </div>
   );
 }
