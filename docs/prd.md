@@ -49,18 +49,18 @@ better ships without losing their working environment.
 
 ## The Promise, Stated Precisely
 
-**Connection promise (v1):** every ACP-compatible agent connects — the full
-vscode-acp roster (Claude Code, Codex, Copilot, Gemini, Qwen, OpenCode, Kiro,
-OpenClaw, Hermes, …) and anything else that speaks the protocol.
+**Connection promise (current release):** every ACP-compatible agent connects —
+every agent in the official [ACP registry](https://agentclientprotocol.com/registry),
+read live as the source of truth, and anything else that speaks the protocol.
 
-**Depth promise (v1):** each agent receives every integration it is capable of
+**Depth promise (current release):** each agent receives every integration it is capable of
 accepting, and the capability matrix shows exactly what you got.
 
 Never "all agents, all features." The resident experience is per-agent uneven by
 nature — some agents take everything patchbay offers, some ignore parts of it. The
 product does not hide that; displaying it *is* bet #2.
 
-## v1 Scope
+## Current-release scope
 
 - **Editor depth, in full.** The agent sees active selection, diagnostics, open
   editors, and unsaved buffer state; edits surface as native diffs; images paste and
@@ -79,7 +79,7 @@ product does not hide that; displaying it *is* bet #2.
 
 Deliberate scope decisions, not limitations:
 
-- **The curated integrations catalog is v2.** Registry curation is ongoing product
+- **The curated integrations catalog is a future version.** Registry curation is ongoing product
   work (OAuth flows, service churn) and a different muscle than editor depth. Deep
   and narrow beats wide and late; GitHub alone covers the majority case.
 - **No agent routing or orchestration.** Patchbay never picks the agent for you.
@@ -99,10 +99,18 @@ the trigger of this project; it is credited as such. It proved the connection la
 works — this very product is being designed and built through it, agent-in-editor.
 Patchbay exists for everything the protocol alone doesn't give you.
 
+Patchbay is a compliant ACP client, and its relationship to the ACP project is a
+separate one from its debt to vscode-acp: the ACP registry is patchbay's single,
+live source of truth for which agents exist — patchbay curates no agent list of
+its own — and the protocol is the contract it holds itself to.
+
 Published to the VS Code Marketplace as an independent extension.
 
 ## Success Test
 
-A Gemini or Codex user in patchbay feels what a Claude user feels in the official
-Claude Code extension. The moment someone says *"I didn't know agent X could do that
-in VS Code"* — that is the product working.
+Patchbay is not measured against the Claude Code extension — it is one unified
+experience that includes Claude Code itself, as one agent among many. Its feature
+set is the best of what vendor VS Code extensions have proven, brought under one
+roof and kept strictly ACP-compliant — so no agent feels like a second-class
+guest. The product is working the moment any agent's user — Gemini, Codex, or
+Claude — says *"I didn't know agent X could do that in VS Code."*
