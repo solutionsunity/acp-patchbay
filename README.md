@@ -14,6 +14,8 @@ capabilities you can trust, and deep editor context. Stop learning a new extensi
 every time you switch agents.
 
 [**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=solutionsunity.acp-patchbay)
+&nbsp;·&nbsp;
+[Product page](https://solutionsunity.com/products/vscode-acp-patchbay)
 
 ![ACP Patchbay — an agent session in VS Code](https://raw.githubusercontent.com/solutionsunity/acp-patchbay/main/media/recordings/agent-session.gif)
 

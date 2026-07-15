@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/solutionsunity/acp-patchbay/issues"
   },
-  "homepage": "https://github.com/solutionsunity/acp-patchbay#readme",
+  "homepage": "https://solutionsunity.com/products/vscode-acp-patchbay",
   "engines": {
     "vscode": "^1.96.0"
   },
