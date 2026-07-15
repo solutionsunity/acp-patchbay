@@ -4,9 +4,9 @@
 
 **One VS Code experience for every AI agent.**
 
-[![VS Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/SolutionsUnity.acp-patchbay?label=Marketplace&labelColor=2c2c2c&color=5b9bd5)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/SolutionsUnity.acp-patchbay?label=Installs&labelColor=2c2c2c&color=5b9bd5)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-5b9bd5.svg)](LICENSE)
+[![Marketplace](https://vsmarketplacebadges.dev/version-short/SolutionsUnity.acp-patchbay.svg?style=flat-square&label=Marketplace&labelColor=1e1e1e&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/SolutionsUnity.acp-patchbay.svg?style=flat-square&label=Installs&labelColor=1e1e1e&color=2ea44f)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
+[![License Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-5b9bd5?style=flat-square&labelColor=1e1e1e&logo=apache&logoColor=white)](LICENSE)
 
 ACP Patchbay is a unified VS Code client for any
 [ACP](https://agentclientprotocol.com)-compatible coding agent — consistent chat,
@@ -14,8 +14,8 @@ capabilities you can trust, and deep editor context. Stop learning a new extensi
 every time you switch agents.
 
 [**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
-&nbsp;·&nbsp;
-[Product page](https://solutionsunity.com/products/vscode-acp-patchbay)
+
+[Product page](https://solutionsunity.com/products/vscode-acp-patchbay) &nbsp;·&nbsp; [Source](https://github.com/solutionsunity/acp-patchbay)
 
 ![ACP Patchbay — an agent session in VS Code](https://raw.githubusercontent.com/solutionsunity/acp-patchbay/main/media/recordings/agent-session.gif)
 
