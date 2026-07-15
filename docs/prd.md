@@ -79,9 +79,12 @@ product does not hide that; displaying it *is* bet #2.
 
 Deliberate scope decisions, not limitations:
 
-- **The curated integrations catalog is a future version.** Registry curation is ongoing product
-  work (OAuth flows, service churn) and a different muscle than editor depth. Deep
-  and narrow beats wide and late; GitHub alone covers the majority case.
+- **Curated integrations stay narrow by design.** GitHub ships as the one curated
+  one-click integration; "add any MCP server" already reaches every other service,
+  so breadth is covered today — a wider curated catalog isn't future work, it's
+  coverage MCP gives for free. Curating a one-click integration (OAuth flows,
+  service churn) is a different muscle than editor depth, spent only where
+  one-click depth genuinely pays. Deep and narrow beats wide and late.
 - **No agent routing or orchestration.** Patchbay never picks the agent for you.
 
 ## What It Isn't
