@@ -14,7 +14,7 @@ import { MermaidBlock } from "../mermaid-block";
 import { ChatCodeBlock } from "./code-block";
 
 /** Streamdown's control icons re-pointed at Codicons — one icon set across
- * the whole extension (ui-rendering-strategy: no second icon set), same
+ * the whole extension (no second icon set), same
  * rule as swapping Lucide out of shadcn components. */
 const SD_ICONS = {
   CheckIcon: () => <Icon name="check" />,

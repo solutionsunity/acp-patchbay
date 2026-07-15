@@ -123,7 +123,7 @@ export function MatrixSection({ state }: { state: SettingsState }) {
           </div>
           {/* Tooltip per cell (Radix, hover or keyboard focus) — the
               declared-vs-used distinction stays inspectable without
-              cluttering the default view (ui-rendering-strategy). */}
+              cluttering the default view. */}
           <TooltipProvider delayDuration={150}>
             <Table>
               <TableHeader>
