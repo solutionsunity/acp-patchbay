@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // shadcn/ui Switch — source-copied (stack.md).
 import * as React from "react";
 import * as SwitchPrimitive from "@radix-ui/react-switch";

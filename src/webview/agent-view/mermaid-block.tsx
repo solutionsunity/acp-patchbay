@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // ```mermaid blocks — source-copied from Streamdown 2.5.0's built-in
 // mermaid block (MIT, Vercel) and adapted, the same house pattern as the
 // shadcn components (stack.md: source-copied, never a black-box dep).

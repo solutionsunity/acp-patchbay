@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Reload-continuation stamp: the set of agents still running when the
 // extension host went down, written once by deactivate's shutdown and
 // consumed (read + cleared — spent either way, like spawn-registry records)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Persisted record of every process patchbay itself spawned (plan.md P15c):
 // agent connections and brokered terminals — the direct children, nothing
 // deeper (grandchildren are the agent's own, covered by tree-kill and P15a

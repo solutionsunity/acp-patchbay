@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Line-level diff via the classic LCS (longest common subsequence) table —
 // correct for reordering-free edits, which covers the overwhelming majority
 // of agent file writes. No dependency: this is ~30 lines by hand and the

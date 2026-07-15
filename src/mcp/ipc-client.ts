@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // IPC client used by the local MCP server subprocess to reach the
 // orchestrator (see ipc-protocol.ts for why this bridge exists at all).
 // Plain Node net socket — no vscode dependency, so this half can run

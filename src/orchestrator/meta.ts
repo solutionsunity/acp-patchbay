@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The _meta extension table — the only place that names the extension keys
 // patchbay understands, mirroring capabilities.ts's CAPABILITY_PROOFS
 // discipline: no call site anywhere spells a key. _meta is spec-sanctioned

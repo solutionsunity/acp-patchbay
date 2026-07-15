@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Bridges the ACP client pool to the Agent View's chat state. Owns the render
 // cache in the sense of deciding *when* it must be rebuilt wholesale — the
 // cache itself lives in AgentViewState, updated only through the shared

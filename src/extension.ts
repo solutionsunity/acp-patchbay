@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 import * as vscode from "vscode";
 import { Orchestrator } from "./orchestrator/orchestrator";
 import { AgentPanelHost, AgentViewProvider, SettingsPanelHost } from "./orchestrator/webview-host";

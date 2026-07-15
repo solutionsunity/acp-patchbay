@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Tree-wide process control (plan.md P15b/c) — house mechanism, no
 // dependency. Agents and brokered terminals spawn as process-group leaders
 // on POSIX (`detached`), so stopping one stops everything it shelled out to

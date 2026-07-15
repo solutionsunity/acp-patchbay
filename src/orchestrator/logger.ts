@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // vscode-free logging seam: the orchestrator injects VS Code's
 // LogOutputChannel (the "Patchbay" Output channel — its methods satisfy this
 // shape structurally); everything below the orchestrator stays

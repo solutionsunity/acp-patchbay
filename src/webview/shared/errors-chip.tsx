@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // "errors (N)" — visible only when this webview instance has collected any;
 // click copies the list for a bug report. Honest scope: these are THIS
 // view's errors since its last mount (webviews die when hidden); the full

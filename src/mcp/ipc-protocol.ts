@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Wire format between the local MCP server (spawned as the *agent's* own
 // subprocess — ACP's stdio transport model) and the orchestrator that
 // actually holds live VS Code state. The MCP server can't reach vscode APIs

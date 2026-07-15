@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The rendering area's full-pane state pages (welcome, restoring,
 // connecting, connect-failed) share one shape and one glyph size — set
 // once here so a change propagates to every page.

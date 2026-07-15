@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Done-sound (Preferences § Turn end) — host-side by design: webviews die
 // when hidden (render-only-webview), and a turn finishing matters most when
 // the user is looking elsewhere, so audio can never depend on a webview

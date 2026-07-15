@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // model · mode · effort — one pill per agent-offered knob only; an
 // unoffered knob renders nothing (ui.md § Composer action row). The list
 // arrives already normalized by the orchestrator's knob processor

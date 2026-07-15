@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Owns capability-matrix bookkeeping and the free connectivity probe.
 // vscode-free (like session-manager.ts) so it's unit-testable against the
 // fake agent without a real extension host.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The vscode-touching side of the IPC bridge: listens on a local socket,
 // answers the local MCP server's tool calls with real editor state. This is
 // the only place that needs vscode.window/workspace/languages for MCP

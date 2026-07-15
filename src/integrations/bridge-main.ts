@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Standalone stdio-to-HTTP bridge (architecture.md § Integrations,
 // capability-conditional transport — the guaranteed floor for agents that
 // don't declare mcp.http, and the pinnable escape hatch for ones whose

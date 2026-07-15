@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § MCP Servers: curated and custom are the same mechanism, routed per
 // agent; a shared config never carries its credential (no-secret-exposure).
 import { useState } from "react";

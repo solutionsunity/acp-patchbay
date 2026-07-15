@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // ACP client pool: agentId → { process, declared, used, sessions[] }.
 // Different agents are always separate subprocesses; sessions with the same
 // agent multiplex over one connection (the protocol's own model). Crash is

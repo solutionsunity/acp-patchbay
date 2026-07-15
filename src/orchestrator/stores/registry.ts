@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Registry loader: curated integrations as shipped data (architecture.md §
 // Integrations — "the registry is shipped data from day one... adding a
 // curated integration in v2 is a data change, not code"). Same trust-boundary

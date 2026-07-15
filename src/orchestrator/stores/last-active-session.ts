@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The "last open session" pointer: which session the Agent View returns to
 // after an extension-host restart. Deliberately NOT freshness-bounded like
 // last-connected.ts — reopening a chat's *view* is free and safe at any age

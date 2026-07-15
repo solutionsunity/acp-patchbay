@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The composer's session-stats strip (Preferences § composerStats): whole-
 // session counts from the view-model's single pass, the files chip
 // (children — files-chip.tsx, the one interactive member of this row) slotted

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Copy-to-clipboard with the standard check-mark feedback window — one
 // implementation for every copy affordance.
 import { useState } from "react";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // View side of a channel: hydrate on mount, apply patches with the shared pure
 // reducer, resnapshot on any revision gap. No durable state here — ever.
 import {

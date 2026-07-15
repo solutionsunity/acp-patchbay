@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Standalone entry point — bundled separately (esbuild.mjs) and spawned by
 // the *agent*, not by patchbay, per ACP's stdio mcpServers model. Plain
 // Node, no vscode: real editor state comes from the orchestrator over the

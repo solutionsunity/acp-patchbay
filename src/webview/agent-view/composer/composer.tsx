@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The composer: context chips row, the Lexical prompt editor (typed-trigger
 // menus + inline tokens live in prompt-editor.tsx), knobs, send/stop. Owns
 // its send/stop routing per session id; the only ephemeral state is UI

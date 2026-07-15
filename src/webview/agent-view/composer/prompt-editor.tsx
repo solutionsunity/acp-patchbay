@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The prompt box (ui.md § Composer), Lexical-backed: typed triggers (`/`
 // commands, `@` context) get real keyboard navigation, and accepted picks
 // become inline tokens (nodes.ts) instead of bare text — a `<textarea>`

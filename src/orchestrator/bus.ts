@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Patch bus: buffers high-frequency events and flushes one patch per short
 // fixed interval or explicit boundary. One knob, no adaptive machinery
 // (architecture.md § Snapshot + patch protocol).

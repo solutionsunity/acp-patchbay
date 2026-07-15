@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Behavioral quirk workaround: some agents honor `session/new`'s
 // `mcpServers` only on the process's FIRST session — every later session's
 // list is silently dropped (spec: the server list is a parameter of every

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // shadcn/ui AlertDialog — source-copied (stack.md). The destructive-confirm
 // primitive: replaces the hand-built two-step ConfirmButton with the same
 // honesty contract — no destructive action without an explicit second click.

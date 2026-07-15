@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Streamdown's math plugin: remark-math parses TeX delimiters, rehype-katex
 // typesets them (KaTeX CSS + woff2 fonts ride the agent-view bundle — the
 // rehype plugin must sit in the parse pipeline, so unlike mermaid this

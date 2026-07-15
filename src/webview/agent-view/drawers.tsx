@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Top overlay drawers (ui.md: drawers overlay from the top). The drawer
 // shells are presentational; every control inside is the shared layer.
 // `onDone(toast?)` closes the drawer — drawer visibility and toasts are the

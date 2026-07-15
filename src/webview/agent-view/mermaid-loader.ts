@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The mermaid engine, lazily delivered: renderMermaid() awaits the
 // standalone out/mermaid.js bundle (mermaid-main.ts via lazy-script.ts), so
 // mermaid's ~1.6 MB never rides the main agent-view bundle and is only

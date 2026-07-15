@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Composer knobs — the user's current working knob combination, per agent.
 // This is what the composer's knob pills show on *entry* (a fresh session,
 // or a history session attached with no live combination in hand) under the

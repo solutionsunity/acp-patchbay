@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.

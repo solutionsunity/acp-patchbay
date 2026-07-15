@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Shared render helpers for the capability matrix — used by both webviews so
 // the one-liner reads identically wherever it appears.
 import type { CapabilityCell, CapabilityMatrix } from "../../shared/protocol";

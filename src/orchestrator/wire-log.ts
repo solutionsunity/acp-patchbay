@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Wire log: the opt-in raw-frame tap (Audit page). The ACP wire is JSON-RPC
 // over stdio (ndjson) — never gRPC — and its frames can carry secrets:
 // session/new's mcpServers array includes the env values patchbay injected

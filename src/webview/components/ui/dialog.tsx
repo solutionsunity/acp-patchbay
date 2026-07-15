@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // shadcn/ui Dialog — source-copied (stack.md); Codicons, not Lucide.
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";

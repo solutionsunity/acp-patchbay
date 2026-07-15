@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The broker-surface cards: permission, diff, terminal, elicitation — one
 // broker path, one card language (architecture.md § Permission broker).
 // Each resolves itself through useActions (requestId = its own block id).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Installs a registry `binary` distribution: download the archive (or raw
 // executable — the spec allows both, FORMAT.md), extract, chmod, resolve to
 // an absolute launch path. Cached per (agentId, version) under

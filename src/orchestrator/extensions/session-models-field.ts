@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Wire extension: the legacy top-level `models` field + `session/set_model`
 // — a real ACP draft that was never stabilized and was REMOVED from the
 // protocol June 1, 2026 (agentclientprotocol.com/rfds/updates), superseded

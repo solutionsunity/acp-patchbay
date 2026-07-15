@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Fence-attribute-aware code block: a fence whose info string carries
 // `path="…"` (optionally the `excerpt` token) renders a caption row naming
 // the file above the normal block. The attributes are a generic fence

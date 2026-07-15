@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Streamdown's code-highlighter plugin, backed by Shiki's JavaScript regex
 // engine — the CSP decision P13a deferred, made here: the JS engine needs no
 // `wasm-unsafe-eval`, so the webview CSP stays exactly as authored

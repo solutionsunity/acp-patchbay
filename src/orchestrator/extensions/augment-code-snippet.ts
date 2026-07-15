@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Wire extension: `<augment_code_snippet path="…" mode="EXCERPT">` — a
 // vendor render directive Augment's models are prompted to wrap around
 // every code excerpt they present. Augment's own client parses it into an

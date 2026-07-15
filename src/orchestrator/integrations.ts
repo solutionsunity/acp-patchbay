@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Integrations manager (architecture.md § Integrations): curated (registry)
 // and custom are the same mechanism — MCP servers routed to agents. Owns
 // the connect lifecycle (static key in a configurable header, or MCP-spec

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Permissions (Trust): the rules that answer next time — command rules in
 // two layers (workspace over machine floor) and the file-write scope.
 // Reviewing what happened lives on Audit; what's stored (and erasing it) on

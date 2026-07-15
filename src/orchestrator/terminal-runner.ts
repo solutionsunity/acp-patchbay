@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Runs the child process behind an ACP terminal/create call. vscode-free (so
 // it's testable against the fake agent without a real extension host) —
 // visibility in a real VS Code terminal is a thin wrapper layered on top in

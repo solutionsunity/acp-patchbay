@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Persisted used-capability cache, keyed by agentId, carrying the
 // version it was earned against (capability-verification.md, amended:
 // used now survives reconnect and persists *across restarts* — it only

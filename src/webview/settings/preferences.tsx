@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Preferences: machine-scoped behavior defaults — how patchbay acts, not
 // what it's wired to. Render-only: edits go out as one setPreferences patch;
 // what's shown is always the orchestrator's stored truth (preferencesChanged

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Webview-side error collector: uncaught errors, unhandled rejections, and
 // CSP violations land in one bounded buffer. The buffer is ephemeral render
 // state (render-only-webview: it describes THIS webview instance and dies

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The ONE Streamdown configuration — every piece of agent-authored prose
 // (message and thought chunks only; tool calls, diffs, and plans never
 // enter the markdown parser) renders through here, so rendering policy has

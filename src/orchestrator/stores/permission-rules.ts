@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Permission rules, two layers. Workspace layer (this file's original
 // scope): command rules + file-write scope in workspaceState — per user,
 // per workspace, never repo-shipped; a cloned repo must not arrive

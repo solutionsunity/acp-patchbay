@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Pending-OAuth-callback registry, keyed by the `state` parameter. The
 // vscode glue is one line in extension.ts: registerUriHandler routes every
 // incoming `vscode://solutionsunity.acp-patchbay/...` URI's query string to

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Prose and tool-call blocks of the transcript. Each component consumes the
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.

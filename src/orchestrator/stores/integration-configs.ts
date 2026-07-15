@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Integrations are developer-env, not code-env: global to this machine,
 // same as agent-configs.ts. Deliberately global-only — the MCP incident
 // features.md records (a production-access MCP server silently following a

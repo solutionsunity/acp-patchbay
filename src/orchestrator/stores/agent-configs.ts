@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Agents are developer-env, not code-env: stored in context.globalState,
 // never a repo-committed file, visible everywhere on this machine.
 // Deliberately global-only — per-workspace binding may return later as an

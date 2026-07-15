@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Normalizes an agent's initialize response into the declared table, and
 // owns the used-proof table — the one place that knows how each row gets
 // marked used. Declared ≠ used: declared is what the agent claims, refreshed

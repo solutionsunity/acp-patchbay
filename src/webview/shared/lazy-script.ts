@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Lazy-loads a sibling bundle from out/ at runtime. The base URL is declared
 // by the host in a <meta> tag (webview-host.ts) rather than derived from
 // document.currentScript — which is null here: this module first executes

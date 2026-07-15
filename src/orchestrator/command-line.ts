@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Parses a user-supplied "custom command that speaks ACP" into command + args.
 // Handles double/single quotes; no shell interpretation (we spawn without one).
 export function parseCommandLine(

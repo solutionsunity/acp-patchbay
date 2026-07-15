@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // KEY=value lines → record; blank/invalid lines are skipped. Write-only env
 // convention rides on this shape (no-secret-exposure.md): a bare `KEY=`
 // submits an empty value, the orchestrator's keep-stored-value signal.

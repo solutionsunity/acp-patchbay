@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // shadcn/ui Button — source-copied (stack.md: components in the repo, never
 // a black-box dep). Icons are Codicons via the shared <Icon>, never Lucide.
 import * as React from "react";

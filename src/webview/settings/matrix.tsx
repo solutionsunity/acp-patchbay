@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Capability matrix: declared is a claim; used is what happened on the
 // wire — inspectable per cell (Radix Tooltip), rows hand-picked against the
 // ACP spec (capability-verification.md).

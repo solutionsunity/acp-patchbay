@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Launcher health — patchbay's tools for the seams of ecosystem launchers
 // (npx/uvx), central on purpose: every chokepoint (connect crash, warmup
 // abort, future add/update flows) calls the same capability instead of

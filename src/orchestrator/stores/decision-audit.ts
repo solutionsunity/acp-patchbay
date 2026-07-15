@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Decision audit: append-only record of events that happened *in patchbay* —
 // permissions granted, tools approved, routing chosen. JSONL in workspace
 // storage; grows, belongs to patchbay (architecture.md § State).

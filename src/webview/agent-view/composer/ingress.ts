@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Attachment ingress — the ONE admission point for bytes entering patchbay
 // from the composer (paste and external drops share it; any future producer
 // joins here). Owns the whole decision table: the size cap, the image

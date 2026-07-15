@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Agent View shell — the single blend: agents + sessions + chat (features §1).
 // Vertical order per ui.md: header → session row → chat → read-out strip → composer;
 // drawers overlay from the top. Render-only: the shell owns only local UI

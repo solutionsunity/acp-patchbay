@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Bridges the channel — an external store — into React the way React
 // defines it: useSyncExternalStore re-checks the snapshot after subscribing,
 // so a snapshot arriving between first render and subscription is never

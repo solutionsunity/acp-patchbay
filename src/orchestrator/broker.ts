@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // One broker path for every gated action (architecture.md § Permission
 // broker): the agent's own session/request_permission calls, and patchbay's
 // own mandatory gates on fs/write_text_file and terminal/create. Same rule

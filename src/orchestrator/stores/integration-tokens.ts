@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Integration credentials: the one place they're allowed to live
 // (architecture.md § State — "Secrets... never settings, never state stores,
 // never logs"; no-secret-exposure.md). Structural subset of

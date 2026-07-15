@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Preferences (Settings § Preferences): machine-scoped behavior defaults —
 // done-sound, fresh-session knob source, idle-release timer. globalState by
 // the placement contract: non-sensitive, developer-env, never repo-committed

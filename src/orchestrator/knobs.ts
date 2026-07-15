@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Normalizes every knob-shaped wire fact into one view, and routes every
 // knob set back to the wire — the knob sibling of capabilities.ts. This is
 // the only module that reads how the wire's knob surfaces relate; no other

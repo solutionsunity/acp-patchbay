@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // MCP-spec OAuth 2.1 client (docs/reference-mcp-oauth.md § mechanism 2):
 // discover the protected resource's metadata (RFC 9728), discover its
 // authorization server's metadata (RFC 8414 / OIDC), register a client

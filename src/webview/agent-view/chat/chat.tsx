@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The transcript: renders the view-model's items in arrival order (the
 // ordering principle, ui-rendering-strategy § Summary), the per-turn
 // metadata line, and the live elapsed ticker. Long transcripts ride the

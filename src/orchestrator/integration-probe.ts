@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Patchbay's own MCP-client handshake with an integration server —
 // initialize + tools/list, no agent, no LLM turn (the same "free read"
 // class as session/list). Provider-side truth only: a passing probe means

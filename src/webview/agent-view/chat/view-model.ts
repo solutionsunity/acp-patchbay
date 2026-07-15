@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The transcript view-model — the ONE derivation between reducer state and
 // chat components, and the one place stream/end semantics live. Components
 // consume the result and stay dumb.

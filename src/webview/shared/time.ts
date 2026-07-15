@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Relative "last activity" labels ("37 minutes ago", "yesterday") — one
 // helper, Intl-backed so the workbench display language localizes it for
 // free. Render-time snapshot, deliberately no ticker: the surfaces using it

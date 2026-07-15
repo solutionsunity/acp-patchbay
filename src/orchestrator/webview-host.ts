@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // vscode glue between webviews and channel hosts. Webviews are render-only:
 // they die when hidden and resurrect via ready → snapshot.
 // CSP + nonce pattern after vscode-acp's ChatWebviewProvider (MIT, formulahendry).

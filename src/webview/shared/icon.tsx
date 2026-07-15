@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Thin wrapper over the bundled @vscode/codicons font — every icon in either
 // webview should route through this so it inherits currentColor and matches
 // the active theme, instead of an emoji/unicode glyph the platform doesn't

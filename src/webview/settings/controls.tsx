@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Shared settings controls — the 1:1 shadcn mappings of the original
 // hand-built trio (ui-rendering-strategy: Field/Toggle/ConfirmButton →
 // labeled row / Switch / AlertDialog).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Host side of one webview channel: canonical state + revision counter + patch
 // bus. vscode-free (structural WebviewLike) so the whole state machine is
 // unit-testable; the vscode glue lives in webview-host.ts.

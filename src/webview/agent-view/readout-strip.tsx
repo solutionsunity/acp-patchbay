@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The read-out strip between chat and composer (ui.md § Read-out strip):
 // live-turn read-outs at the eye's resting point, deliberately OUTSIDE the
 // composer — its binding rule ("above the input = what the agent will see")

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Agents (ui.md § Settings): stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.

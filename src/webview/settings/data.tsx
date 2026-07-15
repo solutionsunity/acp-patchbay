@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Data: what patchbay stores about you, read live from the stores on
 // every mount (architecture.md § State rendered as reality, never a cached
 // claim) — and, at the bottom of exactly that inventory, the way out.

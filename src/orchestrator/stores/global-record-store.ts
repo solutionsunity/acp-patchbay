@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Generic id-keyed record store over context.globalState — agents,
 // integrations, and the used-capability cache are all "developer env,
 // not code env" (never repo-committed) and all need the same shape: list,

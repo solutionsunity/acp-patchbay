@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Streamdown's CJK plugin: CommonMark's emphasis rules mis-parse **bold**
 // and ~~strikethrough~~ adjacent to CJK punctuation (Chinese/Japanese/
 // Korean) — these remark plugins fix the boundary handling. No effect on

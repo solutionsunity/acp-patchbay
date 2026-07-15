@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The one compose point for wire-extension modules (architecture.md
 // § Protocol extensions, "Wire-extension modules" — binding rule:
 // .dotagent/rules/spec-pure-core.md). Core call sites import only from

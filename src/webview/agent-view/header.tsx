@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Top bar: current-session agent indicator, errors chip, session/new
 // buttons. The agent chip is a read-out, not a picker — agent choice
 // happens where it matters, in the new-chat flow; Settings lives in the

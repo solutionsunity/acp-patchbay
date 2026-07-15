@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The active session's title row and the ellipsis actions menu (shared with
 // the sessions drawer). Actions are sent per session id; only drawer-opening
 // stays a shell callback. No rename here: ACP has no rename request — agents

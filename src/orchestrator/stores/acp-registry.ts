@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Client for the official ACP agent registry (agentclientprotocol/registry)
 // — THE agent source (the pre-registry roster overlay is retired; patchbay's
 // own curation lives in code tables: asset-locations.ts ASSET_LOCATIONS).

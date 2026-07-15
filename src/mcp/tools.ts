@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Tool definitions for patchbay's local MCP server. One uniform mechanism
 // per capability (architecture.md's "every agent sees just another local
 // MCP server") — tools only, no MCP resources: every agent's MCP client

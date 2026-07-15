@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The composer's typed-trigger suggestion lists (`/` commands, `@` context).
 // Deliberately NOT Radix menus: these are editor-anchored autocomplete —
 // focus must stay in the prompt editor while they're open, and a

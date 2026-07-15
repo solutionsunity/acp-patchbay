@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Resolves an agent's rules/skills/commands locations (architecture.md
 // § Rules, skills, commands) into the files actually on disk in this
 // workspace — management only, v1 is view + navigate, never delivery. A

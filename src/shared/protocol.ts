@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The one protocol both sides import (architecture.md § Snapshot + patch protocol).
 // Webviews are render-only: they send actions, receive snapshots + patches, and
 // apply patches with the pure reducers defined here. The orchestrator applies the

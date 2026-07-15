@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Context roots (features.md § Chat): workspace folders are the always-active
 // baseline — fixed, non-removable, but shown so the count reflects reality.
 // `roots` is the removable, user-added external set, passed to the agent as

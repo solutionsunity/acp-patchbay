@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Rules · skills · commands: a navigational index onto files living in
 // each agent's own native locations — real editing happens in VS Code's
 // editor, never a webview dialect (render-only-webview.md).

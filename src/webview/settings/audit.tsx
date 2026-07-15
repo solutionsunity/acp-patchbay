@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // § Audit: what actually happened — the decision audit (permissions granted,
 // tools approved, routing chosen) and the wire log (raw ACP JSON-RPC frames
 // to the Output panel, opt-in, auto-off). Reviewing is a different activity

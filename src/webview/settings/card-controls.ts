@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // The agent card's action-cluster view-model — the ONE derivation between
 // SettingsState slices and the card's controls (ui-rendering-strategy.md
 // § Control logic). Every control whose rules read domain state has its

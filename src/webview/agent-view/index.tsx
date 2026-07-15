@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Agent View — render only. Ephemeral state; rehydrates from the orchestrator
 // on every mount.
 import {

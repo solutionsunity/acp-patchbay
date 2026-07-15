@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Solutions Unity
+
 // Settings shell — left nav + one section at a time (ui.md § Settings).
 // Render-only: the open section is host-owned state (state.section), so it
 // survives webview disposal and openSettings can deep-link to it; each
