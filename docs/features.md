@@ -2,7 +2,7 @@
 
 What must be possible, stated as capabilities — not how, not which component. Sits
 between [prd.md](prd.md) (why) and [architecture.md](architecture.md) (how). Every
-feature here is v1 unless parked at the bottom.
+feature here is v1; what is deliberately beyond v1 is in [roadmap.md](roadmap.md).
 
 ---
 
@@ -229,26 +229,3 @@ Deliberately near-empty — flat toggles only, searchable in the standard Settin
   value is migrated onto its agent's config automatically on activate.
 - Telemetry opt-in.
 - Nothing else unless it proves to be a genuinely flat scalar. Never credentials.
-
----
-
-## Parked (v2)
-
-- Curated integrations catalog beyond GitHub (Linear, Jira, Sentry, …).
-- External-continuation detection — watch known agent session stores for
-  out-of-band writes and badge the session "possibly continued elsewhere." Requires
-  per-agent knowledge of private storage paths; adapter-tier work that earns its
-  way in.
-- Post-hoc change detection for uncooperative agents — snapshot workspace state at
-  turn start, watch during the turn, present every out-of-band change as a
-  reviewable, one-click-revertible diff. Not pre-gated, but nothing invisible.
-- Isolated execution workspaces — the agent works against a copy (worktree-style)
-  and every change is applied back as a pre-gated diff. The only true gating for
-  uncooperative agents; heavy on paths, terminals, and UX, so it earns its way in
-  later.
-- Shared source for rules/skills/commands — one base directory with compatibility
-  symlinks into each agent's native locations (the
-  [dotagent](https://github.com/solutionsunity/dotagent) pattern) or full supply
-  by patchbay. v1 proves the management surface first.
-- Anything not listed above that emerges during architecture — it lands here first,
-  not in v1 by momentum.
