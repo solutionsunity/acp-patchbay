@@ -912,7 +912,7 @@ export class Orchestrator {
   async newSessionCommand(): Promise<void> {
     const agents = this.agentView.current.agents;
     if (agents.length === 0) {
-      void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings § Agents.");
+      void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings › Agents.");
       this.handleAction({ kind: "openSettings", section: "agents" });
       return;
     }
@@ -2461,7 +2461,7 @@ export class Orchestrator {
     if (err instanceof RequestError && err.code === -32000) {
       const informative =
         raw.trim() !== "" && !/^authentication required\.?$/i.test(raw.trim());
-      return informative ? raw : "needs login first — use Log in on this agent in Settings § Agents";
+      return informative ? raw : "needs login first — use Log in on this agent in Settings › Agents";
     }
     return this.pool.get(agentId)?.detail ?? raw;
   }
