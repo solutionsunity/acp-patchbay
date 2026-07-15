@@ -2,7 +2,8 @@
 
 What must be possible, stated as capabilities — not how, not which component. Sits
 between [prd.md](prd.md) (why) and [architecture.md](architecture.md) (how). Every
-feature here is v1; what is deliberately beyond v1 is in [roadmap.md](roadmap.md).
+feature here is in the current release; what is deliberately beyond it is in
+[roadmap.md](roadmap.md).
 
 ---
 
@@ -20,11 +21,9 @@ deliverable, owed before implementation.
   isn't running; with several, a picker lists every configured agent with its
   readiness inline. A connection failure surfaces in that same pane with the
   specific reason and a Retry — never a silent bounce to the empty state.
-- Adding agents lives in Settings § Agents only — the one rich form (roster
+- Adding agents lives in Settings › Agents only — the one rich form (registry
   search or any command line that speaks ACP, Verify toggle, binary confirm).
-  The view's picker and empty state route there. *(Supersedes the earlier
-  in-view connect form — owner-approved 2026-07-08: two half-featured add
-  paths collapsed into the featured one.)*
+  The view's picker and empty state route there.
 - User can see each agent's live status: untested (configured, never
   connected), running, stopped, crashed, reconnecting — every configured
   agent is visible from the first frame, not only once connected.
@@ -36,9 +35,7 @@ deliverable, owed before implementation.
   `session/load` (full replay) or `session/resume` (context back, no visible
   history — said so with an inline notice). Where it supports neither, the
   session honestly cannot be reopened — patchbay never mints a new session and
-  presents it as a continuation. *(Supersedes the emulated-continuation
-  fallback: minting a session and seeding it from a cached view was a cache
-  presented as a conversation.)*
+  presents it as a continuation.
 
 ### Sessions
 
@@ -57,14 +54,12 @@ deliverable, owed before implementation.
   unseen-completed, prompt box empty, idle past the auto-close time (default
   60 min, a user setting soon), and the agent declares `session/load` — anything
   less than full replay would destroy the only transcript, since patchbay
-  persists none. *(Supersedes release-on-switch.)*
+  persists none.
 - Renaming lives in the agent, not patchbay: ACP has no rename request, so
   agents with an in-chat `/rename` round-trip the title through their own
   `session/list` / `session_info_update` — which patchbay always honors.
-  *(Supersedes the patchbay-side rename and its `renamedByUser` overlay.)*
-- Branching is out of v1. `session/fork` stays a capability-matrix row; no UI
-  feature rides it yet. *(Supersedes the branch menu item and the emulated
-  branch path.)*
+- Branching is out of the current release. `session/fork` stays a
+  capability-matrix row; no UI feature rides it yet.
 - The agent owns the sessions — 100%. The agent's own `session/list` is the
   only session list; patchbay persists no session records at all — no index,
   no transcripts. What patchbay holds: a **decision audit** (permissions
@@ -73,8 +68,7 @@ deliverable, owed before implementation.
   wholesale from `session/load` replay on every reopen, never merged. Replay
   always wins; there is no reconciliation logic anywhere. Agents without
   `session/list` show only their currently-open sessions, and nothing survives
-  a reload — a deliberate scope decision, not a limitation. *(Supersedes the
-  session index as fallback+overlay and the persisted last-known views.)*
+  a reload — a deliberate scope decision, not a limitation.
 - A session continued outside patchbay (the agent's own CLI, another editor) simply
   appears complete on reopen — the replay carries the detour, because the truth was
   never patchbay's.
@@ -86,8 +80,7 @@ deliverable, owed before implementation.
   as such.
 - Opening a closed session rides the ladder: `session/load` (replay = truth) >
   `session/resume` (context live, a notice says history can't be shown) >
-  cannot open — nothing in hand, nothing to fetch, said as such. *(Supersedes
-  the persisted last-known view and its read-only seeding.)*
+  cannot open — nothing in hand, nothing to fetch, said as such.
 - User can see and change the session's model, mode, and effort when the agent
   offers them, and the result reflects what actually happened — not what was
   requested.
@@ -123,12 +116,6 @@ deliverable, owed before implementation.
   declared / declared but not used / used. Refreshes on every connect. Rows are
   hand-picked against the ACP spec's declared capability surface, not derived
   automatically.
-- ~~Each agent carries a permission-fidelity label~~ *(removed 2026-07-12: the
-  label aggregated data-plane rows — do fs/terminal bytes proxy through
-  patchbay — into a conduct verdict, and read "not exercised yet" as "acts
-  outside"; structurally wrong for SDK-CLI agents whose consent still routes
-  through the permission broker. The capability matrix rows carry the honesty
-  unaggregated.)*
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
 - User can set per-agent process policy: auto / shared / isolated.
@@ -136,7 +123,7 @@ deliverable, owed before implementation.
   Independently of the flag, a window reload restores whatever agents were
   still running when the window went down — a manually connected agent
   survives reload but not quit-and-reopen-later (the running set is stamped
-  at shutdown and honored only while fresh; `stores/last-connected.ts`).
+  at shutdown and honored only while fresh).
   In-flight turns and process warmth do not survive a reload — a deliberate
   scope decision; the connection-keeper daemon that would preserve them is
   deferred until mid-turn reload loss demonstrates the need.
@@ -149,10 +136,8 @@ deliverable, owed before implementation.
 ### MCP servers (integrations)
 
 - User can connect GitHub by pasting a token — one field, no app setup — and
-  disconnect as easily. *(Originally "one click (OAuth)"; superseded by the
-  standing auth decision in [reference-mcp-oauth.md](reference-mcp-oauth.md):
-  GitHub's OAuth is closed to third-party clients. MCP-spec OAuth remains the
-  one-click path for curated entries whose registration is open.)*
+  disconnect as easily. Curated entries whose registration is open connect with
+  one-click OAuth instead.
 - User can add any MCP server — command or URL, with auth — as a custom entry.
 - Two-state lifecycle: **active/inactive** toggles routing without touching the
   credential (the mute switch); **disconnect is the full clear** — credential,
@@ -162,10 +147,7 @@ deliverable, owed before implementation.
 - User owns the routing: which servers each agent receives is the user's
   choice, per agent, not all-or-nothing. Default ("auto"): a new server
   attaches to every agent; "only" pins an explicit list; "except" attaches to
-  all minus the listed. *(Supersedes the fully-brokered auto-gate + explicit
-  plug-in confirmation, 2026-07-12 — the gate conflated data-plane fidelity
-  with control-plane consent; per-tool consent already rides the permission
-  broker for every request_permission-routing agent.)*
+  all minus the listed.
 - Servers are global to this machine, and a shared config never carries its
   credential — connecting is always the user's own explicit, visible act. (The
   real incident behind this rule — a production-access MCP server silently
@@ -179,8 +161,8 @@ deliverable, owed before implementation.
 - User can see and edit each agent's rules, skills, and commands from Settings —
   the files stay in the agent's own native locations, and the agent reads them
   from the workspace itself; patchbay never passes them down.
-- v1 maps Claude Code and Augment locations; an unmapped agent is shown as such —
-  never silently skipped.
+- The current release maps Claude Code and Augment locations; an unmapped agent
+  is shown as such — never silently skipped.
 
 ### Permissions
 
@@ -196,9 +178,7 @@ deliverable, owed before implementation.
 - Configuration (agents, integrations, routing) lives in developer-owned stores,
   global to this machine — never a repo-committed file. Sharing a config entry is
   an explicit copy (Share…); credentials are never in what's shared, never
-  displayed, and revocable at any time. *(Supersedes the earlier
-  "configuration as repo-shareable files" design — the workspace config file is
-  gone, and with it the possibility of a repo arriving pre-configured.)*
+  displayed, and revocable at any time.
 
 ## 3. Editor Surface
 
@@ -206,7 +186,7 @@ deliverable, owed before implementation.
   accepts or rejects before anything touches disk. The capability matrix shows
   which agents deliver this brokered tier row by row; for agents that write on
   their own, the matrix's honest ◌ cells and live terminal visibility carry the
-  honesty in v1.
+  honesty in the current release.
 - The agent sees what the user sees: unsaved buffers, not just disk state.
 - The agent can read the problems panel (diagnostics) — current, not stale.
 - Right-click on a selection: add to context / ask the agent about it.
@@ -223,9 +203,5 @@ deliverable, owed before implementation.
 
 Deliberately near-empty — flat toggles only, searchable in the standard Settings UI:
 
-- ~~Default agent~~ — superseded by the per-agent auto-connect flag (Settings
-  § Agents): the setting's one semantic, connect an agent on window open,
-  generalized to any number of agents. An existing `acpPatchbay.defaultAgent`
-  value is migrated onto its agent's config automatically on activate.
 - Telemetry opt-in.
 - Nothing else unless it proves to be a genuinely flat scalar. Never credentials.
