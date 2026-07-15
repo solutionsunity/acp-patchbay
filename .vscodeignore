@@ -16,3 +16,4 @@ tsconfig.json
 tsconfig.test.json
 .gitignore
 out/ui-gate/**
+media/recordings/**
