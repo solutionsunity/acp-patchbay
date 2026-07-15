@@ -1,0 +1,73 @@
+name: Release
+
+# Builds the .vsix, checksums it, and publishes a GitHub Release when a
+# v<version> tag is pushed. Marketplace publishing is deliberately NOT here —
+# it stays a manual `vsce publish` step (stack.md). No VSCE_PAT is used, so
+# there is no publish secret to protect; the tag-only trigger keeps forks out.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Deterministic sanity gate — the headless-safe subset of `npm run check`.
+      # The full gate (electron suite, UI shots) runs at dev time before tagging.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (=$TAG_VERSION) != package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_ENV"
+
+      - name: Package .vsix
+        run: npx vsce package --out "acp-patchbay-${version}.vsix"
+
+      - name: Checksum
+        run: sha256sum "acp-patchbay-${version}.vsix" | tee "acp-patchbay-${version}.vsix.sha256"
+
+      # Marketplace parity: even minor = stable, odd minor = pre-release.
+      - name: Determine release channel
+        run: |
+          MINOR="$(echo "$version" | cut -d. -f2)"
+          if [ $((MINOR % 2)) -eq 1 ]; then
+            echo "prerelease=--prerelease" >> "$GITHUB_ENV"
+            echo "Odd minor ($MINOR) -> pre-release"
+          else
+            echo "prerelease=" >> "$GITHUB_ENV"
+            echo "Even minor ($MINOR) -> stable"
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "acp-patchbay-${version}.vsix" \
+            "acp-patchbay-${version}.vsix.sha256" \
+            --title "v${version}" \
+            --generate-notes \
+            ${prerelease}
