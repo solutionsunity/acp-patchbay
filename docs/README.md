@@ -20,10 +20,12 @@ through this map, not through a breadcrumb in the source.
 Read top to bottom for the whole picture:
 
 1. **[prd.md](prd.md)** — why the product exists; the problem and the promise.
-2. **[features.md](features.md)** — what must be possible, as v1 capabilities.
+2. **[features.md](features.md)** — what must be possible, as current-release
+   capabilities.
 3. **[architecture.md](architecture.md)** — how the product becomes a VS Code
    extension; mechanisms and the reasoning behind them.
-4. **[roadmap.md](roadmap.md)** — what is deliberately beyond v1, and the bar each
+4. **[roadmap.md](roadmap.md)** — what is deliberately beyond the current release,
+   and the bar each
    item clears to enter.
 
 Grouped areas:

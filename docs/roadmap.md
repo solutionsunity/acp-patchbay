@@ -1,10 +1,11 @@
 # Roadmap
 
-What is deliberately beyond v1. Nothing here is a promise with a date — each item
-is a scope decision and the bar it must clear before it earns a place. Anything
-that emerges during design lands here first, not in v1 by momentum.
+What is deliberately beyond the current release. Nothing here is a promise with a
+date — each item is a scope decision and the bar it must clear before it earns a
+place. Anything that emerges during design lands here first, not in the current
+release by momentum.
 
-## Beyond v1
+## Beyond the current release
 
 - **External-continuation detection** — watch known agent session stores for
   out-of-band writes and badge a session "possibly continued elsewhere." Requires
@@ -23,4 +24,4 @@ that emerges during design lands here first, not in v1 by momentum.
 - **Shared source for rules/skills/commands** — one base directory with
   compatibility symlinks into each agent's native locations (the
   [dotagent](https://github.com/solutionsunity/dotagent) pattern), or full supply
-  by patchbay. v1 proves the management surface first.
+  by patchbay. The current release proves the management surface first.
