@@ -40,9 +40,9 @@ Grouped areas:
   observations of wire behavior and the vendor-communication trail. See
   [agents/README.md](agents/README.md).
 
-References:
+Deep dives:
 
 - **[acp-compliance.md](acp-compliance.md)** — patchbay's own conformance to the
   ACP protocol, as facts checked against a pinned SDK version.
-- **[reference-mcp-oauth.md](reference-mcp-oauth.md)** — how patchbay authenticates
-  to remote MCP servers.
+- **[mcp-architecture.md](mcp-architecture.md)** — the remote-MCP-integration
+  architecture: how patchbay authenticates to and routes remote MCP servers.
