@@ -30,6 +30,11 @@ jobs:
       # The full gate (electron suite, UI shots) runs at dev time before tagging.
       - name: Typecheck
         run: npm run typecheck
+      # The integration tests spawn the real bundled subprocesses
+      # (out/mcp-server.js, out/integration-bridge.js) and a fake agent
+      # (out-test/fake-agent.mjs) — build them first, as pretest:vscode does.
+      - name: Build test prerequisites
+        run: npm run build && node scripts/build-fake-agent.mjs
       - name: Unit tests
         run: npm test
 
