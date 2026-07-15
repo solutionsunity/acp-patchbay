@@ -35,8 +35,8 @@ async function handleMessage(msg: JsonRpcMessage): Promise<void> {
       send({
         id: msg.id,
         result: {
-          // MCP is date-versioned; bump when the ecosystem moves on, per
-          // architecture.md's "adapt when the compatibility moment happens."
+          // MCP is date-versioned; bump when the ecosystem moves on, to
+          // adapt when the compatibility moment happens.
           protocolVersion: "2025-03-26",
           capabilities: { tools: {} },
           serverInfo: { name: "acp-patchbay", version: "0.0.1" },

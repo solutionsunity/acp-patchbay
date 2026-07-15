@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn's cn() — source-copied per stack.md (components live in the repo,
+// shadcn's cn() — source-copied (components live in the repo,
 // never a black-box dep).
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";

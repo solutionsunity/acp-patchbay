@@ -8,7 +8,7 @@
 // per-machine, never synced) so a cold start or an offline CDN still has
 // agents to show; refreshed at activation and on a slow timer. This is a
 // static-data fetch with no agent involved, so the "never on a schedule"
-// rule for diagnostic probes (capability-verification.md) doesn't apply —
+// rule for diagnostic probes doesn't apply —
 // that rule is about not spending real agent turns silently, not about
 // polling a public manifest.
 import { mkdir, readFile, writeFile } from "node:fs/promises";

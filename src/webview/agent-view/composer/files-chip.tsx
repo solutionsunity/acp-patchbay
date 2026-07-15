@@ -2,8 +2,8 @@
 // Copyright 2026 Solutions Unity
 
 // The files chip — edited-files read-out, moved down into the composer's
-// foot row (ui.md § Read-out strip amended: files chip now lives beside the
-// stats strip, not the plan chip). Same view-model totals, same overlay
+// foot row (it now lives beside the stats strip, not the plan chip). Same
+// view-model totals, same overlay
 // panel content; only the anchor changed — it opens upward from its own
 // button instead of spanning the strip. A row's own click is the diff when
 // answerable; the go-to-file button always opens the file plainly.
@@ -78,7 +78,7 @@ export function FilesChip({
             {files.map((path) => {
               const { base, dir } = splitPath(path, roots);
               // Editor reality, not a stored flag: with agent writes landing
-              // in the open buffer (compliance §12/W1), dirty here means the
+              // in the open buffer, dirty here means the
               // user's own unsaved edits sit on an agent-touched file.
               const dirty = openEditors.some((e) => e.file === path && e.dirty);
               const canDiff = diffable.has(path);

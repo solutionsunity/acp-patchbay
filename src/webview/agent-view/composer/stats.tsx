@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The composer's session-stats strip (Preferences § composerStats): whole-
+// The composer's session-stats strip (the composerStats preference): whole-
 // session counts from the view-model's single pass, the files chip
 // (children — files-chip.tsx, the one interactive member of this row) slotted
 // between counts and the context-window gauge (moved from the header,
 // smaller). Counts render only when nonzero, the gauge only when the agent
-// reports usage (absence over fake, ui.md § gauge); a fresh session shows
+// reports usage (absence over fake); a fresh session shows
 // nothing at all.
 import type { ReactNode } from "react";
 import type { PlanUsageInfo, UsageInfo } from "../../../shared/protocol";
@@ -121,7 +121,7 @@ export function ComposerStats({
   return (
     // mr-6 ≈ one counter's width of air before the send button — the strip is
     // a read-out, the button is a control; they must not read as one cluster.
-    // Icon size rides the chrome policy (theme.css § rendered-block chrome).
+    // Icon size rides the chrome policy (theme.css).
     <span className="composer-stats mr-6 flex items-center gap-2 text-[11px] text-muted-foreground">
       {counts.map(
         (c) =>

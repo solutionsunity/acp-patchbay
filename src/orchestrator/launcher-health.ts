@@ -17,8 +17,7 @@
 //    rejected*: it would fix this by owning atomicity, but the price is
 //    reimplementing the package manager's whole lifecycle (GC with in-use
 //    guards, single-flight, stale-fallback policy, bin resolution) — repair
-//    at the chokepoint is the right-sized answer, recorded in
-//    architecture.md § ACP client pool.
+//    at the chokepoint is the right-sized answer.
 //
 // 2. **PATH-sibling divergence probe.** A patchbay-launched agent and the
 //    user's own terminal CLI share one per-user state store (`~/.codex`,

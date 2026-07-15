@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// One broker path for every gated action (architecture.md § Permission
-// broker): the agent's own session/request_permission calls, and patchbay's
+// One broker path for every gated action: the agent's own
+// session/request_permission calls, and patchbay's
 // own mandatory gates on fs/write_text_file and terminal/create. Same rule
 // set, same audit trail, same three-button vocabulary — a second,
 // differently-scrutinized approval surface is exactly what a malicious
@@ -11,7 +11,7 @@
 // fs/write_text_file and terminal/create are gated here unconditionally,
 // regardless of whether the agent also calls session/request_permission
 // first — an agent can route around fs/write_text_file via a shell command,
-// so fs/* is not a security boundary on its own (architecture.md). An agent
+// so fs/* is not a security boundary on its own. An agent
 // that asks nicely via session/request_permission and then calls
 // fs/write_text_file will see two evaluations of the same rule; both any
 // given ruleset would answer the same way, so this is a UX rough edge
@@ -119,7 +119,7 @@ export class PermissionBroker {
     this.pending.delete(requestId);
   }
 
-  /** Turn cancellation duty (ACP § Cancellation, a MUST): every pending
+  /** Turn cancellation duty (an ACP MUST): every pending
    * session/request_permission for the session resolves with the cancelled
    * outcome — the agent is never left hanging on a stopped turn. Same duty
    * when the session is closed under an in-flight turn. */
@@ -353,8 +353,7 @@ export async function applyFileWrite(path: string, content: string): Promise<voi
 
 /** ACP `fs/read_text_file` range params: `line` is 1-based, `limit` is a
  * max line count. The requested slice is what returns — over-serving the
- * whole file costs the agent tokens and disobeys the request shape
- * (acp-compliance.md G3). */
+ * whole file costs the agent tokens and disobeys the request shape. */
 export function sliceTextFileRead(
   content: string,
   line?: number | null,

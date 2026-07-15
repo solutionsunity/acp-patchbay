@@ -10,8 +10,8 @@
 // all key off `liveBlockId`, under that one name. ("streaming"/"active"/
 // "isAnimating" drift was how the RTL regression hid.)
 //
-// One forward pass over the flat block timeline (ordering principle,
-// ui-rendering-strategy.md § Summary): grouping and per-turn rollups are
+// One forward pass over the flat block timeline (the ordering
+// principle): grouping and per-turn rollups are
 // render arrangements derived here, never separate traversals with separate
 // boundary rules.
 import type { ChatBlock, ToolCallBlock, ToolCallKind } from "../../../shared/protocol";

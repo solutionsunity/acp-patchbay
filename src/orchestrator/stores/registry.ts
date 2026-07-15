@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Registry loader: curated integrations as shipped data (architecture.md §
-// Integrations — "the registry is shipped data from day one... adding a
-// curated integration in v2 is a data change, not code"). Same trust-boundary
-// treatment as acp-registry.ts: validated with zod, never trusted blind.
+// Registry loader: curated integrations as shipped data (the registry is
+// shipped data from day one — adding a curated integration in v2 is a data
+// change, not code). Same trust-boundary treatment as acp-registry.ts:
+// validated with zod, never trusted blind.
 //
-// Auth model per docs/reference-mcp-oauth.md (decided): every entry offers
+// Auth model (decided): every entry offers
 // up to two mechanisms — a static key sent in a configurable header (the v1
 // floor), and/or MCP-spec OAuth 2.1 with open Dynamic Client Registration
 // (the upgrade, URL-only — everything else is discovered on the wire).
@@ -43,7 +43,7 @@ export const registryEntrySchema = z.object({
    * brand glyph exists below. Rendered plain, so it inherits the row's
    * text color. */
   icon: z.string().default("server"),
-  /** The curated-only exception to stack.md's Codicons rule (recorded
+  /** The curated-only exception to the Codicons rule (recorded
    * decision, 2026-07-12): a verified monochrome brand glyph as inline SVG
    * path data, source-copied from simple-icons (CC0) — shipped data, never
    * fetched at runtime, rendered with fill=currentColor so color follows

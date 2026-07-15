@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Persisted record of every process patchbay itself spawned (plan.md P15c):
+// Persisted record of every process patchbay itself spawned:
 // agent connections and brokered terminals — the direct children, nothing
-// deeper (grandchildren are the agent's own, covered by tree-kill and P15a
+// deeper (grandchildren are the agent's own, covered by tree-kill and
 // self-exit). Written at spawn with the command line read back from the OS
 // (record what reality says, compare with what reality says later), cleared
 // on observed exit — whatever survives an abnormal end (crash, OS kill,

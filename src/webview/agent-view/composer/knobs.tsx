@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // model · mode · effort — one pill per agent-offered knob only; an
-// unoffered knob renders nothing (ui.md § Composer action row). The list
+// unoffered knob renders nothing. The list
 // arrives already normalized by the orchestrator's knob processor
 // (knobs.ts) — this component never sees the wire's modes/configOptions
 // split, it just renders knobs and sends setSessionKnob. Requested ≠

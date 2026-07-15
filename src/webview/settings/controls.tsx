@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Shared settings controls — the 1:1 shadcn mappings of the original
-// hand-built trio (ui-rendering-strategy: Field/Toggle/ConfirmButton →
+// hand-built trio (Field/Toggle/ConfirmButton →
 // labeled row / Switch / AlertDialog).
 import type { ReactNode } from "react";
 import { Icon } from "../shared/icon";
@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 /** Labeled form field — one row: label column | control column. The row
- * layout is the binding contract (ui-rendering-strategy § component list);
+ * layout is the binding contract;
  * the wrapper stays a native <label> so clicking the label focuses the
  * control — the shadcn conversion happens in the controls inside it. */
 export function Field(props: { label: string; hint?: string; children: ReactNode }) {
@@ -35,7 +35,7 @@ export function Field(props: { label: string; hint?: string; children: ReactNode
 
 /** Destructive confirm — same honesty contract as the old two-step button
  * (no destructive action without an explicit second click), now the shadcn
- * AlertDialog (P13d: ConfirmButton → AlertDialog, 1:1). The dialog states
+ * AlertDialog (ConfirmButton → AlertDialog, 1:1). The dialog states
  * exactly what will happen (`title` — previously a hover tooltip, now
  * impossible to miss) before offering the confirm. */
 export function ConfirmButton(props: {
@@ -76,7 +76,7 @@ export function ConfirmButton(props: {
   );
 }
 
-/** THE on/off control (P13d: Toggle → shadcn Switch, 1:1) — every persisted
+/** THE on/off control (Toggle → shadcn Switch, 1:1) — every persisted
  * boolean setting renders through this one component; Checkbox stays for
  * picking members of a set, never for state. Optional leading codicon. */
 export function Toggle(props: {

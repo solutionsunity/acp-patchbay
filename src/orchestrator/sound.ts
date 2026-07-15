@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Done-sound (Preferences § Turn end) — host-side by design: webviews die
-// when hidden (render-only-webview), and a turn finishing matters most when
+// Done-sound, host-side by design: webviews die when hidden and hold no
+// durable state, and a turn finishing matters most when
 // the user is looking elsewhere, so audio can never depend on a webview
 // being alive. Sounds are the OS's own system set through the OS's own
 // player — no bundled assets, no CSP media-src widening, and under

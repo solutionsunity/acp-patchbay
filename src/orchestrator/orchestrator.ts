@@ -171,7 +171,7 @@ export class Orchestrator {
   private readonly editorSubscriptions: vscode.Disposable[] = [];
   /** Set by the webview host as the Agent View mounts/unmounts (wired in
    * extension.ts to `AgentViewProvider`'s real `onDidChangeVisibility`
-   * signal, P6); defaults to "visible" so native notifications don't fire
+   * signal); defaults to "visible" so native notifications don't fire
    * spuriously before that's connected. */
   isAgentViewVisible: () => boolean = () => true;
   /** Sessions shown in their own detached panels (AgentPanelHost, assigned
@@ -220,7 +220,7 @@ export class Orchestrator {
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
     this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
     this.integrationTokens = new IntegrationTokenStore(context.secrets);
-    // OAuth browser/redirect step (docs/reference-mcp-oauth.md, pitfall §1):
+    // OAuth browser/redirect step:
     // the redirect target is this extension's own vscode:// URI, passed
     // through asExternalUri so VS Code resolves it correctly under SSH
     // remote / WSL / Codespaces — never a hand-rolled 127.0.0.1 server.
@@ -338,12 +338,12 @@ export class Orchestrator {
             });
           this.pendingSyncs.set(agentId, sync);
         }
-        // Offerings are connection state (architecture.md § Session model) —
+        // Offerings are connection state —
         // the settings reducer drops its copy off this same event, and the
         // next connect's offering read repopulates it.
       },
       onIsolatedStatusChanged: (poolKey, _agentId, status) => {
-        // Not surfaced in the Agents list (P8: isolated instances are an
+        // Not surfaced in the Agents list (isolated instances are an
         // implementation detail) — only the sessions riding this specific
         // poolKey need to know their process is gone.
         if (status === "crashed" || status === "reconnecting") {
@@ -385,7 +385,7 @@ export class Orchestrator {
       },
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
-      // Spawn registry (P15c): records live in globalState so an abnormal
+      // Spawn registry: records live in globalState so an abnormal
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
@@ -421,7 +421,7 @@ export class Orchestrator {
           options,
         );
         // A rejected request marks its tool-call block denied — "blocked by
-        // permission" renders distinct from "failed" (ui-rendering-strategy).
+        // permission" renders distinct from "failed".
         // Only this path can correlate: the request carries the toolCallId;
         // patchbay's own fs/terminal gates have no id and already show their
         // own permission/diff cards inline.
@@ -530,7 +530,7 @@ export class Orchestrator {
       onReleaseTerminal: async (_agentId, params) => {
         // ACP release semantics: a still-running command is killed — before
         // this, releasing dropped the handle and left the process running
-        // with nothing pointing at it (P15c).
+        // with nothing pointing at it.
         const handle = this.terminals.get(params.terminalId);
         if (handle !== undefined && handle.exitStatus() === null) handle.kill();
         this.terminals.delete(params.terminalId);
@@ -543,7 +543,7 @@ export class Orchestrator {
     });
     this.editorStateHost.start();
 
-    // Live editor context for the composer (ui.md § Composer: the selection
+    // Live editor context for the composer (the selection
     // ghost chip appears only while the IDE has a selection; the @ mention
     // picker lists open editors). Position/paths only — the selection text
     // is read host-side at the moment the user solidifies it. High-frequency
@@ -620,8 +620,7 @@ export class Orchestrator {
         // McpServerStdio is the untagged union member — no discriminant
         // needed since it's the only variant every agent is guaranteed to
         // accept, which is also why the editor server itself always rides
-        // stdio (integrations get capability-conditional transport;
-        // architecture.md § Integrations).
+        // stdio (integrations get capability-conditional transport).
         const editorServer = {
           name: "patchbay",
           command: process.execPath,
@@ -642,8 +641,8 @@ export class Orchestrator {
           this.editorStateHost.socketPath,
           declaresHttp,
         );
-        // Env and header values are secrets by classification
-        // (no-secret-exposure.md), and this is the one place they cross to
+        // Env and header values are secrets by classification, and this
+        // is the one place they cross to
         // the wire — register every one with the wire log's redaction set.
         // Over-redaction (plumbing values like socket paths get masked too)
         // is the safe direction.
@@ -708,9 +707,9 @@ export class Orchestrator {
     void this.acpRegistry.start().then((cached) => this.applyRegistryData(cached));
     this.publishSessionStats();
 
-    // Native surfaces (P11): the status bar mirrors canonical state via
-    // ChannelHost.onChange — no webview in the path (architecture.md § UI
-    // layer: "direct orchestrator consumers: same state, no webview").
+    // Native surfaces: the status bar mirrors canonical state via
+    // ChannelHost.onChange — no webview in the path (direct orchestrator
+    // consumers: same state, no webview).
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.statusBarItem.command = "acpPatchbay.agentView.focus";
     this.statusBarItem.show();
@@ -718,7 +717,7 @@ export class Orchestrator {
     this.refreshStatusBar();
     this.syncDetachContext();
 
-    // Orphan reaping strictly before any startup agent spawns (P15c): the
+    // Orphan reaping strictly before any startup agent spawns: the
     // registry must be settled before new pids start landing in it.
     void this.reapLeftoverProcesses()
       .then(() => this.connectStartupAgents())
@@ -744,7 +743,7 @@ export class Orchestrator {
     }
   }
 
-  /** "Disconnect & erase all data" (plan.md P18): stop reality first —
+  /** "Disconnect & erase all data": stop reality first —
    * every agent process (graceful ladder) and terminal tree — then the
    * erase sweep (erase-all.ts owns the ordering constraint), then both
    * channels catch up through ordinary events: agents and sessions leave
@@ -803,7 +802,7 @@ export class Orchestrator {
     this.log.info("erase all data: complete — factory state");
   }
 
-  /** deactivate's bounded best-effort (plan.md P15): terminal trees get a
+  /** deactivate's bounded best-effort: terminal trees get a
    * straight SIGKILL (batch commands — no protocol to be graceful about),
    * agents get the pool ladder on its tight budget, and the whole sweep is
    * raced against the ~2s VS Code actually waits before killing the host.
@@ -834,7 +833,7 @@ export class Orchestrator {
    * flagged half (autoConnect means every window open); a manually
    * connected, unflagged agent rides only the stamp and therefore survives
    * reload but not quit-and-reopen-later. Always the user's own configured
-   * choices, never patchbay picking an agent for them (prd.md's routing
+   * choices, never patchbay picking an agent for them (the routing
    * scope decision is about choosing among agents for a task, not this). */
   private async connectStartupAgents(): Promise<void> {
     // Legacy `acpPatchbay.defaultAgent` (superseded by the per-agent flag):
@@ -887,7 +886,7 @@ export class Orchestrator {
     this.sessionManager.activate(sessionId);
   }
 
-  /** Active session · agent health · usage when reported (features.md § 3) —
+  /** Active session · agent health · usage when reported —
    * click jumps to the Agent View, which already shows that same session. */
   /** Mirrors the detachWindows preference into a when-clause context key —
    * package.json gates the view-title button and the palette command on it
@@ -906,9 +905,9 @@ export class Orchestrator {
     this.statusBarItem.tooltip = tooltip;
   }
 
-  /** Command palette (features.md § 3): "new session" — every configured
+  /** Command palette: "new session" — every configured
    * agent with its readiness inline, single agent skips the pick, and a
-   * not-running choice connects on demand (P17: the same startChat path as
+   * not-running choice connects on demand (the same startChat path as
    * the view's "+"). */
   async newSessionCommand(): Promise<void> {
     const agents = this.agentView.current.agents;
@@ -954,8 +953,8 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** "Connect agent" — the palette shortcut into the one add path (Settings
-   * § Agents' persist-connect-verify flow, P17): registry or custom command,
+  /** "Connect agent" — the palette shortcut into the one add path (the
+   * Settings Agents persist-connect-verify flow): registry or custom command,
    * same `connectFromSource` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
@@ -976,7 +975,7 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** Editor right-click (features.md § 3: "add to context / ask the agent
+  /** Editor right-click ("add to context / ask the agent
    * about it") — reuses the composer's own add-selection action so there's
    * one path for "a selection became context," native gesture or button
    * alike; focusing the Agent View afterward is what lets the user ask
@@ -991,9 +990,9 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** The local MCP server's `request_user_input` tool (elicitation fallback
-   * — architecture.md's adapter table; native ACP elicitation is still
-   * unstable in the SDK, so this is the only path in v1, see plan.md P7).
+  /** The local MCP server's `request_user_input` tool (elicitation fallback;
+   * native ACP elicitation is still
+   * unstable in the SDK, so this is the only path in v1).
    * `contextToken` is what the MCP server subprocess was spawned with —
    * translated back to the real sessionId so the form lands in the right
    * transcript. */
@@ -1021,8 +1020,8 @@ export class Orchestrator {
     });
   }
 
-  /** Process-policy decision for a new top-level session (architecture.md §
-   * process model): `isolated` always isolates; `shared` always shares;
+  /** Process-policy decision for a new top-level session: `isolated`
+   * always isolates; `shared` always shares;
    * `auto` (default) shares only once concurrent-session behavior has been
    * *used* on the primary connection, isolating every session before
    * that — a fork always rides its parent's poolKey regardless (SessionManager
@@ -1063,8 +1062,8 @@ export class Orchestrator {
     else if (cell?.suspect !== true) this.capabilityTracker.markSuspect(agentId, row);
   }
 
-  /** Settings-side projections of session-manager events (ui.md § Settings
-   * Agents): the sessions-today stat tile. Live sessions' knob surfaces
+  /** Settings-side projections of session-manager events: the sessions-today
+   * stat tile. Live sessions' knob surfaces
    * deliberately do NOT feed the Settings offerings: a set_config_option
    * response is the session's option surface *given its current selections*
    * (fast mode exists only on some models, effort lists vary per model) —
@@ -1082,7 +1081,7 @@ export class Orchestrator {
   }
 
   /** Knob offerings for Settings — connection-scoped, in-memory only
-   * (architecture.md § Session model: offerings are read, never stored).
+   * (offerings are read, never stored).
    * Sources: the connect-time probe read only (session/new response plus
    * the probe's late config_option_update) — a fresh session at agent
    * defaults, so its surface is the one a new session will actually offer.
@@ -1132,8 +1131,8 @@ export class Orchestrator {
   }
 
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
-   * (architecture.md § Local MCP server — "the agent sees what the user
-   * sees"). Falls back to disk for files with no open editor. */
+   * ("the agent sees what the user sees"). Falls back to disk for files
+   * with no open editor. */
   private async readTextFileLive(path: string): Promise<string> {
     const uri = vscode.Uri.file(path);
     const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === path);
@@ -1142,8 +1141,8 @@ export class Orchestrator {
     return Buffer.from(bytes).toString("utf8");
   }
 
-  /** Live-buffer write — the mirror of readTextFileLive (acp-compliance §12,
-   * W1 resolved): when the file is open in an editor the write lands in that
+  /** Live-buffer write — the mirror of readTextFileLive: when the file is
+   * open in an editor the write lands in that
    * buffer via WorkspaceEdit, then saves — the user sees the change, it joins
    * the undo stack, and disk matches the buffer at once. This closes the
    * divergence window both ways: no more agent write silently lost to a stale
@@ -1167,7 +1166,7 @@ export class Orchestrator {
   }
 
   /** vscode.workspace.fs, shaped to asset-locations.ts's vscode-free FsLike
-   * so the resolution logic itself stays unit-testable (P10). */
+   * so the resolution logic itself stays unit-testable. */
   private readonly assetFs: FsLike = {
     stat: async (path) => {
       try {
@@ -1183,7 +1182,7 @@ export class Orchestrator {
     },
   };
 
-  /** Rules/skills/commands (architecture.md § Rules, skills, commands): v1
+  /** Rules/skills/commands: v1
    * is management, not delivery — lists what's on disk per the asset table's
    * mapping, an unmapped agent shown as such, never guessed. Runs on every
    * connect and on the Settings section's explicit refresh. */
@@ -1268,8 +1267,7 @@ export class Orchestrator {
 
   /** One stash text → one temp file with a real URI, for vscode.diff — both
    * native-diff openers share this (diffs always open in VS Code's own diff
-   * editor, never an inline webview diff; ui-rendering-strategy § tool call
-   * card design). */
+   * editor, never an inline webview diff). */
   private async diffTempFile(scope: string, fileName: string, content: string): Promise<vscode.Uri> {
     const dir = join(tmpdir(), "acp-patchbay-diffs", scope.replace(/[^a-zA-Z0-9_-]/g, "_"));
     await mkdir(dir, { recursive: true });
@@ -1310,7 +1308,7 @@ export class Orchestrator {
   }
 
   /** Real editing happens in VS Code's own editor, never a webview dialect
-   * (render-only-webview.md) — Settings is a navigational index onto files
+   * — Settings is a navigational index onto files
    * that already live in the agent's own native locations. */
   private openAssetFile(path: string): void {
     const abs = vscode.Uri.file(join(this.workspaceRoot ?? process.cwd(), path));
@@ -1318,7 +1316,7 @@ export class Orchestrator {
   }
 
   /** Native notification mirroring the inline card, shown only when the
-   * Agent View isn't visible (features.md § Editor Surface: "impossible to
+   * Agent View isn't visible ("impossible to
    * miss when the view is hidden"). `requestId` is the inline card's own
    * blockId — resolving through it is the same call the card's buttons make,
    * so whichever surface the user acts on first wins. */
@@ -1346,7 +1344,7 @@ export class Orchestrator {
    * bootstrap (and the one-time-adoption gate that existed only because
    * that file could be repo-authored by someone else; a global,
    * developer-owned record needs no such gate). Every config is upserted
-   * into both channels' agent lists right here (P16): the Agent View knows
+   * into both channels' agent lists right here: the Agent View knows
    * every configured agent from the first frame, with an honest status —
    * `untested` (never initialized successfully at any version) or `stopped`
    * (has connected before; `lastSeenVersion` is the durable marker) —
@@ -1385,9 +1383,9 @@ export class Orchestrator {
     void this.refreshAgentConfigs();
   }
 
-  /** Settings § Agents (features.md: "add, edit, and remove agents,
-   * including launch configuration per agent") — persists globally. The
-   * Edit form sends the launch line raw (render-only-webview: parsing is
+  /** The Settings Agents page (add, edit, and remove agents,
+   * including launch configuration per agent) — persists globally. The
+   * Edit form sends the launch line raw (parsing is
    * logic), so an empty args array means "parse `command` here" — the same
    * quote-aware house parser custom Add uses, never a naive split.
    * `env` is the form's submitted set: the full desired key list, an empty
@@ -1444,7 +1442,7 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
   }
 
-  /** Remove is stop + forget (features.md: "add, edit, and remove agents") —
+  /** Remove is stop + forget ("add, edit, and remove agents") —
    * the process goes down (isolated instances included), the agent leaves
    * both channel states via the `agentRemoved` event, its per-agent facts
    * (used capabilities, observed knobs) are purged so a future re-add
@@ -1606,7 +1604,7 @@ export class Orchestrator {
 
   private async refreshAgentConfigs(): Promise<void> {
     // Key names only — env values never leave SecretStorage for a webview
-    // state snapshot (no-secret-exposure.md); the form edits them write-only.
+    // state snapshot; the form edits them write-only.
     const configs: AgentConfigView[] = await Promise.all(
       this.agentConfigs.list().map(async (c) => ({
         id: c.id,
@@ -1624,7 +1622,7 @@ export class Orchestrator {
     this.settings.emit({ kind: "agentConfigsChanged", configs });
   }
 
-  /** `agentInfo.version` is reality (whoami.md: "reality is the source of
+  /** `agentInfo.version` is reality ("reality is the source of
    * truth") — recorded on the config so the registry's live version
    * can be compared against what actually answered, driving "update
    * available" without ever trusting the pinned ask over the wire's fact. */
@@ -1760,7 +1758,7 @@ export class Orchestrator {
   }
 
   /** Persists the launch as a global agent config — "add" and "connect" are
-   * one action now (features.md: adding an agent means it's activated —
+   * one action now (adding an agent means it's activated —
    * checked spawnable, ready to start conversations on), not two decoupled
    * steps a user could leave half-done. Preserves any hand-edited
    * process-policy/defaults an existing config already carries. */
@@ -1883,7 +1881,7 @@ export class Orchestrator {
         break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
-        // Spec § Cancellation (MUST): pending permission requests resolve
+        // The spec's cancellation MUST: pending permission requests resolve
         // with the cancelled outcome — the agent is not left hanging.
         this.broker.cancelPending(action.sessionId);
         break;
@@ -2142,7 +2140,7 @@ export class Orchestrator {
     }
   }
 
-  /** The `@` mention picker's workspace tier (render-only-webview: the
+  /** The `@` mention picker's workspace tier (the
    * webview asks, never reads the filesystem). One findFiles sweep per
    * query, ranked host-side — basename prefix, then basename substring,
    * then path substring — and cut to a menu-sized answer. Directories come
@@ -2182,7 +2180,7 @@ export class Orchestrator {
     });
   }
 
-  /** "Add workspace folders as session context roots" (features.md § Chat) —
+  /** "Add workspace folders as session context roots" —
    * a native folder picker, since only the extension host can browse the
    * real filesystem; the result is just another context-root path,
    * patchbay never indexes what's inside it. */
@@ -2198,7 +2196,7 @@ export class Orchestrator {
     await this.sessionManager.addRoot(sessionId, uri.fsPath);
   }
 
-  /** "Attach files by... picker" (features.md § Chat) — reuses the same
+  /** "Attach files by... picker" — reuses the same
    * context-chip mechanism the composer's "current file" adder already
    * uses, just for an arbitrary file the user picks rather than the active
    * editor. */
@@ -2295,7 +2293,7 @@ export class Orchestrator {
     });
   }
 
-  /** "Explicit share command that copies config" (plan.md P9): the
+  /** "Explicit share command that copies config": the
    * sanitized config entry (no credential — none exists here by
    * construction, see integration-configs.ts) goes to the clipboard.
    * Reattaching a credential is never automatic: a pasted entry's `id` has
@@ -2346,7 +2344,7 @@ export class Orchestrator {
     await this.connectFromSource({ registryId: config.registrySource.registryId });
   }
 
-  /** One intent, one click (P17): connect if needed, then create and
+  /** One intent, one click: connect if needed, then create and
    * activate the session — all inside the chat pane. Uses the saved config
    * path (env injected from SecretStorage at spawn, process policy
    * respected), never a bare pool.connect. Failure lands inline with the
@@ -2380,7 +2378,7 @@ export class Orchestrator {
     }
   }
 
-  /** The session-click half of P17's connect-on-demand: opening a session
+  /** The session-click half of connect-on-demand: opening a session
    * whose configured agent is off spawns it, through the same in-pane
    * chatConnect states startChat uses — but no session is minted: on
    * success the status-running hook re-syncs and hydrates the now-active
@@ -2457,7 +2455,7 @@ export class Orchestrator {
    * over a raw wire error; map auth_required to what actually unblocks it —
    * the agent's own instruction when it gave one beyond the bare
    * "authentication required" (an agent with no login methods, like Auggie,
-   * names the exact CLI command there), the Settings § Agents pointer
+   * names the exact CLI command there), the Settings Agents pointer
    * otherwise. */
   private connectFailureReason(agentId: string, err: unknown, raw: string): string {
     if (err instanceof RequestError && err.code === -32000) {

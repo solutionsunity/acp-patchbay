@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui Card — source-copied (stack.md: components in the repo, never a
+// shadcn/ui Card — source-copied (components in the repo, never a
 // black-box dep).
 import * as React from "react";
 

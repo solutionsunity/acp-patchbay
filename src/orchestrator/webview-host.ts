@@ -5,11 +5,11 @@
 // they die when hidden and resurrect via ready → snapshot.
 // CSP + nonce pattern after vscode-acp's ChatWebviewProvider (MIT, formulahendry).
 //
-// CSP is authored here and never widened silently (stack.md). The record:
-// - P13a: React/Radix apply their "inline styles" through the CSSOM
+// CSP is authored here and never widened silently. The record:
+// - React/Radix apply their "inline styles" through the CSSOM
 //   (element.style), which `style-src` does not govern — no widening needed.
-// - P13b: Shiki runs its JS regex engine — `wasm-unsafe-eval` never added.
-// - P13c follow-up (Mermaid): style-src gains 'unsafe-inline'. Mermaid's
+// - Shiki runs its JS regex engine — `wasm-unsafe-eval` never added.
+// - Mermaid follow-up: style-src gains 'unsafe-inline'. Mermaid's
 //   rendered SVG carries <style> elements and style="" attributes as
 //   parsed markup, which strict style-src blocks and which cannot be
 //   nonce'd (attributes take no nonce). Scope: styles only — script-src
@@ -106,7 +106,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     private readonly channel: ChannelEndpoint,
     /** Fires on mount and every visibility flip — the source of truth for
      * "is the Agent View hidden right now" (native permission notifications
-     * gate on this; features.md § Editor Surface). */
+     * gate on this). */
     private readonly onVisibilityChanged?: (visible: boolean) => void,
   ) {}
 

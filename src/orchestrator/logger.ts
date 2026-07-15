@@ -6,7 +6,7 @@
 // shape structurally); everything below the orchestrator stays
 // vscode-free/unit-testable and defaults to silence.
 //
-// no-secret-exposure.md applies to logs: never argv contents or env *values*
+// Secret hygiene applies to logs: never argv contents or env *values*
 // (users embed keys in args and URLs) — executables, env key *names*, hosts,
 // ids, and counts only.
 export interface Logger {

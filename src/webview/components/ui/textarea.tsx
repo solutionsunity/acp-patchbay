@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui Textarea — source-copied (stack.md).
+// shadcn/ui Textarea — source-copied.
 import * as React from "react";
 
 import { cn } from "@/lib/utils";

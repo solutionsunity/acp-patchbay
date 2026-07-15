@@ -4,7 +4,7 @@
 // Permission rules, two layers. Workspace layer (this file's original
 // scope): command rules + file-write scope in workspaceState — per user,
 // per workspace, never repo-shipped; a cloned repo must not arrive
-// pre-authorized (architecture.md § State, § Permission broker). Machine
+// pre-authorized. Machine
 // layer (MachineRulesStore): command rules only, in globalState —
 // developer-owned defaults for every workspace ("allow `npm test`
 // everywhere"). Evaluation order is workspace first, then machine, then

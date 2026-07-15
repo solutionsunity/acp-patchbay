@@ -44,7 +44,7 @@ const DEFAULT_OUTPUT_LIMIT = 1_000_000;
 
 /** The last ≤ maxBytes *bytes* of s, cut at a character boundary — ACP's
  * outputByteLimit is bytes, and the spec's truncation rule is "from the
- * beginning, at a character boundary" (acp-compliance.md G9). Skipping
+ * beginning, at a character boundary". Skipping
  * UTF-8 continuation bytes lands on a code-point start, which also keeps
  * surrogate pairs whole (one 4-byte code point in UTF-8). */
 export function tailBytes(s: string, maxBytes: number): { text: string; truncated: boolean } {

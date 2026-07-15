@@ -2,7 +2,7 @@
 /* Copyright 2026 Solutions Unity */
 
 /* The theme bridge — written once, imported by every webview entry
- * (ui-rendering-strategy.md: one bridge, never duplicated per surface).
+ * (one bridge, never duplicated per surface).
  *
  * THIS FILE IS A CONTRACT, not an accumulation: the table below is the
  * complete set of tokens the component layer consumes (shadcn components,
@@ -11,11 +11,11 @@
  * — never an arbitrary-value var() class at the point of use. The ui-gate
  * (scripts/ui-gate) renders three theme variable sets against it.
  *
- * Preflight history: skipped at P13a to protect the then-hand-CSS surfaces;
+ * Preflight history: skipped at first to protect the then-hand-CSS surfaces;
  * re-derived and imported once the single-UI-source sweep finished (shadcn
  * assumes it — without it every <button> takes UA ButtonText). Hand CSS
  * lives in the `components` layer, above `base`, so it wins its collisions
- * until it retires (P14f/g ledger). */
+ * until it retires. */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/preflight.css" layer(base);

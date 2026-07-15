@@ -32,7 +32,7 @@ export interface EditorStateHostHooks {
     params: RequestUserInputParams,
   ): Promise<Record<string, unknown> | null>;
   /** The one other thing spawned subprocesses need from the extension host
-   * that isn't editor state (P9): a currently-valid token for a connected
+   * that isn't editor state: a currently-valid token for a connected
    * integration, refreshed transparently server-side if needed. This host is
    * the same "subprocess ↔ orchestrator" trust boundary either way — one
    * socket, one bridge, two kinds of callers. */

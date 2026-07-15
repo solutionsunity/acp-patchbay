@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The composer's inline tokens (ui.md § Composer): an accepted `/` command
+// The composer's inline tokens: an accepted `/` command
 // or `@` file mention becomes an atomic, styled token in the prompt box
 // itself — deletable as a unit, never editable character-by-character
 // ("token" mode). A MentionNode carries the real path; serialization back

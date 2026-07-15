@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Env-var *values* live in SecretStorage (no-secret-exposure.md): env is how
+// Env-var *values* live in SecretStorage: env is how
 // agents and stdio MCP servers commonly take API keys, and globalState is
 // for non-sensitive config only — so config records carry no env at all.
 // One JSON record per id, one instance per record family (agents:

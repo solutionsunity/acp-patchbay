@@ -1,15 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026 Solutions Unity */
 
-/* Settings shell — ported from docs/design/settings-mockup.html (binding
- * inventory: docs/design/ui.md § Settings). Left nav + cards. */
+/* Settings shell — left nav + cards. */
 
 /* Layered below Tailwind's utilities (theme.css declares the order:
  * theme, base, components, utilities) so the shadcn/Streamdown surfaces
  * can override the hand CSS where they collide — most importantly the
  * `* { margin:0; padding:0 }` reset, which as an unlayered rule would
  * silently beat every margin/padding utility. Retires per the ledger above. */
-/* ── CSS LEDGER (P14g) ─────────────────────────────────────────────────
+/* ── CSS LEDGER ─────────────────────────────────────────────────
  * What remains here is the settings shell layout and block/card styling
  * that predates the shadcn layer. Terms of the debt:
  *  - every rule lives in the `components` layer: utilities written in TSX
@@ -212,7 +211,7 @@ h2 {
   background: var(--pb-text-faint);
 }
 
-/* never connected — visibly hollow, not just another gray (P16) */
+/* never connected — visibly hollow, not just another gray */
 .dot.untested {
   background: transparent;
   border: 1px solid var(--pb-text-faint);
@@ -414,8 +413,7 @@ tr.sep td {
   line-height: 1.7;
 }
 
-/* ── registry combobox — searchable Add Agent picker (ui.md § Settings
-   Agents) ─────────────────────────────────────────────────────────────── */
+/* ── registry combobox — searchable Add Agent picker ──────────────────── */
 
 
 
@@ -426,7 +424,7 @@ tr.sep td {
 
 
 
-/* ── stat tiles (ui.md § Settings Agents) ─────────────────────────────── */
+/* ── stat tiles ───────────────────────────────────────────────────────── */
 /* ── default knobs on the per-agent card — only what the agent offered ── */
 .knob-default {
   display: inline-flex;
@@ -440,7 +438,7 @@ tr.sep td {
   color: var(--pb-err);
 }
 
-/* the process's own last words, inline with the crash (P16) */
+/* the process's own last words, inline with the crash */
 .stderr-tail {
   margin: 4px 0 0;
   padding: 5px 8px;
@@ -508,7 +506,7 @@ tr.sep td {
   color: var(--pb-text-dim);
 }
 
-/* ── diagnostics cost-disclosure modal (ui.md: cost before running) ──── */
+/* ── diagnostics cost-disclosure modal (cost before running) ──── */
 
 
 }

@@ -29,17 +29,17 @@ export interface LaunchSpec {
   args: string[];
   env: Record<string, string>;
   cwd: string;
-  /** Per-agent process policy (architecture.md § process model). Absent →
+  /** Per-agent process policy. Absent →
    * "auto", same as an unset config-file field. */
   processPolicy?: "auto" | "shared" | "isolated";
-  /** Per-agent knob defaults, applied post-create (P8) — the folded,
+  /** Per-agent knob defaults, applied post-create — the folded,
    * knob-id-keyed seed (knobs.ts; category is UX-only per ACP). */
   defaults?: KnobSeed;
 }
 
 export interface PoolHooks {
-  /** `stderr` rides crash statuses only — the process's own last words
-   * (P16), so a failure's reason is readable without the Output panel. */
+  /** `stderr` rides crash statuses only — the process's own last words,
+   * so a failure's reason is readable without the Output panel. */
   onStatusChanged(agentId: string, status: AgentStatus, detail?: string, stderr?: readonly string[]): void;
   onDeclaredCaptured(
     agentId: string,
@@ -47,7 +47,7 @@ export interface PoolHooks {
     raw: acp.InitializeResponse,
   ): void;
   onSessionUpdate(agentId: string, notification: acp.SessionNotification): void;
-  /** P6 replaces this with the permission broker; absent → reject-by-cancel. */
+  /** The permission broker replaces this; absent → reject-by-cancel. */
   onPermissionRequest?(
     agentId: string,
     params: acp.RequestPermissionRequest,
@@ -59,7 +59,7 @@ export interface PoolHooks {
    * capabilities.ts's CAPABILITY_PROOFS table — consulted at pool.ts's
    * three chokepoints (agent RPC settled, incoming client request handled,
    * session/update kind tag arrived); no call site ever names a row itself
-   * (capability-verification.md: declared ≠ used). Only the outgoing
+   * (declared ≠ used). Only the outgoing
    * chokepoint can report "suspect": a client-side handler throwing is
    * patchbay's own gate rejecting, never the agent failing. Called
    * synchronously and never awaited so it can't block the RPC it's
@@ -68,7 +68,7 @@ export interface PoolHooks {
   /** Any outgoing agent RPC settling with `auth_required` (-32000) — the
    * connect-time probe, a mid-session prompt after the agent's credentials
    * expired, or a post-logout session attempt all funnel through here, so
-   * "prompt the user to authenticate again" (spec § Authentication) has one
+   * "prompt the user to authenticate again" (per the spec) has one
    * writer. `reason` is the error's own message — the agent's login
    * instruction, and the only guidance on the wire when `authMethods` is
    * empty (Auggie); null when blank. Like onCapabilityEvidence:
@@ -80,7 +80,7 @@ export interface PoolHooks {
   /** One complete ndjson frame, already line-assembled. Redaction is the
    * receiver's job (wire-log.ts) — pool.ts hands over the raw line. */
   onWireFrame?(agentId: string, direction: "→" | "←", line: string): void;
-  /** Status of a process-policy "isolated" instance (P8) — kept off
+  /** Status of a process-policy "isolated" instance — kept off
    * `onStatusChanged` on purpose: an isolated subprocess dying must not flip
    * the shared agent's own status, since the agent itself is unaffected. */
   onIsolatedStatusChanged?(
@@ -89,16 +89,16 @@ export interface PoolHooks {
     status: AgentStatus,
     detail?: string,
   ): void;
-  /** Spawn-registry taps (P15c) — `onProcessSpawned` fires with the command
+  /** Spawn-registry taps — `onProcessSpawned` fires with the command
    * line read back from the OS shortly after spawn (skipped when the process
    * is already gone by then: a record that would only be stale), and
    * `onProcessEnded` when the exit is observed. */
   onProcessSpawned?(pid: number, command: string): void;
   onProcessEnded?(pid: number): void;
-  /** Patchbay declares fs+terminal unconditionally (P2), so these are
+  /** Patchbay declares fs+terminal unconditionally, so these are
    * required — a declared-but-unhandled method would be exactly the kind of
    * lie bet #2 exists to prevent. Live-buffer reads and pre-gated writes
-   * (P6) live behind these hooks so the pool itself stays vscode-free. */
+   * live behind these hooks so the pool itself stays vscode-free. */
   onReadTextFile(agentId: string, params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse>;
   onWriteTextFile(agentId: string, params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse>;
   onCreateTerminal(agentId: string, params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse>;
@@ -153,7 +153,7 @@ export interface PooledAgentView {
 const INITIALIZE_TIMEOUT_MS = 15_000;
 const STDERR_TAIL_LINES = 40;
 
-/** Grace budgets for `stop`'s ladder (plan.md P15b): EOF → SIGTERM →
+/** Grace budgets for `stop`'s ladder: EOF → SIGTERM →
  * SIGKILL, each rung waited on only as long as the budget allows. */
 export interface StopBudget {
   /** After stdin EOF — a well-behaved agent exits on its own here. */
@@ -246,7 +246,7 @@ const WARMUP_TIMEOUT_MS = 180_000;
  * never as a flash of a false claim on a cache hit. */
 const DOWNLOAD_LABEL_AFTER_MS = 1_500;
 
-/** Cache-warm invocation for ecosystem launchers (P16): a cold `npx`/`uvx`
+/** Cache-warm invocation for ecosystem launchers: a cold `npx`/`uvx`
  * downloads the whole package before the agent can say a byte — in total
  * silence (`npx -y` prints nothing while fetching; measured 20s+ on a fast
  * network), which is indistinguishable on the wire from a hung TUI. The
@@ -312,7 +312,7 @@ export class AgentPool {
   }
 
   /** Spawn + initialize. Declared table is captured fresh on every connect.
-   * `opts` backs process-policy "isolated" instances (P8): a distinct
+   * `opts` backs process-policy "isolated" instances: a distinct
    * `poolKey` from `spec.agentId` so a dedicated subprocess can coexist with
    * the shared one, while `reportAs` keeps every hook call attributed to the
    * real configured agent. Declared capabilities are still recorded locally
@@ -421,7 +421,7 @@ export class AgentPool {
     // Chokepoint: every incoming request registers through `proven`, so a
     // handler resolving marks whatever row the proof table ties to its
     // method (capabilities.ts CAPABILITY_PROOFS) — registration sites never
-    // name rows, and a future handler (P7 elicitation) marks for free.
+    // name rows, and a future handler (elicitation) marks for free.
     const proven = <M extends acp.ClientRequestMethod>(
       method: M,
       handler: acp.ClientRequestHandlersByMethod[M],
@@ -502,14 +502,14 @@ export class AgentPool {
         }),
         this.initializeTimeoutMs,
         // The classic silent hang is a CLI doing first-run setup against a
-        // TTY it doesn't have (P16) — name that instead of a bare timeout.
+        // TTY it doesn't have — name that instead of a bare timeout.
         // Reads as "initialize failed: timed out — …" through markDead.
         "timed out — the CLI may need interactive first-run setup; run it once manually",
       );
     } catch (err) {
       // Crash with the reason, never a silent "stopped": the stopping flag
       // used to be set here first, routing markDead to "stopped" and
-      // swallowing the detail — the exact silent failure P16 exists to
+      // swallowing the detail — the exact silent failure crash reporting exists to
       // kill. markDead runs before the kill so the 'exit' handler can't
       // relabel it "exited N" either.
       this.markDead(entry, `initialize failed: ${(err as Error).message}`);
@@ -540,7 +540,7 @@ export class AgentPool {
       throw err;
     }
 
-    // Spec § Initialization (SHOULD): an agent that answers with a protocol
+    // The spec's initialization SHOULD: an agent that answers with a protocol
     // version we can't speak gets a named refusal — never undefined behavior
     // on a half-understood wire. Patchbay speaks exactly v{PROTOCOL_VERSION}.
     if (init.protocolVersion !== acp.PROTOCOL_VERSION) {
@@ -569,7 +569,7 @@ export class AgentPool {
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". The graceful
-   * ladder (plan.md P15b): protocol close, stdin EOF (a well-behaved agent
+   * ladder: protocol close, stdin EOF (a well-behaved agent
    * exits on its own — `connection.close()` never ends the pipe), grace,
    * SIGTERM the tree, grace, SIGKILL the tree — then a final group sweep,
    * because a leader that exited cleanly can still leave grandchildren
@@ -607,7 +607,7 @@ export class AgentPool {
     this.setStatus(entry, "stopped");
   }
 
-  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets (P5).
+  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets.
    * `spec`, when given, replaces the entry's connect-time snapshot — the
    * caller read current config and secrets; a restart is a spawn and must
    * not resurrect stale command/args/env. */
@@ -655,10 +655,10 @@ export class AgentPool {
     await this.request(entry, acp.methods.agent.logout, {});
   }
 
-  /** Also used for P5's automatic, ephemeral fork-verification round-trip
-   * and for real user-triggered branching (P8) — `session/fork` is
-   * addressed to the connection holding the parent's context (architecture.md
-   * § process model: "no cross-process handoff exists"), so a branch always
+  /** Also used for the automatic, ephemeral fork-verification round-trip
+   * and for real user-triggered branching — `session/fork` is
+   * addressed to the connection holding the parent's context (no
+   * cross-process handoff exists), so a branch always
    * rides whatever poolKey its parent lives on, never a fresh decision. */
   async fork(
     poolKey: string,
@@ -752,7 +752,7 @@ export class AgentPool {
   /** Re-attaches to a session *without* replay (`session/resume`): the agent
    * restores its own context and returns immediately — real memory, no
    * visible history. The attach ladder's last rung; load is preferred
-   * wherever declared (architecture.md § State: what the user sees and
+   * wherever declared (what the user sees and
    * what the agent remembers must match). */
   async resumeSession(
     poolKey: string,
@@ -775,8 +775,8 @@ export class AgentPool {
 
   /** Sets a session's operational mode. Display must come only from the
    * agent's own `current_mode_update` notification, never this call's
-   * response (architecture.md § Session model, mode, effort — bridges have
-   * reported success for rejected changes), so the response is discarded. */
+   * response (bridges have reported success for rejected changes), so the
+   * response is discarded. */
   async setSessionMode(poolKey: string, sessionId: string, modeId: string): Promise<void> {
     const entry = this.running(poolKey);
     await this.request(entry, acp.methods.agent.session.setMode, { sessionId, modeId });
@@ -800,8 +800,7 @@ export class AgentPool {
     return this.request(entry, acp.methods.agent.session.setConfigOption, params);
   }
 
-  /** The one untracked escape hatch for wire-extension modules
-   * (architecture.md § Protocol extensions, "Wire-extension modules"):
+  /** The one untracked escape hatch for wire-extension modules:
    * sends an extension-owned method via the SDK's generic string-method
    * overload, deliberately outside the capability-tracked `request()` —
    * extension methods bear on no matrix row, and pool.ts never learns
@@ -840,7 +839,7 @@ export class AgentPool {
 
   /** Local-only bookkeeping once a session is no longer in use — lets an
    * isolated instance's session count reach zero so its subprocess can be
-   * freed (P8; see SessionManager.close). */
+   * freed (see SessionManager.close). */
   forgetSession(poolKey: string, sessionId: string): void {
     this.entries.get(poolKey)?.sessions.delete(sessionId);
   }
@@ -983,7 +982,7 @@ export class AgentPool {
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {
     entry.status = status;
     entry.detail = detail;
-    // Crash carries the process's own last words (P16); every other status
+    // Crash carries the process's own last words; every other status
     // clears them — stale stderr on a running agent would be a lie.
     const stderr =
       status === "crashed" && entry.stderrTail.length > 0 ? [...entry.stderrTail] : undefined;

@@ -2,8 +2,8 @@
 // Copyright 2026 Solutions Unity
 
 // Tool definitions for patchbay's local MCP server. One uniform mechanism
-// per capability (architecture.md's "every agent sees just another local
-// MCP server") — tools only, no MCP resources: every agent's MCP client
+// per capability — every agent sees just another local
+// MCP server — tools only, no MCP resources: every agent's MCP client
 // supports basic tool calling, whereas resources/subscribe support is
 // uneven, so a tools-only design sidesteps needing a second path at all
 // (get_workspace_state *is* the resources.subscribe fallback, staying the

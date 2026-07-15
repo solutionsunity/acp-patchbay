@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Tree-wide process control (plan.md P15b/c) — house mechanism, no
+// Tree-wide process control — house mechanism, no
 // dependency. Agents and brokered terminals spawn as process-group leaders
 // on POSIX (`detached`), so stopping one stops everything it shelled out to
 // — grandchildren included (an agent's own mcp-server/bridge children, a
@@ -74,7 +74,7 @@ export interface OrphanRecord {
   command: string;
 }
 
-/** Reaps leftovers from a session that never ran its cleanup (plan.md P15c):
+/** Reaps leftovers from a session that never ran its cleanup:
  * SIGKILLs the tree of every record whose pid is alive *and* still runs the
  * recorded command line; a mismatch is a reused pid and is spared. Returns
  * what happened per record so the caller can log it and drop them all —

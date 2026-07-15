@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui Checkbox — source-copied (stack.md); Codicons, not Lucide.
+// shadcn/ui Checkbox — source-copied; Codicons, not Lucide.
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 

@@ -3,8 +3,8 @@
 
 // Integrations are developer-env, not code-env: global to this machine,
 // same as agent-configs.ts. Deliberately global-only — the MCP incident
-// features.md records (a production-access MCP server silently following a
-// user between repos) is guarded by credentials never traveling with a
+// (a production-access MCP server silently following a user between repos)
+// is guarded by credentials never traveling with a
 // shared config, not by workspace-scoping the record; binding to
 // workspaces (not repos) may return later as an opt-in. SecretStorage
 // (integration-tokens.ts) keys credentials globally by integration id.

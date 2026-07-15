@@ -2,8 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Patch bus: buffers high-frequency events and flushes one patch per short
-// fixed interval or explicit boundary. One knob, no adaptive machinery
-// (architecture.md § Snapshot + patch protocol).
+// fixed interval or explicit boundary. One knob, no adaptive machinery.
 import type { CoalesceHook } from "../shared/protocol";
 
 export const FLUSH_INTERVAL_MS = 30;

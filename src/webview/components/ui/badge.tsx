@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui Badge — source-copied (stack.md).
+// shadcn/ui Badge — source-copied.
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 

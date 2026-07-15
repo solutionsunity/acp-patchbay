@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The one protocol both sides import (architecture.md § Snapshot + patch protocol).
+// The one protocol both sides import.
 // Webviews are render-only: they send actions, receive snapshots + patches, and
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
@@ -35,10 +35,10 @@ export type ViewToHost =
 export type ConnectAgentSource =
   | { registryId: string } // an agent from the official ACP registry
   | { command: string } // custom command line that speaks ACP
-  | { configuredId: string }; // a saved workspace agent config (Settings § Agents)
+  | { configuredId: string }; // a saved workspace agent config (Settings Agents)
 
 /** The Settings shell's section ids — protocol-level because the open
- * section is host-owned state (render-only-webview.md: webviews rehydrate
+ * section is host-owned state (webviews rehydrate
  * from the orchestrator), and because openSettings deep-links by it. */
 export type SettingsSectionId =
   | "agents"
@@ -58,20 +58,20 @@ export type Action =
   /** The Settings nav itself — section state lives host-side so a disposed
    * webview (hidden tab) comes back where the user left it. */
   | { kind: "setSettingsSection"; section: SettingsSectionId }
-  /** `verifyAfterConnect` (Settings § Agents' "Verify after add", default
+  /** `verifyAfterConnect` (Settings Agents' "Verify after add", default
    * checked) auto-runs the free protocol-level Verify once the connection —
    * and any required login — succeeds. Absent → false (existing callers:
    * Agent View drawer, command palette, default-agent bootstrap). */
   | { kind: "connectAgent"; source: ConnectAgentSource; verifyAfterConnect?: boolean }
   | { kind: "restartAgent"; agentId: string }
   | { kind: "stopAgent"; agentId: string }
-  /** One intent, one click (P17): connect if needed — inside the chat pane
+  /** One intent, one click: connect if needed — inside the chat pane
    * — then create and activate the session. The picker, the single-agent
    * "+", and the palette's New Session all land here. (Replaced
    * `newSession`, which assumed an already-running agent.) */
   | { kind: "startChat"; agentId: string }
   | { kind: "dismissChatConnect" }
-  /** "Disconnect & erase all data" (P18) — explicit and user-triggered,
+  /** "Disconnect & erase all data" — explicit and user-triggered,
    * never a lifecycle side effect: the platform has no uninstall hook, so
    * a clean slate before uninstalling is the user's own deliberate act. */
   | { kind: "eraseAllData" }
@@ -118,11 +118,11 @@ export type Action =
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
   | { kind: "removeCommandRule"; pattern: string; layer: "workspace" | "machine" }
   | { kind: "setFileWriteScope"; scope: FileWriteScopeView }
-  /** Preferences (Settings § Preferences): partial patch in, the
+  /** Preferences: partial patch in, the
    * orchestrator answers `preferencesChanged` with the complete stored
    * object — the webview never assumes its own write landed. */
   | { kind: "setPreferences"; patch: Partial<PreferencesView> }
-  /** Preferences § Turn end play button — plays the given sound ("" = the
+  /** Preferences Turn-end play button — plays the given sound ("" = the
    * platform default chime) host-side, exactly as a finishing turn would.
    * Preview only: nothing is stored. */
   | { kind: "previewDoneSound"; sound: string }
@@ -132,7 +132,7 @@ export type Action =
   | { kind: "addDiagnosticsContext"; sessionId: string }
   | { kind: "removeContextChip"; sessionId: string; chipId: string }
   | { kind: "reloadSession"; sessionId: string }
-  /** One action for every knob — the UI never knows (render-only-webview)
+  /** One action for every knob — the UI never knows
    * whether a knob rides ACP's config-option surface or the legacy modes
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
   | { kind: "setSessionKnob"; sessionId: string; knobId: string; value: string | boolean }
@@ -177,7 +177,7 @@ export type Action =
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
   /** Open a file in the editor by absolute path — the read-out strip's
-   * files-panel rows (render-only-webview: the view never touches fs). */
+   * files-panel rows (the view never touches fs). */
   | { kind: "openFile"; path: string }
   /** The files panel's ± — native diff of the session's first-touch
    * pre-image against the live file. Texts stay orchestrator-side
@@ -214,7 +214,7 @@ export type Action =
   | { kind: "addPathContext"; sessionId: string; uris: readonly string[] }
   | { kind: "addFilePickerContext"; sessionId: string }
   /** The `@` mention picker's workspace tier: the webview never touches the
-   * filesystem (render-only-webview) — it asks, the orchestrator runs
+   * filesystem — it asks, the orchestrator runs
    * `workspace.findFiles` and answers with workspaceFilesListed. */
   | { kind: "queryWorkspaceFiles"; query: string };
 
@@ -235,8 +235,8 @@ export type PromptPart =
    * this position; the agent reads it through the brokered fs path itself. */
   | { kind: "fileRef"; path: string };
 
-// ── Settings § Agents — agent launch config (features.md: "add, edit, and
-// remove agents, including launch configuration per agent"). Agents are
+// ── Settings Agents — agent launch config (add, edit, and
+// remove agents, including launch configuration per agent). Agents are
 // developer-env, not code-env: global to this machine (stores/
 // agent-configs.ts), never repo-committed. Deliberately no per-workspace
 // scoping — binding to workspaces (not repos) may return later as an
@@ -254,7 +254,7 @@ export interface AgentConfigView {
   command: string;
   args: readonly string[];
   /** Env var *names* only — the values live in SecretStorage
-   * (stores/agent-env.ts, no-secret-exposure.md) and never reach a webview
+   * (stores/agent-env.ts) and never reach a webview
    * state snapshot; the Settings form edits them write-only. */
   envKeys: readonly string[];
   processPolicy: "auto" | "shared" | "isolated";
@@ -276,7 +276,7 @@ export interface AgentConfigView {
   lastSeenVersion: string | null;
 }
 
-// ── integrations (architecture.md § Integrations) ───────────────────────────
+// ── integrations ────────────────────────────────────────────────────────────
 
 /** Three reaches: "auto" = every agent; an id list = exactly these agents;
  * `{ except }` = every agent minus the listed ones. *(Supersedes the
@@ -288,10 +288,10 @@ export interface AgentConfigView {
 export type IntegrationRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
 
 /** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
- * with auth" escape hatch (features.md § Integrations). Registry-backed
+ * with auth" escape hatch. Registry-backed
  * integrations go through `connectRegistryKey`/`connectRegistryOAuth`
  * instead, since those drive a connect flow rather than taking a source
- * directly. Auth shapes per docs/reference-mcp-oauth.md: "header" is a
+ * directly. Auth shapes: "header" is a
  * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
  * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
 export type IntegrationSourceView =
@@ -328,10 +328,10 @@ export interface IntegrationView {
   sourceKind: "registry" | "custom-stdio" | "custom-http";
   registryId?: string;
   /** The launch line for a custom-stdio server, or the endpoint URL for a
-   * custom-http one — shown mono on the card (ui.md § Integrations). */
+   * custom-http one — shown mono on the card. */
   command?: string;
   /** A token exists in SecretStorage — never assumed from a pasted/shared
-   * config (features.md's incident-driven rule: a shared config carries no
+   * config (a shared config carries no
    * credential; connecting is always this user's own explicit act). */
   connected: boolean;
   /** The mute switch: inactive keeps config + credential but the server is
@@ -394,7 +394,7 @@ export interface ConnectFlowView {
   reason?: string;
 }
 
-// ── rules, skills, commands (architecture.md § Rules, skills, commands) ────
+// ── rules, skills, commands ─────────────────────────────────────────────────
 // v1 is management, not delivery: files live in each agent's own native
 // locations; patchbay lists what's on disk and lets the user jump to it —
 // real editing happens in the normal VS Code editor, never a webview dialect.
@@ -453,7 +453,7 @@ export type CoalesceHook<E> = (prev: E, next: E) => E | null;
 // ── shared domain vocabulary ─────────────────────────────────────────────────
 
 /** `untested` = config exists, never initialized successfully at any
- * version (P16) — the arm `stopped` used to lie about. Connection status
+ * version — the arm `stopped` used to lie about. Connection status
  * lives here, NOT in the capability matrix: a `CapabilityCell` has no error
  * arm and its used-state is version-keyed persisted — a "connection" row
  * would light up for a dead process. This is live process state; the matrix
@@ -467,9 +467,9 @@ export interface AgentSummary {
   /** Human-readable status context, e.g. "exited 1 · 14:07". */
   detail?: string;
   /** The process's own last words (stderr tail), present on crash — the
-   * reason readable inline, no Output panel required (P16). */
+   * reason readable inline, no Output panel required. */
   stderr?: readonly string[];
-  /** Launch command line as spawned (ui.md § Settings Agents — shown mono). */
+  /** Launch command line as spawned (shown mono). */
   command?: string;
   /** True once a real call has hit ACP's `auth_required` for this
    * connection — cleared on a successful authenticate+retry, or on
@@ -483,7 +483,7 @@ export interface AgentSummary {
   authReason?: string;
 }
 
-/** The live-selection indicator's data (ui.md § Composer — the ghost chip):
+/** The live-selection indicator's data (the ghost chip):
  * position only, never the text — the text is read host-side at the moment
  * the user solidifies it, not streamed on every cursor move. */
 export interface LiveSelectionView {
@@ -571,7 +571,7 @@ export interface RegistryAgentView {
   version: string;
 }
 
-// ── capability matrix (architecture.md § Agent capability matrix) ──────────
+// ── capability matrix ───────────────────────────────────────────────────────
 // Two states per capability: declared (the handshake's claim, refreshed every
 // connect) and used (set only once the path actually fires on the wire —
 // whether that's a real user action or patchbay's own free connectivity
@@ -639,7 +639,7 @@ function dropKey<V>(record: Readonly<Record<string, V>>, key: string): Readonly<
  * True while the free protocol check (session/new + session/fork probe) still
  * has something it could resolve for this agent — the single predicate both
  * the automatic post-connect/reconnect retry (capability-tracker.ts's
- * `onDeclared`) and the Settings § Agents manual Verify control gate on, so
+ * `onDeclared`) and the Settings Agents manual Verify control gate on, so
  * "does this still need a check" can never drift between the two call
  * sites. Only `session.fork` and `auth` are ever probed (capability-
  * verification.md's verification-cost split) — every other row is either
@@ -671,7 +671,7 @@ export interface SessionSummary {
   unseen?: boolean;
 }
 
-// ── session knobs (architecture.md § Session model, mode, effort) — one
+// ── session knobs — one
 // normalized list per session, produced only by the orchestrator's knob
 // processor (knobs.ts). The webview renders it uniformly: it never sees the
 // wire's modes/configOptions split, and display updates only from the
@@ -732,7 +732,7 @@ export interface UserBlock {
   text: string;
   /** True when the whole message is a harness-injected envelope riding the
    * user role on the wire (task notifications, system reminders, command
-   * echoes — acp-agents-notes/claude-agent-acp.md § Injected user-role messages). A real
+   * echoes). A real
    * transcript fact, but not something the human typed: rendered as a dim
    * collapsed line, never a prompt bubble, and never counted as a prompt.
    * Classified orchestrator-side (session-manager harnessEnvelopeTag) —
@@ -773,8 +773,8 @@ export interface ToolCallBlock {
   title: string;
   status: ToolCallStatus;
   toolKind: ToolCallKind;
-  /** rawInput/rawOutput as bounded pretty-printed text (ui-rendering-strategy:
-   * collapsed by default, expandable) — null when the agent never sent one.
+  /** rawInput/rawOutput as bounded pretty-printed text (collapsed by
+   * default, expandable) — null when the agent never sent one.
    * Bounded at the source with an honest truncation marker, never silently. */
   input: string | null;
   output: string | null;
@@ -784,7 +784,7 @@ export interface ToolCallBlock {
   /** Paths with agent-reported diff content (ToolCallContent type:"diff").
    * The texts stay orchestrator-side; expanding the card offers "Open
    * diff", routed to VS Code's native diff editor — never an inline diff
-   * view (ui-rendering-strategy § tool call card design). */
+   * view. */
   diffFiles: readonly string[];
   /** True once the permission broker rejected this call's own
    * session/request_permission — "blocked by permission" and "command
@@ -813,7 +813,7 @@ export interface TurnUsage {
 
 /** Appended when a turn resolves — the per-turn metadata line's source.
  * Counts/files are NOT stored here: the rollup derives from the turn's own
- * blocks in the transcript (ui-rendering-strategy § Per-turn summary).
+ * blocks in the transcript.
  *
  * Nullable trio = a boundary synthesized during session/load replay: the
  * turn's *structure* is recoverable from the wire (a turn ends where the
@@ -842,8 +842,8 @@ export interface PlanEntry {
   status: "pending" | "in_progress" | "completed";
 }
 
-/** One broker path for every gated action (architecture.md § Permission
- * broker) — ACP session/request_permission, and patchbay's own fs.write /
+/** One broker path for every gated action — ACP session/request_permission,
+ * and patchbay's own fs.write /
  * terminal handlers, all render the same card shape. */
 export interface PermissionOptionView {
   optionId: string;
@@ -883,10 +883,10 @@ export interface TerminalBlock {
   exitCode: number | null;
 }
 
-/** The elicitation fallback (architecture.md's adapter table): a local MCP
+/** The elicitation fallback: a local MCP
  * tool renders this as a small form, universal across agents regardless of
  * native ACP elicitation support — which the SDK itself marks unstable/
- * experimental, so v1 uses only this path (plan.md P7 scoping note). */
+ * experimental, so v1 uses only this path. */
 export interface ElicitationField {
   name: string;
   type: "string" | "number" | "integer" | "boolean";
@@ -932,7 +932,7 @@ export interface AvailableCommand {
   inputHint?: string;
 }
 
-/** The in-pane connect state for a chat being started (P17): "+" on a
+/** The in-pane connect state for a chat being started: "+" on a
  * not-yet-running agent connects inside the chat pane itself — a
  * lightweight "Connecting…" resolving into the session, or a failure with
  * the specific reason and a Retry, never a bounce back to the empty state. */
@@ -1011,7 +1011,7 @@ export interface AgentViewState {
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
   /** The pinned plan widget's source — the most recent plan snapshot, or
    * none. A plan is *session-level* state spanning many prompts
-   * (ui-rendering-strategy § Plans): it never enters the per-turn
+   * it never enters the per-turn
    * transcript, so an update replaces this snapshot instead of repeating a
    * card per turn. */
   activePlan: Readonly<Record<string, readonly PlanEntry[] | null>>;
@@ -1026,7 +1026,7 @@ export interface AgentViewState {
   /** Declared auth methods per agent — the Log-in button's source (only
    * "agent"-kind methods are actionable; see AuthMethodView). */
   authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
-  /** Present only once `usage` is used — absence over fake (ui.md § gauge). */
+  /** Present only once `usage` is used — absence over fake. */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
   /** Per session, per path: cumulative +/- since the session's first-touch
    * baseline (fileBaselines) — the same numbers the files panel's ± opens
@@ -1034,8 +1034,7 @@ export interface AgentViewState {
    * reach the webview. Absent for a path until a real change is known
    * (session-manager.noteFileChange) — absence over fake. */
   fileDiffStats: Readonly<Record<string, Readonly<Record<string, { additions: number; deletions: number }>>>>;
-  /** Explicitly attached context, pending inclusion in the next prompt
-   * (features.md § Chat: "explicitly add editor state to the prompt"). */
+  /** Explicitly attached context, pending inclusion in the next prompt. */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
   /** Prompts accepted mid-turn, waiting for the turn to end (QueuedPrompt).
    * Orchestrator-owned like everything else here — rendered as removable
@@ -1044,8 +1043,8 @@ export interface AgentViewState {
   /** Normalized knobs per session (knobs.ts is the only producer) — empty
    * when the agent offers none. */
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
-  /** User-added external context roots, per session (features.md § Chat —
-   * workspace folders are always active and need no chip; these are the
+  /** User-added external context roots, per session (workspace folders
+   * are always active and need no chip; these are the
    * removable, explicit ones). Passed to the agent as `additionalDirectories`.
    * ACP has no live-update request, but `session/load`/`session/resume` "set
    * the complete list" — so a change re-applies to a live session through an
@@ -1056,7 +1055,7 @@ export interface AgentViewState {
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
    * reflects reality instead of counting only the user-added extras. */
   workspaceRoots: readonly string[];
-  /** Live IDE selection — the ghost chip's presence signal (ui.md: appears
+  /** Live IDE selection — the ghost chip's presence signal (appears
    * only while the IDE has a selection). Position only; never the text. */
   liveSelection: LiveSelectionView | null;
   /** Currently open editor tabs — the `@` mention picker's source. */
@@ -1124,7 +1123,7 @@ export type ContextChip =
       kind: "image";
       /** Raw base64 payload — a real ImageContent block where the agent
        * declares `promptCapabilities.image`, the temp-file ResourceLink
-       * fallback otherwise (paste is never disabled, features.md § Chat). */
+       * fallback otherwise (paste is never disabled). */
       content: string;
       /** Describes the payload, always from the platform that produced the
        * bytes (clipboard item type, drop file type, extension map) — never
@@ -1512,7 +1511,7 @@ function upsertToolCall(
     output: event.output ?? existing.output,
     locations: event.locations ?? existing.locations,
     diffFiles: event.diffFiles ?? existing.diffFiles,
-    // A trailing tool_call_update still wins (acp-compliance.md §7): the
+    // A trailing tool_call_update still wins: the
     // wire is still talking about this call, so the "abandoned" guess is
     // no longer the freshest fact.
     interrupted: false,
@@ -1943,7 +1942,7 @@ export function reduceAgentView(
 }
 
 export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next) => {
-  // Concatenate text chunks per message (architecture.md § coalescing).
+  // Concatenate text chunks per message.
   if (
     (prev.kind === "agentTextDelta" && next.kind === "agentTextDelta") ||
     (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta") ||
@@ -2015,7 +2014,7 @@ export interface AuditEntryView {
 }
 
 /** What this agent's *current connection* offers, knob-wise — connection
- * state, never persisted (architecture.md § Session model: offerings are
+ * state, never persisted (offerings are
  * read, never stored — provider inventory can't be version-keyed honestly).
  * Sourced from the connect-time offering read (the free probe's session/new)
  * plus every live session's responses and update notifications; the entry
@@ -2103,7 +2102,7 @@ export interface SettingsState {
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
- * (the placement contract from architecture.md § State, stated as live
+ * (the placement contract, stated as live
  * reality), and what's in it right now. */
 export interface DataInventoryRow {
   id: string;

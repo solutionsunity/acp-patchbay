@@ -3,7 +3,7 @@
 
 // ```mermaid blocks — source-copied from Streamdown 2.5.0's built-in
 // mermaid block (MIT, Vercel) and adapted, the same house pattern as the
-// shadcn components (stack.md: source-copied, never a black-box dep).
+// shadcn components (source-copied, never a black-box dep).
 // Vendored because upstream's actions row is hardcoded (download / copy /
 // fullscreen) with no extension slot, and this block needs one more action:
 // "Open in editor" — the fullscreen portal maxes out at the sidebar

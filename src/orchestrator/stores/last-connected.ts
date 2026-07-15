@@ -51,7 +51,7 @@ export class LastConnectedStore {
     return stamp.agentIds.filter((id): id is string => typeof id === "string");
   }
 
-  /** "Disconnect & erase all data" (plan.md P18). */
+  /** "Disconnect & erase all data". */
   async wipe(): Promise<void> {
     await this.kv.update(KEY, undefined);
   }

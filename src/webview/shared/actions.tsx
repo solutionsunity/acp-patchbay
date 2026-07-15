@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The one seam from components to the orchestrator (render-only-webview.md):
+// The one seam from components to the orchestrator:
 // components send actions; state comes back only as snapshots/patches. One
 // mechanism — never prop-threaded callbacks for some actions and a context
 // for others.

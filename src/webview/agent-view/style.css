@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026 Solutions Unity */
 
-/* Agent View shell — ported from docs/design/agent-view-mockup.html (binding
- * inventory: docs/design/ui.md). Theme-aware via --vscode-* variables; the
- * patchbay identity accents (teal, consumed-orange) stay fixed. */
+/* Agent View shell — ported from the design mockup. Theme-aware via
+ * --vscode-* variables; the patchbay identity accents (teal,
+ * consumed-orange) stay fixed. */
 
 /* ── Z LADDER ──────────────────────────────────────────────────────────
  * App-authored z-index lives strictly below 50. The 50+ band belongs to
@@ -25,7 +25,7 @@
  * can override the hand CSS where they collide — most importantly the
  * `* { margin:0; padding:0 }` reset, which as an unlayered rule would
  * silently beat every margin/padding utility. Retires per the ledger above. */
-/* ── CSS LEDGER (P14g) ─────────────────────────────────────────────────
+/* ── CSS LEDGER ────────────────────────────────────────────────────────
  * What remains here is the agent view shell layout and block/card styling
  * that predates the shadcn layer. Terms of the debt:
  *  - every rule lives in the `components` layer: utilities written in TSX
@@ -139,7 +139,7 @@ body {
   background: var(--pb-text-faint);
 }
 
-/* never connected — visibly hollow, not just another gray (P16) */
+/* never connected — visibly hollow, not just another gray */
 .dot.untested {
   background: transparent;
   border: 1px solid var(--pb-text-faint);
@@ -213,7 +213,7 @@ body {
   color: var(--pb-accent);
 }
 
-/* ── read-out strip — between chat and composer (ui.md § Read-out strip):
+/* ── read-out strip — between chat and composer:
    plan chip only; its panel overlays the chat, growing up from the strip
    (bottom: 100% of the relative wrapper). Read-out only — never context, so
    it lives outside the composer's binding rule. The edited-files chip moved
@@ -431,7 +431,7 @@ body {
   color: var(--pb-err);
 }
 
-/* user's unsaved edits sitting on an agent-touched file (compliance §12) */
+/* user's unsaved edits sitting on an agent-touched file */
 .overlay-panel .file-row .dirty {
   flex: none;
   width: 7px;
@@ -457,8 +457,8 @@ body {
   background: var(--pb-panel);
 }
 
-/* ── crash banner (ui.md § Chat blocks: shown the moment the agent dies;
-   Restart is the one action) ─────────────────────────────────────────── */
+/* ── crash banner — shown the moment the agent dies; Restart is the one
+   action ─────────────────────────────────────────────────────────────── */
 .crash-banner {
   display: flex;
   align-items: center;
@@ -471,7 +471,7 @@ body {
   border-bottom: 1px solid var(--pb-err);
 }
 
-/* the process's own last words, inline with the crash (P16) */
+/* the process's own last words, inline with the crash */
 .stderr-tail {
   flex-basis: 100%;
   margin: 0;
@@ -511,9 +511,9 @@ body {
  * output) instead of letting the chat scroll. */
 .chat-body > * {
   flex-shrink: 0;
-  /* Offscreen transcript rows skip layout and paint entirely
-   * (ui-rendering-strategy § Transcript scale) — the DOM stays real, so
-   * find/copy/selection keep working. The intrinsic-size hint keeps the
+  /* Offscreen transcript rows skip layout and paint entirely — the DOM
+   * stays real, so find/copy/selection keep working. The intrinsic-size
+   * hint keeps the
    * scrollbar honest for unrendered rows. */
   content-visibility: auto;
   contain-intrinsic-size: auto 32px;

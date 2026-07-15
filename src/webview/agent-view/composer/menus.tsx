@@ -4,8 +4,8 @@
 // The composer's typed-trigger suggestion lists (`/` commands, `@` context).
 // Deliberately NOT Radix menus: these are editor-anchored autocomplete —
 // focus must stay in the prompt editor while they're open, and a
-// focus-trapping menu primitive would break typing (recorded exclusion,
-// plan.md P14). Dumb lists by design: entry building and keyboard state
+// focus-trapping menu primitive would break typing (recorded exclusion).
+// Dumb lists by design: entry building and keyboard state
 // live in prompt-editor.tsx (the editor owns the caret, so it owns the
 // selection); these only render rows and forward clicks.
 import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
@@ -115,7 +115,7 @@ export function SlashMenu(props: {
   );
 }
 
-/** The `@` context mention picker (ui.md § Composer): file rows become
+/** The `@` context mention picker: file rows become
  * inline mention tokens sent as `resource_link` blocks — the baseline every
  * agent MUST accept; fixed rows resolve to standard context chips. */
 export function MentionMenu(props: {

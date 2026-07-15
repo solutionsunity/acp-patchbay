@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Top overlay drawers (ui.md: drawers overlay from the top). The drawer
+// Top overlay drawers — they overlay from the top. The drawer
 // shells are presentational; every control inside is the shared layer.
 // `onDone(toast?)` closes the drawer — drawer visibility and toasts are the
 // shell's local UI state.
@@ -16,7 +16,7 @@ import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
 
 /** Drawer title row with the explicit way out — clicking the scrim still
- * works, but the affordance must be visible (P16). */
+ * works, but the affordance must be visible. */
 function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
   return (
     <div className="flex items-center">
@@ -28,10 +28,10 @@ function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
   );
 }
 
-/** The agent picker (P17): one row per configured agent with its readiness
+/** The agent picker: one row per configured agent with its readiness
  * inline; picking one starts a chat with it — connecting first, inside the
  * chat pane, when it isn't running. Adding agents lives in Settings only
- * (the one rich form — owner-approved consolidation, features.md §1);
+ * (the one rich form — owner-approved consolidation);
  * stop/restart stay as Settings troubleshooting controls plus the crash
  * banner's Restart. */
 export function AgentsDrawer(props: {

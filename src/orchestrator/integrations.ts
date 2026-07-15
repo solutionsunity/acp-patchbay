@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Integrations manager (architecture.md § Integrations): curated (registry)
+// Integrations manager: curated (registry)
 // and custom are the same mechanism — MCP servers routed to agents. Owns
 // the connect lifecycle (static key in a configurable header, or MCP-spec
-// OAuth 2.1 per docs/reference-mcp-oauth.md), routing decisions, and the
+// OAuth 2.1), routing decisions, and the
 // mcpServers entries a session actually gets. vscode-free (like
 // SessionManager/CapabilityTracker): the OAuth browser/redirect step is an
 // injected OAuthUserAgent, so everything is unit-testable against a fake
@@ -255,7 +255,7 @@ export class IntegrationsManager {
   }
 
   /** The editable mcpServers-fragment for a custom server — env values
-   * never ride it (write-only, no-secret-exposure.md): stored keys appear
+   * never ride it (write-only): stored keys appear
    * with "", meaning "keep"; a filled value overwrites; a removed key
    * deletes. Undefined for curated entries — their shape is registry data. */
   private async editJsonFor(id: string, source: IntegrationSource): Promise<string | undefined> {
@@ -306,7 +306,7 @@ export class IntegrationsManager {
     return { error: "no endpoint available" };
   }
 
-  /** Static-key connect (the v1 floor — docs/reference-mcp-oauth.md §1):
+  /** Static-key connect (the v1 floor):
    * store the pasted key, record which mechanism/endpoint this connection
    * uses. No network round-trip; the first real request proves the key. */
   async connectRegistryWithKey(registryId: string, token: string, url?: string): Promise<void> {
@@ -343,10 +343,10 @@ export class IntegrationsManager {
     void this.probe(registryId);
   }
 
-  /** MCP-spec OAuth connect (docs/reference-mcp-oauth.md §2): URL-only —
+  /** MCP-spec OAuth connect: URL-only —
    * discovery, dynamic client registration, PKCE, browser redirect via the
    * injected user agent. Failure (gated DCR, non-compliant server, denied
-   * consent, timeout) is immediate and labeled — pitfall §2. */
+   * consent, timeout) is immediate and labeled. */
   async connectRegistryOAuth(registryId: string, url?: string): Promise<void> {
     const entry = this.entryFor(registryId);
     if (entry === undefined || !entry.auth.oauth) {
@@ -421,8 +421,8 @@ export class IntegrationsManager {
     if (source.kind === "custom-stdio") {
       // `args` arrive structured (form lines / imported JSON) and are never
       // re-parsed; the `command` field alone may still be a typed line
-      // ("npx foo"), so it gets the quote-aware house parser (render-only:
-      // parsing is logic, and it lives here).
+      // ("npx foo"), so it gets the quote-aware house parser (parsing is
+      // logic, and it lives here).
       const parsed = parseCommandLine(source.command);
       if (parsed === null) {
         this.hooks.emit({
@@ -438,7 +438,7 @@ export class IntegrationsManager {
         args: [...parsed.args, ...source.args],
       };
       // Values ride the action once and land in SecretStorage — the config
-      // record above deliberately carries no env (no-secret-exposure.md).
+      // record above deliberately carries no env.
       await this.envStore.set(id, { ...source.env });
     } else {
       configSource = {
@@ -544,7 +544,7 @@ export class IntegrationsManager {
   }
 
   /** Applies an edited mcpServers-fragment to one custom server. Env is
-   * write-only (no-secret-exposure.md): "" keeps the stored value, a filled
+   * write-only: "" keeps the stored value, a filled
    * value overwrites, a removed key deletes. A `token` field, when present
    * and non-empty, replaces the stored key the same way. */
   async updateFromJson(id: string, json: string): Promise<void> {
@@ -731,7 +731,7 @@ export class IntegrationsManager {
    * a real `type: "http"` entry, the agent's own MCP client connects (token
    * read here, at attach — it rides agent-visible config, ephemeral per
    * session, exactly like a CLI-added server; the recorded trade superseding
-   * no-secret-exposure's bridge-only rule). Otherwise the stdio-to-HTTP
+   * the earlier bridge-only rule). Otherwise the stdio-to-HTTP
    * bridge, the guaranteed floor. */
   async mcpServersFor(
     agentId: string,

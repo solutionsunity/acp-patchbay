@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Standalone stdio-to-HTTP bridge (architecture.md § Integrations,
-// capability-conditional transport — the guaranteed floor for agents that
+// Standalone stdio-to-HTTP bridge (capability-conditional transport — the
+// guaranteed floor for agents that
 // don't declare mcp.http, and the pinnable escape hatch for ones whose
 // declared support is broken). Spawned by the *agent* as an mcpServers
 // entry, exactly like
@@ -31,7 +31,7 @@ const integrationId = process.env.ACP_PATCHBAY_INTEGRATION_ID ?? "";
 const url = process.env.ACP_PATCHBAY_INTEGRATION_URL ?? "";
 // How the credential rides the request — per-integration data, since not
 // every service takes `Authorization: Bearer` (Stitch wants a raw key in
-// `X-Goog-Api-Key`; see docs/reference-mcp-oauth.md). Absent header name =
+// `X-Goog-Api-Key`). Absent header name =
 // this integration sends no credential at all (authType "none").
 const authHeader = process.env.ACP_PATCHBAY_AUTH_HEADER ?? "";
 const authPrefix = process.env.ACP_PATCHBAY_AUTH_PREFIX ?? "";
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   // The agent that spawned this bridge owns its lifetime: stdin EOF means
   // that agent is gone (clean exit or kill), so exit instead of lingering as
   // an orphan — same rule as server-main.ts, and the defense that still
-  // works when patchbay itself died without running any cleanup (P15a).
+  // works when patchbay itself died without running any cleanup.
   // close() aborts in-flight provider requests; their responses have no
   // reader anymore. The SDK's stdio transport only fires onclose from its
   // own close() — the EOF event needs wiring by hand.

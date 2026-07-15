@@ -69,7 +69,7 @@ export function activate(context: vscode.ExtensionContext): {
       orchestrator.addSelectionToContextCommand(),
     ),
     vscode.commands.registerCommand("acpPatchbay.wireLog", () => orchestrator.wireLogCommand()),
-    // OAuth redirect target (docs/reference-mcp-oauth.md): integrations'
+    // OAuth redirect target: integrations'
     // browser flows come back as vscode://solutionsunity.acp-patchbay/...
     // URIs — resolved correctly in every environment by asExternalUri,
     // unlike a loopback HTTP server.
@@ -85,8 +85,8 @@ export function activate(context: vscode.ExtensionContext): {
 
 // Fires on window close, reload, disable, and uninstall alike — best-effort
 // only (never on a crash or OS kill; the next activate's orphan reap covers
-// those). Returning the promise makes VS Code wait for the bounded sweep
-// (plan.md P15): agents down the graceful ladder, terminal trees killed.
+// those). Returning the promise makes VS Code wait for the bounded sweep:
+// agents down the graceful ladder, terminal trees killed.
 export function deactivate(): Thenable<void> | undefined {
   const pending = activeOrchestrator?.shutdown();
   activeOrchestrator = null;

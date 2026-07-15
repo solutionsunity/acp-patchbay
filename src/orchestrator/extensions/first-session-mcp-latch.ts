@@ -10,20 +10,18 @@
 // real session opens on the connection — the user's session takes the
 // privilege, the probe (which needs no MCP servers) runs second.
 //
-// Id-keyed curated entry (spec-pure-core: shape-gating is physically
-// impossible here — nothing on the wire announces the latch before it
-// bites). Entries are earned by wire reproduction, version-stamped.
+// Id-keyed curated entry: shape-gating is physically impossible here —
+// nothing on the wire announces the latch before it bites. Entries are
+// earned by wire reproduction, version-stamped.
 //
 // Adopted 2026-07-13. RETIRE per agent when its vendor honors per-session
-// mcpServers — re-test on version change (marker-server repro:
-// docs/acp-agents-notes/auggie-acp-compliance-report.md, Issue 1).
+// mcpServers — re-test on version change (marker-server repro).
 // Retirement = delete the entry (or, when empty, this file + its line in
 // extensions/index.ts). Cost while latched: the agent's capability matrix
 // and knob offerings stay at declared-only, and a logged-out agent's
 // needsAuth surfaces at first real use instead of at connect.
 //
-// Dossier: docs/acp-agents-notes/auggie.md § mcpServers honored only on the
-// process's first session/new. Reported upstream 2026-07-13 (pending send).
+// Reported upstream 2026-07-13 (pending send).
 const LATCHED_AGENTS: ReadonlySet<string> = new Set([
   // auggie 0.32.0 (commit eb99b871) — verified 2026-07-12, re-verified
   // 2026-07-13 (control spawns within ~10s of session/new; second-session

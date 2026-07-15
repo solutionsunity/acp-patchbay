@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Status bar content (features.md § 3 — "active session, connection health,
-// usage when available"): a pure function of canonical AgentViewState, kept
+// Status bar content (active session, connection health, usage when
+// available): a pure function of canonical AgentViewState, kept
 // vscode-free so the formatting is unit-testable without a real extension
 // host. Orchestrator just assigns the result to a real StatusBarItem.
 import type { AgentViewState } from "../shared/protocol";

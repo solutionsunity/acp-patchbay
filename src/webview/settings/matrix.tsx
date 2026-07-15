@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// § Capability matrix: declared is a claim; used is what happened on the
+// Capability matrix: declared is a claim; used is what happened on the
 // wire — inspectable per cell (Radix Tooltip), rows hand-picked against the
-// ACP spec (capability-verification.md).
+// ACP spec.
 import type { CapabilityRowId, SettingsState } from "../../shared/protocol";
 import { capabilityState } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
@@ -62,7 +62,7 @@ const STATE_TEXT = {
   "not-declared": "not declared",
 } as const;
 
-/** Cell tooltips explain consequences (ui.md § Capability matrix) — what a
+/** Cell tooltips explain consequences — what a
  * missing/unused row actually costs the user, not just its state. */
 const ROW_CONSEQUENCE: Partial<Record<CapabilityRowId, string>> = {
   "session.fork": "native session branching — no patchbay feature rides it yet",

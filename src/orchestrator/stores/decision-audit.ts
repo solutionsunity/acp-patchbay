@@ -3,7 +3,7 @@
 
 // Decision audit: append-only record of events that happened *in patchbay* —
 // permissions granted, tools approved, routing chosen. JSONL in workspace
-// storage; grows, belongs to patchbay (architecture.md § State).
+// storage; grows, belongs to patchbay.
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -35,7 +35,7 @@ export class DecisionAuditStore {
   }
 
   /** The one exception to append-only: the user erasing their own data
-   * ("Disconnect & erase all data", plan.md P18) — deliberate, never a
+   * ("Disconnect & erase all data") — deliberate, never a
    * lifecycle side effect. */
   async wipe(): Promise<void> {
     if (this.file === null) return;

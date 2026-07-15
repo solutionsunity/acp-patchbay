@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Resolves an agent's rules/skills/commands locations (architecture.md
-// § Rules, skills, commands) into the files actually on disk in this
-// workspace — management only, v1 is view + navigate, never delivery. A
+// Resolves an agent's rules/skills/commands locations into the files
+// actually on disk in this workspace — management only, v1 is view +
+// navigate, never delivery. A
 // structural `FsLike` (mirrors kv.ts's `KV`) keeps the resolution logic
 // vscode-free and unit-testable; the real implementation just wraps
 // vscode.workspace.fs.
@@ -19,7 +19,7 @@ export interface AssetLocations {
  * the registry's agent id, in code like every other house table (meta.ts
  * META_EXTENSIONS, capabilities.ts CAPABILITY_PROOFS — the roster-overlay
  * JSON this replaces was vscode-acp heritage, retired when the official
- * registry became the one agent source). v1 scope (features.md): Claude
+ * registry became the one agent source). v1 scope: Claude
  * Code and Augment mapped; an unmapped agent shows as such, never guessed.
  * Adding an agent here is a recorded curation decision, one line of diff. */
 export const ASSET_LOCATIONS: Readonly<Record<string, AssetLocations>> = {

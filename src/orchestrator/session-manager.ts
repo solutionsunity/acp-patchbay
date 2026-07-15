@@ -4,7 +4,7 @@
 // Bridges the ACP client pool to the Agent View's chat state. Owns the render
 // cache in the sense of deciding *when* it must be rebuilt wholesale — the
 // cache itself lives in AgentViewState, updated only through the shared
-// reducer (architecture.md § State: render cache is disposable, replay
+// reducer (render cache is disposable, replay
 // always wins, never merged).
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,8 +48,8 @@ import type { AgentPool } from "./pool";
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Advance canonical render state without a webview patch — the
-   * session/load replay window (ui-rendering-strategy.md § Hydration
-   * delivery). Absent → falls back to `emit` (tests, patch-per-event). */
+   * session/load replay window. Absent → falls back to `emit` (tests,
+   * patch-per-event). */
   emitSilent?(...events: AgentViewEvent[]): void;
   /** Closes a silent window: one wholesale webview sync from canonical
    * state — the replay lands as a single swap, never a patch flood. */
@@ -59,11 +59,11 @@ export interface SessionManagerHooks {
    * built — session/new hasn't returned). Lets the orchestrator's IPC host
    * translate that token back to the real session once it's known. */
   mapContextToken?(token: string, sessionId: string): void;
-  /** Process-policy decision for a *new top-level* session (architecture.md
-   * § process model): returns the poolKey to create it on — the agentId
+  /** Process-policy decision for a *new top-level* session: returns the
+   * poolKey to create it on — the agentId
    * itself when sharing, or a fresh isolated poolKey (having already
    * connected a dedicated subprocess for it) when isolating. Absent → always
-   * share (pre-P8 behavior — fine for tests that don't exercise policy). */
+   * share (the pre-policy default — fine for tests that don't exercise policy). */
   resolveProcessFor?(agentId: string): Promise<string>;
   /** The knob seed a session starts from on *entry* — a fresh session, or a
    * history session attached with no live combination in hand (folded,
@@ -93,7 +93,7 @@ export interface SessionManagerHooks {
    * there is (patchbay persists no transcripts). */
   currentTranscript?(sessionId: string): readonly ChatBlock[];
   /** Whether `session.delete` is declared *and used* — gates the agent-side
-   * delete on close (capability-verification.md: features gate on used). */
+   * delete on close (features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
   /** Whether this session is the one currently open in the view — the idle
    * reaper exempts it: the visible chat's state never changes under the
@@ -129,8 +129,8 @@ const ENVELOPE_ELEMENT = /^<([a-z][a-z0-9-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>|^<([a-z
 
 /** Agent harnesses inject machine messages into the conversation on the
  * *user* role — task notifications, system reminders, slash-command echoes
- * (observed: claude-agent-acp session/load replay; docs/acp-agents-notes/claude-agent-acp.md
- * § Injected user-role messages). Their common shape: the entire message is
+ * (observed: claude-agent-acp session/load replay). Their common shape: the
+ * entire message is
  * one or more XML-ish envelope elements, nothing else — no human prompt
  * looks like that end-to-end. Returns the first tag name for a matching
  * text, null otherwise; anything unparseable renders as the ordinary user
@@ -180,7 +180,7 @@ interface LiveSession {
   agentId: string;
   /** Which pool connection this session's requests ride — the agentId
    * itself when sharing, a synthetic instance id when process-policy
-   * isolated it (P8). */
+   * isolated it. */
   poolKey: string;
   /** True once auto-derived from the first prompt, or explicitly renamed —
    * either way, later auto-titling must not clobber it again. */
@@ -483,8 +483,7 @@ export class SessionManager {
     };
   }
 
-  /** A `session/load` with its replay window silenced (ui-rendering-
-   * strategy.md § Hydration delivery): the reset and every replayed update
+  /** A `session/load` with its replay window silenced: the reset and every replayed update
    * reduce into canonical state only — the old pane content stays up (no
    * blank flash, no patch flood) until the closing resync swaps the webview
    * wholesale. The window closes on failure too: canonical was reset, and
@@ -542,8 +541,7 @@ export class SessionManager {
     });
   }
 
-  /** Replay-window channel pick (ui-rendering-strategy § Hydration
-   * delivery): inside a session's replay window events reduce silently into
+  /** Replay-window channel pick: inside a session's replay window events reduce silently into
    * canonical state — the closing resync delivers them wholesale; everywhere
    * else they patch the webview live. */
   private emitterFor(sessionId: string): (...events: AgentViewEvent[]) => void {
@@ -648,7 +646,7 @@ export class SessionManager {
     }
   }
 
-  /** "Disconnect & erase all data" (P18): every session's bookkeeping goes
+  /** "Disconnect & erase all data": every session's bookkeeping goes
    * at once — the processes are already down; the UI rows leave via the
    * orchestrator's sessionClosed events. */
   reset(): void {
@@ -688,7 +686,7 @@ export class SessionManager {
   }
 
   /** Same as `invalidateAgent`, scoped to one process-policy isolated
-   * instance (P8) — its subprocess dying must not touch any other session
+   * instance — its subprocess dying must not touch any other session
    * of the same agent living elsewhere. */
   invalidatePoolKey(poolKey: string): void {
     for (const [sessionId, session] of this.sessions) {
@@ -782,7 +780,7 @@ export class SessionManager {
     });
   }
 
-  /** One-click reload (P8): re-attach on demand, even when the session
+  /** One-click reload: re-attach on demand, even when the session
    * isn't currently invalidated — the same ladder as every attach
    * (load > resume), so a resume-only agent's reload works too. */
   async reload(sessionId: string): Promise<void> {
@@ -940,7 +938,7 @@ export class SessionManager {
       return;
     }
     if (route.via === "extension") {
-      // Extension routes execute themselves (spec-pure-core): the module
+      // Extension routes execute themselves: the module
       // owns the wire method and the display policy; this branch only
       // supplies the wire and publishes whatever state the executor returns
       // (null = the agent's own notification will confirm). A throw
@@ -962,7 +960,7 @@ export class SessionManager {
     this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
   }
 
-  /** The deps an extension route's executor receives (spec-pure-core): the
+  /** The deps an extension route's executor receives: the
    * wire — pool's untracked escape hatch bound to this session's connection
    * — and the standing knob state. Built at execute time, not route time:
    * `current` must be the state the executor advances from. */
@@ -993,7 +991,7 @@ export class SessionManager {
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
   }
 
-  /** Entry seed (architecture.md § Session model, mode, effort): applied
+  /** Entry seed: applied
    * post-create on a fresh session, and by reseedAfterAttach on a history
    * session entered with no combination in hand. */
   private async applySeedFor(agentId: string, sessionId: string): Promise<void> {
@@ -1076,7 +1074,7 @@ export class SessionManager {
     this.hooks.emit({ kind: "contextChipRemoved", sessionId, chipId });
   }
 
-  /** External context roots (features.md § Chat): patchbay holds no local
+  /** External context roots: patchbay holds no local
    * copy — the canonical list lives in AgentViewState, read back via
    * `contextRootsFor` so this stays "append/remove, republish, re-apply."
    * ACP has no live-update request for `additionalDirectories`, but
@@ -1275,7 +1273,7 @@ export class SessionManager {
     );
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
-    // (features.md § Chat: "explicitly add editor state to the prompt").
+    // (explicitly add editor state to the prompt).
     const chips = session.pendingContext;
     session.pendingContext = [];
     for (const chip of chips) {
@@ -1437,7 +1435,7 @@ export class SessionManager {
     this.promptQueues.delete(sessionId);
   }
 
-  /** Honest interruption: a live turn is cancelled (spec § Cancellation)
+  /** Honest interruption: a live turn is cancelled (per the spec)
    * and awaited to settle before the caller rips the session out from under
    * it — the turn's own end (turnEnded, the tool-call sweep) must land
    * first, or it would write into a session that no longer exists. Bounded:
@@ -1695,7 +1693,7 @@ export class SessionManager {
     }
 
     switch (update.sessionUpdate) {
-      // Block-model rule (ui-rendering-strategy.md) for all three chunk
+      // Block-model rule for all three chunk
       // arms: runBlockFor above is the one place a chunk's block is decided.
       // This arm is replay-only by design: a live send appends its own whole
       // user block (sendPrompt), and some agents echo the in-flight prompt
@@ -1723,7 +1721,7 @@ export class SessionManager {
           break;
         }
         if (update.content.type !== "text") {
-          // Honesty placeholder (acp-compliance.md G4): unrendered content
+          // Honesty placeholder: unrendered content
           // says so in place — its own closed block, never a silent drop.
           this.sealRun(sessionId, session);
           emit({
@@ -1912,16 +1910,16 @@ export class SessionManager {
         break;
       case "plan_update":
       case "plan_removed":
-        // Declined (acp-compliance.md § 9): gated behind a client capability
+        // Declined: gated behind a client capability
         // patchbay does not declare, so a conforming agent never sends them;
         // the whole-replace `plan` model already covers the feature.
         break;
       default:
         // Compile-time exhaustive over the SDK's SessionUpdate union: a new
         // kind on an SDK upgrade fails typecheck here and demands a verdict
-        // in acp-compliance.md — consumed or declined, never silent. Runtime
+        // — consumed or declined, never silent. Runtime
         // stays a no-op for kinds newer than the SDK, the spec's own rule
-        // for unrecognized notifications (§ Extensibility).
+        // for unrecognized notifications.
         assertUnconsumed(update);
     }
   }

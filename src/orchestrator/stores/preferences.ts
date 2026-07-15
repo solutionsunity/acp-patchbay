@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Preferences (Settings § Preferences): machine-scoped behavior defaults —
-// done-sound, fresh-session knob source, idle-release timer. globalState by
-// the placement contract: non-sensitive, developer-env, never repo-committed
-// (no-secret-exposure.md keeps secrets out of here by construction — nothing
-// in this shape is one). Stored as one partial record merged over defaults
+// Preferences (Settings, Preferences section): machine-scoped behavior
+// defaults — done-sound, fresh-session knob source, idle-release timer.
+// globalState by the placement contract: non-sensitive, developer-env, never
+// repo-committed (secrets stay out of here by construction — nothing in this
+// shape is one). Stored as one partial record merged over defaults
 // on every read, so a version that adds a preference never invalidates an
 // older stored object and an absent key is honestly "the default".
 import { DEFAULT_PREFERENCES, type PreferencesView } from "../../shared/protocol";
@@ -29,7 +29,7 @@ export class PreferencesStore {
     return next;
   }
 
-  /** "Disconnect & erase all data" (plan.md P18). */
+  /** "Disconnect & erase all data". */
   async wipe(): Promise<void> {
     await this.kv.update(KEY, undefined);
   }

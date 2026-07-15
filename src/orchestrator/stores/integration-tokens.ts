@@ -2,10 +2,9 @@
 // Copyright 2026 Solutions Unity
 
 // Integration credentials: the one place they're allowed to live
-// (architecture.md § State — "Secrets... never settings, never state stores,
-// never logs"; no-secret-exposure.md). Structural subset of
-// vscode.SecretStorage so this store, like the others, is vscode-free and
-// fakeable in tests.
+// (secrets never go in settings, never in state stores, never in logs).
+// Structural subset of vscode.SecretStorage so this store, like the others,
+// is vscode-free and fakeable in tests.
 export interface SecretsLike {
   get(key: string): Thenable<string | undefined>;
   store(key: string, value: string): Thenable<void>;
@@ -33,8 +32,8 @@ export interface StoredToken {
   /** ISO — absent means the provider reported no expiry. */
   expiresAt?: string;
   /** OAuth refresh context, captured at connect time (the endpoints/client
-   * were *discovered*, per docs/reference-mcp-oauth.md — nothing static to
-   * re-derive them from later). Present only for OAuth-connected
+   * were *discovered* — nothing static to re-derive them from later).
+   * Present only for OAuth-connected
    * integrations; static-key tokens never expire on our side. */
   tokenEndpoint?: string;
   clientId?: string;

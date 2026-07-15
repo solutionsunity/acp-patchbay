@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// § Agents (ui.md § Settings): stat tiles + Add Agent, one card per known
+// Agents: stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.
 import { useState, type CSSProperties, type ReactNode } from "react";
@@ -58,7 +58,7 @@ function displayCommandLine(command: string, args: readonly string[]): string {
 }
 
 /** ✎ Edit: launch line, process policy, env. Parsing the line is the
- * orchestrator's job (render-only-webview) — it's sent raw, args empty.
+ * orchestrator's job — it's sent raw, args empty.
  * Env is write-only: values live in SecretStorage and never reach this
  * webview, so existing vars render as bare `KEY=` lines — leave one blank
  * to keep its stored value, fill it to overwrite, delete the line to remove
@@ -161,7 +161,7 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
   const existing = state.agentConfigs.find((c) => c.id === agent.id);
   if (existing !== undefined) return existing;
   // The raw line rides in `command` with args empty — the orchestrator
-  // parses on save (render-only-webview: no parsing here).
+  // parses on save — no parsing in the webview.
   return {
     id: agent.id,
     name: agent.name,
@@ -198,8 +198,8 @@ function AgentIcon({ icon }: { icon: string | null | undefined }) {
   return <span aria-hidden className="inline-block h-4 w-4 shrink-0" style={mask} />;
 }
 
-/** Searchable registry picker (ui.md § Settings Agents "Add Agent" — full
- * scenario: type to filter, click to pick, clear to search again). Fully
+/** Searchable registry picker — the "Add Agent" full scenario: type to
+ * filter, click to pick, clear to search again. Fully
  * controlled — the only local state is whether the dropdown is open, so a
  * parent reset (after Add, or on mode toggle) can't leave it out of sync. */
 function RegistryCombobox(props: {
@@ -283,7 +283,7 @@ function RegistryCombobox(props: {
   );
 }
 
-/** Registry search or custom command (ui.md § Settings Agents) — the one way
+/** Registry search or custom command — the one way
  * to add an agent, which is also how it's activated: persisted, connected,
  * and (by default) Verified in one action. Already-configured registry ids
  * are excluded here — their own card below is the way back to them. The two
@@ -465,7 +465,7 @@ function LoginControl(props: {
 
 /** Stat tiles + whatever rides the same row (the Add Agent tile-button) —
  * one container so they share sizing and rhythm. The first surface converted
- * to shadcn primitives (P13a — the first converted surface). */
+ * to shadcn primitives. */
 const TILE = "min-w-24 flex-none rounded-lg px-4 py-2.5 text-center";
 
 export function StatTiles({ state, children }: { state: SettingsState; children?: ReactNode }) {
@@ -662,15 +662,14 @@ export function AgentsSection(props: {
         const knobs = state.agentKnobs[id];
         const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
         // No summary at all = the orchestrator never saw this config — the
-        // honest unknown is "untested", never a claimed "stopped" (P16).
+        // honest unknown is "untested", never a claimed "stopped".
         const status = a?.status ?? "untested";
         const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
         // Editing forces the body open — the form lives there.
         const detailsOpen = openDetails[id] === true || editing === id;
         // The action cluster's one derivation (card-controls.ts) — every
         // show/disabled rule lives there, unit-tested; the JSX below reads
-        // `controls.x` and nothing else (ui-rendering-strategy.md § Control
-        // logic).
+        // `controls.x` and nothing else.
         const controls = agentCardControls({
           agent: a,
           config,
@@ -728,8 +727,7 @@ export function AgentsSection(props: {
                 <LoginControl agentId={id} methods={state.authMethods[id] ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
               )}
               {/* Log out is *disabled* — never unmounted — while in flight,
-                  so the open AlertDialog is never yanked from the tree
-                  (ui-rendering-strategy.md § Overlay surfaces). */}
+                  so the open AlertDialog is never yanked from the tree. */}
               {controls.logout.show && (
                 <ConfirmButton
                   label="Log out"

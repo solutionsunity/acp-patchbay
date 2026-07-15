@@ -32,7 +32,7 @@ export class LastActiveSessionStore {
     if (this.kv.get<string>(KEY) === sessionId) await this.kv.update(KEY, undefined);
   }
 
-  /** "Disconnect & erase all data" (plan.md P18). */
+  /** "Disconnect & erase all data". */
   async wipe(): Promise<void> {
     await this.kv.update(KEY, undefined);
   }

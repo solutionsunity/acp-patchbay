@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Agent View shell — the single blend: agents + sessions + chat (features §1).
-// Vertical order per ui.md: header → session row → chat → read-out strip → composer;
+// Agent View shell — the single blend: agents + sessions + chat.
+// Vertical order: header → session row → chat → read-out strip → composer;
 // drawers overlay from the top. Render-only: the shell owns only local UI
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
@@ -75,7 +75,7 @@ export function App({
     setDrawer(null);
     if (msg !== undefined) showToast(msg);
   };
-  // One intent, one click (P17): a single configured agent starts directly
+  // One intent, one click: a single configured agent starts directly
   // — the single-agent case never pays the multi-agent picker tax; zero
   // routes to Settings (where adding lives); only real choice opens the picker.
   const newChat = () => {

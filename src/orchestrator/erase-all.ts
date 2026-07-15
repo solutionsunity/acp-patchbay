@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// "Disconnect & erase all data" (plan.md P18): the explicit, user-triggered
+// "Disconnect & erase all data": the explicit, user-triggered
 // wipe — never automatic on any lifecycle event, because the platform gives
 // no safe way to do it for the user: deactivate fires identically for
 // reload, disable, and uninstall (vscode#45474), secrets survive uninstall

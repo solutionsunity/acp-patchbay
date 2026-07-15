@@ -11,7 +11,7 @@
 export interface IpcRequest {
   id: number;
   /** Disambiguates which session an editor-state/elicitation call belongs
-   * to; for the integration-bridge methods (P9) there is no session, so the
+   * to; for the integration-bridge methods there is no session, so the
    * bridge passes its integrationId here instead — same field, same "which
    * caller" role, just a different kind of caller. */
   sessionId: string;

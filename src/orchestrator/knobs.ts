@@ -6,8 +6,7 @@
 // the only module that reads how the wire's knob surfaces relate; no other
 // file (and no webview) may distinguish them.
 //
-// The spec rule this encodes (ACP v1 § Session Config Options, "Relationship
-// to Session Modes"): config options supersede modes — a client that
+// The spec rule this encodes (ACP v1): config options supersede modes — a client that
 // supports them "SHOULD use configOptions exclusively and ignore modes",
 // and modes will be removed from the protocol (v2 already drops
 // session/set_mode). So: any non-empty configOptions wins the whole
@@ -18,8 +17,7 @@
 // a correctness dependency ("categories… MUST NOT be required for
 // correctness") and was fitted to one bridge's observed shape.
 //
-// A THIRD source: wire-extension modules (orchestrator/extensions/ —
-// architecture.md § Protocol extensions, "Wire-extension modules") may
+// A THIRD source: wire-extension modules (orchestrator/extensions/) may
 // synthesize additional knobs from out-of-spec surfaces. knobs.ts stays
 // spec-pure: it accepts opaque `KnobExtra`s — a knob view plus a
 // self-executing set route — applies one generic rule (an extra whose id a
@@ -55,7 +53,7 @@ export interface KnobExecuteDeps {
 }
 
 /** One extension-owned knob: the view to offer plus its self-executing set
- * route (spec-pure-core: core never learns the wire method or policy — the
+ * route (core never learns the wire method or policy — the
  * executor returns the next display state, or null to wait for the agent's
  * own notification). Produced only by orchestrator/extensions/ modules. */
 export interface KnobExtra {
@@ -67,7 +65,7 @@ export interface KnobExtra {
  * drives mode/config sets; `extras` holds the extension-owned knobs that
  * were accepted into `knobs` (routing state for routeKnobSet). Both are
  * orchestrator-side only, deliberately not part of the webview view
- * (render-only-webview: the UI renders knobs, it never knows which
+ * (the UI renders knobs, it never knows which
  * protocol surface they came from). */
 export interface NormalizedKnobs {
   surface: "config" | "modes" | "none";

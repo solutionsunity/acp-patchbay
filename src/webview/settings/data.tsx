@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// § Data: what patchbay stores about you, read live from the stores on
-// every mount (architecture.md § State rendered as reality, never a cached
-// claim) — and, at the bottom of exactly that inventory, the way out.
+// Data: what patchbay stores about you, read live from the stores on
+// every mount — and, at the bottom of exactly that inventory, the way out.
 import { useEffect } from "react";
 import type { SettingsState } from "../../shared/protocol";
 import { ConfirmButton } from "./controls";
@@ -15,7 +14,7 @@ export function DataSection(props: {
   onEraseAll(): void;
 }) {
   const { state } = props;
-  // Rehydrate-on-mount (render-only-webview): the inventory is recomputed
+  // Rehydrate-on-mount: the inventory is recomputed
   // from the stores each time this page opens — never carried over.
   useEffect(() => props.onRefresh(), []);
 
@@ -58,7 +57,7 @@ export function DataSection(props: {
         </div>
       </div>
 
-      {/* P18: the platform gives no uninstall hook (deactivate can't tell
+      {/* The platform gives no uninstall hook (deactivate can't tell
           uninstall from reload) and secrets outlive uninstalling — so a
           clean slate is an explicit act here, never a lifecycle side
           effect. */}

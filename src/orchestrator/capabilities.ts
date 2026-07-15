@@ -59,7 +59,7 @@ export function declaredFromInitialize(
  * What patchbay itself declares to every agent — the single source for both
  * the wire claim (`clientCapabilitiesWire`, sent at initialize) and the
  * matrix's client-side cells (`matrixFromDeclared`), so the two can never
- * drift. `elicitation` stays false until P7 wires the adapter — declaring it
+ * drift. `elicitation` stays false until the adapter is wired — declaring it
  * earlier would be the exact lie bet #2 exists to prevent.
  */
 const CLIENT_DECLARES: {
@@ -75,7 +75,7 @@ const CLIENT_DECLARES: {
   // options end to end — knobs.ts normalizes select AND boolean types — so
   // not declaring was the honesty gap in reverse: an agent honoring
   // "omitted = unsupported" would have withheld the whole knob surface. No
-  // matrix row: the row list is hand-picked (capability-verification.md),
+  // matrix row: the row list is hand-picked,
   // and this claim's visible proof is the composer knob strip itself.
   sessionConfigOptions: true,
 };
@@ -83,7 +83,7 @@ const CLIENT_DECLARES: {
 /** CLIENT_DECLARES in its wire form. Elicitation is UNSTABLE and
  * object-shaped on the wire — omitted entirely while false (absent is how
  * ACP says "unsupported"); flipping CLIENT_DECLARES.elicitation is the only
- * change P7 needs here. */
+ * change the elicitation adapter needs here. */
 export function clientCapabilitiesWire(): ClientCapabilities {
   const meta = clientMetaWire();
   return {
@@ -106,7 +106,7 @@ function cell(declared: boolean): { declared: boolean; used: boolean } {
 }
 
 /**
- * Builds the full capability matrix (architecture.md's row list) from the
+ * Builds the full capability matrix (the hand-picked row list) from the
  * agent's declared table. Fired fresh on every connect, so every cell starts
  * at used=false — reset-on-reconnect falls out of always replacing the
  * whole matrix, never patching it in place.
@@ -145,7 +145,7 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
 }
 
 // ── used-proof table ─────────────────────────────────────────────────────────
-// Marking a row used is centralized (capability-verification.md): pool.ts
+// Marking a row used is centralized: pool.ts
 // observes wire facts at three chokepoints — an agent RPC resolving, an
 // incoming client request handled, a session/update kind tag arriving — and
 // asks `rowsProvenBy` which rows each fact proves. No row name ever appears
@@ -200,7 +200,7 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   "fs.readTextFile": [{ via: "clientRequest", method: methods.client.fs.readTextFile }],
   "fs.writeTextFile": [{ via: "clientRequest", method: methods.client.fs.writeTextFile }],
   terminal: [{ via: "clientRequest", method: methods.client.terminal.create }],
-  // Fires the moment P7 registers the handler — no table change needed then.
+  // Fires the moment the elicitation handler is registered — no table change needed then.
   elicitation: [{ via: "clientRequest", method: methods.client.elicitation.create }],
   // MCP-side: observable only in the local MCP server's handshake with the
   // agent's own MCP client, not on the ACP wire.

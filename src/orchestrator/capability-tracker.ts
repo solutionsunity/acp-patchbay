@@ -5,7 +5,7 @@
 // vscode-free (like session-manager.ts) so it's unit-testable against the
 // fake agent without a real extension host.
 //
-// architecture.md's verification-cost table draws the line precisely:
+// The verification-cost distinction draws the line precisely:
 // protocol-level checks are free and automatic on connect; behavior-level
 // probes cost a real agent turn and need real handlers to be honest at all.
 // The probe runs on *every* connect — its session/new doubles as the
@@ -20,8 +20,7 @@
 // synthetic probe below and persists whatever pool.ts reports.
 //
 // Used to reset on every reconnect (a side effect of always rebuilding the
-// matrix fresh); it's now version-keyed (capability-verification.md,
-// amended) — a reconnect at the *same* `agentInfo.version` restores what was
+// matrix fresh); it's now version-keyed — a reconnect at the *same* `agentInfo.version` restores what was
 // already proven, and only an actual version change earns a fresh,
 // honestly-unused matrix.
 import { RequestError, type NewSessionResponse } from "@agentclientprotocol/sdk";
@@ -50,10 +49,10 @@ export interface CapabilityTrackerHooks {
    * the tracker persist the whole row set wholesale without holding its
    * own copy of state that could drift from the canonical one. */
   currentMatrix(agentId: string): CapabilityMatrix | undefined;
-  /** Connect-time knob-offering read (architecture.md § Session model:
-   * offerings are read, never stored) — the probe's session/new response
-   * carries the agent's current knob surface. Passed raw (spec-pure-core:
-   * a new surface — spec or extension — must never ripple this signature);
+  /** Connect-time knob-offering read (offerings are read, never stored) —
+   * the probe's session/new response carries the agent's current knob
+   * surface. Passed raw (a new surface — spec or extension — must never
+   * ripple this signature);
    * the receiver normalizes. Follow-up notifications for the probe session
    * route here via `agentForProbeSession`. */
   onOfferings?(agentId: string, response: NewSessionResponse): void;
@@ -116,7 +115,7 @@ export class CapabilityTracker {
       this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
     }
     // Every connect probes: the session/new is the knob-offering read
-    // (offerings are connection state — architecture.md § Session model),
+    // (offerings are connection state),
     // with auth proof falling out of the same free round-trip. Only the
     // fork sub-check keeps a version-keyed skip, inside probe() itself.
     // Exception: a latched agent's probe waits for the first real session
@@ -237,9 +236,9 @@ export class CapabilityTracker {
     }
   }
 
-  /** User-run Verify (features.md § Settings § Agents), also the "Verify
+  /** User-run Verify, also the "Verify
    * after add" default: cost disclosed first. Today that cost is genuinely
-   * zero — behavior-level probes need P6/P7's real handlers before there's
+   * zero — behavior-level probes need real handlers before there's
    * anything honest to exercise, so running them now would spend a real
    * agent turn probing capabilities patchbay itself doesn't implement yet.
    * Re-runs the free checks only. */

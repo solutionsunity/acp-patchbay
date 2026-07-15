@@ -11,9 +11,6 @@
 // draft is removed upstream, so it will never appear in any SDK; vendor
 // migration is the only exit. Retirement = delete this file + its line in
 // extensions/index.ts.
-//
-// Dossier: docs/acp-agents-notes/auggie.md § Model selection rides a
-// removed draft API. Vendor report: auggie-acp-compliance-report.md.
 import { z } from "zod";
 import { withKnobValue, type KnobExtra } from "../knobs";
 

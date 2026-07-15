@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// § MCP Servers: curated and custom are the same mechanism, routed per
-// agent; a shared config never carries its credential (no-secret-exposure).
+// MCP Servers: curated and custom are the same mechanism, routed per
+// agent; a shared config never carries its credential.
 import { useState } from "react";
 import type {
   IntegrationProbeView,
@@ -212,7 +212,7 @@ function firstLine(text: string): string {
 /** One compact catalog row: name · mechanism chips · Docs · `Connect…`
  * expanding the entry's own form inline. The two mechanisms are presented
  * as the alternatives they are — key paste `— or —` OAuth — never an
- * undifferentiated run of inputs (docs/reference-mcp-oauth.md). */
+ * undifferentiated run of inputs. */
 function CatalogRow(props: {
   entry: SettingsState["integrationRegistry"][number];
   flow: SettingsState["connectFlow"][string] | undefined;

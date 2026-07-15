@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Settings shell — left nav + one section at a time (ui.md § Settings).
+// Settings shell — left nav + one section at a time.
 // Render-only: the open section is host-owned state (state.section), so it
 // survives webview disposal and openSettings can deep-link to it; each
 // section module owns its markup and wiring. Empty states are honest, never
@@ -22,7 +22,7 @@ import { PreferencesSection } from "./preferences";
 /** Grouped by what the group *is*, not by theme: "This machine" is what's
  * global to this machine (the wiring — agents, integrations, the matrix
  * observing them — and behavior preferences; globalState/SecretStorage),
- * "Trust" is the one trust surface (prd.md), "This workspace" is what lives
+ * "Trust" is the one trust surface, "This workspace" is what lives
  * in the workspace itself (asset files the agent reads from its own cwd).
  * The nav teaches the placement contract instead of captioning it. */
 const NAV_GROUPS = [

@@ -89,7 +89,7 @@ export class ChannelHost<S, E> {
     this.sendSnapshot();
   }
 
-  /** Native surfaces (status bar, P11) need to react to canonical state
+  /** Native surfaces (status bar) need to react to canonical state
    * without being a webview — independent of the single `view` attachment
    * above, and of the coalesced patch stream. */
   onChange(listener: () => void): () => void {

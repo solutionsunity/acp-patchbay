@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui Command (cmdk) — source-copied (stack.md); Codicons, not Lucide.
+// shadcn/ui Command (cmdk) — source-copied; Codicons, not Lucide.
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
 

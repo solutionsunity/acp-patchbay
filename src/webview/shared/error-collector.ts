@@ -3,7 +3,7 @@
 
 // Webview-side error collector: uncaught errors, unhandled rejections, and
 // CSP violations land in one bounded buffer. The buffer is ephemeral render
-// state (render-only-webview: it describes THIS webview instance and dies
+// state (it describes THIS webview instance and dies
 // with it); every entry is also forwarded to the orchestrator, whose Output
 // channel is the durable record. The ErrorsChip renders the count + copy.
 export interface CollectedError {

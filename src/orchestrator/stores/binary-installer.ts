@@ -11,8 +11,8 @@
 // authenticity, the same trust boundary a manual browser download would
 // have. Callers must gate the first install of each (agentId, version)
 // behind an explicit, visible user confirmation — never silent — to
-// compensate for the spec's own gap (docs/architecture.md § Agent capability
-// matrix's "never silently trusted" ethos, extended to installs).
+// compensate for the spec's own gap (the "never silently trusted" ethos,
+// extended to installs).
 import { spawn } from "node:child_process";
 import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";

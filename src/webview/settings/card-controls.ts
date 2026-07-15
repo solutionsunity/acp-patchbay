@@ -2,8 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // The agent card's action-cluster view-model — the ONE derivation between
-// SettingsState slices and the card's controls (ui-rendering-strategy.md
-// § Control logic). Every control whose rules read domain state has its
+// SettingsState slices and the card's controls. Every control whose rules read domain state has its
 // entry here; the JSX reads `controls.x` and stays dumb. Cross-control
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
@@ -71,7 +70,7 @@ export function updateAvailable(
 export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   const { agent, config, matrix, authMethods, registryAgents, verifying } = inputs;
   // No summary at all = the orchestrator never saw this config — the honest
-  // unknown is "untested", never a claimed "stopped" (P16).
+  // unknown is "untested", never a claimed "stopped".
   const status = agent?.status ?? "untested";
   const running = status === "running";
   const needsAuth = agent?.needsAuth === true;
@@ -102,7 +101,7 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // NOT call it" otherwise. Hidden while needsAuth (nothing to log out
     // of — and never both login and logout); *disabled*, never unmounted,
     // while in flight, so the open AlertDialog is never yanked from the
-    // tree (Radix rule, ui-rendering-strategy.md § Overlay surfaces).
+    // tree (Radix rule).
     logout: {
       show: running && !needsAuth && matrix?.["auth.logout"]?.declared === true,
       disabled: verifying,

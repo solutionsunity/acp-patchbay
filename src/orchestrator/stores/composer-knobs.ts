@@ -38,7 +38,7 @@ export class ComposerKnobsStore {
     return Object.keys(this.kv.get<ComposerKnobsRecord>(KEY) ?? {}).length;
   }
 
-  /** "Disconnect & erase all data" (plan.md P18). */
+  /** "Disconnect & erase all data". */
   async wipe(): Promise<void> {
     await this.kv.update(KEY, undefined);
   }

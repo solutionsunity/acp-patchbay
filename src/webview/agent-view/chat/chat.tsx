@@ -2,11 +2,10 @@
 // Copyright 2026 Solutions Unity
 
 // The transcript: renders the view-model's items in arrival order (the
-// ordering principle, ui-rendering-strategy § Summary), the per-turn
+// ordering principle), the per-turn
 // metadata line, and the live elapsed ticker. Long transcripts ride the
-// three-mechanism scale strategy (ui-rendering-strategy § Transcript
-// scale): windowed mount, content-visibility containment (style.css),
-// and memoized rows.
+// three-mechanism scale strategy: windowed mount, content-visibility
+// containment (style.css), and memoized rows.
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentViewState, ChatBlock, SessionSummary, TurnUsage } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -18,8 +17,7 @@ import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards
 import { StatePage } from "./state-page";
 import { Button } from "@/components/ui/button";
 
-/** THE turn line (ui-rendering-strategy § Per-turn summary / completion
- * metadata) — one component, live and settled: while the turn runs it is
+/** THE turn line — one component, live and settled: while the turn runs it is
  * the ticker (accent spinner + climbing elapsed + counts as they happen);
  * on turn end it settles in place into the metadata line, same shape, same
  * order. Time ALWAYS leads when known — it is the one always-present part
@@ -155,8 +153,8 @@ const MemoToolRun = memo(
     a.calls.every((c, i) => c === b.calls[i]),
 );
 
-/** Windowed mount (ui-rendering-strategy § Windowed mount): rows are the
- * unit — a proxy for the doc's k·H pixels; containment makes generous
+/** Windowed mount: rows are the
+ * unit — a proxy for k·H pixels; containment makes generous
  * over-mounting cheap, so the counts err large. ~60 rows ≈ 3 viewport
  * pages; one ~page per extension keeps each prepend under the ~100 ms
  * perceptually-instant budget. */
@@ -177,7 +175,7 @@ export function Chat(props: {
    * both keeps them in lockstep by construction. */
   blocks: readonly ChatBlock[];
   derived: TranscriptView;
-  /** The shell's smart "+" (P17): zero agents → Settings, one → straight
+  /** The shell's smart "+": zero agents → Settings, one → straight
    * to it, several → the picker. */
   onNewChat(): void;
 }) {
@@ -197,7 +195,7 @@ export function Chat(props: {
    * Null when parked at the very top (a jump-to-start teleport): staying
    * at 0 lets the fill continue chunk by chunk instead of bouncing. */
   const pendingAnchor = useRef<number | null>(null);
-  /** Scroll-follow contract (ui-rendering-strategy § Scroll-follow):
+  /** Scroll-follow contract:
    * auto-follow only while pinned to the bottom — scrollback is never
    * yanked. Unpin is intent-based (upward wheel, touch drag): a position
    * threshold alone loses the race under a fast stream — the first few
@@ -274,8 +272,8 @@ export function Chat(props: {
   }, [body, stick]);
 
   // The top sentinel extends the window before its edge is ever seen:
-  // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the doc's
-  // safety condition). A callback ref because the sentinel exists only in
+  // rootMargin 75% of the viewport ≥ v·t with ~2× headroom (the safety
+  // condition). A callback ref because the sentinel exists only in
   // the transcript render, not the state pages.
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -291,7 +289,7 @@ export function Chat(props: {
     return () => io.disconnect();
   }, [sentinel, grow]);
 
-  // The in-pane connect state (P17): a chat being started takes over the
+  // The in-pane connect state: a chat being started takes over the
   // pane — "Connecting…" resolving into the session, or the failure with
   // its specific reason and a Retry, never a bounce to the empty state.
   // `?? null` guards snapshots minted before this field existed (persisted

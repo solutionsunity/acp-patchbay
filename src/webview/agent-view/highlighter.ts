@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Streamdown's code-highlighter plugin, backed by Shiki's JavaScript regex
-// engine — the CSP decision P13a deferred, made here: the JS engine needs no
+// engine — the CSP decision deferred earlier, made here: the JS engine needs no
 // `wasm-unsafe-eval`, so the webview CSP stays exactly as authored
 // (webview-host.ts). The grammar set is curated, not bundled-everything:
 // each grammar is real bundle weight, and an unknown language degrades

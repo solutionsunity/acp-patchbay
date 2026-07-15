@@ -7,8 +7,7 @@
 // excerpt card; on a spec ACP wire it is raw text inside
 // `agent_message_chunk`, and any faithful markdown renderer shows the tag
 // literally. Wire-verified 2026-07-14: authored by the model, not by any
-// tool — it appears with the context engine attached and detached alike
-// (dossier § repro).
+// tool — it appears with the context engine attached and detached alike.
 //
 // The rewrite HONORS the directive instead of stripping it: the wrapper is
 // dropped and its `path` (+ EXCERPT mode) is hoisted into the wrapped
@@ -31,8 +30,7 @@
 // extensions/index.ts; the webview's path=/excerpt fence attributes are
 // generic and stay.
 //
-// Dossier: docs/acp-agents-notes/auggie.md § Proprietary render directive
-// in message text. Vendor report: pending (ride the TKT-66153 channel).
+// Vendor report: pending (ride the TKT-66153 channel).
 import type { ProseRewriter } from "./index";
 
 const OPEN_NAME = "<augment_code_snippet";

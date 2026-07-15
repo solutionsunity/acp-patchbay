@@ -39,7 +39,7 @@ export class IpcClient {
       socket.on("error", () => {});
       // A dying socket must not leave callers hanging forever: every
       // in-flight request rejects, and the client resets so a later
-      // request may retry a fresh connect (plan.md P15a).
+      // request may retry a fresh connect.
       socket.on("close", () => {
         if (this.socket === socket) {
           this.socket = null;

@@ -98,7 +98,7 @@ const TOOL_ICON: Record<ToolCallBlock["toolKind"], string> = {
 };
 
 /** The one semantic color axis on tool-call icons: did this call change
- * reality or observe it? (theme.css § tool-call weight accents — one cold
+ * reality or observe it? (theme.css tool-call weight accents — one cold
  * info-blue hue at two intensity steps; the axis is ordinal, so it's a
  * ramp, not a hue pair.) Weight, not verdict: the status tag owns
  * ok/warn/err. Observing kinds stay chrome-dim — the noise floor. Never a

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// shadcn/ui RadioGroup — source-copied (stack.md); Codicons, not Lucide.
+// shadcn/ui RadioGroup — source-copied; Codicons, not Lucide.
 import * as React from "react";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 

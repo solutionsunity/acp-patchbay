@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The read-out strip between chat and composer (ui.md § Read-out strip):
+// The read-out strip between chat and composer:
 // live-turn read-outs at the eye's resting point, deliberately OUTSIDE the
 // composer — its binding rule ("above the input = what the agent will see")
 // stays intact because this strip is never context, only read-out. Plan chip

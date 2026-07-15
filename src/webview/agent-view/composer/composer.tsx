@@ -66,7 +66,7 @@ export function Composer(props: {
   const [adderOpen, setAdderOpen] = useState(false);
   // Drop-target affordance only — a state-styled region, not an overlay
   // (no z-escape, no dismissal, no placement, no focus: none of the four
-  // problems overlay-surfaces exists for).
+  // problems a real overlay exists to solve).
   const [dragOver, setDragOver] = useState(false);
   // The resize surface is the whole composer block (context row → send row),
   // dragged from its top edge — the input itself never grows a resizer.
@@ -125,7 +125,7 @@ export function Composer(props: {
       .filter((f): f is File => f !== null);
     if (files.length > 0) return ingest(files);
     // No bytes → a URI drop (VS Code explorer / editor tabs); the
-    // orchestrator resolves paths host-side (lane 1, render-only-webview).
+    // orchestrator resolves paths host-side (lane 1).
     const uris = extractUris(e.dataTransfer);
     if (uris.length > 0) send({ kind: "addPathContext", sessionId, uris });
   };
@@ -306,7 +306,7 @@ export function Composer(props: {
           </ComposerStats>
         )}
         {/* theme-token primary (brand fills superseded — theme.css
-            § identity palette); while a turn is live it becomes Stop,
+            identity palette); while a turn is live it becomes Stop,
             which is destructive. */}
         <Button
           variant={live ? "destructive" : "default"}

@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// MCP-spec OAuth 2.1 client (docs/reference-mcp-oauth.md § mechanism 2):
+// MCP-spec OAuth 2.1 client:
 // discover the protected resource's metadata (RFC 9728), discover its
 // authorization server's metadata (RFC 8414 / OIDC), register a client
 // dynamically (RFC 7591), then Authorization Code + PKCE (RFC 7636). No
 // pre-provisioned credentials anywhere — a compliant server needs only its
 // URL. vscode-free: the browser/redirect step is injected via OAuthUserAgent
 // (the orchestrator implements it with registerUriHandler + asExternalUri —
-// never a raw loopback server, pitfall §1), so the whole flow is testable
+// never a raw loopback server), so the whole flow is testable
 // against a fake OAuth provider, same fixture philosophy as the fake agent.
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 
-/** DCR rejected — pitfall §2: some vendors allowlist client registration
+/** DCR rejected: some vendors allowlist client registration
  * (Figma 403s unknown client_name with no explanation). This must surface
  * as an immediate, labeled failure, never a retry or a hang. */
 export class DcrRejectedError extends Error {
@@ -85,7 +85,7 @@ const tokenResponseSchema = z.object({
   expires_in: z.number().optional(),
 });
 
-// ── discovery (RFC 9728 → RFC 8414; order per pitfall §5) ────────────────────
+// ── discovery (RFC 9728 → RFC 8414, order matters) ───────────────────────────
 
 async function fetchJson(url: string, fetchFn: typeof fetch): Promise<unknown | null> {
   try {
