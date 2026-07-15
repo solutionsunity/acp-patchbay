@@ -23,29 +23,13 @@ every time you switch agents.
 
 ---
 
-## The agent you pick shouldn't decide the tools you get
+## Why
 
-The AI coding space fragmented fast. Every vendor ships its own VS Code extension,
-and they're uneven — one has a great chat but no session history, another has
-history but a clumsy permission flow, a third has no extension at all and lives
-only in a terminal. Switch agents and you switch muscle memory, lose features, and
-relearn the quirks.
-
-That's backwards. The **agent** should be the variable. The **experience** should
-be the constant.
-
-## ACP makes the agent a plug-in, not a lock-in
-
-The **Agent Client Protocol** standardizes how an editor and an agent talk —
-sessions, prompts, tool calls, permissions. Patchbay speaks it fluently, so any
-ACP-compatible agent drops into the *same* client: one chat surface, one
-permission model, one place for sessions and history. The agent becomes something
-you swap, not something you're married to.
-
-And because the bar is "speaks ACP," not "shipped an extension," agents that only
-ever existed as a CLI are first-class citizens here. Patchbay bets on the protocol,
-not on any single vendor's roadmap — a vendor's own extension can improve or be
-retired, and either way your workflow stays put.
+The agent should be the variable, your experience the constant. The **Agent Client
+Protocol** makes any compatible agent a plug-in — a CLI-only agent is first-class,
+and a vendor's extension improving or being retired never moves your workflow.
+Patchbay is the one client that speaks it for all of them: one chat, one permission
+model, one session store. [The full story →](https://solutionsunity.com/products/vscode-acp-patchbay)
 
 ## What Patchbay adds
 
@@ -94,19 +78,12 @@ rules, and agent / session / rules-skills-commands management live.
 
 ## Uninstalling cleanly
 
-VS Code gives extensions no uninstall hook, and what an extension stores does not
-reliably vanish with it — secrets in particular are known to survive uninstall. So
-a clean slate is an explicit act, deliberately never automatic:
-
-**Settings → Permissions → "Disconnect & erase all data"** stops every agent and
-deletes everything patchbay stored on this machine — agent and MCP-server configs,
-every credential and env value, the capability cache, permission rules, and the
-decision audit. (Sessions themselves live in each agent's own storage — patchbay
-persists no session records.) Run it *before* uninstalling.
-
-Two honest limits: it reaches only the current window's workspace records (reopen
-and erase in other workspaces too if you used patchbay there), and it deletes by
-the current config lists, which is why it must run while those configs still exist.
+VS Code has no uninstall hook, and secrets can survive uninstall — so a clean
+slate is an explicit act: **Settings → Permissions → "Disconnect & erase all
+data"** stops every agent and deletes everything patchbay stored on this machine
+(configs, credentials, caches, rules, the audit). Run it *before* uninstalling. It
+covers the current window's workspace records and deletes by the current config
+lists — so run it while those configs still exist.
 
 ## License
 
