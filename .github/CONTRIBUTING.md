@@ -5,7 +5,7 @@ Thanks for your interest in acp-patchbay. Contributions are welcome.
 ## Ground rules
 
 - **License — inbound = outbound.** By contributing you agree your contribution
-  is licensed under the project's [Apache License 2.0](LICENSE). You keep
+  is licensed under the project's [Apache License 2.0](../LICENSE). You keep
   copyright on your work; there is no copyright assignment.
 - **Developer Certificate of Origin.** Every commit must be signed off,
   certifying you have the right to submit it under the project license (see
@@ -32,7 +32,7 @@ host can be downloaded before you rely on it.
   (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`) — the history reads as a
   changelog.
 - The architecture is documented in
-  [docs/architecture.md](docs/architecture.md). A PR that changes behavior
+  [the architecture doc](../docs/architecture.md). A PR that changes behavior
   should keep the docs honest.
 
 ## Reporting
