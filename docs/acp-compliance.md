@@ -30,7 +30,7 @@ Anchors are `file.ts:symbol`, not line numbers — this codebase moves.
 |---|---|---|
 | JSON-RPC 2.0 over stdio, ndjson framing | ✅ | `pool.ts` spawns the agent subprocess, line-assembles both directions before handing frames to the SDK. |
 | `$/cancel_request` (protocol-level request cancellation) | ✅ | Handled inside the SDK's jsonrpc layer (`jsonrpc.js`: `CANCEL_REQUEST_METHOD`, incoming-side dispatch — verified by reading, 2026-07-12); patchbay neither needs nor adds code. |
-| HTTP / SSE / WebSocket transports (present in the SDK) | ⛔ | v1 scope is local subprocess agents — the reference baseline (vscode-acp) and every roster agent are stdio. The SDK already carries the transports, so the extension point is visible and costs nothing to leave unfilled. Adopt when a real remote-agent need appears, not before. |
+| HTTP / SSE / WebSocket transports (present in the SDK) | ⛔ | the current release's scope is local subprocess agents — the reference baseline (vscode-acp) and every agent in the registry are stdio. The SDK already carries the transports, so the extension point is visible and costs nothing to leave unfilled. Adopt when a real remote-agent need appears, not before. |
 
 ## 2. Initialization
 
@@ -242,9 +242,9 @@ always gated on declared (+ used where it gates UI), never silently.
 | `session/close` | stable | **Adopted** (§5). |
 | `session.configOptions` client capability | stable | **Declared** (§2, §16). |
 | `session_info_update`, `usage_update` | stable | **Adopted** — purely additive notifications with visible value. |
-| Elicitation (session-scoped, form mode) | UNSTABLE; MultiSelect types reshaped in 1.2.1 | **Planned (P7)** — declared `false` until the adapter is real; flipping `CLIENT_DECLARES.elicitation` is the only wire change needed; P7 adopts whatever shape is current when it lands. |
+| Elicitation (session-scoped, form mode) | UNSTABLE; MultiSelect types reshaped in 1.2.1 | **Planned** — declared `false` until the adapter is real; flipping `CLIENT_DECLARES.elicitation` is the only wire change needed; adopts whatever shape is current when it lands. |
 | `plan_update` / `plan_removed` | UNSTABLE | **Declined** (§9). |
-| Providers config (`ProviderId`), NES (`NesSuggestionId`), position encoding | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (docs/acp-agents-notes/auggie.md). |
+| Providers config (`ProviderId`), NES (`NesSuggestionId`), position encoding | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (the Auggie dossier). |
 
 ## Open gaps
 
