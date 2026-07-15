@@ -3,7 +3,7 @@
   "displayName": "ACP Patchbay",
   "description": "Any ACP agent. Every integration it can accept. Shown exactly as it is.",
   "version": "0.82.5",
-  "publisher": "solutionsunity",
+  "publisher": "SolutionsUnity",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
