@@ -12,8 +12,11 @@ the doc — it is not struck through and kept.
 **Code comments never point here.** Comments explain code; docs explain design.
 A source comment naming a doc (or a doc-internal id) is cross-reference debt — it
 rots the moment the doc moves or a section is renamed. Navigation runs one way:
-docs may name code (a stable anchor); code never names docs. You find a document
-through this map, not through a breadcrumb in the source.
+code never names docs. A doc *may* name code — a file or symbol is a stable
+anchor — but does so rarely, and mostly only in the "how" doc (architecture.md),
+where a mechanism genuinely needs the anchor; a "what" doc (prd, features) names
+no code. You find a document through this map, not through a breadcrumb in the
+source.
 
 ## Map
 
