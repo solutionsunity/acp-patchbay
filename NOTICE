@@ -1,0 +1,19 @@
+ACP Patchbay
+Copyright 2026 Solutions Unity
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+
+This product's design was informed by, and adapts patterns from, the following
+work. No verbatim source is included; attribution is given as a courtesy and to
+record heritage:
+
+  vscode-acp (https://github.com/formulahendry/vscode-acp)
+  Copyright (c) Jun Han (formulahendry)
+  Licensed under the MIT License.
+
+  Specifically: the webview CSP + nonce approach and the ACP connection-handling
+  approach were checked against vscode-acp and re-implemented here on the ACP
+  SDK 1.x client API. See src/orchestrator/webview-host.ts and
+  src/orchestrator/pool.ts for the in-source acknowledgements.
