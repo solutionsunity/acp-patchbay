@@ -1,8 +1,8 @@
 # acp-patchbay — Architecture
 
-How the product surface becomes a VS Code extension. Inputs: [prd.md](prd.md) (why)
-and [features.md](features.md) (what); on any conflict, they win. This document
-decides mechanisms and records the reasoning. Stack is fixed by rule: TypeScript
+How the product surface becomes a VS Code extension. Inputs: [the PRD](prd.md)
+(why) and [the Features doc](features.md) (what); on any conflict, they win. This
+document decides mechanisms and records the reasoning. Stack is fixed by rule: TypeScript
 for all extension-host code, esbuild, npm.
 
 ---
@@ -14,18 +14,16 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Orchestrator** — the Node process in the extension host. Single source of truth
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
-- **Session index** — patchbay's registry of session IDs, titles, timestamps, agent.
-  Exists because ACP has no session enumeration.
+- **Known sessions** — patchbay's in-memory mirror of the agent's own
+  `session/list` (ids, titles, timestamps, agent), repopulated every connect.
+  Patchbay persists no session records; there is no durable index.
 - **Decision audit** — append-only record of events that happened *in patchbay*:
   permissions granted, tools approved, routing chosen.
 - **Render cache** — disposable render state, rebuilt wholesale from `session/load`
   replay. Never merged, never reconciled.
 - **Declared / used** — the two capability states: claimed at `initialize` vs.
   observed firing on the wire.
-- **Brokered** — routed through the permission broker. *(The derived fidelity
-  label — fully/partially brokered/acts outside — is removed, 2026-07-12: it
-  aggregated three data-plane rows into a control-plane trust verdict the rows
-  never supported; see § Permission broker.)*
+- **Brokered** — routed through the permission broker.
 - **Integration** — the *record*: a configured MCP-server connection (curated or
   custom) with its credential, env, routing, and active state. The UI calls the
   surface "MCP Servers" (that's what they are); the internal type keeps the name
@@ -36,8 +34,8 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   curated entry reverts to the catalog). Nothing is stored until it can work —
   a cancelled OAuth consent adds nothing.
 - **Branch** — the user-level concept: continue an alternate path from a session.
-  Out of v1 (§ Branching); "fork" only ever names the protocol method
-  `session/fork`, which remains a capability-matrix row.
+  Out of the current release (§ Branching); "fork" only ever names the protocol
+  method `session/fork`, which remains a capability-matrix row.
 - **Routing** — the user's per-agent selection of which integrations that agent
   receives.
 
@@ -83,24 +81,23 @@ webviews are disposed when hidden and must rehydrate losslessly on every mount.
 
 Two webviews and one near-empty native settings page:
 
-1. **Agent View** — the single blend (features §1). Its layout is the owed design
-   deliverable; what architecture fixes now is its information boundary: it knows
+1. **Agent View** — the single blend (the Features doc). Its layout is the owed
+   design deliverable; what architecture fixes now is its information boundary: it knows
    only its current snapshot + patch stream, and can only emit actions. Anything the
    layout wants to show must arrive through that pipe — which is the whole
    rehydration guarantee.
 2. **Settings** — agents and launch config, capability matrix, integrations,
    routing, permission rules. Structured data, low frequency, same render-only
    contract.
-3. **VS Code native settings** — flat scalars only, deliberately near-empty
-   (`defaultAgent` was the one occupant until the per-agent auto-connect flag
-   superseded it). Never credentials: `settings.json` syncs.
+3. **VS Code native settings** — flat scalars only, deliberately near-empty.
+   Never credentials: `settings.json` syncs.
 
 Native surfaces — the status bar item (active session, connection health, usage),
 permission notifications, and command palette entries — are direct orchestrator
 consumers: same state, no webview in the path.
 
-> Agents, sessions, and chat are one surface (features §1). Settings remains its
-> own webview because it is genuinely a different activity, not because panels
+> Agents, sessions, and chat are one surface (the Features doc). Settings remains
+> its own webview because it is genuinely a different activity, not because panels
 > are cheap.
 
 How both webviews are *built* — one shared component layer (shadcn/Radix on
@@ -110,7 +107,7 @@ cards) — is decided in
 [the UI Architecture doc](ui/ui-architecture.md); the split
 above is about state and lifecycle, never visual identity.
 
-### Snapshot + patch protocol — decided
+### Snapshot + patch protocol
 
 One protocol, one shared TypeScript module (`src/shared/protocol.ts`) both sides
 import. No diffing library, no CRDT, no partial hydration:
@@ -138,23 +135,21 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Known sessions | The mirror of the agent's own `session/list` (+ this window's creates): id, title, stamps | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). *(Supersedes the persisted session index and its fallback+overlay role — and the last-known-view files with it: both were caches presented next to truth)* |
+| Known sessions | The mirror of the agent's own `session/list` (+ this window's creates): id, title, stamps | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
 | Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Agent + integration configs | Agents (launch config, defaults), integrations, routing | `globalState` stores | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
 | Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + `globalState` (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
-| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than its at-rest plaintext; decided 2026-07-12, superseding "never ride agent-visible config": that rule assumed the bridge was the only delivery, and capability-conditional transport ended that); on the bridge path the credential still never touches agent-visible config — the bridge IPC-fetches its token per request |
+| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
 
-Agents and integrations are deliberately global-only. (This supersedes the
-earlier `.vscode/acp-patchbay.json` workspace-config design and the
-workspace-scoping that fell out of it.) The MCP incident that shaped the old
-rule — a production-access MCP server silently following a user between repos —
+Agents and integrations are deliberately global-only. The MCP incident behind
+this — a production-access MCP server silently following a user between repos —
 is guarded where the risk actually lives: a shared/pasted config never carries
 its credential; the token reattaches only when its recipient explicitly
-connects. Binding configs to workspaces (workspaces, not repos) may return
-later as an opt-in; the extension point is visible, deliberately unfilled.
+connects. Binding configs to workspaces (workspaces, not repos) may return later
+as an opt-in; the extension point is visible, deliberately unfilled.
 
 ## ACP client pool & process model
 
@@ -169,6 +164,15 @@ later as an opt-in; the extension point is visible, deliberately unfilled.
   attach ladder — `session/load` (replay = truth) > `session/resume` (context
   back, seam notice: no visible history) > honestly not reopenable. Patchbay
   never mints a session and calls it a continuation.
+
+```mermaid
+flowchart TD
+    R(["Reconnect / reopen a session"]) --> Q1{"declared session/load?"}
+    Q1 -- yes --> L["session/load — full replay<br/><small>replay is truth</small>"]
+    Q1 -- no --> Q2{"declared session/resume?"}
+    Q2 -- yes --> RS["session/resume<br/><small>context back; seam notice: no visible history</small>"]
+    Q2 -- no --> N["Honestly not reopenable<br/><small>never mint a session and call it a continuation</small>"]
+```
 - **Session lifecycle**: switching chats never closes anything. The idle
   reaper is the only closer, and only when *all* hold: not new
   (`everPrompted` — a never-prompted session never closes, period; agents
@@ -179,7 +183,7 @@ later as an opt-in; the extension point is visible, deliberately unfilled.
   never load-or-resume: patchbay persists no transcripts, so closing anything
   less than fully-replayable would destroy the only copy. "New session" for
   an agent with a never-prompted session focuses it instead of minting a
-  sibling. *(Supersedes release-on-switch and the emulated continuation.)*
+  sibling.
 - **Launcher health** (launcher-health.ts — one central module, consulted at
   the chokepoints, never inlined): npx/uvx stay the installers — a
   patchbay-owned install store was **considered and rejected** (it fixes
@@ -215,10 +219,7 @@ certified correct). Used is **version-keyed**, not connect-keyed
 (`stores/used-capabilities.ts`): a reconnect at the *same* `agentInfo.version`
 restores what was already proven immediately, from the persisted cache — it does
 not re-run the check. Only an actual version change earns a fresh,
-honestly-unused matrix. (This supersedes an earlier "resets on every reconnect"
-design — used to reset as a side effect of always rebuilding the matrix fresh on
-connect; it's now seeded from the cache first.) UI affordances gate on *used*,
-not declared: real bridges have been observed silently dropping `mcpServers`,
+honestly-unused matrix. UI affordances gate on *used*, not declared: real bridges have been observed silently dropping `mcpServers`,
 collapsing stop reasons, and reporting rejected mode changes as succeeded.
 Four honest states per row: not declared / declared-but-not-used / used /
 **suspect** — declared, not used, and implicated in at least one failed
@@ -256,11 +257,20 @@ Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
 carries every hit, called synchronously and never awaited so it can't block
 the RPC it's reporting on. `capability-tracker.ts` only decides *when* to run
 the synthetic probe below and persists whatever pool.ts reports — it does not
-mark anything itself. (Supersedes the earlier per-call-site emits in pool.ts
-and orchestrator.ts's own fs/terminal marks — same facts, previously written
-at eight scattered points.) session-manager.ts, which decodes `session/update` payloads for
+mark anything itself. session-manager.ts, which decodes `session/update` payloads for
 rendering, marks nothing either; the wire-level fact and the render-level
 interpretation are two different concerns living at two different layers.
+
+```mermaid
+flowchart LR
+    C1["agent RPC settled"] --> PT
+    C2["incoming client request handled"] --> PT
+    C3["session/update kind tag"] --> PT
+    PT["CAPABILITY_PROOFS<br/><small>which wire fact proves which row</small>"] --> H{"rode a success or a failure?"}
+    H -- success --> U["used<br/><small>gates UI affordances</small>"]
+    H -- failure --> S["suspect<br/><small>warning only; gates nothing</small>"]
+    U -. "first success clears" .-> S
+```
 
 Rows (`CapabilityRowId`, protocol.ts) are **hand-picked** against the ACP spec's
 declared capability surface, not derived automatically: `fs.readTextFile` /
@@ -279,7 +289,7 @@ Verification cost splits the triggers:
 | Trigger | Protocol-level (free RPC) | Behavior-level (costs real LLM turns) |
 |---|---|---|
 | Connect/reconnect: `session/new` always (it doubles as the knob-offering read — offerings are connection state and must be read fresh); the `session/fork` half only while still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
-| User-run diagnostics (Settings § Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
+| User-run diagnostics (Settings › Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
 | Background schedule | Fine, cheap | Never |
 
 Connect therefore always implies one throwaway probe session — an accepted
@@ -303,7 +313,7 @@ Synthetic behavior probes run in an **ephemeral session scoped to a temp directo
 
 ## Wire log — the opt-in raw-frame tap
 
-Settings § Audit can stream every ACP JSON-RPC frame (the stdio ndjson wire —
+Settings › Audit can stream every ACP JSON-RPC frame (the stdio ndjson wire —
 there is no gRPC anywhere in this stack) to a dedicated Output channel.
 Decisions, recorded:
 
@@ -345,7 +355,7 @@ observation, used like everything else. Vendor depth that never reaches the
 wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
 commands surface is its channel, no protocol involved.
 
-### Wire-extension modules — decided 2026-07-13
+### Wire-extension modules
 
 The spec-pure-core rule, generalizing meta.ts's discipline from the `_meta`
 site to every out-of-spec adoption (extra response fields, undeclared
@@ -385,22 +395,17 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   and fourth extension start demanding shared machinery, a registry earns
   itself then — extension point visible, not filled prematurely.
 
-Origin: the 2026-07-13 models-field adoption (auggie.md § Model selection
-rides a removed draft API) landed inline first and smeared six touchpoints
-across five core files — the failure this rule exists to prevent. Its
-refactor into `extensions/session-models-field.ts` is the pilot.
-Binding summary: `.dotagent/rules/spec-pure-core.md`.
+The pilot is Auggie's removed-draft models surface (the Auggie dossier),
+refactored into `extensions/session-models-field.ts` — precisely the shape this
+rule exists to keep out of core files.
 
 ## Branching
 
-**Out of v1** — superseded, not deleted: the earlier design (native
-`session/fork` where used, else an emulated `session/new` seeded from the
-parent's transcript, both labeled nodes in a session graph) is retired with the
-emulation machinery: an emulated branch is a cache presented as a
-conversation, and standard-ACP-only is the v1 line. `session/fork` remains a
-capability-matrix row (declared/used honesty about the agent), with no UI
-feature riding it. Native-fork-only branching is the visible extension point
-when a features bullet demands it.
+**Out of the current release.** Standard-ACP-only is the line: an emulated
+branch would be a cache presented as a conversation, so it is declined.
+`session/fork` remains a capability-matrix row (declared/used honesty about the
+agent), with no UI feature riding it. Native-fork-only branching is the visible
+extension point when a features bullet demands it.
 
 ## Session model, mode, effort
 
@@ -422,11 +427,9 @@ else).
   clients "SHOULD use `configOptions` exclusively and ignore `modes`", and v2
   drops `session/set_mode` entirely. So any non-empty `configOptions` wins the
   whole surface; `modes` alone synthesizes a single fallback knob
-  (`MODE_KNOB_ID`). This replaces the old category-keyed dedup — category is
-  UX-only ("MUST NOT be required for correctness"), so suppressing the native
-  mode pill only when a `category:"mode"` option existed was fitted to one
-  bridge's shape and broke the moment an agent omitted the category. Under
-  exclusivity the dup-pill class of bug is unrepresentable.
+  (`MODE_KNOB_ID`). Category is UX-only ("MUST NOT be required for
+  correctness"), so it is never a dedup key; under exclusivity the dup-pill
+  class of bug is unrepresentable.
 - **`current_mode_update` on the config surface is dropped** (visible in the
   wire log, never guessed at): mapping it onto an option would need category as
   a correctness key. The spec's transition duty ("keep both in sync") means a
@@ -451,17 +454,12 @@ keyed honestly. Therefore:
   the capability matrix section — plus the probe session's own late
   `config_option_update`), gone when the connection ends. Settings renders
   offerings only while the agent is connected; stopped agents show stored
-  selections as text. (Supersedes the persisted, version-keyed observed-knobs
-  cache — its lifetime rule was borrowed from used-capabilities, but "this
-  build's fork worked" is a build fact and "these models exist" is not.
-  *Refines* "refreshed by every live session's responses": a live session's
-  option surface is conditioned on that session's current selections — fast
-  mode exists only on some models, effort lists vary per model — so it is
-  session state, not provider inventory; feeding it to Settings made the
-  default-knob rows track whichever session last touched a knob, with
-  last-writer-wins flapping across sessions. The probe session sits at agent
-  defaults, so its surface is exactly what a new session will be offered —
-  the right inventory for a defaults form.)
+  selections as text. (A live session's option surface is conditioned on that
+  session's current selections — fast mode exists only on some models, effort
+  lists vary per model — so it is session state, not provider inventory; using
+  it would make the default-knob rows track whichever session last touched a
+  knob. The probe session sits at agent defaults, so its surface is exactly
+  what a new session will be offered — the right inventory for a defaults form.)
 - **Selections** (per-agent defaults, part of the agent's config record; and
   per-session confirmed state, below) are the only persisted artifacts — bare
   ids/values, never lists.
@@ -481,18 +479,15 @@ user just do something, or did plumbing?*
   one-click reload, connection death, idle release, the roots re-apply — must
   re-seed it after the wire attach: agents reset knob state to their defaults
   on `session/load` (observed: claude-agent-acp rebuilds session config), and
-  the user asked to change nothing. This *refines* the old "the agent's own
-  restored state is the truth — re-imposing a stored copy would force a cache
-  over reality" rule: the reset made "restored state" mean "agent defaults",
-  so honoring it was forcing the agent's cache-miss over the user's reality.
-  What made the roots path an exception is in fact the general rule.
+  the user asked to change nothing — so honoring the agent's load-time reset
+  would force its cache-miss over the user's reality.
 - **Composer knobs** — the user's current working combination *per agent*
   (`stores/composer-knobs.ts`, globalState), written only when the user sets
   a knob and the agent confirms it (config surface: off the set response;
   modes surface: off the agent's own `current_mode_update` — set responses
-  are never trusted). Never written at attach time — recording attach
-  publishes made "last used" mean "last attached", and opening any old
-  session overwrote the record with agent defaults.
+  are never trusted). Never written at attach time — that would make "last
+  used" mean "last attached", overwriting the record with agent defaults
+  whenever an old session opens.
 
 **Seeding at session birth/attach** — one policy (`reseedAfterAttach`):
 
@@ -502,17 +497,20 @@ user just do something, or did plumbing?*
 | Involuntary re-attach (reload, connection death, idle release, roots re-apply) — the window holds the session's combination | The session's own combination, re-seeded over the agent's load-time reset |
 | Deliberate entry from history — nothing in hand (fresh window, or never opened here) | Entry seed, same as fresh. This knowingly overrides an agent that honestly restores per-session knob state on load: entry is deliberate, the user's current combination wins |
 
+```mermaid
+flowchart TD
+    A(["Session attach"]) --> Q{"did the user just act, or did plumbing?"}
+    Q -- "fresh session/new" --> E["Entry seed<br/><small>defaults or composer combo, by knobSource</small>"]
+    Q -- "deliberate entry from history" --> E
+    Q -- "involuntary re-attach (reload, death, idle, roots)" --> W["Re-seed the window's held combination<br/><small>over the agent's load-time reset</small>"]
+```
+
 Per-agent defaults themselves are written only by the Settings save path —
 read-only to the session layer, the seed's fallback, never its record.
 
-*(The emulated-continuation row and the per-session last-confirmed store it
-seeded from are gone with emulation itself; the known-session snapshot above
-is deliberately not its return — in-memory, window-scoped, a mirror of
-agent-confirmed state rather than a persisted claim.)*
-
 ## Local MCP server — editor depth
 
-The differentiator (prd §v1 Scope), shipped complete:
+The differentiator (the PRD's current-release scope), shipped complete:
 
 - **Tools/resources**: active selection, current file, diagnostics (live, not
   stale), open editors. Explicit user gestures ("add selection to context",
@@ -543,7 +541,7 @@ The differentiator (prd §v1 Scope), shipped complete:
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a
   `ResourceLink`. Same data, best form the agent accepts (features §1).
-- **One attachment ingress** (composer/ingress.ts, decided 2026-07-14): every byte
+- **One attachment ingress** (composer/ingress.ts): every byte
   entering from the composer — paste or external drop — passes one admission point
   that owns the size cap (Preferences, default 10MB), the image pass-through set
   {png, jpeg, gif, webp} (the set every major LLM API accepts — an industry
@@ -557,7 +555,7 @@ The differentiator (prd §v1 Scope), shipped complete:
   anywhere downstream, because the platform that produced the bytes is the only
   honest source (the spec requires the field to *describe the payload*).
   Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s the whole
-  turn on formats outside that set (dossier).
+  turn on formats outside that set (the Auggie dossier).
 - **File attach** (drag-drop or picker): picker reads ride inline
   `ContentBlock::Resource` when `promptCapabilities.embeddedContext` is declared,
   `ResourceLink` otherwise. Drops split by what arrives: URI drops (VS Code
@@ -565,7 +563,7 @@ The differentiator (prd §v1 Scope), shipped complete:
   an attachment chip whose `ResourceLink` points at the real path; external drops
   carry bytes only (browsers hide paths; a client path means nothing to a remote
   host), so non-images are staged to a temp file at add time and linked from
-  there. Directory drops are refused in v1 — a deliberate scope decision:
+  there. Directory drops are refused in the current release — a deliberate scope decision:
   expanding a tree is policy (depth, excludes), not a default. Observed in
   practice (2026-07-14): the VS Code workbench claims OS-file drops on the
   editor area for its own drop-to-open before a webview sees them — so the
@@ -575,74 +573,76 @@ The differentiator (prd §v1 Scope), shipped complete:
 
 ## Integrations
 
-Curated and custom are the same mechanism — MCP servers routed to agents:
+The auth mechanisms, the curated set, and the transport-selection rules are the
+[MCP Integrations Architecture doc](mcp-architecture.md); this section is how a
+configured integration reaches an agent. Curated and custom are the same
+mechanism — MCP servers routed to agents:
 
-- **The registry is shipped data from day one.** prd decides this: GitHub ships
-  "proving the registry pattern," and a hardcoded integration proves no pattern.
-  One data file, one entry; every field earned by what GitHub demonstrably needs —
-  `id`, `name`, transport, auth type, scopes, bridge launch — nothing speculative.
-  Adding a curated integration in v2 is a data change, not code.
-- **The agent list is NOT shipped data** *(supersedes the roster-overlay file,
-  2026-07-11)*: the official ACP registry is the one agent source (identity,
-  launch, icon, live-fetched + disk-cached), and patchbay's own per-agent
-  curation lives in code tables where every other house knowledge does —
-  `ASSET_LOCATIONS` (asset-locations.ts), `META_EXTENSIONS` (meta.ts).
-  *(`KNOWN_BYPASS_BRIDGES` retired with the fidelity label, 2026-07-12.)* The overlay JSON was
-  vscode-acp heritage: it *was* the roster until the registry landed, then
-  carried only data the tables now own plus three local-only entries
-  (kiro/hermes/openclaw — unverified claims, retired; the custom-command
-  escape hatch covers them). Terminology followed the collapse: roster =
-  registry, so the word "roster" is gone from the codebase.
+- **The registry is shipped data from day one.** The PRD decides this: GitHub
+  ships "proving the registry pattern," and a hardcoded integration proves no
+  pattern. One data file, one entry; every field earned by what GitHub
+  demonstrably needs — `id`, `name`, transport, auth type, scopes, bridge launch
+  — nothing speculative. Adding a curated integration is a data change, not code.
+- **The agent list is NOT shipped data**: the official ACP registry is the one
+  agent source (identity, launch, icon, live-fetched + disk-cached), and
+  patchbay's own per-agent curation lives in code tables where every other house
+  knowledge does — `ASSET_LOCATIONS` (asset-locations.ts), `META_EXTENSIONS`
+  (meta.ts). The custom-command escape hatch covers anything the registry omits.
 - **Custom escape hatch**: add any MCP server (command or URL, with auth).
-- **Capability-conditional transport** *(supersedes "uniform stdio presentation",
-  2026-07-12 — prompt.image mechanics, decided when the v1 bridge crashed on the
-  first spec-compliant Streamable HTTP server)*: an agent declaring `mcp.http`
-  gets the remote server passed through as a real `type: "http"` entry — its own
-  MCP client connects, upstream-maintained transport, the declared path actually
-  exercised. Everything else rides the stdio-to-HTTP bridge, now a pipe between
-  two `@modelcontextprotocol/sdk` transports (never hand-rolled again): the
-  guaranteed floor for non-declaring agents and the per-integration `transport:
-  "bridge"` escape hatch for an agent whose declared http support is broken in
-  practice. The superseded rule's motive — no per-agent branching — lost to a
-  stronger one: a broker that routes around its counterparty's declared
-  capability never lets the claim be tested. Passthrough traffic is agent↔provider
-  direct (dark to patchbay); bridge traffic passes through us. Custom-stdio is
-  handed through as-is, both worlds.
-- **Connect-time tool probe** *(2026-07-12)*: the orchestrator runs its own MCP
-  handshake (initialize + tools/list — a free read, no agent, no LLM turn) on
-  connect, power-on, and manual refresh; the card shows "N tools" expandable,
-  timestamped, or the failure reason. Provider-side truth only — "reachable,
-  these tools exist", never "working in an agent's session"; the same
-  declared≠used discipline one layer down. Session-lived cache, never persisted:
-  a fresh window re-reads reality.
+- **Capability-conditional transport**: an agent declaring `mcp.http` gets the
+  remote server passed through as a real `type: "http"` entry — its own MCP
+  client connects, upstream-maintained transport, the declared path actually
+  exercised. Everything else rides the stdio-to-HTTP bridge, a pipe between two
+  `@modelcontextprotocol/sdk` transports: the guaranteed floor for non-declaring
+  agents, plus the per-integration `transport: "bridge"` escape hatch for an
+  agent whose declared http support is broken in practice. Routing around an
+  agent's declared capability would never let the claim be tested, so a declaring
+  agent exercises it. Passthrough traffic is agent↔provider direct (dark to
+  patchbay); bridge traffic passes through us. Custom-stdio is handed through
+  as-is, both worlds.
+
+```mermaid
+flowchart TD
+    S(["Configured MCP server"]) --> Q0{"custom stdio?"}
+    Q0 -- yes --> ST["handed through as-is"]
+    Q0 -- "no — remote HTTP" --> Q1{"transport pinned bridge?"}
+    Q1 -- yes --> BR
+    Q1 -- no --> Q2{"agent declares mcp.http?"}
+    Q2 -- yes --> HP["http passthrough<br/><small>agent↔provider direct, dark to patchbay</small>"]
+    Q2 -- no --> BR["stdio-to-HTTP bridge<br/><small>through patchbay; per-request token, redaction</small>"]
+```
+- **Connect-time tool probe**: the orchestrator runs its own MCP handshake
+  (initialize + tools/list — a free read, no agent, no LLM turn) on connect,
+  power-on, and manual refresh; the card shows "N tools" expandable, timestamped,
+  or the failure reason. Provider-side truth only — "reachable, these tools
+  exist", never "working in an agent's session"; the same declared≠used
+  discipline one layer down. Session-lived cache, never persisted: a fresh window
+  re-reads reality.
 - **Routing is the user's, per agent.** "auto" (default) = every agent; an
-  explicit id list pins exactly; "except" = every agent minus the listed.
-  *(Supersedes the fully-brokered auto-gate, 2026-07-12: the gate consulted the
-  fidelity label — a data-plane measure (do file/terminal bytes proxy through
-  patchbay) — for a control-plane question (does consent cross before acting),
-  which the permission broker answers for every request_permission-routing
-  agent anyway. The conflation structurally excluded the whole SDK-CLI agent
-  class from auto forever; caught live on the first real integration.)*
+  explicit id list pins exactly; "except" = every agent minus the listed. Routing
+  is reach, not consent: which servers an agent receives is separate from whether
+  a given tool call is allowed — consent rides the permission broker per call,
+  for every request_permission-routing agent.
 
 ## Rules, skills, commands
 
-v1 is management, not delivery: the files live in each agent's **own native
-locations** (`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them from
+The current release is management, not delivery: the files live in each agent's
+**own native locations** (`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them from
 `cwd` itself — patchbay never passes them down. Settings is where the user sees and
 edits them, per agent, in place. No patchbay dialect (prd: not a new protocol), no
 injection machinery.
 
-- The per-agent location mapping lives in the `ASSET_LOCATIONS` code table; v1 ships Claude Code
-  and Augment mappings — the agents in real use. An unmapped agent is shown as
+- The per-agent location mapping lives in the `ASSET_LOCATIONS` code table; the
+  current release ships Claude Code and Augment mappings — the agents in real use. An unmapped agent is shown as
   such — never silently skipped, never guessed.
 - Commands the agent advertises back (`available_commands_update`) appear in the
   chat input as autocomplete and are sent as ordinary prompts. This is also the
   only compaction lever besides a fresh session: an advertised `/compact` is just
   one of these commands.
-- Parked (v2), stated as a scope decision: a shared base with compatibility
-  symlinks into each agent's locations (the
+- Parked (a future release), stated as a scope decision: a shared base with
+  compatibility symlinks into each agent's locations (the
   [dotagent](https://github.com/solutionsunity/dotagent) pattern) or full supply
-  by patchbay. v1 proves the management surface first.
+  by patchbay. The current release proves the management surface first.
 
 ## Permission broker
 
@@ -653,18 +653,15 @@ injection machinery.
   prompt would target.
 - **Rules never ride the repo.** Agent and integration configs are global,
   developer-owned stores — nothing config-shaped lives in the repo at all, so
-  no repo-authored launch command exists to adopt. (This supersedes the
-  workspace-config-file design and its one-time adoption gate, which existed
-  only because that file could be repo-authored by someone else.)
-- **Fidelity label: REMOVED (2026-07-12; was v1's aggregate of fs/terminal
-  used-rows, plus `KNOWN_BYPASS_BRIDGES`, both deleted).** The aggregate read
-  used=false ("hasn't crossed the wire yet") as "acts outside" (a conduct
-  verdict) — false for the entire SDK-CLI class, which does fs/terminal
-  internally while routing *consent* through `request_permission` faithfully.
-  The per-row matrix keeps carrying the honest data-plane facts (e.g.
-  `fs.writeTextFile` used ⇒ live diff cards work); no aggregate replaces it.
-  If a summary ever returns it must be born as a data-plane *visibility*
-  read-out ("patchbay sees this agent's edits"), never a gate.
+  no repo-authored launch command exists to adopt.
+- **No aggregate fidelity verdict.** The per-row matrix carries the honest
+  data-plane facts (e.g. `fs.writeTextFile` used ⇒ live diff cards work);
+  nothing aggregates them into a conduct label. An aggregate would read
+  used=false ("hasn't crossed the wire yet") as "acts outside" — false for the
+  entire SDK-CLI class, which does fs/terminal internally while routing
+  *consent* through `request_permission` faithfully. If a summary ever returns
+  it must be born as a data-plane *visibility* read-out ("patchbay sees this
+  agent's edits"), never a gate.
 - Protocol fact, load-bearing: an agent can route around `fs/write_text_file` via a
   shell command, and at least one bridge does file I/O invisibly regardless of
   client capabilities. `fs/*` is therefore **not a security boundary** — terminal
@@ -683,7 +680,7 @@ Emitting it remains optional per agent, so population is uneven in practice: sho
 what is reported, omit cleanly when absent, never fake it. claude-agent-acp emits
 it live mid-stream, so the gauge is a real-time affordance there, not per-turn.
 The only guaranteed reset lever is a new session — which is why
-concurrent sessions are load-bearing (prd §v1 Scope), not a luxury.
+concurrent sessions are load-bearing (the PRD's current-release scope), not a luxury.
 
 ## Code layout
 
@@ -691,16 +688,10 @@ Atoms first; each directory is one responsibility:
 
 ```
 src/
-  orchestrator/   session manager, client pool, broker, stores
-  mcp/            local server, adapters, integration bridges
+  extension.ts    activation entry
+  orchestrator/   session manager, client pool, broker, stores, extensions
+  mcp/            local MCP server + its client-capability adapters
+  integrations/   the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only
   shared/         protocol.ts (actions, snapshots, patches), types
 ```
-
-## Open at implementation
-
-- GitHub integration: thin own bridge vs. wrapping an existing GitHub MCP server —
-  pick when building, against the broker's routing requirements.
-- GitHub OAuth grant flow: device flow vs. URI-handler callback — an extension
-  cannot hold an OAuth client secret, which rules options in or out. The
-  registry's auth field carries the outcome.
