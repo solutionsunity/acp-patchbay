@@ -34,7 +34,7 @@ support@augmentcode.com / Discord.
   report — control (marker on first session/new) spawns within ~10s of the
   response (not ~3s: spawn trails the session-open indexing), latch run
   (marker on second) never spawns. Verbatim frames in
-  [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
+  [the compliance report](reports/auggie-acp-compliance-2026-07-13.md).
 - **Patchbay workaround:** implemented 2026-07-13 —
   `extensions/first-session-mcp-latch.ts` (id-keyed curated entry; the
   capability probe defers until the first real session attaches, which then
@@ -45,7 +45,7 @@ support@augmentcode.com / Discord.
   use, and a logged-out auggie's needsAuth surfaces at first session
   instead of at connect.
 - **Status:** observed 2026-07-12 → report drafted 2026-07-13
-  ([auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md),
+  ([the compliance report](reports/auggie-acp-compliance-2026-07-13.md),
   combined with the models issue), pending send.
 
 ### Model selection rides a removed draft API (root `models` field + `session/set_model`)
@@ -67,26 +67,26 @@ support@augmentcode.com / Discord.
   → `session/set_model { sessionId, modelId }` → response `{}`; then silence
   (no notification within 3s; Auggie's `session/update` vocabulary has no
   model variant and `usage_update` carries only `{ cost, size, used }`).
-  Verbatim transcript in [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
+  Verbatim transcript in [the compliance report](reports/auggie-acp-compliance-2026-07-13.md).
 - **Impact:** generic ACP clients show no model selector at all; clients that
   adopt the legacy surface cannot display honest state — nothing on the wire
   ever confirms the active model (`currentModelId` is readable only at
   session-open, where it is `""`; empty sessions aren't persisted, so no
   reload-reconfirm either).
 - **Patchbay workaround:** adopted 2026-07-13 as a scoped wire-extension
-  (architecture.md § Protocol extensions): knobs.ts `sessionModelsOf` /
-  `withModelField` parses the field at the trust boundary (zod,
-  degrade-to-absent) and synthesizes one "model" knob — deduped by id, so an
-  agent whose configOptions already carry model (claude-agent-acp) never
-  collides. Sets ride `session/set_model` via pool.ts `setSessionModel`,
-  outside the capability-tracked path. Display is advanced optimistically
-  from the user's own pick (knobs.ts `applyModelSet`) — the sole fact in
-  existence on an axis with no confirmation channel; the one deliberate
-  exception to display-from-agent-state, scoped here. **Retire when Auggie
+  (the architecture doc): `extensions/session-models-field.ts`
+  `sessionModelsExtras` parses the field at the trust boundary (zod,
+  degrade-to-absent) and synthesizes one "model" knob — id `model`, so the
+  generic id-dedup lets a spec configOption model knob (claude-agent-acp) win
+  wherever both could exist. Sets ride `session/set_model` through the knob's
+  own self-executing `execute` door, outside the capability-tracked path.
+  Display advances optimistically from the user's own pick (`withKnobValue`) —
+  the sole fact in existence on an axis with no confirmation channel; the one
+  deliberate exception to display-from-agent-state, scoped here. **Retire when Auggie
   migrates to configOptions** — the draft surface is removed upstream, so it
   will never appear in any SDK; vendor migration is the only exit.
 - **Status:** observed 2026-07-12 → report drafted 2026-07-13
-  ([auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md)), pending send.
+  ([the compliance report](reports/auggie-acp-compliance-2026-07-13.md)), pending send.
 
 ### Unknown image format kills the whole turn with an opaque 400
 
@@ -111,7 +111,7 @@ support@augmentcode.com / Discord.
   format detonates the turn with an error that names nothing.
 - **Impact on patchbay:** none since 2026-07-14 — the composer's attachment
   ingress normalizes every decodable image outside {png, jpeg, gif, webp}
-  to PNG before a chip exists (architecture.md § one attachment ingress),
+  to PNG before a chip exists (the architecture doc's single attachment ingress),
   chosen as the industry-universal set, not as an auggie workaround — so no
   extension module, no retire condition. This entry documents the vendor
   behavior, not a live dependency.
@@ -236,9 +236,9 @@ support@augmentcode.com / Discord.
   chunk; a cancelled turn's exchange is stored `completed: false` with an
   empty response and replays as nothing at all — adjacent cancelled prompts
   arrive as back-to-back user chunks. Patchbay renders them as separate
-  bubbles (G12 rule: id-less chunks never merge); the cancellation itself is
-  unrecoverable from this wire — upstream ask if replay-visible turn
-  resolution ever matters.
+  bubbles (id-less chunks never merge — the message-boundary rule); the
+  cancellation itself is unrecoverable from this wire — upstream ask if
+  replay-visible turn resolution ever matters.
 - Requests a "Workspace Indexing Permission" on fresh sessions — patchbay
   auto-declines it on probe sessions (probe etiquette: never grant on the
   user's behalf).
@@ -259,5 +259,5 @@ support@augmentcode.com / Discord.
   minimally confirm agent/thought replay granularity, the fact that decides
   whether patchbay's id-less merge rule (`runBlockFor`) can tighten for
   replay. Full text + verbatim wire transcripts:
-  [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
+  [the compliance report](reports/auggie-acp-compliance-2026-07-13.md).
   Awaiting vendor response.

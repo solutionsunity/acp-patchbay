@@ -45,11 +45,11 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   `canUseTool` → `session/request_permission`, so every tool use (file
   writes, bash, MCP calls) hits the permission broker. This asymmetry —
   data plane internal, control plane routed — is what falsified the retired
-  fidelity aggregate (architecture.md § Permission broker, 2026-07-12).
+  fidelity aggregate (the architecture doc).
 - **Replay message shape** (wire-verified 2026-07-12, v0.58.1): every
   history message replays as `user_message_chunk`s carrying `messageId` —
   one id per message, multi-part prompts (composer positional parts) split
-  across several chunks under ONE id. This is what makes the G12 boundary
+  across several chunks under ONE id. This is what makes the message-boundary
   rule exact here. Cancellation is re-encoded by the Claude harness as its
   own user-role history message, literal `[Request interrupted by user]`
   (own messageId) — renders as its own user bubble, deliberately never

@@ -9,10 +9,9 @@ public repo), the dossier section is what gets handed over.
 **Division of knowledge, held strictly:** anything patchbay *consumes* lives
 in code tables (`META_EXTENSIONS` in meta.ts, `ASSET_LOCATIONS` in
 asset-locations.ts, knob quirks in knobs.ts) — machine-actionable mechanism.
-These files hold human-communicable evidence. Each code workaround points at
-its note; each note names its workaround. Two directions, never two truths.
-*(Supersedes the single agent-quirks.md, 2026-07-12 — per-agent files scale
-with the roster and double as vendor-facing documents.)*
+These files hold human-communicable evidence. Each note names its module; code
+does not name the note — the binding is held from the doc side. One direction,
+never two truths.
 
 **The claim discipline:** every entry carries the version it was observed on
 and a reproduction — quirks die with releases, so an unversioned claim is

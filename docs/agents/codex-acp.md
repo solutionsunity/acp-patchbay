@@ -15,7 +15,7 @@ ecosystem.
 ## Behavioral notes
 
 - Terminal-output `_meta` channel — convention shared with claude-agent-acp
-  (architecture.md § the extension landscape). Unadopted; adopt via meta.ts
+  (the architecture doc). Unadopted; adopt via meta.ts
   when a feature needs it.
 
 ## Communication log
