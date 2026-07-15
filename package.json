@@ -5,6 +5,14 @@
   "version": "0.82.5",
   "publisher": "solutionsunity",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solutionsunity/acp-patchbay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/solutionsunity/acp-patchbay/issues"
+  },
+  "homepage": "https://github.com/solutionsunity/acp-patchbay#readme",
   "engines": {
     "vscode": "^1.96.0"
   },

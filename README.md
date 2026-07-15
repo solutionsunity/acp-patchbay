@@ -1,5 +1,8 @@
 # acp-patchbay
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/solutionsunity.acp-patchbay)](https://marketplace.visualstudio.com/items?itemName=solutionsunity.acp-patchbay)
+
 > Developers deserve a unified experience across AI agents.
 
 **acp-patchbay** is a VS Code extension built on the [Agent Client
@@ -80,6 +83,10 @@ configs still exist.
 
 ## License
 
-Proprietary — see the LICENSE file included with this extension.
+Licensed under the [Apache License 2.0](LICENSE). Copyright © 2026
+[Solutions Unity](https://solutionsunity.com). See [NOTICE](NOTICE) for
+attribution.
+
+Source: [github.com/solutionsunity/acp-patchbay](https://github.com/solutionsunity/acp-patchbay).
 
 Built by [Solutions Unity](https://solutionsunity.com).
