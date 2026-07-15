@@ -34,7 +34,7 @@ support@augmentcode.com / Discord.
   report — control (marker on first session/new) spawns within ~10s of the
   response (not ~3s: spawn trails the session-open indexing), latch run
   (marker on second) never spawns. Verbatim frames in
-  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+  [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
 - **Patchbay workaround:** implemented 2026-07-13 —
   `extensions/first-session-mcp-latch.ts` (id-keyed curated entry; the
   capability probe defers until the first real session attaches, which then
@@ -45,7 +45,7 @@ support@augmentcode.com / Discord.
   use, and a logged-out auggie's needsAuth surfaces at first session
   instead of at connect.
 - **Status:** observed 2026-07-12 → report drafted 2026-07-13
-  ([auggie-acp-compliance-report.md](auggie-acp-compliance-report.md),
+  ([auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md),
   combined with the models issue), pending send.
 
 ### Model selection rides a removed draft API (root `models` field + `session/set_model`)
@@ -67,7 +67,7 @@ support@augmentcode.com / Discord.
   → `session/set_model { sessionId, modelId }` → response `{}`; then silence
   (no notification within 3s; Auggie's `session/update` vocabulary has no
   model variant and `usage_update` carries only `{ cost, size, used }`).
-  Verbatim transcript in [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+  Verbatim transcript in [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
 - **Impact:** generic ACP clients show no model selector at all; clients that
   adopt the legacy surface cannot display honest state — nothing on the wire
   ever confirms the active model (`currentModelId` is readable only at
@@ -86,7 +86,7 @@ support@augmentcode.com / Discord.
   migrates to configOptions** — the draft surface is removed upstream, so it
   will never appear in any SDK; vendor migration is the only exit.
 - **Status:** observed 2026-07-12 → report drafted 2026-07-13
-  ([auggie-acp-compliance-report.md](auggie-acp-compliance-report.md)), pending send.
+  ([auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md)), pending send.
 
 ### Unknown image format kills the whole turn with an opaque 400
 
@@ -259,5 +259,5 @@ support@augmentcode.com / Discord.
   minimally confirm agent/thought replay granularity, the fact that decides
   whether patchbay's id-less merge rule (`runBlockFor`) can tighten for
   replay. Full text + verbatim wire transcripts:
-  [auggie-acp-compliance-report.md](auggie-acp-compliance-report.md).
+  [auggie-acp-compliance-2026-07-13.md](reports/auggie-acp-compliance-2026-07-13.md).
   Awaiting vendor response.

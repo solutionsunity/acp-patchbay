@@ -44,3 +44,11 @@ Identity: package, distribution, version(s) tested, vendor channel
 - [claude-agent-acp.md](claude-agent-acp.md) — the Claude Agent SDK bridge
 - [codex-acp.md](codex-acp.md) — the Codex bridge
 - [gemini-cli.md](gemini-cli.md) — Google's Gemini CLI
+
+## Reports
+
+The vendor-facing artifacts — a report is what gets handed to a vendor when an
+issue is raised. They live in [reports/](reports/), dated and named
+`<agent>-<kind>-YYYY-MM-DD.md`, so an agent can accumulate more than one over
+time and reports sit together regardless of agent. Each dossier links its own
+reports.
