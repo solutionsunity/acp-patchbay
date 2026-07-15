@@ -13,10 +13,10 @@ the doc — it is not struck through and kept.
 A source comment naming a doc (or a doc-internal id) is cross-reference debt — it
 rots the moment the doc moves or a section is renamed. Navigation runs one way:
 code never names docs. A doc *may* name code — a file or symbol is a stable
-anchor — but does so rarely, and mostly only in the "how" doc (architecture.md),
-where a mechanism genuinely needs the anchor; a "what" doc (prd, features) names
-no code. You find a document through this map, not through a breadcrumb in the
-source.
+anchor — but does so rarely: the "how" doc (architecture.md) where a mechanism
+needs the anchor, and the compliance fact-sheet where each anchor is the
+evidence for a status. A "what" doc (prd, features) names no code. You find a
+document through this map, not through a breadcrumb in the source.
 
 ## Map
 
