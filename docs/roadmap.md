@@ -6,9 +6,6 @@ that emerges during design lands here first, not in v1 by momentum.
 
 ## Beyond v1
 
-- **Curated integrations catalog beyond GitHub** — Linear, Jira, Sentry, and
-  peers, each a first-class entry in the integrations surface.
-
 - **External-continuation detection** — watch known agent session stores for
   out-of-band writes and badge a session "possibly continued elsewhere." Requires
   per-agent knowledge of private storage paths; adapter-tier work that earns its
