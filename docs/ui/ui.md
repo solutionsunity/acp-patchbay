@@ -6,9 +6,9 @@ binds.** Anything visible in a mockup but absent here is a mockup artifact (demo
 bar, canned data), not a requirement. Kept 1:1 with the mockups — a control that
 appears in one and not the other is a bug in whichever lags.
 
-*How* these surfaces are built is
-[ui-rendering-strategy.md](ui-rendering-strategy.md) — this file says what each
-surface does; that one says what it's made of.
+*How* these surfaces are built is [the UI Architecture
+doc](ui-architecture.md) — this file says what each surface does; that one says
+what it's made of.
 
 ## Shared vocabulary
 

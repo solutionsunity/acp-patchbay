@@ -34,7 +34,7 @@ Read top to bottom for the whole picture:
 Grouped areas:
 
 - **[ui/](ui/)** — the UI surfaces: [ui.md](ui/ui.md) (what each surface does),
-  [ui-rendering-strategy.md](ui/ui-rendering-strategy.md) (what they're built
+  [ui-architecture.md](ui/ui-architecture.md) (what they're built
   from), and the binding mockups.
 - **[agents/](agents/)** — one dossier per ACP agent: versioned, reproducible
   observations of wire behavior and the vendor-communication trail. See

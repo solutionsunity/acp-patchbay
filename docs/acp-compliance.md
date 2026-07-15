@@ -137,7 +137,7 @@ SDK 1.2.1 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 | Kind | Verdict | Notes |
 |---|---|---|
 | `agent_message_chunk` | ✅ | Fully consumed: text streamed; non-text → type-labeled placeholder (rendering the non-text types is §8's 🟡, G10 — not a consumption gap). |
-| `agent_thought_chunk` | ✅ | Block-interruption rule per ui-rendering-strategy; same placeholder floor as message chunks. |
+| `agent_thought_chunk` | ✅ | Block-interruption rule per the UI Architecture doc; same placeholder floor as message chunks. |
 | `user_message_chunk` | ✅ | Delta semantics with `messageId`-governed boundaries (§8); `inFlight` guard against live echo. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
@@ -250,7 +250,7 @@ always gated on declared (+ used where it gates UI), never silently.
 
 | # | Level | Gap |
 |---|---|---|
-| G5 | SHOULD | Tool-call content: `content`-kind blocks unrendered (card shows raw debug view instead of the agent's chosen presentation); `terminal`-kind entries not linked to their owning card (§10). Phase-B rendering work (ui-rendering-strategy), not a patch. |
+| G5 | SHOULD | Tool-call content: `content`-kind blocks unrendered (card shows raw debug view instead of the agent's chosen presentation); `terminal`-kind entries not linked to their owning card (§10). rendering work (the UI Architecture doc), not a patch. |
 | G10 | SHOULD | Non-text message content renders as placeholder only (§8). Remaining, each its own design discussion: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(c)** image — needs a rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. Sequence alongside G5. |
 | G13 | MAY-level | `ToolCallLocation.line` dropped — follow-along opens the file, not the line (§10). One-field render improvement, no design needed. |
 

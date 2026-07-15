@@ -107,7 +107,7 @@ How both webviews are *built* — one shared component layer (shadcn/Radix on
 React, Codicons, a single VS Code-theme bridge) and the chat transcript
 rendering pipeline (Streamdown markdown, the ordered block model, tool-call
 cards) — is decided in
-[design/ui-rendering-strategy.md](design/ui-rendering-strategy.md); the split
+[the UI Architecture doc](ui/ui-architecture.md); the split
 above is about state and lifecycle, never visual identity.
 
 ### Snapshot + patch protocol — decided
