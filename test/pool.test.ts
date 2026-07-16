@@ -284,4 +284,55 @@ describe("AgentPool", () => {
     ).rejects.toThrow();
     expect(details[0]).toContain("interactive first-run setup");
   });
+
+  // Runtime seam: whatever the resolver returns IS what spawns — proven by
+  // resolving a spec that could never spawn into one that does. Warmup and
+  // the real launch read the same resolved spec by construction (the seam
+  // runs once, ahead of both).
+  it("spawns the resolver's spec, not the incoming one", async () => {
+    const pool = new AgentPool(
+      {
+        onStatusChanged: () => {},
+        onDeclaredCaptured: () => {},
+        onSessionUpdate: () => {},
+        ...stubFsTerminalHooks(),
+      },
+      undefined,
+      { resolveRuntime: async (s) => spec({}, s.agentId) },
+    );
+    const declared = await pool.connect({
+      agentId: "resolved",
+      name: "Resolved",
+      command: "patchbay-no-such-launcher",
+      args: [],
+      env: {},
+      cwd,
+    });
+    expect(declared).toBeDefined();
+    expect(pool.get("resolved")?.status).toBe("running");
+    // The entry snapshot holds the resolved spec — what actually ran.
+    expect(pool.get("resolved")?.spec.command).toBe(process.execPath);
+    await pool.stop("resolved");
+  });
+
+  it("a resolver throw is the connect failure, honestly labeled", async () => {
+    const statuses: Array<{ status: AgentStatus; detail?: string }> = [];
+    const pool = new AgentPool(
+      {
+        onStatusChanged: (_id, status, detail) => statuses.push({ status, detail }),
+        onDeclaredCaptured: () => {},
+        onSessionUpdate: () => {},
+        ...stubFsTerminalHooks(),
+      },
+      undefined,
+      {
+        resolveRuntime: async () => {
+          throw new Error("node did not answer --version");
+        },
+      },
+    );
+    await expect(pool.connect(spec({}, "no-runtime"))).rejects.toThrow(/runtime unavailable/);
+    const crashed = statuses.find((s) => s.status === "crashed");
+    expect(crashed?.detail).toContain("node did not answer --version");
+  });
 });

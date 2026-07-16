@@ -58,6 +58,7 @@ import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
 import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
+import { resolveRuntime, runtimeName, type RuntimeKind } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
@@ -536,7 +537,19 @@ export class Orchestrator {
         this.terminals.delete(params.terminalId);
         return {};
       },
-    }, log);
+    }, log, {
+      // Detect-first, sandbox-fallback (runtime-resolver.ts): npx/uvx
+      // launches gate their interpreter on a real round-trip each connect;
+      // only a failed gate downloads a pinned runtime into bin-cache —
+      // behind the same explicit-confirmation ethos as binary installs.
+      resolveRuntime: (spec, onPhase) =>
+        resolveRuntime(spec, {
+          cacheRoot: this.binaryCacheDir,
+          log: this.log,
+          onPhase,
+          confirmInstall: (kind, version) => this.confirmRuntimeDownload(kind, version),
+        }),
+    });
     this.editorStateHost = new EditorStateHost(String(process.pid), {
       requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
       getIntegrationToken: (integrationId) => this.integrations.getToken(integrationId),
@@ -1690,6 +1703,20 @@ export class Orchestrator {
     } catch {
       // A diagnostic nicety must never affect a connect.
     }
+  }
+
+  /** Explicit, visible gate on a managed-runtime download — the
+   * never-silent rule binary installs follow, applied to the runtime
+   * fallback. Modal on purpose: the connect is already waiting on this
+   * decision, and declining fails it honestly. */
+  private async confirmRuntimeDownload(kind: RuntimeKind, version: string): Promise<boolean> {
+    const name = `${runtimeName(kind)} ${version}`;
+    const choice = await vscode.window.showWarningMessage(
+      `This agent is launched with ${kind === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${name} into the extension's own storage? Nothing is installed system-wide, and removing the extension removes it.`,
+      { modal: true },
+      "Download",
+    );
+    return choice === "Download";
   }
 
   /** Restart is a spawn, so it reads reality like any connect: the current

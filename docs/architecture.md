@@ -208,6 +208,29 @@ flowchart TD
   the SDK, no honest comparison exists). Patchbay never mutates PATH or
   installs globally — a user who wants the CLI in their terminal owns that
   install and its update channel.
+- **Runtime resolution** (runtime-resolver.ts, the pool's one launch-phase
+  seam, ahead of warmup and spawn alike): an `npx` agent needs Node.js, a
+  `uvx` agent needs uv (which provisions its own Python) — neither is
+  guaranteed on the machine, and Windows is where the gap bites.
+  **Detect-first, sandbox-fallback**, decided over always-sandboxing (Zed
+  manages its own Node unconditionally): a working system runtime *is*
+  reality, and shadowing it would fork behavior from the user's terminal.
+  The gate is a real `--version` round-trip through the same spawn rules as
+  the launch (presence on PATH proves nothing — the declared≠used instinct
+  applied to interpreters), plus a version floor for node; re-run fresh
+  every connect, never persisted. Only a failed gate downloads a
+  pin-versioned runtime (curated catalog: nodejs.org / uv release CDN) into
+  the same bin-cache as binary agents — same staging+rename integrity, same
+  explicit-confirmation-before-download ethos, then re-gated itself before
+  use (a glibc build on musl fails the connect with a real reason). The
+  applied decision is PATH-prepending into that one agent's spawn env —
+  the command is never rewritten, so every downstream spelling (warmup,
+  Windows .cmd shim handling, cache repair) works unchanged, and nothing
+  is installed system-wide. Deliberate pairing with the data stance:
+  **runtime = ours when needed, state = always the agent's own** — the
+  managed runtime changes which interpreter runs, never where the agent
+  keeps sessions, auth, or config, so terminal and patchbay copies stay
+  one history.
 
 ## Agent capability matrix
 

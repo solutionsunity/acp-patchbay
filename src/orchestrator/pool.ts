@@ -22,6 +22,17 @@ import {
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
+/** Launch-phase seam (runtime-resolver.ts): given the spec about to spawn,
+ * returns the spec that actually spawns — the same spec when the system
+ * runtime passes its gate, a PATH-prepended copy when a managed runtime
+ * backs the launch. `onPhase` surfaces a download in progress as the
+ * connect's status detail. A throw is the connect failure: no runtime, no
+ * agent. */
+export type RuntimeResolver = (
+  spec: LaunchSpec,
+  onPhase: (label: string) => void,
+) => Promise<LaunchSpec>;
+
 export interface LaunchSpec {
   agentId: string;
   name: string;
@@ -277,19 +288,23 @@ export function warmupSpawn(spec: LaunchSpec): { command: string; args: string[]
 export class AgentPool {
   private entries = new Map<string, Entry>();
   private readonly initializeTimeoutMs: number;
+  private readonly runtimeResolver?: RuntimeResolver;
 
   constructor(
     private readonly hooks: PoolHooks,
     /** Output-channel seam (logger.ts) — argv and env values never logged. */
     private readonly log: Logger = nullLogger,
-    /** Applies to the initialize round-trip only: cold `npx`/`uvx` package
-     * downloads happen in the labeled warmup phase before the real spawn
-     * (warmupSpawn), so this budget measures the agent, not the package
-     * manager's network. Tests inject a short one to exercise the timeout
-     * path itself. */
-    opts?: { initializeTimeoutMs?: number },
+    /** `initializeTimeoutMs` applies to the initialize round-trip only:
+     * cold `npx`/`uvx` package downloads happen in the labeled warmup phase
+     * before the real spawn (warmupSpawn), so this budget measures the
+     * agent, not the package manager's network. Tests inject a short one to
+     * exercise the timeout path itself. `resolveRuntime` is the launch-phase
+     * runtime seam — absent (tests, or a host without one) means specs spawn
+     * exactly as given. */
+    opts?: { initializeTimeoutMs?: number; resolveRuntime?: RuntimeResolver },
   ) {
     this.initializeTimeoutMs = opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS;
+    this.runtimeResolver = opts?.resolveRuntime;
   }
 
   get(poolKey: string): PooledAgentView | undefined {
@@ -355,6 +370,26 @@ export class AgentPool {
     };
     this.entries.set(poolKey, entry);
     this.setStatus(entry, "reconnecting");
+
+    // Runtime phase, ahead of everything that spawns: the resolver hands
+    // back the spec reality can run — unchanged when the system runtime
+    // passes its gate, PATH-prepended when a managed runtime backs it. The
+    // resolved spec replaces the connect-time snapshot and feeds warmup and
+    // the real spawn alike: both MUST see the same env or the warmup would
+    // warm a different package cache than the launch reads.
+    if (this.runtimeResolver !== undefined) {
+      try {
+        spec = await this.runtimeResolver(spec, (label) =>
+          this.setStatus(entry, "reconnecting", label),
+        );
+        entry.spec = spec;
+        this.clearPhaseLabel(entry);
+      } catch (err) {
+        const detail = `runtime unavailable — ${(err as Error).message}`;
+        this.markDead(entry, detail);
+        throw new Error(detail);
+      }
+    }
 
     // Ecosystem launchers get their package cache warmed as its own phase —
     // the "run it once manually" advice, done by patchbay itself, with the
@@ -940,7 +975,7 @@ export class AgentPool {
       const settle = (outcome: string) => {
         clearTimeout(label);
         clearTimeout(cap);
-        if (entry.detail !== undefined) this.setStatus(entry, "reconnecting"); // clear the label
+        this.clearPhaseLabel(entry);
         this.log.debug(`${entry.poolKey}: launcher warmup ${outcome}`);
         resolve();
       };
@@ -977,6 +1012,12 @@ export class AgentPool {
       this.log.debug(`launcher cache repair failed: ${(err as Error).message}`);
       return false;
     }
+  }
+
+  /** Clears a transient phase label (runtime download, launcher warmup)
+   * back to bare "reconnecting" — one spelling for every labeled phase. */
+  private clearPhaseLabel(entry: Entry): void {
+    if (entry.detail !== undefined) this.setStatus(entry, "reconnecting");
   }
 
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {
