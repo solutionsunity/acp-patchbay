@@ -109,7 +109,9 @@ export function npmNpxRoot(
     let out = "";
     child.stdout?.on("data", (c: Buffer) => (out += c.toString()));
     child.on("error", () => resolve(null));
-    child.on("exit", (code) => {
+    // "close", not "exit": exit can beat the delivery of buffered stdout,
+    // reading a fast answer as empty. close waits for the streams to drain.
+    child.on("close", (code) => {
       const dir = out.trim();
       resolve(code === 0 && dir !== "" ? join(dir, "_npx") : null);
     });
@@ -225,7 +227,8 @@ export function pathSiblingVersion(
     let out = "";
     child.stdout?.on("data", (c: Buffer) => (out += c.toString()));
     child.on("error", () => resolve(null));
-    child.on("exit", (code) => {
+    // "close", not "exit" — same stdout-drain reasoning as npmNpxRoot.
+    child.on("close", (code) => {
       const m = /\d+\.\d+(\.\d+)?/.exec(out);
       resolve(code === 0 && m !== null ? m[0] : null);
     });
