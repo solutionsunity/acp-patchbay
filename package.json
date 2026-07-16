@@ -169,6 +169,9 @@
       ]
     }
   },
+  "overrides": {
+    "serialize-javascript": ">=7.0.5"
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
