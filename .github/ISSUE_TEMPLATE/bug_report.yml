@@ -1,0 +1,98 @@
+name: Bug report
+description: Something in ACP Patchbay behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        - **Not a bug in Patchbay itself?** Issues in the ACP agent, a third-party MCP
+          server, or VS Code belong to those projects — see the scope note in
+          [SECURITY.md](../blob/main/.github/SECURITY.md).
+        - **Security vulnerability?** Do **not** open a public issue — follow
+          [SECURITY.md](../blob/main/.github/SECURITY.md) instead.
+        - **Before you paste logs:** wire logs and error output can contain tokens,
+          API keys, or env values. Redact them.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+      placeholder: |
+        When I …, Patchbay …
+        I expected …
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that reliably triggers it.
+      placeholder: |
+        1. Connect agent …
+        2. Send prompt …
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent
+      description: The ACP agent connected when the bug occurred.
+      options:
+        - Auggie (augment)
+        - Claude (claude-agent-acp)
+        - Codex (codex-acp)
+        - Gemini CLI
+        - Other / multiple
+        - Not agent-specific
+    validations:
+      required: true
+
+  - type: input
+    id: agent-version
+    attributes:
+      label: Agent version
+      description: Version of the agent above (skip if not agent-specific).
+      placeholder: "e.g. auggie 0.58.1"
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: ACP Patchbay version
+      description: Extensions view → ACP Patchbay, or Help → About.
+      placeholder: "e.g. 0.82.6"
+    validations:
+      required: true
+
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version & OS
+      description: Help → About (or `code --version`), plus your OS.
+      placeholder: "e.g. VS Code 1.9x.x, Windows 11 / macOS 15 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or wire output
+      description: >
+        Output panel ("ACP Patchbay"), the wire log, or DevTools console — whatever
+        applies. Redact secrets before pasting; this box renders as a code block.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I removed any tokens, keys, or credentials from the details above.
+          required: true

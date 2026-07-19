@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/solutionsunity/acp-patchbay/security/advisories/new
+    about: Report privately — do not open a public issue. See SECURITY.md.
+  - name: Question or usage help
+    url: https://solutionsunity.com/products/vscode-acp-patchbay
+    about: Product page and docs. For usage questions, start here rather than an issue.
+  - name: Contributing guide
+    url: https://github.com/solutionsunity/acp-patchbay/blob/main/.github/CONTRIBUTING.md
+    about: How to build, test, and open a pull request.

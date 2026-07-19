@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest a capability or improvement for ACP Patchbay.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the **problem**, not a pre-chosen solution — the best fix often
+        isn't the first one that comes to mind, and a clear problem lets us find it.
+
+        For context on how the pieces fit, see the
+        [architecture doc](../blob/main/docs/architecture.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does Patchbay get in the way today?
+      placeholder: |
+        When I …, I have to …, because Patchbay …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like to see
+      description: Your proposed behavior — and any alternatives you've considered.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Patchbay does this touch?
+      options:
+        - Chat / composer
+        - Sessions & history
+        - Agent connection & capabilities
+        - MCP / integrations
+        - Permissions & security
+        - Settings / preferences
+        - A specific agent's behavior
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: agent
+    attributes:
+      label: Related agent (if any)
+      description: If this is specific to one ACP agent, name it and its version.
+      placeholder: "e.g. Codex (codex-acp)"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
