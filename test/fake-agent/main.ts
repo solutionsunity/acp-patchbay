@@ -78,6 +78,10 @@ export interface FakeAgentScript {
     forkBroken?: boolean;
     /** session/new rejects with `auth_required` until `authenticate` is called. */
     authRequired?: boolean;
+    /** session/list rows arrive malformed: real rows carry epoch-seconds
+     * `updatedAt` (a number where the spec says ISO string — observed
+     * acp-matrix probe shape), plus one under-shaped row with no sessionId. */
+    malformedListRows?: boolean;
   };
 }
 
@@ -601,6 +605,13 @@ const app = acp
     for (const s of sessions.values()) {
       if (cwd !== null && s.cwd !== cwd) continue;
       infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...title(s.id) });
+    }
+    if (script.lies?.malformedListRows) {
+      // Off-spec on purpose: number where ISO string belongs + a row with no
+      // identity — the client's trust-boundary guard is what's under test.
+      const rows: unknown[] = [...infos.values()].map((info) => ({ ...info, updatedAt: 1752900000 }));
+      rows.push({ cwd, title: "no identity" });
+      return { sessions: rows } as unknown as acp.ListSessionsResponse;
     }
     return { sessions: [...infos.values()] };
   })

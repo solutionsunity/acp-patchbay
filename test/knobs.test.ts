@@ -11,6 +11,7 @@ import {
   confirmedFromKnobs,
   foldSeed,
   MODE_KNOB_ID,
+  NO_KNOBS,
   normalizeKnobs,
   routeKnobSet,
   withKnobValue,
@@ -273,5 +274,82 @@ describe("seeds and projections", () => {
       },
       { id: "think", name: "Thinking", category: undefined, type: "boolean", values: [] },
     ]);
+  });
+});
+
+// ── trust boundary: session responses arrive unvalidated (the SDK checks
+// outgoing request params only), so the knob surface must validate-and-
+// degrade — a malformed or unrecognized entry drops singly, the rest of the
+// surface survives, and connect never crashes (acp-matrix fixture finding).
+describe("trust boundary — malformed knob surfaces degrade, never throw", () => {
+  it("an under-shaped config option (no type/options) drops; valid siblings survive", () => {
+    const dropped: string[] = [];
+    const n = normalizeKnobs(
+      null,
+      [{ id: "mystery", name: "Mystery" }, MODEL_OPTION],
+      undefined,
+      (m) => dropped.push(m),
+    );
+    expect(n.surface).toBe("config");
+    expect(n.knobs.map((k) => k.id)).toEqual(["model"]);
+    expect(dropped).toHaveLength(1);
+  });
+
+  it("an unknown option variant (a future type) drops instead of crashing", () => {
+    const n = normalizeKnobs(null, [
+      { id: "slider", name: "Slider", type: "range", currentValue: 3, min: 0, max: 10 },
+      MODEL_OPTION,
+    ]);
+    expect(n.knobs.map((k) => k.id)).toEqual(["model"]);
+  });
+
+  it("configOptions that is not an array is ignored; the modes fallback still stands", () => {
+    const n = normalizeKnobs(MODES, "not-an-array");
+    expect(n.surface).toBe("modes");
+    expect(n.knobs.map((k) => k.id)).toEqual([MODE_KNOB_ID]);
+  });
+
+  it("an all-malformed configOptions list yields the modes fallback, not an empty config surface", () => {
+    const n = normalizeKnobs(MODES, [{ nothing: true }, 42]);
+    expect(n.surface).toBe("modes");
+  });
+
+  it("malformed select entries drop singly inside an otherwise valid option", () => {
+    const n = normalizeKnobs(null, [
+      {
+        id: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "a",
+        options: [{ value: "a", name: "A" }, { value: 7 }, null],
+      },
+    ]);
+    const knob = n.knobs[0]!;
+    expect(knob.type).toBe("select");
+    expect(knob.type === "select" && knob.options).toEqual([{ value: "a", name: "A", description: undefined }]);
+  });
+
+  it("malformed annotation fields (description/category) degrade to absent, keeping the option", () => {
+    const n = normalizeKnobs(null, [{ ...MODEL_OPTION, description: 99, category: { deep: true } }]);
+    expect(n.knobs[0]).toMatchObject({ id: "model", description: undefined, category: undefined });
+  });
+
+  it("a malformed modes state is ignored wholesale; malformed modes drop singly", () => {
+    expect(normalizeKnobs({ currentModeId: 5 }, null)).toEqual(NO_KNOBS);
+    const n = normalizeKnobs(
+      { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: 3 }, "x"] },
+      null,
+    );
+    expect(n.surface).toBe("modes");
+    const mode = n.knobs[0]!;
+    expect(mode.type === "select" && mode.options).toEqual([
+      { value: "ask", name: "Ask", description: undefined },
+    ]);
+  });
+
+  it("applyConfigUpdate tolerates malformed state the same way", () => {
+    const next = applyConfigUpdate([{ id: "broken" }, MODEL_OPTION]);
+    expect(next.surface).toBe("config");
+    expect(next.knobs.map((k) => k.id)).toEqual(["model"]);
   });
 });

@@ -723,10 +723,17 @@ body {
 .perm .q code {
   font-family: var(--vscode-editor-font-family, monospace);
   color: var(--pb-text);
+  /* a long unbroken subject (path, command line) must wrap, not slide
+   * under the card's overflow:hidden edge */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .acts {
   display: flex;
+  /* the card clips (overflow:hidden) — an unwrapped row of long option
+   * labels would push later buttons past the edge, unreachable */
+  flex-wrap: wrap;
   gap: 7px;
   padding: 0 10px 10px;
 }
@@ -976,6 +983,41 @@ body {
 .mention-token {
   color: var(--pb-accent);
   border-color: var(--pb-accent-dim);
+}
+
+/* Tokens inside a sent bubble: a hair of breathing room, so a replay that
+ * glued a mention to the next word still reads as two things (agents have
+ * been observed dropping the separating space). */
+.msg-user .prompt-token {
+  margin: 0 2px;
+  white-space: nowrap;
+}
+
+/* Image part: inline preview off the attachments stash — bounded, its own
+ * line, never dominating the bubble. */
+.msg-user .user-image {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  margin: 4px 0;
+  border-radius: 4px;
+  border: 1px solid var(--pb-border);
+}
+
+/* Context part body: the bounded snapshot, monospace, scrolling past its
+ * own cap — same look as the injected-envelope body. */
+.msg-user .user-context-body {
+  display: block;
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--pb-border);
+  color: var(--pb-text-dim);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .command-token {

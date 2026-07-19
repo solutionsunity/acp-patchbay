@@ -11,6 +11,8 @@ data/**
 node_modules/**
 out/**/*.map
 esbuild.mjs
+eslint.config.mjs
+components.json
 vitest.config.ts
 tsconfig.json
 tsconfig.test.json

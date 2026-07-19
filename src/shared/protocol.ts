@@ -113,7 +113,7 @@ export type Action =
   | { kind: "upgradeAgent"; agentId: string }
   | { kind: "refreshRegistry" }
   /** `layer` picks which rule list (permission-rules.ts): "workspace"
-   * (workspaceState, this repo, evaluated first) or "machine" (globalState,
+   * (workspaceState, this repo, evaluated first) or "machine" (machine store,
    * every workspace, the fallback floor). */
   | { kind: "addCommandRule"; rule: CommandRuleView; layer: "workspace" | "machine" }
   | { kind: "removeCommandRule"; pattern: string; layer: "workspace" | "machine" }
@@ -726,10 +726,54 @@ export function isToolCallOpen(status: ToolCallStatus): boolean {
   return status === "pending" || status === "in_progress";
 }
 
+/** One piece of a user message — the wire's own content vocabulary kept
+ * through to render, instead of flattening everything to a string (which
+ * lost mentions, images and context to placeholder text). Sent prompts and
+ * session/load replays both map onto this one set, so live and reloaded
+ * history render identically. */
+export type UserPart =
+  | { kind: "text"; text: string }
+  /** Inline `@file` mention (a resource_link on the wire). */
+  | { kind: "mention"; name: string; uri: string }
+  /** Image riding the prompt. `file` names its copy in the attachments
+   * stash (previewable); absent when the bytes couldn't be stashed —
+   * degrades to a labeled chip, never an error. */
+  | { kind: "image"; mimeType: string; file?: string }
+  /** File attached whole (a resource_link chip, not an inline mention). */
+  | { kind: "attachment"; name: string; path: string }
+  /** Labeled context snapshot (selection, problems, embedded resource) —
+   * text bounded orchestrator-side, same rule as tool rawInput. */
+  | { kind: "context"; label: string; text: string }
+  /** Honesty placeholder for content kinds without a renderer (audio…). */
+  | { kind: "unrendered"; type: string };
+
+/** A user message flattened for copy/preview — mentions and chips keep a
+ * readable spelling, prose stays verbatim. */
+export function userPartsText(parts: readonly UserPart[]): string {
+  return parts
+    .map((p) => {
+      switch (p.kind) {
+        case "text":
+          return p.text;
+        case "mention":
+          return `@${p.name}`;
+        case "image":
+          return `[image ${p.mimeType}]`;
+        case "attachment":
+          return `@${p.name}`;
+        case "context":
+          return `[${p.label}]`;
+        case "unrendered":
+          return `[${p.type} content]`;
+      }
+    })
+    .join("");
+}
+
 export interface UserBlock {
   kind: "user";
   id: string;
-  text: string;
+  parts: readonly UserPart[];
   /** True when the whole message is a harness-injected envelope riding the
    * user role on the wire (task notifications, system reminders, command
    * echoes). A real
@@ -947,7 +991,7 @@ export interface ChatConnectView {
   forSessionId?: string;
 }
 
-/** Machine-scoped behavior defaults (stores/preferences.ts — globalState,
+/** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
  * non-sensitive). Read fresh orchestrator-side at each point of use
  * (store-truth); this view exists so the Preferences page can render and
  * edit them, and so the agent view can gate its own furniture (composer
@@ -1018,6 +1062,9 @@ export interface AgentViewState {
   /** ISO start time of the in-flight turn, per session — the live elapsed
    * ticker's basis; cleared when the turn's TurnEndBlock lands. */
   activeTurn: Readonly<Record<string, string>>;
+  /** Sessions with a hydration (session/load replay) in flight — the
+   * rendering area's per-session loading page signal. */
+  hydrating: Readonly<Record<string, true>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
   /** Declared/used per agent — replaced wholesale on every (re)connect. */
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
@@ -1151,6 +1198,7 @@ export const initialAgentViewState: AgentViewState = {
   transcripts: {},
   activePlan: {},
   activeTurn: {},
+  hydrating: {},
   commandsBySession: {},
   capabilities: {},
   capabilitiesResetAt: {},
@@ -1197,13 +1245,19 @@ export type AgentViewEvent =
   | { kind: "sessionRenamed"; sessionId: string; title: string }
   | { kind: "sessionClosed"; sessionId: string }
   | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
+  /** A session/load hydration is in flight for this session (open of a cold
+   * session — session-manager.hydrate). The rendering area holds a loading
+   * page while it has nothing else to show; a warm reload keeps its
+   * standing content instead (the replay window swaps it wholesale). */
+  | { kind: "sessionHydrating"; sessionId: string; hydrating: boolean }
   /** Replay always wins — the transcript is discarded, never merged. */
   | { kind: "transcriptReset"; sessionId: string }
-  | { kind: "userMessageAppended"; sessionId: string; blockId: string; text: string }
-  /** Replayed user prose (session/load `user_message_chunk`) — delta
-   * semantics like the agent chunks, unlike `userMessageAppended` (the
-   * live send, which is whole by construction). */
-  | { kind: "userTextDelta"; sessionId: string; blockId: string; text: string; injected?: boolean }
+  | { kind: "userMessageAppended"; sessionId: string; blockId: string; parts: readonly UserPart[] }
+  /** One replayed user content part (session/load `user_message_chunk`) —
+   * delta semantics like the agent chunks, unlike `userMessageAppended`
+   * (the live send, which is whole by construction). Consecutive text
+   * parts on one block merge in the reducer. */
+  | { kind: "userPartAppended"; sessionId: string; blockId: string; part: UserPart; injected?: boolean }
   | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
   | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
   | {
@@ -1454,26 +1508,53 @@ function upsertTextBlock(
   state: AgentViewState,
   sessionId: string,
   blockId: string,
-  kind: "text" | "thought" | "user",
+  kind: "text" | "thought",
   delta: string,
+): AgentViewState {
+  const blocks = state.transcripts[sessionId] ?? [];
+  const i = blocks.findIndex((b) => b.id === blockId);
+  if (i === -1) {
+    return appendBlock(state, sessionId, { kind, id: blockId, text: delta });
+  }
+  const existing = blocks[i] as TextBlock | ThoughtBlock;
+  const updated = { ...existing, text: existing.text + delta };
+  return withTranscript(
+    state,
+    sessionId,
+    blocks.map((b, j) => (j === i ? updated : b)),
+  );
+}
+
+/** The user-block sibling of upsertTextBlock, in the part vocabulary:
+ * consecutive text parts merge (a replay's prose deltas stay one readable
+ * span); any other part appends as its own piece. */
+function upsertUserBlock(
+  state: AgentViewState,
+  sessionId: string,
+  blockId: string,
+  part: UserPart,
   injected?: boolean,
 ): AgentViewState {
   const blocks = state.transcripts[sessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === blockId);
   if (i === -1) {
     return appendBlock(state, sessionId, {
-      kind,
+      kind: "user",
       id: blockId,
-      text: delta,
+      parts: [part],
       ...(injected === true ? { injected: true } : {}),
     });
   }
-  const existing = blocks[i] as TextBlock | ThoughtBlock | UserBlock;
-  const updated = { ...existing, text: existing.text + delta };
+  const existing = blocks[i] as UserBlock;
+  const last = existing.parts[existing.parts.length - 1];
+  const parts =
+    last !== undefined && last.kind === "text" && part.kind === "text"
+      ? [...existing.parts.slice(0, -1), { kind: "text" as const, text: last.text + part.text }]
+      : [...existing.parts, part];
   return withTranscript(
     state,
     sessionId,
-    blocks.map((b, j) => (j === i ? updated : b)),
+    blocks.map((b, j) => (j === i ? { ...existing, parts } : b)),
   );
 }
 
@@ -1676,6 +1757,14 @@ export function reduceAgentView(
           s.id === event.sessionId ? { ...s, live: event.live } : s,
         ),
       };
+    case "sessionHydrating": {
+      // `?? {}` guards snapshots minted before this field existed.
+      const { [event.sessionId]: _h, ...rest } = state.hydrating ?? {};
+      return {
+        ...state,
+        hydrating: event.hydrating ? { ...rest, [event.sessionId]: true } : rest,
+      };
+    }
     case "transcriptReset": {
       // The strip mirrors only what the agent reports: a reset means replay
       // is about to rebuild the transcript, and the live plan rebuilds from
@@ -1692,10 +1781,10 @@ export function reduceAgentView(
       return appendBlock(state, event.sessionId, {
         kind: "user",
         id: event.blockId,
-        text: event.text,
+        parts: event.parts,
       });
-    case "userTextDelta":
-      return upsertTextBlock(state, event.sessionId, event.blockId, "user", event.text, event.injected);
+    case "userPartAppended":
+      return upsertUserBlock(state, event.sessionId, event.blockId, event.part, event.injected);
     case "agentTextDelta":
       return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
     case "agentThoughtDelta":
@@ -1945,12 +2034,23 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   // Concatenate text chunks per message.
   if (
     (prev.kind === "agentTextDelta" && next.kind === "agentTextDelta") ||
-    (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta") ||
-    (prev.kind === "userTextDelta" && next.kind === "userTextDelta")
+    (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta")
   ) {
     if (prev.sessionId === next.sessionId && prev.blockId === next.blockId) {
       return { ...next, text: prev.text + next.text } as AgentViewEvent;
     }
+  }
+  // Same rule in the part vocabulary: adjacent replayed text parts of one
+  // user block ride as a single event.
+  if (
+    prev.kind === "userPartAppended" &&
+    next.kind === "userPartAppended" &&
+    prev.sessionId === next.sessionId &&
+    prev.blockId === next.blockId &&
+    prev.part.kind === "text" &&
+    next.part.kind === "text"
+  ) {
+    return { ...next, part: { kind: "text", text: prev.part.text + next.part.text } };
   }
   // Rapid-fire status updates on the same tool call: only the latest matters,
   // but absent fields inherit — same merge rule as the reducer's upsert.
@@ -2107,7 +2207,7 @@ export interface SettingsState {
 export interface DataInventoryRow {
   id: string;
   label: string;
-  placement: "globalState" | "workspaceState" | "SecretStorage" | "workspace storage";
+  placement: "globalStorage file" | "workspaceState" | "SecretStorage" | "workspace storage";
   detail: string;
 }
 

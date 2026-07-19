@@ -11,7 +11,17 @@ const tool = (id, over = {}) => ({
 /** Interleaved transcript: markdown+code+mermaid (valid & broken), thought,
  * grouped tool run, denied call, turn metadata, math/RTL/CJK/table. */
 export const chatTranscript = [
-  { kind: "user", id: "u1", text: "find foo and fix it" },
+  // parts model: prose + a mention token + an attachment chip — the shot
+  // gates the part renderers, not just plain text
+  {
+    kind: "user", id: "u1",
+    parts: [
+      { kind: "text", text: "find foo in " },
+      { kind: "mention", name: "api.ts", uri: "file:///ws/src/api.ts" },
+      { kind: "text", text: " and fix it" },
+      { kind: "attachment", name: "notes.md", path: "/ws/notes.md" },
+    ],
+  },
   {
     kind: "text", id: "x1",
     text: 'See [the docs](https://example.com/docs) — flow:\n\n```mermaid\ngraph LR\n  A[prompt] --> B{broker}\n  B -->|allow| C[tool runs]\n  B -->|deny| D[blocked]\n```\n\n```ts\nconst pattern: RegExp = /foo/g;\n```',
@@ -32,9 +42,9 @@ export const chatTranscript = [
   // user-role messages) — dim collapsed line, never a bubble, not a prompt
   {
     kind: "user", id: "inj1", injected: true,
-    text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>",
+    parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
-  { kind: "user", id: "u2", text: "keep going" },
+  { kind: "user", id: "u2", parts: [{ kind: "text", text: "keep going" }] },
   { kind: "text", id: "xbroke", text: "broken-mermaid case:\n\n```mermaid\ngraph LR\n  A[unclosed --> ???blah{{\n```" },
   // path=/excerpt fence attributes (the shape the wire-extension rewriter
   // emits — code-block.tsx caption) on a MULTI-LINE fence: line integrity

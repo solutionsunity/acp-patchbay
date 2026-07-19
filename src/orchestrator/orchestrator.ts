@@ -28,6 +28,7 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { ASSET_LOCATIONS, resolveAgentAssets, type FsLike } from "./asset-locations";
+import { ATTACHMENTS_DIR } from "./attachments";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
@@ -60,6 +61,7 @@ import { SecretEnvStore } from "./stores/secret-env";
 import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { resolveRuntime, runtimeName, type RuntimeKind } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
+import { FileKV } from "./stores/file-kv";
 import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
@@ -202,8 +204,18 @@ export class Orchestrator {
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
     this.probeRootBase = join(context.globalStorageUri.fsPath, "probe");
 
+    // Machine scope lives in a file this extension owns (file-kv.ts), not
+    // in globalState: state.vscdb is editor-owned, shared by every
+    // extension, and has been observed truncated to zero bytes by an
+    // unclean shutdown — taking every agent config with it. First load
+    // drains any old globalState keys into the file.
+    const machineKV = new FileKV(
+      join(context.globalStorageUri.fsPath, "state.json"),
+      context.globalState,
+      (message) => log.info(`state file: ${message}`),
+    );
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
-    this.machinePermissionRules = new MachineRulesStore(context.globalState);
+    this.machinePermissionRules = new MachineRulesStore(machineKV);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
     this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
@@ -212,12 +224,12 @@ export class Orchestrator {
     // workspace binding may return later as an opt-in (see
     // stores/integration-configs.ts's header for the incident that shaped
     // this).
-    this.agentConfigs = new AgentConfigStore(context.globalState);
-    this.integrationConfigs = new IntegrationConfigStore(context.globalState);
-    this.preferences = new PreferencesStore(context.globalState);
-    this.composerKnobs = new ComposerKnobsStore(context.globalState);
-    this.usedCapabilities = new UsedCapabilityStore(context.globalState);
-    this.spawnRegistry = new SpawnRegistryStore(context.globalState);
+    this.agentConfigs = new AgentConfigStore(machineKV);
+    this.integrationConfigs = new IntegrationConfigStore(machineKV);
+    this.preferences = new PreferencesStore(machineKV);
+    this.composerKnobs = new ComposerKnobsStore(machineKV);
+    this.usedCapabilities = new UsedCapabilityStore(machineKV);
+    this.spawnRegistry = new SpawnRegistryStore(machineKV);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
     this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
     this.integrationTokens = new IntegrationTokenStore(context.secrets);
@@ -372,7 +384,10 @@ export class Orchestrator {
         const probeAgent = this.capabilityTracker.agentForProbeSession(notification.sessionId);
         if (probeAgent !== undefined) {
           if (notification.update.sessionUpdate === "config_option_update") {
-            this.noteOfferings(probeAgent, applyConfigUpdate(notification.update.configOptions));
+            this.noteOfferings(
+              probeAgent,
+              applyConfigUpdate(notification.update.configOptions, undefined, (m) => this.log.info(m)),
+            );
           }
           return;
         }
@@ -386,7 +401,7 @@ export class Orchestrator {
       },
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
-      // Spawn registry: records live in globalState so an abnormal
+      // Spawn registry: records persist machine-scoped so an abnormal
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
@@ -690,7 +705,9 @@ export class Orchestrator {
         onOfferings: (agentId, response) =>
           this.noteOfferings(
             agentId,
-            normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response)),
+            normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
+              this.log.info(m),
+            ),
           ),
         probeRoot: async (agentId) => {
           const dir = join(this.probeRootBase, agentId);
@@ -1582,22 +1599,22 @@ export class Orchestrator {
     const rules = this.permissionRules.get();
     const machineRules = this.machinePermissionRules.get();
     const rows: DataInventoryRow[] = [
-      { id: "agent-configs", label: "Agent configs", placement: "globalState", detail: n(agentConfigs.length, "agent") },
-      { id: "integration-configs", label: "MCP server configs", placement: "globalState", detail: n(integrations.length, "server") },
-      { id: "used-capabilities", label: "Used-capability cache", placement: "globalState", detail: n(this.usedCapabilities.list().length, "agent record") },
-      { id: "machine-rules", label: "Command rules — this machine", placement: "globalState", detail: n(machineRules.commandRules.length, "rule") },
-      { id: "spawn-registry", label: "Spawn registry", placement: "globalState", detail: n(this.spawnRegistry.list().length, "process record") },
+      { id: "agent-configs", label: "Agent configs", placement: "globalStorage file", detail: n(agentConfigs.length, "agent") },
+      { id: "integration-configs", label: "MCP server configs", placement: "globalStorage file", detail: n(integrations.length, "server") },
+      { id: "used-capabilities", label: "Used-capability cache", placement: "globalStorage file", detail: n(this.usedCapabilities.list().length, "agent record") },
+      { id: "machine-rules", label: "Command rules — this machine", placement: "globalStorage file", detail: n(machineRules.commandRules.length, "rule") },
+      { id: "spawn-registry", label: "Spawn registry", placement: "globalStorage file", detail: n(this.spawnRegistry.list().length, "process record") },
       {
         id: "preferences",
         label: "Preferences",
-        placement: "globalState",
+        placement: "globalStorage file",
         detail: (() => {
           const p = this.preferences.get();
           const idle = p.idleCloseMinutes <= 0 ? "never" : `${p.idleCloseMinutes} min`;
           return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${p.composerStats ? "shown" : "hidden"}`;
         })(),
       },
-      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalState", detail: n(this.composerKnobs.count(), "agent record") },
+      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalStorage file", detail: n(this.composerKnobs.count(), "agent record") },
       {
         id: "secrets",
         label: "Credentials & env values",
@@ -2239,8 +2256,10 @@ export class Orchestrator {
     mimeType: string;
     base64: string;
   }): Promise<void> {
-    const dir = join(tmpdir(), "acp-patchbay-attachments");
-    await mkdir(dir, { recursive: true });
+    // Same stash as image parts (attachments.ts) — one directory, one
+    // webview resource root.
+    await mkdir(ATTACHMENTS_DIR, { recursive: true });
+    const dir = ATTACHMENTS_DIR;
     // The original name stays visible in the staged filename (the agent sees
     // it in the resource_link) — id-prefixed so two drops of "notes.txt"
     // never overwrite each other.

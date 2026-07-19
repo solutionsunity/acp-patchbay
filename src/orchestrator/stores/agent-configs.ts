@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Agents are developer-env, not code-env: stored in context.globalState,
+// Agents are developer-env, not code-env: stored in the machine store
+// (file-kv.ts),
 // never a repo-committed file, visible everywhere on this machine.
 // Deliberately global-only — per-workspace binding may return later as an
 // opt-in (workspaces, not repos), but until then one visibility rule, no
@@ -40,8 +41,8 @@ export const agentConfigSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   // No env here on purpose: env values are how agents commonly take API
-  // keys, so they live in SecretStorage (stores/agent-env.ts), joined onto
-  // the LaunchSpec at spawn time — never in globalState.
+  // keys, so they live in SecretStorage (stores/secret-env.ts), joined onto
+  // the LaunchSpec at spawn time — never in the machine store.
   processPolicy: z.enum(["auto", "shared", "isolated"]).default("auto"),
   /** Connect this agent when a window opens (orchestrator's
    * connectStartupAgents). Per-agent and opt-in — superseded the native

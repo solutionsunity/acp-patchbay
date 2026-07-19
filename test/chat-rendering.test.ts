@@ -116,19 +116,19 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   });
 });
 
-describe("userTextDelta injected flag (harness envelopes on the user role)", () => {
+describe("userPartAppended injected flag (harness envelopes on the user role)", () => {
   it("an injected envelope lands as its own flagged block; the real prompt around it stays a clean bubble", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "userTextDelta", sessionId: S, blockId: "u1", text: "fix the bug" },
-      { kind: "userTextDelta", sessionId: S, blockId: "u2", text: "<system-reminder>x</system-reminder>", injected: true },
-      { kind: "userTextDelta", sessionId: S, blockId: "u3", text: "and add a test" },
+      { kind: "userPartAppended", sessionId: S, blockId: "u1", part: { kind: "text", text: "fix the bug" } },
+      { kind: "userPartAppended", sessionId: S, blockId: "u2", part: { kind: "text", text: "<system-reminder>x</system-reminder>" }, injected: true },
+      { kind: "userPartAppended", sessionId: S, blockId: "u3", part: { kind: "text", text: "and add a test" } },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     expect(state.transcripts[S]).toEqual([
-      { kind: "user", id: "u1", text: "fix the bug" },
-      { kind: "user", id: "u2", text: "<system-reminder>x</system-reminder>", injected: true },
-      { kind: "user", id: "u3", text: "and add a test" },
+      { kind: "user", id: "u1", parts: [{ kind: "text", text: "fix the bug" }] },
+      { kind: "user", id: "u2", parts: [{ kind: "text", text: "<system-reminder>x</system-reminder>" }], injected: true },
+      { kind: "user", id: "u3", parts: [{ kind: "text", text: "and add a test" }] },
     ]);
   });
 });
@@ -174,7 +174,7 @@ describe("deriveTranscript: per-turn rollups", () => {
     kind: "turnEnd", id, startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
     stopReason: "end_turn", usage: null,
   });
-  const user = (id: string): ChatBlock => ({ kind: "user", id, text: "go" });
+  const user = (id: string): ChatBlock => ({ kind: "user", id, parts: [{ kind: "text", text: "go" }] });
 
   it("counts tool calls and DEDUPES files — 3 edits to one file is 1 file, not 3", () => {
     const blocks: ChatBlock[] = [
@@ -263,7 +263,7 @@ describe("deriveTranscript: per-turn rollups", () => {
 
   it("injected user envelopes reset the turn but never count as prompts", () => {
     const injected = (id: string): ChatBlock => ({
-      kind: "user", id, text: "<task-notification>done</task-notification>", injected: true,
+      kind: "user", id, parts: [{ kind: "text", text: "<task-notification>done</task-notification>" }], injected: true,
     });
     const blocks: ChatBlock[] = [
       user("u1"),

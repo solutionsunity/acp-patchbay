@@ -140,8 +140,8 @@ each with different truth semantics, so each gets different placement:
 | Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
-| Agent + integration configs | Agents (launch config, defaults), integrations, routing | `globalState` stores | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
-| Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + `globalState` (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
+| Agent + integration configs | Agents (launch config, defaults), integrations, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
+| Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + machine store (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret (`stores/secret-env.ts`); config records carry no env, webview snapshots carry key names at most, and values are read at the last moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself). HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
 
 Agents and integrations are deliberately global-only. The MCP incident behind
@@ -505,7 +505,7 @@ user just do something, or did plumbing?*
   the user asked to change nothing — so honoring the agent's load-time reset
   would force its cache-miss over the user's reality.
 - **Composer knobs** — the user's current working combination *per agent*
-  (`stores/composer-knobs.ts`, globalState), written only when the user sets
+  (`stores/composer-knobs.ts`, machine store), written only when the user sets
   a knob and the agent confirms it (config surface: off the set response;
   modes surface: off the agent's own `current_mode_update` — set responses
   are never trusted). Never written at attach time — that would make "last

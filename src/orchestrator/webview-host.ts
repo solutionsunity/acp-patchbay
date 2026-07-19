@@ -24,6 +24,7 @@
 //   which is fine — nonce was already the only script source.
 import * as vscode from "vscode";
 import type { ViewToHost } from "../shared/protocol";
+import { ATTACHMENTS_DIR } from "./attachments";
 import type { ChannelEndpoint } from "./channel";
 
 type Bundle = "agent-view" | "settings";
@@ -55,6 +56,11 @@ export function webviewHtml(
   // out/ base URL, and document.currentScript is null by the time a lazily
   // initialized module reads it (lazy-script.ts).
   const outBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out"));
+  // The prompt-attachment stash (attachments.ts), mounted as a resource
+  // root in `bind` — its webview-mapped base rides the same meta channel
+  // as out-base so the transcript can preview sent/replayed images. Not a
+  // CSP change: img-src already trusts ${webview.cspSource}.
+  const attachmentsBase = webview.asWebviewUri(vscode.Uri.file(ATTACHMENTS_DIR));
   const n = nonce();
   return `<!DOCTYPE html>
 <html lang="en">
@@ -63,7 +69,8 @@ export function webviewHtml(
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}' 'strict-dynamic'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="patchbay-out-base" content="${outBase}/">${
+  <meta name="patchbay-out-base" content="${outBase}/">
+  <meta name="patchbay-attachments-base" content="${attachmentsBase}/">${
     pinSessionId !== undefined
       ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinSessionId)}">`
       : ""
@@ -89,7 +96,13 @@ function bind(
 ): void {
   webview.options = {
     enableScripts: true,
-    localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out")],
+    // The attachments stash is a resource root by decision: image bytes
+    // stay files on disk, never base64 riding every state snapshot — the
+    // same never-in-snapshots rule as tool diffs.
+    localResourceRoots: [
+      vscode.Uri.joinPath(extensionUri, "out"),
+      vscode.Uri.file(ATTACHMENTS_DIR),
+    ],
   };
   webview.html = webviewHtml(webview, extensionUri, bundle, pinSessionId);
   channel.attach(webview);

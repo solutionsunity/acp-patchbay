@@ -7,7 +7,13 @@
 // three-mechanism scale strategy: windowed mount, content-visibility
 // containment (style.css), and memoized rows.
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AgentViewState, ChatBlock, SessionSummary, TurnUsage } from "../../../shared/protocol";
+import {
+  userPartsText,
+  type AgentViewState,
+  type ChatBlock,
+  type SessionSummary,
+  type TurnUsage,
+} from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
@@ -107,9 +113,9 @@ function Block({
   switch (block.kind) {
     case "user":
       return block.injected === true ? (
-        <InjectedUser text={block.text} />
+        <InjectedUser text={userPartsText(block.parts)} />
       ) : (
-        <UserMessage text={block.text} />
+        <UserMessage parts={block.parts} />
       );
     case "text":
       return (
@@ -376,6 +382,13 @@ export function Chat(props: {
   }
 
   const { items, rollups, liveRollup, liveBlockId } = derived;
+  // Cold hydration (session/load replay in flight, nothing to show yet):
+  // hold the loading page instead of a blank pane. A warm reload never
+  // lands here — its standing transcript stays up until the replay's
+  // wholesale swap. `?? {}` guards snapshots minted before the field.
+  if ((props.state.hydrating ?? {})[active.id] === true && items.length === 0) {
+    return <StatePage icon="loading" spin tag="Loading session history…" />;
+  }
   const visible = hidden > 0 ? items.slice(hidden) : items;
   const activeTurnStartedAt = props.state.activeTurn[active.id];
 

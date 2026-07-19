@@ -7,7 +7,7 @@
 // "knobs start from: last used" preference (stores/preferences.ts). Written
 // only from the user-set path (session-manager setKnob, after the agent
 // confirms) — never at attach time, so loads/reloads that reset agent-side
-// state can't pollute it. globalState: knob ids and offered values only —
+// state can't pollute it. Machine store: knob ids and offered values only —
 // non-sensitive, machine-scoped like the agent configs they belong to.
 // Seeding through knobs.ts routing means a stale entry (agent dropped a
 // knob, renamed a value) is silently skipped at apply time, exactly like a

@@ -8,9 +8,8 @@
 // (record what reality says, compare with what reality says later), cleared
 // on observed exit — whatever survives an abnormal end (crash, OS kill,
 // host death before cleanup ran) is exactly what the next activate's orphan
-// reap looks at. Global store: a machine fact, not a workspace fact, and
-// never in Settings Sync (globalState keys stay machine-local unless opted
-// in, which this never is).
+// reap looks at. Machine store: a machine fact, not a workspace fact —
+// and file-backed, so Settings Sync can never carry it anywhere.
 import { z } from "zod";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";

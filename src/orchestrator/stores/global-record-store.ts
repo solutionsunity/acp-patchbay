@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Generic id-keyed record store over context.globalState — agents,
+// Generic id-keyed record store over the machine-scoped KV (file-kv.ts) —
+// agents,
 // integrations, and the used-capability cache are all "developer env,
 // not code env" (never repo-committed) and all need the same shape: list,
 // upsert-by-id, remove-by-id. One implementation, three instantiations.
-// Same trust-boundary treatment as acp-registry.ts/config-file.ts: zod-validated
+// Same trust-boundary treatment as acp-registry.ts/registry.ts: zod-validated
 // on read, a malformed stored record is dropped rather than trusted blind.
 import type { z } from "zod";
 import type { KV } from "./kv";

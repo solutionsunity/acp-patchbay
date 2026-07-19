@@ -5,7 +5,7 @@
 // scope): command rules + file-write scope in workspaceState — per user,
 // per workspace, never repo-shipped; a cloned repo must not arrive
 // pre-authorized. Machine
-// layer (MachineRulesStore): command rules only, in globalState —
+// layer (MachineRulesStore): command rules only, in the machine store —
 // developer-owned defaults for every workspace ("allow `npm test`
 // everywhere"). Evaluation order is workspace first, then machine, then
 // ask (broker.ts): a workspace can tighten or loosen its own floor, and
@@ -53,7 +53,7 @@ export class PermissionRulesStore {
 
 const MACHINE_KEY = "acpPatchbay.machineCommandRules";
 
-/** Machine-layer command rules — globalState (developer-owned, every
+/** Machine-layer command rules — machine store (developer-owned, every
  * workspace on this machine), consulted only after the workspace layer
  * stays silent. Command rules only: file-write scope stays workspace-level
  * by nature (it's defined relative to the current workspace root). */

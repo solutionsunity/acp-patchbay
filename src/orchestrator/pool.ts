@@ -20,6 +20,8 @@ import {
   type WireFact,
 } from "./capabilities";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
+import { guardResponse } from "./response-guards";
+import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 
 /** Launch-phase seam (runtime-resolver.ts): given the spec about to spawn,
@@ -181,36 +183,6 @@ const INTERACTIVE_STOP: StopBudget = { eofMs: 500, termMs: 2000, killMs: 500 };
  * across agents (disposeAll). */
 const SHUTDOWN_STOP: StopBudget = { eofMs: 200, termMs: 700, killMs: 300 };
 
-/** npx/npm are .cmd shims on Windows, and Node ≥ 20.12 (CVE-2024-27980)
- * refuses to spawn .cmd/.bat without a shell (EINVAL) — so shims get
- * `shell: true`, scoped to win32 + shim, never anywhere else. With a shell
- * Node joins the args unquoted, and registry-supplied args are remote
- * data: anything shell-active (cmd metacharacters, quotes, whitespace) is
- * refused outright — as an `error` the caller surfaces honestly, never
- * quoted-and-hoped. Exported for tests; `platform` injectable for the same
- * reason. */
-export function resolveSpawn(
-  command: string,
-  args: readonly string[],
-  platform: NodeJS.Platform = process.platform,
-): { command: string; args: string[]; shell: boolean; error?: string } {
-  const resolved =
-    platform === "win32" && (command === "npx" || command === "npm") ? `${command}.cmd` : command;
-  const shell = platform === "win32" && /\.(cmd|bat)$/i.test(resolved);
-  if (shell) {
-    const active = args.find((a) => /[\s&|<>^%!"']/.test(a));
-    if (active !== undefined) {
-      return {
-        command: resolved,
-        args: [...args],
-        shell,
-        error: `refusing to spawn: argument ${JSON.stringify(active)} is shell-active and ${resolved} needs a Windows shell`,
-      };
-    }
-  }
-  return { command: resolved, args: [...args], shell };
-}
-
 /** The child's exit code once it has actually exited, waited on for at most
  * `ms` — null when it hasn't exited in time (or died to a signal). */
 function exitCodeWithin(child: ChildProcess, ms: number): Promise<number | null> {
@@ -238,9 +210,13 @@ function timeOfDay(): string {
  * killTree is taskkill /T, wrapper included); treeSpawnOptions makes the
  * child a process-group leader on POSIX (process-tree.ts), what lets
  * stop() reach grandchildren. */
+function spawnEnv(spec: LaunchSpec): NodeJS.ProcessEnv {
+  return { ...process.env, ...spec.env };
+}
+
 function spawnOptions(spec: LaunchSpec, shell: boolean, stdio: "pipe" | "ignore") {
   return {
-    env: { ...process.env, ...spec.env },
+    env: spawnEnv(spec),
     cwd: spec.cwd,
     stdio: [stdio, stdio, stdio] as ["pipe", "pipe", "pipe"] | ["ignore", "ignore", "ignore"],
     shell,
@@ -400,7 +376,7 @@ export class AgentPool {
     this.log.info(
       `${poolKey}: spawning ${spec.command} (${spec.args.length} args${isolated ? ", isolated" : ""})`,
     );
-    const launch = resolveSpawn(spec.command, spec.args);
+    const launch = resolveSpawn(spec.command, spec.args, spawnEnv(spec));
     if (launch.error !== undefined) {
       this.markDead(entry, launch.error);
       throw new Error(launch.error);
@@ -483,11 +459,23 @@ export class AgentPool {
         // Chokepoint: the kind tag is the wire fact (e.g. usage_update has
         // no initialize-time claim — its arrival is the only signal), so it
         // goes through the table before session-manager decodes the payload.
-        this.markProven(reportAs, {
-          via: "sessionUpdate",
-          updateKind: ctx.params.update.sessionUpdate,
-        });
-        this.hooks.onSessionUpdate(reportAs, ctx.params);
+        // Tolerance law: one update's handling failure drops that update
+        // (logged), never the stream — a throw here would bubble into the
+        // SDK's dispatch and read as the whole turn dying. Frames the SDK's
+        // own schema layer rejects never reach this point; they drop
+        // per message upstream, and the raw line is in the wire log when
+        // the tap is on.
+        try {
+          this.markProven(reportAs, {
+            via: "sessionUpdate",
+            updateKind: ctx.params.update.sessionUpdate,
+          });
+          this.hooks.onSessionUpdate(reportAs, ctx.params);
+        } catch (err) {
+          this.log.info(
+            `${reportAs}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${(err as Error).message}`,
+          );
+        }
       })
       .onRequest(
         ...proven(acp.methods.client.fs.readTextFile, (ctx) =>
@@ -921,8 +909,13 @@ export class AgentPool {
     };
     try {
       const result = await entry.connection!.agent.request(method, params);
+      // The response trust boundary (response-guards.ts): validated and
+      // degraded before "used" is marked or any caller reads it. A guard
+      // throw is a structurally unusable response — it rides the same catch
+      // as any RPC failure, so the rows go suspect, not used.
+      const guarded = guardResponse(method, result, (m) => this.log.info(`${entry.reportAs}: ${m}`));
       this.markProven(entry.reportAs, fact);
-      return result;
+      return guarded;
     } catch (err) {
       if (err instanceof acp.RequestError && err.code === -32000) {
         this.hooks.onAuthRequired?.(entry.reportAs, err.message.trim() === "" ? null : err.message);
@@ -958,7 +951,7 @@ export class AgentPool {
     warm: { command: string; args: string[] },
     spec: LaunchSpec,
   ): Promise<void> {
-    const launch = resolveSpawn(warm.command, warm.args);
+    const launch = resolveSpawn(warm.command, warm.args, spawnEnv(spec));
     if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
     this.log.info(`${entry.poolKey}: warming launcher cache (${warm.command} ${warm.args.join(" ")})`);
     return new Promise<void>((resolve) => {
@@ -1005,7 +998,7 @@ export class AgentPool {
     const pkg = npxPackageName(spec);
     if (pkg === null) return false;
     try {
-      const npxRoot = await npmNpxRoot({ ...process.env, ...spec.env });
+      const npxRoot = await npmNpxRoot(spawnEnv(spec));
       if (npxRoot === null) return false;
       return (await purgeNpxEntries(npxRoot, pkg, this.log)).length > 0;
     } catch (err) {

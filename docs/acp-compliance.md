@@ -168,7 +168,7 @@ SDK 1.2.1 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 
 | Duty | Verdict | Notes |
 |---|---|---|
-| Respond with `selected` / `cancelled` | ✅ | `broker.ts:requestPermission`; dismissal → `{ cancelled: true }`. |
+| Respond with `selected` / `cancelled` | ✅ | `broker.ts:resolveAgentPermissionRequest`; dismissal → `{ cancelled: true }`. |
 | Option kinds inform UI | ✅ | allow/reject × once/always rendered distinctly. |
 | Auto-resolution per user settings (MAY) | ✅ | Broker rules; per the capability rule, an auto-*rejection* is patchbay's own gate working and never marks the agent suspect. |
 | Cancelled turn → pending requests resolve `cancelled` | ✅ | See §7. |

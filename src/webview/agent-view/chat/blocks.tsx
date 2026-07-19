@@ -5,17 +5,112 @@
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
 import { useState } from "react";
-import { isToolCallOpen, type ToolCallBlock } from "../../../shared/protocol";
+import {
+  isToolCallOpen,
+  userPartsText,
+  type ToolCallBlock,
+  type UserPart,
+} from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { useCopy } from "../../shared/use-copy";
+import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
 import { Button } from "@/components/ui/button";
 
-/** The human's own prompt bubble, with a hover-revealed copy affordance to
- * its left — outside the bubble so it never overlaps the text; while the
- * check-mark feedback shows, it stays visible regardless of hover. */
-export function UserMessage({ text }: { text: string }) {
+/** Mention spelling some agents flatten replayed mentions into as *text*:
+ * `[@name](file://… | zed://…)`. Structured mentions arrive as their own
+ * part; this regex only recovers ones an agent baked into prose. Anchored
+ * to those schemes on purpose: a user's own `[label](url)` markdown stays
+ * the literal text they typed (user prompts are never markdown-rendered). */
+const MENTION_LINK = /\[@([^\]\n]+)\]\((?:file|zed):\/\/[^()\s]*\)/g;
+
+/** Literal prompt prose, with agent-flattened mention links recovered as
+ * tokens — everything else renders exactly as typed. */
+function UserProse({ text }: { text: string }) {
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(MENTION_LINK)) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    nodes.push(
+      <span key={m.index} className="prompt-token mention-token">
+        @{m[1]}
+      </span>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (nodes.length === 0) return <>{text}</>;
+  if (last < text.length) nodes.push(text.slice(last));
+  return <>{nodes}</>;
+}
+
+/** A pasted/attached image inside the bubble: inline preview off the
+ * attachments stash where the bytes landed; a missing file (stash failed,
+ * OS temp cleanup, another machine's session) degrades to a labeled chip —
+ * never a broken-image glyph. */
+function ImagePart({ part }: { part: Extract<UserPart, { kind: "image" }> }) {
+  const [broken, setBroken] = useState(false);
+  const src = part.file !== undefined ? attachmentUri(part.file) : null;
+  if (src === null || broken) {
+    return (
+      <span className="prompt-token" title={part.mimeType}>
+        <Icon name="file-media" /> image
+      </span>
+    );
+  }
+  return <img className="user-image" src={src} alt={part.mimeType} onError={() => setBroken(true)} />;
+}
+
+/** A labeled context snapshot (selection, problems, embedded resource) —
+ * collapsed to its label; the bounded text on demand. */
+function ContextPart({ part }: { part: Extract<UserPart, { kind: "context" }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="user-context">
+      <span
+        className="prompt-token cursor-pointer select-none"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <Icon name="link" /> {part.label} <Icon name={open ? "chevron-down" : "chevron-right"} />
+      </span>
+      {open && <pre className="user-context-body">{part.text}</pre>}
+    </span>
+  );
+}
+
+function PartView({ part }: { part: UserPart }) {
+  switch (part.kind) {
+    case "text":
+      return <UserProse text={part.text} />;
+    case "mention":
+      return (
+        <span className="prompt-token mention-token" title={part.uri}>
+          @{part.name}
+        </span>
+      );
+    case "image":
+      return <ImagePart part={part} />;
+    case "attachment":
+      return (
+        <span className="prompt-token" title={part.path}>
+          <Icon name="file" /> {part.name}
+        </span>
+      );
+    case "context":
+      return <ContextPart part={part} />;
+    case "unrendered":
+      return <span className="italic text-muted-foreground">[{part.type} content — not rendered]</span>;
+  }
+}
+
+/** The human's own prompt bubble — a part sequence rendered in the wire's
+ * own vocabulary (text, mentions, images, attachments, context), with a
+ * hover-revealed copy affordance to its left — outside the bubble so it
+ * never overlaps the text; while the check-mark feedback shows, it stays
+ * visible regardless of hover. Copy hands back the flattened readable
+ * form (userPartsText). */
+export function UserMessage({ parts }: { parts: readonly UserPart[] }) {
   const { copied, copy } = useCopy();
   return (
     <div className="group flex max-w-[85%] items-start gap-1.5 self-end">
@@ -26,13 +121,17 @@ export function UserMessage({ text }: { text: string }) {
         }`}
         title="Copy prompt"
         aria-label="Copy prompt"
-        onClick={() => copy(text)}
+        onClick={() => copy(userPartsText(parts))}
       >
         <Icon name={copied ? "check" : "copy"} size={12} />
       </button>
       {/* max-w-full neutralizes .msg-user's own 85% cap (style.css) — the
           wrapper already carries it; 85% of 85% would double-shrink. */}
-      <div className="msg-user max-w-full">{text}</div>
+      <div className="msg-user max-w-full">
+        {parts.map((part, i) => (
+          <PartView key={i} part={part} />
+        ))}
+      </div>
     </div>
   );
 }

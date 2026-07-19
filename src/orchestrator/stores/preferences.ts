@@ -3,7 +3,7 @@
 
 // Preferences (Settings, Preferences section): machine-scoped behavior
 // defaults — done-sound, fresh-session knob source, idle-release timer.
-// globalState by the placement contract: non-sensitive, developer-env, never
+// Machine store by the placement contract: non-sensitive, developer-env, never
 // repo-committed (secrets stay out of here by construction — nothing in this
 // shape is one). Stored as one partial record merged over defaults
 // on every read, so a version that adds a preference never invalidates an

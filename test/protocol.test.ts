@@ -392,3 +392,25 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   });
 });
 
+
+describe("sessionHydrating (the load-replay loading page signal)", () => {
+  it("sets and clears per session, tolerating pre-field snapshots", () => {
+    const on = reduceAgentView(initialAgentViewState, {
+      kind: "sessionHydrating",
+      sessionId: "s1",
+      hydrating: true,
+    });
+    expect(on.hydrating).toEqual({ s1: true });
+    const off = reduceAgentView(on, { kind: "sessionHydrating", sessionId: "s1", hydrating: false });
+    expect(off.hydrating).toEqual({});
+    // a snapshot minted before the field existed reduces without crashing
+    const legacy = { ...initialAgentViewState } as Record<string, unknown>;
+    delete legacy.hydrating;
+    const revived = reduceAgentView(legacy as unknown as typeof initialAgentViewState, {
+      kind: "sessionHydrating",
+      sessionId: "s2",
+      hydrating: true,
+    });
+    expect(revived.hydrating).toEqual({ s2: true });
+  });
+});

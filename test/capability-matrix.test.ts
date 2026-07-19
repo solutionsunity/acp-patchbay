@@ -10,7 +10,6 @@ import {
   reduceAgentView,
   type AgentViewEvent,
   type AuthMethodView,
-  type CapabilityMatrix,
   type DeclaredCapabilities,
 } from "../src/shared/protocol";
 

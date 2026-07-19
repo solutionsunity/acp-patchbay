@@ -18,6 +18,7 @@ import {
   type AgentViewEvent,
   type AgentViewState,
   type ChatBlock,
+  userPartsText,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -148,7 +149,7 @@ describe("SessionManager", () => {
 
     const state2 = h.state();
     const blocks = state2.transcripts[sessionId]!;
-    expect(blocks[0]).toMatchObject({ kind: "user", text: "go go go" });
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "go go go" }] });
     expect(textOf(blocks[1])).toBe("hi there");
     expect(state2.sessions[0]?.live).toBe(false);
     // first prompt on an untitled session derives its title
@@ -235,7 +236,7 @@ describe("SessionManager", () => {
     await new Promise((r) => setTimeout(r, 500));
     expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
     const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
-    expect(users.map((b) => (b as { text: string }).text)).toEqual(["first", "second"]);
+    expect(users.map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual(["first", "second"]);
     await h.pool.stop("smq1");
   });
 
@@ -386,7 +387,7 @@ describe("SessionManager", () => {
     // replay rebuilt the whole first turn — user message included (the spec
     // replays the *entire* conversation) — then the new user message, then
     // the new turn's text — never merged, always reset
-    expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "first turn" }] });
     expect(textOf(blocks[1])).toBe("before crash");
     // the replayed turn keeps its boundary — synthesized, since the replay
     // wire carries no turn resolution: structure recovered, timing/stop/usage
@@ -398,7 +399,7 @@ describe("SessionManager", () => {
       stopReason: null,
       usage: null,
     });
-    expect(blocks[3]).toMatchObject({ kind: "user", text: "second turn" });
+    expect(blocks[3]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "second turn" }] });
     expect(textOf(blocks[4])).toBe("before crash"); // second turn uses the same script
 
     await h.pool.stop("sm5");
@@ -422,17 +423,17 @@ describe("SessionManager", () => {
     // live second turn streamed as patches again.
     expect(h.silentEvents.map((e) => e.kind)).toEqual([
       "transcriptReset",
-      "userTextDelta",
+      "userPartAppended",
       "agentTextDelta",
       "turnEnded",
     ]);
     expect(h.resyncCount()).toBe(1);
     // canonical state is complete regardless of delivery path
     const blocks = h.state().transcripts[sessionId]!;
-    expect(blocks[0]).toMatchObject({ kind: "user", text: "first turn" });
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "first turn" }] });
     expect(textOf(blocks[1])).toBe("hello");
     expect(blocks[2]).toMatchObject({ kind: "turnEnd", startedAt: null });
-    expect(blocks[3]).toMatchObject({ kind: "user", text: "second turn" });
+    expect(blocks[3]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "second turn" }] });
     await h.pool.stop("sm5s");
   });
 
@@ -508,7 +509,7 @@ describe("SessionManager", () => {
     await h.sessionManager.sendPrompt(sessionId, "/cmd");
     const blocks = h.state().transcripts[sessionId]!;
     expect(blocks.filter((b) => b.kind === "user")).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({ kind: "user", text: "/cmd" });
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "/cmd" }] });
     expect(textOf(blocks[1])).toBe("ok");
     await h.pool.stop("sm5e");
   });
@@ -1021,9 +1022,14 @@ describe("SessionManager", () => {
       { type: "resource_link", uri: "file:///repo/src/app.ts", name: "app.ts" },
       { type: "text" },
     ]);
-    // the transcript shows the readable form, tokens included
+    // the transcript records the prompt in the part vocabulary — the
+    // mention is a structured part, rendered as an inline @app.ts token
     const user = h.state().transcripts[sessionId]!.find((b) => b.kind === "user");
-    expect(user?.kind === "user" && user.text).toBe("look at @app.ts please");
+    expect(user?.kind === "user" && user.parts).toEqual([
+      { kind: "text", text: "look at " },
+      { kind: "mention", name: "app.ts", uri: "file:///repo/src/app.ts" },
+      { kind: "text", text: " please" },
+    ]);
 
     await h.pool.stop("sm11p");
   });
@@ -1070,6 +1076,29 @@ describe("session history (list / resume / delete)", () => {
     expect(state.capabilities.sh1?.["session.list"]).toMatchObject({ declared: true, used: true });
 
     await h.pool.stop("sh1");
+  });
+
+  it("malformed list rows degrade at the boundary: metadata to absent, identity-less rows dropped", async () => {
+    // acp-matrix fixture finding: rows with epoch-seconds updatedAt used to
+    // reach the drawer typed as ISO strings and blank the webview on sort.
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "ext-bad.jsonl"), "", "utf8");
+
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS, lies: { malformedListRows: true } }, "shm"));
+    await h.sessionManager.syncAgentSessions("shm");
+
+    const state = h.state();
+    const row = state.sessions.find((s) => s.id === "ext-bad");
+    // The row survives with its bad sort key degraded to a real ISO string…
+    expect(row).toBeDefined();
+    expect(typeof row!.updatedAt).toBe("string");
+    expect(() => row!.updatedAt.localeCompare("2026-01-01T00:00:00Z")).not.toThrow();
+    // …and the identity-less row never entered the snapshot.
+    expect(state.sessions.some((s) => s.title === "no identity")).toBe(false);
+
+    await h.pool.stop("shm");
   });
 
   it("prunes rows the agent no longer reports — wire truth wins", async () => {
@@ -1168,7 +1197,7 @@ describe("session history (list / resume / delete)", () => {
     // cached view kept, seam notice marks where the unreplayed memory begins
     const noticeAt = blocks.findIndex((b) => b.kind === "notice");
     expect(noticeAt).toBeGreaterThanOrEqual(before);
-    expect(blocks.filter((b) => b.kind === "user").map((b) => b.kind === "user" && b.text)).toEqual([
+    expect(blocks.filter((b) => b.kind === "user").map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual([
       "first",
       "second",
     ]);
@@ -1408,6 +1437,63 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     return { h, sessionId, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
   }
 
+  it("replayed image and embedded-resource chunks land as structured parts in the SAME bubble", async () => {
+    const { h, push, blocks } = await chunkHarness("ch-parts");
+    const png = Buffer.from("89504e470d0a1a0a", "hex").toString("base64");
+    push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "see " }, messageId: "m1" });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "image", data: png, mimeType: "image/png" }, messageId: "m1" });
+    push({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "resource", resource: { uri: "file:///ws/ctx.ts", text: "const c = 1;" } },
+      messageId: "m1",
+    });
+    push({ sessionUpdate: "user_message_chunk", content: { type: "audio", data: "x", mimeType: "audio/wav" }, messageId: "m1" });
+    expect(blocks()).toHaveLength(1);
+    const user = blocks()[0]!;
+    expect(user.kind).toBe("user");
+    const parts = user.kind === "user" ? user.parts : [];
+    expect(parts[0]).toEqual({ kind: "text", text: "see " });
+    expect(parts[1]).toMatchObject({ kind: "image", mimeType: "image/png" });
+    expect((parts[1] as { file?: string }).file).toMatch(/\.png$/);
+    expect(parts[2]).toEqual({ kind: "context", label: "file:///ws/ctx.ts", text: "const c = 1;" });
+    expect(parts[3]).toEqual({ kind: "unrendered", type: "audio" });
+    await h.pool.stop("ch-parts");
+  });
+
+  it("live chips ride the sent bubble as parts — image, attachment, context, then prose", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm-parts"));
+    const sessionId = await h.sessionManager.createSession("sm-parts", "Fake Agent", cwd);
+    h.sessionManager.addContext(sessionId, {
+      id: "img-1",
+      kind: "image",
+      label: "pasted image",
+      content: Buffer.from("89504e470d0a1a0a", "hex").toString("base64"),
+      mimeType: "image/png",
+    });
+    h.sessionManager.addContext(sessionId, {
+      id: "att-1",
+      kind: "attachment",
+      label: "notes.md",
+      path: "/ws/notes.md",
+    });
+    h.sessionManager.addContext(sessionId, {
+      id: "sel-1",
+      kind: "selection",
+      label: "Selection: a.ts:1-2",
+      content: "const x = 1;",
+    });
+    await h.sessionManager.sendPrompt(sessionId, "what is this?");
+    const user = h.state().transcripts[sessionId]!.find((b) => b.kind === "user");
+    expect(user?.kind === "user" && user.parts).toEqual([
+      { kind: "image", mimeType: "image/png", file: "img-1.png" },
+      { kind: "attachment", name: "notes.md", path: "/ws/notes.md" },
+      { kind: "context", label: "Selection: a.ts:1-2", text: "const x = 1;" },
+      { kind: "text", text: "what is this?" },
+    ]);
+    await h.pool.stop("sm-parts");
+  });
+
   it("whitespace-only chunks never open a run — no blank Thought accordion (G11)", async () => {
     const { h, push, blocks } = await chunkHarness("ch1");
     push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "" } });
@@ -1467,23 +1553,67 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     });
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: " and fix it" }, messageId: "m1" });
     expect(blocks()).toHaveLength(1);
-    expect(blocks()[0]).toMatchObject({ kind: "user", text: "please read @a.ts and fix it" });
+    // One wire message, one bubble: the mention is its own structured part
+    // between the merged prose spans.
+    expect(blocks()[0]).toMatchObject({
+      kind: "user",
+      parts: [
+        { kind: "text", text: "please read " },
+        { kind: "mention", name: "a.ts", uri: "file:///ws/a.ts" },
+        { kind: "text", text: " and fix it" },
+      ],
+    });
     await h.pool.stop("ch3");
   });
 
   it("a messageId change splits adjacent user messages — cancelled turns never fuse", async () => {
     // The cancelled-turn shape: two prompts with nothing between them (the
     // turn produced no output). Claude additionally interleaves its own
-    // interruption marker as a separate message — three ids, three bubbles.
+    // interruption marker as a separate message — the marker is a turn
+    // fact, never a bubble (outside a replay window it adds nothing: the
+    // live turn's own turnEnded already said cancelled).
     const { h, push, blocks } = await chunkHarness("ch5");
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "in this starting" }, messageId: "m1" });
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "[Request interrupted by user]" }, messageId: "m2" });
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "again?" }, messageId: "m3" });
-    expect(blocks()).toHaveLength(3);
-    expect(blocks()[0]).toMatchObject({ kind: "user", text: "in this starting" });
-    expect(blocks()[1]).toMatchObject({ kind: "user", text: "[Request interrupted by user]" });
-    expect(blocks()[2]).toMatchObject({ kind: "user", text: "again?" });
+    expect(blocks()).toHaveLength(2);
+    expect(blocks()[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "in this starting" }] });
+    expect(blocks()[1]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "again?" }] });
     await h.pool.stop("ch5");
+  });
+
+  it("a replayed interruption marker closes its turn as cancelled — the chip, not the raw text", async () => {
+    // Live cancel shows the real turnEnded's "cancelled" line; the marker
+    // the agent stores instead must replay to the same rendering (live
+    // cancel and its later replay render identically).
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true },
+          // the agent echoes the marker as its own user-role message during
+          // the turn — dropped live (inFlight), durably recorded for replay
+          turn: [{ type: "userEcho", text: "[Request interrupted by user]" }],
+        },
+        "sm-int",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm-int", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "do the thing");
+
+    await h.pool.restart("sm-int");
+    await h.sessionManager.reload(sessionId);
+
+    const blocks = h.state().transcripts[sessionId]!;
+    // prompt bubble, then the cancelled boundary — the marker text nowhere
+    expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "do the thing" }] });
+    expect(blocks[1]).toMatchObject({ kind: "turnEnd", stopReason: "cancelled", startedAt: null });
+    expect(
+      blocks.some(
+        (b) => b.kind === "user" && b.parts.some((p) => p.kind === "text" && p.text.includes("interrupted")),
+      ),
+    ).toBe(false);
+    await h.pool.stop("sm-int");
   });
 
   it("id-less user chunks never merge — one bubble per message (auggie shape)", async () => {
@@ -1493,8 +1623,8 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "still same?" } });
     push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "?" } });
     expect(blocks()).toHaveLength(2);
-    expect(blocks()[0]).toMatchObject({ kind: "user", text: "still same?" });
-    expect(blocks()[1]).toMatchObject({ kind: "user", text: "?" });
+    expect(blocks()[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "still same?" }] });
+    expect(blocks()[1]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "?" }] });
     await h.pool.stop("ch6");
   });
 

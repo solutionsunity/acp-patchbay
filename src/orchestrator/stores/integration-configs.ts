@@ -29,7 +29,7 @@ export const integrationSourceSchema = z.discriminatedUnion("kind", [
     args: z.array(z.string()).default([]),
     // No env here on purpose: stdio MCP servers commonly take API keys via
     // env, so values live in SecretStorage (stores/secret-env.ts), read at
-    // attach time (integrations.mcpServersFor) — never in globalState.
+    // attach time (integrations.mcpServersFor) — never in the machine store.
   }),
   z.object({
     kind: z.literal("custom-http"),

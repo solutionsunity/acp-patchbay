@@ -143,7 +143,7 @@ Notes:
 
 1. Header auth generalized: `headerName` + `valuePrefix` in both the registry
    schema (`stores/registry.ts`) and the custom-http config shape
-   (`stores/config-file.ts`); the bridge reads them from
+   (`stores/integration-configs.ts`); the bridge reads them from
    `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`integrations/bridge-main.ts`).
 2. `src/orchestrator/mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
    Authorization Code + PKCE; redirect via an injected `OAuthUserAgent` — the

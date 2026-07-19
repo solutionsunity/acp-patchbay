@@ -6,9 +6,7 @@
 // cache itself lives in AgentViewState, updated only through the shared
 // reducer (render cache is disposable, replay
 // always wins, never merged).
-import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
   ContentBlock,
@@ -28,7 +26,10 @@ import {
   type SessionSummary,
   type ToolCallStatus,
   type TurnUsage,
+  type UserPart,
+  userPartsText,
 } from "../shared/protocol";
+import { imageFileName, stashImage } from "./attachments";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -469,7 +470,10 @@ export class SessionManager {
       const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
       this.hooks.onRealSessionAttached?.(agentId);
-      return { sessionId: r.sessionId, knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r)) };
+      return {
+        sessionId: r.sessionId,
+        knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
+      };
     }
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
     const r =
@@ -479,9 +483,13 @@ export class SessionManager {
     this.hooks.onRealSessionAttached?.(agentId);
     return {
       sessionId: target.sessionId,
-      knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r)),
+      knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
     };
   }
+
+  /** Sanitizer report channel (knobs.ts guards) — dropped wire entries land
+   * in the Output channel, never a crash. */
+  private readonly knobDropLog = (message: string): void => this.log.info(message);
 
   /** A `session/load` with its replay window silenced: the reset and every replayed update
    * reduce into canonical state only — the old pane content stays up (no
@@ -592,6 +600,9 @@ export class SessionManager {
   async hydrate(sessionId: string): Promise<void> {
     if (this.sessions.has(sessionId) || this.hydrating.has(sessionId)) return;
     this.hydrating.add(sessionId);
+    // The loading-page signal — live patch on purpose (never the silent
+    // replay channel): it must show while the replay is still reducing.
+    this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: true });
     try {
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
@@ -612,6 +623,7 @@ export class SessionManager {
       });
     } finally {
       this.hydrating.delete(sessionId);
+      this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
     }
   }
 
@@ -714,6 +726,8 @@ export class SessionManager {
         cwd,
         ...(cursor !== undefined ? { cursor } : {}),
       });
+      // Rows arrive through the response trust boundary (pool's chokepoint):
+      // identity-less rows are already dropped, bad sort keys degraded.
       for (const info of response.sessions) {
         // Re-filter defensively: the cwd param is a request, not a contract.
         if (info.cwd !== cwd) continue;
@@ -723,6 +737,15 @@ export class SessionManager {
       if (response.nextCursor == null) {
         complete = true;
         break;
+      }
+      if (typeof response.nextCursor !== "string") {
+        // A cursor that can't be sent back truncates the walk — same rule as
+        // the page cap: merge what arrived, never prune on a partial read.
+        // Deliberately judged here, not at the response boundary: degrading
+        // the cursor to absent there would read as "complete" and license a
+        // wrongful prune — pagination policy is this walk's, not the wire's.
+        this.log.info(`${agentId}: session/list nextCursor is malformed — sync merged, prune skipped`);
+        return;
       }
       cursor = response.nextCursor;
     }
@@ -952,7 +975,7 @@ export class SessionManager {
       return;
     }
     const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-    const next = applyConfigUpdate(response.configOptions, session.knobs);
+    const next = applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog);
     this.publishKnobs(sessionId, next);
     // A user set, agent-confirmed: this — and only this — is what the
     // composer's per-agent combination records. Attach-time publishes never
@@ -1053,7 +1076,10 @@ export class SessionManager {
       }
       try {
         const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-        this.publishKnobs(sessionId, applyConfigUpdate(response.configOptions, session.knobs));
+        this.publishKnobs(
+          sessionId,
+          applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog),
+        );
       } catch {
         // rejected seed entry — the agent's state stands, nothing to repair
       }
@@ -1266,11 +1292,6 @@ export class SessionManager {
     // restart the agent's own session/list stamp is the truth.
     const entry = this.known.get(sessionId);
     if (entry !== undefined) this.known.set(sessionId, { ...entry, updatedAt: startedAt });
-    events.push(
-      { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), text },
-      { kind: "sessionLiveChanged", sessionId, live: true },
-      { kind: "turnStarted", sessionId, at: startedAt },
-    );
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
     // (explicitly add editor state to the prompt).
@@ -1279,6 +1300,41 @@ export class SessionManager {
     for (const chip of chips) {
       events.push({ kind: "contextChipRemoved", sessionId, chipId: chip.id });
     }
+    // The transcript's copy of the prompt, in the part vocabulary — chips
+    // first, then prose, the same order the wire blocks below carry. Image
+    // bytes stash to the attachments dir (fire-and-forget: the part names
+    // its file up front; a failed write degrades to a label chip at render).
+    const userParts: UserPart[] = chips.map((c): UserPart => {
+      if (c.kind === "image") {
+        const file = imageFileName(c.id, c.mimeType);
+        void stashImage(file, c.content).catch((err: Error) => {
+          this.log.info(`session ${sessionId}: image stash failed — ${err.message}`);
+        });
+        return { kind: "image", mimeType: c.mimeType, file };
+      }
+      if (c.kind === "attachment") {
+        return { kind: "attachment", name: basename(c.path), path: c.path };
+      }
+      return { kind: "context", label: c.label, text: boundedText(c.content) };
+    });
+    if (parts !== undefined && parts.length > 0) {
+      for (const p of parts) {
+        if (p.kind === "text") userParts.push({ kind: "text", text: p.text });
+        else
+          userParts.push({
+            kind: "mention",
+            name: basename(p.path),
+            uri: pathToFileURL(p.path).toString(),
+          });
+      }
+    } else {
+      userParts.push({ kind: "text", text });
+    }
+    events.push(
+      { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), parts: userParts },
+      { kind: "sessionLiveChanged", sessionId, live: true },
+      { kind: "turnStarted", sessionId, at: startedAt },
+    );
     this.hooks.emit(...events);
 
     // Chips ride in the best form the agent accepts — capability first,
@@ -1593,6 +1649,41 @@ export class SessionManager {
    *   an id-less agent's real message boundaries stay invisible until a
    *   wire capture proves its replay granularity (auggie's agent-chunk
    *   side is uncaptured — dossier note when it lands). */
+  /** Replay counterpart of sendPrompt's part building: one wire content
+   * block of a replayed user message → its UserPart. The whole content
+   * vocabulary maps — text stays literal, resource_link becomes a mention,
+   * image bytes stash to the attachments dir for preview (fire-and-forget;
+   * a failed write degrades to a label chip), embedded text resources
+   * become bounded context snapshots — and only genuinely unrenderable
+   * kinds (audio, blob resources) fall to the honesty placeholder. */
+  private userPartOf(sessionId: string, content: ContentBlock): UserPart {
+    switch (content.type) {
+      case "text":
+        return { kind: "text", text: content.text };
+      case "resource_link":
+        return { kind: "mention", name: content.name, uri: content.uri };
+      case "image": {
+        if (content.data === "") return { kind: "image", mimeType: content.mimeType };
+        const file = imageFileName(`replay-${++blockCounter}`, content.mimeType);
+        void stashImage(file, content.data).catch((err: Error) => {
+          this.log.info(`session ${sessionId}: replay image stash failed — ${err.message}`);
+        });
+        return { kind: "image", mimeType: content.mimeType, file };
+      }
+      case "resource":
+        if ("text" in content.resource) {
+          return {
+            kind: "context",
+            label: content.resource.uri,
+            text: boundedText(content.resource.text),
+          };
+        }
+        return { kind: "unrendered", type: "blob resource" };
+      default:
+        return { kind: "unrendered", type: content.type };
+    }
+  }
+
   private runBlockFor(
     sessionId: string,
     session: LiveSession,
@@ -1703,53 +1794,63 @@ export class SessionManager {
       // message lands.
       case "user_message_chunk": {
         if (session.inFlight) return;
+        // Interruption marker riding the user role (shape-gated: the whole
+        // message is exactly the bracketed marker — no human prompt looks
+        // like that; observed: claude-agent-acp replay). It is the replay
+        // wire's only record that the turn was cancelled, so render the
+        // fact, not the artifact: the segment closes as a cancelled turn —
+        // the same line a live cancel leaves — and the marker text never
+        // becomes a bubble. Outside a replay window there is nothing to
+        // add: the live turn's own turnEnded already said cancelled.
+        if (
+          update.content.type === "text" &&
+          /^\[Request interrupted by user( for tool use)?\]$/.test(update.content.text.trim())
+        ) {
+          this.sealRun(sessionId, session);
+          if (this.replaying.has(sessionId)) {
+            session.replayTurnDirty = false;
+            emit({
+              kind: "turnEnded",
+              sessionId,
+              blockId: newBlockId("turn"),
+              startedAt: null,
+              at: null,
+              stopReason: "cancelled",
+              usage: null,
+            });
+          }
+          break;
+        }
         // A replayed user message with agent activity pending = the previous
         // turn just ended structurally — its boundary lands first, so the
         // rollup derivation sees the same shape a live turn left behind.
         this.flushReplayBoundary(sessionId, session, emit);
         const messageId = update.messageId ?? null;
-        if (update.content.type === "resource_link") {
-          // Our own positional file mentions come back like this on replay
-          // (the composer sends them as resource_link parts inline) — so
-          // render the mention the way the user typed it, INTO the same
-          // prose run: a placeholder block here would sever one prompt
-          // into bubble + placeholder + bubble.
-          const text = `@${update.content.name}`;
-          const blockId = this.runBlockFor(sessionId, session, "user", messageId, text);
-          if (blockId === null) break;
-          emit({ kind: "userTextDelta", sessionId, blockId, text });
-          break;
-        }
-        if (update.content.type !== "text") {
-          // Honesty placeholder: unrendered content
-          // says so in place — its own closed block, never a silent drop.
-          this.sealRun(sessionId, session);
-          emit({
-            kind: "userTextDelta",
-            sessionId,
-            blockId: newBlockId("user"),
-            text: `*[${update.content.type} content — not rendered]*`,
-          });
-          break;
-        }
-        if (harnessEnvelopeTag(update.content.text) !== null) {
+        if (update.content.type === "text" && harnessEnvelopeTag(update.content.text) !== null) {
           // Harness-injected envelope riding the user role: its own closed,
           // flagged block — never merged into the prose run (an injection
           // between two real messages must not fuse them into one bubble,
           // and the injection itself is not the user's prompt).
           this.sealRun(sessionId, session);
           emit({
-            kind: "userTextDelta",
+            kind: "userPartAppended",
             sessionId,
             blockId: newBlockId("user"),
-            text: update.content.text,
+            part: { kind: "text", text: update.content.text },
             injected: true,
           });
           break;
         }
-        const blockId = this.runBlockFor(sessionId, session, "user", messageId, update.content.text);
+        // Every other content kind maps to its user part and joins the SAME
+        // prose run (userPartOf) — one wire message, one bubble: mentions,
+        // images and context render in place instead of severing the prompt
+        // into bubble + placeholder + bubble.
+        const part = this.userPartOf(sessionId, update.content);
+        // Non-text parts pass their non-empty flat preview, so the
+        // whitespace-only guard in runBlockFor can never swallow them.
+        const blockId = this.runBlockFor(sessionId, session, "user", messageId, userPartsText([part]));
         if (blockId === null) break;
-        emit({ kind: "userTextDelta", sessionId, blockId, text: update.content.text });
+        emit({ kind: "userPartAppended", sessionId, blockId, part });
         break;
       }
       case "agent_message_chunk": {
@@ -1889,7 +1990,10 @@ export class SessionManager {
         // Spec: the notification carries the complete configuration state.
         // (`session.knobs` prior keeps accepted extension extras — they ride
         // the session response, not config updates.)
-        this.publishKnobs(sessionId, applyConfigUpdate(update.configOptions, session.knobs));
+        this.publishKnobs(
+          sessionId,
+          applyConfigUpdate(update.configOptions, session.knobs, this.knobDropLog),
+        );
         break;
       case "usage_update":
         // Capability marking (declared+used together, on first sight — no
@@ -1947,28 +2051,15 @@ export class SessionManager {
   }
 }
 
-/** Exactly the ingress's wire set — an image chip can't carry anything
- * else (composer/ingress.ts admits or re-encodes; lane-1 drops map from
- * the same set), so the "img" fallback below is a can't-happen guard, not
- * a live path. */
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-};
-
 /** The image-paste fallback for agents that never declared
- * `promptCapabilities.image`: bytes to a temp file, sent as a ResourceLink
- * (with ContentBlock::Text, the baseline every agent must accept). */
+ * `promptCapabilities.image`: bytes to the attachments stash, sent as a
+ * ResourceLink (with ContentBlock::Text, the baseline every agent must
+ * accept). The same stash file backs the transcript's preview. */
 async function imageAsResourceLink(
   chip: Extract<ContextChip, { kind: "image" }>,
 ): Promise<ContentBlock> {
-  const dir = join(tmpdir(), "acp-patchbay-attachments");
-  await mkdir(dir, { recursive: true });
-  const name = `${chip.id}.${IMAGE_EXTENSIONS[chip.mimeType] ?? "img"}`;
-  const file = join(dir, name);
-  await writeFile(file, Buffer.from(chip.content, "base64"));
+  const name = imageFileName(chip.id, chip.mimeType);
+  const file = await stashImage(name, chip.content);
   return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType: chip.mimeType };
 }
 
@@ -1992,6 +2083,13 @@ function toTurnUsage(usage: { totalTokens: number; inputTokens: number; outputTo
  * the reducer's "absent = keep existing" merge rule holds. */
 const RAW_CAP = 4_000;
 
+/** The bound itself, reusable for any agent-sized text that rides state
+ * snapshots (context-chip snapshots on user blocks share the rule). */
+function boundedText(text: string): string {
+  if (text.length <= RAW_CAP) return text;
+  return `${text.slice(0, RAW_CAP)}\n… truncated (${text.length.toLocaleString()} chars total)`;
+}
+
 function boundedRaw(
   key: "input" | "output",
   raw: unknown,
@@ -2006,10 +2104,7 @@ function boundedRaw(
       text = String(raw);
     }
   }
-  if (text.length > RAW_CAP) {
-    text = `${text.slice(0, RAW_CAP)}\n… truncated (${text.length.toLocaleString()} chars total)`;
-  }
-  return { [key]: text } as { input: string } | { output: string };
+  return { [key]: boundedText(text) } as { input: string } | { output: string };
 }
 
 /** Exhaustiveness backstop for handleUpdate's switch — see its default arm. */

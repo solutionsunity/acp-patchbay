@@ -135,6 +135,11 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
+  // user-message part model: the sent bubble renders its mention and
+  // attachment as tokens, not flattened text
+  const userTokens = await p.$$eval(".msg-user .prompt-token", (els) => els.map((el) => el.textContent.trim()));
+  check(`[${theme}] user bubble renders the mention part as a token`, userTokens.includes("@api.ts"));
+  check(`[${theme}] user bubble renders the attachment part as a chip`, userTokens.some((t) => t.includes("notes.md")));
 
   // ── composer stats strip: whole-session counts (2 prompts, 5 tool calls
   // in the fixture) with the files chip slotted between counts and gauge
@@ -179,7 +184,9 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] mention menu lists open editors`, (await p.waitForSelector('.pop .it:has-text("app.ts")', { timeout: 3000 })) !== null);
   await p.screenshot({ path: `${OUT}/composer-mention-${theme}.png` });
   await p.keyboard.press("Enter");
-  const mentionToken = await p.waitForSelector(".mention-token", { timeout: 3000 });
+  // scoped to the composer: the transcript fixture renders its own mention
+  // tokens in the sent bubble now
+  const mentionToken = await p.waitForSelector(".input-shell .mention-token", { timeout: 3000 });
   check(`[${theme}] picked file lands as inline mention token`, (await mentionToken.textContent()) === "@app.ts");
   check(`[${theme}] menu closed after pick`, (await p.$(".pop .it.sel")) === null);
   await p.screenshot({ path: `${OUT}/composer-tokens-${theme}.png` });

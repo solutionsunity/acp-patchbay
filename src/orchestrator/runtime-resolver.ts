@@ -19,7 +19,8 @@ import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
 import { launcherKind } from "./launcher-health";
 import type { Logger } from "./logger";
-import { resolveSpawn, type LaunchSpec } from "./pool";
+import type { LaunchSpec } from "./pool";
+import { resolveSpawn } from "./spawn-resolve";
 import { killTree, treeSpawnOptions } from "./process-tree";
 import {
   installBinary,
@@ -73,7 +74,7 @@ export function probeVersion(
   env: NodeJS.ProcessEnv,
   timeoutMs = PROBE_TIMEOUT_MS,
 ): Promise<string | null> {
-  const launch = resolveSpawn(command, ["--version"]);
+  const launch = resolveSpawn(command, ["--version"], env);
   if (launch.error !== undefined) return Promise.resolve(null);
   return new Promise((resolve) => {
     const child = spawn(launch.command, launch.args, {

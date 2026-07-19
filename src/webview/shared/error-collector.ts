@@ -38,6 +38,14 @@ export function installErrorCollector(reportToHost: (message: string) => void): 
   });
 }
 
+/** Programmatic entry for errors patchbay's own code catches (the render
+ * boundary in mount.tsx) — same buffer, same host forward as the
+ * window-level hooks; a React error boundary swallows the error before the
+ * window "error" event can fire, so caught render errors report themselves. */
+export function collectError(message: string): void {
+  push(message);
+}
+
 export function subscribeErrors(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

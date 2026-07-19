@@ -21,7 +21,7 @@ import { PreferencesSection } from "./preferences";
 
 /** Grouped by what the group *is*, not by theme: "This machine" is what's
  * global to this machine (the wiring — agents, integrations, the matrix
- * observing them — and behavior preferences; globalState/SecretStorage),
+ * observing them — and behavior preferences; machine store/SecretStorage),
  * "Trust" is the one trust surface, "This workspace" is what lives
  * in the workspace itself (asset files the agent reads from its own cwd).
  * The nav teaches the placement contract instead of captioning it. */

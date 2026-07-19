@@ -29,6 +29,7 @@ interface Internal {
       get(): { commandRules: unknown[]; fileWriteScope: string };
       set(rules: { commandRules: unknown[]; fileWriteScope: string }): Promise<void>;
     };
+    usedCapabilities: { remove(id: string): Promise<void> };
     connectAgent(spec: {
       agentId: string;
       name: string;
@@ -73,6 +74,12 @@ suite("opportunistic fs/terminal verification", () => {
       ...rules,
       commandRules: [...rules.commandRules, { pattern: "node -e ok", verdict: "allow" }],
     });
+
+    // A previous suite run in this user-data dir leaves its version-keyed
+    // used-capability record behind, and the connect would honestly restore
+    // used:true from it — this test asserts the pre-restore state, so its
+    // agent starts from a clean slate.
+    await orchestrator.usedCapabilities.remove("verify-e2e");
 
     try {
       await orchestrator.connectAgent({

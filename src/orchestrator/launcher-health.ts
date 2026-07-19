@@ -32,6 +32,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "./logger";
+import { resolveSpawn } from "./spawn-resolve";
 
 /** Normalized launcher name from a command that may be a path or a Windows
  * shim — THE one spelling of "is this an ecosystem launcher", shared by
@@ -98,12 +99,14 @@ export function npmNpxRoot(
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
-  const npm = platform === "win32" ? "npm.cmd" : "npm";
+  // Resolved like any launch (spawn-resolve.ts) — absolute path, shell
+  // only for a .cmd shim; fixed literal args, nothing registry-supplied.
+  const launch = resolveSpawn("npm", ["config", "get", "cache"], env, platform);
+  if (launch.error !== undefined) return Promise.resolve(null);
   return new Promise((resolve) => {
-    // Fixed literal args — nothing registry-supplied rides this shell.
-    const child = spawn(npm, ["config", "get", "cache"], {
+    const child = spawn(launch.command, launch.args, {
       env: env as NodeJS.ProcessEnv,
-      shell: platform === "win32",
+      shell: launch.shell,
       timeout: 10_000,
     });
     let out = "";
@@ -212,16 +215,19 @@ export async function bundledVersionInNpxCache(
 
 /** `<bin> --version` for the PATH sibling; null when absent (nothing to
  * compare — silence, not an error). Bin names come from PATH_SIBLINGS only,
- * never from registry data, so the win32 shell is safe. */
+ * never from registry data; resolution (spawn-resolve.ts) finds the npm
+ * .cmd shims these CLIs usually are on Windows. */
 export function pathSiblingVersion(
   bin: string,
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
+  const launch = resolveSpawn(bin, ["--version"], env, platform);
+  if (launch.error !== undefined) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const child = spawn(bin, ["--version"], {
+    const child = spawn(launch.command, launch.args, {
       env: env as NodeJS.ProcessEnv,
-      shell: platform === "win32",
+      shell: launch.shell,
       timeout: 5_000,
     });
     let out = "";
