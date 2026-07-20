@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import type { SessionKnobView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -51,34 +51,43 @@ export function Knobs(props: {
     <>
       {props.knobs.map((k) => (
         <span className="knob" key={k.id} title={k.name}>
-          <Icon name={glyphFor(k.category)} />
           {k.type === "boolean" ? (
-            <Checkbox
-              checked={k.currentValue}
-              onCheckedChange={(v) => set(k.id, v === true)}
-            />
+            // A boolean knob is a named on/off state: its own title + a
+            // switch (a state, not an act), not a glyph the user must
+            // decode + a bare checkbox.
+            <label className="flex cursor-pointer items-center gap-1 text-[10.5px]">
+              {k.name}
+              <Switch
+                className="h-3 w-5.5 [&_[data-slot=switch-thumb]]:h-2 [&_[data-slot=switch-thumb]]:w-2 [&_[data-slot=switch-thumb]]:data-[state=checked]:translate-x-3"
+                checked={k.currentValue}
+                onCheckedChange={(v) => set(k.id, v === true)}
+              />
+            </label>
           ) : (
-            <Select value={k.currentValue} onValueChange={(value) => set(k.id, value)}>
-              <SelectTrigger className={KNOB_TRIGGER}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {k.options.map((entry) =>
-                  "group" in entry ? (
-                    <SelectGroup key={entry.group}>
-                      <SelectLabel>{entry.name}</SelectLabel>
-                      {entry.options.map((v) => (
-                        <SelectItem key={v.value} value={v.value}>
-                          {v.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ) : (
-                    <SelectItem key={entry.value} value={entry.value}>
-                      {entry.name}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectContent>
-            </Select>
+            <>
+              <Icon name={glyphFor(k.category)} />
+              <Select value={k.currentValue} onValueChange={(value) => set(k.id, value)}>
+                <SelectTrigger className={KNOB_TRIGGER}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {k.options.map((entry) =>
+                    "group" in entry ? (
+                      <SelectGroup key={entry.group}>
+                        <SelectLabel>{entry.name}</SelectLabel>
+                        {entry.options.map((v) => (
+                          <SelectItem key={v.value} value={v.value}>
+                            {v.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : (
+                      <SelectItem key={entry.value} value={entry.value}>
+                        {entry.name}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+            </>
           )}
           {pending[k.id] && <span className="knob-pending spin" />}
         </span>

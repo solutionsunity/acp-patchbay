@@ -807,14 +807,33 @@ export class SessionManager {
    * isn't currently invalidated — the same ladder as every attach
    * (load > resume), so a resume-only agent's reload works too. */
   async reload(sessionId: string): Promise<void> {
-    // Reload discards the render cache and replays from the agent — a turn
-    // still streaming into that cache is stopped first, so replay and live
-    // stream never interleave.
-    await this.interruptTurn(sessionId);
-    this.sessions.delete(sessionId);
-    const agentId = this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return;
-    await this.ensureAttached(sessionId, agentId);
+    // Same in-flight signal as a cold open — the row spinner's basis; the
+    // set doubles as the reentry guard, so a double-click is one reload.
+    if (this.hydrating.has(sessionId)) return;
+    this.hydrating.add(sessionId);
+    this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: true });
+    try {
+      // Reload discards the render cache and replays from the agent — a turn
+      // still streaming into that cache is stopped first, so replay and live
+      // stream never interleave.
+      await this.interruptTurn(sessionId);
+      // Live-channel reset, deliberately outside the silent replay window
+      // and strictly after the interrupt (the dying turn's tail must not
+      // stream into a blanked view): an explicit reload means "what's shown
+      // is not trusted" — keeping it up while re-reading would be the cache
+      // lying. The view blanks to the same loading page as a cold open (one
+      // route); only the *involuntary* re-attach (reopen on connection
+      // death) keeps its transcript standing, since there the user asked
+      // for nothing and yanking it would be hostile.
+      this.hooks.emit({ kind: "transcriptReset", sessionId });
+      this.sessions.delete(sessionId);
+      const agentId = this.known.get(sessionId)?.agentId;
+      if (agentId === undefined) return;
+      await this.ensureAttached(sessionId, agentId);
+    } finally {
+      this.hydrating.delete(sessionId);
+      this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
+    }
   }
 
   /** Re-attaches a session after its connection died, via `session/load`

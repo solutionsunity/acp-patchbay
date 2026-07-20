@@ -43,4 +43,16 @@ export class GlobalRecordStore<T extends { id: string }> {
   async remove(id: string): Promise<void> {
     await this.kv.update(this.key, this.list().filter((v) => v.id !== id));
   }
+
+  /** Persist a new array order. `ids` is a view's picture of the order at
+   * drop time — records it doesn't name (added since, or never shown there)
+   * keep their relative order at the tail rather than being dropped, so a
+   * stale picture can never lose data. */
+  async reorder(ids: readonly string[]): Promise<void> {
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    const current = this.list();
+    const named = current.filter((v) => rank.has(v.id));
+    named.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+    await this.kv.update(this.key, [...named, ...current.filter((v) => !rank.has(v.id))]);
+  }
 }

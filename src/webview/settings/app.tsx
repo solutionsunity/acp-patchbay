@@ -109,6 +109,7 @@ export function App({ state }: { state: SettingsState }) {
             onRefreshRegistry={() => send({ kind: "refreshRegistry" })}
             onConfirmBinaryInstall={(agentId) => send({ kind: "confirmBinaryInstall", agentId })}
             onCancelBinaryInstall={(agentId) => send({ kind: "cancelBinaryInstall", agentId })}
+            onReorder={(ids) => send({ kind: "reorderAgentConfigs", ids })}
           />
         )}
         {section === "matrix" && <MatrixSection state={state} />}
@@ -150,6 +151,7 @@ export function App({ state }: { state: SettingsState }) {
             }
             onProbe={(integrationId) => send({ kind: "probeIntegration", integrationId })}
             onShare={(integrationId) => send({ kind: "shareIntegrationConfig", integrationId })}
+            onReorder={(ids) => send({ kind: "reorderIntegrations", ids })}
           />
         )}
         {section === "permissions" && (

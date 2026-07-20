@@ -6,7 +6,7 @@
 // configuration. Webviews only ever see its snapshots and patches.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
@@ -62,6 +62,7 @@ import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
 import { resolveRuntime, runtimeName, type RuntimeKind } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { FileKV } from "./stores/file-kv";
+import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
 import { IntegrationConfigStore } from "./stores/integration-configs";
 import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
@@ -214,6 +215,16 @@ export class Orchestrator {
       context.globalState,
       (message) => log.info(`state file: ${message}`),
     );
+    // One-shot fill of anything the 0.82.6 publisher-casing flip orphaned
+    // in the old-cased globalState row. FileKV updates take effect as they
+    // are issued (microtask-paced at worst), and this constructor only
+    // wires stores — their first real read comes later on the event loop,
+    // after the fill has fully landed.
+    void recoverLegacyGlobalState({
+      kv: machineKV,
+      vscdbPath: join(dirname(context.globalStorageUri.fsPath), "state.vscdb"),
+      log: (message) => log.info(`legacy recovery: ${message}`),
+    }).catch((error: unknown) => log.info(`legacy recovery failed: ${String(error)}`));
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
     this.machinePermissionRules = new MachineRulesStore(machineKV);
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
@@ -2171,6 +2182,15 @@ export class Orchestrator {
         break;
       case "removeAgentConfig":
         void this.removeAgentConfig(action.agentId);
+        break;
+      case "reorderAgentConfigs":
+        void this.agentConfigs
+          .reorder(action.ids)
+          .then(() => this.refreshAgentConfigs())
+          .catch(this.logCatch("reorderAgentConfigs"));
+        break;
+      case "reorderIntegrations":
+        void this.integrations.reorder(action.ids);
         break;
       case "addContextRoot":
         void this.addContextRoot(action.sessionId);

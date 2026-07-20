@@ -47,8 +47,14 @@ export class FileKV implements KV {
       const value = migrateFrom?.get(key);
       if (value !== undefined) this.map[key] = value;
     }
-    this.writeDisk(this.map);
+    // No file until there is something to hold — created here only when the
+    // migration actually carried keys, else lazily by the first update().
+    // An eagerly written empty file would latch as the one truth and mask a
+    // migration source that was merely unreadable this launch (the 0.82.6
+    // publisher-casing flip turned exactly that into apparent data loss);
+    // absence keeps every later launch's migration door open.
     if (keys.length > 0) {
+      this.writeDisk(this.map);
       this.log(`created ${this.filePath} — migrated ${keys.length} entries out of globalState`);
       for (const key of keys) void migrateFrom?.update(key, undefined);
     }

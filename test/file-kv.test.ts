@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,10 +36,20 @@ describe("FileKV", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("starts empty with no file and no migration source", () => {
+  it("starts empty with no file and no migration source — and writes no file", () => {
     const kv = new FileKV(file);
     expect(kv.get("anything")).toBeUndefined();
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({});
+    // No empty-file latch: an eager `{}` would mask a migration source that
+    // was merely unreadable this launch; absence keeps the door open.
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("creates the file lazily on first update, not on an empty migration", async () => {
+    const source = new EnumerableMemoryKV(); // exists but holds nothing
+    const kv = new FileKV(file, source);
+    expect(existsSync(file)).toBe(false);
+    await kv.update("k", 1);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ k: 1 });
   });
 
   it("persists updates across instances", async () => {

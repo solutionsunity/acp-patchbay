@@ -382,10 +382,12 @@ export function Chat(props: {
   }
 
   const { items, rollups, liveRollup, liveBlockId } = derived;
-  // Cold hydration (session/load replay in flight, nothing to show yet):
-  // hold the loading page instead of a blank pane. A warm reload never
-  // lands here — its standing transcript stays up until the replay's
-  // wholesale swap. `?? {}` guards snapshots minted before the field.
+  // Replay in flight with nothing to show — cold open, or an explicit
+  // reload (which resets the transcript upfront: shown-but-untrusted
+  // content doesn't stay up while reality is re-read). One route, one
+  // loading page. Only the involuntary reopen after a connection death
+  // keeps its transcript standing through the replay's wholesale swap.
+  // `?? {}` guards snapshots minted before the field.
   if ((props.state.hydrating ?? {})[active.id] === true && items.length === 0) {
     return <StatePage icon="loading" spin tag="Loading session history…" />;
   }

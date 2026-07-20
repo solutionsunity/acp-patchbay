@@ -13,6 +13,7 @@ import type {
 import { Icon } from "../shared/icon";
 import { ConfirmButton, Field } from "./controls";
 import { parseEnvLines } from "./parse-env";
+import { SortableItem, SortableList } from "./sortable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -388,6 +389,7 @@ export function IntegrationsSection(props: {
   onSetTransport(integrationId: string, transport: "auto" | "bridge"): void;
   onProbe(integrationId: string): void;
   onShare(integrationId: string): void;
+  onReorder(ids: string[]): void;
 }) {
   const { state } = props;
   const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
@@ -501,162 +503,172 @@ export function IntegrationsSection(props: {
           </div>
         </div>
       )}
-      {state.integrations.map((integration) => {
-        // Editing JSON forces the body open — the form lives there.
-        const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
-        // A connected curated server keeps its catalog icon (the registry
-        // entry is still the id's source of truth; custom servers have none).
-        const catalogEntry = state.integrationRegistry.find((r) => r.id === integration.registryId);
-        return (
-        <div className="card" key={integration.id}>
-          <div className="row flex-wrap">
-            <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
-            {catalogEntry !== undefined && (
-              <EntryIcon icon={catalogEntry.icon} brandIcon={catalogEntry.brandIcon} />
-            )}
-            <span className="nm min-w-0">{integration.name}</span>
-            <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
-              {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
-            </Badge>
-            <span className="flex-1" />
-            {/* on/off is a state, not an act — a switch says so (a power
-                *button* read as "do something", not "currently on") */}
-            <Switch
-              checked={integration.active}
-              title={
-                integration.active
-                  ? "on — switching off keeps the credential but the server reaches no agent until switched back"
-                  : "off — switch on to route this server again"
-              }
-              aria-label={integration.active ? "Switch off" : "Switch on"}
-              onCheckedChange={(checked) => props.onSetActive(integration.id, checked === true)}
-            />
-            <Button
-              variant="outline" size="icon" className="size-8"
-              title="Copy config… (never the credential)"
-              aria-label="Copy config"
-              onClick={() => props.onShare(integration.id)}
-            >
-              <Icon name="copy" />
-            </Button>
-            <ConfirmButton
-              label={integration.sourceKind === "registry" ? "Disconnect" : "Remove"}
-              icon={integration.sourceKind === "registry" ? "debug-disconnect" : "trash"}
-              title={
-                integration.sourceKind === "registry"
-                  ? "full clear — credential and config; the catalog entry stays, ready for a fresh connect"
-                  : "full clear — credential, env, and config"
-              }
-              onConfirm={() => props.onRemove(integration.id)}
-            />
-            <Button
-              variant="outline" size="icon" className="size-8"
-              title={detailsOpen ? "Hide settings" : "Settings"}
-              aria-label={detailsOpen ? "Hide settings" : "Settings"}
-              aria-expanded={detailsOpen}
-              onClick={() => {
-                if (editingJsonId === integration.id) setEditingJsonId(null);
-                setOpenDetails({ ...openDetails, [integration.id]: !detailsOpen });
-              }}
-            >
-              <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
-            </Button>
-          </div>
-          <ProbeStrip
-            probe={integration.probe}
-            probeable={integration.connected && integration.active}
-            expanded={openTools[integration.id] === true}
-            onToggleTools={() =>
-              setOpenTools({ ...openTools, [integration.id]: openTools[integration.id] !== true })
-            }
-            onProbe={() => props.onProbe(integration.id)}
-          />
-          {detailsOpen && integration.command !== undefined && (
-            <div className="mono mt-1.5 break-all">
-              {integration.command}
-            </div>
-          )}
-          {!integration.active && (
-            <div className="note mt-1.5">
-              switched off — configured with its credential intact, reaching no agent
-            </div>
-          )}
-          {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
-            <div className="connect-form">
-              <Field label="server JSON" hint="the mcpServers-fragment for this server">
-                <Textarea
-                  rows={7}
-                  className="resize-y font-mono"
-                  value={jsonDraft}
-                  onInput={(e) => setJsonDraft((e.target as HTMLTextAreaElement).value)}
-                />
-              </Field>
-              <div className="note">
-                env values are write-only — <code>""</code> keeps the stored value, a filled value
-                overwrites, a removed key deletes
-              </div>
-              <div className="form-actions">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    props.onUpdateJson(integration.id, jsonDraft);
-                    setEditingJsonId(null);
-                  }}
-                >
-                  Save
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setEditingJsonId(null)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : integration.editJson !== undefined ? (
-            <div className="row mt-1.5">
-              <Button
-                variant="outline" size="sm"
-                onClick={() => {
-                  setJsonDraft(integration.editJson!);
-                  setEditingJsonId(integration.id);
-                }}
-              >
-                <Icon name="json" /> Edit JSON…
-              </Button>
-            </div>
-          ) : null}
-          {state.connectFlow[integration.id]?.status === "failed" && (
-            <div className="note mt-1.5">
-              {state.connectFlow[integration.id]?.reason}{" "}
-              <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(integration.id)} title="clear this note">
-                Dismiss
-              </Button>
-            </div>
-          )}
-          {detailsOpen && (
-            <div className="mt-2">
-              <RoutingEditor
-                agents={state.agents}
-                routing={integration.routing}
-                onChange={(routing) => props.onSetRouting(integration.id, routing)}
-              />
-            </div>
-          )}
-          {detailsOpen && integration.sourceKind !== "custom-stdio" && (
-            <label
-              className="row mt-2 gap-1.5 text-[12px]"
-              title="normally an agent that declares http support connects to this server itself (its own MCP client, upstream-maintained); pin the bridge when that declared support turns out broken in practice — every non-declaring agent rides the bridge either way"
-            >
-              <Checkbox
-                checked={integration.transport === "bridge"}
-                onCheckedChange={(checked) =>
-                  props.onSetTransport(integration.id, checked === true ? "bridge" : "auto")
-                }
-              />
-              always attach through patchbay's stdio bridge
-            </label>
-          )}
-        </div>
-        );
-      })}
+      <SortableList
+        ids={state.integrations.map((i) => i.id)}
+        onReorder={props.onReorder}
+      >
+        {state.integrations.map((integration) => {
+          // Editing JSON forces the body open — the form lives there.
+          const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
+          // A connected curated server keeps its catalog icon (the registry
+          // entry is still the id's source of truth; custom servers have none).
+          const catalogEntry = state.integrationRegistry.find((r) => r.id === integration.registryId);
+          return (
+            <SortableItem key={integration.id} id={integration.id}>
+              {(handle) => (
+                <div className="card">
+                  <div className="row flex-wrap">
+                    {handle}
+                    <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
+                    {catalogEntry !== undefined && (
+                      <EntryIcon icon={catalogEntry.icon} brandIcon={catalogEntry.brandIcon} />
+                    )}
+                    <span className="nm min-w-0">{integration.name}</span>
+                    <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
+                      {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
+                    </Badge>
+                    <span className="flex-1" />
+                    {/* on/off is a state, not an act — a switch says so (a power
+                        *button* read as "do something", not "currently on") */}
+                    <Switch
+                      checked={integration.active}
+                      title={
+                        integration.active
+                          ? "on — switching off keeps the credential but the server reaches no agent until switched back"
+                          : "off — switch on to route this server again"
+                      }
+                      aria-label={integration.active ? "Switch off" : "Switch on"}
+                      onCheckedChange={(checked) => props.onSetActive(integration.id, checked === true)}
+                    />
+                    <Button
+                      variant="outline" size="icon" className="size-8"
+                      title="Copy config… (never the credential)"
+                      aria-label="Copy config"
+                      onClick={() => props.onShare(integration.id)}
+                    >
+                      <Icon name="copy" />
+                    </Button>
+                    <ConfirmButton
+                      label={integration.sourceKind === "registry" ? "Disconnect" : "Remove"}
+                      icon={integration.sourceKind === "registry" ? "debug-disconnect" : "trash"}
+                      title={
+                        integration.sourceKind === "registry"
+                          ? "full clear — credential and config; the catalog entry stays, ready for a fresh connect"
+                          : "full clear — credential, env, and config"
+                      }
+                      onConfirm={() => props.onRemove(integration.id)}
+                    />
+                    <Button
+                      variant="outline" size="icon" className="size-8"
+                      title={detailsOpen ? "Hide settings" : "Settings"}
+                      aria-label={detailsOpen ? "Hide settings" : "Settings"}
+                      aria-expanded={detailsOpen}
+                      onClick={() => {
+                        if (editingJsonId === integration.id) setEditingJsonId(null);
+                        setOpenDetails({ ...openDetails, [integration.id]: !detailsOpen });
+                      }}
+                    >
+                      <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
+                    </Button>
+                  </div>
+                  <ProbeStrip
+                    probe={integration.probe}
+                    probeable={integration.connected && integration.active}
+                    expanded={openTools[integration.id] === true}
+                    onToggleTools={() =>
+                      setOpenTools({ ...openTools, [integration.id]: openTools[integration.id] !== true })
+                    }
+                    onProbe={() => props.onProbe(integration.id)}
+                  />
+                  {detailsOpen && integration.command !== undefined && (
+                    <div className="mono mt-1.5 break-all">
+                      {integration.command}
+                    </div>
+                  )}
+                  {!integration.active && (
+                    <div className="note mt-1.5">
+                      switched off — configured with its credential intact, reaching no agent
+                    </div>
+                  )}
+                  {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
+                    <div className="connect-form">
+                      <Field label="server JSON" hint="the mcpServers-fragment for this server">
+                        <Textarea
+                          rows={7}
+                          className="resize-y font-mono"
+                          value={jsonDraft}
+                          onInput={(e) => setJsonDraft((e.target as HTMLTextAreaElement).value)}
+                        />
+                      </Field>
+                      <div className="note">
+                        env values are write-only — <code>""</code> keeps the stored value, a filled value
+                        overwrites, a removed key deletes
+                      </div>
+                      <div className="form-actions">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            props.onUpdateJson(integration.id, jsonDraft);
+                            setEditingJsonId(null);
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setEditingJsonId(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : integration.editJson !== undefined ? (
+                    <div className="row mt-1.5">
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => {
+                          setJsonDraft(integration.editJson!);
+                          setEditingJsonId(integration.id);
+                        }}
+                      >
+                        <Icon name="json" /> Edit JSON…
+                      </Button>
+                    </div>
+                  ) : null}
+                  {state.connectFlow[integration.id]?.status === "failed" && (
+                    <div className="note mt-1.5">
+                      {state.connectFlow[integration.id]?.reason}{" "}
+                      <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(integration.id)} title="clear this note">
+                        Dismiss
+                      </Button>
+                    </div>
+                  )}
+                  {detailsOpen && (
+                    <div className="mt-2">
+                      <RoutingEditor
+                        agents={state.agents}
+                        routing={integration.routing}
+                        onChange={(routing) => props.onSetRouting(integration.id, routing)}
+                      />
+                    </div>
+                  )}
+                  {detailsOpen && integration.sourceKind !== "custom-stdio" && (
+                    <label
+                      className="row mt-2 gap-1.5 text-[12px]"
+                      title="normally an agent that declares http support connects to this server itself (its own MCP client, upstream-maintained); pin the bridge when that declared support turns out broken in practice — every non-declaring agent rides the bridge either way"
+                    >
+                      <Checkbox
+                        checked={integration.transport === "bridge"}
+                        onCheckedChange={(checked) =>
+                          props.onSetTransport(integration.id, checked === true ? "bridge" : "auto")
+                        }
+                      />
+                      always attach through patchbay's stdio bridge
+                    </label>
+                  )}
+                </div>
+              )}
+            </SortableItem>
+          );
+        })}
+      </SortableList>
 
       <div className="card">
         <h2 className="mt-0">Add a custom MCP server</h2>

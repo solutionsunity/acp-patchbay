@@ -11,6 +11,7 @@ import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { ConfirmButton, Field, Toggle } from "./controls";
 import { parseEnvLines } from "./parse-env";
+import { SortableItem, SortableList } from "./sortable";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -580,6 +581,7 @@ export function AgentsSection(props: {
   onRefreshRegistry(): void;
   onConfirmBinaryInstall(agentId: string): void;
   onCancelBinaryInstall(agentId: string): void;
+  onReorder(ids: string[]): void;
 }) {
   const { state } = props;
   const [editing, setEditing] = useState<string | null>(null); // agentId being edited
@@ -648,263 +650,270 @@ export function AgentsSection(props: {
           </div>
         </div>
       )}
-      {ids.map((id) => {
-        const a = state.agents.find((x) => x.id === id);
-        const config = state.agentConfigs.find((c) => c.id === id);
-        const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
-        const matrix = state.capabilities[id];
-        // Registry row for this config: the config's own registrySource is
-        // the link (a config id may predate the registry naming); plain id
-        // covers agents added straight from the registry.
-        const registry = state.registryAgents.find(
-          (r) => r.id === (config?.registrySource?.registryId ?? id),
-        );
-        const knobs = state.agentKnobs[id];
-        const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
-        // No summary at all = the orchestrator never saw this config — the
-        // honest unknown is "untested", never a claimed "stopped".
-        const status = a?.status ?? "untested";
-        const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
-        // Editing forces the body open — the form lives there.
-        const detailsOpen = openDetails[id] === true || editing === id;
-        // The action cluster's one derivation (card-controls.ts) — every
-        // show/disabled rule lives there, unit-tested; the JSX below reads
-        // `controls.x` and nothing else.
-        const controls = agentCardControls({
-          agent: a,
-          config,
-          matrix,
-          authMethods: state.authMethods[id] ?? [],
-          registryAgents: state.registryAgents,
-          verifying: state.verifyingAgents[id] === true,
-        });
-        // Inline knob/policy edits never touch env — submit every existing
-        // key blank, the "keep the stored value" signal (write-only env).
-        const saveConfig = (patch: Partial<AgentConfigView>) =>
-          props.onSave(
-            { ...effectiveConfig, ...patch },
-            Object.fromEntries(effectiveConfig.envKeys.map((k) => [k, ""])),
+      <SortableList ids={ids} onReorder={props.onReorder}>
+        {ids.map((id) => {
+          const a = state.agents.find((x) => x.id === id);
+          const config = state.agentConfigs.find((c) => c.id === id);
+          const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
+          const matrix = state.capabilities[id];
+          // Registry row for this config: the config's own registrySource is
+          // the link (a config id may predate the registry naming); plain id
+          // covers agents added straight from the registry.
+          const registry = state.registryAgents.find(
+            (r) => r.id === (config?.registrySource?.registryId ?? id),
           );
-        // One normalized knob list (the orchestrator's knobs.ts already
-        // resolved the wire's modes/configOptions split) — no dedup here.
-        const offeredKnobs = knobs?.knobs ?? [];
-        const setKnobDefault = (knobId: string, value: string | boolean) => {
-          const defaults = { ...effectiveConfig.defaults };
-          if (value === "") delete defaults[knobId];
-          else defaults[knobId] = value;
-          saveConfig({ defaults });
-        };
-        // Saved selections the current connection doesn't offer (a model
-        // retired, an option gone) — stated, never silently blanked; apply
-        // time already guards per session.
-        const savedNotOffered: string[] = [];
-        if (knobs !== undefined) {
-          for (const [knobId, value] of Object.entries(effectiveConfig.defaults)) {
-            const offered = offeredKnobs.find((k) => k.id === knobId);
-            const valueOffered =
-              offered !== undefined &&
-              (offered.type === "boolean"
-                ? typeof value === "boolean"
-                : typeof value === "string" && offered.values.some((v) => v.value === value));
-            if (!valueOffered) savedNotOffered.push(`${knobId}=${String(value)}`);
+          const knobs = state.agentKnobs[id];
+          const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
+          // No summary at all = the orchestrator never saw this config — the
+          // honest unknown is "untested", never a claimed "stopped".
+          const status = a?.status ?? "untested";
+          const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
+          // Editing forces the body open — the form lives there.
+          const detailsOpen = openDetails[id] === true || editing === id;
+          // The action cluster's one derivation (card-controls.ts) — every
+          // show/disabled rule lives there, unit-tested; the JSX below reads
+          // `controls.x` and nothing else.
+          const controls = agentCardControls({
+            agent: a,
+            config,
+            matrix,
+            authMethods: state.authMethods[id] ?? [],
+            registryAgents: state.registryAgents,
+            verifying: state.verifyingAgents[id] === true,
+          });
+          // Inline knob/policy edits never touch env — submit every existing
+          // key blank, the "keep the stored value" signal (write-only env).
+          const saveConfig = (patch: Partial<AgentConfigView>) =>
+            props.onSave(
+              { ...effectiveConfig, ...patch },
+              Object.fromEntries(effectiveConfig.envKeys.map((k) => [k, ""])),
+            );
+          // One normalized knob list (the orchestrator's knobs.ts already
+          // resolved the wire's modes/configOptions split) — no dedup here.
+          const offeredKnobs = knobs?.knobs ?? [];
+          const setKnobDefault = (knobId: string, value: string | boolean) => {
+            const defaults = { ...effectiveConfig.defaults };
+            if (value === "") delete defaults[knobId];
+            else defaults[knobId] = value;
+            saveConfig({ defaults });
+          };
+          // Saved selections the current connection doesn't offer (a model
+          // retired, an option gone) — stated, never silently blanked; apply
+          // time already guards per session.
+          const savedNotOffered: string[] = [];
+          if (knobs !== undefined) {
+            for (const [knobId, value] of Object.entries(effectiveConfig.defaults)) {
+              const offered = offeredKnobs.find((k) => k.id === knobId);
+              const valueOffered =
+                offered !== undefined &&
+                (offered.type === "boolean"
+                  ? typeof value === "boolean"
+                  : typeof value === "string" && offered.values.some((v) => v.value === value));
+              if (!valueOffered) savedNotOffered.push(`${knobId}=${String(value)}`);
+            }
           }
-        }
-        return (
-          <div className="card" key={id}>
-            {/* flex-wrap + min-w-0: at narrow widths the action cluster wraps
-                to its own line instead of pushing past the card border */}
-            <div className="row flex-wrap">
-              <span className={`dot ${status}`} />
-              <AgentIcon icon={registry?.icon} />
-              <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
-              {controls.upgrade !== null && (
-                <Badge className="border-warn/40 text-warn" title={`registry has v${controls.upgrade.to}, pinned to v${controls.upgrade.from}`}>
-                  update available
-                </Badge>
-              )}
-              <span className="flex-1" />
-              {controls.login.show && (
-                <LoginControl agentId={id} methods={state.authMethods[id] ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
-              )}
-              {/* Log out is *disabled* — never unmounted — while in flight,
-                  so the open AlertDialog is never yanked from the tree. */}
-              {controls.logout.show && (
-                <ConfirmButton
-                  label="Log out"
-                  icon="sign-out"
-                  title="Active sessions may start failing with auth errors until you log in again."
-                  disabled={controls.logout.disabled}
-                  onConfirm={() => props.onLogout(id)}
-                />
-              )}
-              {controls.stop.show && (
-                <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
-                  <Icon name="debug-stop" />
-                </Button>
-              )}
-              {controls.verify.show && (
-                <Button
-                  variant="outline" size="icon" className="size-8"
-                  title={controls.verify.busy ? "Verifying…" : "Verify…"}
-                  aria-label="Verify"
-                  disabled={controls.verify.disabled}
-                  onClick={() => setDiagFor(id)}
-                >
-                  <Icon name={controls.verify.busy ? "loading" : "beaker"} spin={controls.verify.busy} />
-                </Button>
-              )}
-              {controls.connect.show && (
-                <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
-                  <Icon name="plug" />
-                </Button>
-              )}
-              {controls.upgrade !== null && (
-                <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${controls.upgrade.to}`} aria-label={`Upgrade to v${controls.upgrade.to}`} onClick={() => props.onUpgrade(id)}>
-                  <Icon name="arrow-circle-up" />
-                </Button>
-              )}
-              {controls.edit.show && (
-                <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
-                  <Icon name="edit" />
-                </Button>
-              )}
-              {controls.remove.show && (
-                <ConfirmButton
-                  label="Remove"
-                  icon="trash"
-                  title="stops the agent and forgets it — config, env, and capability cache"
-                  onConfirm={() => props.onRemove(id)}
-                />
-              )}
-              <Button
-                variant="outline" size="icon" className="size-8"
-                title={detailsOpen ? "Hide settings" : "Settings"}
-                aria-label={detailsOpen ? "Hide settings" : "Settings"}
-                aria-expanded={detailsOpen}
-                onClick={() => {
-                  if (editing === id) setEditing(null);
-                  setOpenDetails({ ...openDetails, [id]: !detailsOpen });
-                }}
-              >
-                <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
-              </Button>
-            </div>
-            {/* The auth_required error's own message — the agent's login
-                instruction in its words, and the only guidance there is when
-                it declares no actionable method (Auggie names the exact CLI
-                command here). */}
-            {a?.needsAuth === true && a.authReason !== undefined && (
-              <div className="note mt-1.5">
-                <Icon name="info" /> {a.authReason}
-              </div>
-            )}
-            {/* The connect warmup's honest phase label ("downloading the
-                agent package…") — pool.ts sets it only while a launcher
-                download is genuinely in flight, and clears it itself. */}
-            {status === "reconnecting" && a?.detail !== undefined && (
-              <div className="note mt-1.5">
-                <Icon name="cloud-download" /> {a.detail}
-              </div>
-            )}
-            {status === "crashed" && (
-              <div className="note crashed-note mt-1.5">
-                <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}
-                <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(id)}>
-                  Restart
-                </Button>
-                {a?.stderr !== undefined && a.stderr.length > 0 && (
-                  <pre className="stderr-tail">{a.stderr.join("\n")}</pre>
-                )}
-              </div>
-            )}
-            {detailsOpen && command !== undefined && (
-              <div className="mono mt-1.5 break-all">
-                {command}
-              </div>
-            )}
-            {detailsOpen && matrix !== undefined && (
-              <div className="note mt-1.5">
-                {capabilityOneLiner(matrix)}
-              </div>
-            )}
-            {!detailsOpen ? null : editing === id ? (
-              <AgentConfigForm
-                initial={effectiveConfig}
-                onSave={(c, env) => {
-                  props.onSave(c, env);
-                  setEditing(null);
-                }}
-                onCancel={() => setEditing(null)}
-              />
-            ) : (
-              // one knob per line — process policy, then mode/model/effort/…
-              // (whatever the agent actually offered), never a wrap soup
-              <div className="mt-2 flex flex-col items-start gap-2">
-                <label className="knob-default">
-                  process
-                  <Select
-                    value={effectiveConfig.processPolicy}
-                    onValueChange={(v) =>
-                      saveConfig({ processPolicy: v as AgentConfigView["processPolicy"] })
-                    }
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">
-                        auto — {concurrencyUsed ? "shared, concurrency used ✓" : "isolated, not yet used"}
-                      </SelectItem>
-                      <SelectItem value="shared">shared</SelectItem>
-                      <SelectItem value="isolated">isolated</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
-                <Toggle
-                  icon="zap"
-                  label="auto-connect"
-                  title="connect this agent when the window opens"
-                  checked={effectiveConfig.autoConnect}
-                  onChange={(v) => saveConfig({ autoConnect: v })}
-                />
-                {status !== "running" ? (
-                  // Offerings are connection state — no connection, no list
-                  // to render, only the stored selections stated as text.
-                  <StoredDefaultsLine defaults={effectiveConfig.defaults} />
-                ) : knobs === undefined ? (
-                  // Connected but the connect-time offering read hasn't
-                  // landed (or is blocked on login) — pending, not "none".
-                  <span className="note m-0 self-center">
-                    reading this agent's knob offering…
-                  </span>
-                ) : (
-                  <>
-                    {offeredKnobs.map((knob) => (
-                      <DefaultKnob
-                        key={knob.id}
-                        icon={(knob.category !== undefined ? KNOB_ICON[knob.category] : undefined) ?? "settings"}
-                        label={knob.name}
-                        offered={knob.type === "boolean" ? null : knob.values}
-                        value={effectiveConfig.defaults[knob.id] ?? ""}
-                        onChange={(v) => setKnobDefault(knob.id, v)}
+          return (
+            <SortableItem key={id} id={id} disabled={config === undefined}>
+              {(handle) => (
+                <div className="card">
+                  {/* flex-wrap + min-w-0: at narrow widths the action cluster wraps
+                      to its own line instead of pushing past the card border */}
+                  <div className="row flex-wrap">
+                    {handle}
+                    <span className={`dot ${status}`} />
+                    <AgentIcon icon={registry?.icon} />
+                    <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
+                    {controls.upgrade !== null && (
+                      <Badge className="border-warn/40 text-warn" title={`registry has v${controls.upgrade.to}, pinned to v${controls.upgrade.from}`}>
+                        update available
+                      </Badge>
+                    )}
+                    <span className="flex-1" />
+                    {controls.login.show && (
+                      <LoginControl agentId={id} methods={state.authMethods[id] ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
+                    )}
+                    {/* Log out is *disabled* — never unmounted — while in flight,
+                        so the open AlertDialog is never yanked from the tree. */}
+                    {controls.logout.show && (
+                      <ConfirmButton
+                        label="Log out"
+                        icon="sign-out"
+                        title="Active sessions may start failing with auth errors until you log in again."
+                        disabled={controls.logout.disabled}
+                        onConfirm={() => props.onLogout(id)}
                       />
-                    ))}
-                    {offeredKnobs.length === 0 && (
-                      <span className="note m-0 self-center">
-                        this agent offered no session knobs
-                      </span>
                     )}
-                    {savedNotOffered.length > 0 && (
-                      <span className="note m-0 self-center">
-                        saved but not currently offered: {savedNotOffered.join(" · ")} — applied
-                        only where a session actually offers it
-                      </span>
+                    {controls.stop.show && (
+                      <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
+                        <Icon name="debug-stop" />
+                      </Button>
                     )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+                    {controls.verify.show && (
+                      <Button
+                        variant="outline" size="icon" className="size-8"
+                        title={controls.verify.busy ? "Verifying…" : "Verify…"}
+                        aria-label="Verify"
+                        disabled={controls.verify.disabled}
+                        onClick={() => setDiagFor(id)}
+                      >
+                        <Icon name={controls.verify.busy ? "loading" : "beaker"} spin={controls.verify.busy} />
+                      </Button>
+                    )}
+                    {controls.connect.show && (
+                      <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
+                        <Icon name="plug" />
+                      </Button>
+                    )}
+                    {controls.upgrade !== null && (
+                      <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${controls.upgrade.to}`} aria-label={`Upgrade to v${controls.upgrade.to}`} onClick={() => props.onUpgrade(id)}>
+                        <Icon name="arrow-circle-up" />
+                      </Button>
+                    )}
+                    {controls.edit.show && (
+                      <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
+                        <Icon name="edit" />
+                      </Button>
+                    )}
+                    {controls.remove.show && (
+                      <ConfirmButton
+                        label="Remove"
+                        icon="trash"
+                        title="stops the agent and forgets it — config, env, and capability cache"
+                        onConfirm={() => props.onRemove(id)}
+                      />
+                    )}
+                    <Button
+                      variant="outline" size="icon" className="size-8"
+                      title={detailsOpen ? "Hide settings" : "Settings"}
+                      aria-label={detailsOpen ? "Hide settings" : "Settings"}
+                      aria-expanded={detailsOpen}
+                      onClick={() => {
+                        if (editing === id) setEditing(null);
+                        setOpenDetails({ ...openDetails, [id]: !detailsOpen });
+                      }}
+                    >
+                      <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
+                    </Button>
+                  </div>
+                  {/* The auth_required error's own message — the agent's login
+                      instruction in its words, and the only guidance there is when
+                      it declares no actionable method (Auggie names the exact CLI
+                      command here). */}
+                  {a?.needsAuth === true && a.authReason !== undefined && (
+                    <div className="note mt-1.5">
+                      <Icon name="info" /> {a.authReason}
+                    </div>
+                  )}
+                  {/* The connect warmup's honest phase label ("downloading the
+                      agent package…") — pool.ts sets it only while a launcher
+                      download is genuinely in flight, and clears it itself. */}
+                  {status === "reconnecting" && a?.detail !== undefined && (
+                    <div className="note mt-1.5">
+                      <Icon name="cloud-download" /> {a.detail}
+                    </div>
+                  )}
+                  {status === "crashed" && (
+                    <div className="note crashed-note mt-1.5">
+                      <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}
+                      <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(id)}>
+                        Restart
+                      </Button>
+                      {a?.stderr !== undefined && a.stderr.length > 0 && (
+                        <pre className="stderr-tail">{a.stderr.join("\n")}</pre>
+                      )}
+                    </div>
+                  )}
+                  {detailsOpen && command !== undefined && (
+                    <div className="mono mt-1.5 break-all">
+                      {command}
+                    </div>
+                  )}
+                  {detailsOpen && matrix !== undefined && (
+                    <div className="note mt-1.5">
+                      {capabilityOneLiner(matrix)}
+                    </div>
+                  )}
+                  {!detailsOpen ? null : editing === id ? (
+                    <AgentConfigForm
+                      initial={effectiveConfig}
+                      onSave={(c, env) => {
+                        props.onSave(c, env);
+                        setEditing(null);
+                      }}
+                      onCancel={() => setEditing(null)}
+                    />
+                  ) : (
+                    // one knob per line — process policy, then mode/model/effort/…
+                    // (whatever the agent actually offered), never a wrap soup
+                    <div className="mt-2 flex flex-col items-start gap-2">
+                      <label className="knob-default">
+                        process
+                        <Select
+                          value={effectiveConfig.processPolicy}
+                          onValueChange={(v) =>
+                            saveConfig({ processPolicy: v as AgentConfigView["processPolicy"] })
+                          }
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">
+                              auto — {concurrencyUsed ? "shared, concurrency used ✓" : "isolated, not yet used"}
+                            </SelectItem>
+                            <SelectItem value="shared">shared</SelectItem>
+                            <SelectItem value="isolated">isolated</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      <Toggle
+                        icon="zap"
+                        label="auto-connect"
+                        title="connect this agent when the window opens"
+                        checked={effectiveConfig.autoConnect}
+                        onChange={(v) => saveConfig({ autoConnect: v })}
+                      />
+                      {status !== "running" ? (
+                        // Offerings are connection state — no connection, no list
+                        // to render, only the stored selections stated as text.
+                        <StoredDefaultsLine defaults={effectiveConfig.defaults} />
+                      ) : knobs === undefined ? (
+                        // Connected but the connect-time offering read hasn't
+                        // landed (or is blocked on login) — pending, not "none".
+                        <span className="note m-0 self-center">
+                          reading this agent's knob offering…
+                        </span>
+                      ) : (
+                        <>
+                          {offeredKnobs.map((knob) => (
+                            <DefaultKnob
+                              key={knob.id}
+                              icon={(knob.category !== undefined ? KNOB_ICON[knob.category] : undefined) ?? "settings"}
+                              label={knob.name}
+                              offered={knob.type === "boolean" ? null : knob.values}
+                              value={effectiveConfig.defaults[knob.id] ?? ""}
+                              onChange={(v) => setKnobDefault(knob.id, v)}
+                            />
+                          ))}
+                          {offeredKnobs.length === 0 && (
+                            <span className="note m-0 self-center">
+                              this agent offered no session knobs
+                            </span>
+                          )}
+                          {savedNotOffered.length > 0 && (
+                            <span className="note m-0 self-center">
+                              saved but not currently offered: {savedNotOffered.join(" · ")} — applied
+                              only where a session actually offers it
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </SortableItem>
+          );
+        })}
+      </SortableList>
       <Dialog open={diagFor !== null} onOpenChange={(open) => { if (!open) setDiagFor(null); }}>
         <DialogContent>
           <DialogHeader>

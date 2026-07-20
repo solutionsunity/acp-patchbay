@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.82.7 — 2026-07-20
+
+- Session identity is now honored end to end: a session id recycled by the
+  agent (after patchbay's connect-time probe, or by a second agent minting
+  the same string) can no longer capture another session's traffic — which
+  used to silently auto-deny every permission request (~2ms, no dialog),
+  swallow all live rendering until a reload, or land a late MCP
+  `request_user_input` form in the wrong transcript.
+- Removing an agent now also purges its recorded knob combination and auth
+  recipe, so a future re-add under the same id starts clean instead of
+  inheriting the old agent's settings.
+- UI polish: agent and MCP server cards reorder by drag-drop (order persists),
+  boolean composer knobs show their name with a toggle, and session reload
+  shows the same loading page as opening a session instead of holding the
+  stale transcript.
+- **Recovers the data 0.82.6 appeared to lose.** 0.82.6 changed the
+  publisher casing (`solutionsunity` → `SolutionsUnity`), and VS Code
+  namespaces an extension's stored state by the cased id — so on upgrade,
+  every agent, MCP server, and preference looked gone. Nothing was deleted:
+  the data sat unreachable under the old id. 0.82.7 reads it back directly
+  from VS Code's storage db on first start (once, never clobbering anything
+  re-added since). Credentials live in the OS keychain under the old id and
+  can't be carried over — API keys and OAuth logins must be re-entered.
+  The machine store also no longer writes an empty state file when a
+  migration finds nothing, so an unreadable source can never again latch
+  into permanent-looking loss.
+
 ## 0.82.6 — 2026-07-19
 
 - Malformed agent data can no longer break patchbay: every agent response and

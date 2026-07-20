@@ -95,6 +95,7 @@ export function App({
           session={active}
           onTitle={pinned ? () => {} : () => setDrawer("sessions")}
           detach={detach && !pinned}
+          reloading={(state.hydrating ?? {})[active.id] === true}
         />
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (

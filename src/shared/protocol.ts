@@ -196,6 +196,10 @@ export type Action =
    * action upward only; state snapshots never carry them (envKeys only). */
   | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView; env: Readonly<Record<string, string>> }
   | { kind: "removeAgentConfig"; agentId: string }
+  /** Drag-drop reorder from Settings — `ids` is the full list order as the
+   * view sees it at drop time; the store keeps unnamed records at the tail. */
+  | { kind: "reorderAgentConfigs"; ids: readonly string[] }
+  | { kind: "reorderIntegrations"; ids: readonly string[] }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
   /** Byte-carrying attachment adds, both produced by the composer's one

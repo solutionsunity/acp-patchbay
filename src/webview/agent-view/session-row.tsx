@@ -28,11 +28,15 @@ import {
 export function SessionActions({
   session,
   detach,
+  reloading = false,
   open,
   onOpenChange,
 }: {
   session: SessionSummary;
   detach: boolean;
+  /** A replay is in flight for this session (state.hydrating) — Reload
+   * disables rather than queueing a second replay behind the first. */
+  reloading?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -50,8 +54,11 @@ export function SessionActions({
             Open in new window
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}>
-          Reload from agent
+        <DropdownMenuItem
+          disabled={reloading}
+          onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}
+        >
+          {reloading ? "Reloading…" : "Reload from agent"}
         </DropdownMenuItem>
         {/* Bare clipboard write, not useCopy: the menu closes on select, so
             there's no surface for the check-mark feedback to live on. */}
@@ -66,14 +73,22 @@ export function SessionActions({
   );
 }
 
-export function SessionRow(props: { session: SessionSummary; onTitle(): void; detach: boolean }) {
+export function SessionRow(props: {
+  session: SessionSummary;
+  onTitle(): void;
+  detach: boolean;
+  reloading: boolean;
+}) {
   return (
     <div className="sess-row">
       <span className="sess-title" onClick={props.onTitle}>
         {props.session.title}
       </span>
+      {/* Replay in flight (reload or re-attach) — mirrors the rendering
+          area's loading page so the title row says busy too. */}
+      {props.reloading && <Icon name="loading" spin />}
       <div className="spacer flex-1" />
-      <SessionActions session={props.session} detach={props.detach} />
+      <SessionActions session={props.session} detach={props.detach} reloading={props.reloading} />
     </div>
   );
 }

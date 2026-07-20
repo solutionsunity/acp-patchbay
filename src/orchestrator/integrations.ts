@@ -615,6 +615,14 @@ export class IntegrationsManager {
     if (active) void this.probe(id);
   }
 
+  /** Settings drag-drop — persist the dropped order and republish. Order
+   * is presentational only (routing never depends on it): no probe, no
+   * reconnect. */
+  async reorder(ids: readonly string[]): Promise<void> {
+    await this.integrationStore.reorder(ids);
+    await this.refresh();
+  }
+
   async setTransport(id: string, transport: "auto" | "bridge"): Promise<void> {
     const existing = this.integrationStore.get(id);
     if (existing === undefined) return;
