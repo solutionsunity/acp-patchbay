@@ -33,6 +33,16 @@ export class ComposerKnobsStore {
     await this.kv.update(KEY, { ...all, [agentId]: seed });
   }
 
+  /** Agent removal: the combination is a fact about *that* agent, and the
+   * id is user-chosen and reusable — a lingering record would seed a
+   * future re-add under the same id with the old agent's knobs. */
+  async remove(agentId: string): Promise<void> {
+    const all = this.kv.get<ComposerKnobsRecord>(KEY);
+    if (all === undefined || !(agentId in all)) return;
+    const { [agentId]: _, ...rest } = all;
+    await this.kv.update(KEY, Object.keys(rest).length > 0 ? rest : undefined);
+  }
+
   /** Data-page inventory: how many agents have a recorded combination. */
   count(): number {
     return Object.keys(this.kv.get<ComposerKnobsRecord>(KEY) ?? {}).length;

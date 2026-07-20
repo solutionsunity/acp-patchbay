@@ -1437,6 +1437,20 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     return { h, sessionId, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
   }
 
+  it("an update from a different agent under the same session id is dropped — ids are only unique per connection", async () => {
+    const { h, sessionId, push, blocks } = await chunkHarness("ch-owner");
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "mine" } });
+    expect(blocks()).toHaveLength(1);
+    // Same sessionId string, different agent: spec-legal collision — must
+    // never write into this transcript.
+    h.sessionManager.handleUpdate("intruder", {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not mine" } },
+    } as Parameters<typeof h.sessionManager.handleUpdate>[1]);
+    expect(blocks()).toHaveLength(1);
+    await h.pool.stop("ch-owner");
+  });
+
   it("replayed image and embedded-resource chunks land as structured parts in the SAME bubble", async () => {
     const { h, push, blocks } = await chunkHarness("ch-parts");
     const png = Buffer.from("89504e470d0a1a0a", "hex").toString("base64");

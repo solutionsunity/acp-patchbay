@@ -381,11 +381,10 @@ export class Orchestrator {
         // A throwaway probe session's late config_option_update still counts
         // as part of the connect-time offering read — some agents deliver
         // the option surface only after session/new returns.
-        const probeAgent = this.capabilityTracker.agentForProbeSession(notification.sessionId);
-        if (probeAgent !== undefined) {
+        if (this.capabilityTracker.isProbeSession(agentId, notification.sessionId)) {
           if (notification.update.sessionUpdate === "config_option_update") {
             this.noteOfferings(
-              probeAgent,
+              agentId,
               applyConfigUpdate(notification.update.configOptions, undefined, (m) => this.log.info(m)),
             );
           }
@@ -405,7 +404,7 @@ export class Orchestrator {
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
-      onPermissionRequest: async (_agentId, params) => {
+      onPermissionRequest: async (agentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
         // A throwaway probe session can trip real agent-side gates (Auggie's
@@ -415,9 +414,8 @@ export class Orchestrator {
         // answer. Least privilege instead: the question re-asks on the
         // user's first real session, and the probe's temp dir is about to
         // be deleted anyway.
-        const probeAgent = this.capabilityTracker.agentForProbeSession(params.sessionId);
-        if (probeAgent !== undefined) {
-          this.log.info(`${probeAgent}: auto-declined "${title}" on a probe session`);
+        if (this.capabilityTracker.isProbeSession(agentId, params.sessionId)) {
+          this.log.info(`${agentId}: auto-declined "${title}" on a probe session`);
           const auto = await this.broker.resolveProbePermissionRequest(
             params.sessionId,
             title,
@@ -603,6 +601,7 @@ export class Orchestrator {
           this.agentView.emit(...events);
           this.relaySettingsDerived(events);
           this.recordLastActive(events);
+          this.dropContextTokens(events);
           this.maybeChime(events);
         },
         // The session/load replay window: canonical state advances (and the
@@ -617,8 +616,11 @@ export class Orchestrator {
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
         // The deferred-probe trigger for latched agents
-        // (extensions/first-session-mcp-latch) — no-op for everyone else.
-        onRealSessionAttached: (agentId) => this.capabilityTracker.noteRealSessionOpened(agentId),
+        // (extensions/first-session-mcp-latch) — and, for everyone, the
+        // signal that a real session now owns this id (any probe entry
+        // still carrying it is retired).
+        onRealSessionAttached: (agentId, sessionId) =>
+          this.capabilityTracker.noteRealSessionOpened(agentId, sessionId),
         // From the store-backed spec map, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect. The
@@ -787,6 +789,8 @@ export class Orchestrator {
     this.terminals.clear();
     await this.pool.disposeAll();
     this.sessionManager.reset();
+    this.contextTokenToSession.clear();
+    this.authRecipes.clear();
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
@@ -1030,7 +1034,13 @@ export class Orchestrator {
     contextToken: string,
     params: { message: string; properties: Array<{ name: string; type: string; title?: string; description?: string; required?: boolean }> },
   ): Promise<Record<string, unknown> | null> {
-    const sessionId = this.contextTokenToSession.get(contextToken) ?? contextToken;
+    // Unknown token = the session it named is gone (tokens are minted at
+    // attach and retired at close). There is no transcript to ask in, so
+    // the honest answer is "no answer" — never a guessed session id, which
+    // could be a *different* live session by now (ids are agent-minted and
+    // legally recycled).
+    const sessionId = this.contextTokenToSession.get(contextToken);
+    if (sessionId === undefined) return Promise.resolve(null);
     const blockId = `elicit-${++this.elicitationCounter}`;
     this.agentView.emit({
       kind: "elicitationRequested",
@@ -1102,6 +1112,20 @@ export class Orchestrator {
    * last touched a knob. Offerings come only from session-independent
    * reads: the connect-time probe (noteOfferings via the capability
    * tracker, plus the probe session's late config_option_update). */
+  /** A closed session's context tokens leave the map with it: the token
+   * names a session-scoped identity, and an entry outliving its session
+   * would route a late MCP subprocess call into whatever transcript owns
+   * that session id next (agents may legally re-mint ids). Also the
+   * map's only bound — one token is minted per attach. */
+  private dropContextTokens(events: readonly AgentViewEvent[]): void {
+    for (const event of events) {
+      if (event.kind !== "sessionClosed") continue;
+      for (const [token, sessionId] of this.contextTokenToSession) {
+        if (sessionId === event.sessionId) this.contextTokenToSession.delete(token);
+      }
+    }
+  }
+
   private relaySettingsDerived(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
@@ -1485,7 +1509,9 @@ export class Orchestrator {
     this.sessionManager.forgetAgentSessions(agentId);
     await this.agentConfigs.remove(agentId);
     await this.usedCapabilities.remove(agentId);
+    await this.composerKnobs.remove(agentId);
     await this.agentEnv.remove(agentId);
+    this.authRecipes.delete(agentId);
     await rm(join(this.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
     this.configuredAgentSpecs.delete(agentId);
     this.agentNames.delete(agentId);

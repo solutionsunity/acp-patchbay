@@ -54,7 +54,7 @@ export interface CapabilityTrackerHooks {
    * surface. Passed raw (a new surface — spec or extension — must never
    * ripple this signature);
    * the receiver normalizes. Follow-up notifications for the probe session
-   * route here via `agentForProbeSession`. */
+   * route here via `isProbeSession`. */
   onOfferings?(agentId: string, response: NewSessionResponse): void;
   /** The agent's standing probe workspace — a real, existing directory,
    * never the user's workspace roots. Owned by the orchestrator and deleted
@@ -131,21 +131,29 @@ export class CapabilityTracker {
     void this.probe(agentId);
   }
 
-  /** The deferred-probe trigger: a real session opened on this agent's
-   * connection (session-manager's attach ceremony fires this via the
-   * orchestrator), so the first-session privilege is spent where it belongs
-   * and the probe can run. Once per connect — onDeclared re-arms the
-   * deferral on reconnect. No-op for agents that probed at connect. */
-  noteRealSessionOpened(agentId: string): void {
+  /** A real session opened on this agent's connection (session-manager's
+   * attach ceremony fires this via the orchestrator). Two duties: real
+   * adoption supersedes probe identity — the agent just minted this id
+   * for a real session, so any probe entry still carrying it names a
+   * session that necessarily ended agent-side (covers close/delete-
+   * incapable agents that reap and recycle on their own). And it is the
+   * deferred-probe trigger: the first-session privilege is spent where
+   * it belongs, so the probe can run — once per connect; onDeclared
+   * re-arms the deferral on reconnect. */
+  noteRealSessionOpened(agentId: string, sessionId: string): void {
+    if (this.probeSessions.get(sessionId) === agentId) this.probeSessions.delete(sessionId);
     if (!this.deferredProbes.delete(agentId)) return;
     this.log.debug(`${agentId}: deferred probe starting (first real session opened)`);
     void this.probe(agentId);
   }
 
-  /** Routes an update notification's session to its agent when the session
-   * is one of the tracker's throwaway probes — undefined for real sessions. */
-  agentForProbeSession(sessionId: string): string | undefined {
-    return this.probeSessions.get(sessionId);
+  /** Whether this session is one of the tracker's throwaway probes.
+   * Agent-scoped on purpose: session ids are only unique within one
+   * agent's connection, so a bare-sessionId lookup would let one agent's
+   * lingering probe entry capture another agent's real session whose id
+   * happens to match. */
+  isProbeSession(agentId: string, sessionId: string): boolean {
+    return this.probeSessions.get(sessionId) === agentId;
   }
 
   markUsed(agentId: string, row: CapabilityRowId): void {
@@ -207,11 +215,24 @@ export class CapabilityTracker {
       // and session.delete used-proofs falling out of the same free
       // round-trips (delete is spec-idempotent; close frees what delete
       // doesn't cover on close-only agents).
+      // Each successful round-trip also retires the id from probeSessions:
+      // once the agent-side session is ended, the id belongs to the agent
+      // again and may legally be re-minted for a future real session — a
+      // lingering registration would silently swallow that real session's
+      // updates and auto-deny its permission requests. Close-incapable
+      // agents keep their entries (their probe session genuinely lives on
+      // agent-side, so late traffic on it must still be routed here).
       if (declared.sessionClose) {
-        for (const id of probeSessionIds) await this.pool.closeSession(agentId, id);
+        for (const id of probeSessionIds) {
+          await this.pool.closeSession(agentId, id);
+          this.probeSessions.delete(id);
+        }
       }
       if (declared.sessionDelete) {
-        for (const id of probeSessionIds) await this.pool.deleteSession(agentId, id);
+        for (const id of probeSessionIds) {
+          await this.pool.deleteSession(agentId, id);
+          this.probeSessions.delete(id);
+        }
       }
       return "ok";
     } catch (err) {

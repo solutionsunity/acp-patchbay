@@ -43,14 +43,15 @@ function harness(kv = new MemoryKV()): {
   state(): ReturnType<typeof reduceAgentView>;
   /** Every onOfferings delivery, in order — the connect-time offering read
    * (raw session response per spec-pure-core; tests reach into it). */
-  offerings: { agentId: string; modes: unknown; configOptions: unknown }[];
+  offerings: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[];
   /** `agentAuthRequired`/`agentAuthResolved` only patch an existing
    * AgentSummary (same shape as the real orchestrator, which always
    * upserts before connecting) — tests touching `needsAuth` seed one first. */
   seedAgent(agentId: string): void;
 } {
   const events: AgentViewEvent[] = [];
-  const offerings: { agentId: string; modes: unknown; configOptions: unknown }[] = [];
+  const offerings: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[] =
+    [];
   let tracker!: CapabilityTracker;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
   const usedCache = new UsedCapabilityStore(kv);
@@ -70,7 +71,12 @@ function harness(kv = new MemoryKV()): {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => state().capabilities[agentId],
     onOfferings: (agentId, response) =>
-      offerings.push({ agentId, modes: response.modes, configOptions: response.configOptions }),
+      offerings.push({
+        agentId,
+        sessionId: response.sessionId,
+        modes: response.modes,
+        configOptions: response.configOptions,
+      }),
     // Standing probe workspace, orchestrator-style: per agent, created
     // idempotently, never removed mid-connection.
     probeRoot: async (agentId) => {
@@ -130,6 +136,38 @@ describe("CapabilityTracker", () => {
     expect(state().capabilities.tidy2!["session.fork"].used).toBe(false);
     expect(pool.get("tidy2")!.sessions).toEqual([]);
     await pool.stop("tidy2");
+  });
+
+  it("an ended probe session's id is retired — the agent may legally re-mint it for a real session", async () => {
+    // Session ids are agent-chosen; once the probe close/deletes its
+    // throwaway session the id is the agent's to reuse (the acp-matrix
+    // fixture mints max-stored+1, so its next real session collides
+    // deterministically). A lingering probeSessions entry then swallows the
+    // real session's updates and auto-denies its permission requests.
+    const { pool, tracker, offerings } = harness();
+    await pool.connect(
+      spec({ declare: { sessionCapabilities: { close: {}, delete: {} } } }, "reuse"),
+    );
+    const probeId = (await waitFor(() => offerings[0])).sessionId;
+    await waitFor(() => (tracker.isProbeSession("reuse", probeId) ? undefined : true));
+    expect(tracker.isProbeSession("reuse", probeId)).toBe(false);
+    await pool.stop("reuse");
+  });
+
+  it("probe identity is agent-scoped and real adoption supersedes it — a lingering entry can't capture another agent's session", async () => {
+    // A close+delete-incapable agent's probe entry deliberately lingers
+    // (the probe session genuinely lives on agent-side). Two boundaries
+    // still hold: another agent minting the same id string is never
+    // classified by it, and the owning agent re-minting the id for a real
+    // session retires it (the probe session necessarily ended agent-side).
+    const { pool, tracker, offerings } = harness();
+    await pool.connect(spec({}, "lingerer")); // declares neither close nor delete
+    const probeId = (await waitFor(() => offerings[0])).sessionId;
+    expect(tracker.isProbeSession("lingerer", probeId)).toBe(true);
+    expect(tracker.isProbeSession("other-agent", probeId)).toBe(false);
+    tracker.noteRealSessionOpened("lingerer", probeId);
+    expect(tracker.isProbeSession("lingerer", probeId)).toBe(false);
+    await pool.stop("lingerer");
   });
 
   it("the probe root survives the probe — a workspace-aware agent may hold it past session/new", async () => {
@@ -222,14 +260,14 @@ describe("CapabilityTracker", () => {
     );
     await new Promise((r) => setTimeout(r, 200));
     expect(offerings).toHaveLength(0); // connect did NOT spend the process's first session
-    tracker.noteRealSessionOpened("auggie");
+    tracker.noteRealSessionOpened("auggie", "real-1");
     await waitFor(() => (offerings.length > 0 ? true : undefined));
     expect(offerings[0]!.agentId).toBe("auggie");
-    tracker.noteRealSessionOpened("auggie"); // already spent — no second probe
+    tracker.noteRealSessionOpened("auggie", "real-2"); // already spent — no second probe
     await new Promise((r) => setTimeout(r, 200));
     expect(offerings).toHaveLength(1);
     // ...and a non-latched agent id is a no-op trigger.
-    tracker.noteRealSessionOpened("someone-else");
+    tracker.noteRealSessionOpened("someone-else", "real-3");
     await pool.stop("auggie");
   });
 

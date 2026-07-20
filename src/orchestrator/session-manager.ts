@@ -83,7 +83,7 @@ export interface SessionManagerHooks {
    * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
    * extensions/first-session-mcp-latch). Probe sessions never pass through
    * here, which is exactly what makes this the honest "real session" fact. */
-  onRealSessionAttached?(agentId: string): void;
+  onRealSessionAttached?(agentId: string, sessionId: string): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch since ACP has no live-update request for
    * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
@@ -469,7 +469,7 @@ export class SessionManager {
     if (target.via === "new") {
       const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
-      this.hooks.onRealSessionAttached?.(agentId);
+      this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
       return {
         sessionId: r.sessionId,
         knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
@@ -480,7 +480,7 @@ export class SessionManager {
       target.via === "load"
         ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
         : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
-    this.hooks.onRealSessionAttached?.(agentId);
+    this.hooks.onRealSessionAttached?.(agentId, target.sessionId);
     return {
       sessionId: target.sessionId,
       knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
@@ -1753,8 +1753,21 @@ export class SessionManager {
 
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
-  handleUpdate(_agentId: string, notification: SessionNotification): void {
+  handleUpdate(agentId: string, notification: SessionNotification): void {
     const { sessionId, update } = notification;
+    // The one identity guard, at the one door every inbound update rides
+    // through: session ids are only unique per agent connection, so two
+    // agents can legally mint the same string. An update whose sender
+    // isn't the session's owner would write one agent's traffic into
+    // another's transcript — drop it here, loudly, and nothing deeper
+    // ever re-checks.
+    const owner = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
+    if (owner !== undefined && owner !== agentId) {
+      this.log.info(
+        `session ${sessionId}: update from ${agentId} dropped — session belongs to ${owner}`,
+      );
+      return;
+    }
     // Session metadata, not transcript — handled before the live guard: the
     // agent may retitle any session it knows, live in patchbay or not.
     if (update.sessionUpdate === "session_info_update") {
