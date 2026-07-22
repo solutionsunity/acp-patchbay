@@ -38,9 +38,12 @@ import type { UsedCapabilityStore } from "./stores/used-capabilities";
 
 /** What the free probe actually observed — callers that need to react to
  * auth state (terminal-recipe login's restart escalation) read this instead
- * of guessing from side effects. "skipped" = no connection/declared caps to
- * probe against; "failed" = round-trip broke for a non-auth reason (an
- * honest declared-but-unproven state, not an error to surface). */
+ * of guessing from side effects. "skipped" = the probe never ran: no
+ * connection/declared caps to probe against, or the agent's first-session
+ * latch defers it — the terminal-login path treats both as "restart to
+ * find out", which is the right move for a stopped agent too. "failed" =
+ * round-trip broke for a non-auth reason (an honest declared-but-unproven
+ * state, not an error to surface). */
 export type ProbeOutcome = "ok" | "auth_required" | "failed" | "skipped";
 
 export interface CapabilityTrackerHooks {
@@ -115,9 +118,10 @@ export class CapabilityTracker {
       this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
     }
     // Every connect probes: the session/new is the knob-offering read
-    // (offerings are connection state),
-    // with auth proof falling out of the same free round-trip. Only the
-    // fork sub-check keeps a version-keyed skip, inside probe() itself.
+    // (offerings are connection state) and the concurrency/fork proof
+    // opportunity — deliberately NOT an auth proof; its success is
+    // non-bearing evidence (auth-evidence.ts). Only the fork sub-check
+    // keeps a version-keyed skip, inside probe() itself.
     // Exception: a latched agent's probe waits for the first real session
     // (extensions/first-session-mcp-latch — the probe must not spend the
     // process's one honored mcpServers slot); re-armed on every connect
@@ -202,7 +206,11 @@ export class CapabilityTracker {
       probeSessionIds.push(response.sessionId);
       this.probeSessions.set(response.sessionId, agentId);
       this.hooks.onOfferings?.(agentId, response);
-      this.hooks.emit({ kind: "agentAuthResolved", agentId });
+      // Deliberately NO auth-state write here: session/new succeeding is
+      // non-bearing evidence on lazy-auth agents (Claude passes it while
+      // logged out), so what it means is the authority table's call
+      // (auth-evidence.ts, fed by pool's wire chokepoint) — a probe can
+      // clear only a lock its own method raised, never a witnessed logout.
       const forkStillUnproven =
         declared.sessionFork && !(this.hooks.currentMatrix(agentId)?.["session.fork"].used ?? false);
       if (forkStillUnproven) {
@@ -237,9 +245,9 @@ export class CapabilityTracker {
       return "ok";
     } catch (err) {
       if (err instanceof RequestError && err.code === -32000) {
-        // needsAuth itself was already raised by pool.ts's wire chokepoint
-        // (onAuthRequired — one writer for every auth_required, probe or
-        // real usage); this only names the friendly next step in the log.
+        // needsAuth itself was already raised through pool.ts's wire
+        // chokepoint (onAuthWireFact → the orchestrator's one auth-state
+        // writer); this only names the friendly next step in the log.
         this.log.info(`${agentId}: probe hit auth_required — Log in to proceed`);
         return "auth_required";
       }
@@ -264,6 +272,13 @@ export class CapabilityTracker {
    * agent turn probing capabilities patchbay itself doesn't implement yet.
    * Re-runs the free checks only. */
   async verify(agentId: string): Promise<ProbeOutcome> {
+    // A latched agent's probe stays parked (first-session-mcp-latch): a
+    // user-run Verify must not spend the process's one honored mcpServers
+    // slot on a throwaway session — same deferral onDeclared honors.
+    if (this.deferredProbes.has(agentId)) {
+      this.log.info(`${agentId}: verify skipped — probe deferred until first real session`);
+      return "skipped";
+    }
     return await this.probe(agentId);
   }
 
@@ -271,33 +286,30 @@ export class CapabilityTracker {
    * successful login is reflected immediately rather than waiting for the
    * next real session attempt. Failure (rejected, cancelled, agent-side
    * error) surfaces plainly — `agentAuthRequired` stays set, never silently
-   * cleared on a failed attempt. */
+   * cleared on a failed attempt. The trailing probe honors the same latch
+   * deferral as verify; auth state doesn't need it (the authenticate
+   * success itself is the authority's clearing evidence). */
   async authenticate(agentId: string, methodId: string): Promise<void> {
     await this.pool.authenticate(agentId, methodId);
+    if (this.deferredProbes.has(agentId)) return;
     await this.probe(agentId);
   }
 
-  /** Stable `logout` round trip — and no probe after it. A successful
-   * logout IS the auth state: the user explicitly logged out, so
-   * `agentAuthRequired` is emitted directly. Probing here would ask the
-   * agent a question we already know the answer to, and for agents that
-   * only raise `auth_required` at prompt time (Claude: session/new succeeds
-   * without credentials) the probe's success would immediately overwrite
-   * the logged-out state with `agentAuthResolved` — the "logout does
-   * nothing" bug.
+  /** Stable `logout` round trip — and no probe after it: probing would ask
+   * the agent a question the wire cannot answer honestly (lazy-auth agents
+   * pass session/new while logged out). The auth-state consequence is not
+   * decided here at all: pool's wire chokepoint reports "logout settled
+   * ok" and the authority table (auth-evidence.ts) turns that into the
+   * strongest lock there is — cleared only by an affirmative login or a
+   * completed prompt, never by a reconnect's probe.
    *
    * The orchestrator disconnects the agent's processes right after this
    * returns (logoutAgent): a process that has held credentials is never
    * trusted to shed them — auth state read at spawn and never re-read is
    * live agent behavior (auggie dossier, 2026-07-14), and its logout-side
    * mirror (a process that keeps working after revocation) is a security
-   * hazard. The reason string doubles as the stopped card's explanation. */
+   * hazard. The lock's reason doubles as the stopped card's explanation. */
   async logout(agentId: string): Promise<void> {
     await this.pool.logout(agentId);
-    this.hooks.emit({
-      kind: "agentAuthRequired",
-      agentId,
-      reason: "logged out — the process was disconnected to clear its session; Connect to use this agent again",
-    });
   }
 }

@@ -307,6 +307,15 @@ export function withKnobValue(current: NormalizedKnobs, knobId: string, value: s
     knobs: current.knobs.map((k) =>
       k.id === knobId && k.type === "select" ? { ...k, currentValue: value } : k,
     ),
+    // The extras entry carries the view a config-surface rebuild re-appends
+    // (withExtras via applyConfigUpdate's `prior`) — advance it too, or the
+    // next config update would roll the user's RPC-acknowledged pick back
+    // to the attach-time value it captured.
+    extras: current.extras?.map((e) =>
+      e.knob.id === knobId && e.knob.type === "select"
+        ? { ...e, knob: { ...e.knob, currentValue: value } }
+        : e,
+    ),
   };
 }
 

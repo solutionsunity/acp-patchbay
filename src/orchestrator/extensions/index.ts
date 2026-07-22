@@ -18,6 +18,12 @@ export function sessionKnobExtras(response: unknown): KnobExtra[] {
 
 export { probeDeferredFor } from "./first-session-mcp-latch";
 
+export {
+  authCapabilityWire,
+  typedAuthMethodOf,
+  type TypedTerminalAuth,
+} from "./auth-method-types";
+
 /** A stateful text filter over one prose run's delta stream. `push` may
  * withhold a suffix that could still become a wire-extension shape;
  * whoever closes the run MUST `flush` so the tail lands (raw) instead of

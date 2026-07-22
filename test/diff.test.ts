@@ -52,4 +52,16 @@ describe("computeLineDiff", () => {
       { kind: "add", text: "" },
     ]);
   });
+
+  it("CRLF and LF are the same line boundary — mixed-source sides never mark every line changed", () => {
+    // agent-normalized LF content vs the same file read from disk as CRLF
+    expect(computeLineDiff("a\r\nb\r\nc\r\n", "a\nb\nc\n")).toMatchObject({
+      additions: 0,
+      deletions: 0,
+    });
+    expect(computeLineDiff("a\r\nb\r\nc\r\n", "a\nB\nc\n")).toMatchObject({
+      additions: 1,
+      deletions: 1,
+    });
+  });
 });

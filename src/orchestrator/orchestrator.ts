@@ -7,7 +7,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
-import { RequestError } from "@agentclientprotocol/sdk";
+import { methods, RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -38,11 +38,12 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
-import { sessionKnobExtras } from "./extensions";
+import { sessionKnobExtras, typedAuthMethodOf, type TypedTerminalAuth } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
+import { resolveExecutableWin32 } from "./spawn-resolve";
 import { SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
@@ -70,6 +71,9 @@ import { LastConnectedStore } from "./stores/last-connected";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { loadRegistry } from "./stores/registry";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
+import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
+import { AuthLockStore } from "./stores/auth-locks";
+import { SessionContinuityStore } from "./stores/session-continuity";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
@@ -113,6 +117,10 @@ export class Orchestrator {
   readonly agentConfigs: AgentConfigStore;
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
+  /** Standing auth locks (auth-evidence.ts) — persisted so reload and
+   * reconnect cannot launder a witnessed logout. Written only by
+   * noteAuthEvidence, the one auth-state writer. */
+  readonly authLocks: AuthLockStore;
   readonly spawnRegistry: SpawnRegistryStore;
   readonly agentEnv: SecretEnvStore;
   readonly integrationEnv: SecretEnvStore;
@@ -121,6 +129,7 @@ export class Orchestrator {
   readonly machinePermissionRules: MachineRulesStore;
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
+  readonly sessionContinuity: SessionContinuityStore;
   /** The current ACP registry snapshot (agents + icons) — replaced whenever
    * the registry refreshes; every agent lookup elsewhere reads this. */
   private registryData: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
@@ -160,6 +169,10 @@ export class Orchestrator {
    * fresh at every connect from the raw initialize response — never
    * persisted, never sent to a webview. */
   private readonly authRecipes = new Map<string, ReadonlyMap<string, TerminalAuthRecipe>>();
+  /** agentId → methodId → typed terminal method (auth-method-types.ts),
+   * captured alongside authRecipes — wire args/env only; the command is the
+   * agent's own spawn spec, composed at click time, never stored. */
+  private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TypedTerminalAuth>>();
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
@@ -239,7 +252,9 @@ export class Orchestrator {
     this.integrationConfigs = new IntegrationConfigStore(machineKV);
     this.preferences = new PreferencesStore(machineKV);
     this.composerKnobs = new ComposerKnobsStore(machineKV);
+    this.sessionContinuity = new SessionContinuityStore(machineKV);
     this.usedCapabilities = new UsedCapabilityStore(machineKV);
+    this.authLocks = new AuthLockStore(machineKV);
     this.spawnRegistry = new SpawnRegistryStore(machineKV);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
     this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
@@ -378,15 +393,25 @@ export class Orchestrator {
         const version = raw.agentInfo?.version ?? null;
         this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
         if (version !== null) void this.recordSeenVersion(agentId, version);
-        // terminal-auth recipes (meta.ts), fresh per connect — command paths
-        // are machine-absolute and never persisted; the webview only ever
-        // sees the method's kind, the recipe stays host-side.
+        // terminal-auth recipes (meta.ts) and typed terminal methods
+        // (auth-method-types.ts), fresh per connect — command paths are
+        // machine-absolute and never persisted; the webview only ever sees
+        // the method's kind, both captures stay host-side. A recipe wins
+        // over the typed surface, matching the kind precedence
+        // (capabilities.ts).
         const recipes = new Map<string, TerminalAuthRecipe>();
+        const typed = new Map<string, TypedTerminalAuth>();
         for (const m of raw.authMethods ?? []) {
           const recipe = terminalAuthRecipeOf(m._meta);
-          if (recipe !== null) recipes.set(m.id, recipe);
+          if (recipe !== null) {
+            recipes.set(m.id, recipe);
+            continue;
+          }
+          const t = typedAuthMethodOf(m);
+          if (t !== null && t.kind === "terminal") typed.set(m.id, t.terminal);
         }
         this.authRecipes.set(agentId, recipes);
+        this.typedTerminalAuth.set(agentId, typed);
       },
       onSessionUpdate: (agentId, notification) => {
         // A throwaway probe session's late config_option_update still counts
@@ -404,11 +429,13 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification);
       },
       onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
-      onAuthRequired: (agentId, reason) => {
-        const event = { kind: "agentAuthRequired", agentId, reason } as const;
-        this.agentView.emit(event);
-        this.settings.emit(event);
-      },
+      onAuthWireFact: (agentId, method, settled, reason) =>
+        this.noteAuthEvidence(
+          agentId,
+          settled === "ok"
+            ? { kind: "rpcOk", method }
+            : { kind: "authRequired", method, reason: reason ?? null },
+        ),
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
       // Spawn registry: records persist machine-scoped so an abnormal
@@ -646,6 +673,13 @@ export class Orchestrator {
           return this.composerKnobs.get(agentId) ?? defaults;
         },
         onKnobsConfirmed: (agentId, seed) => void this.composerKnobs.record(agentId, seed),
+        continuityFor: (sessionId, agentId) => this.sessionContinuity.read(sessionId, agentId),
+        onContinuity: (sessionId, agentId, patch) => {
+          void (patch === null
+            ? this.sessionContinuity.forget(sessionId, agentId)
+            : this.sessionContinuity.patch(sessionId, agentId, patch)
+          ).catch((err: Error) => this.log.error(`session continuity ${sessionId} — ${err.message}`));
+        },
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         isDeleteUsed: (agentId) =>
@@ -653,8 +687,11 @@ export class Orchestrator {
         isActiveSession: (sessionId) =>
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
+        isPointerActive: (sessionId) => this.agentView.current.activeSessionId === sessionId,
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
+        authLocked: (agentId) => this.authLocks.lockFor(agentId) !== null,
+        readFileLive: (path) => this.readTextFileLive(path),
       },
       () => this.workspaceRoot ?? process.cwd(),
       async (contextToken, agentId) => {
@@ -802,11 +839,13 @@ export class Orchestrator {
     this.sessionManager.reset();
     this.contextTokenToSession.clear();
     this.authRecipes.clear();
+    this.typedTerminalAuth.clear();
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
       integrationConfigs: this.integrationConfigs,
       usedCapabilities: this.usedCapabilities,
+      authLocks: this.authLocks,
       spawnRegistry: this.spawnRegistry,
       agentEnv: this.agentEnv,
       integrationEnv: this.integrationEnv,
@@ -818,6 +857,13 @@ export class Orchestrator {
       lastConnected: this.lastConnected,
       preferences: this.preferences,
       composerKnobs: this.composerKnobs,
+      sessionContinuity: this.sessionContinuity,
+      tempStashes: {
+        wipe: async () => {
+          await rm(ATTACHMENTS_DIR, { recursive: true, force: true });
+          await rm(join(tmpdir(), "acp-patchbay-diffs"), { recursive: true, force: true });
+        },
+      },
     });
 
     this.configuredAgentSpecs.clear();
@@ -1113,6 +1159,63 @@ export class Orchestrator {
     else if (cell?.suspect !== true) this.capabilityTracker.markSuspect(agentId, row);
   }
 
+  /** The one writer for agent auth state. Every caller — pool's wire
+   * chokepoint, the terminal login flows — reports what it *witnessed*;
+   * the authority table (auth-evidence.ts) decides what that does to the
+   * lock, the lock persists machine-scoped, and only a real transition
+   * emits. No other code may emit agentAuthRequired/agentAuthResolved. */
+  private noteAuthEvidence(agentId: string, evidence: AuthEvidence): void {
+    // Evidence for an agent that no longer exists writes nothing: a
+    // terminal login left open across a Remove would otherwise re-create
+    // a lock entry for a deleted id and poison a future re-add.
+    if (!this.agentNames.has(agentId)) {
+      this.log.debug(`auth evidence for unknown agent ${agentId} dropped (${evidence.kind})`);
+      return;
+    }
+    // Between the logout RPC resolving and stopAllFor finishing, an
+    // in-flight prompt can settle "ok" — evidence issued on pre-logout
+    // credentials, contradicting nothing. Clears are suspended for that
+    // window; locks still apply.
+    const result = applyAuthEvidence(this.authLocks.lockFor(agentId), evidence, new Date().toISOString());
+    if (!result.changed) return;
+    if (result.lock === null) {
+      if (this.loggingOut.has(agentId)) {
+        this.log.info(`${agentId}: auth clear (${evidence.kind}) ignored — logout in progress`);
+        return;
+      }
+      this.authLocks.remove(agentId).catch((err: Error) => {
+        this.log.error(`${agentId}: auth-lock remove failed — ${err.message}`);
+      });
+      const event = { kind: "agentAuthResolved", agentId } as const;
+      this.agentView.emit(event);
+      this.settings.emit(event);
+      // The auth row's off-table proof source (recorded at
+      // CAPABILITY_PROOFS.auth) — deliberately only the affirmative auth
+      // actions: an authenticate round-trip or a terminal login exiting 0.
+      // Other clears (a completed prompt, a same-method contradiction)
+      // honestly end the lock but never exercised patchbay's auth path —
+      // a transient -32000 healing itself must not mark the row used.
+      if (
+        evidence.kind === "loginOk" ||
+        (evidence.kind === "rpcOk" && evidence.method === methods.agent.authenticate)
+      ) {
+        this.noteEvidence(agentId, "auth", "used");
+      }
+      // Words held at the turn-start door were waiting for exactly this:
+      // an idle session has no coming turn end to drain them. The lock is
+      // already cleared in memory (FileKV swaps synchronously), so the
+      // drain reads the new truth.
+      this.sessionManager.drainHeldQueues(agentId);
+    } else {
+      this.authLocks.upsert({ id: agentId, lock: result.lock }).catch((err: Error) => {
+        this.log.error(`${agentId}: auth-lock write failed — ${err.message}`);
+      });
+      const event = { kind: "agentAuthRequired", agentId, reason: result.lock.reason } as const;
+      this.agentView.emit(event);
+      this.settings.emit(event);
+    }
+  }
+
   /** Settings-side projections of session-manager events: the sessions-today
    * stat tile. Live sessions' knob surfaces
    * deliberately do NOT feed the Settings offerings: a set_config_option
@@ -1156,7 +1259,12 @@ export class Orchestrator {
    * two-half merge), so every observation replaces wholesale. An empty
    * surface is not an observation. */
   private noteOfferings(agentId: string, normalized: NormalizedKnobs): void {
-    if (normalized.surface === "none") return;
+    // An empty surface is not an observation — and neither is an empty
+    // knob list: a probe session's late config_option_update carrying no
+    // (or all-rejected) options normalizes to surface "config" with zero
+    // knobs, and replacing the session/new-read offerings with that would
+    // be erasure by weaker evidence.
+    if (normalized.surface === "none" || normalized.knobs.length === 0) return;
     this.settings.emit({
       kind: "agentKnobsObserved",
       agentId,
@@ -1432,14 +1540,19 @@ export class Orchestrator {
         defaults: foldSeed(agent.defaults),
       });
       this.agentNames.set(agent.id, agent.name);
+      // needsAuth seeds from the persisted lock (auth-evidence.ts), never
+      // a literal: a logout witnessed before this reload is still the
+      // truth — the wire has nothing to re-read it from.
+      const lock = this.authLocks.lockFor(agent.id);
       const upsert = {
         kind: "agentUpserted",
         agent: {
           id: agent.id,
           name: agent.name,
-          status: agent.lastSeenVersion === null ? "untested" : "stopped",
+          status: agent.lastSeenVersion === null ? ("untested" as const) : ("stopped" as const),
           command: [agent.command, ...agent.args].join(" "),
-          needsAuth: false,
+          needsAuth: lock !== null,
+          authReason: lock?.reason ?? undefined,
         },
       } as const;
       this.agentView.emit(upsert);
@@ -1480,6 +1593,11 @@ export class Orchestrator {
       // a blank value for a key that has no stored value: nothing to keep
     }
     await this.agentEnv.set(config.id, merged);
+    // Identity/wire facts never round-trip through the form: the webview's
+    // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
+    // the moment a connect or an Upgrade lands mid-edit — the store's own
+    // values are the truth the form has no business carrying back.
+    const prior = this.agentConfigs.get(config.id);
     await this.agentConfigs.upsert({
       id: config.id,
       name: config.name,
@@ -1490,8 +1608,8 @@ export class Orchestrator {
       // The view's folded seed is stored under `options` alone — the legacy
       // `mode` field is read (foldSeed) but never written again.
       defaults: { options: { ...config.defaults } },
-      registrySource: config.registrySource,
-      lastSeenVersion: config.lastSeenVersion,
+      registrySource: prior?.registrySource ?? config.registrySource,
+      lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     });
     this.configuredAgentSpecs.set(config.id, {
       agentId: config.id,
@@ -1523,6 +1641,8 @@ export class Orchestrator {
     await this.composerKnobs.remove(agentId);
     await this.agentEnv.remove(agentId);
     this.authRecipes.delete(agentId);
+    this.typedTerminalAuth.delete(agentId);
+    await this.authLocks.remove(agentId);
     await rm(join(this.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
     this.configuredAgentSpecs.delete(agentId);
     this.agentNames.delete(agentId);
@@ -1720,14 +1840,19 @@ export class Orchestrator {
    * config store never carry them. */
   async connectAgent(spec: LaunchSpec): Promise<void> {
     this.agentNames.set(spec.agentId, spec.name);
+    // A connect bears nothing on auth — needsAuth carries the standing
+    // lock (auth-evidence.ts) through the upsert instead of a literal
+    // false, or every reconnect would erase a witnessed logout.
+    const lock = this.authLocks.lockFor(spec.agentId);
     const upsert = {
       kind: "agentUpserted",
       agent: {
         id: spec.agentId,
         name: spec.name,
-        status: "reconnecting",
+        status: "reconnecting" as const,
         command: [spec.command, ...spec.args].join(" "),
-        needsAuth: false,
+        needsAuth: lock !== null,
+        authReason: lock?.reason ?? undefined,
       },
     } as const;
     this.agentView.emit(upsert);
@@ -1942,6 +2067,9 @@ export class Orchestrator {
           });
         break;
       case "sendPrompt":
+        // Pure dispatch: the auth-lock adjudication lives at the
+        // session-manager's turn-start door (with inFlight), where every
+        // prompt passes — a guard here would cover only this entrance.
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
         void this.sessionManager
           .sendPrompt(action.sessionId, action.text, action.parts)
@@ -1960,6 +2088,29 @@ export class Orchestrator {
       case "removeQueuedPrompt":
         this.sessionManager.removeQueuedPrompt(action.sessionId, action.promptId);
         break;
+      case "setSessionDraft": {
+        // The composer's debounced durable save. The draft is opaque here
+        // (serialized editor state); the row dies with the session, so an
+        // unknown id writes nothing.
+        const draftAgent = this.agentView.current.sessions.find(
+          (v) => v.id === action.sessionId,
+        )?.agentId;
+        if (draftAgent === undefined) break;
+        // Unchanged drafts write nothing: every save rewrites the whole
+        // machine KV file, and the debounce ticks while a user merely
+        // moves the caret.
+        if ((this.sessionContinuity.read(action.sessionId, draftAgent)?.draft ?? "") === action.draft) {
+          break;
+        }
+        void this.sessionContinuity
+          .patch(action.sessionId, draftAgent, { draft: action.draft })
+          .catch((err: Error) => this.log.error(`draft save ${action.sessionId} — ${err.message}`));
+        // Mirror into view state so sibling views (detached panels) and the
+        // next session switch read the same copy. The composer applies
+        // drafts only at switch/mount — echoes never fight the keyboard.
+        this.agentView.emit({ kind: "sessionDraftChanged", sessionId: action.sessionId, draft: action.draft });
+        break;
+      }
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
         // The spec's cancellation MUST: pending permission requests resolve
@@ -1978,16 +2129,28 @@ export class Orchestrator {
       case "authenticateAgent": {
         // failure leaves needsAuth set — the honest signal, no separate reply channel
         const recipe = this.authRecipes.get(action.agentId)?.get(action.methodId);
+        const typed = this.typedTerminalAuth.get(action.agentId)?.get(action.methodId);
         if (recipe !== undefined) {
           // terminal-recipe method: the login runs in a visible terminal,
           // `authenticate` is never called on it (meta.ts).
           void this.loginViaTerminal(action.agentId, recipe).catch(
             this.logCatch(`terminal login ${action.agentId}`),
           );
+        } else if (typed !== undefined) {
+          // typed terminal method (auth-method-types.ts): same executor,
+          // recipe composed from the agent's own spawn spec at click time —
+          // `authenticate` is never called on it either, so a login's
+          // success is always terminal-ran-plus-reprobe, never the RPC's
+          // word for it.
+          void this.typedLoginViaTerminal(action.agentId, typed).catch(
+            this.logCatch(`typed terminal login ${action.agentId}`),
+          );
         } else {
-          void this.capabilityTracker
-            .authenticate(action.agentId, action.methodId)
-            .catch(this.logCatch(`authenticate ${action.agentId}`));
+          // Bracketed like verify/logout: the card's controls dim for the
+          // authenticate round-trip's span too.
+          void this.withVerifySignal(action.agentId, "authenticate", () =>
+            this.capabilityTracker.authenticate(action.agentId, action.methodId),
+          ).catch(this.logCatch(`authenticate ${action.agentId}`));
         }
         break;
       }
@@ -2176,6 +2339,11 @@ export class Orchestrator {
         void this.openSessionFileDiff(action.sessionId, action.path).catch(
           this.logCatch(`openSessionFileDiff ${action.path}`),
         );
+        break;
+      case "refreshFileDiffStats":
+        void this.sessionManager
+          .refreshFileDiffStats(action.sessionId)
+          .catch(this.logCatch(`refreshFileDiffStats ${action.sessionId}`));
         break;
       case "addOrUpdateAgentConfig":
         void this.addOrUpdateAgentConfig(action.config, action.env);
@@ -2533,8 +2701,18 @@ export class Orchestrator {
       }
     }
     if (spec === null) return;
-    if (this.pool.get(spec.agentId)?.status === "running") return;
+    // Persist FIRST: an Upgrade clicked while the agent happens to be
+    // connecting must still land its new pin — only the connect itself is
+    // skipped. Then "reconnecting" gates alongside "running": a second
+    // Connect during an in-flight connect would re-emit the wholesale
+    // upsert (stomping the card mid-connect) just to have pool.connect
+    // refuse a moment later.
     if (shouldPersist) await this.persistAgentConfig(spec, registrySource);
+    const status = this.pool.get(spec.agentId)?.status;
+    if (status === "running" || status === "reconnecting") {
+      this.log.info(`${spec.agentId}: connect skipped — already ${status}`);
+      return;
+    }
     try {
       await this.connectAgent(spec);
       if (verifyAfterConnect) void this.runVerify(spec.agentId);
@@ -2575,17 +2753,17 @@ export class Orchestrator {
    * shell has no such cliff.)
    *
    * The command's *result* is listened to, never guessed: with shell
-   * integration the exit code is real evidence. Zero → re-probe (same
-   * span as Verify, so the card reads "Verifying…"; the probe, not the
-   * exit code, is what clears needsAuth) — and if the probe *still* says
+   * integration the exit code is real evidence. Zero → the affirmative
+   * fact the authority table clears on (noteAuthEvidence loginOk), then a
+   * re-probe as corroboration and offering re-read (same span as Verify,
+   * so the card reads "Verifying…") — and if the probe *still* says
    * auth_required, restart the process: the recipe wrote credentials
    * outside it, and a CLI that reads auth at spawn never re-reads them.
-   * Non-zero → re-raise needsAuth with the code as the card's reason, and
-   * deliberately NO probe — a lazy-auth agent (Claude passes session/new
-   * without credentials) would "verify away" the still-logged-out state.
-   * Where shell integration never activates, the fallback is the old
-   * convention: sendText, wait for the terminal to close, probe — the
-   * only signal available. */
+   * Non-zero → loginFailed evidence, locking with the exit code as the
+   * card's reason. An unknown exit (shell integration never activated,
+   * terminal closed mid-run) is not affirmative: no evidence noted, the
+   * fallback probe runs, and the lock heals later through a same-method
+   * success or a completed prompt. */
   private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
     const name = recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`;
     const terminal = vscode.window.createTerminal({
@@ -2602,16 +2780,32 @@ export class Orchestrator {
     const exitCode = await this.runLoginCommand(terminal, cmd);
     this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
     if (exitCode !== undefined && exitCode !== 0) {
-      const event = {
-        kind: "agentAuthRequired",
-        agentId,
+      this.noteAuthEvidence(agentId, {
+        kind: "loginFailed",
         reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
-      } as const;
-      this.agentView.emit(event);
-      this.settings.emit(event);
+      });
       return;
     }
+    // Exit 0 is the affirmative evidence — it clears the lock (the
+    // authority table's call); the probe below is corroboration and the
+    // offering re-read, not the clearer: on a lazy-auth agent its
+    // session/new success bears nothing either way. An *unknown* exit
+    // (shell integration never activated, terminal closed mid-run) is not
+    // affirmative — no evidence is noted, and the lock heals later through
+    // a same-method success or a completed prompt.
+    if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });
     const outcome = await this.runVerify(agentId);
+    // "skipped" = the probe is latch-deferred (first-session-mcp-latch) —
+    // no corroboration is possible without spending the latch slot, and
+    // the latched vendor is also the spawn-time-credential-read vendor:
+    // restart unconditionally, same reasoning as the auth_required arm.
+    if (exitCode === 0 && outcome === "skipped") {
+      this.log.info(
+        `${agentId}: login succeeded but the probe is latch-deferred — restarting so the process reads the fresh credentials`,
+      );
+      await this.restartAgent(agentId);
+      return;
+    }
     if (outcome === "auth_required") {
       // The recipe wrote credentials *outside* the running process, and the
       // process still answers auth_required: a CLI that reads auth state at
@@ -2625,6 +2819,35 @@ export class Orchestrator {
       );
       await this.restartAgent(agentId);
     }
+  }
+
+  /** Typed terminal method (auth-method-types.ts): the wire pins the
+   * command to the agent's own spawn — spec read fresh from the store (a
+   * Settings edit applies here exactly as it would to the next spawn) with
+   * SecretStorage env merged at the last moment, the method's args APPENDED
+   * to the spawn args and its env layered over the spawn env. On Windows
+   * the command is absolutized the same way a spawn would be — the login
+   * terminal's shell may be cmd.exe, which resolves a bare name against
+   * the cwd (the workspace) before PATH, and a planted `npx.cmd` must not
+   * win here any more than it can at spawn; not-found falls back to the
+   * bare name and lets the shell report it. */
+  private async typedLoginViaTerminal(agentId: string, typed: TypedTerminalAuth): Promise<void> {
+    const spec = this.configuredAgentSpecs.get(agentId);
+    if (spec === undefined) {
+      this.log.warn(`typed terminal login: no configured spec for ${agentId}`);
+      return;
+    }
+    const secretEnv = await this.agentEnv.get(agentId);
+    const env = { ...spec.env, ...secretEnv, ...typed.env };
+    const command =
+      process.platform === "win32"
+        ? (resolveExecutableWin32(spec.command, { ...process.env, ...env }) ?? spec.command)
+        : spec.command;
+    await this.loginViaTerminal(agentId, {
+      command,
+      args: [...spec.args, ...typed.args],
+      env,
+    });
   }
 
   /** Runs `cmd` in the login terminal and resolves with its exit code —
@@ -2675,16 +2898,29 @@ export class Orchestrator {
   }
 
   /** THE in-flight bracket for every tracker round-trip the settings card
-   * reflects (verify, logout): emits agentVerifyStarted/Finished around the
-   * work so the card's controls dim for exactly its span — one writer for
-   * the signal, so the two flows can never drift apart. */
+   * reflects (verify, authenticate, logout): emits
+   * agentVerifyStarted/Finished around the work so the card's controls dim
+   * for exactly its span — one writer for the signal, so the flows can
+   * never drift apart. Refcounted: overlapping brackets (a user Verify
+   * racing verify-after-connect) must not un-dim mid-RPC when the first
+   * one finishes — Finished fires only when the LAST bracket closes. */
+  private readonly verifySignalDepth = new Map<string, number>();
+
   private async withVerifySignal<T>(agentId: string, label: string, work: () => Promise<T>): Promise<T> {
-    this.settings.emit({ kind: "agentVerifyStarted", agentId });
+    const depth = this.verifySignalDepth.get(agentId) ?? 0;
+    this.verifySignalDepth.set(agentId, depth + 1);
+    if (depth === 0) this.settings.emit({ kind: "agentVerifyStarted", agentId });
     this.log.debug(`${agentId}: ${label} started`);
     try {
       return await work();
     } finally {
-      this.settings.emit({ kind: "agentVerifyFinished", agentId });
+      const remaining = (this.verifySignalDepth.get(agentId) ?? 1) - 1;
+      if (remaining <= 0) {
+        this.verifySignalDepth.delete(agentId);
+        this.settings.emit({ kind: "agentVerifyFinished", agentId });
+      } else {
+        this.verifySignalDepth.set(agentId, remaining);
+      }
       this.log.debug(`${agentId}: ${label} finished`);
     }
   }
@@ -2697,11 +2933,22 @@ export class Orchestrator {
    * (spawn-time-only auth reads are live behavior — auggie dossier), so
    * killing it is the only clear-out that needs no agent cooperation.
    * `stopAllFor`, not `stop`: isolated-spawn clones share the same
-   * credentials. The card lands on stopped + the logout reason; the next
-   * Connect re-derives auth state from the wire, fresh. */
+   * credentials. The card lands on stopped + the logout reason, and the
+   * lock persists (auth-evidence.ts) — a reconnect carries it until real
+   * login evidence clears it. */
+  /** Agents mid-logout: clears are suspended (noteAuthEvidence) until the
+   * processes are down — a prompt finishing on pre-logout credentials must
+   * not launder the witnessed logout. */
+  private readonly loggingOut = new Set<string>();
+
   private async logoutAgent(agentId: string): Promise<void> {
-    await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
-    await this.pool.stopAllFor(agentId);
+    this.loggingOut.add(agentId);
+    try {
+      await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
+      await this.pool.stopAllFor(agentId);
+    } finally {
+      this.loggingOut.delete(agentId);
+    }
   }
 
   /** Brackets a Verify round-trip (manual click or "Verify after add") with

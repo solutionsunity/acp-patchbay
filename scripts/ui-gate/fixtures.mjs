@@ -92,7 +92,7 @@ export function agentViewState({ live }) {
     capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
     // matches g3's diff-bearing edit below — the files panel's +/- badge
     fileDiffStats: { s1: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } },
-    contextChips: { s1: [] }, sessionKnobs: { s1: [] }, promptQueue: {},
+    contextChips: { s1: [] }, sessionKnobs: { s1: [] }, promptQueue: {}, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },

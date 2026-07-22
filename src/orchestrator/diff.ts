@@ -14,8 +14,17 @@ export interface DiffResult {
 }
 
 export function computeLineDiff(oldText: string, newText: string): DiffResult {
-  const oldLines = oldText.length === 0 ? [] : oldText.split("\n");
-  const newLines = newText.length === 0 ? [] : newText.split("\n");
+  // One line-ending vocabulary before comparing: the two sides routinely
+  // come from different producers (agent-normalized LF content vs a CRLF
+  // file on disk, or vice versa), and comparing raw marked every line
+  // changed — while VS Code's own diff editor, which ignores trailing
+  // whitespace by default, showed the same change clean. \r\n and \n are
+  // the same line boundary here; all other whitespace is content.
+  const normalize = (text: string) => text.replace(/\r\n/g, "\n");
+  const oldNorm = normalize(oldText);
+  const newNorm = normalize(newText);
+  const oldLines = oldNorm.length === 0 ? [] : oldNorm.split("\n");
+  const newLines = newNorm.length === 0 ? [] : newNorm.split("\n");
   const n = oldLines.length;
   const m = newLines.length;
 

@@ -11,6 +11,10 @@ import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-stor
 import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
+import { matrixFromDeclared } from "../src/orchestrator/capabilities";
+import type { DeclaredCapabilities } from "../src/shared/protocol";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore, RELOAD_GRACE_MS } from "../src/orchestrator/stores/last-connected";
 import { ComposerKnobsStore } from "../src/orchestrator/stores/composer-knobs";
@@ -264,5 +268,112 @@ describe("ComposerKnobsStore — the composer combination per agent", () => {
     await store.record("claude", { mode: "plan" });
     expect(store.get("claude")).toEqual({ mode: "plan" });
     expect(store.count()).toBe(2);
+  });
+});
+
+describe("UsedCapabilityStore.seed — the fresh claim outranks the cache", () => {
+  const declared = (over: Partial<DeclaredCapabilities>): DeclaredCapabilities => ({
+    loadSession: false, sessionFork: false, sessionResume: false, sessionList: false,
+    sessionDelete: false, sessionClose: false, sessionAdditionalDirectories: false,
+    promptImage: false, promptAudio: false, promptEmbeddedContext: false,
+    mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false,
+    ...over,
+  });
+
+  it("used restores only while the new connect still makes the claim", async () => {
+    const store = new UsedCapabilityStore(new MemoryKV());
+    const earned = matrixFromDeclared(declared({ sessionFork: true }));
+    await store.save("a", "1.0", { ...earned, "session.fork": { declared: true, used: true } });
+    const stillClaimed = store.seed("a", "1.0", matrixFromDeclared(declared({ sessionFork: true })));
+    expect(stillClaimed["session.fork"]).toEqual({ declared: true, used: true });
+    // Claim withdrawn: a restored used=true would light a feature the spec
+    // now forbids calling.
+    const withdrawn = store.seed("a", "1.0", matrixFromDeclared(declared({})));
+    expect(withdrawn["session.fork"]).toEqual({ declared: false, used: false });
+  });
+
+  it("suspect restores regardless of the fresh claim — a declaration flicker at the same version must not launder the warning", async () => {
+    const store = new UsedCapabilityStore(new MemoryKV());
+    const base = matrixFromDeclared(declared({ loadSession: true }));
+    await store.save("a", "1.0", {
+      ...base,
+      "session.load": { declared: true, used: false, suspect: true },
+    });
+    const stillClaimed = store.seed("a", "1.0", matrixFromDeclared(declared({ loadSession: true })));
+    expect(stillClaimed["session.load"]).toEqual({ declared: true, used: false, suspect: true });
+    // Claim withdrawn at the SAME version: the warning stands — only an
+    // actual version change resets it honestly (suspect gates nothing).
+    const withdrawn = store.seed("a", "1.0", matrixFromDeclared(declared({})));
+    expect(withdrawn["session.load"]).toEqual({ declared: true, used: false, suspect: true });
+  });
+
+  it("claimless-provable rows (usage, concurrentSessions, auth) restore regardless — the mark carried the claim", async () => {
+    const store = new UsedCapabilityStore(new MemoryKV());
+    const base = matrixFromDeclared(declared({}));
+    await store.save("a", "1.0", {
+      ...base,
+      usage: { declared: true, used: true },
+      auth: { declared: true, used: true },
+    });
+    const seeded = store.seed("a", "1.0", matrixFromDeclared(declared({})));
+    expect(seeded.usage).toEqual({ declared: true, used: true });
+    expect(seeded.auth).toEqual({ declared: true, used: true });
+  });
+});
+
+describe("SessionContinuityStore", () => {
+  it("reads are agentId-checked — a colliding session id under another agent reads absent", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    await store.patch("s1", "claude", { knobs: { model: "sonnet", thinking: true } });
+    expect(store.read("s1", "claude")?.knobs).toEqual({ model: "sonnet", thinking: true });
+    // session ids are agent-minted: the same string under a different agent
+    // is a different session, never the other agent's state
+    expect(store.read("s1", "auggie")).toBeUndefined();
+    expect(store.read("s2", "claude")).toBeUndefined();
+    await store.forget("s1", "claude");
+    expect(store.read("s1", "claude")).toBeUndefined();
+  });
+
+  it("patch merges fields; empty values delete them; a fieldless row leaves the store", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    await store.patch("s1", "claude", { knobs: { model: "sonnet" } });
+    await store.patch("s1", "claude", { queue: [{ id: "q1", text: "held" }], draft: "typing…" });
+    expect(store.read("s1", "claude")).toEqual({
+      knobs: { model: "sonnet" },
+      queue: [{ id: "q1", text: "held" }],
+      draft: "typing…",
+    });
+    // drained queue and cleared draft drop their fields, knobs stand
+    await store.patch("s1", "claude", { queue: [], draft: "" });
+    expect(store.read("s1", "claude")).toEqual({ knobs: { model: "sonnet" } });
+    // last field emptied → the row itself leaves
+    await store.patch("s1", "claude", { knobs: undefined });
+    expect(store.list()).toEqual([]);
+  });
+
+  it("two agents' colliding session ids keep separate rows — one can never destroy the other's", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    await store.patch("1", "claude", { knobs: { model: "sonnet" } });
+    await store.patch("1", "auggie", { draft: "other agent, same id" });
+    expect(store.read("1", "claude")).toEqual({ knobs: { model: "sonnet" } });
+    expect(store.read("1", "auggie")).toEqual({ draft: "other agent, same id" });
+    // an empty-draft save under one agent removes only that agent's row
+    await store.patch("1", "auggie", { draft: "" });
+    expect(store.read("1", "auggie")).toBeUndefined();
+    expect(store.read("1", "claude")).toEqual({ knobs: { model: "sonnet" } });
+  });
+
+  it("an empty knobs object is a deletion, not a husk field", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    await store.patch("s1", "claude", { knobs: {} });
+    expect(store.list()).toEqual([]);
+  });
+
+  it("folds the legacy knob rows in once and drops the old key", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.sessionKnobs", [{ id: "s1", agentId: "claude", seed: { mode: "code" } }]);
+    const store = new SessionContinuityStore(kv);
+    expect(store.read("s1", "claude")?.knobs).toEqual({ mode: "code" });
+    expect(kv.get("acpPatchbay.sessionKnobs")).toBeUndefined();
   });
 });

@@ -345,6 +345,31 @@ body {
   font-weight: 600;
 }
 
+/* Head title with its optional session-total badge — the total reuses the
+   row badge's add/del colors, exempt from the head's uppercase/spacing so
+   the numbers read plainly. */
+.overlay-panel .head .title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.overlay-panel .head .title .stat {
+  display: flex;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-panel .head .title .stat .add {
+  color: var(--pb-ok);
+}
+
+.overlay-panel .head .title .stat .del {
+  color: var(--pb-err);
+}
+
 .overlay-panel .head .close {
   background: none;
   border: none;

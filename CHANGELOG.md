@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.82.8 — 2026-07-22
+
+- Agents offering the ACP draft's typed terminal login (`type: "terminal"`)
+  now get a working Log in button — patchbay runs the agent's own command in
+  a visible terminal and verifies the result; previously these showed as
+  declared but couldn't run.
+- Reworked state handling around a single source of truth so the UI always
+  reflects what actually happened. Fixes: logged-out agents showing as logged
+  in after a reconnect, reload, or Verify (Claude's logout used to vanish); a
+  prompt to a logged-out agent fabricating a phantom message and error turn
+  (it now holds as a queue row and sends after login); knob selections
+  resetting to agent defaults after a reload; and assorted ghosts — chips and
+  queued prompts after a crash, an overwritten session title, a reset
+  plan-usage gauge, a resurrected upgrade badge.
+- Anything prepared but not sent now survives a window reload, per session:
+  context folders, pasted images and files, queued prompts, and your
+  in-progress message (the prompt box is per-session now — switching chats
+  keeps drafts apart). Queued prompts survive an agent crash too, holding as
+  visible rows until you reconnect; only Stop or removing a row discards them.
+- The edited-files panel is sharper and its numbers now agree with the diffs
+  they open: the per-file diff no longer marks the whole file new when an
+  agent's edit omitted the original (the real file is the comparison base,
+  and tool-call cards recover the same pre-image), CRLF/LF differences no
+  longer count every line as changed, opening the panel re-reads the live
+  files so outside edits show, and the header totals the session's +/− lines.
+
 ## 0.82.7 — 2026-07-20
 
 - Session identity is now honored end to end: a session id recycled by the

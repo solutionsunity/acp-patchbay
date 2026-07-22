@@ -13,6 +13,7 @@ import {
   type PromptRequest,
 } from "@agentclientprotocol/sdk";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
+import { authCapabilityWire, typedAuthMethodOf } from "./extensions";
 import { clientMetaWire, terminalAuthRecipeOf } from "./meta";
 
 export function declaredFromInitialize(
@@ -39,17 +40,18 @@ export function declaredFromInitialize(
       id: m.id,
       name: m.name,
       description: m.description ?? null,
-      // A parseable `_meta["terminal-auth"]` recipe wins over the `type`
-      // field: Auggie ships its recipe on a type-less method (schema-default
+      // A parseable `_meta["terminal-auth"]` recipe wins over the typed
+      // surface: Auggie ships its recipe on a type-less method (schema-default
       // "agent") whose `authenticate` is a no-op, so type-first would wire a
-      // button to nothing. Otherwise the wire's `type`: absent is the stable
-      // default ("agent" handles it itself via `authenticate`);
-      // "env_var"/"terminal" without a recipe stay declared-but-unwired
-      // (protocol.ts's AuthMethodView docstring).
+      // button to nothing. Otherwise the unstable `type` field is the
+      // extension module's parse (auth-method-types.ts): "terminal" is wired
+      // to the typed login executor, "env_var" stays declared-but-unwired,
+      // and absent/malformed degrades to the stable default ("agent" handles
+      // auth itself via `authenticate`).
       kind:
         terminalAuthRecipeOf(m._meta) !== null
           ? "terminal-recipe"
-          : ((m as { type?: "env_var" | "terminal" }).type ?? "agent"),
+          : (typedAuthMethodOf(m)?.kind ?? "agent"),
     })),
     authLogout: caps.auth?.logout != null,
   };
@@ -95,6 +97,12 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     ...(CLIENT_DECLARES.sessionConfigOptions
       ? { session: { configOptions: { boolean: {} } } }
       : {}),
+    // Adopted typed-auth extension (auth-method-types.ts — the declare and
+    // the executor live there and in the orchestrator's typed login path;
+    // nothing here names the key). No CLIENT_DECLARES entry: that record is
+    // the stable-surface claim set, and this claim is the module's to make
+    // and retire with itself.
+    ...authCapabilityWire(),
     // Adopted _meta extensions (meta.ts — the declare flags there are the
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
@@ -136,9 +144,9 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     // No initialize-time claim exists for these — only ever observed directly.
     usage: cell(false),
     concurrentSessions: cell(false),
-    // Declared the moment authMethods is non-empty; used only once a
-    // session has actually opened (with or without an authenticate round
-    // trip in between — see capability-tracker.ts / pool.ts).
+    // Declared the moment authMethods is non-empty; used only once the
+    // auth path demonstrably fired (CAPABILITY_PROOFS above — an
+    // authenticate round trip, or the auth authority clearing a lock).
     auth: cell(declared.authMethods.length > 0),
     "auth.logout": cell(declared.authLogout),
   };
@@ -257,12 +265,39 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
     // …and a fork always proves it — the parent already rides the connection.
     { via: "agentRequest", method: methods.agent.session.fork },
   ],
-  // A working session/new is the proof: whoever called it (a real session or
-  // capability-tracker.ts's throwaway probe) got a session out of it, so
-  // auth — if this agent even declares any — actually works.
-  auth: [{ via: "agentRequest", method: methods.agent.session.new }],
+  // The auth *path* firing is the proof — an authenticate round trip on an
+  // agent that actually declares methods. session/new succeeding is
+  // deliberately NOT a proof: lazy-auth agents pass it while logged out,
+  // so it would mark a path that never fired. The row's second proof
+  // source is off-table by necessity: the auth authority clearing a lock
+  // (orchestrator's noteAuthEvidence — terminal login exit 0, or a
+  // success contradicting the lock) is auth demonstrably working, and the
+  // orchestrator marks the row there.
+  auth: [
+    {
+      via: "agentRequest",
+      method: methods.agent.authenticate,
+      when: (_params, prior) => (prior.declared?.authMethods.length ?? 0) > 0,
+    },
+  ],
   "auth.logout": [{ via: "agentRequest", method: methods.agent.logout }],
 };
+
+/** Rows whose used/suspect state may legitimately outrun the initialize
+ * claim — no wire declaration exists (usage, concurrentSessions, the
+ * MCP-side rows) or the proof can fire while the claim is absent (auth: a
+ * lock clearing on an agent with empty authMethods — Auggie's shape). The
+ * persisted-cache restore consults this: every other row's cached
+ * used/suspect is honored only while the fresh connect still makes the
+ * claim, or a feature would gate on a capability the new connect never
+ * declared. */
+export const USED_MAY_OUTRUN_CLAIM: ReadonlySet<CapabilityRowId> = new Set<CapabilityRowId>([
+  "roots.listChanged",
+  "resources.subscribe",
+  "usage",
+  "concurrentSessions",
+  "auth",
+]);
 
 /** One wire fact, as observed by a pool.ts chokepoint. */
 export type WireFact =

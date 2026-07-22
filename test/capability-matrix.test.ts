@@ -107,7 +107,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       declared: null,
     });
 
-  it("session/new proves auth; concurrentSessions only with a prior session", () => {
+  it("session/new proves nothing auth-wise — lazy-auth agents pass it logged out; concurrentSessions only with a prior session", () => {
     const first = rowsProvenBy({
       via: "agentRequest",
       method: "session/new",
@@ -115,7 +115,7 @@ describe("rowsProvenBy — the one used-proof table", () => {
       priorSessionCount: 0,
       declared: null,
     });
-    expect(first).toEqual(["auth"]);
+    expect(first).toEqual([]);
     const second = rowsProvenBy({
       via: "agentRequest",
       method: "session/new",
@@ -123,7 +123,27 @@ describe("rowsProvenBy — the one used-proof table", () => {
       priorSessionCount: 1,
       declared: null,
     });
-    expect(second.sort()).toEqual(["auth", "concurrentSessions"]);
+    expect(second).toEqual(["concurrentSessions"]);
+  });
+
+  it("authenticate proves auth only on an agent that declares methods", () => {
+    const declared = {
+      loadSession: false, sessionFork: false, sessionResume: false, sessionList: false,
+      sessionDelete: false, sessionClose: false, sessionAdditionalDirectories: false,
+      promptImage: false, promptAudio: false, promptEmbeddedContext: false,
+      mcpHttp: false, mcpSse: false, authLogout: false,
+      authMethods: [{ id: "m", name: "M", description: null, kind: "agent" as const }],
+    };
+    const withMethods = rowsProvenBy({
+      via: "agentRequest", method: "authenticate", params: { methodId: "m" },
+      priorSessionCount: 0, declared,
+    });
+    expect(withMethods).toEqual(["auth"]);
+    const withoutMethods = rowsProvenBy({
+      via: "agentRequest", method: "authenticate", params: { methodId: "m" },
+      priorSessionCount: 0, declared: { ...declared, authMethods: [] },
+    });
+    expect(withoutMethods).toEqual([]);
   });
 
   it("a logout round trip proves auth.logout and nothing else", () => {
@@ -182,31 +202,23 @@ describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => 
 
   it("false when nothing is declared — nothing for the free check to resolve", () => {
     const matrix = matrixFromDeclared(noDeclared);
-    expect(hasUnusedProbe(matrix, [])).toBe(false);
+    expect(hasUnusedProbe(matrix)).toBe(false);
   });
 
   it("true while a declared fork hasn't been used yet", () => {
     const matrix = matrixFromDeclared({ ...noDeclared, sessionFork: true });
-    expect(hasUnusedProbe(matrix, [])).toBe(true);
+    expect(hasUnusedProbe(matrix)).toBe(true);
   });
 
   it("false once the declared fork is used", () => {
     const matrix = matrixFromDeclared({ ...noDeclared, sessionFork: true });
     const used = { ...matrix, "session.fork": { declared: true, used: true } };
-    expect(hasUnusedProbe(used, [])).toBe(false);
+    expect(hasUnusedProbe(used)).toBe(false);
   });
 
-  it("true while a stable (agent-kind) auth method hasn't been used yet", () => {
+  it("auth never gates the predicate — the probe is not an auth proof, so an auth clause would light Verify forever", () => {
     const matrix = matrixFromDeclared({ ...noDeclared, authMethods: agentAuth });
-    expect(hasUnusedProbe(matrix, agentAuth)).toBe(true);
-  });
-
-  it("env_var/terminal-kind auth methods never gate a retry — not actionable", () => {
-    const unstable: readonly AuthMethodView[] = [
-      { id: "e", name: "Env", description: null, kind: "env_var" },
-    ];
-    const matrix = matrixFromDeclared({ ...noDeclared, authMethods: unstable });
-    expect(hasUnusedProbe(matrix, unstable)).toBe(false);
+    expect(hasUnusedProbe(matrix)).toBe(false);
   });
 });
 

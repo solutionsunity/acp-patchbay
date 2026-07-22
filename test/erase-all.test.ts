@@ -21,6 +21,8 @@ import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } fro
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
+import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 
 let dir: string;
@@ -40,6 +42,7 @@ describe("eraseAllData", () => {
     const agentConfigs = new AgentConfigStore(globalKv);
     const integrationConfigs = new IntegrationConfigStore(globalKv);
     const usedCapabilities = new UsedCapabilityStore(globalKv);
+    const authLocks = new AuthLockStore(globalKv);
     const spawnRegistry = new SpawnRegistryStore(globalKv);
     const agentEnv = new SecretEnvStore(secrets, "acpPatchbay.agent");
     const integrationEnv = new SecretEnvStore(secrets, "acpPatchbay.integration");
@@ -51,6 +54,7 @@ describe("eraseAllData", () => {
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
     const composerKnobs = new ComposerKnobsStore(globalKv);
+    const sessionContinuity = new SessionContinuityStore(globalKv);
 
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
@@ -69,18 +73,25 @@ describe("eraseAllData", () => {
     await lastActiveSession.set("s1");
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
     await composerKnobs.record("claude", { mode: "code" });
+    await authLocks.upsert({ id: "claude", lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
+    await sessionContinuity.patch("s1", "claude", { knobs: { mode: "code" }, draft: "half a thought" });
+    let stashWiped = false;
 
     await eraseAllData({
       agentConfigs, integrationConfigs, usedCapabilities,
-      spawnRegistry, agentEnv, integrationEnv,
+      authLocks, spawnRegistry, agentEnv, integrationEnv,
       integrationTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastConnected, lastActiveSession,
-      preferences, composerKnobs,
+      preferences, composerKnobs, sessionContinuity,
+      tempStashes: { wipe: async () => { stashWiped = true; } },
     });
 
     expect(agentConfigs.list()).toEqual([]);
     expect(integrationConfigs.list()).toEqual([]);
     expect(usedCapabilities.list()).toEqual([]); // ghost gone too
+    expect(authLocks.list()).toEqual([]);
+    expect(sessionContinuity.list()).toEqual([]);
+    expect(stashWiped).toBe(true);
     expect(spawnRegistry.list()).toEqual([]);
     expect(await agentEnv.get("claude")).toEqual({});
     expect(await integrationEnv.get("github")).toEqual({});

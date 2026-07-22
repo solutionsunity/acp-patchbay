@@ -1,9 +1,11 @@
 // P5 gate: fake agent scripted to lie shows declared-but-not-used; branch
 // affordance lights only after the fork is used; reconnect drops used.
+import { methods } from "@agentclientprotocol/sdk";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { applyAuthEvidence, type AuthLock } from "../src/orchestrator/auth-evidence";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
@@ -52,6 +54,7 @@ function harness(kv = new MemoryKV()): {
   const events: AgentViewEvent[] = [];
   const offerings: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[] =
     [];
+  const locks = new Map<string, AuthLock>();
   let tracker!: CapabilityTracker;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
   const usedCache = new UsedCapabilityStore(kv);
@@ -62,9 +65,31 @@ function harness(kv = new MemoryKV()): {
     onSessionUpdate: () => {},
     onCapabilityEvidence: (agentId, row, evidence) =>
       evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),
-    // Mirrors the orchestrator: needsAuth is raised at the pool's wire
-    // chokepoint, not by the tracker.
-    onAuthRequired: (agentId, reason) => events.push({ kind: "agentAuthRequired", agentId, reason }),
+    // Mirrors the orchestrator's noteAuthEvidence: the wire fact runs
+    // through the real authority table (auth-evidence.ts), only a
+    // transition emits, and only an affirmative auth action's clear marks
+    // the auth row — the same transitions the extension host runs.
+    onAuthWireFact: (agentId, method, settled, reason) => {
+      const result = applyAuthEvidence(
+        locks.get(agentId) ?? null,
+        settled === "ok"
+          ? { kind: "rpcOk", method }
+          : { kind: "authRequired", method, reason: reason ?? null },
+        new Date().toISOString(),
+      );
+      if (!result.changed) return;
+      if (result.lock === null) {
+        locks.delete(agentId);
+        events.push({ kind: "agentAuthResolved", agentId });
+        // Restricted marking, as in the host: only an affirmative auth
+        // action proves the row — a prompt or same-method heal honestly
+        // ends the lock without having exercised patchbay's auth path.
+        if (settled === "ok" && method === methods.agent.authenticate) tracker.markUsed(agentId, "auth");
+      } else {
+        locks.set(agentId, result.lock);
+        events.push({ kind: "agentAuthRequired", agentId, reason: result.lock.reason });
+      }
+    },
     ...stubFsTerminalHooks(),
   });
   tracker = new CapabilityTracker(pool, usedCache, {

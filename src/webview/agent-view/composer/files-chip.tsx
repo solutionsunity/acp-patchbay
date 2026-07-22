@@ -45,6 +45,9 @@ export function FilesChip({
   const wrapRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!open) return undefined;
+    // Opening the panel re-reads reality: the ± shown must match the diff
+    // a click opens (the live file moves after the agent's last report).
+    send({ kind: "refreshFileDiffStats", sessionId });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
@@ -64,12 +67,32 @@ export function FilesChip({
 
   if (files.length === 0) return null;
 
+  // Session totals — summed over exactly the rows shown, so the header and
+  // the row badges can never disagree.
+  const total = files.reduce(
+    (acc, path) => {
+      const stat = diffStats[path];
+      return stat === undefined
+        ? acc
+        : { additions: acc.additions + stat.additions, deletions: acc.deletions + stat.deletions };
+    },
+    { additions: 0, deletions: 0 },
+  );
+
   return (
     <span className="files-chip-wrap" ref={wrapRef}>
       {open && (
         <div className="overlay-panel files-panel">
           <div className="head">
-            <span className="title">{count(files.length, "file")} edited this session</span>
+            <span className="title">
+              {count(files.length, "file")} edited this session
+              {(total.additions > 0 || total.deletions > 0) && (
+                <span className="stat">
+                  {total.additions > 0 && <span className="add">+{total.additions}</span>}
+                  {total.deletions > 0 && <span className="del">-{total.deletions}</span>}
+                </span>
+              )}
+            </span>
             <button className="close" title="Close" onClick={() => setOpen(false)}>
               <Icon name="close" />
             </button>

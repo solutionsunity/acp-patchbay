@@ -317,8 +317,10 @@ Verification cost splits the triggers:
 
 Connect therefore always implies one throwaway probe session — an accepted
 behavioral contract, not an accident: `session/new` is free, the offering read
-needs it every connect (see § Session model), and auth/concurrency proof falls
-out of the same round-trip opportunistically. The probe session's root is the
+needs it every connect (see § Session model), and concurrency proof falls
+out of the same round-trip opportunistically. (Auth proof deliberately does
+NOT — see § Auth evidence below: `session/new` succeeding is non-bearing on
+lazy-auth agents.) The probe session's root is the
 agent's **standing probe workspace** (`globalStorage/probe/<agentId>` — never
 the user's workspace roots), created idempotently per probe and deleted only
 with the agent's config: a workspace-aware agent may validate or index that
@@ -333,6 +335,56 @@ the two can't drift on what still needs a check.
 
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.
+
+### Auth evidence — the same discipline, applied to a two-state fact
+
+`needsAuth` is the capability matrix's sibling problem: a fact with multiple
+would-be writers where the wire offers no query to re-read the truth. The
+answer is the same shape — an authority table (`auth-evidence.ts`, the auth
+sibling of `CAPABILITY_PROOFS`) that alone decides which evidence may move
+the locked/unlocked state, consulted by one writer
+(`orchestrator.noteAuthEvidence`); no call site anywhere decides what a wire
+fact means for auth.
+
+- **Locks** carry their provenance: a wire `auth_required` records the method
+  that raised it; a successful `logout` round-trip is itself the strongest
+  lock (the user's witnessed action, never a clear).
+- **Clears** require bearing evidence: an `authenticate` success, a terminal
+  login exiting 0, or a completed prompt (the one wire fact even a lazy-auth
+  agent cannot produce while logged out) clear any lock; any other method's
+  success clears only a lock that same method raised (a strict agent's
+  `session/new` failure is honestly contradicted by a later `session/new`
+  success). A bare connect, and a lazy-auth agent's `session/new` passing,
+  bear nothing — the transitions that used to launder a logout.
+- **Locks persist** (machine store, `stores/auth-locks.ts`): reload +
+  autoConnect cannot launder a witnessed logout. Not a cache of readable
+  reality — the wire has no auth query; the witnessed event is the only
+  record there is. Cleared with the agent's config, wiped by erase-all.
+- The matrix `auth` row is proven only by the affirmative auth actions: an
+  `authenticate` round-trip (declared methods only) or a terminal login
+  exiting 0. Other clears — a completed prompt, a same-method contradiction
+  — honestly end the lock without marking the row: clearing ≠ proving, and
+  a transient -32000 healing itself must not fabricate a proof. Never by
+  `session/new` succeeding.
+- Two windows the writer refuses: evidence for an agent whose config no
+  longer exists (a terminal login left open across a Remove), and clears
+  arriving between the logout RPC resolving and the processes stopping (a
+  prompt finishing on pre-logout credentials contradicts nothing).
+- **A standing lock is a turn-start precondition** — the consumer side of
+  the authority. The one adjudication every prompt passes (session-manager's
+  `sendPrompt` top, ahead of any transcript write or wire call; the queue
+  drain re-checks the same conditions before shifting) treats a lock as `inFlight`'s peer: the words queue as
+  visible held rows — never a fabricated user message fired into a wire
+  already witnessed to refuse, never a silent drop. `inFlight` releases at
+  turn end; the lock releases when its clearing drains the held queues
+  (`drainHeldQueues`, poked by the one writer). The idle reaper spares
+  sessions holding words. The composer's disabled state is the courtesy
+  telling the user why; the door is the invariant.
+
+The generalized rule (state-authority, `.dotagent/rules/`): centralized
+transport is not centralized authority — every fact with more than one
+writer gets its transition rules declared as data at one site, and callers
+report what they witnessed, never conclusions.
 
 ## Wire log — the opt-in raw-frame tap
 
@@ -412,11 +464,14 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
 - **Deliberately NOT a hook/plugin framework.** Function-extension systems
   (Odoo-style inheritance, hook buses) earn their complexity from third-party
   module ecosystems; patchbay's deviations are first-party and curated —
-  two at this writing (`_meta` terminal-auth; Auggie's removed-draft models
-  surface). Free interception would dissolve the one-door discipline
-  (knobs.ts, CAPABILITY_PROOFS) that this codebase is built on. If a third
-  and fourth extension start demanding shared machinery, a registry earns
-  itself then — extension point visible, not filled prematurely.
+  the `_meta` table (meta.ts) plus the modules in `orchestrator/extensions/`
+  (removed-draft models surface, first-session mcpServers latch, render
+  directive rewriter, typed auth methods at this writing). Free interception
+  would dissolve the one-door discipline (knobs.ts, CAPABILITY_PROOFS) that
+  this codebase is built on. None of them demand shared machinery yet — each
+  composes by hand-named export through `extensions/index.ts`; a registry
+  earns itself when they do — extension point visible, not filled
+  prematurely.
 
 The pilot is Auggie's removed-draft models surface (the Auggie dossier),
 refactored into `extensions/session-models-field.ts` — precisely the shape this
@@ -496,14 +551,17 @@ keyed honestly. Therefore:
 two places, and every attach decides between them by one question — *did the
 user just do something, or did plumbing?*
 
-- **Session knobs** — the session's own agent-confirmed combination, held
-  in-memory only (snapshotted per publish onto the known-session row, which
-  outlives the attachment but not the window). An **involuntary re-attach** —
-  one-click reload, connection death, idle release, the roots re-apply — must
-  re-seed it after the wire attach: agents reset knob state to their defaults
-  on `session/load` (observed: claude-agent-acp rebuilds session config), and
-  the user asked to change nothing — so honoring the agent's load-time reset
-  would force its cache-miss over the user's reality.
+- **Session knobs** — the session's own agent-confirmed combination,
+  snapshotted per publish onto the known-session row and mirrored to the
+  session's continuity row (below). An **involuntary re-attach** — window reload, connection death,
+  idle release, the roots re-apply — must re-seed it after the wire attach:
+  agents reset knob state to their defaults on `session/load` (observed:
+  claude-agent-acp rebuilds session config), and the user asked to change
+  nothing — so honoring the agent's load-time reset would force its
+  cache-miss over the user's reality. A restored window is in this arm: the
+  durable copy rehydrates the row when `session/list` re-enters it (the
+  first persisted-copy of this fact was lost with the removed session index —
+  its rationale was orphaned by that pivot, not superseded).
 - **Composer knobs** — the user's current working combination *per agent*
   (`stores/composer-knobs.ts`, machine store), written only when the user sets
   a knob and the agent confirms it (config surface: off the set response;
@@ -517,8 +575,8 @@ user just do something, or did plumbing?*
 | Attach | Seed applied |
 |---|---|
 | Fresh `session/new` | Entry seed: per-agent defaults, or the composer combination, by the `knobSource` preference — once, via set requests, skipped silently where the option isn't offered |
-| Involuntary re-attach (reload, connection death, idle release, roots re-apply) — the window holds the session's combination | The session's own combination, re-seeded over the agent's load-time reset |
-| Deliberate entry from history — nothing in hand (fresh window, or never opened here) | Entry seed, same as fresh. This knowingly overrides an agent that honestly restores per-session knob state on load: entry is deliberate, the user's current combination wins |
+| Involuntary re-attach (window reload, connection death, idle release, roots re-apply) — the session's combination is in hand (in-memory row, or the durable copy after a reload) | The session's own combination, re-seeded over the agent's load-time reset |
+| Deliberate entry from history — nothing in hand (never steered, or its durable row already pruned) | Entry seed, same as fresh. This knowingly overrides an agent that honestly restores per-session knob state on load: entry is deliberate, the user's current combination wins |
 
 ```mermaid
 flowchart TD
@@ -530,6 +588,36 @@ flowchart TD
 
 Per-agent defaults themselves are written only by the Settings save path —
 read-only to the session layer, the seed's fallback, never its record.
+
+**Session continuity — the survives-reload family.** One durable row per
+session (`stores/session-continuity.ts`, machine store) carries everything a
+window reload would otherwise lose and the wire cannot re-report: the
+agent-confirmed **knob combination** (agents reset knobs on load), user-added
+**context roots** (ACP has no read-back for `additionalDirectories` — and a
+re-attach *re-applies* the local list, so losing it would overwrite the
+agent's own copy too), the **held prompt queue**, prepared **context chips**
+(image bytes stay in the attachments stash; the row carries the file
+reference, and a reference whose temp file the OS reclaimed drops honestly
+on rehydration), and the **composer draft**. Not a cache of readable
+reality — the same justification as the auth locks. Written through at each
+mutation's chokepoint; rehydrated once, when `session/list` re-enters the
+session (roots/queue/draft re-emit into the view immediately, chips decode
+async, knobs ride the known row into the reattach rule). Rows leave with
+their session: close, list-prune, agent removal, zero-turn recreate,
+erase-all. Held words rehydrated behind a standing auth lock stay held;
+opening the session (or the lock clearing) is their release, and a new
+prompt sent while held words wait joins the queue *behind* them — order is
+part of the contract. Held words also survive an involuntary drop (crash,
+connection death): only the user discards words — Stop, the row's ×, close
+(a reload keeps them and re-drains after its re-attach). The drain rides
+success: it fires one held prompt per completed turn (plus login, open, and
+reload's re-attach), holds while the agent isn't running, and never
+auto-retries after a failure — a send that never started re-holds the words
+at the front; a send the wire settled is spent, visible as a user message
+with its error turn. The composer **draft** is per-session state owned
+here, not by the webview (render-only): the composer edits the live buffer,
+saves debounced, and reads the durable copy only when switching sessions —
+its own echoes never fight the keyboard.
 
 ## Local MCP server — editor depth
 

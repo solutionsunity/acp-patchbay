@@ -28,7 +28,8 @@ function matrixOf(overrides: Partial<Record<CapabilityRowId, { declared: boolean
 }
 
 const agentMethod: AuthMethodView = { id: "claude-login", name: "Log in with Claude", description: null, kind: "agent" };
-const terminalOnly: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
+const envVarOnly: AuthMethodView = { id: "key", name: "API key", description: null, kind: "env_var" };
+const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
   return { id: "a1", name: "Agent", status: "running", needsAuth: false, ...over };
@@ -83,16 +84,29 @@ describe("agentCardControls", () => {
     }
   });
 
-  // The escape hatch survives: auth resolvable only out of band (Auggie's
-  // "run `auggie login`") still gets a manual re-check.
+  // The escape hatch survives: auth resolvable only out of band (an
+  // env_var-only offer — the value has to arrive via Settings, not a
+  // button) still gets a manual re-check.
   it("needsAuth without a runnable login method: verify offered as the escape hatch", () => {
     const c = agentCardControls(inputs({
       agent: summary({ needsAuth: true }),
       matrix: matrixOf({ auth: { declared: true, used: true } }),
-      authMethods: [terminalOnly],
+      authMethods: [envVarOnly],
     }));
     expect(c.login.show).toBe(true); // renders the no-runnable-method note
     expect(c.verify.show).toBe(true);
+  });
+
+  // A typed terminal method (adopted typed-auth extension) is runnable —
+  // login only, same shape as the stable/recipe kinds.
+  it("needsAuth with a typed terminal method: login only — it is runnable now", () => {
+    const c = agentCardControls(inputs({
+      agent: summary({ needsAuth: true }),
+      matrix: matrixOf({ auth: { declared: true, used: true } }),
+      authMethods: [typedTerminal],
+    }));
+    expect(c.login.show).toBe(true);
+    expect(c.verify.show).toBe(false);
   });
 
   it("unused probe (fresh fork claim) still gates verify on", () => {
@@ -106,7 +120,7 @@ describe("agentCardControls", () => {
     const c = agentCardControls(inputs({
       agent: summary({ needsAuth: true }),
       matrix: matrixOf({ auth: { declared: true, used: true } }),
-      authMethods: [terminalOnly],
+      authMethods: [typedTerminal],
       verifying: true,
     }));
     expect(c.login.disabled).toBe(true);

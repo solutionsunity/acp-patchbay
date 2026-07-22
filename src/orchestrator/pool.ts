@@ -78,15 +78,23 @@ export interface PoolHooks {
    * synchronously and never awaited so it can't block the RPC it's
    * reporting on. */
   onCapabilityEvidence?(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void;
-  /** Any outgoing agent RPC settling with `auth_required` (-32000) — the
-   * connect-time probe, a mid-session prompt after the agent's credentials
-   * expired, or a post-logout session attempt all funnel through here, so
-   * "prompt the user to authenticate again" (per the spec) has one
-   * writer. `reason` is the error's own message — the agent's login
-   * instruction, and the only guidance on the wire when `authMethods` is
-   * empty (Auggie); null when blank. Like onCapabilityEvidence:
-   * synchronous, never awaited. */
-  onAuthRequired?(agentId: string, reason: string | null): void;
+  /** Every outgoing agent RPC's auth bearing, fired however the call
+   * settles: "ok" on success, "auth_required" on -32000. What either fact
+   * *means* for auth state is decided nowhere in pool.ts — the receiver
+   * runs it through the one authority table (auth-evidence.ts), the auth
+   * sibling of the capability proof table, so "prompt the user to
+   * authenticate again" (per the spec) keeps one writer and a success can
+   * only clear a lock it actually contradicts. `reason` is the -32000
+   * error's own message — the agent's login instruction, and the only
+   * guidance on the wire when `authMethods` is empty (Auggie); null when
+   * blank, absent on "ok". Like onCapabilityEvidence: synchronous, never
+   * awaited. */
+  onAuthWireFact?(
+    agentId: string,
+    method: string,
+    settled: "ok" | "auth_required",
+    reason?: string | null,
+  ): void;
   /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
    * while false, chunks are dropped without even being decoded. */
   wireLogActive?(): boolean;
@@ -152,6 +160,10 @@ interface Entry {
   sessions: Set<string>;
   stopping: boolean;
   stderrTail: string[];
+  /** Isolated entries only: the shared connection's `agentInfo.version`
+   * when this instance spawned — the evidence gate's fallback reference
+   * while a shared reconnect's own initialize is still in flight. */
+  sharedVersionAtSpawn?: string;
 }
 
 export interface PooledAgentView {
@@ -343,6 +355,9 @@ export class AgentPool {
       sessions: new Set(),
       stopping: false,
       stderrTail: [],
+      ...(isolated
+        ? { sharedVersionAtSpawn: this.entries.get(reportAs)?.initializeRaw?.agentInfo?.version }
+        : {}),
     };
     this.entries.set(poolKey, entry);
     this.setStatus(entry, "reconnecting");
@@ -440,7 +455,12 @@ export class AgentPool {
       method,
       (async (ctx: never) => {
         const result = await (handler as (ctx: never) => Promise<unknown>)(ctx);
-        this.markProven(reportAs, { via: "clientRequest", method });
+        // Same version gate as the outgoing chokepoint: a mismatched
+        // isolated build's facts must not persist against the shared
+        // version on any of the three chokepoints.
+        if (this.capabilityEvidenceBearing(entry)) {
+          this.markProven(reportAs, { via: "clientRequest", method });
+        }
         return result;
       }) as acp.ClientRequestHandlersByMethod[M],
     ];
@@ -466,10 +486,12 @@ export class AgentPool {
         // per message upstream, and the raw line is in the wire log when
         // the tap is on.
         try {
-          this.markProven(reportAs, {
-            via: "sessionUpdate",
-            updateKind: ctx.params.update.sessionUpdate,
-          });
+          if (this.capabilityEvidenceBearing(entry)) {
+            this.markProven(reportAs, {
+              via: "sessionUpdate",
+              updateKind: ctx.params.update.sessionUpdate,
+            });
+          }
           this.hooks.onSessionUpdate(reportAs, ctx.params);
         } catch (err) {
           this.log.info(
@@ -599,6 +621,15 @@ export class AgentPool {
    * behind. */
   async stop(poolKey: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
     const entry = this.entries.get(poolKey);
+    // Pre-spawn (runtime resolve / warmup) there is nothing to stop and
+    // nothing safe to mutate: the in-flight connect() closure owns this
+    // entry, and flipping its status to "stopped" here would unlock the
+    // orchestrator's connect gate mid-connect — a second connect would
+    // then install a fresh entry while the first, gate defused, spawns
+    // onto the orphaned one (two live processes, one unreachable). The
+    // card offers Stop only while running, so no user control reaches
+    // this window anyway — an abortable pre-spawn phase is a visible
+    // extension point, deliberately unfilled.
     if (!entry || entry.process === null) return;
     entry.stopping = true;
     entry.connection?.close();
@@ -720,7 +751,10 @@ export class AgentPool {
 
   /** Re-attaches to a session on a fresh connection; the agent replays its
    * own history as session/update notifications before this resolves. Only
-   * meaningful when declared.loadSession is true — callers check first. */
+   * meaningful when declared.loadSession is true — callers check first.
+   * Failure is routine (suspect-exempt): the attach ladder calls this on
+   * ids the agent may legally no longer hold — an unknown-session error
+   * bears nothing on whether the capability works. */
   async loadSession(
     poolKey: string,
     sessionId: string,
@@ -729,12 +763,17 @@ export class AgentPool {
     additionalDirectories: string[] = [],
   ): Promise<acp.LoadSessionResponse> {
     const entry = this.running(poolKey);
-    const response = await this.request(entry, acp.methods.agent.session.load, {
-      sessionId,
-      cwd,
-      mcpServers,
-      additionalDirectories,
-    });
+    const response = await this.request(
+      entry,
+      acp.methods.agent.session.load,
+      {
+        sessionId,
+        cwd,
+        mcpServers,
+        additionalDirectories,
+      },
+      { failureIsRoutine: true },
+    );
     entry.sessions.add(sessionId);
     this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
     return response;
@@ -776,7 +815,9 @@ export class AgentPool {
    * restores its own context and returns immediately — real memory, no
    * visible history. The attach ladder's last rung; load is preferred
    * wherever declared (what the user sees and
-   * what the agent remembers must match). */
+   * what the agent remembers must match). Failure is routine
+   * (suspect-exempt), same as loadSession: stale ids are the ladder's
+   * normal weather. */
   async resumeSession(
     poolKey: string,
     sessionId: string,
@@ -785,12 +826,17 @@ export class AgentPool {
     additionalDirectories: string[] = [],
   ): Promise<acp.ResumeSessionResponse> {
     const entry = this.running(poolKey);
-    const response = await this.request(entry, acp.methods.agent.session.resume, {
-      sessionId,
-      cwd,
-      mcpServers,
-      additionalDirectories,
-    });
+    const response = await this.request(
+      entry,
+      acp.methods.agent.session.resume,
+      {
+        sessionId,
+        cwd,
+        mcpServers,
+        additionalDirectories,
+      },
+      { failureIsRoutine: true },
+    );
     entry.sessions.add(sessionId);
     this.log.debug(`${poolKey}: session/resume ${sessionId}`);
     return response;
@@ -830,7 +876,24 @@ export class AgentPool {
    * their names (they arrive from orchestrator/extensions/ modules). */
   async unstableRequest(poolKey: string, method: string, params: unknown): Promise<unknown> {
     const entry = this.running(poolKey);
-    return entry.connection!.agent.request<unknown>(method, params);
+    try {
+      const result = await entry.connection!.agent.request<unknown>(method, params);
+      this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok");
+      return result;
+    } catch (err) {
+      // Untracked for capabilities by design — but auth is orthogonal: an
+      // extension RPC hitting auth_required is the same locked agent, and
+      // swallowing it would leave the card claiming otherwise.
+      if (err instanceof acp.RequestError && err.code === -32000) {
+        this.hooks.onAuthWireFact?.(
+          entry.reportAs,
+          method,
+          "auth_required",
+          err.message.trim() === "" ? null : err.message,
+        );
+      }
+      throw err;
+    }
   }
 
   /** Attaches the wire-log tap to one direction of a connection's stdio.
@@ -898,6 +961,13 @@ export class AgentPool {
     entry: Entry,
     method: M,
     params: acp.AgentRequestParamsByMethod[M],
+    opts?: {
+      /** This call fails as part of normal operation (the attach ladder's
+       * stale-id descent) — its failure bears nothing on the capability,
+       * so no suspect is raised. Success still proves, auth facts still
+       * flow. */
+      failureIsRoutine?: boolean;
+    },
   ): Promise<acp.AgentRequestResponsesByMethod[M]> {
     const priorSessionCount = entry.sessions.size;
     const fact: WireFact = {
@@ -914,18 +984,49 @@ export class AgentPool {
       // throw is a structurally unusable response — it rides the same catch
       // as any RPC failure, so the rows go suspect, not used.
       const guarded = guardResponse(method, result, (m) => this.log.info(`${entry.reportAs}: ${m}`));
-      this.markProven(entry.reportAs, fact);
+      if (this.capabilityEvidenceBearing(entry)) this.markProven(entry.reportAs, fact);
+      // A cancelled prompt is auth-non-bearing: a bridge may short-circuit
+      // cancellation before its backend ever touches credentials, so the
+      // resolved RPC proves nothing a lock should clear on.
+      const cancelled =
+        method === acp.methods.agent.session.prompt &&
+        (guarded as { stopReason?: string }).stopReason === "cancelled";
+      if (!cancelled) this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok");
       return guarded;
     } catch (err) {
       if (err instanceof acp.RequestError && err.code === -32000) {
-        this.hooks.onAuthRequired?.(entry.reportAs, err.message.trim() === "" ? null : err.message);
-      } else {
+        this.hooks.onAuthWireFact?.(
+          entry.reportAs,
+          method,
+          "auth_required",
+          err.message.trim() === "" ? null : err.message,
+        );
+      } else if (opts?.failureIsRoutine !== true && this.capabilityEvidenceBearing(entry)) {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");
         }
       }
       throw err;
     }
+  }
+
+  /** Isolated instances report as the shared agent, and used/suspect
+   * persists version-keyed against the shared connection's version — but an
+   * npx-launched isolated spawn re-resolves the package and may be a
+   * different build. Facts from a version-mismatched (or shared-less)
+   * isolated entry are dropped rather than persisted against a version
+   * they weren't earned on — the honest direction. Auth wire facts are
+   * exempt: credentials are account-level, not build-level. */
+  private capabilityEvidenceBearing(entry: Entry): boolean {
+    if (!entry.isolated) return true;
+    // Reference version: the shared connection's current initialize when
+    // it has one, else the value captured when this isolated instance
+    // spawned — so a shared reconnect's initialize window (initializeRaw
+    // still null) doesn't black out evidence from a healthy isolated
+    // session that matched when it started.
+    const sharedNow = this.entries.get(entry.reportAs)?.initializeRaw?.agentInfo?.version;
+    const reference = sharedNow ?? entry.sharedVersionAtSpawn;
+    return reference === entry.initializeRaw?.agentInfo?.version;
   }
 
   private markProven(reportAs: string, fact: WireFact): void {

@@ -414,3 +414,61 @@ describe("sessionHydrating (the load-replay loading page signal)", () => {
     expect(revived.hydrating).toEqual({ s2: true });
   });
 });
+
+describe("state-truth regressions — weak evidence never overwrites strong", () => {
+  const session = (id: string) => ({
+    kind: "sessionCreated" as const,
+    session: { id, agentId: "a1", title: "T", live: false, updatedAt: "2026-07-21T00:00:00Z" },
+  });
+
+  it("usageReported coalesce: a plain tick never erases a standing plan reading", () => {
+    const withPlan: AgentViewEvent = {
+      kind: "usageReported", sessionId: "s1", used: 10, size: 100, cost: undefined,
+      plan: { status: "limited", window: "five_hour", utilization: 0.9, resetsAt: undefined },
+    };
+    const plainTick: AgentViewEvent = {
+      kind: "usageReported", sessionId: "s1", used: 12, size: 100, cost: undefined, plan: undefined,
+    };
+    const merged = coalesceAgentViewEvent(withPlan, plainTick);
+    expect(merged).toMatchObject({ used: 12, plan: { window: "five_hour" } });
+    // Different windows are parallel axes — both must reach the reducer.
+    const otherWindow: AgentViewEvent = {
+      kind: "usageReported", sessionId: "s1", used: 13, size: 100, cost: undefined,
+      plan: { status: "ok", window: "weekly", utilization: 0.2, resetsAt: undefined },
+    };
+    expect(coalesceAgentViewEvent(withPlan, otherWindow)).toBeNull();
+  });
+
+  it("sessionCreated: a re-minted id replaces the row — never a duplicate — and resets its maps", () => {
+    let state = replay(initialAgentViewState, [session("s1")]);
+    state = reduceAgentView(state, {
+      kind: "contextChipAdded", sessionId: "s1",
+      chip: { id: "c1", kind: "selection", label: "L", content: "x" },
+    });
+    state = replay(state, [session("s1")]);
+    expect(state.sessions.filter((s) => s.id === "s1")).toHaveLength(1);
+    expect(state.contextChips.s1).toEqual([]);
+  });
+
+  it("sessionCreated activate:false leaves the pointer and an in-flight chatConnect alone", () => {
+    let state = replay(initialAgentViewState, [session("s1"), { kind: "sessionActivated", sessionId: "s1" }]);
+    state = reduceAgentView(state, { ...session("s2"), activate: false });
+    expect(state.activeSessionId).toBe("s1");
+  });
+
+  it("transcriptReset clears the ± rows — replay re-reports what's real", () => {
+    let state = replay(initialAgentViewState, [session("s1")]);
+    state = reduceAgentView(state, {
+      kind: "fileDiffStatChanged", sessionId: "s1", path: "/f.ts", additions: 3, deletions: 1,
+    });
+    state = reduceAgentView(state, { kind: "transcriptReset", sessionId: "s1" });
+    expect(state.fileDiffStats.s1).toBeUndefined();
+  });
+
+  it("sessionClosed drops a hung hydration's ghost key", () => {
+    let state = replay(initialAgentViewState, [session("s1")]);
+    state = reduceAgentView(state, { kind: "sessionHydrating", sessionId: "s1", hydrating: true });
+    state = reduceAgentView(state, { kind: "sessionClosed", sessionId: "s1" });
+    expect(state.hydrating.s1).toBeUndefined();
+  });
+});

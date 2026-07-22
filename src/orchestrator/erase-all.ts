@@ -27,6 +27,8 @@ export interface EraseTargets {
   agentConfigs: RecordStoreLike;
   integrationConfigs: RecordStoreLike;
   usedCapabilities: RecordStoreLike;
+  authLocks: RecordStoreLike;
+  sessionContinuity: RecordStoreLike;
   spawnRegistry: RecordStoreLike;
   agentEnv: SecretsById;
   integrationEnv: SecretsById;
@@ -38,6 +40,10 @@ export interface EraseTargets {
   lastActiveSession: Wipeable;
   preferences: Wipeable;
   composerKnobs: Wipeable;
+  /** The attachment/diff temp stashes: pasted-image bytes and diff
+   * snapshots are user content — "deletes everything patchbay ever
+   * stored" includes them, not just the rows that referenced them. */
+  tempStashes: Wipeable;
 }
 
 /** Deletes everything patchbay ever stored for this user. Ordering
@@ -62,6 +68,8 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     targets.agentConfigs,
     targets.integrationConfigs,
     targets.usedCapabilities,
+    targets.authLocks,
+    targets.sessionContinuity,
     targets.spawnRegistry,
   ];
   for (const store of recordStores) {
@@ -75,4 +83,5 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.lastActiveSession.wipe();
   await targets.preferences.wipe();
   await targets.composerKnobs.wipe();
+  await targets.tempStashes.wipe();
 }

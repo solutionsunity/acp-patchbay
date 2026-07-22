@@ -25,3 +25,12 @@ release by momentum.
   compatibility symlinks into each agent's native locations (the
   [dotagent](https://github.com/solutionsunity/dotagent) pattern), or full supply
   by patchbay. The current release proves the management surface first.
+
+- **Localization** — internationalize the extension along two axes: content
+  correctness (RTL/bidi, CJK layout) for passthrough text that is never ours to
+  translate, and chrome translation for the thin shell that is. Correctness-
+  bearing locales (`zh-hans`, then `ja`/`zh-hant`/`ko`, then `ar`) are promoted;
+  chrome-only locales (`pt-br`/`de`/`fr`/`es`/`ru`) are demand-gated. Earns its
+  way in because the chrome surface is small and the correctness work is bounded
+  — the current release proves the surfaces first. Design landed in
+  [localization.md](localization.md); implementation waits a later cycle.

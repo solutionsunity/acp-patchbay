@@ -31,6 +31,7 @@ import {
   KEY_TAB_COMMAND,
   PASTE_COMMAND,
   type TextNode,
+  CLEAR_HISTORY_COMMAND,
 } from "lexical";
 import type { AvailableCommand, OpenEditorView, PromptPart } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -60,6 +61,13 @@ interface Trigger {
 export interface PromptEditorProps {
   enabled: boolean;
   placeholder: string;
+  /** The session this editor currently serves — "" when none. Switching
+   * saves the outgoing session's draft and loads the incoming one's. */
+  sessionId: string;
+  /** The durable draft copy (state.drafts). Read ONLY at session switch or
+   * mount — the editor owns the live buffer, so patch echoes of our own
+   * debounced saves never fight the keyboard. */
+  draft: string;
   commands: readonly AvailableCommand[];
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
@@ -161,6 +169,109 @@ function EditorCore(props: PromptEditorProps) {
   useEffect(() => {
     editor.setEditable(props.enabled);
   }, [editor, props.enabled]);
+
+  // ── Per-session draft continuity ──
+  // loadedFor gates the update listener: null while a switch is installing
+  // the incoming draft (those updates are ours, not the user's), else the
+  // session the buffer belongs to — which is what the debounced save
+  // stamps, so a save can never land on the wrong session.
+  const loadedFor = useRef<string | null>(null);
+  const saveTimer = useRef<number | null>(null);
+  const serialize = () =>
+    editor.getEditorState().read(() => $getRoot().getTextContent().trim() === "")
+      ? ""
+      : JSON.stringify(editor.getEditorState().toJSON());
+  /** Save the live buffer NOW for the session that owns it — the debounce
+   * window is a data-loss window on every disposal path (webviews are
+   * destroyed when hidden), so switches, submits, and pagehide all flush
+   * through here instead of waiting out the timer. */
+  const flushDraft = () => {
+    if (saveTimer.current === null) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    if (loadedFor.current !== null && loadedFor.current !== "") {
+      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: serialize() });
+    }
+  };
+  useEffect(() => {
+    // Disposal flush: best-effort — the host may or may not deliver a
+    // message posted during pagehide, but a lost flush only costs the
+    // debounce window it would have lost anyway.
+    window.addEventListener("pagehide", flushDraft);
+    return () => {
+      window.removeEventListener("pagehide", flushDraft);
+      flushDraft();
+    };
+  }, []);
+  useEffect(
+    () =>
+      editor.registerUpdateListener(({ dirtyElements, dirtyLeaves }) => {
+        if (loadedFor.current === null || loadedFor.current === "") return;
+        if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
+        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+        saveTimer.current = window.setTimeout(() => {
+          saveTimer.current = null;
+          if (loadedFor.current !== null && loadedFor.current !== "") {
+            send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: serialize() });
+          }
+        }, 400);
+      }),
+    [editor],
+  );
+  useEffect(() => {
+    if (loadedFor.current === props.sessionId) return;
+    flushDraft(); // the outgoing session's unsaved keystrokes
+    loadedFor.current = null;
+    const draft = props.draft;
+    editor.update(
+      () => {
+        $getRoot().clear();
+      },
+      { discrete: true },
+    );
+    if (draft !== "") {
+      try {
+        editor.setEditorState(editor.parseEditorState(draft));
+      } catch {
+        // A draft from an older node vocabulary parses no more — an empty
+        // box beats a crashed composer; the stale copy gets overwritten by
+        // the next keystroke's save.
+      }
+    }
+    editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
+    loadedFor.current = props.sessionId;
+    // props.draft deliberately absent: it is read only at the moment of a
+    // session switch — reacting to it live would fight the keyboard.
+  }, [editor, props.sessionId]);
+
+  // The sibling-view seam (a session open in the sidebar AND a detached
+  // panel): each composer owns its live buffer, so an incoming durable
+  // draft is applied only when this editor is idle — not focused, nothing
+  // pending — and actually differs. A focused editor keeps the keyboard's
+  // truth; its own next save wins.
+  useEffect(() => {
+    if (loadedFor.current !== props.sessionId || props.sessionId === "") return;
+    if (saveTimer.current !== null) return;
+    const root = editor.getRootElement();
+    if (root !== null && root.contains(document.activeElement)) return;
+    if (serialize() === props.draft) return;
+    loadedFor.current = null;
+    editor.update(
+      () => {
+        $getRoot().clear();
+      },
+      { discrete: true },
+    );
+    if (props.draft !== "") {
+      try {
+        editor.setEditorState(editor.parseEditorState(props.draft));
+      } catch {
+        // unparseable foreign copy — keep the empty box
+      }
+    }
+    editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
+    loadedFor.current = props.sessionId;
+  }, [editor, props.draft, props.sessionId]);
 
   // Trigger tracking: recomputed on every state/selection change.
   useEffect(
@@ -345,6 +456,16 @@ function EditorCore(props: PromptEditorProps) {
     editor.update(() => {
       $getRoot().clear();
     });
+    // The durable copy clears WITH the send — riding the 400ms debounce
+    // would resurrect the sent message as a draft if the webview dies
+    // inside the window.
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (loadedFor.current !== null && loadedFor.current !== "") {
+      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: "" });
+    }
     editor.focus();
   };
   useEffect(() => {

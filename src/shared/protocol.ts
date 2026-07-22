@@ -97,6 +97,8 @@ export type Action =
   | { kind: "stopTurn"; sessionId: string }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
   | { kind: "removeQueuedPrompt"; sessionId: string; promptId: string }
+  /** Debounced durable save of the composer's per-session draft. */
+  | { kind: "setSessionDraft"; sessionId: string; draft: string }
   | { kind: "verifyAgent"; agentId: string }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
@@ -183,6 +185,9 @@ export type Action =
    * pre-image against the live file. Texts stay orchestrator-side
    * (fileBaselines); the view only ever names the path. */
   | { kind: "openSessionFileDiff"; sessionId: string; path: string }
+  /** Files panel opening: re-read reality for each diff-bearing path so
+   * the ± shown matches the diff a click would open. */
+  | { kind: "refreshFileDiffStats"; sessionId: string }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
    * big diagram can breathe. */
@@ -222,14 +227,39 @@ export type Action =
    * `workspace.findFiles` and answers with workspaceFilesListed. */
   | { kind: "queryWorkspaceFiles"; query: string };
 
-/** A prompt sent while a turn was already in flight — held orchestrator-side
- * (session-manager bookkeeping, ephemeral) and fired when the turn ends. The
- * view carries it only to render removable pending rows; Stop clears the
- * whole queue. */
+/** Words held at the turn-start door — a prompt sent mid-turn, under a
+ * standing auth lock, or behind other held words. Held orchestrator-side
+ * with a durable copy (the session-continuity row), released one per turn
+ * end, on login, or on opening the session; the view carries it only to
+ * render removable pending rows. Only the user discards: Stop or close
+ * clears the queue, the row's × removes one. */
 export interface QueuedPrompt {
   id: string;
   text: string;
   parts?: readonly PromptPart[];
+}
+
+/** A context chip as persisted in the session-continuity store. Image
+ * bytes never enter the store — they are stashed to the attachments dir at
+ * ingress and the row carries the file reference; a reference whose file
+ * the OS reclaimed drops on rehydration (the stash is temp-dir ephemeral
+ * by design), logged, never an error. */
+export type PersistedChip =
+  | { kind: "selection" | "file" | "diagnostics"; id: string; label: string; content: string; sourceUri?: string }
+  | { kind: "image"; id: string; label: string; mimeType: string; file: string }
+  | { kind: "attachment"; id: string; label: string; path: string; mimeType?: string };
+
+/** The survives-reload family: session-scoped state the wire cannot
+ * re-report (agents reset knobs on load; ACP has no read-back for roots;
+ * queue, chips, and draft are user-staged input that exists nowhere else).
+ * One row per session in stores/session-continuity.ts, dropped when the
+ * session leaves for good. */
+export interface SessionContinuity {
+  knobs?: KnobSeed;
+  roots?: readonly string[];
+  queue?: readonly QueuedPrompt[];
+  chips?: readonly PersistedChip[];
+  draft?: string;
 }
 
 /** One positional piece of a composed prompt (sendPrompt `parts`). */
@@ -475,10 +505,13 @@ export interface AgentSummary {
   stderr?: readonly string[];
   /** Launch command line as spawned (shown mono). */
   command?: string;
-  /** True once a real call has hit ACP's `auth_required` for this
-   * connection — cleared on a successful authenticate+retry, or on
-   * disconnect. Distinct from the `auth` capability row: this is "blocked
-   * right now," that row is "has this ever been used successfully." */
+  /** True while a standing auth lock exists for this agent — raised by a
+   * wire `auth_required` or a witnessed logout, cleared only by evidence
+   * that actually bears on it (the orchestrator's authority table; a
+   * reconnect or a lazy-auth agent's session/new success clears nothing).
+   * Survives disconnect and reload: the lock persists machine-side.
+   * Distinct from the `auth` capability row: this is "blocked right now,"
+   * that row is "has this ever been used successfully." */
   needsAuth: boolean;
   /** The `auth_required` error's own message — the agent's login
    * instruction in its words. The only guidance that exists when an agent
@@ -504,13 +537,15 @@ export interface OpenEditorView {
 /** One of `initialize`'s declared `authMethods` (ACP schema, stable).
  * `kind` discriminates what patchbay can do with it: "agent" (the wire's
  * absent/default `type`, stable — the agent handles auth itself via
- * `authenticate`) and "terminal-recipe" (a parseable `_meta["terminal-auth"]`
+ * `authenticate`), "terminal-recipe" (a parseable `_meta["terminal-auth"]`
  * recipe — adopted extension, meta.ts; patchbay runs the recipe in a
- * VS Code terminal, never calls `authenticate` on it) are actionable.
- * The recipe itself stays orchestrator-side — the UI only needs to know
- * the method is runnable. "env_var" and "terminal" (the wire's UNSTABLE
- * `type` values without a recipe) are shown as declared, never wired to a
- * Log-in button, per "only stable calls are used." */
+ * VS Code terminal, never calls `authenticate` on it), and "terminal"
+ * (the UNSTABLE typed surface — adopted extension, auth-method-types.ts;
+ * patchbay re-runs the agent's own spawn command with the method's args
+ * appended, in a terminal, and likewise never calls `authenticate` on it)
+ * are actionable. The recipe/args stay orchestrator-side — the UI only
+ * needs to know the method is runnable. "env_var" (typed, no executor
+ * wired) is shown as declared, never wired to a Log-in button. */
 export interface AuthMethodView {
   id: string;
   name: string;
@@ -640,23 +675,22 @@ function dropKey<V>(record: Readonly<Record<string, V>>, key: string): Readonly<
 }
 
 /**
- * True while the free protocol check (session/new + session/fork probe) still
- * has something it could resolve for this agent — the single predicate both
- * the automatic post-connect/reconnect retry (capability-tracker.ts's
- * `onDeclared`) and the Settings Agents manual Verify control gate on, so
- * "does this still need a check" can never drift between the two call
- * sites. Only `session.fork` and `auth` are ever probed (capability-
- * verification.md's verification-cost split) — every other row is either
- * opportunistic or has no active check to retry.
+ * True while the free protocol check (session/new + session/fork probe)
+ * still has something it can RESOLVE for this agent — the manual Verify
+ * control's visibility predicate. One clause: a declared fork not yet
+ * proven (the probe's fork round-trip resolves it). The auth row is
+ * deliberately absent: the probe's session/new is never an auth proof
+ * (non-bearing evidence — auth-evidence.ts), so an auth clause would keep
+ * Verify lit forever on every healthy agent, promising a check the button
+ * structurally cannot perform. Auth surfaces its own re-check paths: every
+ * connect probes anyway (a locked agent re-raises at the chokepoint), and
+ * the needsAuth card offers Log in / the out-of-band escape hatch. Every
+ * other row is opportunistic or has no active check to retry — the
+ * verification-cost split: protocol-level checks are free, behavior probes
+ * cost real agent turns.
  */
-export function hasUnusedProbe(
-  matrix: CapabilityMatrix,
-  authMethods: readonly AuthMethodView[],
-): boolean {
-  if (matrix["session.fork"].declared && !matrix["session.fork"].used) return true;
-  return (
-    authMethods.some((m) => m.kind === "agent" || m.kind === "terminal-recipe") && !matrix.auth.used
-  );
+export function hasUnusedProbe(matrix: CapabilityMatrix): boolean {
+  return matrix["session.fork"].declared && !matrix["session.fork"].used;
 }
 
 export interface SessionSummary {
@@ -1074,8 +1108,8 @@ export interface AgentViewState {
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   /** ISO time of the last capabilitiesDeclared — powers the "reset <time>" chip. */
   capabilitiesResetAt: Readonly<Record<string, string>>;
-  /** Declared auth methods per agent — the Log-in button's source (only
-   * "agent"-kind methods are actionable; see AuthMethodView). */
+  /** Declared auth methods per agent — the Log-in button's source (the
+   * runnable kinds are AuthMethodView's docstring). */
   authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Present only once `usage` is used — absence over fake. */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
@@ -1091,6 +1125,10 @@ export interface AgentViewState {
    * Orchestrator-owned like everything else here — rendered as removable
    * pending rows above the composer. */
   promptQueue: Readonly<Record<string, readonly QueuedPrompt[]>>;
+  /** Per-session composer drafts — the durable copy. The composer owns the
+   * live editing buffer and reads this only when switching sessions (or on
+   * mount), so patch echoes never fight the keyboard. */
+  drafts: Readonly<Record<string, string>>;
   /** Normalized knobs per session (knobs.ts is the only producer) — empty
    * when the agent offers none. */
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
@@ -1213,6 +1251,7 @@ export const initialAgentViewState: AgentViewState = {
   promptQueue: {},
   sessionKnobs: {},
   contextRoots: {},
+  drafts: {},
   workspaceRoots: [],
   liveSelection: null,
   openEditors: [],
@@ -1238,7 +1277,14 @@ export type AgentViewEvent =
    * (stale pointer, failed connects); either way `restoring` clears and the
    * rendering area stops holding the loading page. */
   | { kind: "startupSettled" }
-  | { kind: "sessionCreated"; session: SessionSummary }
+  | {
+      kind: "sessionCreated";
+      session: SessionSummary;
+      /** false = create the row without stealing the active pointer or an
+       * in-flight chatConnect (recreateEmpty's zero-turn root change on a
+       * possibly-background session); absent/true = a user-facing create. */
+      activate?: boolean;
+    }
   /** A session surfaced by the agent's own `session/list` (or refreshed by a
    * later sync) — upserts the row *without* activating it or touching the
    * connect pane, unlike sessionCreated: a connect-time sync of N history
@@ -1341,11 +1387,16 @@ export type AgentViewEvent =
   | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
-  /** A prompt landed while a turn was in flight — queued, not refused. */
+  /** Words held at the turn-start door (mid-turn, auth lock, or behind
+   * other held words) — or rehydrated from the continuity row after a
+   * reload, or re-emitted in a drain-failure resync. Queued, not refused. */
   | { kind: "promptQueued"; sessionId: string; prompt: QueuedPrompt }
   /** One queued prompt left the queue — fired (drain) or removed by hand. */
   | { kind: "promptUnqueued"; sessionId: string; promptId: string }
-  /** Stop means stop: the whole queue goes with the cancelled turn. */
+  | { kind: "sessionDraftChanged"; sessionId: string; draft: string }
+  /** The queue's rows leave at once — a deliberate Stop discarding them,
+   * or the prelude of a drain-failure resync (immediately re-emitted as
+   * promptQueued rows in firing order; nothing discarded). */
   | { kind: "promptQueueCleared"; sessionId: string }
   /** Full replace, always — every knob-bearing wire fact (a create/load/fork
    * response, a config_option_update or current_mode_update notification, a
@@ -1389,10 +1440,11 @@ export type AgentViewEvent =
       /** Present only on the updates that carry a fresh plan reading. */
       plan?: PlanUsageInfo;
     }
-  /** A real call (Verify's ephemeral session, or a real one) hit ACP's
-   * `auth_required` — the agent needs `authenticate` before sessions work.
-   * `reason` is the error's own message (agent-authored instruction),
-   * null when the wire carried none. */
+  /** A standing auth lock was raised by the one writer (the evidence
+   * authority): a wire `auth_required`, a witnessed logout (the strongest
+   * lock), or a failed terminal login. `reason` is the lock's reason — an
+   * agent-authored instruction where the wire carried one, null
+   * otherwise. */
   | { kind: "agentAuthRequired"; agentId: string; reason: string | null }
   | { kind: "agentAuthResolved"; agentId: string }
   /** Full replace — the registry × overlay merge changed (refresh, or a new
@@ -1659,20 +1711,41 @@ export function reduceAgentView(
       return { ...state, chatConnect: null };
     case "startupSettled":
       return { ...state, restoring: false };
-    case "sessionCreated":
+    case "sessionCreated": {
+      // An agent may legally re-mint a closed session's id — replace the
+      // row, never duplicate it (sessionListed already dedupes; the
+      // asymmetry was the hazard). The per-session maps reset either way:
+      // a re-minted id is a new session, not the old one's heir.
+      const exists = state.sessions.some((s) => s.id === event.session.id);
+      const { [event.session.id]: _d, ...drafts } = state.drafts;
+      const { [event.session.id]: _q, ...promptQueue } = state.promptQueue;
+      const { [event.session.id]: _u, ...sessionUsage } = state.sessionUsage;
       return {
         ...state,
-        sessions: [...state.sessions, event.session],
+        sessions: exists
+          ? state.sessions.map((s) => (s.id === event.session.id ? event.session : s))
+          : [...state.sessions, event.session],
         transcripts: { ...state.transcripts, [event.session.id]: [] },
         commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
         contextChips: { ...state.contextChips, [event.session.id]: [] },
         sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
-        activeSessionId: event.session.id,
-        // A session arriving ends any in-pane connect, success or stale
-        // failure alike — cleared here so it can't desync from reality.
-        chatConnect: null,
+        drafts,
+        promptQueue,
+        sessionUsage,
+        // Activation is the event's call, not a side effect: a background
+        // recreate must not steal the pointer or wipe another pane's
+        // in-flight connect.
+        ...(event.activate === false
+          ? {}
+          : {
+              activeSessionId: event.session.id,
+              // A session arriving ends any in-pane connect, success or
+              // stale failure alike — cleared here so it can't desync.
+              chatConnect: null,
+            }),
       };
+    }
     case "sessionListed": {
       const existing = state.sessions.find((s) => s.id === event.session.id);
       if (existing !== undefined) {
@@ -1731,7 +1804,9 @@ export function reduceAgentView(
       const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
+      const { [event.sessionId]: _d, ...drafts } = state.drafts;
       const { [event.sessionId]: _fds, ...fileDiffStats } = state.fileDiffStats;
+      const { [event.sessionId]: _hy, ...hydrating } = state.hydrating ?? {};
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
       // sibling: a session click is the one hydrate/connect trigger, so a
@@ -1750,7 +1825,9 @@ export function reduceAgentView(
         contextRoots,
         sessionUsage,
         promptQueue,
+        drafts,
         fileDiffStats,
+        hydrating,
         activeSessionId,
       };
     }
@@ -1775,10 +1852,16 @@ export function reduceAgentView(
       // the same replay — a stale strip must not outlive its source. Same
       // for a stale ticker: no turn survives a transcript rebuild.
       const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
+      // The files strip's ± rows follow the same contract as the texts:
+      // after a reset, only what the replay re-reports comes back — a
+      // pre-reload badge asserting itself over the replayed reality would
+      // be the cache lying.
+      const { [event.sessionId]: _fd, ...fileDiffStats } = state.fileDiffStats;
       return {
         ...withTranscript(state, event.sessionId, []),
         activePlan: { ...state.activePlan, [event.sessionId]: null },
         activeTurn,
+        fileDiffStats,
       };
     }
     case "userMessageAppended":
@@ -1989,6 +2072,13 @@ export function reduceAgentView(
       const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
       return { ...state, promptQueue };
     }
+    case "sessionDraftChanged": {
+      if (event.draft === "") {
+        const { [event.sessionId]: _d, ...drafts } = state.drafts;
+        return { ...state, drafts };
+      }
+      return { ...state, drafts: { ...state.drafts, [event.sessionId]: event.draft } };
+    }
     case "sessionKnobsSet":
       return { ...state, sessionKnobs: { ...state.sessionKnobs, [event.sessionId]: event.knobs } };
     case "transcriptSeeded":
@@ -2074,13 +2164,22 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       diffFiles: next.diffFiles ?? prev.diffFiles,
     };
   }
-  // Usage can report mid-stream (claude-agent-acp does) — only the latest matters.
+  // Usage can report mid-stream (claude-agent-acp does) — only the latest
+  // counters matter, but a plan-window reading is sticky state the reducer
+  // deliberately keeps: a plain tick collapsing over it would erase a
+  // reading at the transport layer that the reducer would have preserved.
   if (
     prev.kind === "usageReported" &&
     next.kind === "usageReported" &&
     prev.sessionId === next.sessionId
   ) {
-    return next;
+    if (next.plan === undefined) {
+      return prev.plan === undefined ? next : { ...next, plan: prev.plan };
+    }
+    // Different windows are parallel axes — both readings must reach the
+    // reducer's per-window merge; don't coalesce.
+    if (prev.plan === undefined || prev.plan.window === next.plan.window) return next;
+    return null;
   }
   // Editor context changes on every cursor move — only the latest matters.
   if (prev.kind === "editorContextChanged" && next.kind === "editorContextChanged") {

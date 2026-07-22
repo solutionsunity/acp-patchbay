@@ -147,6 +147,7 @@ export function App({
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
+        draft={active !== null ? (state.drafts[active.id] ?? "") : ""}
         showStats={showStats}
         totals={derived.totals}
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}

@@ -22,6 +22,7 @@ import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
 import { FilesChip } from "./files-chip";
 import { extractUris, ingestFiles } from "./ingress";
+import { composerControls } from "./composer-controls";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
 import { basename } from "./menus";
@@ -52,6 +53,9 @@ export function Composer(props: {
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   knobs: readonly SessionKnobView[];
+  /** The active session's durable draft copy (state.drafts) — handed to the
+   * editor, which reads it only at session switch/mount. */
+  draft: string;
   /** Session stats strip (Preferences composerStats gates it off entirely). */
   showStats: boolean;
   totals: SessionTotals;
@@ -76,7 +80,7 @@ export function Composer(props: {
   const drag = useRef<{ y0: number; h0: number } | null>(null);
   const submitRef = useRef<(() => void) | null>(null);
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
-  const enabled = props.session !== null && props.agent?.status === "running";
+  const { enabled, placeholder } = composerControls(props.session, props.agent);
   const sessionId = props.session?.id ?? "";
   const live = props.session?.live ?? false;
 
@@ -271,11 +275,9 @@ export function Composer(props: {
       >
         <PromptEditor
           enabled={enabled}
-          placeholder={
-            enabled
-              ? `Message ${props.agent!.name} — / commands · @ context`
-              : "Connect an agent to start"
-          }
+          placeholder={placeholder}
+          sessionId={sessionId}
+          draft={props.draft}
           commands={props.commands}
           openEditors={props.openEditors}
           workspaceFiles={props.workspaceFiles}

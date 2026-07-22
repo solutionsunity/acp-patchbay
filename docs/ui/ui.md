@@ -63,7 +63,9 @@ holds the **plan chip only**; it is absent without a plan — no placeholder.
 Click opens the **plan panel** overlaying the chat, growing up from the strip (the
 drawers' mechanic, mirrored) — X, Escape, or re-click closes. Plan panel: the full
 checklist (✓ done, ▸ active, ○ pending). The **files panel** (opened from the
-composer's stats row) anchors to the composer instead: one row per file, click
+composer's stats row) anchors to the composer instead: the header carries the
+session's total ± (summed over exactly the rows shown, so header and badges
+can never disagree); one row per file, click
 opens it in the editor; a dot marks a file whose open editor holds unsaved changes
 — editor reality, never a stored flag. Rows the orchestrator can answer a diff for
 carry a **±** that opens VS Code's native diff: left = the session's first-touch

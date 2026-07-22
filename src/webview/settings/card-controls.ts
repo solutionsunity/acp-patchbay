@@ -44,13 +44,16 @@ export interface AgentCardControls {
   remove: { show: boolean };
 }
 
-/** The wire's runnable subset — "agent"-kind (stable `authenticate`) and
- * "terminal-recipe" (adopted terminal-auth extension). Recipe-less
- * "env_var"/"terminal" stay declared but never wired to a button (only
- * stable calls are used). One filter for the Log-in control's method list
+/** The wire's runnable subset — "agent"-kind (stable `authenticate`),
+ * "terminal-recipe" (adopted terminal-auth extension), and "terminal"
+ * (adopted typed-auth extension — the agent's own command re-run in a
+ * terminal with the method's args appended). "env_var" stays declared but
+ * never wired to a button. One filter for the Log-in control's method list
  * and every predicate that asks "can patchbay drive a login here?". */
 export function runnableLoginMethods(methods: readonly AuthMethodView[]): readonly AuthMethodView[] {
-  return methods.filter((m) => m.kind === "agent" || m.kind === "terminal-recipe");
+  return methods.filter(
+    (m) => m.kind === "agent" || m.kind === "terminal-recipe" || m.kind === "terminal",
+  );
 }
 
 /** Registry version vs. what this config is pinned to — null when there's
@@ -64,6 +67,11 @@ export function updateAvailable(
   if (config?.registrySource == null) return null;
   const latest = registryAgents.find((r) => r.id === config.registrySource!.registryId)?.version;
   if (latest == null || latest === config.registrySource.pinnedVersion) return null;
+  // The wire's own fact outranks the pinned ask: a connection that already
+  // reported the registry's latest (a launcher serving a newer build than
+  // the pin) has no upgrade to offer — badging it would let the pin lie
+  // about reality.
+  if (config.lastSeenVersion === latest) return null;
   return { from: config.registrySource.pinnedVersion, to: latest };
 }
 
@@ -75,27 +83,27 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   const running = status === "running";
   const needsAuth = agent?.needsAuth === true;
   const hasRunnableLogin = runnableLoginMethods(authMethods).length > 0;
-  // Verify gates on the same predicate the orchestrator's automatic
-  // post-connect/reconnect retry uses (hasUnusedProbe, protocol.ts) — but
-  // ONLY while authenticated. On a needsAuth card the Log in flow is the
-  // re-check (its success re-probes); Verify appears solely as the escape
-  // hatch when no runnable login method exists (the user resolves auth out
-  // of band — e.g. Auggie's "run `auggie login`"). Never both: a logged-out
-  // card with an unused probe (fresh connect, auth.used=false) must not
-  // offer Verify — a lazy-auth agent (Claude passes session/new without
-  // credentials) would "verify away" the logged-out state.
+  // Verify gates on hasUnusedProbe (protocol.ts): fork-declared-unproven
+  // is the one thing the free check can still resolve — the auth clause is
+  // gone with the auth row's proof redefinition, or the button would
+  // promise a check it structurally cannot perform. On a needsAuth card,
+  // Verify appears solely as the escape hatch when no runnable login
+  // method exists (auth resolved out of band; the probe heals a lock its
+  // own method raised, a prompt heals the rest). Never both — UX clarity,
+  // not the invariant holder: the authority table already refuses
+  // non-bearing clears, so a stray Verify can no longer "verify away" a
+  // logged-out state.
   const needsVerify = needsAuth
     ? !hasRunnableLogin
-    : matrix !== undefined && hasUnusedProbe(matrix, authMethods);
+    : matrix !== undefined && hasUnusedProbe(matrix);
 
   return {
     // Running-gated: authenticate is an RPC on the live connection, so a
     // stopped-but-logged-out card (logout disconnects the process —
-    // orchestrator.logoutAgent) offers Connect, and the fresh connect
-    // re-derives auth state from the wire. Disabled while a verify/logout
-    // round-trip is in flight — an authenticate racing the probe's own
-    // auth resolution is the same hazard class the logout button already
-    // guards against.
+    // orchestrator.logoutAgent) offers Connect; the lock rides through the
+    // reconnect and the card comes back still logged out. Disabled while a
+    // verify/authenticate/logout round-trip is in flight — one bracket,
+    // refcounted, dims them together.
     login: { show: running && needsAuth, disabled: verifying },
     // Offered only on a declared auth.logout — the spec's "Clients MUST
     // NOT call it" otherwise. Hidden while needsAuth (nothing to log out

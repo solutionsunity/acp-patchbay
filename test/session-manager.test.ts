@@ -11,6 +11,7 @@ import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { harnessEnvelopeTag, SessionManager } from "../src/orchestrator/session-manager";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
@@ -51,6 +52,12 @@ function harness(opts?: {
   idleCloseMs?: number;
   /** Stand-in for the reducer-derived unseen (blue) mark. */
   isUnseen?(sessionId: string): boolean;
+  /** Stand-in for the orchestrator's auth-lock read — the turn-start door
+   * consults it before any transcript write or wire call. */
+  authLocked?(agentId: string): boolean;
+  /** Shared across two harnesses to simulate a window reload: the durable
+   * per-session continuity row is the only state that survives. */
+  continuityStore?: SessionContinuityStore;
 }): {
   pool: AgentPool;
   sessionManager: SessionManager;
@@ -64,6 +71,7 @@ function harness(opts?: {
 } {
   const events: AgentViewEvent[] = [];
   const silentEvents: AgentViewEvent[] = [];
+  const continuity = opts?.continuityStore ?? new SessionContinuityStore(new MemoryKV());
   let resyncs = 0;
   let sessionManager!: SessionManager;
   let capabilityTracker!: CapabilityTracker;
@@ -110,7 +118,19 @@ function harness(opts?: {
           ?.used ?? false,
       isActiveSession: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
+      // Sidebar-pointer semantics (orchestrator mirrors this shape; the
+      // harness has no pinned panels, so the two coincide here).
+      isPointerActive: (sessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
       isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
+      authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
+      readFileLive: (path) => readFile(path, "utf8"),
+      continuityFor: (sessionId, agentId) => continuity.read(sessionId, agentId),
+      onContinuity: (sessionId, agentId, patch) => {
+        void (patch === null
+          ? continuity.forget(sessionId, agentId)
+          : continuity.patch(sessionId, agentId, patch));
+      },
     },
     () => cwd,
     undefined,
@@ -263,6 +283,62 @@ describe("SessionManager", () => {
     await h.pool.stop("smq2");
   });
 
+  // The turn-start door: a standing auth lock is inFlight's peer — words
+  // sent into a locked agent hold as visible queue rows (no fabricated
+  // user message, nothing on the wire) and fire when the lock's clearing
+  // releases them. The live-caught shape: prompting a reconnected-but-
+  // logged-out agent fabricated a phantom "Hi" plus an error turn.
+  it("a prompt into a locked agent holds at the door and fires on release", async () => {
+    let locked = true;
+    const h = harness({ authLocked: () => locked });
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "served" }] }, "smq3"));
+    const sessionId = await h.sessionManager.createSession("smq3", "Fake Agent", cwd);
+
+    await h.sessionManager.sendPrompt(sessionId, "held words"); // resolves immediately: held
+    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+    // nothing fabricated: no user message, no turn
+    expect(h.state().transcripts[sessionId]).toEqual([]);
+
+    locked = false;
+    h.sessionManager.drainHeldQueues("smq3");
+    await new Promise((r) => setTimeout(r, 500));
+    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(users.map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual(["held words"]);
+    await h.pool.stop("smq3");
+  });
+
+  it("the turn-end drain holds queued words under a lock that landed mid-turn", async () => {
+    let locked = false;
+    const h = harness({ authLocked: () => locked });
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 },
+        "smq4",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smq4", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.sendPrompt(sessionId, "second"); // queued mid-turn
+    locked = true; // logout witnessed while the turn streamed
+    await promptDone;
+    await new Promise((r) => setTimeout(r, 300));
+
+    // held, not fired — and not dropped
+    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "second" }]);
+    expect(h.state().transcripts[sessionId]!.filter((b) => b.kind === "user")).toHaveLength(1);
+
+    // login clears the lock: the release valve fires the held words
+    locked = false;
+    h.sessionManager.drainHeldQueues("smq4");
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
+    expect(h.state().transcripts[sessionId]!.filter((b) => b.kind === "user")).toHaveLength(2);
+    await h.pool.stop("smq4");
+  });
+
   // Honest close: closing mid-stream stops the turn (spec cancel) and lets
   // it settle — turnEnded lands before sessionClosed, never a delete fired
   // under a live turn.
@@ -360,6 +436,145 @@ describe("SessionManager", () => {
 
     await h.pool.stop("sm4");
   });
+
+  // The whole-file-is-new bug: an agent diff omitting oldText used to
+  // latch "" as the session baseline (first-note-wins) — every files-panel
+  // diff and ± badge then claimed the entire file was added. The real
+  // pre-image is read from disk/buffer instead.
+  it("a diff without oldText reads the real pre-image — never whole-file-new", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const target = join(cwd, "notes.txt");
+    await writeFile(target, "one\ntwo\nthree\n", "utf8");
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "t1", title: "Edit" },
+            { type: "toolDone", id: "t1", diff: { path: target, newText: "one\nTWO\nthree\n" } },
+          ],
+        },
+        "smb1",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smb1", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit it");
+    // the capture is async (a reality read) — poll the stat
+    const start = Date.now();
+    let stat: { additions: number; deletions: number } | undefined;
+    while (stat === undefined) {
+      stat = h.state().fileDiffStats[sessionId]?.[target];
+      if (Date.now() - start > 2000) throw new Error("stat never computed");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(stat).toEqual({ additions: 1, deletions: 1 }); // one changed line, not the whole file
+    await h.pool.stop("smb1");
+  });
+
+  it("panel-open refresh recomputes the ± against the live file — outside edits included", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const target = join(cwd, "refresh.txt");
+    await writeFile(target, "a\nb\nc\n", "utf8");
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "t1", title: "Edit" },
+            { type: "toolDone", id: "t1", diff: { path: target, oldText: "a\nb\nc\n", newText: "a\nB\nc\n" } },
+          ],
+        },
+        "smr1",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smr1", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit");
+    expect(h.state().fileDiffStats[sessionId]?.[target]).toEqual({ additions: 1, deletions: 1 });
+
+    // a terminal/user edit moves the file after the agent's report — the
+    // panel's numbers must follow the diff it opens (baseline vs live)
+    await writeFile(target, "a\nB\nc\nd\ne\n", "utf8");
+    await h.sessionManager.refreshFileDiffStats(sessionId);
+    expect(h.state().fileDiffStats[sessionId]?.[target]).toEqual({ additions: 3, deletions: 1 });
+    await h.pool.stop("smr1");
+  });
+
+  it("an unsaid tool-card pre-image backfills from reality — the card diff matches the panel", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const target = join(cwd, "card.txt");
+    await writeFile(target, "one\ntwo\n", "utf8");
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "t9", title: "Edit" },
+            { type: "toolDone", id: "t9", diff: { path: target, newText: "one\nTWO\n" } },
+          ],
+        },
+        "smr2",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smr2", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit");
+    // the capture is async — poll until the stash backfills
+    const start = Date.now();
+    let diff: { oldText: string; newText: string } | null = null;
+    for (;;) {
+      diff = h.sessionManager.toolCallDiff(sessionId, "t9", target);
+      if (diff?.oldText === "one\ntwo\n") break;
+      if (Date.now() - start > 2000) throw new Error(`stash never backfilled: ${JSON.stringify(diff)}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(diff).toEqual({ oldText: "one\ntwo\n", newText: "one\nTWO\n" });
+    await h.pool.stop("smr2");
+  });
+
+  it("held words survive an agent crash and fire after reconnect — only the user discards", async () => {
+    const h = harness();
+    // The dying script serves one chunk then exits mid-turn; the reconnect
+    // uses a healthy one — a crash is an event, not a personality trait.
+    const dying: FakeAgentScript = {
+      declare: { loadSession: true },
+      turn: [{ type: "chunk", text: "a" }, { type: "crash" }],
+      stepDelayMs: 200,
+    };
+    const healthy: FakeAgentScript = {
+      declare: { loadSession: true },
+      turn: [{ type: "chunk", text: "ok" }],
+    };
+    await h.pool.connect(spec(dying, "smc1"));
+    const sessionId = await h.sessionManager.createSession("smc1", "Fake Agent", cwd);
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first").catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+    await h.sessionManager.sendPrompt(sessionId, "held words"); // queued mid-turn
+    await promptDone; // the crash step kills the process under the live turn
+    await new Promise((r) => setTimeout(r, 250)); // exit handler + deferred drain settle
+
+    // the crash dropped the live session — but the words held, visibly
+    expect(h.sessionManager.isLive(sessionId)).toBe(false);
+    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+
+    // reconnect: the next prompt joins BEHIND the held words, which fire first
+    await h.pool.connect(spec(healthy, "smc1"));
+    await h.sessionManager.sendPrompt(sessionId, "after reconnect");
+    const start = Date.now();
+    let users: string[] = [];
+    for (;;) {
+      users = (h.state().transcripts[sessionId] ?? [])
+        .filter((b) => b.kind === "user")
+        .map((b) => (b.kind === "user" ? userPartsText(b.parts) : ""));
+      if ((h.state().promptQueue[sessionId]?.length ?? 0) === 0 && users.length >= 2) break;
+      if (Date.now() - start > 3500) {
+        throw new Error(
+          `held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[sessionId])} live: ${h.sessionManager.isLive(sessionId)} status: ${h.pool.get("smc1")?.status}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(users.slice(-2)).toEqual(["held words", "after reconnect"]);
+    await h.pool.stop("smc1");
+  }, 15000);
 
   it("rebuilds the render cache wholesale from session/load replay after a crash", async () => {
     const h = harness();
@@ -966,6 +1181,117 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11k");
   });
 
+  // The durable copy behind the reattach rule: a window reload wipes the
+  // in-memory snapshot, but a restored session is not a deliberate fresh
+  // entry — its own combination must come back, not the entry seed. The
+  // persisted copy was lost when the session index was removed; this pins
+  // its return.
+  it("a session's knob combination survives a window reload — restored, not reseeded", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    const script: FakeAgentScript = {
+      declare: { loadSession: true, sessionCapabilities: { list: {} } },
+      turn: [{ type: "chunk", text: "x" }],
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "sonnet", name: "Sonnet" },
+          ],
+        },
+      ],
+    };
+    // window 1: the user steers the knob, then the window goes away
+    const h1 = harness({ continuityStore: store });
+    await h1.pool.connect(spec(script, "smk1"));
+    const sessionId = await h1.sessionManager.createSession("smk1", "Fake Agent", cwd);
+    await h1.sessionManager.setKnob(sessionId, "model", "sonnet");
+    await h1.sessionManager.sendPrompt(sessionId, "first turn");
+    expect(store.read(sessionId, "smk1")?.knobs).toMatchObject({ model: "sonnet" });
+    await h1.pool.stop("smk1");
+
+    // window 2: fresh processes, fresh memory — only the durable copy survives
+    const h2 = harness({ continuityStore: store });
+    await h2.pool.connect(spec(script, "smk1"));
+    await h2.sessionManager.syncAgentSessions("smk1");
+    expect(h2.sessionManager.knows(sessionId)).toBe(true);
+    h2.sessionManager.activate(sessionId);
+    // session/load hands back the script default; the involuntary-arm
+    // reseed must restore the session's own confirmed value
+    const start = Date.now();
+    for (;;) {
+      const model = h2.state().sessionKnobs[sessionId]?.find((k) => k.id === "model");
+      if (model?.currentValue === "sonnet") break;
+      if (Date.now() - start > 4000) {
+        throw new Error(`knob never restored — surface: ${JSON.stringify(h2.state().sessionKnobs[sessionId])}`);
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await h2.pool.stop("smk1");
+  });
+
+  // The rest of the continuity row: held words, user-added roots, prepared
+  // chips, and the composer draft all re-enter with the listed session —
+  // and the held words release when the lock clears, exactly as they would
+  // have in the window that queued them.
+  it("held words, roots, chips, and draft survive a window reload", async () => {
+    let locked = false;
+    const store = new SessionContinuityStore(new MemoryKV());
+    const script: FakeAgentScript = {
+      declare: { loadSession: true, sessionCapabilities: { list: {} } },
+      turn: [{ type: "chunk", text: "x" }],
+    };
+    const h1 = harness({ continuityStore: store, authLocked: () => locked });
+    await h1.pool.connect(spec(script, "smq6"));
+    const sessionId = await h1.sessionManager.createSession("smq6", "Fake Agent", cwd);
+    await h1.sessionManager.sendPrompt(sessionId, "real turn"); // persists agent-side
+    await h1.sessionManager.addRoot(sessionId, "/repo/extra");
+    h1.sessionManager.addContext(sessionId, {
+      kind: "selection",
+      id: "chip-1",
+      label: "main.ts:1-3",
+      content: "const x = 1;",
+    });
+    locked = true; // logout witnessed
+    await h1.sessionManager.sendPrompt(sessionId, "held words"); // → held row
+    await store.patch(sessionId, "smq6", { draft: "half-typed thought" }); // the orchestrator's debounced save
+    await h1.pool.stop("smq6");
+
+    // window 2: fresh memory, lock still standing — the row restores everything
+    const h2 = harness({ continuityStore: store, authLocked: () => locked });
+    await h2.pool.connect(spec(script, "smq6"));
+    await h2.sessionManager.syncAgentSessions("smq6");
+    expect(h2.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+    expect(h2.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+    expect(h2.state().drafts[sessionId]).toBe("half-typed thought");
+    {
+      // chips decode async (stash read) — give the tick a moment
+      const start = Date.now();
+      while ((h2.state().contextChips[sessionId]?.length ?? 0) === 0) {
+        if (Date.now() - start > 2000) throw new Error("chip never rehydrated");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
+    expect(h2.state().contextChips[sessionId]).toMatchObject([{ id: "chip-1", label: "main.ts:1-3" }]);
+
+    // login clears the lock: the held words fire, chips riding along
+    locked = false;
+    h2.sessionManager.drainHeldQueues("smq6");
+    const start = Date.now();
+    for (;;) {
+      const users = h2.state().transcripts[sessionId]?.filter((b) => b.kind === "user") ?? [];
+      if (users.length >= 2) break;
+      if (Date.now() - start > 4000) throw new Error("held words never fired after unlock");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(h2.state().promptQueue[sessionId] ?? []).toEqual([]);
+    await h2.pool.stop("smq6");
+  });
+
   it("a failed root re-apply detaches the session — the next prompt re-enters the ladder, never a corpse", async () => {
     const h = harness();
     await h.pool.connect(
@@ -1350,6 +1676,38 @@ describe("session history (list / resume / delete)", () => {
 
     h.sessionManager.dispose();
     await h.pool.stop("sh12");
+  });
+
+  it("the reaper spares a session holding words — held prompts are unfinished user work", async () => {
+    let locked = false;
+    const h = harness({ idleCloseMs: 150, authLocked: () => locked });
+    await h.pool.connect(
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { close: {} } }, turn: [{ type: "chunk", text: "x" }] },
+        "smq5",
+      ),
+    );
+    const victim = await h.sessionManager.createSession("smq5", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(victim, "reapable");
+    const holding = await h.sessionManager.createSession("smq5", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(holding, "prompted once");
+    locked = true;
+    await h.sessionManager.sendPrompt(holding, "held words"); // auth-held row
+    const active = await h.sessionManager.createSession("smq5", "Fake Agent", cwd); // takes the view
+
+    // the reaper proves it ran by releasing the queue-less idle session…
+    const start = Date.now();
+    while (h.sessionManager.isLive(victim)) {
+      if (Date.now() - start > 3000) throw new Error("reaper never fired");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    // …while the one holding words stays attached, words intact
+    expect(h.sessionManager.isLive(holding)).toBe(true);
+    expect(h.state().promptQueue[holding]).toMatchObject([{ text: "held words" }]);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([victim, holding, active]);
+
+    h.sessionManager.dispose();
+    await h.pool.stop("smq5");
   });
 
   it("the reaper never touches a still-new session — new sessions never close, period", async () => {

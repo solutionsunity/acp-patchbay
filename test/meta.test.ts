@@ -122,7 +122,7 @@ describe("auth method kind classification", () => {
     expect(declared.authMethods[0]!.kind).toBe("agent");
   });
 
-  it("recipe-less unstable types stay declared-but-unwired", () => {
+  it("recipe-less typed methods classify by the typed-auth extension's parse", () => {
     const declared = declaredFromInitialize(
       initWith([
         { id: "t", name: "Terminal", type: "terminal", args: ["--cli"] },
@@ -130,6 +130,13 @@ describe("auth method kind classification", () => {
       ]),
     );
     expect(declared.authMethods.map((m) => m.kind)).toEqual(["terminal", "env_var"]);
+  });
+
+  it("a malformed typed terminal degrades to the stable default — never a runnable kind", () => {
+    const declared = declaredFromInitialize(
+      initWith([{ id: "t", name: "Terminal", type: "terminal", args: "login" }]),
+    );
+    expect(declared.authMethods[0]!.kind).toBe("agent");
   });
 
   it("a malformed recipe falls back to the type field, honestly", () => {
@@ -140,18 +147,12 @@ describe("auth method kind classification", () => {
   });
 });
 
-describe("hasUnusedProbe with terminal-recipe methods", () => {
+describe("hasUnusedProbe", () => {
   const matrix: CapabilityMatrix = matrixFromDeclared(
     declaredFromInitialize(initWith([])),
   );
 
-  it("a terminal-recipe method keeps the auth probe pending until proven", () => {
-    const methods = [{ id: "l", name: "L", description: null, kind: "terminal-recipe" as const }];
-    expect(hasUnusedProbe(matrix, methods)).toBe(true);
-  });
-
-  it("recipe-less unstable methods alone leave nothing to probe", () => {
-    const methods = [{ id: "t", name: "T", description: null, kind: "terminal" as const }];
-    expect(hasUnusedProbe(matrix, methods)).toBe(false);
+  it("auth methods of any kind leave nothing to probe — the free check is not an auth proof", () => {
+    expect(hasUnusedProbe(matrix)).toBe(false);
   });
 });

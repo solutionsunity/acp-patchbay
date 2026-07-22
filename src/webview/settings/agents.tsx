@@ -438,8 +438,15 @@ function LoginControl(props: {
   return (
     <span className="row gap-1.5">
       {actionable.length > 1 && (
-        <Select value={methodId} onValueChange={setMethodId}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+        // `selected.id`, not the raw state: a reconnect may refresh the
+        // declared methods under an open popover, and the display must
+        // follow the same stale-id fallback the button already fires with.
+        <Select value={selected.id} onValueChange={setMethodId}>
+          {/* Explicit value: the closed control shows the title only — a
+              bare SelectValue echoes the item's children, description
+              included, and the widest description would set the trigger's
+              width. The open list keeps both lines. */}
+          <SelectTrigger><SelectValue>{selected.name}</SelectValue></SelectTrigger>
           <SelectContent>
             {actionable.map((m) => (
               <SelectItem key={m.id} value={m.id}>

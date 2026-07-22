@@ -9,6 +9,7 @@
 // build of an agent, not about a workspace.
 import { z } from "zod";
 import type { CapabilityMatrix } from "../../shared/protocol";
+import { USED_MAY_OUTRUN_CLAIM } from "../capabilities";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
@@ -35,18 +36,28 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
   /** Seeds `used` — and `suspect`, a broken bridge must not look clean
    * after a restart — from the cache when `version` matches what's stored;
    * an honest reset (all cells declared-but-not-used) otherwise, same
-   * shape `matrixFromDeclared` already produces. */
+   * shape `matrixFromDeclared` already produces.
+   *
+   * The fresh declaration outranks the cache for USED — features gate on
+   * used, and a restored mark on an undeclared row would light up a call
+   * the spec now forbids. Exception: the rows whose proof may legitimately
+   * outrun any claim (USED_MAY_OUTRUN_CLAIM, capabilities.ts) — for those
+   * the mark itself carried the claim when earned, and it restores the
+   * same way. SUSPECT deliberately restores regardless of the fresh
+   * declaration: it gates nothing, and a bridge that flickers a
+   * declaration off at the same version must not launder its own warning
+   * — "only an actual version change resets it honestly". */
   seed(agentId: string, version: string, freshlyDeclared: CapabilityMatrix): CapabilityMatrix {
     const cached = this.get(agentId);
     if (cached === undefined || cached.version !== version) return freshlyDeclared;
     const seeded = { ...freshlyDeclared };
     for (const key of Object.keys(freshlyDeclared) as (keyof CapabilityMatrix)[]) {
       const cachedCell = cached.matrix[key];
-      if (cachedCell?.used) seeded[key] = { declared: freshlyDeclared[key].declared, used: true };
-      else if (cachedCell?.suspect === true) {
-        // Suspicion implied declared when earned (the attempt is the claim)
-        // — restore it the same way, or an undeclared-claim row's flag
-        // (concurrentSessions) would vanish into "not declared".
+      if (cachedCell?.used) {
+        if (freshlyDeclared[key].declared || USED_MAY_OUTRUN_CLAIM.has(key)) {
+          seeded[key] = { declared: true, used: true };
+        }
+      } else if (cachedCell?.suspect === true) {
         seeded[key] = { declared: true, used: false, suspect: true };
       }
     }
