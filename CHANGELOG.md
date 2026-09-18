@@ -8,6 +8,11 @@
   or fails the probe exactly as it will in a real session; previously the
   probe ran in the editor's own directory and failed servers that then worked
   fine. A failed probe now names the directory it ran in. (#3)
+- Long unbreakable text — URLs, absolute paths, connection strings — now
+  wraps inside the panel everywhere instead of being cut off at the edge:
+  agent and user messages, dialogs (the download-confirm URL), popovers, and
+  settings boxes. A context chip with a long path truncates with an ellipsis
+  and keeps its × reachable at any panel width. (#2)
 
 ## 0.82.8 — 2026-07-22
 

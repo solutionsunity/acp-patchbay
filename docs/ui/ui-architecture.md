@@ -28,7 +28,13 @@ the bundler; Tailwind runs alongside it as a CSS build step.
 - **One theme bridge** (VS Code CSS variables → shadcn/Tailwind tokens), written
   once as a shared module, imported by every webview entry — never duplicated per
   surface. Streamdown's styling assumes the same shadcn custom properties, so the
-  one bridge covers markdown too.
+  one bridge covers markdown too. The bridge also carries the one **wrapping
+  policy**: `overflow-wrap: anywhere` on `body`, inherited by every text node of
+  every webview, so a token with no break opportunity (a URL, an absolute path, a
+  connection string) wraps at its box instead of overflowing the panel or forcing
+  a dialog wider than it. No surface re-declares it; a surface that must stay one
+  line opts out with `white-space: nowrap` + `text-overflow`. The ui-gate renders
+  the chat at 280px and measures rendered text extents against the viewport.
 - **CSP is authored here, never widened silently.** Radix needs inline `style`
   attributes (already allowed; no inline `<script>`/`eval`); Shiki's default
   engine needs `wasm-unsafe-eval` *or* Streamdown configured with Shiki's JS

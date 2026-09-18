@@ -831,7 +831,7 @@ export function AgentsSection(props: {
                     </div>
                   )}
                   {detailsOpen && command !== undefined && (
-                    <div className="mono mt-1.5 break-all">
+                    <div className="mono mt-1.5">
                       {command}
                     </div>
                   )}

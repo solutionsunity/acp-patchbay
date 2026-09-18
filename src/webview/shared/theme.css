@@ -134,6 +134,18 @@
   --card: color-mix(in srgb, var(--vscode-editor-background) 93%, white);
 }
 
+/* One wrapping policy, inherited by every text node of every webview: a
+ * token with no break opportunity (a URL, an absolute path, a DSN) wraps at
+ * its box edge instead of sliding under an overflow:hidden edge or forcing
+ * a flex/grid track wider than the panel. `anywhere`, not `break-word`: it
+ * also lowers min-content, which is what lets a dialog or a chip row fit
+ * the panel rather than be sized by its longest URL. A surface that must
+ * stay one line opts out with white-space: nowrap (+ text-overflow); pre
+ * blocks never soft-wrap, so they keep their horizontal scroll. */
+body {
+  overflow-wrap: anywhere;
+}
+
 /* Unlayered on purpose: must outrank the `text-primary` utility Streamdown
  * puts on links. `primary` maps to VS Code's *button* background — right
  * for Buttons, wrong for prose links, which follow the theme's own link

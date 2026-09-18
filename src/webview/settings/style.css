@@ -448,7 +448,6 @@ tr.sep td {
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
-  word-break: break-all;
   color: var(--pb-text-faint);
   background: color-mix(in srgb, var(--pb-err) 7%, transparent);
   border-radius: 3px;

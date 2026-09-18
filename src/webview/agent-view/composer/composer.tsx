@@ -226,8 +226,8 @@ export function Composer(props: {
                           ? "attach"
                           : "warning"
                 }
-              />{" "}
-              {c.label}
+              />
+              <span className="label">{c.label}</span>
               <span className="x" onClick={() => send({ kind: "removeContextChip", sessionId, chipId: c.id })}>
                 ×
               </span>

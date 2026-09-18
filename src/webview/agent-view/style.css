@@ -507,7 +507,6 @@ body {
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
-  word-break: break-all;
   color: var(--pb-text-faint);
   background: color-mix(in srgb, var(--pb-err) 7%, transparent);
   border-radius: 3px;
@@ -689,7 +688,6 @@ body {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
   max-height: 260px;
   overflow-y: auto;
 }
@@ -748,9 +746,6 @@ body {
 .perm .q code {
   font-family: var(--vscode-editor-font-family, monospace);
   color: var(--pb-text);
-  /* a long unbroken subject (path, command line) must wrap, not slide
-   * under the card's overflow:hidden edge */
-  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -868,20 +863,31 @@ body {
   margin-bottom: 4px;
 }
 
-.queue-row .txt {
-  flex: 1;
+/* A removable row — queued prompt, context chip — never outgrows its
+ * container: the text truncates and the × keeps its size, so it stays
+ * reachable at any panel width. The row's own `title` carries the full
+ * text. Queue rows fill their line (flex: 1); chips hug their content. */
+.queue-row .txt,
+.ctx-chip .label {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.queue-row .x {
+.queue-row .txt {
+  flex: 1;
+}
+
+.queue-row .x,
+.ctx-chip .x {
+  flex-shrink: 0;
   cursor: pointer;
   color: var(--pb-text-faint);
 }
 
-.queue-row .x:hover {
+.queue-row .x:hover,
+.ctx-chip .x:hover {
   color: var(--pb-err);
 }
 
@@ -901,15 +907,8 @@ body {
   border: 1px solid var(--pb-border);
   border-radius: 6px;
   padding: 2px 8px;
-}
-
-.ctx-chip .x {
-  cursor: pointer;
-  color: var(--pb-text-faint);
-}
-
-.ctx-chip .x:hover {
-  color: var(--pb-err);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .ctx-chip.lit {
@@ -968,7 +967,6 @@ body {
   font: inherit;
   padding: 9px 11px;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* Type-to-grow cap: while the composer hasn't been manually dragged
@@ -1040,7 +1038,6 @@ body {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
   max-height: 200px;
   overflow-y: auto;
 }

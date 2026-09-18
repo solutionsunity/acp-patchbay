@@ -58,7 +58,31 @@ export const chatTranscript = [
     kind: "text", id: "x3",
     text: "Ohm: $$V = I \\cdot R$$ — but $5 and $10 stay currency.\n\nIntro line in English.\n\nالنتيجة **جاهزة** للمراجعة وهذا نص عربي.\n\nこの**変更**は完了した。\n\n| item | qty |\n|---|---|\n| bolts | 40 |\n| nuts | 80 |",
   },
+  // one URL three ways, none with a break opportunity: an autolink, plain
+  // text (scheme-less so GFM never autolinks it — the shape issue #2's
+  // agent produced: a URL rendered as text, no link), and inline code. The
+  // narrow shot gates that every one wraps instead of sliding under the edge.
+  {
+    kind: "text", id: "x5",
+    text: "## Sources\n\n- <https://raw.githubusercontent.com/odoo/odoo/17.0/addons/web/static/src/views/form/form_controller.scss>\n- api.github.com/repos/odoo/odoo/commits?path=addons/web/static/src/views/form/form_controller.scss&sha=17.0\n- `postgresql://user:password@localhost:5432/a_database_with_a_long_name?sslmode=require`",
+  },
 ];
+
+/** A queued prompt that is one unbreakable token — the narrow shot gates
+ * that the row truncates and its × stays reachable. */
+export const longQueuedPrompt = {
+  id: "q1",
+  text: "https://api.github.com/repos/odoo/odoo/commits?path=addons/web/static/src/views/form/form_controller.scss&sha=17.0",
+};
+
+/** A selection chip whose label is one unbreakable absolute path — same
+ * gate, the chip's own row shape. */
+export const longSelectionChip = {
+  id: "c1", kind: "selection",
+  label: "Selection: /ws/addons/web/static/src/views/form/form_controller.scss:12-40",
+  content: ".o_form_view { display: flex; }",
+  sourceUri: "file:///ws/addons/web/static/src/views/form/form_controller.scss#L12-L40",
+};
 
 export const chatPlan = [
   { content: "locate the unanchored pattern", status: "completed" },
@@ -92,7 +116,7 @@ export function agentViewState({ live }) {
     capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
     // matches g3's diff-bearing edit below — the files panel's +/- badge
     fileDiffStats: { s1: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } },
-    contextChips: { s1: [] }, sessionKnobs: { s1: [] }, promptQueue: {}, drafts: {},
+    contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },

@@ -581,7 +581,7 @@ export function IntegrationsSection(props: {
                     onProbe={() => props.onProbe(integration.id)}
                   />
                   {detailsOpen && integration.command !== undefined && (
-                    <div className="mono mt-1.5 break-all">
+                    <div className="mono mt-1.5">
                       {integration.command}
                     </div>
                   )}

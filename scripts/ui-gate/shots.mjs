@@ -213,6 +213,41 @@ for (const theme of Object.keys(THEMES)) {
   await p.screenshot({ path: `${OUT}/sessions-drawer-${theme}.png` });
   await p.close();
 
+  // ── chat at the narrowest side-panel width: unbreakable tokens (a URL as
+  // autolink, plain text, and inline code; a queued prompt; an absolute path
+  // in a context chip) wrap or truncate — never push past the panel edge ──
+  p = await page(browser, theme, { width: 280, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".chat .msg-user");
+  await p.waitForSelector(".queue-row .x");
+  await p.waitForSelector(".ctx-chip .x");
+  // Measured on the rendered text itself (Range rects), not on boxes or
+  // scrollWidth: an ancestor's overflow:hidden clips the symptom out of
+  // every box metric, which is exactly why it shipped unseen. Fences,
+  // diagrams, and tables scroll on purpose and are excluded.
+  const narrow = await p.evaluate(() => {
+    const walker = document.createTreeWalker(document.querySelector(".chat"), NodeFilter.SHOW_TEXT);
+    let textRight = 0;
+    for (let n; (n = walker.nextNode()); ) {
+      if (n.parentElement.closest('pre, svg, [data-streamdown="table-wrapper"]')) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const box = range.getBoundingClientRect();
+      if (box.width > 0) textRight = Math.max(textRight, Math.round(box.right));
+    }
+    const removers = [...document.querySelectorAll(".queue-row .x, .ctx-chip .x")];
+    return {
+      textRight,
+      removers: removers.length,
+      xRight: Math.max(...removers.map((el) => Math.round(el.getBoundingClientRect().right))),
+      width: window.innerWidth,
+    };
+  });
+  check(`[${theme}] narrow: prose text stays inside the panel (${narrow.textRight} ≤ ${narrow.width})`, narrow.textRight <= narrow.width);
+  check(`[${theme}] narrow: queue row + context chip × stay inside the panel (${narrow.removers} rows, ${narrow.xRight} ≤ ${narrow.width})`, narrow.removers === 2 && narrow.xRight <= narrow.width);
+  await p.screenshot({ path: `${OUT}/chat-narrow-${theme}.png`, fullPage: true });
+  await p.close();
+
   // ── chat, live turn (caret + ticker) ──
   p = await page(browser, theme, { width: 420, height: 600 });
   await renderView(p, "agent-view", agentViewState({ live: true }));
@@ -234,6 +269,9 @@ for (const theme of Object.keys(THEMES)) {
   // outline buttons set no text color of their own — they must inherit the
   // theme foreground exactly (UA ButtonText broke this before preflight)
   check(`[${theme}] outline button text = theme foreground (${btnColor})`, btnColor === bodyColor);
+  // the one wrapping policy (theme.css) must reach this bundle too — the
+  // download-confirm dialog's URL box and every .mono rely on inheriting it
+  check(`[${theme}] settings inherits the wrapping policy`, (await p.evaluate(() => getComputedStyle(document.body).overflowWrap)) === "anywhere");
 
   await p.click('button[aria-label="Remove"]');
   check(`[${theme}] destructive AlertDialog opens`, (await p.waitForSelector("text=Confirm remove?", { timeout: 3000 })) !== null);
