@@ -41,6 +41,7 @@ import { OAuthCallbackRegistry } from "./oauth-callback";
 import { foldSeed, normalizeKnobs } from "./knobs";
 import { sessionKnobExtras, typedAuthMethodOf, type TypedTerminalAuth } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
+import { runLoginTask } from "./login-task";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
@@ -2754,40 +2755,25 @@ export class Orchestrator {
     return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  /** terminal-auth login (meta.ts): runs the method's recipe in an
-   * Editor-pane terminal running the user's *default shell* — the login
-   * happens front and center in the agent's own flow, and the shell keeps
-   * stdin open after the command exits. (The earlier read-only-Editor
-   * hazard was specific to `shellPath: recipe.command` — the pane dies
-   * with the process, so an auth code could never be pasted; a default
-   * shell has no such cliff.)
+  /** terminal-auth login (meta.ts): runs the method's recipe as a VS Code
+   * task (login-task.ts) — front and center in the agent's own flow, the
+   * executable and args handed over as an array so no shell command line is
+   * ever composed here.
    *
-   * The command's *result* is listened to, never guessed: with shell
-   * integration the exit code is real evidence. Zero → the affirmative
-   * fact the authority table clears on (noteAuthEvidence loginOk), then a
-   * re-probe as corroboration and offering re-read (same span as Verify,
-   * so the card reads "Verifying…") — and if the probe *still* says
-   * auth_required, restart the process: the recipe wrote credentials
-   * outside it, and a CLI that reads auth at spawn never re-reads them.
-   * Non-zero → loginFailed evidence, locking with the exit code as the
-   * card's reason. An unknown exit (shell integration never activated,
-   * terminal closed mid-run) is not affirmative: no evidence noted, the
-   * fallback probe runs, and the lock heals later through a same-method
-   * success or a completed prompt. */
+   * The command's *result* is listened to, never guessed: the task's
+   * process-end exit code is real evidence. Zero → the affirmative fact the
+   * authority table clears on (noteAuthEvidence loginOk), then a re-probe
+   * as corroboration and offering re-read (same span as Verify, so the
+   * card reads "Verifying…") — and if the probe *still* says auth_required,
+   * restart the process: the recipe wrote credentials outside it, and a CLI
+   * that reads auth at spawn never re-reads them. Non-zero → loginFailed
+   * evidence, locking with the exit code as the card's reason. An unknown
+   * exit (task never started, terminated, terminal closed mid-run) is not
+   * affirmative: no evidence noted, the fallback probe runs, and the lock
+   * heals later through a same-method success or a completed prompt. */
   private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
     const name = recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`;
-    const terminal = vscode.window.createTerminal({
-      name,
-      env: recipe.env,
-      location: vscode.TerminalLocation.Editor,
-    });
-    terminal.show();
-    // POSIX single-quote each token so paths with spaces and special
-    // characters survive the shell pass-through unchanged.
-    const cmd = [recipe.command, ...recipe.args]
-      .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
-      .join(" ");
-    const exitCode = await this.runLoginCommand(terminal, cmd);
+    const exitCode = await runLoginTask(name, recipe);
     this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
     if (exitCode !== undefined && exitCode !== 0) {
       this.noteAuthEvidence(agentId, {
@@ -2836,11 +2822,11 @@ export class Orchestrator {
    * Settings edit applies here exactly as it would to the next spawn) with
    * SecretStorage env merged at the last moment, the method's args APPENDED
    * to the spawn args and its env layered over the spawn env. On Windows
-   * the command is absolutized the same way a spawn would be — the login
-   * terminal's shell may be cmd.exe, which resolves a bare name against
-   * the cwd (the workspace) before PATH, and a planted `npx.cmd` must not
-   * win here any more than it can at spawn; not-found falls back to the
-   * bare name and lets the shell report it. */
+   * the command is absolutized the same way a spawn would be — a bare
+   * name would otherwise be resolved by the task engine's own PATH walk,
+   * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
+   * guards, and it must not win here any more than it can at spawn;
+   * not-found falls back to the bare name and lets the task report it. */
   private async typedLoginViaTerminal(agentId: string, typed: TypedTerminalAuth): Promise<void> {
     const spec = this.configuredAgentSpecs.get(agentId);
     if (spec === undefined) {
@@ -2857,53 +2843,6 @@ export class Orchestrator {
       command,
       args: [...spec.args, ...typed.args],
       env,
-    });
-  }
-
-  /** Runs `cmd` in the login terminal and resolves with its exit code —
-   * `undefined` only when the answer is honestly unknown: shell
-   * integration never activated (sendText; "done" = terminal closed), the
-   * shell reported no code, or the user closed the terminal mid-run. */
-  private async runLoginCommand(terminal: vscode.Terminal, cmd: string): Promise<number | undefined> {
-    const shellIntegration = await new Promise<vscode.TerminalShellIntegration | undefined>(
-      (resolve) => {
-        if (terminal.shellIntegration !== undefined) return resolve(terminal.shellIntegration);
-        const timer = setTimeout(() => {
-          sub.dispose();
-          resolve(undefined);
-        }, 5000);
-        const sub = vscode.window.onDidChangeTerminalShellIntegration((e) => {
-          if (e.terminal !== terminal) return;
-          clearTimeout(timer);
-          sub.dispose();
-          resolve(e.shellIntegration);
-        });
-      },
-    );
-    if (shellIntegration === undefined) {
-      terminal.sendText(cmd);
-      await new Promise<void>((resolve) => {
-        const sub = vscode.window.onDidCloseTerminal((t) => {
-          if (t !== terminal) return;
-          sub.dispose();
-          resolve();
-        });
-      });
-      return undefined;
-    }
-    const execution = shellIntegration.executeCommand(cmd);
-    return await new Promise<number | undefined>((resolve) => {
-      const settle = (code: number | undefined): void => {
-        ended.dispose();
-        closed.dispose();
-        resolve(code);
-      };
-      const ended = vscode.window.onDidEndTerminalShellExecution((e) => {
-        if (e.execution === execution) settle(e.exitCode);
-      });
-      const closed = vscode.window.onDidCloseTerminal((t) => {
-        if (t === terminal) settle(undefined);
-      });
     });
   }
 

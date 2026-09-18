@@ -20,6 +20,12 @@
   (a throwaway session, no LLM turn, ended when the card collapses). New
   sessions then apply the saved combination in dependency order, so a
   default that only exists once another is set still lands. (#1)
+- *Log in* on Windows now works under PowerShell and cmd. The login used to
+  be pasted into a terminal as a POSIX-quoted command line, which PowerShell
+  rejects before running anything; it now runs as a VS Code task that
+  receives the executable and its arguments as-is, so no shell quoting
+  exists to get wrong on any platform. The login opens in the task panel,
+  stays open after it finishes, and takes pasted input as before. (#4)
 
 ## 0.82.8 — 2026-07-22
 
