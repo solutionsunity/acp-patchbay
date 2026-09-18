@@ -123,6 +123,10 @@ export class IntegrationsManager {
      * config record carries no env at all. */
     private readonly envStore: SecretEnvStore,
     private readonly hooks: IntegrationsManagerHooks,
+    /** The directory agents are launched in — and so the one their
+     * spawned stdio servers inherit. The probe runs custom-stdio servers
+     * here so it reports the same reality the agent's own spawn will. */
+    private readonly workspaceCwd: string,
     /** Browser/redirect step for OAuth connects — the orchestrator wires
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
@@ -640,8 +644,9 @@ export class IntegrationsManager {
     if (integration === undefined) return;
     this.probes.set(id, { status: "probing", at: new Date().toISOString() });
     await this.refresh();
+    let target: ProbeTarget | null = null;
     try {
-      const target = await this.probeTargetFor(integration);
+      target = await this.probeTargetFor(integration);
       if (target === null) {
         // Nothing reachable to probe (no endpoint / missing credential) —
         // the card's connected flag already tells that story.
@@ -658,12 +663,15 @@ export class IntegrationsManager {
         this.log.info(`${id}: probe ok — ${outcome.tools.length} tool(s)`);
       }
     } catch (err) {
-      this.probes.set(id, {
-        status: "failed",
-        at: new Date().toISOString(),
-        reason: (err as Error).message,
-      });
-      this.log.info(`${id}: probe failed — ${(err as Error).message}`);
+      // A stdio failure names where the command ran: a server that reads
+      // project-local config fails differently per directory, and the
+      // reason should let the user see which one was tried.
+      const reason =
+        target?.kind === "stdio"
+          ? `${(err as Error).message} (ran in ${target.cwd})`
+          : (err as Error).message;
+      this.probes.set(id, { status: "failed", at: new Date().toISOString(), reason });
+      this.log.info(`${id}: probe failed — ${reason}`);
     }
     await this.refresh();
   }
@@ -679,6 +687,7 @@ export class IntegrationsManager {
         command: source.command,
         args: source.args,
         env: await this.envStore.get(integration.id),
+        cwd: this.workspaceCwd,
       };
     }
     const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
@@ -765,6 +774,8 @@ export class IntegrationsManager {
         // spawns stdio servers itself (ACP model), so the spawn env must
         // ride the session's mcpServers config. SecretStorage governs
         // where patchbay keeps them at rest, not that inherent handoff.
+        // No cwd travels: the entry has no such field, so the server runs
+        // wherever the agent does — the same workspaceCwd the probe uses.
         const env = await this.envStore.get(integration.id);
         servers.push({
           name: integration.name,

@@ -728,7 +728,13 @@ flowchart TD
   or the failure reason. Provider-side truth only — "reachable, these tools
   exist", never "working in an agent's session"; the same declared≠used
   discipline one layer down. Session-lived cache, never persisted: a fresh window
-  re-reads reality.
+  re-reads reality. A custom-stdio probe executes the command in the workspace
+  cwd — the one directory agents are launched in, which the servers they spawn
+  inherit — so the probe sees what the agent's own spawn will (a server reading
+  project-local config finds it in both places or neither); a failure names the
+  directory tried. No per-server cwd exists, by construction: the ACP
+  `mcpServers` entry carries none, so a probe-only cwd could pass where the real
+  run fails.
 - **Routing is the user's, per agent.** "auto" (default) = every agent; an
   explicit id list pins exactly; "except" = every agent minus the listed. Routing
   is reach, not consent: which servers an agent receives is separate from whether

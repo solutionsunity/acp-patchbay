@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Custom stdio MCP servers are now probed in the workspace directory — the
+  same one agents are launched in and their servers inherit — so a server
+  that reads project-local config (a `.env`, a local settings file) passes
+  or fails the probe exactly as it will in a real session; previously the
+  probe ran in the editor's own directory and failed servers that then worked
+  fine. A failed probe now names the directory it ran in. (#3)
+
 ## 0.82.8 — 2026-07-22
 
 - Agents offering the ACP draft's typed terminal login (`type: "terminal"`)

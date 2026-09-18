@@ -143,7 +143,16 @@ export class Orchestrator {
   /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
   readonly oauthCallbacks = new OAuthCallbackRegistry();
 
+  /** The first workspace folder, absent when no folder is open — the
+   * permission broker's write scope (nothing is workspace-scoped then). */
   private readonly workspaceRoot: string | null;
+  /** The one directory this window's work runs in: agents spawn here (and
+   * their stdio MCP children inherit it), sessions open here, integration
+   * probes execute here, relative asset paths resolve here. The process
+   * cwd stands in when no folder is open. Derived once — VS Code restarts
+   * the extension host when the first folder changes, so it is a process
+   * constant; every consumer reads this field, none re-derives it. */
+  private readonly workspaceCwd: string;
   private readonly binaryCacheDir: string;
   /** Standing probe workspaces, one per agent (`probe/<agentId>`) — created
    * idempotently at each probe, deleted only with the agent's config. Never
@@ -209,6 +218,7 @@ export class Orchestrator {
   ) {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
     this.workspaceRoot = workspaceRoot;
+    this.workspaceCwd = workspaceRoot ?? process.cwd();
     this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
     this.integrationBridgeScriptPath = vscode.Uri.joinPath(
       context.extensionUri,
@@ -271,6 +281,7 @@ export class Orchestrator {
       this.integrationTokens,
       this.integrationEnv,
       { emit: (...events) => this.settings.emit(...events) },
+      this.workspaceCwd,
       {
         redirectUri: async () => {
           const callback = await vscode.env.asExternalUri(
@@ -693,7 +704,7 @@ export class Orchestrator {
         authLocked: (agentId) => this.authLocks.lockFor(agentId) !== null,
         readFileLive: (path) => this.readTextFileLive(path),
       },
-      () => this.workspaceRoot ?? process.cwd(),
+      () => this.workspaceCwd,
       async (contextToken, agentId) => {
         // McpServerStdio is the untagged union member — no discriminant
         // needed since it's the only variant every agent is guaranteed to
@@ -1365,7 +1376,7 @@ export class Orchestrator {
     const key = this.agentConfigs.get(agentId)?.registrySource?.registryId ?? agentId;
     const assets = await resolveAgentAssets(
       this.assetFs,
-      this.workspaceRoot ?? process.cwd(),
+      this.workspaceCwd,
       agentId,
       ASSET_LOCATIONS[key] ?? null,
     );
@@ -1484,7 +1495,7 @@ export class Orchestrator {
    * — Settings is a navigational index onto files
    * that already live in the agent's own native locations. */
   private openAssetFile(path: string): void {
-    const abs = vscode.Uri.file(join(this.workspaceRoot ?? process.cwd(), path));
+    const abs = vscode.Uri.file(join(this.workspaceCwd, path));
     void vscode.window.showTextDocument(abs);
   }
 
@@ -1533,7 +1544,7 @@ export class Orchestrator {
         command: agent.command,
         args: agent.args,
         env: {},
-        cwd: this.workspaceRoot ?? process.cwd(),
+        cwd: this.workspaceCwd,
         processPolicy: agent.processPolicy,
         // Stored {mode, options} folds to the knob-id-keyed seed here — the
         // one door legacy defaults re-enter memory through.
@@ -1617,7 +1628,7 @@ export class Orchestrator {
       command,
       args,
       env: {},
-      cwd: this.workspaceRoot ?? process.cwd(),
+      cwd: this.workspaceCwd,
       processPolicy: config.processPolicy,
       defaults: config.defaults,
     });
@@ -1927,7 +1938,7 @@ export class Orchestrator {
     confirmed = false,
   ): Promise<{ spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null> {
     const launch = resolveDistribution(agent);
-    const cwd = this.workspaceRoot ?? process.cwd();
+    const cwd = this.workspaceCwd;
     if ("error" in launch) return null; // reason already visible on the picker row
     switch (launch.kind) {
       case "npx":
@@ -2630,7 +2641,7 @@ export class Orchestrator {
       }
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event.
-      await this.sessionManager.createSession(agentId, agentName, this.workspaceRoot ?? process.cwd());
+      await this.sessionManager.createSession(agentId, agentName, this.workspaceCwd);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });
@@ -2696,7 +2707,7 @@ export class Orchestrator {
           command: parsed.command,
           args: parsed.args,
           env: {},
-          cwd: this.workspaceRoot ?? process.cwd(),
+          cwd: this.workspaceCwd,
         };
       }
     }

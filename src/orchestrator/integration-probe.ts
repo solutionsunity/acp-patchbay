@@ -16,8 +16,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 export type ProbeTarget =
   | { kind: "http"; url: string; header: { name: string; value: string } | null }
   /** Probing stdio means *executing* the configured command — only ever on
-   * the user's explicit act (connect, power-on, refresh), never on a sweep. */
-  | { kind: "stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> };
+   * the user's explicit act (connect, power-on, refresh), never on a sweep.
+   * `cwd` is required, never defaulted: the probe is only truthful if it
+   * runs the server where the real run will — the agent's cwd, inherited by
+   * the servers it spawns — and an omitted cwd would silently mean the
+   * extension host's, a directory no agent ever runs in. */
+  | { kind: "stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>>; cwd: string };
 
 export interface ProbeOutcome {
   serverName: string;
@@ -44,6 +48,7 @@ export async function probeMcpServer(target: ProbeTarget): Promise<ProbeOutcome>
           command: target.command,
           args: [...target.args],
           env: { ...(process.env as Record<string, string>), ...target.env },
+          cwd: target.cwd,
           stderr: "ignore",
         });
   const client = new Client({ name: "acp-patchbay", version: "0" });

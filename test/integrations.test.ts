@@ -51,6 +51,10 @@ function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<str
   return Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value]));
 }
 
+/** The directory the orchestrator launches agents in — the probe must run
+ * custom-stdio servers in the same one. */
+const WORKSPACE_CWD = "/workspace/project";
+
 function harness(registry: RegistryEntry[]) {
   const events: SettingsEvent[] = [];
   const integrationStore = new IntegrationConfigStore(new MemoryKV());
@@ -69,6 +73,7 @@ function harness(registry: RegistryEntry[]) {
     tokens,
     envStore,
     { emit: (...evs) => events.push(...evs) },
+    WORKSPACE_CWD,
     fakeUserAgent(),
     undefined,
     (target) => probeFn(target),
@@ -480,7 +485,7 @@ describe("IntegrationsManager — connect-time tool probe", () => {
     ]);
   });
 
-  it("probing a custom-stdio server carries its command and SecretStorage env", async () => {
+  it("probing a custom-stdio server carries its command, SecretStorage env, and the workspace cwd the agent's spawn will inherit", async () => {
     const h = harness([]);
     await h.manager.addCustom(
       "Local Tool",
@@ -490,8 +495,23 @@ describe("IntegrationsManager — connect-time tool probe", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.probed).toEqual([
-      { kind: "stdio", command: "echo", args: ["hi"], env: { MY_KEY: "v1" } },
+      { kind: "stdio", command: "echo", args: ["hi"], env: { MY_KEY: "v1" }, cwd: WORKSPACE_CWD },
     ]);
+  });
+
+  it("a custom-stdio probe failure names the directory it ran in", async () => {
+    const h = harness([]);
+    h.setProbeFn(async () => {
+      throw new Error("Connection closed");
+    });
+    await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const failed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
+    expect(failed?.kind === "integrationsChanged" && failed.integrations[0]?.probe).toMatchObject({
+      status: "failed",
+      reason: `Connection closed (ran in ${WORKSPACE_CWD})`,
+    });
   });
 
   it("a probe failure lands on the card as failed-with-reason, cleared by the next success", async () => {
@@ -588,6 +608,7 @@ describe("IntegrationsManager — cancelling a browser flow", () => {
       tokens,
       new SecretEnvStore(secrets, "acpPatchbay.integration"),
       { emit: (...evs) => events.push(...evs) },
+      WORKSPACE_CWD,
       {
         redirectUri: async () => "vscode://solutionsunity.acp-patchbay/oauth-callback",
         authorize: () => new Promise(() => {}), // the browser tab that never answers
