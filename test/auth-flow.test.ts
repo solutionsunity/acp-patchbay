@@ -231,4 +231,45 @@ describe("auth flows on the wire", () => {
 
     await h.pool.stop("healed");
   });
+
+  it("a mid-turn credential failure rejected as an internal error with an auth-classified errorKind locks like -32000 (turn-auth-failure door)", async () => {
+    const h = harness();
+    h.seedAgent("expired");
+    const EXPIRED = "Failed to authenticate: OAuth session expired and could not be refreshed";
+    // The claude-agent-acp shape for an expired OAuth session: lazy auth
+    // passes connect, probe and session/new; the prompt is what fails —
+    // and not with -32000.
+    await h.pool.connect(
+      spec(
+        {
+          ...LAZY,
+          promptError: {
+            code: -32603,
+            message: `Internal error: ${EXPIRED}`,
+            data: { errorKind: "authentication_failed" },
+          },
+        },
+        "expired",
+      ),
+    );
+    await waitFor(() => (h.state().capabilities.expired?.["session.fork"]?.used ? true : undefined));
+    expect(h.locks.get("expired")).toBeUndefined();
+
+    const { sessionId } = await h.pool.newSession("expired", cwd);
+    await expect(h.pool.prompt("expired", sessionId, [{ type: "text", text: "hi" }])).rejects.toMatchObject({
+      code: -32603,
+    });
+    // The rejection still reaches the caller (the turn fails honestly),
+    // AND the lock now stands, carrying the prompt method and the agent's
+    // own reason minus the SDK framing — the card offers Log in.
+    expect(h.locks.get("expired")).toMatchObject({
+      kind: "authRequired",
+      method: methods.agent.session.prompt,
+      reason: EXPIRED,
+    });
+    expect(h.authEvents("agentAuthRequired", "expired")).toHaveLength(1);
+    expect(h.state().agents.find((a) => a.id === "expired")?.needsAuth).toBe(true);
+
+    await h.pool.stop("expired");
+  });
 });

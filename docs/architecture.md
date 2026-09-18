@@ -468,7 +468,8 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   module ecosystems; patchbay's deviations are first-party and curated —
   the `_meta` table (meta.ts) plus the modules in `orchestrator/extensions/`
   (removed-draft models surface, first-session mcpServers latch, render
-  directive rewriter, typed auth methods at this writing). Free interception
+  directive rewriter, typed auth methods, turn-time auth failure code at
+  this writing). Free interception
   would dissolve the one-door discipline (knobs.ts, CAPABILITY_PROOFS) that
   this codebase is built on. None of them demand shared machinery yet — each
   composes by hand-named export through `extensions/index.ts`; a registry

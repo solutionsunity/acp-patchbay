@@ -25,7 +25,7 @@
 // matrix fresh); it's now version-keyed — a reconnect at the *same* `agentInfo.version` restores what was
 // already proven, and only an actual version change earns a fresh,
 // honestly-unused matrix.
-import { RequestError, type NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { NewSessionResponse } from "@agentclientprotocol/sdk";
 import {
   type AgentViewEvent,
   type CapabilityMatrix,
@@ -35,7 +35,7 @@ import {
 import { matrixFromDeclared } from "./capabilities";
 import { probeDeferredFor } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
-import type { AgentPool } from "./pool";
+import { authRequiredReasonOf, type AgentPool } from "./pool";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
 
 /** What the free probe actually observed — callers that need to react to
@@ -250,7 +250,7 @@ export class CapabilityTracker {
       }
       return "ok";
     } catch (err) {
-      if (err instanceof RequestError && err.code === -32000) {
+      if (authRequiredReasonOf(err) !== null) {
         // needsAuth itself was already raised through pool.ts's wire
         // chokepoint (onAuthWireFact → the orchestrator's one auth-state
         // writer); this only names the friendly next step in the log.

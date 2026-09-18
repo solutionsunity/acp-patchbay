@@ -7,7 +7,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
-import { methods, RequestError } from "@agentclientprotocol/sdk";
+import { methods } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -43,7 +43,7 @@ import { sessionKnobExtras, typedAuthMethodOf, type TypedTerminalAuth } from "./
 import { checkPathDivergence } from "./launcher-health";
 import { runLoginTask } from "./login-task";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
-import { AgentPool, type LaunchSpec } from "./pool";
+import { AgentPool, authRequiredReasonOf, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { resolveExecutableWin32 } from "./spawn-resolve";
 import { SessionManager } from "./session-manager";
@@ -2739,10 +2739,11 @@ export class Orchestrator {
    * names the exact CLI command there), the Settings Agents pointer
    * otherwise. */
   private connectFailureReason(agentId: string, err: unknown, raw: string): string {
-    if (err instanceof RequestError && err.code === -32000) {
-      const informative =
-        raw.trim() !== "" && !/^authentication required\.?$/i.test(raw.trim());
-      return informative ? raw : "needs login first — use Log in on this agent in Settings › Agents";
+    const auth = authRequiredReasonOf(err);
+    if (auth !== null) {
+      return auth.reason !== null && !/^authentication required\.?$/i.test(auth.reason.trim())
+        ? auth.reason
+        : "needs login first — use Log in on this agent in Settings › Agents";
     }
     return this.pool.get(agentId)?.detail ?? raw;
   }
@@ -2786,7 +2787,7 @@ export class Orchestrator {
     // authority table's call); the probe below is corroboration and the
     // offering re-read, not the clearer: on a lazy-auth agent its
     // session/new success bears nothing either way. An *unknown* exit
-    // (shell integration never activated, terminal closed mid-run) is not
+    // (task never started, terminated, terminal closed mid-run) is not
     // affirmative — no evidence is noted, and the lock heals later through
     // a same-method success or a completed prompt.
     if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });

@@ -18,6 +18,8 @@ export function sessionKnobExtras(response: unknown): KnobExtra[] {
 
 export { probeDeferredFor } from "./first-session-mcp-latch";
 
+export { turnAuthFailureReasonOf } from "./turn-auth-failure";
+
 export {
   authCapabilityWire,
   typedAuthMethodOf,

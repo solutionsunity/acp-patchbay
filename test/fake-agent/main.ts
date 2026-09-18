@@ -77,6 +77,9 @@ export interface FakeAgentScript {
    * rebuilt as the base options plus each dependent whose condition the
    * current values satisfy; a dependent keeps its value while it stays. */
   dependentOptions?: { on: { configId: string; value: string }; option: acp.SessionConfigOption }[];
+  /** Every session/prompt rejects with this JSON-RPC error (code, message,
+   * optional data) — the generic error shape the spec leaves to agents. */
+  promptError?: { code: number; message: string; data?: unknown };
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -524,6 +527,10 @@ const app = acp
   .onRequest("session/prompt", async (ctx): Promise<acp.PromptResponse> => {
     const session = sessions.get(ctx.params.sessionId);
     if (!session) throw acp.RequestError.invalidRequest("unknown session");
+    if (script.promptError) {
+      const { code, message, data } = script.promptError;
+      throw new acp.RequestError(code, message, data);
+    }
     session.pending?.abort();
     session.pending = new AbortController();
     // Spec-faithful replay: session/load MUST replay the *entire*

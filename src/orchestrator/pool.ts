@@ -19,10 +19,26 @@ import {
   rowsProvenBy,
   type WireFact,
 } from "./capabilities";
+import { turnAuthFailureReasonOf } from "./extensions";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { guardResponse } from "./response-guards";
 import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
+
+/** The auth-required reading of a failed RPC, or null when the failure
+ * bears nothing on auth: the spec's -32000 (reason = the agent's own
+ * message, null when blank), and through the extensions door, a rejection
+ * whose shape an adopted module reads as an auth failure. The one reading
+ * — the wire chokepoints report on it, and every consumer that classifies
+ * a caught RPC error (probe outcome, connect-failure wording) asks here
+ * rather than re-testing the code. */
+export function authRequiredReasonOf(err: unknown): { reason: string | null } | null {
+  if (err instanceof acp.RequestError && err.code === -32000) {
+    return { reason: err.message.trim() === "" ? null : err.message };
+  }
+  const reason = turnAuthFailureReasonOf(err);
+  return reason === null ? null : { reason };
+}
 
 /** Launch-phase seam (runtime-resolver.ts): given the spec about to spawn,
  * returns the spec that actually spawns — the same spec when the system
@@ -79,7 +95,8 @@ export interface PoolHooks {
    * reporting on. */
   onCapabilityEvidence?(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void;
   /** Every outgoing agent RPC's auth bearing, fired however the call
-   * settles: "ok" on success, "auth_required" on -32000. What either fact
+   * settles: "ok" on success, "auth_required" on -32000 — or on a
+   * rejection the extensions door reads as an auth failure. What either fact
    * *means* for auth state is decided nowhere in pool.ts — the receiver
    * runs it through the one authority table (auth-evidence.ts), the auth
    * sibling of the capability proof table, so "prompt the user to
@@ -884,13 +901,9 @@ export class AgentPool {
       // Untracked for capabilities by design — but auth is orthogonal: an
       // extension RPC hitting auth_required is the same locked agent, and
       // swallowing it would leave the card claiming otherwise.
-      if (err instanceof acp.RequestError && err.code === -32000) {
-        this.hooks.onAuthWireFact?.(
-          entry.reportAs,
-          method,
-          "auth_required",
-          err.message.trim() === "" ? null : err.message,
-        );
+      const auth = authRequiredReasonOf(err);
+      if (auth !== null) {
+        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", auth.reason);
       }
       throw err;
     }
@@ -994,13 +1007,9 @@ export class AgentPool {
       if (!cancelled) this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok");
       return guarded;
     } catch (err) {
-      if (err instanceof acp.RequestError && err.code === -32000) {
-        this.hooks.onAuthWireFact?.(
-          entry.reportAs,
-          method,
-          "auth_required",
-          err.message.trim() === "" ? null : err.message,
-        );
+      const auth = authRequiredReasonOf(err);
+      if (auth !== null) {
+        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", auth.reason);
       } else if (opts?.failureIsRoutine !== true && this.capabilityEvidenceBearing(entry)) {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");

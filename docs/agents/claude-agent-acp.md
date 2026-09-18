@@ -20,6 +20,28 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   appears in the later replay.
 - **Status:** not yet reported upstream.
 
+### Turn-time auth failure rejected as an internal error, not `auth_required`
+
+- **Observed:** 2026-09-18, v0.79.0 (live, patchbay Output log). With the
+  OAuth session expired, `session/new` still succeeds (lazy auth) and every
+  `session/prompt` is rejected
+  `-32603 Internal error: Failed to authenticate: OAuth session expired and could not be refreshed`
+  with `data: { errorKind: "authentication_failed" }`. The bridge's source
+  keeps this deliberate ("Preserve legacy codes: only explicit `/login`
+  signals trigger ACP's auth flow"): `-32000` is raised only for the CLI's
+  synthetic "Please run /login" message, while API-level
+  `authentication_failed` / `oauth_org_not_allowed` are laned as auth for
+  its own session-failure `_meta` extension and sent to a plain client as
+  an internal error. The spec's one re-authenticate signal is `-32000`.
+- **Impact:** a client keyed on `-32000` never learns the agent is signed
+  out — the card stays unlocked while every prompt fails, and only a
+  manual logout + login repairs it.
+- **Patchbay:** module `extensions/turn-auth-failure.ts` reads the shape
+  (`-32603` + auth-classified `data.errorKind`, never the message text) as
+  `authRequired` evidence at the pool's chokepoints; the authority table
+  locks as it would on `-32000`.
+- **Status:** not yet reported upstream.
+
 ## Capability gaps
 
 *(none load-bearing observed)*

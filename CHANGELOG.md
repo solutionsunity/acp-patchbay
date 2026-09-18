@@ -26,6 +26,11 @@
   receives the executable and its arguments as-is, so no shell quoting
   exists to get wrong on any platform. The login opens in the task panel,
   stays open after it finishes, and takes pasted input as before. (#4)
+- A Claude session whose sign-in expired mid-use now locks the agent card
+  and offers *Log in*, instead of failing every prompt with an internal
+  error while the card still reads as signed in. claude-agent-acp reports
+  that case with a different error code than the protocol's auth signal;
+  patchbay now reads its structured error data as the same fact. (#5)
 
 ## 0.82.8 — 2026-07-22
 
