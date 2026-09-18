@@ -67,16 +67,19 @@ async function page(browser, themeName, { width, height }) {
   // The fake host answers the ONE action a fixture page can't render
   // without: the settings nav's setSettingsSection (section state is
   // host-owned since the deep-link work — the view correctly refuses to
-  // move on its own). Everything else stays a no-op sink.
+  // move on its own). Every other action is recorded (window.__actions) so
+  // a scenario can assert what the view asked for; window.__patch lets a
+  // scenario play host-side events into the mounted view.
   await p.evaluate(`
     let rev = 1;
+    window.__actions = [];
+    window.__patch = (events) => window.postMessage({ kind: "patch", rev: ++rev, events }, "*");
     window.acquireVsCodeApi = () => ({
       postMessage: (msg) => {
-        if (msg?.kind === "action" && msg.action?.kind === "setSettingsSection") {
-          window.postMessage(
-            { kind: "patch", rev: ++rev, events: [{ kind: "sectionChanged", section: msg.action.section }] },
-            "*",
-          );
+        if (msg?.kind !== "action") return;
+        window.__actions.push(msg.action);
+        if (msg.action?.kind === "setSettingsSection") {
+          window.__patch([{ kind: "sectionChanged", section: msg.action.section }]);
         }
       },
     });
@@ -211,6 +214,45 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] drawer sorts latest activity on top`, firstTitle === "refactor bar");
   check(`[${theme}] unseen completion shows the blue dot`, (await p.$(".drawer .unseen-dot")) !== null);
   await p.screenshot({ path: `${OUT}/sessions-drawer-${theme}.png` });
+  await p.close();
+
+  // ── new chat in flight (#6): while "Connecting…" is up the box is locked
+  // and names the starting agent, the previous session's row is gone, and
+  // keystrokes cannot land in that session's draft; the landed session
+  // starts empty ──
+  p = await page(browser, theme, { width: 420, height: 600 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".chat .msg-user");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("old words");
+  await p.evaluate(() => window.__patch([{ kind: "chatConnectStarted", agentId: "fake" }]));
+  await p.waitForSelector("text=Connecting Claude Code");
+  const inFlight = await p.$eval(".prompt-editor", (el) => ({
+    text: el.textContent.trim(),
+    editable: el.getAttribute("contenteditable"),
+    hint: el.getAttribute("aria-placeholder"),
+  }));
+  check(`[${theme}] in flight: box empty and locked, says it's starting ("${inFlight.hint}")`, inFlight.text === "" && inFlight.editable === "false" && inFlight.hint === "Starting Claude Code…");
+  check(`[${theme}] in flight: no session row for the previous session`, (await p.$(".sess-row")) === null);
+  await p.click(".prompt-editor");
+  await p.keyboard.type("new words"); // must bounce off the locked box
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "sessionCreated",
+        session: { id: "s3", agentId: "fake", title: "fresh", live: false, updatedAt: "2026-09-18T00:00:00Z" },
+      },
+    ]),
+  );
+  await p.waitForFunction(() => document.querySelector(".prompt-editor")?.getAttribute("aria-placeholder")?.startsWith("Message"));
+  check(`[${theme}] landed session starts with an empty box`, (await p.$eval(".prompt-editor", (el) => el.textContent.trim())) === "");
+  await p.waitForTimeout(500); // past the draft debounce
+  const drafts = await p.evaluate(() =>
+    window.__actions
+      .filter((a) => a.kind === "setSessionDraft")
+      .map((a) => ({ id: a.sessionId, newWords: a.draft.includes("new words"), oldWords: a.draft.includes("old words") })),
+  );
+  check(`[${theme}] previous session's draft keeps only its own words`, drafts.some((d) => d.id === "s1") && drafts.every((d) => d.id === "s1" && d.oldWords && !d.newWords));
   await p.close();
 
   // ── chat at the narrowest side-panel width: unbreakable tokens (a URL as

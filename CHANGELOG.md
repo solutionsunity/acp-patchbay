@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Typing during *New chat* no longer lands in the previous session. The
+  composer used to stay on the session that was open before the click, so
+  whatever you typed while "Connecting…" was up vanished when the new
+  session appeared and turned up later as the old session's draft. While a
+  chat starts, the previous session's row is gone and the box is locked
+  with "Starting <agent>…" until the new session is ready. (#6)
 - Custom stdio MCP servers are now probed in the workspace directory — the
   same one agents are launched in and their servers inherit — so a server
   that reads project-local config (a `.env`, a local settings file) passes

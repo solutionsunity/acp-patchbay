@@ -181,6 +181,13 @@ function EditorCore(props: PromptEditorProps) {
     editor.getEditorState().read(() => $getRoot().getTextContent().trim() === "")
       ? ""
       : JSON.stringify(editor.getEditorState().toJSON());
+  /** The one durable write, stamped with the session the buffer belongs
+   * to — a no-op while no session is bound. */
+  const saveDraft = (draft: string) => {
+    if (loadedFor.current !== null && loadedFor.current !== "") {
+      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft });
+    }
+  };
   /** Save the live buffer NOW for the session that owns it — the debounce
    * window is a data-loss window on every disposal path (webviews are
    * destroyed when hidden), so switches, submits, and pagehide all flush
@@ -189,9 +196,7 @@ function EditorCore(props: PromptEditorProps) {
     if (saveTimer.current === null) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = null;
-    if (loadedFor.current !== null && loadedFor.current !== "") {
-      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: serialize() });
-    }
+    saveDraft(serialize());
   };
   useEffect(() => {
     // Disposal flush: best-effort — the host may or may not deliver a
@@ -211,9 +216,7 @@ function EditorCore(props: PromptEditorProps) {
         if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
         saveTimer.current = window.setTimeout(() => {
           saveTimer.current = null;
-          if (loadedFor.current !== null && loadedFor.current !== "") {
-            send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: serialize() });
-          }
+          saveDraft(serialize());
         }, 400);
       }),
     [editor],
@@ -463,9 +466,7 @@ function EditorCore(props: PromptEditorProps) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    if (loadedFor.current !== null && loadedFor.current !== "") {
-      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft: "" });
-    }
+    saveDraft("");
     editor.focus();
   };
   useEffect(() => {

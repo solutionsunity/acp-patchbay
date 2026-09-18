@@ -632,7 +632,13 @@ at the front; a send the wire settled is spent, visible as a user message
 with its error turn. The composer **draft** is per-session state owned
 here, not by the webview (render-only): the composer edits the live buffer,
 saves debounced, and reads the durable copy only when switching sessions —
-its own echoes never fight the keyboard.
+its own echoes never fight the keyboard. A new chat in flight leaves no
+session active: the connect pane is up, the previous session's row is
+gone, and the box is locked with the same word until the new session
+lands — nothing typed in that window can reach the previous session's
+draft. Type-ahead for the session about to land was weighed and declined
+(scope decision): it needs a pre-session buffer and a pre-session queue
+for Enter, two concepts for a few seconds of waiting.
 
 ## Local MCP server — editor depth
 

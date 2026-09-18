@@ -13,6 +13,7 @@ import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
 import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
 import { Composer } from "./composer/composer";
+import { newChatInFlight } from "./composer/composer-controls";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
 import { ReadoutStrip } from "./readout-strip";
@@ -36,10 +37,17 @@ export function App({
   const [toast, setToast] = useState<{ msg: string; kind: "info" | "warning" } | null>(null);
 
   const pinned = pinnedSessionId !== undefined;
-  const active =
-    state.sessions.find((s) => s.id === (pinned ? pinnedSessionId : state.activeSessionId)) ??
-    null;
-  const activeAgent = active ? (state.agents.find((a) => a.id === active.agentId) ?? null) : null;
+  // A new chat in flight leaves no session active: the pane is the connect
+  // state and the composer locks with it — nothing typed can land in the
+  // session that was open before the click. The agent is the one being
+  // started.
+  const incoming = !pinned && newChatInFlight(state.chatConnect);
+  const active = incoming
+    ? null
+    : (state.sessions.find((s) => s.id === (pinned ? pinnedSessionId : state.activeSessionId)) ??
+      null);
+  const activeAgentId = active?.agentId ?? (incoming ? state.chatConnect?.agentId : undefined);
+  const activeAgent = state.agents.find((a) => a.id === activeAgentId) ?? null;
 
   // The one transcript derivation (view-model.ts), hoisted here because two
   // siblings consume it: Chat renders the items/rollups, the composer's
@@ -126,6 +134,7 @@ export function App({
       <Composer
         agent={activeAgent}
         session={active}
+        incoming={incoming}
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}

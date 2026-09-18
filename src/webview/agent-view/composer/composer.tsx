@@ -35,6 +35,9 @@ import type { AvailableCommand } from "../../../shared/protocol";
 export function Composer(props: {
   agent: AgentSummary | null;
   session: SessionSummary | null;
+  /** A new chat is starting for `agent` while `session` is still null: the
+   * box is locked and says so. */
+  incoming: boolean;
   commands: readonly AvailableCommand[];
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
@@ -80,7 +83,7 @@ export function Composer(props: {
   const drag = useRef<{ y0: number; h0: number } | null>(null);
   const submitRef = useRef<(() => void) | null>(null);
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
-  const { enabled, placeholder } = composerControls(props.session, props.agent);
+  const { enabled, placeholder } = composerControls(props.session, props.agent, props.incoming);
   const sessionId = props.session?.id ?? "";
   const live = props.session?.live ?? false;
 
