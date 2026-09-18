@@ -261,6 +261,9 @@ describe("settings projections (ui.md § Settings Agents)", () => {
     const s = events.reduce(reduceSettings, initialSettingsState);
     expect(s.sessionsToday).toBe(3);
     expect(s.agentKnobs.claude!.knobs[0]!.category).toBe("model");
+    // the defaults editor ending its session releases the surface — a
+    // re-expanded card reads fresh instead of showing the old one
+    expect(reduceSettings(s, { kind: "agentKnobsReleased", agentId: "claude" }).agentKnobs.claude).toBeUndefined();
   });
 
   it("agentVerifyStarted/Finished track exactly the in-flight agents", () => {

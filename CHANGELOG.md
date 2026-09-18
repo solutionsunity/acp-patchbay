@@ -13,6 +13,13 @@
   agent and user messages, dialogs (the download-confirm URL), popovers, and
   settings boxes. A context chip with a long path truncates with an ellipsis
   and keeps its × reachable at any panel width. (#2)
+- Agent defaults in Settings now show every knob the agent offers *for the
+  defaults you've chosen*, not just the ones it offers out of the box: pick a
+  model and its own thinking/effort levels appear as a default you can set,
+  because the card reads the surface back from the agent after each change
+  (a throwaway session, no LLM turn, ended when the card collapses). New
+  sessions then apply the saved combination in dependency order, so a
+  default that only exists once another is set still lands. (#1)
 
 ## 0.82.8 — 2026-07-22
 

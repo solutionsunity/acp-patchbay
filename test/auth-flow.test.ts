@@ -111,7 +111,6 @@ function harness(): {
   tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     emit: (...evs) => events.push(...evs),
     currentMatrix: (agentId) => state().capabilities[agentId],
-    onOfferings: () => {},
     probeRoot: async (agentId) => {
       const dir = join(cwd, "probe", agentId);
       await mkdir(dir, { recursive: true });

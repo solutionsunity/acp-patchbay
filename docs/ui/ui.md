@@ -170,13 +170,18 @@ vs `isolated, not yet used`) · default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config
 option, keyed by the option's own id — category is UX-only in ACP, so it only
 decorates with an icon when reported; boolean options render a tri-state default
-(agent default / on / off). Offerings are read fresh at every connect, never
-persisted, so the card states exactly one honest fact per situation: stopped → the
-stored selections as text (`saved defaults: … — connect to edit`); connected with
-the offering read still in flight → `reading this agent's knob offering…`; an
-agent that offered nothing reads `this agent offered no session knobs`, and saved
-selections the current connection doesn't offer are stated rather than silently
-blanked · Stop · `Diagnostics…` → modal that **discloses cost before running**
+(agent default / on / off). Offerings come from the agent itself, for the
+defaults being edited: expanding the card opens a throwaway session seeded with
+the saved defaults, every change re-reads the surface the agent answers with (a
+model's own effort levels appear the moment that model is the default), and
+collapsing the card ends it — never persisted, so the card states exactly one
+honest fact per situation: stopped → the stored selections as text (`saved
+defaults: … — connect to edit`); connected with the session still opening →
+`reading this agent's knob offering…`; an agent that can't open one yet (a
+latched agent before its first session) states why; an agent that offered
+nothing reads `this agent offered no session knobs`, and saved selections the
+current surface doesn't offer are stated rather than silently blanked · Stop ·
+`Diagnostics…` → modal that **discloses cost before running**
 (behavior probes consume real turns; ephemeral session in a temp directory — never
 the workspace). Crashed card: red note with time + one `Restart` + the process's
 stderr tail (mono, scrolling); an initialize timeout names interactive first-run

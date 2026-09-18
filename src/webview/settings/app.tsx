@@ -110,6 +110,7 @@ export function App({ state }: { state: SettingsState }) {
             onConfirmBinaryInstall={(agentId) => send({ kind: "confirmBinaryInstall", agentId })}
             onCancelBinaryInstall={(agentId) => send({ kind: "cancelBinaryInstall", agentId })}
             onReorder={(ids) => send({ kind: "reorderAgentConfigs", ids })}
+            onEditDefaults={(agentId, open) => send({ kind: "editAgentDefaults", agentId, open })}
           />
         )}
         {section === "matrix" && <MatrixSection state={state} />}

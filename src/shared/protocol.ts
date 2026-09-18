@@ -100,6 +100,10 @@ export type Action =
   /** Debounced durable save of the composer's per-session draft. */
   | { kind: "setSessionDraft"; sessionId: string; draft: string }
   | { kind: "verifyAgent"; agentId: string }
+  /** A Settings card's knob editor expanded (open) or collapsed — the
+   * orchestrator's defaults editor opens/ends the throwaway session that
+   * reads the agent's surface for the defaults being edited. */
+  | { kind: "editAgentDefaults"; agentId: string; open: boolean }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
   | { kind: "authenticateAgent"; agentId: string; methodId: string }
@@ -2219,13 +2223,15 @@ export interface AuditEntryView {
 /** What this agent's *current connection* offers, knob-wise — connection
  * state, never persisted (offerings are
  * read, never stored — provider inventory can't be version-keyed honestly).
- * Sourced from the connect-time offering read (the free probe's session/new)
- * plus every live session's responses and update notifications; the entry
- * leaves settings state when the connection does. */
+ * Sourced from the defaults editor's own throwaway session — the surface the
+ * agent reports for the defaults being edited (a surface is conditioned on
+ * its selections: a model's effort levels exist only once that model is
+ * set), re-read after every edit; the entry leaves settings state when the
+ * editor collapses or the connection ends. */
 export interface AgentKnobsView {
   /** The normalized knob offering (knobs.ts): ids, names, and offered
-   * values only — no current value, since offerings describe what the
-   * connection can do, not any one session's state. */
+   * values only — no current value: the stored defaults are the selection,
+   * the surface is what can be selected. */
   knobs: readonly {
     id: string;
     name: string;
@@ -2234,6 +2240,10 @@ export interface AgentKnobsView {
     /** Offered values — empty for boolean options. */
     values: readonly { value: string; name: string }[];
   }[];
+  /** Why no surface can be read right now (a latched agent before its
+   * first real session; a session the agent refused to open) — the card
+   * states it instead of a spinner that never resolves. */
+  unavailable?: string;
 }
 
 /** A registry `binary` distribution awaiting the one-time download
@@ -2363,6 +2373,9 @@ export type SettingsEvent =
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
+  /** The defaults editor ended its session — the surface leaves with it,
+   * so a re-expanded card reads fresh instead of showing a stale one. */
+  | { kind: "agentKnobsReleased"; agentId: string }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
@@ -2380,8 +2393,9 @@ export function reduceSettings(
       return {
         ...state,
         agents: reduceAgents(state.agents, event),
-        // Offerings are connection state — they leave with the connection;
-        // the next connect's offering read repopulates them fresh.
+        // Offerings are connection state — the defaults editor's session
+        // rode the connection, so its surface leaves with it; an expanded
+        // card reopens one when the agent is back.
         ...(event.status !== "running"
           ? { agentKnobs: dropKey(state.agentKnobs, event.agentId) }
           : {}),
@@ -2479,6 +2493,8 @@ export function reduceSettings(
       return { ...state, sessionsToday: event.sessionsToday };
     case "agentKnobsObserved":
       return { ...state, agentKnobs: { ...state.agentKnobs, [event.agentId]: event.knobs } };
+    case "agentKnobsReleased":
+      return { ...state, agentKnobs: dropKey(state.agentKnobs, event.agentId) };
     case "wireLogChanged":
       return { ...state, wireLog: { active: event.active, until: event.until } };
     case "dataInventoryChanged":
@@ -2504,6 +2520,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",
+  "agentKnobsReleased",
   "wireLogChanged",
   "dataInventoryChanged",
   "binaryInstallPending",

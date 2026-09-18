@@ -8,10 +8,12 @@
 // The verification-cost distinction draws the line precisely:
 // protocol-level checks are free and automatic on connect; behavior-level
 // probes cost a real agent turn and need real handlers to be honest at all.
-// The probe runs on *every* connect — its session/new doubles as the
-// knob-offering read (offerings are connection state, read fresh each
-// connect), proves whether `auth_required` blocks this agent, and adds the
-// session/fork round-trip while that row is still declared-but-unused.
+// The probe runs on *every* connect — its session/new is the concurrency,
+// close, and delete proof opportunity, proves whether `auth_required`
+// blocks this agent, and adds the session/fork round-trip while that row
+// is still declared-but-unused. (Knob offerings are not read here: the
+// settings defaults editor reads them from its own session, for the
+// defaults being edited.)
 // Marking a row *used* doesn't happen here, though — pool.ts's wire
 // chokepoints (agent RPC resolved, incoming request handled, session/update
 // kind tag arrived) consult the one proof table (capabilities.ts
@@ -52,13 +54,12 @@ export interface CapabilityTrackerHooks {
    * the tracker persist the whole row set wholesale without holding its
    * own copy of state that could drift from the canonical one. */
   currentMatrix(agentId: string): CapabilityMatrix | undefined;
-  /** Connect-time knob-offering read (offerings are read, never stored) —
-   * the probe's session/new response carries the agent's current knob
-   * surface. Passed raw (a new surface — spec or extension — must never
-   * ripple this signature);
-   * the receiver normalizes. Follow-up notifications for the probe session
-   * route here via `isProbeSession`. */
-  onOfferings?(agentId: string, response: NewSessionResponse): void;
+  /** Announces each throwaway probe session as its session/new lands —
+   * the raw response, so an observer (a test, a diagnostic) learns the
+   * id the agent minted and what it answered. The tracker itself routes
+   * the probe's later traffic via `isProbeSession`; settings offerings
+   * come from the defaults editor's own session, never from here. */
+  onProbeSession?(agentId: string, response: NewSessionResponse): void;
   /** The agent's standing probe workspace — a real, existing directory,
    * never the user's workspace roots. Owned by the orchestrator and deleted
    * only when the agent's config is removed: a probe session may hold this
@@ -117,11 +118,10 @@ export class CapabilityTracker {
     if (version !== null && seeded !== fresh) {
       this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
     }
-    // Every connect probes: the session/new is the knob-offering read
-    // (offerings are connection state) and the concurrency/fork proof
-    // opportunity — deliberately NOT an auth proof; its success is
-    // non-bearing evidence (auth-evidence.ts). Only the fork sub-check
-    // keeps a version-keyed skip, inside probe() itself.
+    // Every connect probes: the session/new is the concurrency/close/
+    // delete/fork proof opportunity — deliberately NOT an auth proof; its
+    // success is non-bearing evidence (auth-evidence.ts). Only the fork
+    // sub-check keeps a version-keyed skip, inside probe() itself.
     // Exception: a latched agent's probe waits for the first real session
     // (extensions/first-session-mcp-latch — the probe must not spend the
     // process's one honored mcpServers slot); re-armed on every connect
@@ -131,7 +131,7 @@ export class CapabilityTracker {
       this.log.info(`${agentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
       return;
     }
-    this.log.debug(`${agentId}: connect-time probe starting (offering read; fork where still unproven)`);
+    this.log.debug(`${agentId}: connect-time probe starting (fork where still unproven)`);
     void this.probe(agentId);
   }
 
@@ -160,6 +160,13 @@ export class CapabilityTracker {
     return this.probeSessions.get(sessionId) === agentId;
   }
 
+  /** Whether this agent's first-session privilege is still unspent — any
+   * other throwaway session (the defaults editor's) must wait as the probe
+   * does, or it would take the one honored mcpServers slot. */
+  isProbeDeferred(agentId: string): boolean {
+    return this.deferredProbes.has(agentId);
+  }
+
   markUsed(agentId: string, row: CapabilityRowId): void {
     this.hooks.emit({ kind: "capabilityUsed", agentId, row });
     this.persist(agentId);
@@ -184,9 +191,8 @@ export class CapabilityTracker {
   /** Free RPC round-trip: session/new (+ session/fork, while still
    * declared-but-unused) in a throwaway session rooted at the agent's
    * standing probe dir (hooks.probeRoot), never the workspace, never
-   * surfaced as a real session. Doubles as the connect-time
-   * offering read: the session/new response's modes/configOptions go out via
-   * onOfferings. Marking `auth`/`session.fork` used happens inside pool.ts
+   * surfaced as a real session; the raw session/new response is announced
+   * via onProbeSession. Marking `auth`/`session.fork` used happens inside pool.ts
    * itself, right where each call succeeds — this only has to make the
    * calls. A declared-but-broken fork (a lying bridge) fails here and the
    * row stays honestly at declared-but-unused. An `auth_required` error is
@@ -205,7 +211,7 @@ export class CapabilityTracker {
       const response = await this.pool.newSession(agentId, dir);
       probeSessionIds.push(response.sessionId);
       this.probeSessions.set(response.sessionId, agentId);
-      this.hooks.onOfferings?.(agentId, response);
+      this.hooks.onProbeSession?.(agentId, response);
       // Deliberately NO auth-state write here: session/new succeeding is
       // non-bearing evidence on lazy-auth agents (Claude passes it while
       // logged out), so what it means is the authority table's call

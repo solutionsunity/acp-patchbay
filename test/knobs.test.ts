@@ -8,6 +8,7 @@ import type { SessionConfigOption, SessionModeState } from "@agentclientprotocol
 import {
   applyConfigUpdate,
   applyModeUpdate,
+  applySeedToFixedPoint,
   confirmedFromKnobs,
   foldSeed,
   MODE_KNOB_ID,
@@ -228,6 +229,53 @@ describe("extension extras (the wire-extension door)", () => {
     const advanced = withKnobValue(n, "model", "b");
     expect(advanced.knobs.find((k) => k.id === "model")).toMatchObject({ currentValue: "b" });
     expect(advanced.knobs.find((k) => k.id === MODE_KNOB_ID)).toMatchObject({ currentValue: "ask" });
+  });
+});
+
+describe("applySeedToFixedPoint — a surface conditioned on its own selections", () => {
+  /** A fake wire: `effort` exists only once model=pro is set. */
+  const EFFORT: SessionConfigOption = {
+    id: "effort",
+    name: "Effort",
+    type: "select",
+    currentValue: "medium",
+    options: [
+      { value: "low", name: "Low" },
+      { value: "high", name: "High" },
+    ],
+  };
+  const PRO_MODEL: SessionConfigOption = {
+    ...MODEL_OPTION,
+    options: [
+      { value: "sonnet", name: "Sonnet" },
+      { value: "pro", name: "Pro" },
+    ],
+  };
+  function wire() {
+    let surface = applyConfigUpdate([PRO_MODEL]);
+    const sets: string[] = [];
+    const set = async (route: { via: string; configId?: string }, knobId: string, value: string | boolean) => {
+      sets.push(`${knobId}=${String(value)}`);
+      const options = surface.knobs.map((k) => (k.id === knobId ? { ...k, currentValue: value } : k));
+      const model = options.find((k) => k.id === "model")?.currentValue;
+      const effort = options.find((k) => k.id === "effort") ?? EFFORT; // a dependent keeps its value while it stays
+      const withEffort = model === "pro" ? [...options.filter((k) => k.id !== "effort"), effort] : options.filter((k) => k.id !== "effort");
+      surface = applyConfigUpdate(withEffort as unknown as SessionConfigOption[]);
+    };
+    return { current: () => surface, set, sets };
+  }
+
+  it("lands an entry whose knob appears only after an earlier entry's set — regardless of key order", async () => {
+    const w = wire();
+    await applySeedToFixedPoint({ effort: "high", model: "pro" }, w.current, w.set);
+    expect(w.sets).toEqual(["model=pro", "effort=high"]);
+    expect(confirmedFromKnobs(w.current())).toEqual({ model: "pro", effort: "high" });
+  });
+
+  it("skips what the surface never offers, without re-asking — terminates", async () => {
+    const w = wire();
+    await applySeedToFixedPoint({ nothing: "x", model: "sonnet", effort: "high" }, w.current, w.set);
+    expect(w.sets).toEqual(["model=sonnet"]); // effort never appears for sonnet; `nothing` never exists
   });
 });
 

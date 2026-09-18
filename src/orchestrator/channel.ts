@@ -37,6 +37,7 @@ export class ChannelHost<S, E> {
   private readonly bus: CoalescingBus<E>;
   private ackWaiters: Array<{ rev: number; resolve: (rev: number) => void }> = [];
   private changeListeners = new Set<() => void>();
+  private attachmentListeners = new Set<(attached: boolean) => void>();
 
   constructor(
     initial: S,
@@ -108,13 +109,26 @@ export class ChannelHost<S, E> {
   }
 
   attach(view: WebviewLike): void {
+    const wasAttached = this.attached;
     this.views.add(view);
     this.lastAckedRev = -1;
+    if (!wasAttached) for (const l of this.attachmentListeners) l(true);
   }
 
   detach(view: WebviewLike): void {
     this.views.delete(view);
-    if (this.views.size === 0) this.lastAckedRev = -1;
+    if (this.views.size === 0) {
+      this.lastAckedRev = -1;
+      for (const l of this.attachmentListeners) l(false);
+    }
+  }
+
+  /** Fires on the 0↔1 transitions of attached webviews — the signal for
+   * host-side work that exists only to serve a visible surface (the
+   * settings defaults editor's throwaway sessions end with the panel). */
+  onAttachment(listener: (attached: boolean) => void): () => void {
+    this.attachmentListeners.add(listener);
+    return () => this.attachmentListeners.delete(listener);
   }
 
   handleViewMessage(msg: ViewToHost): void {

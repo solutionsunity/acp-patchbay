@@ -32,12 +32,13 @@ import { ATTACHMENTS_DIR } from "./attachments";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
+import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
-import { applyConfigUpdate, foldSeed, normalizeKnobs, toOfferedKnobs, type NormalizedKnobs } from "./knobs";
+import { foldSeed, normalizeKnobs } from "./knobs";
 import { sessionKnobExtras, typedAuthMethodOf, type TypedTerminalAuth } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
@@ -136,6 +137,7 @@ export class Orchestrator {
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
   readonly capabilityTracker: CapabilityTracker;
+  private readonly defaultsEditor: DefaultsEditor;
   readonly broker: PermissionBroker;
   readonly editorStateHost: EditorStateHost;
   readonly integrationTokens: IntegrationTokenStore;
@@ -366,6 +368,8 @@ export class Orchestrator {
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidateAgent(agentId);
         }
+        // The editor's session rode the connection that just ended.
+        if (status !== "running") this.defaultsEditor.forget(agentId);
         // Every connect of a list-capable agent syncs its own session
         // history into the list — the wire is the ONLY list (patchbay
         // persists no session records). The promise is tracked so the
@@ -388,9 +392,9 @@ export class Orchestrator {
             });
           this.pendingSyncs.set(agentId, sync);
         }
-        // Offerings are connection state —
-        // the settings reducer drops its copy off this same event, and the
-        // next connect's offering read repopulates it.
+        // Offerings are connection state — the settings reducer drops its
+        // copy off this same event; the defaults editor forgot its session
+        // above, and an expanded card reopens one once running.
       },
       onIsolatedStatusChanged: (poolKey, _agentId, status) => {
         // Not surfaced in the Agents list (isolated instances are an
@@ -425,16 +429,11 @@ export class Orchestrator {
         this.typedTerminalAuth.set(agentId, typed);
       },
       onSessionUpdate: (agentId, notification) => {
-        // A throwaway probe session's late config_option_update still counts
-        // as part of the connect-time offering read — some agents deliver
-        // the option surface only after session/new returns.
-        if (this.capabilityTracker.isProbeSession(agentId, notification.sessionId)) {
-          if (notification.update.sessionUpdate === "config_option_update") {
-            this.noteOfferings(
-              agentId,
-              applyConfigUpdate(notification.update.configOptions, undefined, (m) => this.log.info(m)),
-            );
-          }
+        // Throwaway sessions never reach a transcript: the probe's traffic
+        // is dropped, the defaults editor's feeds its own surface.
+        if (this.capabilityTracker.isProbeSession(agentId, notification.sessionId)) return;
+        if (this.defaultsEditor.owns(agentId, notification.sessionId)) {
+          this.defaultsEditor.handleUpdate(agentId, notification);
           return;
         }
         this.sessionManager.handleUpdate(agentId, notification);
@@ -456,15 +455,18 @@ export class Orchestrator {
       onPermissionRequest: async (agentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
-        // A throwaway probe session can trip real agent-side gates (Auggie's
-        // workspace-indexing question rides session/new). No surface renders
-        // a probe session, so the card/toast path would leave the agent's
-        // RPC dangling forever — a JSON-RPC request is always owed an
-        // answer. Least privilege instead: the question re-asks on the
-        // user's first real session, and the probe's temp dir is about to
-        // be deleted anyway.
-        if (this.capabilityTracker.isProbeSession(agentId, params.sessionId)) {
-          this.log.info(`${agentId}: auto-declined "${title}" on a probe session`);
+        // A throwaway session — the probe's or the defaults editor's — can
+        // trip real agent-side gates (Auggie's workspace-indexing question
+        // rides session/new). No surface renders one, so the card/toast
+        // path would leave the agent's RPC dangling forever — a JSON-RPC
+        // request is always owed an answer. Least privilege instead: the
+        // question re-asks on the user's first real session, and the probe
+        // dir is never the workspace.
+        if (
+          this.capabilityTracker.isProbeSession(agentId, params.sessionId) ||
+          this.defaultsEditor.owns(agentId, params.sessionId)
+        ) {
+          this.log.info(`${agentId}: auto-declined "${title}" on a throwaway session`);
           const auto = await this.broker.resolveProbePermissionRequest(
             params.sessionId,
             title,
@@ -763,21 +765,29 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
-        onOfferings: (agentId, response) =>
-          this.noteOfferings(
-            agentId,
-            normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
-              this.log.info(m),
-            ),
-          ),
-        probeRoot: async (agentId) => {
-          const dir = join(this.probeRootBase, agentId);
-          await mkdir(dir, { recursive: true });
-          return dir;
-        },
+        probeRoot: (agentId) => this.probeRoot(agentId),
       },
       log,
     );
+    this.defaultsEditor = new DefaultsEditor(
+      this.pool,
+      {
+        probeRoot: (agentId) => this.probeRoot(agentId),
+        defaultsFor: (agentId) => this.configuredAgentSpecs.get(agentId)?.defaults ?? {},
+        normalize: (response) =>
+          normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
+            this.log.info(m),
+          ),
+        mayOpen: (agentId) => !this.capabilityTracker.isProbeDeferred(agentId),
+        emit: (...events) => this.settings.emit(...events),
+      },
+      log,
+    );
+    // The editor's sessions exist only to serve the open panel — they end
+    // with it.
+    this.settings.onAttachment((attached) => {
+      if (!attached) void this.defaultsEditor.closeAll();
+    });
     this.broker = new PermissionBroker(
       this.permissionRules,
       this.decisionAudit,
@@ -1227,16 +1237,6 @@ export class Orchestrator {
     }
   }
 
-  /** Settings-side projections of session-manager events: the sessions-today
-   * stat tile. Live sessions' knob surfaces
-   * deliberately do NOT feed the Settings offerings: a set_config_option
-   * response is the session's option surface *given its current selections*
-   * (fast mode exists only on some models, effort lists vary per model) —
-   * session state, not provider inventory. Republishing it as agent-level
-   * offerings made the Settings default-knob rows track whichever session
-   * last touched a knob. Offerings come only from session-independent
-   * reads: the connect-time probe (noteOfferings via the capability
-   * tracker, plus the probe session's late config_option_update). */
   /** A closed session's context tokens leave the map with it: the token
    * names a session-scoped identity, and an entry outliving its session
    * would route a late MCP subprocess call into whatever transcript owns
@@ -1251,6 +1251,12 @@ export class Orchestrator {
     }
   }
 
+  /** Settings-side projections of session-manager events: the sessions-today
+   * stat tile. Live sessions' knob surfaces deliberately do NOT feed the
+   * Settings offerings — a session's surface is conditioned on its own
+   * selections, so republishing it would make the default-knob rows track
+   * whichever session last touched a knob; the defaults editor reads its
+   * own session instead. */
   private relaySettingsDerived(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
@@ -1259,28 +1265,15 @@ export class Orchestrator {
     }
   }
 
-  /** Knob offerings for Settings — connection-scoped, in-memory only
-   * (offerings are read, never stored).
-   * Sources: the connect-time probe read only (session/new response plus
-   * the probe's late config_option_update) — a fresh session at agent
-   * defaults, so its surface is the one a new session will actually offer.
-   * Never live sessions: their surfaces are conditioned on their own
-   * selections (see relaySettingsDerived). Each read is a complete
-   * normalized surface (knobs.ts exclusivity killed the old modes/options
-   * two-half merge), so every observation replaces wholesale. An empty
-   * surface is not an observation. */
-  private noteOfferings(agentId: string, normalized: NormalizedKnobs): void {
-    // An empty surface is not an observation — and neither is an empty
-    // knob list: a probe session's late config_option_update carrying no
-    // (or all-rejected) options normalizes to surface "config" with zero
-    // knobs, and replacing the session/new-read offerings with that would
-    // be erasure by weaker evidence.
-    if (normalized.surface === "none" || normalized.knobs.length === 0) return;
-    this.settings.emit({
-      kind: "agentKnobsObserved",
-      agentId,
-      knobs: { knobs: toOfferedKnobs(normalized.knobs) },
-    });
+  /** An agent's standing throwaway workspace (`probe/<agentId>`) — the
+   * capability probe's and the defaults editor's sessions both open here,
+   * never in a user workspace root. Created idempotently, deleted only with
+   * the agent's config (removeAgentConfig): a workspace-aware agent may
+   * hold it agent-side past session/new. */
+  private async probeRoot(agentId: string): Promise<string> {
+    const dir = join(this.probeRootBase, agentId);
+    await mkdir(dir, { recursive: true });
+    return dir;
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).
@@ -1634,6 +1627,9 @@ export class Orchestrator {
     });
     this.agentNames.set(config.id, config.name);
     await this.refreshAgentConfigs();
+    // The store moved; an open editor re-reads the surface for the new
+    // defaults from the agent (a no-op when no editor is open).
+    void this.defaultsEditor.defaultsChanged(config.id);
   }
 
   /** Remove is stop + forget ("add, edit, and remove agents") —
@@ -1828,8 +1824,8 @@ export class Orchestrator {
     const existing = this.agentConfigs.get(agentId);
     if (existing === undefined || existing.lastSeenVersion === version) return;
     // Knob offerings need no reset here: they're connection-scoped, and a
-    // version can only change on a fresh connect, whose own offering read
-    // just repopulated them.
+    // version can only change on a fresh connect, which already dropped
+    // them with the old connection.
     await this.agentConfigs.upsert({ ...existing, lastSeenVersion: version });
     await this.refreshAgentConfigs();
   }
@@ -2130,6 +2126,9 @@ export class Orchestrator {
         break;
       case "verifyAgent":
         void this.runVerify(action.agentId);
+        break;
+      case "editAgentDefaults":
+        void (action.open ? this.defaultsEditor.open(action.agentId) : this.defaultsEditor.close(action.agentId));
         break;
       case "resolvePermission":
         this.broker.resolve(action.requestId, action.optionId);

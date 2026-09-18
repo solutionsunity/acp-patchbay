@@ -35,6 +35,7 @@ import { imageFileName, readStashedImage, stashImage } from "./attachments";
 import {
   applyConfigUpdate,
   applyModeUpdate,
+  applySeedToFixedPoint,
   confirmedFromKnobs,
   NO_KNOBS,
   normalizeKnobs,
@@ -1303,39 +1304,43 @@ export class SessionManager {
     else await this.applySeedFor(agentId, sessionId);
   }
 
-  /** Issues the set requests for a knob seed, each routed and guarded by
-   * knobs.ts against what this session actually offers — silently skipped
-   * otherwise. Rejections are swallowed: the honest displayed state comes
-   * from the agent's own responses/notifications either way. */
+  /** Issues the set requests for a knob seed to a fixed point (knobs.ts
+   * applySeedToFixedPoint), each routed and guarded against what this
+   * session actually offers at that moment — silently skipped otherwise.
+   * Rejections are swallowed: the honest displayed state comes from the
+   * agent's own responses/notifications either way. A session that vanished
+   * mid-seed reads as an empty surface, which ends the loop. */
   private async applySeed(sessionId: string, seed: KnobSeed): Promise<void> {
-    for (const [knobId, value] of Object.entries(seed)) {
-      const session = this.sessions.get(sessionId);
-      if (!session) return;
-      const route = routeKnobSet(session.knobs, knobId, value);
-      if (route === null) continue;
-      if (route.via === "setMode") {
-        await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId).catch(() => {});
-        continue;
-      }
-      if (route.via === "extension") {
-        try {
-          const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
-          if (next !== null) this.publishKnobs(sessionId, next);
-        } catch {
-          // rejected seed entry — the extension's axis stands, nothing to repair
+    await applySeedToFixedPoint(
+      seed,
+      () => this.sessions.get(sessionId)?.knobs ?? NO_KNOBS,
+      async (route, _knobId, value) => {
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+        if (route.via === "setMode") {
+          await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId).catch(() => {});
+          return;
         }
-        continue;
-      }
-      try {
-        const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-        this.publishKnobs(
-          sessionId,
-          applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog),
-        );
-      } catch {
-        // rejected seed entry — the agent's state stands, nothing to repair
-      }
-    }
+        if (route.via === "extension") {
+          try {
+            const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
+            if (next !== null) this.publishKnobs(sessionId, next);
+          } catch {
+            // rejected seed entry — the extension's axis stands, nothing to repair
+          }
+          return;
+        }
+        try {
+          const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
+          this.publishKnobs(
+            sessionId,
+            applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog),
+          );
+        } catch {
+          // rejected seed entry — the agent's state stands, nothing to repair
+        }
+      },
+    );
   }
 
   addContext(sessionId: string, chip: ContextChip): void {

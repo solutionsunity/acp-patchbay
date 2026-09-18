@@ -71,6 +71,12 @@ export interface FakeAgentScript {
    * response field only — no config_option_update echo. Spec-conformant, not
    * a lie: claude-agent-acp behaves this way for client-initiated sets. */
   configSetRepliesOnly?: boolean;
+  /** Options that exist only for certain values of another option — the
+   * surface is a function of its selections (observed: OpenCode offers
+   * `effort` only for models with variants). After every set the surface is
+   * rebuilt as the base options plus each dependent whose condition the
+   * current values satisfy; a dependent keeps its value while it stays. */
+  dependentOptions?: { on: { configId: string; value: string }; option: acp.SessionConfigOption }[];
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -557,6 +563,14 @@ const app = acp
     const option = session.configOptions?.find((o) => o.id === ctx.params.configId);
     if (!option) throw acp.RequestError.invalidRequest(`unknown config option ${ctx.params.configId}`);
     option.currentValue = ctx.params.value as never;
+    if (script.dependentOptions && session.configOptions) {
+      const dependents = script.dependentOptions;
+      const base = session.configOptions.filter((o) => !dependents.some((d) => d.option.id === o.id));
+      const live = dependents
+        .filter((d) => base.find((o) => o.id === d.on.configId)?.currentValue === d.on.value)
+        .map((d) => session.configOptions!.find((o) => o.id === d.option.id) ?? structuredClone(d.option));
+      session.configOptions = [...base, ...live];
+    }
     if (!script.configSetRepliesOnly) {
       await ctx.client.notify(acp.methods.client.session.update, {
         sessionId: session.id,

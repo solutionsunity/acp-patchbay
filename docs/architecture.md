@@ -311,14 +311,16 @@ Verification cost splits the triggers:
 
 | Trigger | Protocol-level (free RPC) | Behavior-level (costs real LLM turns) |
 |---|---|---|
-| Connect/reconnect: `session/new` always (it doubles as the knob-offering read — offerings are connection state and must be read fresh); the `session/fork` half only while still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
+| Connect/reconnect: `session/new` always (the concurrency/close/delete proof opportunity); the `session/fork` half only while still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
 | User-run diagnostics (Settings › Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
 | Background schedule | Fine, cheap | Never |
 
 Connect therefore always implies one throwaway probe session — an accepted
-behavioral contract, not an accident: `session/new` is free, the offering read
-needs it every connect (see § Session model), and concurrency proof falls
-out of the same round-trip opportunistically. (Auth proof deliberately does
+behavioral contract, not an accident: `session/new` is free, and the
+concurrency, close, and delete proofs fall out of the one round-trip
+opportunistically. (The Settings defaults editor opens its own throwaway
+session on the same standing probe directory — see § Session model — but
+only while a card's knob editor is expanded, never at connect.) (Auth proof deliberately does
 NOT — see § Auth evidence below: `session/new` succeeding is non-bearing on
 lazy-auth agents.) The probe session's root is the
 agent's **standing probe workspace** (`globalStorage/probe/<agentId>` — never
@@ -527,17 +529,29 @@ And offerings are provider inventory, not build behavior: a provider adds or
 removes a model without `agentInfo.version` moving, so no persisted copy can be
 keyed honestly. Therefore:
 
-- **Offerings** are connection-scoped, in-memory only: read from the
-  connect-time probe alone (the free `session/new` every connect performs — see
-  the capability matrix section — plus the probe session's own late
-  `config_option_update`), gone when the connection ends. Settings renders
+- **Offerings** are read by the Settings defaults editor from its own
+  throwaway session, for the defaults being edited. A surface is conditioned on
+  its selections — OpenCode offers `effort` only for models with variants, with
+  values per model; effort lists vary per model on Claude too — so a surface
+  read at agent defaults cannot show the knobs a saved default reveals, and no
+  cached union could state their values (option lists come from remote
+  providers and move without the agent's version moving). The editor
+  (`defaults-editor.ts`) therefore opens one session per expanded card on the
+  standing probe directory (no MCP servers, never an LLM turn), seeds it with
+  the stored defaults to a fixed point, publishes the surface the agent answers
+  with, re-reads after every edit (`set_config_option` is a free read), and
+  ends the session on collapse, panel close, or disconnect. The session
+  holds no truth — the store does — so a dead or stale one is thrown away and
+  recomputed, never reconciled. Live sessions never feed the form: their
+  surfaces track whichever session last touched a knob. Settings renders
   offerings only while the agent is connected; stopped agents show stored
-  selections as text. (A live session's option surface is conditioned on that
-  session's current selections — fast mode exists only on some models, effort
-  lists vary per model — so it is session state, not provider inventory; using
-  it would make the default-knob rows track whichever session last touched a
-  knob. The probe session sits at agent defaults, so its surface is exactly
-  what a new session will be offered — the right inventory for a defaults form.)
+  selections as text. A latched agent (first-session MCP latch) states that
+  its defaults open after its first real session rather than spending the
+  latch on the editor.
+- **Seeds apply to a fixed point** (`applySeedToFixedPoint`, knobs.ts): an
+  entry the surface doesn't offer yet may be revealed by an earlier entry's
+  set, so passes repeat until a pass lands nothing — `{effort, model}` lands
+  regardless of key order, for the editor's session and real sessions alike.
 - **Selections** (per-agent defaults, part of the agent's config record; and
   per-session confirmed state, below) are the only persisted artifacts — bare
   ids/values, never lists.

@@ -395,6 +395,34 @@ export function routeKnobSet(
   return { via: "setConfigOption", configId: knobId };
 }
 
+/** Applies a knob seed against a live surface until nothing more lands.
+ * A surface is a function of its own selections — an agent may offer
+ * `effort` only once a model with variants is selected — so one pass in
+ * key order would silently drop an entry whose knob appears after an
+ * earlier entry's set. Passes repeat while a pass landed something; an
+ * entry the surface never offers is skipped, never retried. `current`
+ * re-reads the surface after every set; `set` performs one routed set
+ * (rejections are the caller's to swallow — a rejected entry still counts
+ * as landed, patchbay never re-asks). */
+export async function applySeedToFixedPoint(
+  seed: KnobSeed,
+  current: () => NormalizedKnobs,
+  set: (route: KnobSetRoute, knobId: string, value: string | boolean) => Promise<void>,
+): Promise<void> {
+  const pending = new Map(Object.entries(seed));
+  let landed = true;
+  while (landed && pending.size > 0) {
+    landed = false;
+    for (const [knobId, value] of [...pending]) {
+      const route = routeKnobSet(current(), knobId, value);
+      if (route === null) continue;
+      pending.delete(knobId);
+      landed = true;
+      await set(route, knobId, value);
+    }
+  }
+}
+
 /** The agent-confirmed combination a normalized state represents (id-keyed;
  * the modes-surface knob lands under MODE_KNOB_ID) — what the KnownSession
  * row snapshots for involuntary re-attach, and what the composer-knobs

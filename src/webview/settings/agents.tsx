@@ -4,7 +4,7 @@
 // Agents: stat tiles + Add Agent, one card per known
 // agent — status live, capabilities claimed-until-exercised, write-only env,
 // knobs offering only what the agent actually offered.
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
@@ -589,6 +589,9 @@ export function AgentsSection(props: {
   onConfirmBinaryInstall(agentId: string): void;
   onCancelBinaryInstall(agentId: string): void;
   onReorder(ids: string[]): void;
+  /** A card's knob editor is showing (open) or gone — the host opens or
+   * ends the throwaway session that reads the agent's surface. */
+  onEditDefaults(agentId: string, open: boolean): void;
 }) {
   const { state } = props;
   const [editing, setEditing] = useState<string | null>(null); // agentId being edited
@@ -596,6 +599,27 @@ export function AgentsSection(props: {
   // Card body (command line, capabilities, knobs) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
+  // The knob editor reads the agent's surface through a host-side session
+  // that exists while a card is expanded AND its agent is running — a card
+  // expanded while stopped gets its session the moment the agent comes up.
+  // Opening is derived here; collapse is the gear click; unmount releases
+  // whatever is still open.
+  const editingIds = Object.keys(openDetails)
+    .filter((id) => openDetails[id] && state.agents.find((a) => a.id === id)?.status === "running")
+    .join("\n");
+  const onEditDefaults = useRef(props.onEditDefaults);
+  onEditDefaults.current = props.onEditDefaults;
+  useEffect(() => {
+    for (const id of editingIds.split("\n").filter(Boolean)) onEditDefaults.current(id, true);
+  }, [editingIds]);
+  const editingRef = useRef(editingIds);
+  editingRef.current = editingIds;
+  useEffect(
+    () => () => {
+      for (const id of editingRef.current.split("\n").filter(Boolean)) onEditDefaults.current(id, false);
+    },
+    [],
+  );
 
   // One card per known agent id — the union of connected-this-session
   // (state.agents) and persisted (state.agentConfigs); Add always persists,
@@ -797,6 +821,9 @@ export function AgentsSection(props: {
                       onClick={() => {
                         if (editing === id) setEditing(null);
                         setOpenDetails({ ...openDetails, [id]: !detailsOpen });
+                        // Opening is derived (expanded ∧ running — the effect
+                        // above); collapsing is this click, stated once.
+                        if (detailsOpen) props.onEditDefaults(id, false);
                       }}
                     >
                       <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
@@ -883,11 +910,13 @@ export function AgentsSection(props: {
                         // to render, only the stored selections stated as text.
                         <StoredDefaultsLine defaults={effectiveConfig.defaults} />
                       ) : knobs === undefined ? (
-                        // Connected but the connect-time offering read hasn't
-                        // landed (or is blocked on login) — pending, not "none".
+                        // Connected, the editor's session still opening —
+                        // pending, not "none".
                         <span className="note m-0 self-center">
                           reading this agent's knob offering…
                         </span>
+                      ) : knobs.unavailable !== undefined ? (
+                        <span className="note m-0 self-center">{knobs.unavailable}</span>
                       ) : (
                         <>
                           {offeredKnobs.map((knob) => (
