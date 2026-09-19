@@ -67,10 +67,6 @@ const sessionContinuityEntrySchema = z.object({
 export type SessionContinuityEntry = z.infer<typeof sessionContinuityEntrySchema>;
 
 const KEY = "acpPatchbay.sessionContinuity";
-/** The short-lived predecessor (knobs only) — folded in and dropped on
- * first construction; the key never gets written again. Retire the fold
- * with the first release after 0.82.8: no published build ever wrote it. */
-const LEGACY_KNOBS_KEY = "acpPatchbay.sessionKnobs";
 
 /** Row identity is the PAIR: session ids are agent-minted, and two agents
  * minting the same string are two different sessions — a sessionId-only
@@ -91,26 +87,6 @@ function isEmpty(value: SessionContinuity[keyof SessionContinuity]): boolean {
 export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityEntry> {
   constructor(kv: KV) {
     super(kv, KEY, sessionContinuityEntrySchema);
-    const legacy = kv.get<unknown[]>(LEGACY_KNOBS_KEY);
-    if (legacy !== undefined) {
-      for (const item of legacy) {
-        const parsed = z
-          .object({ id: z.string().min(1), agentId: z.string().min(1), seed: knobSeedSchema })
-          .safeParse(item);
-        if (parsed.success && this.read(parsed.data.id, parsed.data.agentId) === undefined) {
-          // Best-effort fold: a failing disk write here loses only rows a
-          // never-published build wrote — swallowed, never unhandled.
-          void this
-            .upsert({
-              id: rowId(parsed.data.agentId, parsed.data.id),
-              agentId: parsed.data.agentId,
-              knobs: parsed.data.seed,
-            })
-            .catch(() => {});
-        }
-      }
-      void Promise.resolve(kv.update(LEGACY_KNOBS_KEY, undefined)).catch(() => {});
-    }
   }
 
   read(sessionId: string, agentId: string): SessionContinuity | undefined {

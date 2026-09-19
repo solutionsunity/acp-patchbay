@@ -368,12 +368,4 @@ describe("SessionContinuityStore", () => {
     await store.patch("s1", "claude", { knobs: {} });
     expect(store.list()).toEqual([]);
   });
-
-  it("folds the legacy knob rows in once and drops the old key", async () => {
-    const kv = new MemoryKV();
-    await kv.update("acpPatchbay.sessionKnobs", [{ id: "s1", agentId: "claude", seed: { mode: "code" } }]);
-    const store = new SessionContinuityStore(kv);
-    expect(store.read("s1", "claude")?.knobs).toEqual({ mode: "code" });
-    expect(kv.get("acpPatchbay.sessionKnobs")).toBeUndefined();
-  });
 });
