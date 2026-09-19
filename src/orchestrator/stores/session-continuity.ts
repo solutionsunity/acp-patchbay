@@ -29,6 +29,8 @@ const queuedPromptSchema = z.object({
       ]),
     )
     .optional(),
+  // the composer's own form of the words — opaque here, like `draft` below
+  draft: z.string().optional(),
 });
 
 const persistedChipSchema = z.discriminatedUnion("kind", [

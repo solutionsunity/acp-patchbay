@@ -646,7 +646,14 @@ opening the session (or the lock clearing) is their release, and a new
 prompt sent while held words wait joins the queue *behind* them — order is
 part of the contract. Held words also survive an involuntary drop (crash,
 connection death): only the user discards words — Stop, the row's ×, close
-(a reload keeps them and re-drains after its re-attach). The drain rides
+(a reload keeps them and re-drains after its re-attach). Held rows render in
+their own band between the read-out strip and the composer (messages
+already written, not this message's context); every row copies its text,
+and the tail — the one row whose place a resend keeps — takes back into the
+composer: the row leaves the queue and its own editor state (carried on the
+row from the send) becomes the session draft, honored only into an empty
+draft, which the composer flushes on blur so the click reads truth. A
+non-tail row is edited by hand: copy, ×, paste. The drain rides
 success: it fires one held prompt per completed turn (plus login, open, and
 reload's re-attach), holds while the agent isn't running, and never
 auto-retries after a failure — a send that never started re-holds the words

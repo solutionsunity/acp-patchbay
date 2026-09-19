@@ -72,10 +72,12 @@ export interface PromptEditorProps {
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   hasSelection: boolean;
-  /** `parts` present only when the prompt carries inline file mentions.
-   * Always consumes the draft: Enter during a live turn queues the prompt
-   * (orchestrator-side) — only the Stop button stops. */
-  onSubmit(text: string, parts?: readonly PromptPart[]): void;
+  /** `parts` present only when the prompt carries inline file mentions;
+   * `draft` is the buffer's serialized editor state at the moment of send,
+   * so a held prompt can be taken back exactly. Always consumes the
+   * buffer: Enter during a live turn queues the prompt (orchestrator-side)
+   * — only the Stop button stops. */
+  onSubmit(text: string, parts: readonly PromptPart[] | undefined, draft: string): void;
   /** Files lifted off the clipboard — a pasted bitmap (Chromium exposes it
    * as an image/png File) or copied files. The composer runs them through
    * the attachment ingress (ingress.ts); nothing is decided here. */
@@ -208,6 +210,17 @@ function EditorCore(props: PromptEditorProps) {
       flushDraft();
     };
   }, []);
+  // Blur flush: focus leaving the box is the moment the durable draft has
+  // to be true — a click landing elsewhere (the queue band's "edit", which
+  // the orchestrator honors only into an empty draft) reads it next.
+  useEffect(
+    () =>
+      editor.registerRootListener((root, prev) => {
+        prev?.removeEventListener("blur", flushDraft);
+        root?.addEventListener("blur", flushDraft);
+      }),
+    [editor],
+  );
   useEffect(
     () =>
       editor.registerUpdateListener(({ dirtyElements, dirtyLeaves }) => {
@@ -455,7 +468,7 @@ function EditorCore(props: PromptEditorProps) {
       return { text: $getRoot().getTextContent(), parts: collected };
     });
     if (text.trim() === "") return;
-    props.onSubmit(text, parts.some((p) => p.kind === "fileRef") ? parts : undefined);
+    props.onSubmit(text, parts.some((p) => p.kind === "fileRef") ? parts : undefined, serialize());
     editor.update(() => {
       $getRoot().clear();
     });

@@ -12,7 +12,6 @@ import type {
   LiveSelectionView,
   OpenEditorView,
   PromptPart,
-  QueuedPrompt,
   SessionKnobView,
   SessionSummary,
   UsageInfo,
@@ -51,8 +50,6 @@ export function Composer(props: {
   /** Cumulative +/- since first touch, per path — the files chip's badges. */
   fileDiffStats: Readonly<Record<string, { additions: number; deletions: number }>>;
   liveSelection: LiveSelectionView | null;
-  /** Prompts sent mid-turn, waiting for the turn to end — removable rows. */
-  queued: readonly QueuedPrompt[];
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   knobs: readonly SessionKnobView[];
@@ -94,8 +91,8 @@ export function Composer(props: {
   // Enter during a live turn queues (the orchestrator holds it until the
   // turn ends); the Stop button is the only stop — Enter-as-stop would be
   // too easy to trip once sending mid-turn is legal.
-  const onSubmit = (text: string, parts?: readonly PromptPart[]): void =>
-    send({ kind: "sendPrompt", sessionId, text, parts });
+  const onSubmit = (text: string, parts: readonly PromptPart[] | undefined, draft: string): void =>
+    send({ kind: "sendPrompt", sessionId, text, parts, draft });
 
   /** The adder's entries — also reused by the `@` mention picker's fixed rows. */
   const addSelection = () => send({ kind: "addSelectionContext", sessionId });
@@ -177,19 +174,6 @@ export function Composer(props: {
         {/* the grabber pill — the visible "hold here" affordance */}
         <div className="h-[3px] w-10 rounded-full bg-border transition-colors group-hover:bg-muted-foreground group-active:bg-muted-foreground" />
       </div>
-      {props.queued.map((q) => (
-        <div className="queue-row" key={q.id} title={q.text}>
-          <Icon name="history" />
-          <span className="txt">{q.text}</span>
-          <span
-            className="x"
-            title="Remove from queue"
-            onClick={() => send({ kind: "removeQueuedPrompt", sessionId, promptId: q.id })}
-          >
-            ×
-          </span>
-        </div>
-      ))}
       {(props.contextChips.length > 0 || props.contextRoots.length > 0 || enabled) && (
         <div className="ctx-row">
           {enabled && (

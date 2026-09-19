@@ -335,14 +335,23 @@ describe("SessionContinuityStore", () => {
   });
 
   it("patch merges fields; empty values delete them; a fieldless row leaves the store", async () => {
-    const store = new SessionContinuityStore(new MemoryKV());
+    const kv = new MemoryKV();
+    const store = new SessionContinuityStore(kv);
     await store.patch("s1", "claude", { knobs: { model: "sonnet" } });
-    await store.patch("s1", "claude", { queue: [{ id: "q1", text: "held" }], draft: "typing…" });
-    expect(store.read("s1", "claude")).toEqual({
-      knobs: { model: "sonnet" },
-      queue: [{ id: "q1", text: "held" }],
+    await store.patch("s1", "claude", {
+      queue: [{ id: "q1", text: "held", draft: '{"editor":"held"}' }],
       draft: "typing…",
     });
+    expect(store.read("s1", "claude")).toEqual({
+      knobs: { model: "sonnet" },
+      queue: [{ id: "q1", text: "held", draft: '{"editor":"held"}' }],
+      draft: "typing…",
+    });
+    // a held row's editor state survives the next window's load — the
+    // schema must carry it, not strip it as an unknown key
+    expect(new SessionContinuityStore(kv).read("s1", "claude")?.queue).toEqual([
+      { id: "q1", text: "held", draft: '{"editor":"held"}' },
+    ]);
     // drained queue and cleared draft drop their fields, knobs stand
     await store.patch("s1", "claude", { queue: [], draft: "" });
     expect(store.read("s1", "claude")).toEqual({ knobs: { model: "sonnet" } });

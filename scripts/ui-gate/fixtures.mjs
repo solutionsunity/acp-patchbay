@@ -73,6 +73,8 @@ export const chatTranscript = [
 export const longQueuedPrompt = {
   id: "q1",
   text: "https://api.github.com/repos/odoo/odoo/commits?path=addons/web/static/src/views/form/form_controller.scss&sha=17.0",
+  // carries its editor state, so the row renders its full set: copy, edit, ×
+  draft: '{"root":{}}',
 };
 
 /** A selection chip whose label is one unbreakable absolute path — same

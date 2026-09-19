@@ -270,6 +270,45 @@ describe("SessionManager", () => {
     await h.pool.stop("smq1");
   });
 
+  it("a held prompt carries the composer's draft; take-back is tail-only, draft-only, and leaves the rest in order", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 },
+        "smq4",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("smq4", "Fake Agent", cwd);
+
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first");
+    await new Promise((r) => setTimeout(r, 80));
+    await h.sessionManager.sendPrompt(sessionId, "second", undefined, '{"editor":"second"}');
+    await h.sessionManager.sendPrompt(sessionId, "third"); // held before the composer sent drafts
+    await h.sessionManager.sendPrompt(sessionId, "fourth", undefined, '{"editor":"fourth"}');
+    const [a, b, c] = h.state().promptQueue[sessionId]!;
+    expect([a, b, c]).toMatchObject([
+      { text: "second", draft: '{"editor":"second"}' },
+      { text: "third" },
+      { text: "fourth", draft: '{"editor":"fourth"}' },
+    ]);
+
+    // not the tail — refused, nothing moves
+    expect(h.sessionManager.reclaimQueuedPrompt(sessionId, a!.id)).toBeUndefined();
+    expect(h.state().promptQueue[sessionId]).toHaveLength(3);
+    // the tail — comes back with its editor state, the rest keep their order
+    expect(h.sessionManager.reclaimQueuedPrompt(sessionId, c!.id)).toMatchObject({ draft: '{"editor":"fourth"}' });
+    expect(h.state().promptQueue[sessionId]!.map((q) => q.text)).toEqual(["second", "third"]);
+    // the new tail has nothing to come back as — refused, it copies and fires
+    expect(h.sessionManager.reclaimQueuedPrompt(sessionId, b!.id)).toBeUndefined();
+    expect(h.state().promptQueue[sessionId]).toHaveLength(2);
+
+    await promptDone;
+    await new Promise((r) => setTimeout(r, 900));
+    const users = h.state().transcripts[sessionId]!.filter((x) => x.kind === "user");
+    expect(users.map((x) => x.kind === "user" && userPartsText(x.parts))).toEqual(["first", "second", "third"]);
+    await h.pool.stop("smq4");
+  });
+
   it("stop clears the queue — a deliberate stop never restarts from it", async () => {
     const h = harness();
     await h.pool.connect(

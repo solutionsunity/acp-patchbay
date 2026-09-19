@@ -97,10 +97,18 @@ export type Action =
    * positional — the orchestrator turns each `fileRef` into a
    * `resource_link` content block *at its place in the prompt* instead of
    * a chip riding ahead of the prose. Absent for plain text prompts. */
-  | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[] }
+  /** `draft` is the composer's serialized editor state for these words —
+   * kept only if the prompt is held (QueuedPrompt.draft), dropped on a
+   * direct send. */
+  | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[]; draft?: string }
   | { kind: "stopTurn"; sessionId: string }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
   | { kind: "removeQueuedPrompt"; sessionId: string; promptId: string }
+  /** Take the tail of the queue back into the composer: the row leaves the
+   * queue and its editor state becomes the session draft. Tail only — the
+   * one row whose place a resend keeps — and only into an empty composer;
+   * anything else is a no-op (Copy is the way to merge by hand). */
+  | { kind: "reclaimQueuedPrompt"; sessionId: string; promptId: string }
   /** Debounced durable save of the composer's per-session draft. */
   | { kind: "setSessionDraft"; sessionId: string; draft: string }
   | { kind: "verifyAgent"; agentId: string }
@@ -237,12 +245,18 @@ export type Action =
  * standing auth lock, or behind other held words. Held orchestrator-side
  * with a durable copy (the session-continuity row), released one per turn
  * end, on login, or on opening the session; the view carries it only to
- * render removable pending rows. Only the user discards: Stop or close
- * clears the queue, the row's × removes one. */
+ * render the pending rows. Only the user discards: Stop or close clears the
+ * queue, the row's × removes one, and the tail's take-back returns one to
+ * the composer. */
 export interface QueuedPrompt {
   id: string;
   text: string;
   parts?: readonly PromptPart[];
+  /** The composer's own form of these words (serialized editor state, the
+   * same opaque copy `drafts` holds) — so the tail row can be taken back
+   * into the composer exactly, tokens and all. Absent on rows held before
+   * the composer started sending it; those copy and fire, never reclaim. */
+  draft?: string;
 }
 
 /** A context chip as persisted in the session-continuity store. Image

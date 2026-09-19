@@ -1298,6 +1298,23 @@ export class Orchestrator {
     }
   }
 
+  /** The session draft's one write: durable row + view mirror. The draft is
+   * opaque here (serialized editor state); the row dies with the session,
+   * so an unknown id writes nothing. Unchanged drafts write nothing: every
+   * save rewrites the whole machine KV file, and the debounce ticks while a
+   * user merely moves the caret. The view mirror is what sibling views
+   * (detached panels) and the next session switch read — the composer
+   * applies drafts only when idle, so echoes never fight the keyboard. */
+  private saveDraft(sessionId: string, draft: string): void {
+    const agentId = this.agentView.current.sessions.find((v) => v.id === sessionId)?.agentId;
+    if (agentId === undefined) return;
+    if ((this.sessionContinuity.read(sessionId, agentId)?.draft ?? "") === draft) return;
+    void this.sessionContinuity
+      .patch(sessionId, agentId, { draft })
+      .catch((err: Error) => this.log.error(`draft save ${sessionId} — ${err.message}`));
+    this.agentView.emit({ kind: "sessionDraftChanged", sessionId, draft });
+  }
+
   /** The Settings "active today" tile — recomputed from canonical Agent
    * View rows on every change, emitted only when the number moved (the
    * change hook fires per chunk; the Settings channel must not). Live
@@ -2071,7 +2088,7 @@ export class Orchestrator {
         // prompt passes — a guard here would cover only this entrance.
         // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
         void this.sessionManager
-          .sendPrompt(action.sessionId, action.text, action.parts)
+          .sendPrompt(action.sessionId, action.text, action.parts, action.draft)
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
       case "detachSession":
@@ -2087,29 +2104,21 @@ export class Orchestrator {
       case "removeQueuedPrompt":
         this.sessionManager.removeQueuedPrompt(action.sessionId, action.promptId);
         break;
-      case "setSessionDraft": {
-        // The composer's debounced durable save. The draft is opaque here
-        // (serialized editor state); the row dies with the session, so an
-        // unknown id writes nothing.
-        const draftAgent = this.agentView.current.sessions.find(
-          (v) => v.id === action.sessionId,
-        )?.agentId;
-        if (draftAgent === undefined) break;
-        // Unchanged drafts write nothing: every save rewrites the whole
-        // machine KV file, and the debounce ticks while a user merely
-        // moves the caret.
-        if ((this.sessionContinuity.read(action.sessionId, draftAgent)?.draft ?? "") === action.draft) {
-          break;
-        }
-        void this.sessionContinuity
-          .patch(action.sessionId, draftAgent, { draft: action.draft })
-          .catch((err: Error) => this.log.error(`draft save ${action.sessionId} — ${err.message}`));
-        // Mirror into view state so sibling views (detached panels) and the
-        // next session switch read the same copy. The composer applies
-        // drafts only at switch/mount — echoes never fight the keyboard.
-        this.agentView.emit({ kind: "sessionDraftChanged", sessionId: action.sessionId, draft: action.draft });
+      case "reclaimQueuedPrompt": {
+        // Only into an empty composer: the durable draft is the composer's
+        // truth here — it flushes on blur, so the click that sent this
+        // action came after the buffer's last save. A non-empty draft
+        // refuses; merging two messages into one is the user's call, made
+        // with Copy. The tail-only rule is the session-manager's.
+        if ((this.agentView.current.drafts[action.sessionId] ?? "") !== "") break;
+        const reclaimed = this.sessionManager.reclaimQueuedPrompt(action.sessionId, action.promptId);
+        if (reclaimed !== undefined) this.saveDraft(action.sessionId, reclaimed.draft);
         break;
       }
+      case "setSessionDraft":
+        // The composer's debounced durable save.
+        this.saveDraft(action.sessionId, action.draft);
+        break;
       case "stopTurn":
         void this.sessionManager.stopTurn(action.sessionId);
         // The spec's cancellation MUST: pending permission requests resolve

@@ -849,8 +849,30 @@ body {
   container-type: inline-size;
 }
 
-/* Queued prompts (sent mid-turn, waiting for the turn to end) — full-width
-   rows above the context row; removable until they fire. */
+/* Held prompts (sent mid-turn, waiting for the turn to end) — their own band
+   between the read-out strip and the composer: messages already written,
+   not this message's context. Every row copies and removes; the tail
+   takes back into the composer. */
+.queue-band {
+  padding: 4px 8px 0;
+  border-top: 1px solid var(--pb-border);
+}
+
+.queue-row .act {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--pb-text-faint);
+}
+
+.queue-row .act:hover {
+  color: var(--pb-text);
+}
+
+.queue-row .act[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .queue-row {
   display: flex;
   align-items: center;

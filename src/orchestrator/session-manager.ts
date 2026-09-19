@@ -1607,7 +1607,12 @@ export class SessionManager {
     this.log.info(`session ${oldId}: zero-turn — recreated as ${sessionId} to apply context roots`);
   }
 
-  async sendPrompt(sessionId: string, text: string, parts?: readonly PromptPart[]): Promise<void> {
+  async sendPrompt(
+    sessionId: string,
+    text: string,
+    parts?: readonly PromptPart[],
+    draft?: string,
+  ): Promise<void> {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
     // The turn-start door — the one adjudication every prompt passes,
@@ -1627,6 +1632,7 @@ export class SessionManager {
         id: newBlockId("queued"),
         text,
         ...(parts !== undefined ? { parts } : {}),
+        ...(draft !== undefined ? { draft } : {}),
       };
       let queue = this.promptQueues.get(sessionId);
       if (queue === undefined) {
@@ -2010,6 +2016,24 @@ export class SessionManager {
     queue.splice(index, 1);
     this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId });
     this.persistQueue(sessionId);
+  }
+
+  /** Take the queue's tail back for editing: the row leaves the queue and
+   * its editor state is returned for the caller to make the draft. Tail
+   * only — the one row whose place a resend keeps — and only a row that
+   * carries its editor state (one held before the composer sent it has
+   * nothing to come back as; it copies and fires). Anything else is a
+   * no-op: a row that already fired is simply gone. */
+  reclaimQueuedPrompt(sessionId: string, promptId: string): (QueuedPrompt & { draft: string }) | undefined {
+    const queue = this.promptQueues.get(sessionId);
+    const tail = queue?.at(-1);
+    if (queue === undefined || tail === undefined || tail.id !== promptId || tail.draft === undefined) {
+      return undefined;
+    }
+    queue.pop();
+    this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId });
+    this.persistQueue(sessionId);
+    return { ...tail, draft: tail.draft };
   }
 
   private clearPromptQueue(sessionId: string): void {

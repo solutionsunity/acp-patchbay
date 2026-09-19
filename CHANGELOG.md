@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Held prompts (sent mid-turn) can be copied and, for the last one in the
+  queue, taken back into the composer for editing — exactly as typed,
+  mentions included; the other rows are edited by copy, ×, paste. The rows
+  moved out of the composer into their own band above it: they are messages
+  already written, not part of the one being written. Take-back needs an
+  empty composer — merging two messages is your call, not the tool's — and
+  the button says so instead of hiding. (#15)
 - Session order and the Settings tile now read one activity stamp. The
   drawer's "latest first" stayed frozen in a second VS Code window until
   its agent reconnected — opening the drawer (and the palette's "Switch to

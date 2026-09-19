@@ -16,6 +16,7 @@ import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
+import { QueueBand } from "./queue-band";
 import { ReadoutStrip } from "./readout-strip";
 import { SessionRow } from "./session-row";
 import { Button } from "@/components/ui/button";
@@ -136,6 +137,13 @@ export function App({
         // not something a session switch should inherit
         <ReadoutStrip key={active.id} plan={state.activePlan[active.id] ?? null} />
       )}
+      {active !== null && (
+        <QueueBand
+          sessionId={active.id}
+          queued={state.promptQueue[active.id] ?? []}
+          composerEmpty={(state.drafts[active.id] ?? "") === ""}
+        />
+      )}
       <Composer
         agent={activeAgent}
         session={active}
@@ -157,7 +165,6 @@ export function App({
           false
         }
         liveSelection={state.liveSelection}
-        queued={active !== null ? (state.promptQueue[active.id] ?? []) : []}
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
