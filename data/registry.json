@@ -4,6 +4,7 @@
     {
       "id": "github",
       "name": "GitHub",
+      "description": "GitHub's official remote server — repositories, issues, pull requests, code search.",
       "icon": "github",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -11,7 +12,7 @@
       },
       "url": "https://api.githubcopilot.com/mcp/",
       "docsUrl": "https://github.com/github/github-mcp-server",
-      "note": "GitHub's official remote MCP server. Uses a Personal Access Token — its OAuth is not open to third-party clients (no dynamic client registration).",
+      "note": "Uses a Personal Access Token — its OAuth is not open to third-party clients (no dynamic client registration).",
       "auth": {
         "header": {
           "hint": "Personal Access Token from github.com/settings/tokens (repo + read:org for full tool coverage)",
@@ -38,6 +39,7 @@
     {
       "id": "figma",
       "name": "Figma",
+      "description": "Figma design context — frames, components, and variables from your files, for Dev Mode.",
       "icon": "paintcan",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -59,11 +61,12 @@
     {
       "id": "stitch",
       "name": "Stitch",
+      "description": "Google Labs' Stitch — generates UI designs and screens from prompts.",
       "icon": "wand",
       "brandIcon": null,
       "url": "https://stitch.googleapis.com/mcp",
       "docsUrl": "https://stitch.withgoogle.com/docs/mcp/setup/",
-      "note": "Google Labs' Stitch UI-design server. Key-only, sent as a Google API header.",
+      "note": "Key-only, sent as a Google API header.",
       "auth": {
         "header": {
           "headerName": "X-Goog-Api-Key",
@@ -77,6 +80,7 @@
     {
       "id": "stripe",
       "name": "Stripe",
+      "description": "Stripe — customers, payments, subscriptions, and the Stripe docs.",
       "icon": "credit-card",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -108,6 +112,7 @@
     {
       "id": "sentry",
       "name": "Sentry",
+      "description": "Sentry — issues, errors, and traces from your organization.",
       "icon": "bug",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -138,6 +143,7 @@
     {
       "id": "postman",
       "name": "Postman",
+      "description": "Postman — collections, environments, and API requests from your workspace.",
       "icon": "beaker",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -157,6 +163,7 @@
     {
       "id": "supabase",
       "name": "Supabase",
+      "description": "Supabase — your project's database schema, SQL, edge functions, and logs.",
       "icon": "database",
       "brandIcon": {
         "viewBox": "0 0 24 24",
@@ -188,12 +195,13 @@
     {
       "id": "augment-context-engine",
       "name": "Augment Context Engine",
+      "description": "Augment's context engine — semantic retrieval over your codebase.",
       "icon": "search",
       "brandIcon": null,
       "url": "",
       "userUrl": true,
       "docsUrl": "https://docs.augmentcode.com/context-services/mcp/overview",
-      "note": "Semantic codebase retrieval. Endpoint and credentials come from app.augmentcode.com/mcp/configuration; remote indexing additionally needs Augment's GitHub App on the repo.",
+      "note": "Endpoint and credentials come from app.augmentcode.com/mcp/configuration; remote indexing additionally needs Augment's GitHub App on the repo.",
       "auth": {
         "header": {
           "hint": "API key from app.augmentcode.com/mcp/configuration",

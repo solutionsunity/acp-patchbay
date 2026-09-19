@@ -219,8 +219,12 @@ stored and saved as written; an OAuth token never appears), then **Add custom** 
 display name, command, args one-per-line, env `KEY=value` lines — the id is
 generated, a slug of the name, never user-typed; or `Import JSON…` accepting the
 well-known `{"mcpServers": {...}}` shape, per-entry failures labeled), then the
-**Curated catalog** last: compact one-line rows (name · `key`/`OAuth`/`local`
-chips · Docs · `Connect…`), one row expanding at a time into its connect form — key
+**Curated catalog** last: a filter toolbar (search over name and description —
+what the row shows, never the caveat note · the `key`/`OAuth`/`local` chips as
+AND-combined toggles · `N of M` while narrowed; an emptied list offers
+`Clear filter`) over compact rows (name · mechanism chips · Docs · `Connect…`,
+with the entry's one-line description dim underneath, whole — never truncated,
+never behind a hover), one row expanding at a time into its connect form — key
 paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— or run it
 locally —` (verified official local stdio servers — GitHub, Stripe, Sentry,
 Supabase, Augment — prefill the custom form; nothing runs until the user adds it).

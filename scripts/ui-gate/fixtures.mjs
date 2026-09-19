@@ -126,6 +126,28 @@ export function agentViewState({ live }) {
   };
 }
 
+/** Three curated entries spanning the mechanism space — key+local,
+ * key+OAuth, local-only-not-connectable — so the catalog filter's toggles
+ * and text have distinct rows to keep and drop. Stripe's caveat note
+ * carries the word the text probe types: the note must NOT match. */
+const catalogEntry = (id, name, description, over = {}) => ({
+  id, name, description, icon: "server", brandIcon: null, connectable: true, note: "", docsUrl: "https://example.com/docs",
+  userUrl: false, headerAuth: null, oauth: false, local: null, ...over,
+});
+const catalogEntries = [
+  catalogEntry("github", "GitHub", "repositories, issues, pull requests, code search", {
+    headerAuth: { hint: "Personal Access Token", keyUrl: "https://github.com/settings/tokens" },
+    local: { kind: "stdio", command: "docker", args: ["run", "-i"], envKeys: ["GITHUB_PERSONAL_ACCESS_TOKEN"], note: "official server via Docker" },
+  }),
+  catalogEntry("stripe", "Stripe", "customers, payments, subscriptions", {
+    headerAuth: { hint: "Restricted API key", keyUrl: "" }, oauth: true, note: "Design your restricted key's scopes first.",
+  }),
+  catalogEntry("figma", "Figma", "design context — frames, components, variables", {
+    connectable: false, note: "Remote gated on a client allowlist; the desktop server is open.",
+    local: { kind: "http", url: "http://127.0.0.1:3845/mcp", note: "desktop app running" },
+  }),
+];
+
 export function settingsState() {
   return {
     // Host-owned since the deep-link work — a snapshot REPLACES state, so a
@@ -155,7 +177,7 @@ export function settingsState() {
     },
     capabilitiesResetAt: {}, agentProtocol: { claude: 1 }, authMethods: {},
     commandRules: [], machineCommandRules: [], fileWriteScope: "workspace",
-    auditTail: [], integrationRegistry: [], integrations: [], connectFlow: {}, assets: {},
+    auditTail: [], integrationRegistry: catalogEntries, integrations: [], connectFlow: {}, assets: {},
     agentConfigs: [{
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       env: { API_KEY: "sk-fixture" }, processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,

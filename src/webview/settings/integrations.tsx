@@ -11,10 +11,12 @@ import type {
   SettingsState,
 } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
+import { filterCatalog, MECHANISMS, mechanismsOf, type Mechanism } from "./catalog-filter";
 import { ConfirmButton, Field } from "./controls";
 import { parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -40,6 +42,40 @@ function EntryIcon(props: { icon: string; brandIcon: { viewBox: string; path: st
     >
       <path d={props.brandIcon.path} />
     </svg>
+  );
+}
+
+/** One spelling per mechanism — label and color — worn by the catalog rows
+ * and, as toggles, by the catalog filter: the same chip means the same
+ * thing in both places. */
+const MECHANISM_LABEL: Record<Mechanism, string> = { key: "key", oauth: "OAuth", local: "local" };
+const MECHANISM_CLASS: Record<Mechanism, string> = {
+  key: "border-consumed/40 text-consumed",
+  oauth: "border-brand/40 text-brand",
+  local: "border-ok/40 text-ok",
+};
+
+function MechanismChip(props: { mechanism: Mechanism }) {
+  return <Badge className={MECHANISM_CLASS[props.mechanism]}>{MECHANISM_LABEL[props.mechanism]}</Badge>;
+}
+
+/** The chip as a filter toggle — lit in its mechanism color when pressed,
+ * muted outline otherwise; `aria-pressed` carries the state. */
+function MechanismToggle(props: { mechanism: Mechanism; pressed: boolean; onToggle(): void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={props.pressed}
+      title={`only entries offering ${MECHANISM_LABEL[props.mechanism]}`}
+      className={cn(
+        badgeVariants(),
+        "cursor-pointer",
+        props.pressed ? cn(MECHANISM_CLASS[props.mechanism], "bg-current/10") : "hover:text-foreground",
+      )}
+      onClick={props.onToggle}
+    >
+      {MECHANISM_LABEL[props.mechanism]}
+    </button>
   );
 }
 
@@ -241,10 +277,9 @@ function CatalogRow(props: {
         {/* no color class — inherits the row's text color either way */}
         <EntryIcon icon={entry.icon} brandIcon={entry.brandIcon} />
         <span className="nm min-w-0">{entry.name}</span>
-        {/* mechanism chips — each mechanism keeps one color everywhere */}
-        {entry.headerAuth !== null && <Badge className="border-consumed/40 text-consumed">key</Badge>}
-        {entry.oauth && <Badge className="border-brand/40 text-brand">OAuth</Badge>}
-        {entry.local !== null && <Badge className="border-ok/40 text-ok">local</Badge>}
+        {[...mechanismsOf(entry)].map((m) => (
+          <MechanismChip key={m} mechanism={m} />
+        ))}
         <span className="flex-1" />
         <Button asChild variant="outline" size="icon" className="size-8">
           <a href={entry.docsUrl} title="Docs" aria-label={`${entry.name} docs`}>
@@ -271,6 +306,9 @@ function CatalogRow(props: {
           <Badge>not connectable yet</Badge>
         )}
       </div>
+      {/* what the catalog search can hit is on the row, whole — never
+          truncated, never behind a hover */}
+      <div className="cat-desc">{entry.description}</div>
       {entry.note !== "" && (props.expanded || !offersAnything) && (
         <div className="note mx-0 mb-0 mt-1.5">
           {entry.note}
@@ -393,6 +431,10 @@ export function IntegrationsSection(props: {
 }) {
   const { state } = props;
   const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
+  // The catalog's narrowing (catalog-filter.ts) — render state only; the
+  // list it narrows is the orchestrator's.
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogMechanisms, setCatalogMechanisms] = useState<ReadonlySet<Mechanism>>(new Set());
   const [adding, setAdding] = useState<"stdio" | "http" | "json" | null>(null);
   /** The name of the last submitted custom add — the form clears on submit,
    * so the OAuth pending/failed note needs its own anchor to render from
@@ -487,6 +529,13 @@ export function IntegrationsSection(props: {
     setToken("");
     setHeaderName("Authorization");
   };
+
+  // Connected entries live in the list above, not the catalog.
+  const available = state.integrationRegistry.filter(
+    (entry) => !state.integrations.some((i) => i.registryId === entry.id),
+  );
+  const narrowed = catalogQuery.trim() !== "" || catalogMechanisms.size > 0;
+  const shown = filterCatalog(available, catalogQuery, catalogMechanisms);
 
   return (
     <section className="section">
@@ -843,32 +892,66 @@ export function IntegrationsSection(props: {
           Each entry offers exactly the mechanisms its vendor opens — key paste, MCP-spec OAuth, or
           both. Connecting moves it to the list above.
         </div>
-        {state.integrationRegistry.map((entry) => {
-          const configured = state.integrations.some((i) => i.registryId === entry.id);
-          if (configured) return null; // living above, in the connected list
-          return (
-            <CatalogRow
-              key={entry.id}
-              entry={entry}
-              flow={state.connectFlow[entry.id]}
-              expanded={expandedCatalogId === entry.id}
-              onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
-              onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
-              onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
-              onCancelConnect={() => props.onCancelConnect(entry.id)}
-              onUseLocal={() => {
-                if (entry.local !== null) useLocal(entry.name, entry.local);
-              }}
+        {available.length > 0 && (
+          <div className="cat-filter">
+            <Input
+              type="text"
+              className="w-56"
+              placeholder="search name or description…"
+              aria-label="Search the catalog"
+              value={catalogQuery}
+              onInput={(e) => setCatalogQuery((e.target as HTMLInputElement).value)}
             />
-          );
-        })}
-        {state.integrationRegistry.every((entry) =>
-          state.integrations.some((i) => i.registryId === entry.id),
-        ) && (
-          <div className="note m-0">
-            Everything curated is already connected.
+            {MECHANISMS.map((m) => (
+              <MechanismToggle
+                key={m}
+                mechanism={m}
+                pressed={catalogMechanisms.has(m)}
+                onToggle={() => {
+                  const next = new Set(catalogMechanisms);
+                  if (!next.delete(m)) next.add(m);
+                  setCatalogMechanisms(next);
+                }}
+              />
+            ))}
+            {narrowed && (
+              <span className="note m-0">
+                {shown.length} of {available.length}
+              </span>
+            )}
           </div>
         )}
+        {shown.map((entry) => (
+          <CatalogRow
+            key={entry.id}
+            entry={entry}
+            flow={state.connectFlow[entry.id]}
+            expanded={expandedCatalogId === entry.id}
+            onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
+            onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
+            onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
+            onCancelConnect={() => props.onCancelConnect(entry.id)}
+            onUseLocal={() => {
+              if (entry.local !== null) useLocal(entry.name, entry.local);
+            }}
+          />
+        ))}
+        {available.length === 0 ? (
+          <div className="note m-0">Everything curated is already connected.</div>
+        ) : shown.length === 0 ? (
+          <div className="note m-0">
+            No curated entry matches.{" "}
+            <Button
+              variant="outline" size="sm"
+              onClick={() => {
+                setCatalogQuery("");
+                setCatalogMechanisms(new Set());
+              }}
+            >
+              Clear filter
+            </Button>
+          </div>
+        ) : null}
       </div>
     </section>
   );

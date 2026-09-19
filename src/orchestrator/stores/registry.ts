@@ -39,6 +39,10 @@ export const registryAuthSchema = z.object({
 export const registryEntrySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  /** What the server is for, one line — the row shows it and the catalog
+   * search matches it. Required: an entry nobody can describe isn't
+   * curated. `note` below is a different thing — per-entry caveats. */
+  description: z.string().min(1),
   /** Codicon name for the catalog row — the fallback when no verified
    * brand glyph exists below. Rendered plain, so it inherits the row's
    * text color. */

@@ -346,6 +346,21 @@ for (const theme of Object.keys(THEMES)) {
   await cell.hover();
   check(`[${theme}] matrix tooltip explains used`, (await p.waitForSelector("text=fired successfully", { timeout: 3000 })) !== null);
   await p.screenshot({ path: `${OUT}/settings-matrix-${theme}.png` });
+
+  // ── settings: curated catalog filter (text × mechanism toggles) ──
+  await p.click("text=MCP Servers");
+  await p.waitForSelector(".cat-filter");
+  const rowsShown = () => p.$$eval(".cat-row", (rows) => rows.length);
+  check(`[${theme}] catalog shows every entry unfiltered`, (await rowsShown()) === 3);
+  await p.click('.cat-filter button[aria-pressed="false"]:has-text("local")');
+  check(`[${theme}] local toggle keeps the two local-bearing rows`, (await rowsShown()) === 2);
+  await p.fill('input[aria-label="Search the catalog"]', "design");
+  check(`[${theme}] text matches description, never the caveat note`, (await rowsShown()) === 1);
+  await p.screenshot({ path: `${OUT}/settings-catalog-${theme}.png` });
+  await p.fill('input[aria-label="Search the catalog"]', "nothing");
+  check(`[${theme}] empty filter offers a clear`, (await p.waitForSelector("text=Clear filter", { timeout: 3000 })) !== null);
+  await p.click("text=Clear filter");
+  check(`[${theme}] clear restores every entry`, (await rowsShown()) === 3);
   await p.close();
 }
 

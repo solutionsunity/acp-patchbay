@@ -31,6 +31,7 @@ function entry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
   return {
     id: "svc",
     name: "Service",
+    description: "a service",
     icon: "server",
     brandIcon: null,
     url: provider.mcpUrl,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The curated MCP catalog can be narrowed: a search box over name and
+  description, and the key / OAuth / local chips double as filter toggles
+  (all selected mechanisms must be offered). Every entry gained a one-line
+  description, shown on its row — search only hits what the row shows, so
+  a match never looks like a false positive. The full list stays the
+  default — the catalog is data meant to grow, and a fifty-row list needs
+  a way in. (#16)
 - Held prompts (sent mid-turn) can be copied and, for the last one in the
   queue, taken back into the composer for editing — exactly as typed,
   mentions included; the other rows are edited by copy, ×, paste. The rows
