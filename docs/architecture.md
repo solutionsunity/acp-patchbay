@@ -646,7 +646,14 @@ The differentiator (the PRD's current-release scope), shipped complete:
 
 - **Tools/resources**: active selection, current file, diagnostics (live, not
   stale), open editors. Explicit user gestures ("add selection to context",
-  right-click) inject the same data into the prompt directly.
+  right-click) inject the same data into the prompt directly. "Current" is
+  the text editor the user was last in, not VS Code's `activeTextEditor`
+  alone: that read goes undefined whenever a webview — a detached Patchbay
+  panel, Settings, a preview — is the active editor, which is exactly when
+  the composer's adders and the tools ask. The editor-state host remembers
+  the last text editor from the change event and validates on read: the
+  file counts while its document is open, the selection only while its tab
+  is on screen.
 - **Context roots**: a session's roots are the workspace folders plus user-added
   external folders (multi-repo work). Delivered protocol-native (`roots` +
   `roots.listChanged` where declared; adapter fallback otherwise). Patchbay

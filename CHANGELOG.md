@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- *Current file* and *Selection* in the composer now mean the file you were
+  last in, not whichever tab happens to be active. They used to come up empty
+  whenever the active tab wasn't a text editor — a detached Patchbay panel,
+  Settings, a preview, an image — and the live selection chip vanished the
+  moment you clicked into a detached panel to use it. The `get_current_file`
+  and `get_selection` tools agents call follow the same rule. When there
+  genuinely is nothing — no file open, no selection in a visible editor —
+  the adder now says so instead of doing nothing. (#7)
 - Typing during *New chat* no longer lands in the previous session. The
   composer used to stay on the session that was open before the click, so
   whatever you typed while "Connecting…" was up vanished when the new

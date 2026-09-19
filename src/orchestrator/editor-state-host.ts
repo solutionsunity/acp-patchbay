@@ -55,6 +55,13 @@ function severityName(sev: vscode.DiagnosticSeverity): DiagnosticInfo["severity"
 export class EditorStateHost {
   private server: Server | null = null;
   readonly socketPath: string;
+  /** The text editor the user was last in. `window.activeTextEditor` goes
+   * undefined the moment a webview becomes the active editor — a detached
+   * Patchbay panel, Settings, a preview — which is exactly when the
+   * composer's adders and the MCP tools ask "which file?". Remembered from
+   * the change event, validated on every read (see currentEditor). */
+  private lastTextEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
+  private subscription: vscode.Disposable | null = null;
 
   constructor(
     workspaceId: string,
@@ -70,11 +77,26 @@ export class EditorStateHost {
     if (this.server !== null) return;
     this.server = createServer((socket) => this.handleConnection(socket));
     this.server.listen(this.socketPath);
+    this.subscription = vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor !== undefined) this.lastTextEditor = editor;
+    });
   }
 
   stop(): void {
     this.server?.close();
     this.server = null;
+    this.subscription?.dispose();
+    this.subscription = null;
+  }
+
+  /** The editor "current" means: the active text editor when there is one,
+   * else the last one the user was in, as long as its document is still
+   * open. A closed tab is nobody's current file. */
+  private currentEditor(): vscode.TextEditor | undefined {
+    const active = vscode.window.activeTextEditor;
+    if (active !== undefined) return active;
+    const last = this.lastTextEditor;
+    return last !== undefined && !last.document.isClosed ? last : undefined;
   }
 
   private handleConnection(socket: Socket): void {
@@ -122,8 +144,12 @@ export class EditorStateHost {
   }
 
   getSelection(): SelectionInfo | null {
-    const editor = vscode.window.activeTextEditor;
+    // A selection is read only from an editor still on screen: an editor
+    // whose tab is hidden reports the selection it had when it was last
+    // shown, which the user can neither see nor is pointing at.
+    const editor = this.currentEditor();
     if (editor === undefined || editor.selection.isEmpty) return null;
+    if (!vscode.window.visibleTextEditors.includes(editor)) return null;
     return {
       file: editor.document.uri.fsPath,
       startLine: editor.selection.start.line + 1,
@@ -133,7 +159,7 @@ export class EditorStateHost {
   }
 
   getCurrentFile(): CurrentFileInfo | null {
-    const editor = vscode.window.activeTextEditor;
+    const editor = this.currentEditor();
     if (editor === undefined) return null;
     return { file: editor.document.uri.fsPath, content: editor.document.getText() };
   }

@@ -2249,7 +2249,10 @@ export class Orchestrator {
       }
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();
-        if (selection === null) break;
+        if (selection === null) {
+          void vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
+          break;
+        }
         this.sessionManager.addContext(action.sessionId, {
           id: chipId(),
           kind: "selection",
@@ -2261,7 +2264,10 @@ export class Orchestrator {
       }
       case "addFileContext": {
         const file = this.editorStateHost.getCurrentFile();
-        if (file === null) break;
+        if (file === null) {
+          void vscode.window.showInformationMessage("No current file — open a file in an editor first.");
+          break;
+        }
         this.sessionManager.addContext(action.sessionId, {
           id: chipId(),
           kind: "file",
