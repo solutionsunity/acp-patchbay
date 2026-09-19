@@ -2,15 +2,15 @@
 // Copyright 2026 Solutions Unity
 
 // Agents: stat tiles + Add Agent, one card per known
-// agent — status live, capabilities claimed-until-exercised, write-only env,
-// knobs offering only what the agent actually offered.
+// agent — status live, capabilities claimed-until-exercised, knobs offering
+// only what the agent actually offered.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { ConfirmButton, Field, Toggle } from "./controls";
-import { parseEnvLines } from "./parse-env";
+import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
 import {
   AlertDialog,
@@ -44,7 +44,7 @@ const EMPTY_AGENT_CONFIG: AgentConfigView = {
   name: "",
   command: "",
   args: [],
-  envKeys: [],
+  env: {},
   processPolicy: "auto",
   autoConnect: false,
   defaults: {},
@@ -59,17 +59,14 @@ function displayCommandLine(command: string, args: readonly string[]): string {
 }
 
 /** ✎ Edit: launch line, process policy, env. Parsing the line is the
- * orchestrator's job — it's sent raw, args empty.
- * Env is write-only: values live in SecretStorage and never reach this
- * webview, so existing vars render as bare `KEY=` lines — leave one blank
- * to keep its stored value, fill it to overwrite, delete the line to remove
- * the variable. Default model/mode/effort deliberately do NOT appear here:
- * the card's knob selects own them, offering only what the agent has
- * actually offered — a free-text duplicate would let the user type options
- * that don't exist. */
+ * orchestrator's job — it's sent raw, args empty. Env shows what is
+ * stored and saves what is in the box. Default model/mode/effort
+ * deliberately do NOT appear here: the card's knob selects own them,
+ * offering only what the agent has actually offered — a free-text
+ * duplicate would let the user type options that don't exist. */
 function AgentConfigForm(props: {
   initial: AgentConfigView;
-  onSave(config: AgentConfigView, env: Record<string, string>): void;
+  onSave(config: AgentConfigView): void;
   onCancel(): void;
 }) {
   const [id, setId] = useState(props.initial.id);
@@ -77,26 +74,22 @@ function AgentConfigForm(props: {
   const [command, setCommand] = useState(displayCommandLine(props.initial.command, props.initial.args));
   const [processPolicy, setProcessPolicy] = useState(props.initial.processPolicy);
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
-  const [envText, setEnvText] = useState(props.initial.envKeys.map((k) => `${k}=`).join("\n"));
+  const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
 
   const save = () => {
     if (id.trim() === "" || name.trim() === "" || command.trim() === "") return;
-    const env = parseEnvLines(envText);
-    props.onSave(
-      {
-        id: id.trim(),
-        name: name.trim(),
-        command: command.trim(),
-        args: [],
-        envKeys: Object.keys(env),
-        processPolicy,
-        autoConnect,
-        defaults: props.initial.defaults,
-        registrySource: props.initial.registrySource,
-        lastSeenVersion: props.initial.lastSeenVersion,
-      },
-      env,
-    );
+    props.onSave({
+      id: id.trim(),
+      name: name.trim(),
+      command: command.trim(),
+      args: [],
+      env: parseEnvLines(envText),
+      processPolicy,
+      autoConnect,
+      defaults: props.initial.defaults,
+      registrySource: props.initial.registrySource,
+      lastSeenVersion: props.initial.lastSeenVersion,
+    });
   };
 
   return (
@@ -128,7 +121,7 @@ function AgentConfigForm(props: {
       <Field label="auto-connect" hint="connect this agent when the window opens">
         <Toggle icon="zap" label="connect on window open" checked={autoConnect} onChange={setAutoConnect} />
       </Field>
-      <Field label="environment variables" hint="KEY=value, one per line">
+      <Field label="environment variables" hint="KEY=value, one per line — stored in VS Code SecretStorage">
         <Textarea
           rows={3}
           className="resize-y"
@@ -137,11 +130,6 @@ function AgentConfigForm(props: {
           onInput={(e) => setEnvText((e.target as HTMLTextAreaElement).value)}
         />
       </Field>
-      <div className="note">
-        values are stored in VS Code SecretStorage and never shown back — a bare <code>KEY=</code>{" "}
-        keeps the stored value, <code>KEY=newvalue</code> overwrites it, deleting the line removes
-        the variable
-      </div>
       <div className="form-actions">
         <Button size="sm" onClick={save}>
           Save
@@ -168,7 +156,7 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
     name: agent.name,
     command: (agent.command ?? "").trim(),
     args: [],
-    envKeys: [],
+    env: {},
     processPolicy: "auto",
     autoConnect: false,
     defaults: {},
@@ -578,7 +566,7 @@ export function AgentsSection(props: {
   onVerify(agentId: string): void;
   onConnectConfigured(agentId: string): void;
   onAddAgent(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
-  onSave(config: AgentConfigView, env: Record<string, string>): void;
+  onSave(config: AgentConfigView): void;
   onRemove(agentId: string): void;
   onStop(agentId: string): void;
   onRestart(agentId: string): void;
@@ -712,13 +700,8 @@ export function AgentsSection(props: {
             registryAgents: state.registryAgents,
             verifying: state.verifyingAgents[id] === true,
           });
-          // Inline knob/policy edits never touch env — submit every existing
-          // key blank, the "keep the stored value" signal (write-only env).
           const saveConfig = (patch: Partial<AgentConfigView>) =>
-            props.onSave(
-              { ...effectiveConfig, ...patch },
-              Object.fromEntries(effectiveConfig.envKeys.map((k) => [k, ""])),
-            );
+            props.onSave({ ...effectiveConfig, ...patch });
           // One normalized knob list (the orchestrator's knobs.ts already
           // resolved the wire's modes/configOptions split) — no dedup here.
           const offeredKnobs = knobs?.knobs ?? [];
@@ -870,8 +853,8 @@ export function AgentsSection(props: {
                   {!detailsOpen ? null : editing === id ? (
                     <AgentConfigForm
                       initial={effectiveConfig}
-                      onSave={(c, env) => {
-                        props.onSave(c, env);
+                      onSave={(c) => {
+                        props.onSave(c);
                         setEditing(null);
                       }}
                       onCancel={() => setEditing(null)}

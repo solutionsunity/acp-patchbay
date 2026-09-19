@@ -596,21 +596,22 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
 
     const files = JSON.parse((await h.manager.exportJson("my-files"))!);
     expect(files).toEqual({
-      mcpServers: { "My Files": { command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "" } } },
+      mcpServers: { "My Files": { command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } } },
     });
     expect(JSON.parse((await h.manager.exportJson("remote"))!)).toEqual({
-      mcpServers: { Remote: { url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "" } },
+      mcpServers: { Remote: { url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k" } },
     });
     expect(JSON.parse((await h.manager.exportJson("svc"))!)).toEqual({
-      mcpServers: { Service: { url: provider.mcpUrl, authType: "header", headerName: "Authorization", valuePrefix: "Bearer " } },
+      mcpServers: {
+        Service: { url: provider.mcpUrl, authType: "header", headerName: "Authorization", valuePrefix: "Bearer ", token: "pasted-key-1" },
+      },
     });
-    // never the store record, never a credential
+    // never the store record
     for (const id of ["my-files", "remote", "svc"]) {
-      const json = (await h.manager.exportJson(id))!;
-      expect(json).not.toMatch(/"routing"|"source"|"transport"|sk-1|pasted-key-1|"k"/);
+      expect((await h.manager.exportJson(id))!).not.toMatch(/"routing"|"source"|"transport"/);
     }
 
-    // round-trip: what Copy emits, Import accepts — same id, same launch line
+    // round-trip: what Copy emits, Import accepts — same id, same launch line, same env
     const fresh = harness([]);
     await fresh.manager.importJson(JSON.stringify(files));
     expect(fresh.integrationStore.get("my-files")?.source).toMatchObject({
@@ -618,22 +619,56 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
       command: "npx",
       args: ["-y", "files-server"],
     });
+    expect(await fresh.envStore.get("my-files")).toEqual({ FILES_KEY: "sk-1" });
     expect(fresh.events.some((e) => e.kind === "integrationConnectFailed")).toBe(false);
   });
 
-  it("updateFromJson: env is write-only — blank keeps, filled overwrites, removed deletes", async () => {
+  it("an OAuth-minted token never rides editJson or Copy — only what the owner typed does (issue #12)", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryOAuth("svc");
+    const json = (await h.manager.exportJson("svc"))!;
+    expect(JSON.parse(json).mcpServers.Service).toEqual({ url: provider.mcpUrl, authType: "oauth" });
+    expect(json).not.toContain((await h.tokens.get("svc"))!.accessToken);
+  });
+
+  it("editJson shows the stored env and header key; updateFromJson stores the box as written (issue #12)", async () => {
     const h = harness([]);
     await h.manager.addCustom(
       "Editable",
       { kind: "custom-stdio", command: "srv", args: ["--x"], env: { KEEP: "old", GONE: "bye", SWAP: "1" } },
       "auto",
     );
+    await h.manager.addCustom(
+      "Keyed",
+      { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k1" },
+      "auto",
+    );
+    const views = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
+    const editJsonOf = (id: string) =>
+      JSON.parse(
+        (views?.kind === "integrationsChanged" && views.integrations.find((i) => i.id === id)?.editJson) || "null",
+      );
+    expect(editJsonOf("editable").env).toEqual({ KEEP: "old", GONE: "bye", SWAP: "1" });
+    expect(editJsonOf("keyed").token).toBe("k1");
+
     await h.manager.updateFromJson(
       "editable",
-      JSON.stringify({ command: "srv2", args: ["--y"], env: { KEEP: "", SWAP: "2", NEW: "n" } }),
+      JSON.stringify({ command: "srv2", args: ["--y"], env: { KEEP: "old", SWAP: "2", NEW: "n" } }),
     );
     expect(h.integrationStore.get("editable")?.source).toMatchObject({ command: "srv2", args: ["--y"] });
     expect(await h.envStore.get("editable")).toEqual({ KEEP: "old", SWAP: "2", NEW: "n" });
+
+    // a header key removed from the box is removed from the store — the card reads disconnected
+    await h.manager.updateFromJson(
+      "keyed",
+      JSON.stringify({ url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "" }),
+    );
+    expect(await h.tokens.get("keyed")).toBeNull();
+    await h.manager.updateFromJson(
+      "keyed",
+      JSON.stringify({ url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k2" }),
+    );
+    expect((await h.tokens.get("keyed"))?.accessToken).toBe("k2");
   });
 });
 

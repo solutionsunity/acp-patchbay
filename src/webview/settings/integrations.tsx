@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // MCP Servers: curated and custom are the same mechanism, routed per
-// agent; a shared config never carries its credential.
+// agent; a copied config carries what its owner typed, never an OAuth token.
 import { useState } from "react";
 import type {
   IntegrationProbeView,
@@ -493,7 +493,7 @@ export function IntegrationsSection(props: {
       <h1>MCP Servers</h1>
       <div className="sub">
         Curated and custom are the same mechanism — MCP servers, routed per agent. Global to this
-        machine, never repo-committed; a shared config never carries its credential.
+        machine, never repo-committed; a copied config carries what you typed, never an OAuth token.
       </div>
 
       {state.integrations.length === 0 && (
@@ -592,7 +592,7 @@ export function IntegrationsSection(props: {
                   )}
                   {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
                     <div className="connect-form">
-                      <Field label="server JSON" hint="the mcpServers-fragment for this server">
+                      <Field label="server JSON" hint="the mcpServers entry for this server — saved as written">
                         <Textarea
                           rows={7}
                           className="resize-y font-mono"
@@ -600,10 +600,6 @@ export function IntegrationsSection(props: {
                           onInput={(e) => setJsonDraft((e.target as HTMLTextAreaElement).value)}
                         />
                       </Field>
-                      <div className="note">
-                        env values are write-only — <code>""</code> keeps the stored value, a filled value
-                        overwrites, a removed key deletes
-                      </div>
                       <div className="form-actions">
                         <Button
                           size="sm"

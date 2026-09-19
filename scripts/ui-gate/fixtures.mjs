@@ -156,7 +156,7 @@ export function settingsState() {
     auditTail: [], integrationRegistry: [], integrations: [], connectFlow: {}, assets: {},
     agentConfigs: [{
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
-      envKeys: ["API_KEY"], processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,
+      env: { API_KEY: "sk-fixture" }, processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,
     }],
     sessionsToday: 7, agentKnobs: {}, registryFetchedAt: "", pendingBinaryInstall: null, verifyingAgents: {},
     wireLog: { active: false, until: null }, dataInventory: null,

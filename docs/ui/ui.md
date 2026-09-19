@@ -213,8 +213,8 @@ never on a schedule.
 Order is the working set first: **Connected servers** on top (dot · name ·
 `curated`/`custom-*` chip · **active toggle** · `Copy config` · `Disconnect` for
 curated / `Remove` for custom · mono command/URL · routing · `Edit JSON…` for
-custom entries — the mcpServers-fragment, env values write-only: `""` keeps,
-filled overwrites, removed deletes), then **Add custom** (structured fields:
+custom entries — the mcpServers entry, env values and a header key shown as
+stored and saved as written; an OAuth token never appears), then **Add custom** (structured fields:
 display name, command, args one-per-line, env `KEY=value` lines — the id is
 generated, a slug of the name, never user-typed; or `Import JSON…` accepting the
 well-known `{"mcpServers": {...}}` shape, per-entry failures labeled), then the
@@ -240,9 +240,10 @@ record.
 ticked list, except = every agent minus the ticked. Routing is reach; consent rides
 the permission broker per tool call. Per-server `Copy config` — the explicit,
 visible act of copying the server as a `{"mcpServers": {name: entry}}` document,
-the shape `Import JSON…` reads back and other clients take; the credential never
-travels with it, reattaching only when its recipient explicitly connects. Servers are global to this
-machine. Binding to workspaces, not repos, may return later as an opt-in feature.
+the shape `Import JSON…` reads back and other clients take. It carries what the
+owner typed — env values, a header key — and never an OAuth token; copy and paste
+are the owner's explicit acts. Servers are global to this machine. Binding to
+workspaces, not repos, may return later as an opt-in feature.
 
 ### Preferences
 

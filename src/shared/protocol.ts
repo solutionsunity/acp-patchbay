@@ -157,8 +157,8 @@ export type Action =
    * VS Code shape) — parsed orchestrator-side; each entry becomes a custom
    * server, failures labeled per entry. */
   | { kind: "importIntegrationsJson"; json: string }
-  /** Replaces one custom server's config from its edited mcpServers-fragment
-   * JSON. Env values are write-only: an empty value keeps the stored one. */
+  /** Replaces one custom server's config from its edited mcpServers entry
+   * JSON — env (and a header key) stored exactly as written. */
   | { kind: "updateIntegrationJson"; integrationId: string; json: string }
   /** Abandons an in-flight browser OAuth connect — the pending state clears
    * and nothing is stored (the browser tab, if still open, dies unanswered). */
@@ -202,10 +202,9 @@ export type Action =
    * logged to the Patchbay Output channel, the durable record the in-view
    * "errors (N)" chip points at. */
   | { kind: "reportWebviewError"; view: "agent-view" | "settings"; message: string }
-  /** `env` is the form's submitted set — full desired key list, where an
-   * empty value means "keep the stored value for this key". Values ride the
-   * action upward only; state snapshots never carry them (envKeys only). */
-  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView; env: Readonly<Record<string, string>> }
+  /** The form's full desired config, `env` included — what is in the box
+   * is what gets stored. */
+  | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView }
   | { kind: "removeAgentConfig"; agentId: string }
   /** Drag-drop reorder from Settings — `ids` is the full list order as the
    * view sees it at drop time; the store keeps unnamed records at the tail. */
@@ -290,10 +289,10 @@ export interface AgentConfigView {
   name: string;
   command: string;
   args: readonly string[];
-  /** Env var *names* only — the values live in SecretStorage
-   * (stores/agent-env.ts) and never reach a webview
-   * state snapshot; the Settings form edits them write-only. */
-  envKeys: readonly string[];
+  /** Launch env, values included. They live in SecretStorage and ride the
+   * Settings channel only — the owner typed them and reads them back; the
+   * form shows what is stored and saves what is in the box. */
+  env: Readonly<Record<string, string>>;
   processPolicy: "auto" | "shared" | "isolated";
   /** Connect this agent when the window opens. Per-agent and opt-in —
    * superseded the native `acpPatchbay.defaultAgent` setting. */
@@ -332,9 +331,8 @@ export type IntegrationRoutingView = "auto" | readonly string[] | { readonly exc
  * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
  * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
 export type IntegrationSourceView =
-  /** `env` values ride the add action upward once, straight into
-   * SecretStorage (stores/secret-env.ts) — state snapshots never carry
-   * them, same write-only rule as agent env. */
+  /** `env` values go straight into SecretStorage (stores/secret-env.ts)
+   * and come back to their owner in `editJson`. */
   | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
   | {
       kind: "custom-http";
@@ -383,9 +381,9 @@ export interface IntegrationView {
    * (provider-side truth: "reachable, N tools", never "working in your
    * sessions"). Absent = never probed this session. */
   probe?: IntegrationProbeView;
-  /** Present for custom servers only: the editable mcpServers-fragment JSON.
-   * Env values never ride it — keys appear with "" (write-only: blank keeps
-   * the stored value, filled overwrites, removed key deletes). */
+  /** Present for custom servers only: the editable mcpServers entry JSON,
+   * env values and a header key included — the owner typed them and reads
+   * them back. OAuth tokens (flow-minted) never appear. */
   editJson?: string;
 }
 

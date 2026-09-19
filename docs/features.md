@@ -152,13 +152,13 @@ deliverable, owed before implementation.
   choice, per agent, not all-or-nothing. Default ("auto"): a new server
   attaches to every agent; "only" pins an explicit list; "except" attaches to
   all minus the listed.
-- Servers are global to this machine, and a shared config never carries its
-  credential — connecting is always the user's own explicit, visible act. (The
-  real incident behind this rule — a production-access MCP server silently
-  followed a user from one repo into another — is guarded by the
-  credential-never-travels rule. Binding integrations to specific workspaces —
-  workspaces, not repos — may return later as an opt-in feature; deliberately
-  not built until the need is demonstrated.)
+- Servers are global to this machine and never ride a repo — a config moves
+  only by the owner's explicit Copy and paste. (The real incident behind this
+  rule — a production-access MCP server silently followed a user from one repo
+  into another — is guarded by that: nothing attaches by opening a folder.
+  Binding integrations to specific workspaces — workspaces, not repos — may
+  return later as an opt-in feature; deliberately not built until the need is
+  demonstrated.)
 
 ### Rules, skills, commands
 
@@ -181,8 +181,12 @@ deliverable, owed before implementation.
 
 - Configuration (agents, integrations, routing) lives in developer-owned stores,
   global to this machine — never a repo-committed file. Sharing a config entry is
-  an explicit copy (Copy config, in the well-known `mcpServers` shape); credentials
-  are never in what's shared, never displayed, and revocable at any time.
+  an explicit copy (Copy config, in the well-known `mcpServers` shape). What the
+  owner typed — env values, a header API key — is readable in the edit forms and
+  rides the copy; an OAuth token, minted by a login flow, never shows and never
+  copies. Everything is revocable at any time. *(Supersedes 2026-09-19 the
+  "never displayed" rule: the owner could not verify a stored value without
+  removing and re-adding the entry.)*
 
 ## 3. Editor Surface
 

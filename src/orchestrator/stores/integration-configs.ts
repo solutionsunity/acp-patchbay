@@ -4,9 +4,9 @@
 // Integrations are developer-env, not code-env: global to this machine,
 // same as agent-configs.ts. Deliberately global-only — the MCP incident
 // (a production-access MCP server silently following a user between repos)
-// is guarded by credentials never traveling with a
-// shared config, not by workspace-scoping the record; binding to
-// workspaces (not repos) may return later as an opt-in. SecretStorage
+// is guarded by configs never riding a repo: a credential moves only by
+// its owner's explicit Copy and paste, never by opening a folder. Binding
+// to workspaces (not repos) may return later as an opt-in. SecretStorage
 // (integration-tokens.ts) keys credentials globally by integration id.
 import { z } from "zod";
 import { GlobalRecordStore } from "./global-record-store";

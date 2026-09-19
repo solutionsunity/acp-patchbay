@@ -1560,15 +1560,9 @@ export class Orchestrator {
    * Edit form sends the launch line raw (parsing is
    * logic), so an empty args array means "parse `command` here" — the same
    * quote-aware house parser custom Add uses, never a naive split.
-   * `env` is the form's submitted set: the full desired key list, an empty
-   * value meaning "keep the stored value" (the form never sees values, so
-   * that's its only way to say unchanged); keys the user deleted are gone
-   * from the submitted set and thus removed. Values go to SecretStorage
-   * only (stores/agent-env.ts). */
-  private async addOrUpdateAgentConfig(
-    config: AgentConfigView,
-    env: Readonly<Record<string, string>>,
-  ): Promise<void> {
+   * `config.env` is the form's full desired set — what is in the box is
+   * what gets stored, to SecretStorage only (stores/secret-env.ts). */
+  private async addOrUpdateAgentConfig(config: AgentConfigView): Promise<void> {
     let { command, args } = { command: config.command, args: [...config.args] };
     if (args.length === 0) {
       const parsed = parseCommandLine(command);
@@ -1579,14 +1573,7 @@ export class Orchestrator {
       ({ command } = parsed);
       args = parsed.args;
     }
-    const stored = await this.agentEnv.get(config.id);
-    const merged: Record<string, string> = {};
-    for (const [key, value] of Object.entries(env)) {
-      if (value !== "") merged[key] = value;
-      else if (key in stored) merged[key] = stored[key]!;
-      // a blank value for a key that has no stored value: nothing to keep
-    }
-    await this.agentEnv.set(config.id, merged);
+    await this.agentEnv.set(config.id, { ...config.env });
     // Identity/wire facts never round-trip through the form: the webview's
     // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
     // the moment a connect or an Upgrade lands mid-edit — the store's own
@@ -1787,15 +1774,15 @@ export class Orchestrator {
   }
 
   private async refreshAgentConfigs(): Promise<void> {
-    // Key names only — env values never leave SecretStorage for a webview
-    // state snapshot; the form edits them write-only.
+    // Env values ride the Settings channel to their owner — the form shows
+    // what is stored; SecretStorage stays the only place they rest.
     const configs: AgentConfigView[] = await Promise.all(
       this.agentConfigs.list().map(async (c) => ({
         id: c.id,
         name: c.name,
         command: c.command,
         args: c.args,
-        envKeys: Object.keys(await this.agentEnv.get(c.id)),
+        env: await this.agentEnv.get(c.id),
         processPolicy: c.processPolicy,
         autoConnect: c.autoConnect,
         defaults: foldSeed(c.defaults),
@@ -1833,7 +1820,7 @@ export class Orchestrator {
 
   /** Connect an agent from config or registry; upserts it into both channel
    * states. The single env-injection point: values are read fresh from
-   * SecretStorage per connect (stores/agent-env.ts) — the spec maps and the
+   * SecretStorage per connect (stores/secret-env.ts) — the spec maps and the
    * config store never carry them. */
   async connectAgent(spec: LaunchSpec): Promise<void> {
     this.agentNames.set(spec.agentId, spec.name);
@@ -2352,7 +2339,7 @@ export class Orchestrator {
           .catch(this.logCatch(`refreshFileDiffStats ${action.sessionId}`));
         break;
       case "addOrUpdateAgentConfig":
-        void this.addOrUpdateAgentConfig(action.config, action.env);
+        void this.addOrUpdateAgentConfig(action.config);
         break;
       case "removeAgentConfig":
         void this.removeAgentConfig(action.agentId);
@@ -2518,10 +2505,10 @@ export class Orchestrator {
   }
 
   /** Copy config: the server as an `mcpServers` document (the shape Import
-   * reads back) goes to the clipboard. No credential rides it — a pasted
-   * entry's id has no token in SecretStorage until its user explicitly
-   * connects; SecretStorage is global, keyed only by integration id, so
-   * that has always been the real trust boundary. */
+   * reads back) goes to the clipboard, carrying what its owner typed — env
+   * values, a header key — and never an OAuth token. Copy and paste are
+   * the owner's explicit acts; configs never ride a repo, so nothing can
+   * follow a user between workspaces on its own. */
   private async copyIntegrationJson(integrationId: string): Promise<void> {
     const integration = this.integrationConfigs.get(integrationId);
     const json = await this.integrations.exportJson(integrationId);

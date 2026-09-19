@@ -7,9 +7,9 @@
 // One JSON record per id, one instance per record family (agents:
 // `acpPatchbay.agent.<id>.env`, integrations:
 // `acpPatchbay.integration.<id>.env` — the same key family the token store
-// uses). Values never reach a webview state snapshot; they're read at the
-// last moment reality needs them — agent spawn (orchestrator.connectAgent)
-// or MCP-server attach (integrations.mcpServersFor).
+// uses). Values are read at the moment reality needs them — agent spawn
+// (orchestrator.connectAgent), MCP-server attach (integrations.mcpServersFor)
+// — and shown back to their owner in the Settings forms.
 import type { SecretsLike } from "./integration-tokens";
 
 export class SecretEnvStore {

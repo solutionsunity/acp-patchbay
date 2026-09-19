@@ -63,7 +63,8 @@ const mcpServersEntrySchema = z.union([
     authType: z.enum(["none", "header", "oauth"]).default("none"),
     headerName: z.string().optional(),
     valuePrefix: z.string().optional(),
-    /** Write-only: never emitted back in editJson. */
+    /** A header key — user-typed, so it rides editJson and Copy like env
+     * does. Never an OAuth token. */
     token: z.string().optional(),
   }),
 ]);
@@ -268,10 +269,8 @@ export class IntegrationsManager {
     return views;
   }
 
-  /** The editable mcpServers entry for a custom server — env values
-   * never ride it (write-only): stored keys appear
-   * with "", meaning "keep"; a filled value overwrites; a removed key
-   * deletes. Undefined for curated entries — their shape is registry data. */
+  /** The editable mcpServers entry for a custom server, values included.
+   * Undefined for curated entries — their shape is registry data. */
   private async editJsonFor(id: string, source: IntegrationSource): Promise<string | undefined> {
     if (source.kind === "registry") return undefined;
     const entry = await this.entryJsonFor(id, source);
@@ -292,26 +291,23 @@ export class IntegrationsManager {
     return JSON.stringify({ mcpServers: { [integration.name]: entry } }, null, 2);
   }
 
-  /** One `mcpServers` entry, the shape mcpServersEntrySchema reads back.
-   * Env values never ride it (write-only): stored keys appear with "". */
+  /** One `mcpServers` entry, the shape mcpServersEntrySchema reads back,
+   * carrying what the owner typed: env values, and the key of a header-auth
+   * server. An OAuth token is flow-minted and never rides. */
   private async entryJsonFor(
     id: string,
     source: IntegrationSource,
   ): Promise<Record<string, unknown> | undefined> {
     if (source.kind === "custom-stdio") {
-      const envKeys = Object.keys(await this.envStore.get(id));
-      return {
-        command: source.command,
-        args: source.args,
-        env: Object.fromEntries(envKeys.map((k) => [k, ""])),
-      };
+      return { command: source.command, args: source.args, env: await this.envStore.get(id) };
     }
     const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
     const url = endpointOf(source, entry);
     if (url === "") return undefined;
     const authType = source.kind === "registry" ? source.authMode : source.authType;
-    const header = authType === "header" ? headerShapeOf(source, entry) : null;
-    return { url, authType, ...(header ?? {}) };
+    if (authType !== "header") return { url, authType };
+    const token = (await this.tokens.get(id))?.accessToken;
+    return { url, authType, ...headerShapeOf(source, entry), ...(token !== undefined ? { token } : {}) };
   }
 
   private entryFor(registryId: string): RegistryEntry | undefined {
@@ -570,10 +566,10 @@ export class IntegrationsManager {
     }
   }
 
-  /** Applies an edited mcpServers-fragment to one custom server. Env is
-   * write-only: "" keeps the stored value, a filled
-   * value overwrites, a removed key deletes. A `token` field, when present
-   * and non-empty, replaces the stored key the same way. */
+  /** Applies an edited mcpServers entry to one custom server — the box is
+   * the truth: env is stored as written, and for header auth so is
+   * `token` (removing it removes the key, which reads as disconnected
+   * until one is entered again). */
   async updateFromJson(id: string, json: string): Promise<void> {
     const existing = this.integrationStore.get(id);
     if (existing === undefined || existing.source.kind === "registry") return;
@@ -594,19 +590,16 @@ export class IntegrationsManager {
       return;
     }
     if ("command" in spec.data) {
-      const stored = await this.envStore.get(id);
-      const merged: Record<string, string> = {};
-      for (const [key, value] of Object.entries(spec.data.env)) {
-        if (value !== "") merged[key] = value;
-        else if (key in stored) merged[key] = stored[key]!;
-      }
-      await this.envStore.set(id, merged);
+      await this.envStore.set(id, spec.data.env);
       await this.integrationStore.upsert({
         ...existing,
         source: { kind: "custom-stdio", command: spec.data.command, args: spec.data.args },
       });
     } else {
-      if (spec.data.token) await this.tokens.set(id, { accessToken: spec.data.token });
+      if (spec.data.authType === "header") {
+        if (spec.data.token) await this.tokens.set(id, { accessToken: spec.data.token });
+        else await this.tokens.remove(id);
+      }
       await this.integrationStore.upsert({
         ...existing,
         source: {

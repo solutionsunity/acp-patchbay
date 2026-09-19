@@ -97,7 +97,7 @@ export function App({ state }: { state: SettingsState }) {
             onAddAgent={(source, verifyAfterConnect) =>
               send({ kind: "connectAgent", source, verifyAfterConnect })
             }
-            onSave={(config, env) => send({ kind: "addOrUpdateAgentConfig", config, env })}
+            onSave={(config) => send({ kind: "addOrUpdateAgentConfig", config })}
             onRemove={(agentId) => send({ kind: "removeAgentConfig", agentId })}
             onStop={(agentId) => send({ kind: "stopAgent", agentId })}
             onRestart={(agentId) => send({ kind: "restartAgent", agentId })}

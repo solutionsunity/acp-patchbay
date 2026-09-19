@@ -7,6 +7,16 @@
   other clients read. It used to copy patchbay's internal store record,
   which nothing could import back. Curated servers copy as their resolved
   endpoint and auth shape. (#11)
+- Env values are readable again where you edit them. The agent form and the
+  MCP server *Edit JSON* used to show existing variables as bare `KEY=` /
+  `"KEY": ""`, with a blank meaning "keep whatever is stored" — the only
+  way to check a value was to remove the entry and add it back. Both forms
+  now show what is stored and save what is in the box, and *Copy config*
+  carries the values too, so a copy actually reproduces the server. The
+  rule: what you typed you can read — env values and a header API key;
+  an OAuth token, minted by a login flow, still never shows or copies.
+  Storage is unchanged: values live in VS Code SecretStorage and reach only
+  the Settings page while it is open. (#12)
 - *Current file* and *Selection* in the composer now mean the file you were
   last in, not whichever tab happens to be active. They used to come up empty
   whenever the active tab wasn't a text editor — a detached Patchbay panel,
