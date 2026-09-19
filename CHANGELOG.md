@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Dependency advisories on code that ships: mermaid 11.16.0 → 11.17.2 (XY
+  and radar diagram DoS, `%%{init}%%` prototype pollution, CSS injection),
+  dompurify 3.4.11 → 3.4.15 (two sanitizer bypasses — both already blocked
+  here by mermaid's strict default and the webview CSP), fast-uri 3.1.3 →
+  3.1.8 (six host-confusion advisories in the MCP SDK's schema validator —
+  inert in this usage, it resolves `$ref`s and never makes a request). The
+  rest of the Dependabot list lives in build and test tooling that never
+  reaches the VSIX. (#9)
+
 ## 0.82.9 — 2026-09-19
 
 - *Copy config* on an MCP server card now copies a `{"mcpServers": {name:
