@@ -39,10 +39,10 @@ import type {
  * selections (foldSeed). */
 export const MODE_KNOB_ID = "mode";
 
-/** What an extension route receives at execute time — session-manager
+/** What an extension route receives at execute time — performKnobSet
  * supplies these at its one generic branch; the extension owns everything
  * else (method name, params, display policy). */
-export interface KnobExecuteDeps {
+interface KnobExecuteDeps {
   sessionId: string;
   /** Raw wire sender (pool.unstableRequest bound to the session's
    * connection) — the one escape hatch for extension-owned methods. */
@@ -393,6 +393,50 @@ export function routeKnobSet(
     return { via: "setMode", modeId: value };
   }
   return { via: "setConfigOption", configId: knobId };
+}
+
+/** What one routed set needs from the wire — the caller binds it to one
+ * session's connection; the three paths a KnobSetRoute can take. */
+export interface KnobWire {
+  setMode(sessionId: string, modeId: string): Promise<void>;
+  setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string | boolean,
+  ): Promise<{ configOptions: unknown }>;
+  /** Raw sender for extension-owned methods (pool.unstableRequest bound). */
+  send: KnobExecuteDeps["send"];
+}
+
+/** Performs one routed set and returns the next display state, or null
+ * when the agent confirms out of band. Display honesty per route:
+ * set_config_option's response is spec-required complete state and is
+ * consumed; set_mode's response carries no state (bridges have returned
+ * success for rejected changes), so display waits for the agent's own
+ * current_mode_update; an extension executor returns its own next state or
+ * null to defer to the agent's notification likewise. `current` is read
+ * when each route needs it — an extension advances from the state at
+ * execute time; a config response layers onto the state as it stands when
+ * the response lands (a notification may have moved it meanwhile). A
+ * throw propagates — what a rejection means (surface it, swallow it, clear
+ * a pending flag) is the caller's policy, never this function's. */
+export async function performKnobSet(
+  wire: KnobWire,
+  sessionId: string,
+  current: () => NormalizedKnobs,
+  route: KnobSetRoute,
+  value: string | boolean,
+  log?: DropLog,
+): Promise<NormalizedKnobs | null> {
+  if (route.via === "setMode") {
+    await wire.setMode(sessionId, route.modeId);
+    return null;
+  }
+  if (route.via === "extension") {
+    return route.extra.execute({ sessionId, send: wire.send, current: current() }, value);
+  }
+  const response = await wire.setConfigOption(sessionId, route.configId, value);
+  return applyConfigUpdate(response.configOptions, current(), log);
 }
 
 /** Whether the surface already reads back this seed entry. */

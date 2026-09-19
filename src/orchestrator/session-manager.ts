@@ -40,7 +40,8 @@ import {
   NO_KNOBS,
   normalizeKnobs,
   routeKnobSet,
-  type KnobExecuteDeps,
+  type KnobWire,
+  performKnobSet,
   type NormalizedKnobs,
 } from "./knobs";
 import { createProseRewriter, sessionKnobExtras, type ProseRewriter } from "./extensions";
@@ -1185,47 +1186,27 @@ export class SessionManager {
     this.publishKnobs(sessionId, knobs);
   }
 
-  /** The one knob-set entry point (knobs.ts routes it to the wire). A knob
-   * or value the session doesn't offer is a silent no-op — patchbay never
-   * invents a knob. Display honesty per route: set_config_option's response
-   * is spec-required complete state and is consumed; set_mode's response
-   * carries no state and display waits for the agent's own
-   * current_mode_update (bridges have returned success for rejected
-   * changes). */
+  /** The user's knob-set entry point (knobs.ts routes and performs it). A
+   * knob or value the session doesn't offer is a silent no-op — patchbay
+   * never invents a knob. A throw propagates: the caller shows the error. */
   async setKnob(sessionId: string, knobId: string, value: string | boolean): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     const route = routeKnobSet(session.knobs, knobId, value);
     if (route === null) return;
-    if (route.via === "setMode") {
-      // Composer recording waits for the agent's current_mode_update — the
-      // response carries no state (see userModeSetPending). Flag first: the
-      // notification may land before the response resolves.
-      session.userModeSetPending = true;
-      try {
-        await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId);
-      } catch (err) {
-        session.userModeSetPending = false;
-        throw err;
-      }
-      return;
+    // Composer recording for a mode set waits for the agent's
+    // current_mode_update — the response carries no state (see
+    // userModeSetPending). Flag first: the notification may land before
+    // the response resolves.
+    if (route.via === "setMode") session.userModeSetPending = true;
+    let next: NormalizedKnobs | null;
+    try {
+      next = await performKnobSet(this.knobWire(session.poolKey), sessionId, () => session.knobs, route, value, this.knobDropLog);
+    } catch (err) {
+      if (route.via === "setMode") session.userModeSetPending = false;
+      throw err;
     }
-    if (route.via === "extension") {
-      // Extension routes execute themselves: the module
-      // owns the wire method and the display policy; this branch only
-      // supplies the wire and publishes whatever state the executor returns
-      // (null = the agent's own notification will confirm). A throw
-      // propagates (the caller shows the error); a published state is what
-      // the composer records and reseeds, same as a config response.
-      const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
-      if (next !== null) {
-        this.publishKnobs(sessionId, next);
-        this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
-      }
-      return;
-    }
-    const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-    const next = applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog);
+    if (next === null) return; // the agent's own notification confirms
     this.publishKnobs(sessionId, next);
     // A user set, agent-confirmed: this — and only this — is what the
     // composer's per-agent combination records. Attach-time publishes never
@@ -1233,18 +1214,15 @@ export class SessionManager {
     this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
   }
 
-  /** The deps an extension route's executor receives: the
-   * wire — pool's untracked escape hatch bound to this session's connection
-   * — and the standing knob state. Built at execute time, not route time:
-   * `current` must be the state the executor advances from. */
-  private knobExecuteDeps(
-    sessionId: string,
-    session: { poolKey: string; knobs: NormalizedKnobs },
-  ): KnobExecuteDeps {
+  /** The wire one routed set needs, bound to this session's connection.
+   * The surface a set advances from travels alongside at set time, not
+   * route time — it must be the state as it stands then. */
+  private knobWire(poolKey: string): KnobWire {
     return {
-      sessionId,
-      send: (method, params) => this.pool.unstableRequest(session.poolKey, method, params),
-      current: session.knobs,
+      setMode: (sessionId, modeId) => this.pool.setSessionMode(poolKey, sessionId, modeId),
+      setConfigOption: (sessionId, configId, value) =>
+        this.pool.setSessionConfigOption(poolKey, sessionId, configId, value),
+      send: (method, params) => this.pool.unstableRequest(poolKey, method, params),
     };
   }
 
@@ -1317,25 +1295,9 @@ export class SessionManager {
       async (route, _knobId, value) => {
         const session = this.sessions.get(sessionId);
         if (!session) return;
-        if (route.via === "setMode") {
-          await this.pool.setSessionMode(session.poolKey, sessionId, route.modeId).catch(() => {});
-          return;
-        }
-        if (route.via === "extension") {
-          try {
-            const next = await route.extra.execute(this.knobExecuteDeps(sessionId, session), value);
-            if (next !== null) this.publishKnobs(sessionId, next);
-          } catch {
-            // rejected seed entry — the extension's axis stands, nothing to repair
-          }
-          return;
-        }
         try {
-          const response = await this.pool.setSessionConfigOption(session.poolKey, sessionId, route.configId, value);
-          this.publishKnobs(
-            sessionId,
-            applyConfigUpdate(response.configOptions, session.knobs, this.knobDropLog),
-          );
+          const next = await performKnobSet(this.knobWire(session.poolKey), sessionId, () => session.knobs, route, value, this.knobDropLog);
+          if (next !== null) this.publishKnobs(sessionId, next);
         } catch {
           // rejected seed entry — the agent's state stands, nothing to repair
         }

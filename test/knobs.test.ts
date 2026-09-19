@@ -14,9 +14,11 @@ import {
   MODE_KNOB_ID,
   NO_KNOBS,
   normalizeKnobs,
+  performKnobSet,
   routeKnobSet,
   withKnobValue,
   type KnobExtra,
+  type KnobWire,
 } from "../src/orchestrator/knobs";
 import { toOfferedKnobs } from "../src/orchestrator/knobs";
 
@@ -229,6 +231,68 @@ describe("extension extras (the wire-extension door)", () => {
     const advanced = withKnobValue(n, "model", "b");
     expect(advanced.knobs.find((k) => k.id === "model")).toMatchObject({ currentValue: "b" });
     expect(advanced.knobs.find((k) => k.id === MODE_KNOB_ID)).toMatchObject({ currentValue: "ask" });
+  });
+});
+
+describe("performKnobSet — one routed set, three wire paths", () => {
+  function wire(response: SessionConfigOption[], onConfigSet?: () => void) {
+    const calls: string[] = [];
+    const w: KnobWire = {
+      setMode: async (sessionId, modeId) => {
+        calls.push(`set_mode ${sessionId} ${modeId}`);
+      },
+      setConfigOption: async (sessionId, configId, value) => {
+        calls.push(`set_config_option ${sessionId} ${configId}=${String(value)}`);
+        onConfigSet?.();
+        return { configOptions: response };
+      },
+      send: async (method, params) => {
+        calls.push(`${method} ${JSON.stringify(params)}`);
+        return {};
+      },
+    };
+    return { w, calls };
+  }
+
+  it("set_mode: calls the wire and returns null — display waits for current_mode_update", async () => {
+    const { w, calls } = wire([]);
+    const next = await performKnobSet(w, "s1", () => normalizeKnobs(MODES, undefined), { via: "setMode", modeId: "code" }, "code");
+    expect(next).toBeNull();
+    expect(calls).toEqual(["set_mode s1 code"]);
+  });
+
+  it("set_config_option: consumes the response onto the state as it stands when the response lands", async () => {
+    const { extra } = fakeExtra("x");
+    let current = normalizeKnobs(undefined, [MODEL_OPTION]);
+    // the surface moved while the request was in flight (a notification, an
+    // extension set) — what it carried must survive the response
+    const { w, calls } = wire([{ ...MODEL_OPTION, currentValue: "opus" }], () => {
+      current = normalizeKnobs(undefined, [MODEL_OPTION], [extra]);
+    });
+    const next = await performKnobSet(w, "s1", () => current, { via: "setConfigOption", configId: "model" }, "opus");
+    expect(calls).toEqual(["set_config_option s1 model=opus"]);
+    expect(next?.knobs.find((k) => k.id === "model")?.currentValue).toBe("opus");
+    expect(next?.extras).toEqual([extra]);
+  });
+
+  it("extension: executes with the state at execute time and returns the executor's next state", async () => {
+    const { extra, sent } = fakeExtra("x");
+    const current = normalizeKnobs(undefined, [MODEL_OPTION], [extra]);
+    const { w, calls } = wire([]);
+    const next = await performKnobSet(w, "s1", () => current, { via: "extension", extra }, "b");
+    expect(sent).toEqual([{ sessionId: "s1", value: "b" }]);
+    expect(calls).toEqual([]); // the executor owns its wire; the spec paths are untouched
+    expect(next?.knobs.find((k) => k.id === "x")?.currentValue).toBe("b");
+  });
+
+  it("a wire rejection propagates untouched — what it means is the caller's policy", async () => {
+    const refuse = async () => {
+      throw new Error("nope");
+    };
+    const w: KnobWire = { setMode: refuse, setConfigOption: refuse, send: async () => ({}) };
+    const none = () => normalizeKnobs(undefined, undefined);
+    await expect(performKnobSet(w, "s1", none, { via: "setMode", modeId: "code" }, "code")).rejects.toThrow("nope");
+    await expect(performKnobSet(w, "s1", none, { via: "setConfigOption", configId: "model" }, "opus")).rejects.toThrow("nope");
   });
 });
 

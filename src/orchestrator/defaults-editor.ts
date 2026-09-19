@@ -22,8 +22,10 @@ import {
   applyConfigUpdate,
   applyModeUpdate,
   applySeedToFixedPoint,
+  performKnobSet,
   toOfferedKnobs,
   type KnobSetRoute,
+  type KnobWire,
   type NormalizedKnobs,
 } from "./knobs";
 import { nullLogger, type Logger } from "./logger";
@@ -190,29 +192,29 @@ export class DefaultsEditor {
   }
 
   /** One routed set; a rejection leaves the agent's state standing (the
-   * surface still reflects what the agent actually holds). */
+   * surface still reflects what the agent actually holds). A null next
+   * state means the agent confirms by notification — handleUpdate. */
   private async set(agentId: string, entry: Editing, route: KnobSetRoute, value: string | boolean): Promise<void> {
     try {
-      if (route.via === "setMode") {
-        // display comes from the agent's current_mode_update (handleUpdate)
-        await this.pool.setSessionMode(agentId, entry.sessionId, route.modeId);
-      } else if (route.via === "extension") {
-        const next = await route.extra.execute(
-          {
-            sessionId: entry.sessionId,
-            send: (method, params) => this.pool.unstableRequest(agentId, method, params),
-            current: entry.knobs,
-          },
-          value,
-        );
-        if (next !== null) entry.knobs = next;
-      } else {
-        const response = await this.pool.setSessionConfigOption(agentId, entry.sessionId, route.configId, value);
-        entry.knobs = applyConfigUpdate(response.configOptions, entry.knobs, (m) => this.log.info(m));
-      }
+      const next = await performKnobSet(this.knobWire(agentId), entry.sessionId, () => entry.knobs, route, value, (m) =>
+        this.log.info(m),
+      );
+      if (next !== null) entry.knobs = next;
     } catch (err) {
       this.log.info(`${agentId}: defaults editor set rejected — ${(err as Error).message}`);
     }
+  }
+
+  /** The wire one routed set needs, bound to this agent's connection (the
+   * editor's sessions live on the agent's own pool key, never an isolated
+   * clone). */
+  private knobWire(agentId: string): KnobWire {
+    return {
+      setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),
+      setConfigOption: (sessionId, configId, value) =>
+        this.pool.setSessionConfigOption(agentId, sessionId, configId, value),
+      send: (method, params) => this.pool.unstableRequest(agentId, method, params),
+    };
   }
 
   private publish(agentId: string, entry: Editing): void {

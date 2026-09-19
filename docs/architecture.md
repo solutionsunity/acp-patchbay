@@ -453,10 +453,12 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   escape hatch (extension-owned methods bear on no capability row);
   `normalizeKnobs(..., extras?)` where an extra is `{ knob, execute }` —
   knobs.ts applies one generic rule (extras append unless a spec-surface
-  knob owns the id) and knows nothing of any shape; session-manager runs
-  extension routes through one generic branch forever (the route executes
-  itself and returns the next state to publish, or null to wait for a
-  notification); offering chokepoints pass the raw response through, so a
+  knob owns the id) and knows nothing of any shape; `performKnobSet`
+  (knobs.ts) runs extension routes through one generic branch forever (the
+  route executes itself and returns the next state to publish, or null to
+  wait for a notification) — the one place a routed set meets the wire,
+  shared by the user set, seeding, and the defaults editor; offering
+  chokepoints pass the raw response through, so a
   new surface never ripples a hook signature.
 - **Shape-gated wherever shape exists; id-keyed only where it can't.** A
   silent behavioral quirk (nothing on the wire announces it before it bites
