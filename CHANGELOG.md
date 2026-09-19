@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Knob seeding converges instead of setting once: an entry a later set reset
+  (an agent that resets `effort` when the model changes) is re-asked until
+  the surface reads the seed back, and an entry the agent already holds
+  costs no wire call. A rejected entry is never nagged — re-asked only when
+  a different entry fired after it. Seeds from agent defaults, the
+  composer's per-agent combination, and the Settings defaults editor all
+  ride the one loop.
 - Dependency advisories on code that ships: mermaid 11.16.0 → 11.17.2 (XY
   and radar diagram DoS, `%%{init}%%` prototype pollution, CSS injection),
   dompurify 3.4.11 → 3.4.15 (two sanitizer bypasses — both already blocked

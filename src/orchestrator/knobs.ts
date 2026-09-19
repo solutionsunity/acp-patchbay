@@ -395,30 +395,49 @@ export function routeKnobSet(
   return { via: "setConfigOption", configId: knobId };
 }
 
-/** Applies a knob seed against a live surface until nothing more lands.
- * A surface is a function of its own selections — an agent may offer
- * `effort` only once a model with variants is selected — so one pass in
- * key order would silently drop an entry whose knob appears after an
- * earlier entry's set. Passes repeat while a pass landed something; an
- * entry the surface never offers is skipped, never retried. `current`
- * re-reads the surface after every set; `set` performs one routed set
- * (rejections are the caller's to swallow — a rejected entry still counts
- * as landed, patchbay never re-asks). */
+/** Whether the surface already reads back this seed entry. */
+function holds(current: NormalizedKnobs, knobId: string, value: string | boolean): boolean {
+  return current.knobs.find((k) => k.id === knobId)?.currentValue === value;
+}
+
+/** Applies a knob seed against a live surface until the surface reads the
+ * seed back. A surface is a function of its own selections — an agent may
+ * offer `effort` only once a model with variants is selected, and may
+ * reset `effort` when the model changes — so neither one pass in key order
+ * nor "every entry was set once" is enough: the first drops an entry whose
+ * knob appears after a later entry's set, the second keeps an entry a
+ * later set silently reset. The fixed point is convergence: each pass
+ * walks the whole seed and sets what the surface offers but doesn't hold;
+ * the loop ends on a pass that set nothing, capped at seed-size + 1 passes
+ * so two knobs that reset each other terminate. An entry the surface never
+ * offers is skipped.
+ *
+ * A rejection (the agent refused, or confirms only by a notification that
+ * hasn't landed) leaves an entry divergent with nothing to repair — so an
+ * entry is re-asked only when a *different* entry fired after its own last
+ * set; divergence after nothing else moved is never re-asked. `current`
+ * re-reads the surface before every decision; `set` performs one routed
+ * set (rejections are the caller's to swallow). */
 export async function applySeedToFixedPoint(
   seed: KnobSeed,
   current: () => NormalizedKnobs,
   set: (route: KnobSetRoute, knobId: string, value: string | boolean) => Promise<void>,
 ): Promise<void> {
-  const pending = new Map(Object.entries(seed));
-  let landed = true;
-  while (landed && pending.size > 0) {
-    landed = false;
-    for (const [knobId, value] of [...pending]) {
-      const route = routeKnobSet(current(), knobId, value);
+  const entries = Object.entries(seed);
+  let sets = 0; // every set issued, in order
+  const ownLastSet = new Map<string, number>(); // `sets` right after this entry's own set
+  let progressed = true;
+  for (let pass = 0; progressed && pass <= entries.length; pass++) {
+    progressed = false;
+    for (const [knobId, value] of entries) {
+      if (ownLastSet.get(knobId) === sets) continue; // nothing fired since — a rejection, not a disturbance
+      const surface = current();
+      if (holds(surface, knobId, value)) continue;
+      const route = routeKnobSet(surface, knobId, value);
       if (route === null) continue;
-      pending.delete(knobId);
-      landed = true;
       await set(route, knobId, value);
+      ownLastSet.set(knobId, ++sets);
+      progressed = true;
     }
   }
 }

@@ -251,15 +251,23 @@ describe("applySeedToFixedPoint — a surface conditioned on its own selections"
       { value: "pro", name: "Pro" },
     ],
   };
-  function wire() {
-    let surface = applyConfigUpdate([PRO_MODEL]);
+  /** `effort` is offered on every model when `always`, only on "pro"
+   * otherwise; a model switch always resets it to its default (the shape
+   * that defeats set-once seeding). `refuse` lists values the agent
+   * rejects — the set "succeeds" but the surface keeps its value. */
+  function wire(opts: { always?: boolean; refuse?: string[] } = {}) {
+    let surface = applyConfigUpdate(opts.always ? [PRO_MODEL, EFFORT] : [PRO_MODEL]);
     const sets: string[] = [];
-    const set = async (route: { via: string; configId?: string }, knobId: string, value: string | boolean) => {
+    const set = async (_route: unknown, knobId: string, value: string | boolean) => {
       sets.push(`${knobId}=${String(value)}`);
-      const options = surface.knobs.map((k) => (k.id === knobId ? { ...k, currentValue: value } : k));
+      const accepted = !(opts.refuse ?? []).includes(String(value));
+      const options = surface.knobs.map((k) => (k.id === knobId && accepted ? { ...k, currentValue: value } : k));
       const model = options.find((k) => k.id === "model")?.currentValue;
-      const effort = options.find((k) => k.id === "effort") ?? EFFORT; // a dependent keeps its value while it stays
-      const withEffort = model === "pro" ? [...options.filter((k) => k.id !== "effort"), effort] : options.filter((k) => k.id !== "effort");
+      const effort = knobId === "model" ? EFFORT : (options.find((k) => k.id === "effort") ?? EFFORT);
+      const withEffort =
+        opts.always || model === "pro"
+          ? [...options.filter((k) => k.id !== "effort"), effort]
+          : options.filter((k) => k.id !== "effort");
       surface = applyConfigUpdate(withEffort as unknown as SessionConfigOption[]);
     };
     return { current: () => surface, set, sets };
@@ -272,10 +280,53 @@ describe("applySeedToFixedPoint — a surface conditioned on its own selections"
     expect(confirmedFromKnobs(w.current())).toEqual({ model: "pro", effort: "high" });
   });
 
+  it("re-asks an entry a later set reset — convergence, not set-once", async () => {
+    const w = wire({ always: true });
+    await applySeedToFixedPoint({ effort: "high", model: "pro" }, w.current, w.set);
+    expect(w.sets).toEqual(["effort=high", "model=pro", "effort=high"]);
+    expect(confirmedFromKnobs(w.current())).toEqual({ model: "pro", effort: "high" });
+  });
+
+  it("skips what the surface already holds — a seed matching the agent costs no wire", async () => {
+    const w = wire({ always: true });
+    await applySeedToFixedPoint({ model: "sonnet", effort: "medium" }, w.current, w.set);
+    expect(w.sets).toEqual([]);
+  });
+
   it("skips what the surface never offers, without re-asking — terminates", async () => {
     const w = wire();
     await applySeedToFixedPoint({ nothing: "x", model: "sonnet", effort: "high" }, w.current, w.set);
-    expect(w.sets).toEqual(["model=sonnet"]); // effort never appears for sonnet; `nothing` never exists
+    expect(w.sets).toEqual([]); // sonnet already held; effort never appears for sonnet; `nothing` never exists
+  });
+
+  it("never re-asks a rejected entry when nothing else moved", async () => {
+    const w = wire({ always: true, refuse: ["high"] });
+    await applySeedToFixedPoint({ effort: "high" }, w.current, w.set);
+    expect(w.sets).toEqual(["effort=high"]);
+  });
+
+  it("re-asks a rejected entry once per neighbour that fired after it, then stops", async () => {
+    const w = wire({ always: true, refuse: ["high"] });
+    await applySeedToFixedPoint({ effort: "high", model: "pro" }, w.current, w.set);
+    // model fired after effort's set — it may have disturbed it; the second
+    // refusal has no neighbour after it, so it stands.
+    expect(w.sets).toEqual(["effort=high", "model=pro", "effort=high"]);
+  });
+
+  it("terminates when two knobs reset each other", async () => {
+    const A: SessionConfigOption = { ...EFFORT, id: "a", currentValue: "low" };
+    const B: SessionConfigOption = { ...EFFORT, id: "b", currentValue: "low" };
+    let surface = applyConfigUpdate([A, B]);
+    const sets: string[] = [];
+    const set = async (_r: unknown, knobId: string, value: string | boolean) => {
+      sets.push(`${knobId}=${String(value)}`);
+      // setting either knob resets the other to "low"
+      surface = applyConfigUpdate(
+        surface.knobs.map((k) => ({ ...k, currentValue: k.id === knobId ? value : "low" })) as unknown as SessionConfigOption[],
+      );
+    };
+    await applySeedToFixedPoint({ a: "high", b: "high" }, () => surface, set);
+    expect(sets.length).toBeLessThanOrEqual(6); // ≤ (seed size + 1) passes × seed size
   });
 });
 
