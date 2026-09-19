@@ -174,7 +174,12 @@ flowchart TD
     Q2 -- yes --> RS["session/resume<br/><small>context back; seam notice: no visible history</small>"]
     Q2 -- no --> N["Honestly not reopenable<br/><small>never mint a session and call it a continuation</small>"]
 ```
-- **Session lifecycle**: switching chats never closes anything. The idle
+- **Session lifecycle**: opening a session — drawer click, palette pick, or
+  "Open in new window" — is one ceremony (`SessionManager.open`): the
+  pointer moves unless the session is pinned to its own window, the ladder
+  above runs, and an off agent is spawned (connect-on-demand); when an agent
+  comes up, every session on view (active or pinned — the reaper's same
+  exemption set) re-runs the ladder. Switching chats never closes anything. The idle
   reaper is the only closer, and only when *all* hold: not new
   (`everPrompted` — a never-prompted session never closes, period; agents
   404 load/resume on zero-turn ids), nothing in flight, not unseen-completed

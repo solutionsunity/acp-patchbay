@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- "Open in new window" on a session that isn't loaded now loads it: the
+  pinned window ran connect-on-demand but never the attach ladder, and an
+  agent coming up re-hydrated only the sidebar's active session — a pinned
+  one stayed blank until Reload. The palette's "Switch to session…" had the
+  mirror gap (ladder, no connect). Opening a session is now one ceremony
+  for every entrance: pointer unless pinned, ladder, connect-on-demand; an
+  agent coming up hydrates everything on view. (#13)
 - Knob seeding converges instead of setting once: an entry a later set reset
   (an agent that resets `effort` when the model changes) is re-asked until
   the surface reads the seed back, and an entry the agent already holds

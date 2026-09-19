@@ -368,14 +368,10 @@ export class Orchestrator {
         if (status === "running") {
           const sync = this.sessionManager
             .syncAgentSessions(agentId)
-            .then(() => {
-              // A session opened before its agent connected sat blank (no
-              // replay to run yet) — hydrate it now that one exists.
-              const active = this.agentView.current.activeSessionId;
-              if (active !== null && this.sessionManager.agentFor(active) === agentId) {
-                return this.sessionManager.hydrate(active);
-              }
-            })
+            // A session opened before its agent connected sat blank (no
+            // replay to run yet) — hydrate whatever is on view now that a
+            // process exists.
+            .then(() => this.sessionManager.hydrateViewed(agentId))
             .catch(this.logCatch(`session/list sync for ${agentId}`))
             .finally(() => {
               if (this.pendingSyncs.get(agentId) === sync) this.pendingSyncs.delete(agentId);
@@ -691,6 +687,7 @@ export class Orchestrator {
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
         isPointerActive: (sessionId) => this.agentView.current.activeSessionId === sessionId,
+        connectForSession: (sessionId) => void this.connectForSession(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
         authLocked: (agentId) => this.authLocks.lockFor(agentId) !== null,
@@ -1051,7 +1048,7 @@ export class Orchestrator {
       { placeHolder: "Switch to session…" },
     );
     if (picked === undefined) return;
-    this.sessionManager.activate(picked.sessionId);
+    this.sessionManager.open(picked.sessionId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -2025,10 +2022,7 @@ export class Orchestrator {
         // Switching NEVER closes the session being left — open sessions
         // stay attached until the idle reaper's full predicate says
         // otherwise (session-manager.ts reapIdle).
-        this.sessionManager.activate(action.sessionId);
-        // A session click is a connect trigger — the running agent is the
-        // session's prerequisite (composer stays disabled until then).
-        void this.connectForSession(action.sessionId);
+        this.sessionManager.open(action.sessionId);
         break;
       case "closeSession":
         void this.sessionManager.close(action.sessionId);
@@ -2064,10 +2058,10 @@ export class Orchestrator {
         // that hid itself (render-only webviews don't get to be the gate).
         if (!this.preferences.get().detachWindows) break;
         // The panel host lives in extension.ts (like Settings) — reach it by
-        // command. A detached session is being opened to be used: connect,
-        // same as a session click, but without stealing the active pointer.
+        // command. Then the one open ceremony, pinned: the panel renders
+        // this session by id, so the active pointer stays where it is.
         void vscode.commands.executeCommand("acpPatchbay.detachSession", action.sessionId);
-        void this.connectForSession(action.sessionId);
+        this.sessionManager.open(action.sessionId, { pin: true });
         break;
       case "removeQueuedPrompt":
         this.sessionManager.removeQueuedPrompt(action.sessionId, action.promptId);
@@ -2588,13 +2582,14 @@ export class Orchestrator {
     }
   }
 
-  /** The session-click half of connect-on-demand: opening a session
-   * whose configured agent is off spawns it, through the same in-pane
-   * chatConnect states startChat uses — but no session is minted: on
-   * success the status-running hook re-syncs and hydrates the now-active
-   * session, and `forSessionId` makes the failure pane's Retry re-open this
-   * session instead of starting a new chat. Unconfigured agents stay
-   * untouched — the row is a readable record, nothing more to offer. */
+  /** The connect half of the session-manager's open ceremony (its
+   * connectForSession hook): opening a session whose configured agent is
+   * off spawns it, through the same in-pane chatConnect states startChat
+   * uses — but no session is minted: on success the status-running hook
+   * re-syncs and hydrates whatever is on view, and `forSessionId` makes
+   * the failure pane's Retry re-open this session instead of starting a
+   * new chat. Unconfigured agents stay untouched — the row is a readable
+   * record, nothing more to offer. */
   private async connectForSession(sessionId: string): Promise<void> {
     const agentId = this.sessionManager.agentFor(sessionId);
     if (agentId === undefined) return;

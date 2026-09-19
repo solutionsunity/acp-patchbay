@@ -1024,9 +1024,9 @@ export interface ChatConnectView {
   status: "connecting" | "failed";
   reason?: string;
   /** Present when the connect was triggered by opening an existing session
-   * (a session click is a connect trigger — the running agent is the
-   * session's prerequisite). Retry then re-opens that session instead of
-   * minting a new one via startChat. */
+   * (every open — click, palette, own window — is a connect trigger: the
+   * running agent is the session's prerequisite). Retry then re-opens that
+   * session instead of minting a new one via startChat. */
   forSessionId?: string;
 }
 
@@ -1810,7 +1810,7 @@ export function reduceAgentView(
       const { [event.sessionId]: _hy, ...hydrating } = state.hydrating ?? {};
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
-      // sibling: a session click is the one hydrate/connect trigger, so a
+      // sibling: opening a session is the one hydrate/connect trigger, so a
       // silently auto-activated row would render its title over an empty pane.
       const activeSessionId =
         state.activeSessionId === event.sessionId ? null : state.activeSessionId;

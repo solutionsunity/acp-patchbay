@@ -58,6 +58,11 @@ function harness(opts?: {
   /** Shared across two harnesses to simulate a window reload: the durable
    * per-session continuity row is the only state that survives. */
   continuityStore?: SessionContinuityStore;
+  /** Stand-in for the orchestrator's pinned-panel list: sessions on view
+   * in their own window, active-pointer or not. */
+  pinned?: ReadonlySet<string>;
+  /** Stand-in for the orchestrator's connect-on-demand — records the asks. */
+  onConnectForSession?(sessionId: string): void;
 }): {
   pool: AgentPool;
   sessionManager: SessionManager;
@@ -117,11 +122,13 @@ function harness(opts?: {
         events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId]?.["session.delete"]
           ?.used ?? false,
       isActiveSession: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
-      // Sidebar-pointer semantics (orchestrator mirrors this shape; the
-      // harness has no pinned panels, so the two coincide here).
+        events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId ||
+        (opts?.pinned?.has(sessionId) ?? false),
+      // Sidebar-pointer semantics (orchestrator mirrors this shape: pinned
+      // panels excluded).
       isPointerActive: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
+      connectForSession: (sessionId) => opts?.onConnectForSession?.(sessionId),
       isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
       authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
       readFileLive: (path) => readFile(path, "utf8"),
@@ -1779,6 +1786,80 @@ describe("session history (list / resume / delete)", () => {
     expect(h.state().sessions.map((s) => s.id)).not.toContain(sessionId);
 
     await h.pool.stop("sh6");
+  });
+});
+
+describe("open — one ceremony for every entrance", () => {
+  const LOAD: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "chunk", text: "remembered" }] };
+
+  async function untilLive(h: ReturnType<typeof harness>, sessionId: string): Promise<void> {
+    const start = Date.now();
+    while (!h.sessionManager.isLive(sessionId)) {
+      if (Date.now() - start > 3000) throw new Error(`${sessionId} never attached`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  it("pinned open hydrates the session without moving the pointer, and asks for its agent", async () => {
+    const asked: string[] = [];
+    const pinned = new Set<string>();
+    const h = harness({ pinned, onConnectForSession: (id) => asked.push(id) });
+    await h.pool.connect(spec(LOAD, "op1"));
+    const older = await h.sessionManager.createSession("op1", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(older, "first");
+    const current = await h.sessionManager.createSession("op1", "Fake Agent", cwd);
+    expect(h.state().activeSessionId).toBe(current);
+    h.sessionManager.invalidateAgent("op1");
+
+    pinned.add(older);
+    h.sessionManager.open(older, { pin: true }); // "Open in new window"
+    await untilLive(h, older);
+    expect(h.state().activeSessionId).toBe(current); // the sidebar didn't move
+    expect(asked).toEqual([older]);
+
+    await h.pool.stop("op1");
+  });
+
+  it("plain open is a click: pointer, ladder, and the connect ask", async () => {
+    const asked: string[] = [];
+    const h = harness({ onConnectForSession: (id) => asked.push(id) });
+    await h.pool.connect(spec(LOAD, "op2"));
+    const sessionId = await h.sessionManager.createSession("op2", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "first");
+    h.sessionManager.invalidateAgent("op2");
+
+    h.sessionManager.open(sessionId); // the palette pick, the drawer click
+    await untilLive(h, sessionId);
+    expect(h.state().activeSessionId).toBe(sessionId);
+    expect(asked).toEqual([sessionId]);
+
+    await h.pool.stop("op2");
+  });
+
+  it("an agent coming up hydrates every session on view — pinned included, not only the pointer", async () => {
+    const pinned = new Set<string>();
+    const h = harness({ pinned });
+    await h.pool.connect(spec(LOAD, "op3"));
+    const shown = await h.sessionManager.createSession("op3", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(shown, "first");
+    const other = await h.sessionManager.createSession("op3", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(other, "second");
+    expect(h.state().activeSessionId).toBe(other);
+    // The agent goes down; the pinned window opens while it's off — nothing
+    // to attach to yet, so open can only ask for the connect.
+    await h.pool.stop("op3");
+    h.sessionManager.invalidateAgent("op3");
+    pinned.add(shown);
+    h.sessionManager.open(shown, { pin: true });
+    expect(h.sessionManager.isLive(shown)).toBe(false);
+
+    await h.pool.connect(spec(LOAD, "op3"));
+    await h.sessionManager.hydrateViewed("op3"); // what the status-running hook runs after its list sync
+    expect(h.sessionManager.isLive(shown)).toBe(true); // pinned
+    expect(h.sessionManager.isLive(other)).toBe(true); // the pointer
+    expect(h.state().activeSessionId).toBe(other);
+
+    await h.pool.stop("op3");
   });
 });
 

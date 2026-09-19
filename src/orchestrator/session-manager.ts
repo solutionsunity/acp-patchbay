@@ -112,10 +112,11 @@ export interface SessionManagerHooks {
   /** Whether `session.delete` is declared *and used* — gates the agent-side
    * delete on close (features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
-  /** Whether this session is the one currently open in the view — the idle
-   * reaper exempts it: the visible chat's state never changes under the
-   * user, and the composer (whose draft must block a close) only exists
-   * for the active session. */
+  /** Whether this session is on view — the sidebar's active one or a
+   * pinned window's. The idle reaper exempts it (the visible chat's state
+   * never changes under the user, and the composer, whose draft must block
+   * a close, only exists for a viewed session), and hydrateViewed reopens
+   * it when its agent comes up — one on-view set, both readers. */
   isActiveSession?(sessionId: string): boolean;
   /** Narrower than isActiveSession: true only when this session owns the
    * sidebar's active pointer (pinned panels excluded) — recreateEmpty's
@@ -136,6 +137,12 @@ export interface SessionManagerHooks {
    * already witnessed to refuse — and the drain holds until the lock's
    * clearing releases it. */
   authLocked?(agentId: string): boolean;
+  /** Connect-on-demand: the user opened a session whose configured agent
+   * may be off — spawn it (the orchestrator's agent lifecycle, with its
+   * in-pane connect states). Fired on every open; a running agent makes
+   * it a no-op. When the agent comes up, hydrateViewed runs the ladder for
+   * whatever is on view. */
+  connectForSession?(sessionId: string): void;
 }
 
 /** session/list pagination guard: 50 pages of history for one workspace is
@@ -696,10 +703,43 @@ export class SessionManager {
     return sessionId;
   }
 
+  /** The user opened a session — drawer click, palette pick, or "Open in
+   * new window". One ceremony, whatever the entrance: the pointer moves
+   * (unless the session is pinned to its own window, which renders it
+   * without the pointer), the attach ladder runs, and an off agent is
+   * asked for (connect-on-demand — its coming-up re-runs the ladder via
+   * hydrateViewed, since hydrate can do nothing without a process). */
+  open(sessionId: string, opts: { pin?: boolean } = {}): void {
+    if (opts.pin === true) void this.hydrateLogged(sessionId);
+    else this.activate(sessionId);
+    this.hooks.connectForSession?.(sessionId);
+  }
+
+  /** Point the view at a session and run the ladder — no connect. The
+   * unpinned open wraps this with the connect ask; the two entrances that
+   * must never spawn a process — the startup restore and "new session"
+   * focusing a never-prompted draft — call it directly. */
   activate(sessionId: string): void {
     this.hooks.emit({ kind: "sessionActivated", sessionId });
-    void this.hydrate(sessionId).catch((err: Error) => {
-      // Blank pane + working Reload button is the honest degraded state.
+    void this.hydrateLogged(sessionId);
+  }
+
+  /** An agent came up: each of its sessions that is on view (active or
+   * pinned — the reaper's exemption set, read through the same hook) sat
+   * blank until now, having nothing to attach to. Run the ladder for each;
+   * a live one costs nothing (hydrate returns at once). */
+  async hydrateViewed(agentId: string): Promise<void> {
+    const viewed = [...this.known]
+      .filter(([sessionId, k]) => k.agentId === agentId && this.hooks.isActiveSession?.(sessionId) === true)
+      .map(([sessionId]) => sessionId);
+    await Promise.all(viewed.map((sessionId) => this.hydrateLogged(sessionId)));
+  }
+
+  /** The ladder with open's exhaustion policy applied: a failed rung is
+   * logged — blank pane + working Reload button is the honest degraded
+   * state — never thrown at a click. */
+  private hydrateLogged(sessionId: string): Promise<void> {
+    return this.hydrate(sessionId).catch((err: Error) => {
       this.log.info(`session ${sessionId}: hydrate on open failed — ${err.message}`);
     });
   }
@@ -719,7 +759,7 @@ export class SessionManager {
     try {
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
-      if (this.pool.get(agentId)?.status !== "running") return; // connect-on-demand re-hydrates after
+      if (this.pool.get(agentId)?.status !== "running") return; // hydrateViewed runs once the connect lands
       const outcome = await this.attach(sessionId, agentId);
       if (outcome.attached) {
         // Held words whose firing trigger died with the old window:
