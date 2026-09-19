@@ -6,7 +6,7 @@
 // configuration. Webviews only ever see its snapshots and patches.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
@@ -87,17 +87,6 @@ import { type TerminalHandle } from "./terminal-runner";
 let chipSeq = 0;
 const chipId = () => `chip-${Date.now()}-${chipSeq++}`;
 
-/** Extension → mime for images every major LLM API accepts (the same set
- * the composer ingress passes through unconverted) — an industry constant,
- * not any one agent's. Outside it, a dropped path stays an attachment
- * chip: the honest resource_link, never a guessed ImageContent. */
-const WIRE_IMAGE_MIME: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-};
 
 function optionViewsFromAcp(
   options: readonly { optionId: string; name: string; kind: string }[],
@@ -2399,11 +2388,6 @@ export class Orchestrator {
           this.logCatch(`addDroppedFileContext ${action.name}`),
         );
         break;
-      case "addPathContext":
-        void this.addPathContext(action.sessionId, action.uris).catch(
-          this.logCatch("addPathContext"),
-        );
-        break;
       case "addFilePickerContext":
         void this.addFilePickerContext(action.sessionId);
         break;
@@ -2514,43 +2498,6 @@ export class Orchestrator {
    * for the wire — becomes an attachment chip whose resource_link the agent
    * reads itself. That fallback is strictly honest, so nothing in this lane
    * is ever refused. */
-  private async addPathContext(sessionId: string, uris: readonly string[]): Promise<void> {
-    const maxBytes = this.preferences.get().attachmentMaxMB * 1024 * 1024;
-    for (const raw of uris) {
-      let uri: vscode.Uri;
-      try {
-        uri = vscode.Uri.parse(raw, true);
-      } catch {
-        continue;
-      }
-      const stat = await vscode.workspace.fs.stat(uri).then(
-        (s) => s,
-        () => null,
-      );
-      if (stat === null || (stat.type & vscode.FileType.Directory) !== 0) continue;
-      const path = uri.fsPath;
-      const mime = WIRE_IMAGE_MIME[extname(path).toLowerCase()];
-      if (mime !== undefined && stat.size <= maxBytes) {
-        const bytes = await vscode.workspace.fs.readFile(uri);
-        this.sessionManager.addContext(sessionId, {
-          id: chipId(),
-          kind: "image",
-          label: `Image: ${basename(path)}`,
-          content: Buffer.from(bytes).toString("base64"),
-          mimeType: mime,
-        });
-      } else {
-        this.sessionManager.addContext(sessionId, {
-          id: chipId(),
-          kind: "attachment",
-          label: `File: ${basename(path)}`,
-          path,
-          ...(mime !== undefined ? { mimeType: mime } : {}),
-        });
-      }
-    }
-  }
-
   private async addFilePickerContext(sessionId: string): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: false,

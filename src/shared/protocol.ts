@@ -222,9 +222,6 @@ export type Action =
    * the chip rides the prompt as a resource_link to it. Empty mimeType =
    * the platform didn't know; it stays unknown, never guessed. */
   | { kind: "addDroppedFileContext"; sessionId: string; name: string; mimeType: string; base64: string }
-  /** Drops that arrive as URIs (VS Code explorer, editor tabs): no bytes
-   * cross the webview — the orchestrator resolves each path host-side. */
-  | { kind: "addPathContext"; sessionId: string; uris: readonly string[] }
   | { kind: "addFilePickerContext"; sessionId: string }
   /** The `@` mention picker's workspace tier: the webview never touches the
    * filesystem — it asks, the orchestrator runs

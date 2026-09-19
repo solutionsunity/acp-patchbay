@@ -113,17 +113,6 @@ export async function ingestFiles(
   return out;
 }
 
-/** file:// entries of a URI-list drop (VS Code explorer / editor tabs set
- * `text/uri-list`). Non-file schemes and comment lines are dropped here so
- * the orchestrator only ever sees candidates it can stat. */
-export function extractUris(dt: DataTransfer): string[] {
-  return dt
-    .getData("text/uri-list")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l !== "" && !l.startsWith("#"));
-}
-
 async function toBase64(blob: Blob): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

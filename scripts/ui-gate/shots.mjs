@@ -253,6 +253,21 @@ for (const theme of Object.keys(THEMES)) {
       .map((a) => ({ id: a.sessionId, newWords: a.draft.includes("new words"), oldWords: a.draft.includes("old words") })),
   );
   check(`[${theme}] previous session's draft keeps only its own words`, drafts.some((d) => d.id === "s1") && drafts.every((d) => d.id === "s1" && d.oldWords && !d.newWords));
+
+  // ── file drop on the composer: the bytes lane — a dropped file leaves as
+  // an attachment action with its bytes (the same lane paste feeds) ──
+  const drop = await p.evaluate(async () => {
+    const composer = document.querySelector(".composer");
+    const dt = new DataTransfer();
+    dt.items.add(new File(["hello"], "note.txt", { type: "text/plain" }));
+    const fire = (type) => !composer.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    const over = fire("dragover");
+    const dropped = fire("drop");
+    await new Promise((r) => setTimeout(r, 300)); // the ingress reads the file async
+    const action = window.__actions.find((a) => a.kind === "addDroppedFileContext");
+    return { over, dropped, name: action?.name, base64: action?.base64 };
+  });
+  check(`[${theme}] dropped file leaves as an attachment action with its bytes`, drop.over && drop.dropped && drop.name === "note.txt" && drop.base64 === "aGVsbG8=");
   await p.close();
 
   // ── chat at the narrowest side-panel width: unbreakable tokens (a URL as

@@ -92,7 +92,11 @@ deliverable, owed before implementation.
 - When the agent maintains a task list / plan, it renders live in the session.
 - User can paste an image and any agent receives it in the best form it supports —
   paste is never disabled.
-- User can attach files by drag-and-drop or picker.
+- User can attach files by paste, by picker, or by dropping from the OS with
+  Shift held (without Shift, VS Code takes the drop for itself). Editor tabs
+  and Explorer entries cannot be dropped onto the composer — VS Code blocks
+  every webview for the duration of an in-window drag — so open editors and
+  workspace files are reached through `@` in the prompt.
 - User can explicitly add editor state to the prompt: current selection, current
   file, diagnostics.
 - User can add workspace folders as session context roots — the open workspace's

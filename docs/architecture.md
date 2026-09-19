@@ -695,20 +695,22 @@ The differentiator (the PRD's current-release scope), shipped complete:
   honest source (the spec requires the field to *describe the payload*).
   Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s the whole
   turn on formats outside that set (the Auggie dossier).
-- **File attach** (drag-drop or picker): picker reads ride inline
+- **File attach** (paste, OS drop, or picker): picker reads ride inline
   `ContentBlock::Resource` when `promptCapabilities.embeddedContext` is declared,
-  `ResourceLink` otherwise. Drops split by what arrives: URI drops (VS Code
-  explorer/tabs) resolve host-side — wire-set images become image chips, all else
-  an attachment chip whose `ResourceLink` points at the real path; external drops
-  carry bytes only (browsers hide paths; a client path means nothing to a remote
-  host), so non-images are staged to a temp file at add time and linked from
-  there. Directory drops are refused in the current release — a deliberate scope decision:
-  expanding a tree is policy (depth, excludes), not a default. Observed in
-  practice (2026-07-14): the VS Code workbench claims OS-file drops on the
-  editor area for its own drop-to-open before a webview sees them — so the
-  bytes lanes are exercised by *paste* (screenshots, copied files), and the
-  drops that actually reach the composer are the explorer/tab URI kind.
-  Accepted, not a bug: both entry points land in the same ingress.
+  `ResourceLink` otherwise. Paste and drop carry bytes only (browsers hide
+  paths; a client path means nothing to a remote host), so non-images are
+  staged to a temp file at add time and linked from there. Directory drops
+  are refused in the current release — a deliberate scope decision:
+  expanding a tree is policy (depth, excludes), not a default. What a
+  webview can receive, as observed 2026-09-19 on VS Code 1.10x–1.138 and
+  verified in its sources: an OS file drop reaches the composer only while
+  **Shift** is held — without it the webview host page hands a file drag to
+  the workbench, which opens the file as an editor (editor area) or drops it
+  on nothing (sidebar); accepted as a limitation. Drags that start inside
+  the VS Code window (editor tabs, Explorer entries) never reach any
+  webview: the workbench blocks every webview iframe for the drag's
+  duration, and upstream closed the request for webview drop events as out
+  of scope. `@` in the prompt covers open editors and workspace files.
 
 ## Integrations
 

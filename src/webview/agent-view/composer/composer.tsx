@@ -21,7 +21,7 @@ import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
 import { FilesChip } from "./files-chip";
-import { extractUris, ingestFiles } from "./ingress";
+import { ingestFiles } from "./ingress";
 import { composerControls } from "./composer-controls";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
@@ -127,14 +127,17 @@ export function Composer(props: {
     const items = [...e.dataTransfer.items];
     const dirs = items.filter((it) => it.webkitGetAsEntry?.()?.isDirectory === true).length;
     if (dirs > 0) props.onNotice("Folders can't be attached — drop files individually");
+    // Bytes are the only thing a drop can carry here. An OS file drop
+    // reaches this handler only while Shift is held: without it, VS Code's
+    // webview host hands the drag to the workbench before the drop lands
+    // (observed, not yet defeated). A drag that starts inside the VS Code
+    // window (an editor tab, an Explorer entry) never reaches any webview —
+    // the platform blocks the iframe for the drag's duration. `@` covers
+    // open editors and workspace files; paste covers the rest.
     const files = items
       .map((it) => (it.kind === "file" && it.webkitGetAsEntry?.()?.isDirectory !== true ? it.getAsFile() : null))
       .filter((f): f is File => f !== null);
-    if (files.length > 0) return ingest(files);
-    // No bytes → a URI drop (VS Code explorer / editor tabs); the
-    // orchestrator resolves paths host-side (lane 1).
-    const uris = extractUris(e.dataTransfer);
-    if (uris.length > 0) send({ kind: "addPathContext", sessionId, uris });
+    if (files.length > 0) ingest(files);
   };
 
   return (
