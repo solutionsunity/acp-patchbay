@@ -82,6 +82,10 @@ export type Action =
   /** Data page mount/refresh: recompute the storage inventory from the
    * live stores and answer with dataInventoryChanged. */
   | { kind: "refreshDataInventory" }
+  /** The user is about to read the session list (drawer opening): re-read
+   * every running agent's own `session/list` so activity from another
+   * window is on the rows — reality at the moment of need, never polled. */
+  | { kind: "syncSessions" }
   | { kind: "switchSession"; sessionId: string }
   /** Open the session in its own editor panel, floated to a new (auxiliary)
    * window — detached from the sidebar, multi-screen usable. Does not touch
@@ -1286,14 +1290,19 @@ export type AgentViewEvent =
        * possibly-background session); absent/true = a user-facing create. */
       activate?: boolean;
     }
-  /** A session surfaced by the agent's own `session/list` (or refreshed by a
-   * later sync) — upserts the row *without* activating it or touching the
-   * connect pane, unlike sessionCreated: a connect-time sync of N history
-   * rows must not steal focus. `live` is advisory on update (existing rows
-   * keep their own). */
+  /** A session first surfaced by the agent's own `session/list` — adds the
+   * row *without* activating it or touching the connect pane, unlike
+   * sessionCreated: a connect-time sync of N history rows must not steal
+   * focus. The stamp is the wire's, or first-sight time when the wire
+   * carries none (honest as ordering, nothing more). */
   | { kind: "sessionListed"; session: SessionSummary }
+  /** A known row's metadata moved — from the wire (a later `session/list`
+   * sync, the agent's `session_info_update`) or patchbay's own derived
+   * first-prompt title. Each field rides only when its witness said
+   * something: an absent title or stamp is silence, never a clear. The
+   * agent's title wins; the stamp only moves forward. */
+  | { kind: "sessionRefreshed"; sessionId: string; title?: string; updatedAt?: string }
   | { kind: "sessionActivated"; sessionId: string }
-  | { kind: "sessionRenamed"; sessionId: string; title: string }
   | { kind: "sessionClosed"; sessionId: string }
   | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
   /** A session/load hydration is in flight for this session (open of a cold
@@ -1747,25 +1756,34 @@ export function reduceAgentView(
             }),
       };
     }
+    case "sessionRefreshed":
+      // Metadata only — `live` is a liveness fact the sync knows nothing
+      // about. The stamp: newest wins — the wire's may trail a local prompt.
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === event.sessionId
+            ? {
+                ...s,
+                title: event.title ?? s.title,
+                updatedAt:
+                  event.updatedAt !== undefined && event.updatedAt > s.updatedAt
+                    ? event.updatedAt
+                    : s.updatedAt,
+              }
+            : s,
+        ),
+      };
     case "sessionListed": {
-      const existing = state.sessions.find((s) => s.id === event.session.id);
-      if (existing !== undefined) {
-        // Refresh the summary facts; `live` stays whatever the row already
-        // knows — a list sync is metadata, not a liveness signal. Activity
-        // time: newest wins — the wire's stamp may trail a local prompt.
-        return {
-          ...state,
-          sessions: state.sessions.map((s) =>
-            s.id === event.session.id
-              ? {
-                  ...s,
-                  title: event.session.title,
-                  updatedAt:
-                    event.session.updatedAt > s.updatedAt ? event.session.updatedAt : s.updatedAt,
-                }
-              : s,
-          ),
-        };
+      // A row the state already holds is a refresh, whatever the emitter
+      // believed — the wire's page and a local create can cross.
+      if (state.sessions.some((s) => s.id === event.session.id)) {
+        return reduceAgentView(state, {
+          kind: "sessionRefreshed",
+          sessionId: event.session.id,
+          title: event.session.title,
+          updatedAt: event.session.updatedAt,
+        });
       }
       return {
         ...state,
@@ -1788,13 +1806,6 @@ export function reduceAgentView(
             ),
           }
         : state;
-    case "sessionRenamed":
-      return {
-        ...state,
-        sessions: state.sessions.map((s) =>
-          s.id === event.sessionId ? { ...s, title: event.title } : s,
-        ),
-      };
     case "sessionClosed": {
       const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
       const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
@@ -2283,8 +2294,12 @@ export interface SettingsState {
    * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as registry/custom (`{ configuredId }`). */
   agentConfigs: readonly AgentConfigView[];
-  /** Stat tile: sessions created today (from the session index). */
-  sessionsToday: number;
+  /** Stat tile: sessions active today — a projection of the Agent View's
+   * canonical rows (their `updatedAt` falls on today), republished by the
+   * orchestrator whenever that state moves. Activity, not creation: the
+   * wire's `session/list` carries only an activity stamp, so activity is
+   * the one definition every row can honor. */
+  sessionsActiveToday: number;
   /** Keyed by agentId — observed knob offerings (see AgentKnobsView). */
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
@@ -2338,7 +2353,7 @@ export const initialSettingsState: SettingsState = {
   connectFlow: {},
   assets: {},
   agentConfigs: [],
-  sessionsToday: 0,
+  sessionsActiveToday: 0,
   agentKnobs: {},
   registryFetchedAt: "",
   pendingBinaryInstall: null,
@@ -2368,7 +2383,7 @@ export type SettingsEvent =
   | { kind: "integrationConnectResolved"; registryId: string }
   | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
-  | { kind: "sessionStatsChanged"; sessionsToday: number }
+  | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
   /** The defaults editor ended its session — the surface leaves with it,
    * so a re-expanded card reads fresh instead of showing a stale one. */
@@ -2487,7 +2502,7 @@ export function reduceSettings(
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };
     case "sessionStatsChanged":
-      return { ...state, sessionsToday: event.sessionsToday };
+      return { ...state, sessionsActiveToday: event.sessionsActiveToday };
     case "agentKnobsObserved":
       return { ...state, agentKnobs: { ...state.agentKnobs, [event.agentId]: event.knobs } };
     case "agentKnobsReleased":

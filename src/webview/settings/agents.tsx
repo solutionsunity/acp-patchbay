@@ -469,7 +469,7 @@ export function StatTiles({ state, children }: { state: SettingsState; children?
   const tiles = [
     { n: state.agents.length, label: "agents", icon: "hubot" },
     { n: running, label: "running", icon: "pulse" },
-    { n: state.sessionsToday, label: "sessions today", icon: "comment-discussion" },
+    { n: state.sessionsActiveToday, label: "active today", icon: "comment-discussion" },
   ];
   return (
     <div className="mb-3.5 flex gap-2.5">

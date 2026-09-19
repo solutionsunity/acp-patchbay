@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Session order and the Settings tile now read one activity stamp. The
+  drawer's "latest first" stayed frozen in a second VS Code window until
+  its agent reconnected — opening the drawer (and the palette's "Switch to
+  session…") now re-reads every running agent's own `session/list`, so
+  another window's activity is on the rows when you look. The Settings tile
+  is now "active today" (sessions whose last activity is today) instead of
+  a creation count that meant two different things for wire-listed and
+  locally created rows, and that showed 0 after a reload until a session
+  was created. Root cause: `updatedAt` was written in two places with two
+  rules; it now has one home, the Agent View's canonical row — and so does
+  the title, which had the same second copy. The session-manager keeps a
+  routing index (session → agent, knob seed), nothing the view shows. (#14)
 - "Open in new window" on a session that isn't loaded now loads it: the
   pinned window ran connect-on-demand but never the attach ladder, and an
   agent coming up re-hydrated only the sidebar's active session — a pinned

@@ -109,6 +109,10 @@ export interface SessionManagerHooks {
    * resume rung shows it behind the seam notice: it's the only history
    * there is (patchbay persists no transcripts). */
   currentTranscript?(sessionId: string): readonly ChatBlock[];
+  /** Canonical (AgentViewState-held) title of a session — read at recreate,
+   * where the fresh id inherits the retired row's title. The manager keeps
+   * no title of its own. */
+  titleOf?(sessionId: string): string | undefined;
   /** Whether `session.delete` is declared *and used* — gates the agent-side
    * delete on close (features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
@@ -235,18 +239,37 @@ function persistChip(chip: ContextChip): PersistedChip {
   };
 }
 
+/** What the wire's session metadata may move on a row, read one way for
+ * every witness (a `session/list` row, `session_info_update`): a title when
+ * one came (null is a clear, treated as silence — blank rows help no one),
+ * a stamp when one came and parses. An absent field is the wire saying
+ * nothing — it rides as nothing, never as a reset. */
+function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
+  title?: string;
+  updatedAt?: string;
+} {
+  const updatedAt =
+    info.updatedAt != null && !Number.isNaN(Date.parse(info.updatedAt)) ? info.updatedAt : undefined;
+  return {
+    ...(info.title != null ? { title: info.title } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+  };
+}
+
 /** One session patchbay currently knows to exist — created here this
- * window, or reported by the agent's own `session/list`. The identity
- * facts (title, timestamps) are in-memory, deliberately: the agent is the
- * source of truth for sessions and this is the mirror of the last wire
- * read, repopulated every connect (patchbay stores no transcripts, no
- * index). The knob snapshot is the one exception — mirrored to the
- * durable continuity row, because the wire cannot re-report it. */
+ * window, or reported by the agent's own `session/list`. This is the
+ * manager's routing index, not a mirror of the row the user sees: a field
+ * lives here only if a manager code path branches on it — the owning
+ * agent (every wire call routes by it) and the knob seed (re-applied on an
+ * involuntary re-attach). What the view shows — title, activity stamp,
+ * liveness, the unseen mark — has one home, the view's canonical row; the
+ * manager reports the evidence that moves it and, when it needs such a
+ * fact, reads it through a hook (titleOf, isActiveSession, …) rather than
+ * keeping a copy. In-memory, deliberately: the agent is the source of
+ * truth for sessions, repopulated every connect (patchbay stores no
+ * transcripts, no index). */
 interface KnownSession {
   agentId: string;
-  title: string;
-  createdAt: string; // ISO — session/list rows carry only updatedAt; used for it there
-  updatedAt: string; // ISO — the drawer's sort key
   /** The session's last agent-confirmed knob combination — written at every
    * publishKnobs, so it outlives the LiveSession (detach on connection
    * death, idle release) and re-seeds any *involuntary* re-attach: the
@@ -407,6 +430,10 @@ export class SessionManager {
    * set first: that walk's pages are post-close truth (a failed agent-side
    * delete resurrecting the row then is honest, not stale). */
   private closedDuringSync = new Map<string, Set<string>>();
+  /** One `session/list` walk per agent at a time — a re-read asked mid-walk
+   * joins the one in flight. Two interleaved walks would each clear the
+   * other's close tombstones (closedDuringSync) and race the prune. */
+  private walks = new Map<string, Promise<void>>();
   /** Rapid re-clicks must not stack replays — one hydration per session. */
   private hydrating = new Set<string>();
   /** Sessions inside a session/load replay window: their transcript events
@@ -477,18 +504,6 @@ export class SessionManager {
       if (session.agentId === agentId && !session.everPrompted) return sessionId;
     }
     return undefined;
-  }
-
-  /** Sessions created today, as currently known — the Settings stat tile.
-   * Wire-listed rows carry only updatedAt; for them createdAt is that stamp
-   * (honest as ordering, nothing more). */
-  createdTodayCount(): number {
-    const today = new Date().toDateString();
-    let count = 0;
-    for (const entry of this.known.values()) {
-      if (new Date(entry.createdAt).toDateString() === today) count++;
-    }
-    return count;
   }
 
   /** Frees an idle session's agent-side resources: `session/close` on the
@@ -688,7 +703,7 @@ export class SessionManager {
     this.sessions.set(sessionId, liveSession(agentId, poolKey, false));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
-    this.known.set(sessionId, { agentId, title, createdAt: now, updatedAt: now });
+    this.known.set(sessionId, { agentId });
     const summary: SessionSummary = {
       id: sessionId,
       agentId,
@@ -941,6 +956,42 @@ export class SessionManager {
    * *complete* pagination walk: a truncated read must never erase. */
   async syncAgentSessions(agentId: string): Promise<void> {
     if (this.pool.get(agentId)?.declared?.sessionList !== true) return;
+    await this.walkAgentSessions(agentId);
+  }
+
+  /** The user is about to read the list (drawer opening, palette pick):
+   * re-read every running agent's own `session/list`, so activity from
+   * another window or another client is on the rows — reality at the
+   * moment of need, never polled. Per-agent failures log and stop nothing:
+   * one agent's bad page must not hold the others' rows. */
+  async syncRunningAgents(): Promise<void> {
+    await Promise.all(
+      this.pool
+        .list()
+        .filter((agent) => agent.status === "running" && agent.declared?.sessionList === true)
+        .map((agent) =>
+          this.walkAgentSessions(agent.spec.agentId).catch((err: Error) => {
+            this.log.info(`${agent.spec.agentId}: session/list re-read failed — ${err.message}`);
+          }),
+        ),
+    );
+  }
+
+  /** Shared by the connect-time sync and the on-demand re-read; capability
+   * gating is the callers' business. Coalesced per agent (see `walks`). */
+  private walkAgentSessions(agentId: string): Promise<void> {
+    const inFlight = this.walks.get(agentId);
+    if (inFlight !== undefined) return inFlight;
+    const walk = this.readAgentSessions(agentId).finally(() => {
+      if (this.walks.get(agentId) === walk) this.walks.delete(agentId);
+    });
+    this.walks.set(agentId, walk);
+    return walk;
+  }
+
+  /** The walk itself — every page merged row by row, the prune only after a
+   * complete read. */
+  private async readAgentSessions(agentId: string): Promise<void> {
     this.closedDuringSync.delete(agentId);
     const cwd = this.cwd();
     const seen = new Set<string>();
@@ -1009,10 +1060,11 @@ export class SessionManager {
     const now = new Date().toISOString();
     if (existing === undefined) {
       // A session patchbay never saw — created externally (CLI, another
-      // editor) or in a previous window. updatedAt is the only timestamp
-      // the wire offers; honest as createdAt-for-ordering, nothing more.
-      const title = info.title ?? "Untitled session";
-      const at = info.updatedAt ?? now;
+      // editor) or in a previous window. The wire's stamp orders it; an
+      // agent that sends none leaves first sight as the only honest stamp.
+      const meta = wireMeta(info);
+      const title = meta.title ?? "Untitled session";
+      const at = meta.updatedAt ?? now;
       // The durable continuity row re-enters with the session — the fields
       // the wire list cannot carry. Knobs ride the known row (consumed by
       // the reattach rule); roots/queue/draft re-emit into the view now;
@@ -1021,9 +1073,6 @@ export class SessionManager {
       const cont = this.hooks.continuityFor?.(info.sessionId, agentId);
       this.known.set(info.sessionId, {
         agentId,
-        title,
-        createdAt: at,
-        updatedAt: at,
         ...(cont?.knobs !== undefined ? { knobs: cont.knobs } : {}),
       });
       this.hooks.emit({
@@ -1051,19 +1100,12 @@ export class SessionManager {
       }
       return;
     }
-    const title = info.title ?? existing.title;
-    const updatedAt = info.updatedAt ?? existing.updatedAt;
-    this.known.set(info.sessionId, { ...existing, title, updatedAt });
-    this.hooks.emit({
-      kind: "sessionListed",
-      session: {
-        id: info.sessionId,
-        agentId,
-        title,
-        live: this.sessions.has(info.sessionId),
-        updatedAt,
-      },
-    });
+    // Only what the wire carried rides — the row's own is the truth
+    // otherwise (silence is no event at all), and the reducer's newest-wins
+    // keeps a local prompt ahead of a trailing wire read.
+    const meta = wireMeta(info);
+    if (meta.title === undefined && meta.updatedAt === undefined) return;
+    this.hooks.emit({ kind: "sessionRefreshed", sessionId: info.sessionId, ...meta });
   }
 
   /** One-click reload: re-attach on demand, even when the session
@@ -1497,15 +1539,11 @@ export class SessionManager {
     fresh.pendingContext = old.pendingContext;
     this.sessions.set(sessionId, fresh);
     this.sessions.delete(oldId);
-    const entry = this.known.get(oldId);
     const now = new Date().toISOString();
-    const title = entry?.title ?? "Untitled session";
-    this.known.set(sessionId, {
-      agentId: old.agentId,
-      title,
-      createdAt: entry?.createdAt ?? now,
-      updatedAt: now,
-    });
+    // The fresh id inherits the retired row's title — read from the one
+    // place it lives, the view's row.
+    const title = this.hooks.titleOf?.(oldId) ?? "Untitled session";
+    this.known.set(sessionId, { agentId: old.agentId });
     this.known.delete(oldId);
     // Everything the user invested migrates to the fresh id — held words
     // and draft included (they'd otherwise vanish with sessionClosed).
@@ -1650,18 +1688,12 @@ export class SessionManager {
     const events: AgentViewEvent[] = [];
     if (!session.titled) {
       session.titled = true;
-      const title = deriveTitle(text);
-      this.retitle(sessionId, title);
-      events.push({ kind: "sessionRenamed", sessionId, title });
+      events.push({ kind: "sessionRefreshed", sessionId, title: deriveTitle(text) });
     }
     // Duration basis is send→stop, deliberately not first-chunk→stop: the
     // live ticker exists so a slow response has visible feedback instead of
     // silence, and the silence starts at send.
     const startedAt = new Date().toISOString();
-    // Activity stamp — the drawer's sort key. In-memory only; across a
-    // restart the agent's own session/list stamp is the truth.
-    const entry = this.known.get(sessionId);
-    if (entry !== undefined) this.known.set(sessionId, { ...entry, updatedAt: startedAt });
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
     // (explicitly add editor state to the prompt).
@@ -2624,48 +2656,27 @@ export class SessionManager {
     }
   }
 
-  /** Title bookkeeping shared by auto-titling and the agent's own pushes —
-   * the known map mirrors what the view shows. */
-  private retitle(sessionId: string, title: string): void {
-    const entry = this.known.get(sessionId);
-    if (entry !== undefined) this.known.set(sessionId, { ...entry, title });
-  }
-
   /** `session_info_update`: the agent pushed new title/updatedAt. The
    * agent's title always wins (there is no patchbay-side rename). A null
    * title is a clear, not a rename: patchbay keeps its own (a session list
-   * with blank rows helps no one). */
+   * with blank rows helps no one). Both facts ride one refresh to the row
+   * they live on — the drawer's title and sort key move now, not at the
+   * next full list sync. */
   private async noteInfoUpdate(
     sessionId: string,
     update: { title?: string | null; updatedAt?: string | null },
   ): Promise<void> {
-    const entry = this.known.get(sessionId);
-    if (entry === undefined) return;
-    if (update.updatedAt != null && !Number.isNaN(Date.parse(update.updatedAt))) {
-      this.known.set(sessionId, { ...this.known.get(sessionId)!, updatedAt: update.updatedAt });
-      // One fact, one truth: the drawer's sort key moves with the row now,
-      // not at the next full list sync (the reducer's newest-wins merge
-      // absorbs a stale wire stamp).
-      this.hooks.emit({
-        kind: "sessionListed",
-        session: {
-          id: sessionId,
-          agentId: entry.agentId,
-          title: entry.title,
-          live: this.sessions.has(sessionId),
-          updatedAt: update.updatedAt,
-        },
-      });
+    if (!this.known.has(sessionId)) return;
+    const meta = wireMeta(update);
+    if (meta.title !== undefined) {
+      // An agent-authored title marks the session titled even when the text
+      // matches what's shown — the first prompt's auto-title must never
+      // clobber it (the agent's title wins, in both directions of time).
+      const live = this.sessions.get(sessionId);
+      if (live !== undefined) live.titled = true;
     }
-    if (update.title == null) return;
-    // An agent-authored title marks the session titled even when the text
-    // matches what's shown — the first prompt's auto-title must never
-    // clobber it (the agent's title wins, in both directions of time).
-    const live = this.sessions.get(sessionId);
-    if (live !== undefined) live.titled = true;
-    if (update.title === entry.title) return;
-    this.retitle(sessionId, update.title);
-    this.hooks.emit({ kind: "sessionRenamed", sessionId, title: update.title });
+    if (meta.title === undefined && meta.updatedAt === undefined) return;
+    this.hooks.emit({ kind: "sessionRefreshed", sessionId, ...meta });
   }
 }
 

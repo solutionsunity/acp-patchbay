@@ -77,6 +77,7 @@ import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { AuthLockStore } from "./stores/auth-locks";
 import { SessionContinuityStore } from "./stores/session-continuity";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
+import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
 import { type TerminalHandle } from "./terminal-runner";
 
@@ -636,7 +637,6 @@ export class Orchestrator {
       {
         emit: (...events) => {
           this.agentView.emit(...events);
-          this.relaySettingsDerived(events);
           this.recordLastActive(events);
           this.dropContextTokens(events);
           this.maybeChime(events);
@@ -646,7 +646,6 @@ export class Orchestrator {
         // the webview — resyncView closes the window with one wholesale swap.
         emitSilent: (...events) => {
           this.agentView.emitSilent(...events);
-          this.relaySettingsDerived(events);
           this.recordLastActive(events);
         },
         resyncView: () => this.agentView.resync(),
@@ -681,6 +680,7 @@ export class Orchestrator {
         },
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
+        titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
         isDeleteUsed: (agentId) =>
           this.agentView.current.capabilities[agentId]?.["session.delete"]?.used ?? false,
         isActiveSession: (sessionId) =>
@@ -793,16 +793,20 @@ export class Orchestrator {
     this.loadAgentConfigs();
     void this.integrations.refresh();
     void this.acpRegistry.start().then((cached) => this.applyRegistryData(cached));
-    this.publishSessionStats();
 
-    // Native surfaces: the status bar mirrors canonical state via
-    // ChannelHost.onChange — no webview in the path (direct orchestrator
-    // consumers: same state, no webview).
+    // Projections of canonical Agent View state via ChannelHost.onChange —
+    // the status bar (native surface, no webview in the path) and the
+    // Settings "active today" tile (another channel, same source): same
+    // state, read where it lives, never a second counter.
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.statusBarItem.command = "acpPatchbay.agentView.focus";
     this.statusBarItem.show();
-    this.agentView.onChange(() => this.refreshStatusBar());
+    this.agentView.onChange(() => {
+      this.refreshStatusBar();
+      this.publishSessionStats();
+    });
     this.refreshStatusBar();
+    this.publishSessionStats();
     this.syncDetachContext();
 
     // Orphan reaping strictly before any startup agent spawns: the
@@ -1032,21 +1036,42 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** "Switch session." */
+  /** "Switch session." The pick is a read of the list — the same re-read
+   * as the drawer opening — and, like the drawer, it opens on what is known
+   * now and re-fills when the re-read lands: a running agent that never
+   * answers must not hold the palette hostage (pool requests carry no
+   * deadline). */
   async switchSessionCommand(): Promise<void> {
-    const sessions = this.agentView.current.sessions;
-    if (sessions.length === 0) {
-      void vscode.window.showInformationMessage("No sessions yet.");
-      return;
-    }
-    const picked = await vscode.window.showQuickPick(
-      sessions.map((s) => ({
+    type Item = vscode.QuickPickItem & { sessionId: string };
+    const items = (): Item[] =>
+      this.agentView.current.sessions.map((s) => ({
         label: s.title,
         description: this.agentNames.get(s.agentId) ?? s.agentId,
         sessionId: s.id,
-      })),
-      { placeHolder: "Switch to session…" },
-    );
+      }));
+    const pick = vscode.window.createQuickPick<Item>();
+    pick.placeholder = "Switch to session…";
+    pick.items = items();
+    pick.busy = true;
+    const picked = await new Promise<Item | undefined>((resolve) => {
+      let open = true;
+      pick.onDidAccept(() => resolve(pick.selectedItems[0]));
+      pick.onDidHide(() => {
+        open = false;
+        resolve(undefined);
+      });
+      void this.sessionManager.syncRunningAgents().finally(() => {
+        if (!open) return;
+        pick.items = items();
+        pick.busy = false;
+        if (pick.items.length === 0) {
+          void vscode.window.showInformationMessage("No sessions yet.");
+          pick.hide();
+        }
+      });
+      pick.show();
+    });
+    pick.dispose();
     if (picked === undefined) return;
     this.sessionManager.open(picked.sessionId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
@@ -1238,20 +1263,6 @@ export class Orchestrator {
     }
   }
 
-  /** Settings-side projections of session-manager events: the sessions-today
-   * stat tile. Live sessions' knob surfaces deliberately do NOT feed the
-   * Settings offerings — a session's surface is conditioned on its own
-   * selections, so republishing it would make the default-knob rows track
-   * whichever session last touched a knob; the defaults editor reads its
-   * own session instead. */
-  private relaySettingsDerived(events: readonly AgentViewEvent[]): void {
-    for (const event of events) {
-      if (event.kind === "sessionCreated" || event.kind === "sessionClosed") {
-        this.publishSessionStats();
-      }
-    }
-  }
-
   /** An agent's standing throwaway workspace (`probe/<agentId>`) — the
    * capability probe's and the defaults editor's sessions both open here,
    * never in a user workspace root. Created idempotently, deleted only with
@@ -1287,11 +1298,18 @@ export class Orchestrator {
     }
   }
 
+  /** The Settings "active today" tile — recomputed from canonical Agent
+   * View rows on every change, emitted only when the number moved (the
+   * change hook fires per chunk; the Settings channel must not). Live
+   * sessions' knob surfaces deliberately do NOT feed the Settings
+   * offerings — a session's surface is conditioned on its own selections,
+   * so republishing it would make the default-knob rows track whichever
+   * session last touched a knob; the defaults editor reads its own session
+   * instead. */
   private publishSessionStats(): void {
-    this.settings.emit({
-      kind: "sessionStatsChanged",
-      sessionsToday: this.sessionManager.createdTodayCount(),
-    });
+    const count = sessionsActiveToday(this.agentView.current.sessions);
+    if (count === this.settings.current.sessionsActiveToday) return;
+    this.settings.emit({ kind: "sessionStatsChanged", sessionsActiveToday: count });
   }
 
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
@@ -2017,6 +2035,9 @@ export class Orchestrator {
         break;
       case "refreshDataInventory":
         void this.publishDataInventory();
+        break;
+      case "syncSessions":
+        void this.sessionManager.syncRunningAgents();
         break;
       case "switchSession":
         // Switching NEVER closes the session being left — open sessions

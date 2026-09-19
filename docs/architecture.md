@@ -14,9 +14,13 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Orchestrator** — the Node process in the extension host. Single source of truth
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
-- **Known sessions** — patchbay's in-memory mirror of the agent's own
-  `session/list` (ids, titles, timestamps, agent), repopulated every connect.
-  Patchbay persists no session records; there is no durable index.
+- **Known sessions** — the session-manager's routing index of the agent's
+  own `session/list` (session id → owning agent, plus the knob seed the
+  wire cannot re-report), repopulated every connect. Patchbay persists no
+  session records; there is no durable index. Nothing the view shows lives
+  here — title, activity stamp, liveness, the unseen mark have one home,
+  the Agent View's canonical row; the manager reads such a fact through a
+  hook when it needs one, never a copy.
 - **Decision audit** — append-only record of events that happened *in patchbay*:
   permissions granted, tools approved, routing chosen.
 - **Render cache** — disposable render state, rebuilt wholesale from `session/load`
@@ -135,7 +139,7 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Known sessions | The mirror of the agent's own `session/list` (+ this window's creates): id, title, stamps | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). |
+| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): id → agent, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
 | Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
@@ -179,7 +183,17 @@ flowchart TD
   pointer moves unless the session is pinned to its own window, the ladder
   above runs, and an off agent is spawned (connect-on-demand); when an agent
   comes up, every session on view (active or pinned — the reaper's same
-  exemption set) re-runs the ladder. Switching chats never closes anything. The idle
+  exemption set) re-runs the ladder. The drawer's order is last activity,
+  one fact with one home: the reducer's row stamp (`updatedAt`), moved by
+  prompt send, turn end, and the wire's own stamp — newest wins, judged
+  there and nowhere else; the session-manager reports the evidence and
+  keeps no copy. Cross-window freshness is a read, not a push: opening the
+  drawer (or the palette's session pick) re-runs `session/list` on every
+  running agent (`syncRunningAgents`), so another window's activity lands
+  on the rows at the moment they are looked at — never polled. The Settings
+  "active today" tile is a projection of the same rows (`session-stats.ts`),
+  republished from the channel's change hook like the status bar. Switching
+  chats never closes anything. The idle
   reaper is the only closer, and only when *all* hold: not new
   (`everPrompted` — a never-prompted session never closes, period; agents
   404 load/resume on zero-turn ids), nothing in flight, not unseen-completed

@@ -152,7 +152,8 @@ Nav footer restates the credential rule: SecretStorage only.
 
 ### Agents
 
-Stat tiles (agents / running / sessions today), auto-width, with an `add agent`
+Stat tiles (agents / running / active today — sessions whose last activity
+falls on today, the drawer's own stamp counted), auto-width, with an `add agent`
 tile-button riding the same row — same box as the counters, but it reads as an
 action (accent ＋, hover lift). Collapsed by default once any agent exists, open by
 default on first run (nothing to collapse to yet). Toggling reveals the Add Agent

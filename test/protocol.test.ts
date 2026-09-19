@@ -247,7 +247,7 @@ describe("plan strip mirrors only what the agent reports", () => {
 describe("settings projections (ui.md § Settings Agents)", () => {
   it("sessionStatsChanged and agentKnobsObserved land in settings state", () => {
     const events: SettingsEvent[] = [
-      { kind: "sessionStatsChanged", sessionsToday: 3 },
+      { kind: "sessionStatsChanged", sessionsActiveToday: 3 },
       {
         kind: "agentKnobsObserved",
         agentId: "claude",
@@ -259,7 +259,7 @@ describe("settings projections (ui.md § Settings Agents)", () => {
       },
     ];
     const s = events.reduce(reduceSettings, initialSettingsState);
-    expect(s.sessionsToday).toBe(3);
+    expect(s.sessionsActiveToday).toBe(3);
     expect(s.agentKnobs.claude!.knobs[0]!.category).toBe("model");
     // the defaults editor ending its session releases the surface — a
     // re-expanded card reads fresh instead of showing the old one
@@ -382,7 +382,40 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     expect(s.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
   });
 
-  it("sessionListed keeps the newer activity stamp — the wire may trail a local prompt", () => {
+  it("sessionRefreshed keeps the newer activity stamp — the wire may trail a local prompt", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
+      { kind: "sessionRefreshed", sessionId: "a", title: "a", updatedAt: "2026-07-09T09:00:00Z" },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
+  });
+
+  it("sessionRefreshed without a stamp is the wire saying nothing — the row keeps its own", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
+      { kind: "sessionRefreshed", sessionId: "a", title: "renamed" },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")).toMatchObject({
+      title: "renamed",
+      updatedAt: "2026-07-09T10:00:00Z",
+    });
+  });
+
+  it("sessionRefreshed without a title is silence too — the row keeps what it shows", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      { kind: "sessionRefreshed", sessionId: "a", title: "derived from the first prompt" },
+      { kind: "sessionRefreshed", sessionId: "a", updatedAt: "2026-07-09T11:00:00Z" },
+    ]);
+    expect(s.sessions.find((x) => x.id === "a")).toMatchObject({
+      title: "derived from the first prompt",
+      updatedAt: "2026-07-09T11:00:00Z",
+    });
+  });
+
+  it("sessionListed on a row the state already holds is a refresh, never a duplicate", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
       { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
@@ -391,6 +424,7 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
         session: { id: "a", agentId: "claude", title: "a", live: false, updatedAt: "2026-07-09T09:00:00Z" },
       },
     ]);
+    expect(s.sessions.filter((x) => x.id === "a")).toHaveLength(1);
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
   });
 });

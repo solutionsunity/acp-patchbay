@@ -67,6 +67,10 @@ export interface FakeAgentScript {
   /** session/list reports `title: "fake:<sessionId>"` per session — lets
    * tests exercise the agent-title-wins merge rule deterministically. */
   listWithTitles?: boolean;
+  /** session/list reports this ISO `updatedAt` on every row (the spec's
+   * optional activity stamp; absent by default, as many agents send none) —
+   * lets tests pin what the wire claims against what the client observed. */
+  listUpdatedAt?: string;
   /** session/set_config_option answers with the new state in the required
    * response field only — no config_option_update echo. Spec-conformant, not
    * a lie: claude-agent-acp behaves this way for client-initiated sets. */
@@ -612,7 +616,10 @@ const app = acp
       throw acp.RequestError.methodNotFound("session/list");
     }
     const cwd = ctx.params.cwd ?? null;
-    const title = (id: string) => (script.listWithTitles ? { title: `fake:${id}` } : {});
+    const meta = (id: string) => ({
+      ...(script.listWithTitles ? { title: `fake:${id}` } : {}),
+      ...(script.listUpdatedAt !== undefined ? { updatedAt: script.listUpdatedAt } : {}),
+    });
     const infos = new Map<string, acp.SessionInfo>();
     // The durable store is what survives this process dying — exactly how a
     // real agent's history outlives its connections.
@@ -620,12 +627,12 @@ const app = acp
       for (const f of readdirSync(join(cwd, ".fake-agent-sessions"))) {
         if (!f.endsWith(".jsonl")) continue;
         const sessionId = f.slice(0, -".jsonl".length);
-        infos.set(sessionId, { sessionId, cwd, ...title(sessionId) });
+        infos.set(sessionId, { sessionId, cwd, ...meta(sessionId) });
       }
     }
     for (const s of sessions.values()) {
       if (cwd !== null && s.cwd !== cwd) continue;
-      infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...title(s.id) });
+      infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...meta(s.id) });
     }
     if (script.lies?.malformedListRows) {
       // Off-spec on purpose: number where ISO string belongs + a row with no

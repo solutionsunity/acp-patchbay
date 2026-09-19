@@ -5,11 +5,12 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { harnessEnvelopeTag, SessionManager } from "../src/orchestrator/session-manager";
+import { sessionsActiveToday } from "../src/orchestrator/session-stats";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
@@ -118,6 +119,8 @@ function harness(opts?: {
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       currentTranscript: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
+      titleOf: (sessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).sessions.find((s) => s.id === sessionId)?.title,
       isDeleteUsed: (agentId) =>
         events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId]?.["session.delete"]
           ?.used ?? false,
@@ -1786,6 +1789,145 @@ describe("session history (list / resume / delete)", () => {
     expect(h.state().sessions.map((s) => s.id)).not.toContain(sessionId);
 
     await h.pool.stop("sh6");
+  });
+});
+
+// ── the activity stamp has one home: the view's canonical row. The
+// session-manager reports evidence (prompt send, turn end, a wire stamp);
+// the reducer judges (newest wins); the Settings tile projects it.
+describe("session activity stamp — one home", () => {
+  const LIST_CAPS = { sessionCapabilities: { list: {}, delete: {} } };
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  it("a wire row stamped yesterday, prompted today: active today — and a re-read cannot move it back", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "old-1.jsonl"), "", "utf8");
+
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { declare: { ...LIST_CAPS, loadSession: true }, listUpdatedAt: yesterday, turn: [{ type: "chunk", text: "hi" }] },
+        "st1",
+      ),
+    );
+    await h.sessionManager.syncAgentSessions("st1");
+    const before = h.state().sessions.find((s) => s.id === "old-1");
+    expect(before?.updatedAt).toBe(yesterday);
+    expect(sessionsActiveToday(h.state().sessions)).toBe(0);
+
+    await h.sessionManager.sendPrompt("old-1", "wake up"); // attaches on demand, then prompts
+    const prompted = h.state().sessions.find((s) => s.id === "old-1")!;
+    expect(prompted.updatedAt > yesterday).toBe(true);
+    // creation-day counting would still say 0 here — the row was born yesterday
+    expect(sessionsActiveToday(h.state().sessions)).toBe(1);
+
+    // the wire still says yesterday; newest wins, in the one place it is judged
+    await h.sessionManager.syncAgentSessions("st1");
+    expect(h.state().sessions.find((s) => s.id === "old-1")!.updatedAt).toBe(prompted.updatedAt);
+
+    await h.pool.stop("st1");
+  });
+
+  it("a wire row without a stamp: the re-read says nothing, the row keeps its own", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st2"));
+    const sessionId = await h.sessionManager.createSession("st2", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+    const after = h.state().sessions.find((s) => s.id === sessionId)!.updatedAt;
+
+    const before = h.events.length;
+    await h.sessionManager.syncAgentSessions("st2");
+    expect(h.state().sessions.find((s) => s.id === sessionId)!.updatedAt).toBe(after);
+    // silence is no event at all — neither a second listing nor an empty refresh
+    const during = h.events.slice(before);
+    expect(during.some((e) => e.kind === "sessionListed" && e.session.id === sessionId)).toBe(false);
+    expect(during.some((e) => e.kind === "sessionRefreshed" && e.sessionId === sessionId)).toBe(false);
+
+    await h.pool.stop("st2");
+  });
+
+  it("session_info_update with a null title and no stamp is a clear, not a rename — nothing moves", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "st2n"));
+    const sessionId = await h.sessionManager.createSession("st2n", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "derive me");
+    const before = h.events.length;
+    await h.sessionManager.handleUpdate("st2n", {
+      sessionId,
+      update: { sessionUpdate: "session_info_update", title: null },
+    });
+    expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed")).toBe(false);
+    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+
+    await h.pool.stop("st2n");
+  });
+
+  it("walks coalesce per agent: a re-read asked mid-walk joins it — one session/list on the wire", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "st6"));
+    const listSessions = vi.spyOn(h.pool, "listSessions");
+    await Promise.all([h.sessionManager.syncAgentSessions("st6"), h.sessionManager.syncRunningAgents()]);
+    expect(listSessions).toHaveBeenCalledTimes(1);
+    // …and a later read walks again
+    await h.sessionManager.syncRunningAgents();
+    expect(listSessions).toHaveBeenCalledTimes(2);
+
+    await h.pool.stop("st6");
+  });
+
+  it("a wire list without titles leaves the derived title alone — the refresh carries no title", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st4"));
+    const sessionId = await h.sessionManager.createSession("st4", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "derive me");
+    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+
+    const before = h.events.length;
+    await h.sessionManager.syncAgentSessions("st4");
+    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+    // the wire said nothing about this row — no refresh rode at all
+    expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed" && e.sessionId === sessionId)).toBe(false);
+
+    await h.pool.stop("st4");
+  });
+
+  it("a zero-turn recreate inherits the title from the view's row — the manager keeps no copy", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoRoots" }] }, "st5"));
+    const oldId = await h.sessionManager.createSession("st5", "Fake Agent", cwd);
+    // an agent-pushed title lands on the row only (session_info_update path)
+    await h.sessionManager.handleUpdate("st5", {
+      sessionId: oldId,
+      update: { sessionUpdate: "session_info_update", title: "agent named me" },
+    });
+    expect(h.state().sessions.find((s) => s.id === oldId)?.title).toBe("agent named me");
+
+    await h.sessionManager.addRoot(oldId, "/repo/backend");
+    const newId = h.state().activeSessionId!;
+    expect(newId).not.toBe(oldId);
+    expect(h.state().sessions.find((s) => s.id === newId)?.title).toBe("agent named me");
+
+    await h.pool.stop("st5");
+  });
+
+  it("syncRunningAgents re-reads every running list-capable agent — another window's session appears", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "st3"));
+    await h.pool.connect(spec({}, "st3-nolist")); // no session/list: skipped, not an error
+    await h.sessionManager.syncAgentSessions("st3");
+    expect(h.sessionManager.knows("other-window-1")).toBe(false);
+
+    // "another window" writes into the agent's own store after our connect
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "other-window-1.jsonl"), "", "utf8");
+    await h.sessionManager.syncRunningAgents();
+    expect(h.sessionManager.knows("other-window-1")).toBe(true);
+    expect(h.state().sessions.some((s) => s.id === "other-window-1")).toBe(true);
+
+    await h.pool.stop("st3");
+    await h.pool.stop("st3-nolist");
   });
 });
 

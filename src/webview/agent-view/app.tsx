@@ -93,15 +93,20 @@ export function App({
     else setDrawer("agents");
   };
 
+  // Opening the list is a read of the agents' own session/list: another
+  // window's activity is on the rows only if it is re-read now.
+  const openSessions = () => {
+    send({ kind: "syncSessions" });
+    setDrawer("sessions");
+  };
+
   return (
     <div className="sidebar">
-      {!pinned && (
-        <Header agent={activeAgent} onSessions={() => setDrawer("sessions")} onNew={newChat} />
-      )}
+      {!pinned && <Header agent={activeAgent} onSessions={openSessions} onNew={newChat} />}
       {active !== null && (
         <SessionRow
           session={active}
-          onTitle={pinned ? () => {} : () => setDrawer("sessions")}
+          onTitle={pinned ? () => {} : openSessions}
           detach={detach && !pinned}
           reloading={(state.hydrating ?? {})[active.id] === true}
         />
