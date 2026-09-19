@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.82.9 — 2026-09-19
 
 - *Copy config* on an MCP server card now copies a `{"mcpServers": {name:
   entry}}` document — the well-known shape patchbay's own *Import JSON* and
