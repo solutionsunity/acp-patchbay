@@ -181,8 +181,8 @@ deliverable, owed before implementation.
 
 - Configuration (agents, integrations, routing) lives in developer-owned stores,
   global to this machine — never a repo-committed file. Sharing a config entry is
-  an explicit copy (Share…); credentials are never in what's shared, never
-  displayed, and revocable at any time.
+  an explicit copy (Copy config, in the well-known `mcpServers` shape); credentials
+  are never in what's shared, never displayed, and revocable at any time.
 
 ## 3. Editor Surface
 

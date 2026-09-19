@@ -95,6 +95,16 @@ function needsToken(source: IntegrationSource): boolean {
   return false;
 }
 
+/** The endpoint an http-backed integration reaches: the user's own URL for
+ * a per-account entry, else the registry's fixed one; "" when neither
+ * exists (not connectable). Never called for custom-stdio. */
+function endpointOf(
+  source: Exclude<IntegrationSource, { kind: "custom-stdio" }>,
+  entry: RegistryEntry | undefined,
+): string {
+  return source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
+}
+
 /** How the bridge should present the stored credential on the wire —
  * null when there's no credential to send. OAuth access tokens are always
  * `Authorization: Bearer`; header mode uses the entry's/user's own shape. */
@@ -258,37 +268,50 @@ export class IntegrationsManager {
     return views;
   }
 
-  /** The editable mcpServers-fragment for a custom server — env values
+  /** The editable mcpServers entry for a custom server — env values
    * never ride it (write-only): stored keys appear
    * with "", meaning "keep"; a filled value overwrites; a removed key
    * deletes. Undefined for curated entries — their shape is registry data. */
   private async editJsonFor(id: string, source: IntegrationSource): Promise<string | undefined> {
+    if (source.kind === "registry") return undefined;
+    const entry = await this.entryJsonFor(id, source);
+    return entry === undefined ? undefined : JSON.stringify(entry, null, 2);
+  }
+
+  /** Copy config: the integration as a `{"mcpServers": {name: entry}}`
+   * document — the well-known shape importJson reads and other clients
+   * take. Keyed by display name so a re-import slugs back to the same id.
+   * A curated entry copies as its resolved endpoint plus auth shape (what
+   * a re-import would create as a custom-http server). Undefined when there
+   * is no endpoint to name. */
+  async exportJson(id: string): Promise<string | undefined> {
+    const integration = this.integrationStore.get(id);
+    if (integration === undefined) return undefined;
+    const entry = await this.entryJsonFor(id, integration.source);
+    if (entry === undefined) return undefined;
+    return JSON.stringify({ mcpServers: { [integration.name]: entry } }, null, 2);
+  }
+
+  /** One `mcpServers` entry, the shape mcpServersEntrySchema reads back.
+   * Env values never ride it (write-only): stored keys appear with "". */
+  private async entryJsonFor(
+    id: string,
+    source: IntegrationSource,
+  ): Promise<Record<string, unknown> | undefined> {
     if (source.kind === "custom-stdio") {
       const envKeys = Object.keys(await this.envStore.get(id));
-      return JSON.stringify(
-        {
-          command: source.command,
-          args: source.args,
-          env: Object.fromEntries(envKeys.map((k) => [k, ""])),
-        },
-        null,
-        2,
-      );
+      return {
+        command: source.command,
+        args: source.args,
+        env: Object.fromEntries(envKeys.map((k) => [k, ""])),
+      };
     }
-    if (source.kind === "custom-http") {
-      return JSON.stringify(
-        {
-          url: source.url,
-          authType: source.authType,
-          ...(source.authType === "header"
-            ? { headerName: source.headerName, valuePrefix: source.valuePrefix }
-            : {}),
-        },
-        null,
-        2,
-      );
-    }
-    return undefined;
+    const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
+    const url = endpointOf(source, entry);
+    if (url === "") return undefined;
+    const authType = source.kind === "registry" ? source.authMode : source.authType;
+    const header = authType === "header" ? headerShapeOf(source, entry) : null;
+    return { url, authType, ...(header ?? {}) };
   }
 
   private entryFor(registryId: string): RegistryEntry | undefined {
@@ -787,8 +810,7 @@ export class IntegrationsManager {
       }
 
       const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
-      const url =
-        source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
+      const url = endpointOf(source, entry);
       if (url === "") continue; // not connectable — nothing to route to
       if (needsToken(source) && (await this.tokens.get(integration.id)) === null) continue;
 

@@ -151,7 +151,7 @@ export function App({ state }: { state: SettingsState }) {
               send({ kind: "setIntegrationTransport", integrationId, transport })
             }
             onProbe={(integrationId) => send({ kind: "probeIntegration", integrationId })}
-            onShare={(integrationId) => send({ kind: "shareIntegrationConfig", integrationId })}
+            onCopy={(integrationId) => send({ kind: "copyIntegrationJson", integrationId })}
             onReorder={(ids) => send({ kind: "reorderIntegrations", ids })}
           />
         )}

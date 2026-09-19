@@ -388,7 +388,7 @@ export function IntegrationsSection(props: {
   onSetRouting(integrationId: string, routing: IntegrationRoutingView): void;
   onSetTransport(integrationId: string, transport: "auto" | "bridge"): void;
   onProbe(integrationId: string): void;
-  onShare(integrationId: string): void;
+  onCopy(integrationId: string): void;
   onReorder(ids: string[]): void;
 }) {
   const { state } = props;
@@ -542,9 +542,9 @@ export function IntegrationsSection(props: {
                     />
                     <Button
                       variant="outline" size="icon" className="size-8"
-                      title="Copy config… (never the credential)"
+                      title="Copy config as an mcpServers entry"
                       aria-label="Copy config"
-                      onClick={() => props.onShare(integration.id)}
+                      onClick={() => props.onCopy(integration.id)}
                     >
                       <Icon name="copy" />
                     </Button>

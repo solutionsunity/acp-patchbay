@@ -2313,8 +2313,8 @@ export class Orchestrator {
       case "probeIntegration":
         void this.integrations.probe(action.integrationId);
         break;
-      case "shareIntegrationConfig":
-        void this.shareIntegrationConfig(action.integrationId);
+      case "copyIntegrationJson":
+        void this.copyIntegrationJson(action.integrationId);
         break;
       case "refreshAgentAssets":
         void this.refreshAgentAssets(action.agentId);
@@ -2517,19 +2517,18 @@ export class Orchestrator {
     });
   }
 
-  /** "Explicit share command that copies config": the
-   * sanitized config entry (no credential — none exists here by
-   * construction, see integration-configs.ts) goes to the clipboard.
-   * Reattaching a credential is never automatic: a pasted entry's `id` has
-   * no token in SecretStorage until its user explicitly connects —
-   * SecretStorage itself is global, keyed only by integration id (never
-   * workspace-namespaced), so this has always been the real trust boundary. */
-  private async shareIntegrationConfig(integrationId: string): Promise<void> {
+  /** Copy config: the server as an `mcpServers` document (the shape Import
+   * reads back) goes to the clipboard. No credential rides it — a pasted
+   * entry's id has no token in SecretStorage until its user explicitly
+   * connects; SecretStorage is global, keyed only by integration id, so
+   * that has always been the real trust boundary. */
+  private async copyIntegrationJson(integrationId: string): Promise<void> {
     const integration = this.integrationConfigs.get(integrationId);
-    if (integration === undefined) return;
-    await vscode.env.clipboard.writeText(JSON.stringify(integration, null, 2));
+    const json = await this.integrations.exportJson(integrationId);
+    if (integration === undefined || json === undefined) return;
+    await vscode.env.clipboard.writeText(json);
     void vscode.window.showInformationMessage(
-      `Copied "${integration.name}" config to the clipboard — no credential included.`,
+      `Copied "${integration.name}" as an mcpServers entry.`,
     );
   }
 

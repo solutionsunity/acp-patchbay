@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- *Copy config* on an MCP server card now copies a `{"mcpServers": {name:
+  entry}}` document — the well-known shape patchbay's own *Import JSON* and
+  other clients read. It used to copy patchbay's internal store record,
+  which nothing could import back. Curated servers copy as their resolved
+  endpoint and auth shape. (#11)
 - *Current file* and *Selection* in the composer now mean the file you were
   last in, not whichever tab happens to be active. They used to come up empty
   whenever the active tab wasn't a text editor — a detached Patchbay panel,

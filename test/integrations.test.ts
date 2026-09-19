@@ -580,6 +580,47 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
     expect(h.integrationStore.get("tool-2")?.source).toMatchObject({ command: "b" });
   });
 
+  it("exportJson emits the mcpServers document Import reads back — stdio, custom-http, and curated alike (issue #11)", async () => {
+    const h = harness([entry()]);
+    await h.manager.addCustom(
+      "My Files",
+      { kind: "custom-stdio", command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } },
+      "auto",
+    );
+    await h.manager.addCustom(
+      "Remote",
+      { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k" },
+      "auto",
+    );
+    await h.manager.connectRegistryWithKey("svc", "pasted-key-1");
+
+    const files = JSON.parse((await h.manager.exportJson("my-files"))!);
+    expect(files).toEqual({
+      mcpServers: { "My Files": { command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "" } } },
+    });
+    expect(JSON.parse((await h.manager.exportJson("remote"))!)).toEqual({
+      mcpServers: { Remote: { url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "" } },
+    });
+    expect(JSON.parse((await h.manager.exportJson("svc"))!)).toEqual({
+      mcpServers: { Service: { url: provider.mcpUrl, authType: "header", headerName: "Authorization", valuePrefix: "Bearer " } },
+    });
+    // never the store record, never a credential
+    for (const id of ["my-files", "remote", "svc"]) {
+      const json = (await h.manager.exportJson(id))!;
+      expect(json).not.toMatch(/"routing"|"source"|"transport"|sk-1|pasted-key-1|"k"/);
+    }
+
+    // round-trip: what Copy emits, Import accepts — same id, same launch line
+    const fresh = harness([]);
+    await fresh.manager.importJson(JSON.stringify(files));
+    expect(fresh.integrationStore.get("my-files")?.source).toMatchObject({
+      kind: "custom-stdio",
+      command: "npx",
+      args: ["-y", "files-server"],
+    });
+    expect(fresh.events.some((e) => e.kind === "integrationConnectFailed")).toBe(false);
+  });
+
   it("updateFromJson: env is write-only — blank keeps, filled overwrites, removed deletes", async () => {
     const h = harness([]);
     await h.manager.addCustom(

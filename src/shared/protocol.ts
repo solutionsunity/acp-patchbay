@@ -177,7 +177,9 @@ export type Action =
   /** Re-runs the connect-time tool probe (patchbay's own MCP client
    * handshake with the server) — a free read, no agent involved. */
   | { kind: "probeIntegration"; integrationId: string }
-  | { kind: "shareIntegrationConfig"; integrationId: string }
+  /** Copies the server as a `{"mcpServers": {name: entry}}` document — the
+   * shape `importIntegrationsJson` reads back and other clients take. */
+  | { kind: "copyIntegrationJson"; integrationId: string }
   | { kind: "refreshAgentAssets"; agentId: string }
   | { kind: "openAssetFile"; agentId: string; path: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
