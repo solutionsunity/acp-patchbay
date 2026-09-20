@@ -41,7 +41,7 @@ describe("catalog drift checker", () => {
       "https://mcp.acme.test/mcp": { status: 401, headers: { "www-authenticate": 'Bearer resource_metadata="x"' } },
       "https://mcp.acme.test/.well-known/oauth-protected-resource/mcp": { status: 200, body: '{"authorization_servers":["https://auth.acme.test"]}' },
       "https://registry.npmjs.org/@acme/mcp": { status: 200 },
-      "https://cdn.simpleicons.org/acme": { status: 200, body: `<svg><path d="${GLYPH}"/></svg>` },
+      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 200, body: `<svg><path d="${GLYPH}"/></svg>` },
     });
     const findings = await checkCatalog(
       [entry({
@@ -63,7 +63,7 @@ describe("catalog drift checker", () => {
       "https://acme.test/docs": { status: 404 },
       "https://mcp.acme.test/mcp": { status: 410 },
       "https://registry.npmjs.org/acme-mcp": { status: 404 },
-      "https://cdn.simpleicons.org/acme": { status: 200, body: '<svg><path d="M0 0"/></svg>' },
+      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 200, body: '<svg><path d="M0 0"/></svg>' },
     });
     const findings = await checkCatalog(
       [entry({
@@ -78,19 +78,25 @@ describe("catalog drift checker", () => {
     expect(verdict(findings, "brand-icon").detail).toMatch(/differs/);
   });
 
-  it("unclear, never drift: a 403 to the bot, a timeout, an unexpected registry status", async () => {
+  it("unclear, never drift: a 403 to the bot (docs, glyph CDN), a timeout, an unexpected registry status", async () => {
     const { f } = fakeFetch({
       "https://acme.test/docs": { status: 403 },
       "https://mcp.acme.test/mcp": "throw",
       "https://registry.npmjs.org/acme-mcp": { status: 503 },
+      // the first workflow run: simple-icons' CDN 403s GitHub runners — not a missing glyph
+      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 403 },
     });
     const findings = await checkCatalog(
-      [entry({ local: { command: "npx", args: ["acme-mcp"], envKeys: [], note: "" } })],
+      [entry({
+        local: { command: "npx", args: ["acme-mcp"], envKeys: [], note: "" },
+        brandIcon: { viewBox: "0 0 24 24", path: GLYPH },
+      })],
       f,
     );
     expect(verdict(findings, "docs")).toMatchObject({ status: "unclear", detail: "docsUrl answers 403" });
     expect(verdict(findings, "endpoint")).toMatchObject({ status: "unclear", detail: "no response: ECONNREFUSED" });
     expect(verdict(findings, "npm")).toMatchObject({ status: "unclear" });
+    expect(verdict(findings, "brand-icon")).toMatchObject({ status: "unclear", detail: "simple-icons answers 403" });
     expect(findings.some((x: Finding) => x.status === "drift")).toBe(false);
   });
 

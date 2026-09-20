@@ -9,6 +9,7 @@
 //               protected-resource metadata
 //   npm         an npx-launched local server's package still resolves
 //   brand-icon  the glyph still equals simple-icons' current path for the id
+//               (the npm package via jsDelivr)
 //
 // Three verdicts per check: ok, drift, or unclear (a response that proves
 // neither — a 403 to a bot, a timeout — shown, never counted as drift).
@@ -114,11 +115,17 @@ async function checkNpm(entry, f) {
   return finding(entry.id, "npm", "unclear", `${pkg}: registry answers ${r.status}`);
 }
 
+/** simple-icons as published to npm, served by jsDelivr — the package the
+ * paths were copied from. (simple-icons' own CDN answers 403 to GitHub
+ * runners; the first workflow run filed six false glyph drifts on that.) */
+const glyphUrl = (slug) => `https://cdn.jsdelivr.net/npm/simple-icons/icons/${slug}.svg`;
+
 async function checkBrandIcon(entry, f) {
   if (entry.brandIcon === null) return finding(entry.id, "brand-icon", "skipped", "codicon fallback");
-  const r = await probe(f, `https://cdn.simpleicons.org/${entry.id}`);
+  const r = await probe(f, glyphUrl(entry.id));
   if (r.error) return finding(entry.id, "brand-icon", "unclear", `no response: ${r.error}`);
-  if (r.status !== 200) return finding(entry.id, "brand-icon", "drift", `simple-icons has no "${entry.id}" (${r.status})`);
+  if (goneStatus(r.status)) return finding(entry.id, "brand-icon", "drift", `simple-icons has no "${entry.id}" (${r.status})`);
+  if (r.status !== 200) return finding(entry.id, "brand-icon", "unclear", `simple-icons answers ${r.status}`);
   const svg = await r.text();
   const path = /\sd="([^"]+)"/.exec(svg)?.[1];
   if (path === undefined) return finding(entry.id, "brand-icon", "unclear", "simple-icons answered without a path");
