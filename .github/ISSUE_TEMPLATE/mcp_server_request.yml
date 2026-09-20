@@ -82,10 +82,18 @@ body:
     id: local
     attributes:
       label: Official local server (if the vendor documents one)
-      description: The stdio command and its env vars, or the local URL a desktop app serves.
+      description: Paste the vendor's published `mcpServers` snippet as is — a stdio command with its env vars, or the local URL a desktop app serves.
+      render: json
       placeholder: |
-        npx -y @example/mcp
-        env: EXAMPLE_API_KEY
+        {
+          "mcpServers": {
+            "example": {
+              "command": "npx",
+              "args": ["-y", "@example/mcp"],
+              "env": { "EXAMPLE_API_KEY": "" }
+            }
+          }
+        }
 
   - type: textarea
     id: notes
