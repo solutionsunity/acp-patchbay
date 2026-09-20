@@ -1,7 +1,7 @@
-name: Catalog drift check
+name: MCP catalog drift check
 
 # Weekly: asks the network whether every fact in data/mcp-catalog.json still
-# holds (scripts/catalog-check.mjs) and keeps exactly one open "Catalog
+# holds (scripts/catalog-check.mjs) and keeps exactly one open "MCP Catalog
 # drift" issue — created when drift appears, rewritten (with one comment)
 # only when the findings change, silent while they don't, closed by the
 # first clean run. No product code, no VSIX footprint.
@@ -40,10 +40,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRIFT: ${{ steps.check.outputs.drift }}
         run: |
-          existing="$(gh issue list --label catalog --state open --search '"Catalog drift" in:title' --json number --jq '.[0].number // empty')"
+          existing="$(gh issue list --label catalog --state open --search '"MCP Catalog drift" in:title' --json number --jq '.[0].number // empty')"
           if [ "$DRIFT" = "1" ]; then
             if [ -z "$existing" ]; then
-              gh issue create --title "Catalog drift" --label catalog --body-file report.md
+              gh issue create --title "MCP Catalog drift" --label catalog --body-file report.md
             else
               # Same findings as last time → say nothing. The report's first
               # line is the date, so compare everything after it.

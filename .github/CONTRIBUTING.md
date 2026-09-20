@@ -52,7 +52,7 @@ The catalog under Settings → MCP Servers is shipped data:
   [simple-icons](https://simpleicons.org) (CC0) or `null` — never drawn or
   guessed. `npm test` loads the file through the schema;
   `node scripts/catalog-check.mjs` asks the network whether every fact still
-  holds (the same check runs weekly and files a "Catalog drift" issue).
+  holds (the same check runs weekly and files an "MCP Catalog drift" issue).
 
 ## Reporting
 

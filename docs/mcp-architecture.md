@@ -106,7 +106,7 @@ restate it. Policy for what an entry is:
   OAuth origins still publish protected-resource metadata, npx packages still
   resolve, brand glyphs still equal simple-icons — with three verdicts (ok,
   drift, unclear) so a bot-blocked 403 never reads as a dead link. The weekly
-  workflow keeps one open "Catalog drift" issue: opened when drift appears,
+  workflow keeps one open "MCP Catalog drift" issue: opened when drift appears,
   updated only when the findings change, closed on the first clean run.
 
 ## Pitfalls the implementation must respect (evidence-backed)
