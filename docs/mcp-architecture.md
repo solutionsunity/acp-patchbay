@@ -101,6 +101,13 @@ restate it. Policy for what an entry is:
   Listing is public information, so no vendor sign-off is needed and none is
   owed: a vendor's request to be removed is judged on its reason like any
   other issue, not granted by default.
+- **Facts are re-asked, not assumed.** `scripts/catalog-check.mjs` asks the
+  network whether each entry still holds — docs page and endpoint answer,
+  OAuth origins still publish protected-resource metadata, npx packages still
+  resolve, brand glyphs still equal simple-icons — with three verdicts (ok,
+  drift, unclear) so a bot-blocked 403 never reads as a dead link. The weekly
+  workflow keeps one open "Catalog drift" issue: opened when drift appears,
+  updated only when the findings change, closed on the first clean run.
 
 ## Pitfalls the implementation must respect (evidence-backed)
 

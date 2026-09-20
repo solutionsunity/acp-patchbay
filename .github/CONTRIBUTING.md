@@ -50,7 +50,9 @@ The catalog under Settings → MCP Servers is shipped data:
   file, every field read from the vendor's docs (`docsUrl` is that page).
   `brandIcon` is a monochrome path copied from
   [simple-icons](https://simpleicons.org) (CC0) or `null` — never drawn or
-  guessed. `npm test` loads the file through the schema.
+  guessed. `npm test` loads the file through the schema;
+  `node scripts/catalog-check.mjs` asks the network whether every fact still
+  holds (the same check runs weekly and files a "Catalog drift" issue).
 
 ## Reporting
 

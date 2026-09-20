@@ -1,0 +1,60 @@
+name: Catalog drift check
+
+# Weekly: asks the network whether every fact in data/mcp-catalog.json still
+# holds (scripts/catalog-check.mjs) and keeps exactly one open "Catalog
+# drift" issue — created when drift appears, rewritten (with one comment)
+# only when the findings change, silent while they don't, closed by the
+# first clean run. No product code, no VSIX footprint.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Check the catalog
+        id: check
+        run: |
+          if node scripts/catalog-check.mjs --report report.md; then
+            echo "drift=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=1" >> "$GITHUB_OUTPUT"
+          fi
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.check.outputs.drift }}
+        run: |
+          existing="$(gh issue list --label catalog --state open --search '"Catalog drift" in:title' --json number --jq '.[0].number // empty')"
+          if [ "$DRIFT" = "1" ]; then
+            if [ -z "$existing" ]; then
+              gh issue create --title "Catalog drift" --label catalog --body-file report.md
+            else
+              # Same findings as last time → say nothing. The report's first
+              # line is the date, so compare everything after it.
+              gh issue view "$existing" --json body --jq .body | tr -d '\r' > current.md
+              if diff -q <(tail -n +2 report.md) <(tail -n +2 current.md) >/dev/null; then
+                echo "unchanged since the last report — no update"
+              else
+                gh issue edit "$existing" --body-file report.md
+                gh issue comment "$existing" --body "Findings changed on $(date -u +%F) — body updated."
+              fi
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Clean run on $(date -u +%F) — nothing drifts."
+          fi
