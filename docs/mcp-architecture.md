@@ -1,7 +1,7 @@
 # MCP Integrations — Architecture
 
 How patchbay authenticates to and routes **remote MCP servers** — the mechanisms,
-the curated integrations, and the failure modes the implementation must avoid.
+the curated catalog's policy, and the failure modes the implementation must avoid.
 (Patchbay's own *local* MCP server, which exposes editor state to agents, lives in
 [the architecture doc](architecture.md); this file is the remote services patchbay
 connects agents to.) It is built on a vendor auth reference — endpoints, auth
@@ -31,14 +31,14 @@ the bridge sends it on every request.
 
 - **Header name is per-integration data, not hardcoded**: most services take
   `Authorization: Bearer <key>`, but Stitch requires `X-Goog-Api-Key: <key>`. The
-  bearer-token case is the default; the registry/custom schema carries a
+  bearer-token case is the default; the catalog/custom schema carries a
   `headerName` field (default `Authorization`, value template `Bearer {token}` vs
   raw).
 - Zero OAuth surface: no popups, no redirects, no browser, no remote-environment
   failure modes. Works identically in local VS Code, SSH remote, WSL, code-server,
   Codespaces.
-- This is the **floor for every integration**: each of the eight below has a
-  documented static-key path. OAuth is an upgrade where open, never a
+- This is the **floor**: a catalog entry carries the vendor's documented
+  static-key path wherever one exists. OAuth is an upgrade where open, never a
   prerequisite.
 
 ### 2 · MCP-spec OAuth 2.1 with Dynamic Client Registration — `authType: "oauth"`
@@ -62,7 +62,7 @@ pre-provisioned credentials of any kind):
 6. Tokens (access + refresh) into `IntegrationTokenStore`; the existing
    refresh-on-expiry logic in `IntegrationsManager.getToken` carries over.
 
-A registry entry for an OAuth integration needs **only a URL** — every other
+A catalog entry for an OAuth integration needs **only a URL** — every other
 parameter is discovered. This is [the architecture doc](architecture.md)'s "adding
 a curated integration is a data change, not code" at its most literal.
 
@@ -74,34 +74,33 @@ maintenance (an app owned by this project per vendor, subject to each platform's
 review/suspension policies); the services that would need it (GitHub, Figma) all
 have a static-key path that works today with no vendor dependency; and the
 static-key path is strictly more reliable (§ Pitfalls). If a vendor later opens
-DCR, that integration upgrades to mechanism 2 by changing its registry entry —
+DCR, that integration upgrades to mechanism 2 by changing its catalog entry —
 data, not code. Device Flow (RFC 8628) support returns only if some future vendor
-offers it as its *open* mechanism, which none of the eight do.
+offers it as its *open* mechanism, which no curated vendor does.
 
-## The curated eight
+## The curated set
 
-| Integration | Endpoint | Static-key auth (`header`) | OAuth upgrade (`oauth`) |
-|---|---|---|---|
-| **GitHub** | `https://api.githubcopilot.com/mcp/` | PAT as `Authorization: Bearer` | ✗ — no DCR; one-click OAuth exists only for IDE-registered apps ([github/github-mcp-server](https://github.com/github/github-mcp-server)) |
-| **Figma** | `https://mcp.figma.com/mcp` | ✗ remote (no key mode) — but the **Desktop** Dev Mode server is a local *HTTP* endpoint (`http://127.0.0.1:3845/mcp`, no auth; enabled in the desktop app) carried by the registry's `local` field | ✗ for now — remote access is gated on Figma's MCP client **catalog**: "only clients listed... can connect", new clients join a waitlist ([official docs](https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/), re-verified after owner review). VS Code being listed covers *VS Code's own OAuth client* only — patchbay is its own MCP client and doesn't inherit the listing by running inside VS Code. Flips to ✓ if patchbay gets catalog-listed; the waitlist form is an owner touchpoint |
-| **Stitch** (Google Labs) | `https://stitch.googleapis.com/mcp` | API key as `X-Goog-Api-Key` (custom header name — the case that forces `headerName` into the schema) | ✗ — key-only ([stitch.withgoogle.com/docs/mcp](https://stitch.withgoogle.com/docs/mcp/setup/)) |
-| **Stripe** | `https://mcp.stripe.com` | Restricted API key as bearer | ✓ open DCR ([docs.stripe.com/mcp](https://docs.stripe.com/mcp)) |
-| **Sentry** | `https://mcp.sentry.dev/mcp` | PAT (their own recommended fallback for remote-IDE setups) | ✓ open DCR ([docs.sentry.io/ai/mcp](https://docs.sentry.io/ai/mcp/)) |
-| **Postman** | `https://mcp.postman.com/mcp` (US), `https://mcp.eu.postman.com` (EU) | API key as bearer (EU is key-only) | ✓ US server ([Postman docs](https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server)) |
-| **Supabase** | Per-project URL (Supabase OAuth 2.1 Server product) | Project API key | ✓ when the project enables DCR ([supabase docs](https://supabase.com/docs/guides/auth/oauth-server/mcp-authentication)) |
-| **Augment Context Engine** | Per-account URL from `app.augmentcode.com/mcp/configuration` | API key (documented "non-interactive" mode) | ✓ documented OAuth mode ([docs.augmentcode.com](https://docs.augmentcode.com/context-services/mcp/overview)) — DCR openness unverified, check at implementation |
+The catalog is `data/mcp-catalog.json`, loaded through the schema in
+`stores/mcp-catalog.ts`; the data file is the record and this document does not
+restate it. Policy for what an entry is:
 
-Notes:
-
-- Per-account/per-project URLs (Supabase, Augment) mean the registry entry ships
-  with `url: ""` and the user pastes their own endpoint at connect time — the
-  entry contributes name, auth shape, and a docs link.
-- Augment's remote indexing additionally requires their GitHub App on the repo —
-  Augment's own onboarding, outside patchbay.
-- Figma remote is the one entry with no self-serve path today; it ships as visible
-  with the remote honestly gated, and the desktop Dev Mode server (local HTTP, no
-  auth) offered as its "run it locally" path — the catalog row's Connect leads
-  there.
+- **The vendor's official server**, described from the vendor's public
+  documentation (`docsUrl` is the page every other field comes from). Patchbay
+  lists what the vendor publishes; it does not certify the server — MCP is a
+  standard — and a fact that turns out wrong is an issue.
+- **Mechanisms as documented**: `auth.header` where the vendor documents a
+  pasted key, `auth.oauth` where it documents MCP-spec OAuth — set false when a
+  failure was reproduced (Figma's allowlisted DCR, Pitfall §2). Per-account
+  services ship `url: ""` with `userUrl: true` and the user pastes their own
+  endpoint at connect.
+- **`description`** says what the server is for; **`note`** carries the caveats
+  a user must know before connecting; **`local`** is the vendor's official local
+  server when it documents one, offered as a prefill and never auto-run.
+- Requests arrive through the "Curated MCP server request" issue form;
+  contributions as a one-entry PR (CONTRIBUTING). Paid services are welcome.
+  Listing is public information, so no vendor sign-off is needed and none is
+  owed: a vendor's request to be removed is judged on its reason like any
+  other issue, not granted by default.
 
 ## Pitfalls the implementation must respect (evidence-backed)
 
@@ -141,8 +140,8 @@ Notes:
 
 ## Implementation — where each piece lives
 
-1. Header auth generalized: `headerName` + `valuePrefix` in both the registry
-   schema (`stores/registry.ts`) and the custom-http config shape
+1. Header auth generalized: `headerName` + `valuePrefix` in both the catalog
+   schema (`stores/mcp-catalog.ts`) and the custom-http config shape
    (`stores/integration-configs.ts`); the bridge reads them from
    `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`integrations/bridge-main.ts`).
 2. `src/orchestrator/mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
@@ -152,7 +151,7 @@ Notes:
    Gated DCR throws `DcrRejectedError`, labeled, immediately. Tested against a fake
    spec-compliant provider that genuinely verifies S256 PKCE
    (`test/support/fake-oauth-provider.ts`, `test/mcp-oauth.test.ts`).
-3. `data/registry.json` ships the eight entries (Figma visible-but-not-connectable;
-   Supabase/Augment with user-supplied URLs).
-4. Per-account endpoints: registry source persists the pasted `url`;
+3. `data/mcp-catalog.json` ships the entries; `stores/mcp-catalog.ts` loads them
+   through the schema (the loader is the one seam a fetched source would use).
+4. Per-account endpoints: the registry-kind source persists the pasted `url`;
    `IntegrationsManager.resolveEndpoint` refuses labeled when missing.

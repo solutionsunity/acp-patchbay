@@ -1,6 +1,6 @@
 {
-  "$comment": "Curated integrations registry (architecture.md § Integrations; auth model per docs/reference-mcp-oauth.md). Every entry offers a static-key header mode (the v1 floor) and/or MCP-spec OAuth 2.1 where the vendor's Dynamic Client Registration is verified open. userUrl entries (Supabase, Augment) have per-account endpoints the user pastes at connect. Figma remote is deliberately not connectable: no key mode, and its DCR allowlists client_name — the note says so; Figma Desktop's local MCP fits the custom-stdio escape hatch instead. Endpoints/auth facts re-verified against each vendor's docs at ship time — nothing here is guessed.",
-  "integrations": [
+  "$comment": "Curated MCP server catalog. Every entry offers a static-key header mode and/or MCP-spec OAuth 2.1 as the vendor documents it; userUrl entries (Supabase, Augment) have per-account endpoints the user pastes at connect. Facts are the vendor's public docs (docsUrl) — a wrong one is an issue, not a patchbay finding. Request an entry with the 'Curated MCP server request' issue form.",
+  "servers": [
     {
       "id": "github",
       "name": "GitHub",

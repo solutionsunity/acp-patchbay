@@ -1,4 +1,4 @@
-// Integrations manager: registry key/OAuth connects, custom escape hatch,
+// Integrations manager: catalog key/OAuth connects, custom escape hatch,
 // routing, and mcpServers construction — against a real fake MCP-spec OAuth
 // provider (test/support/fake-oauth-provider.ts) and an in-memory global
 // integration-config store (integrations are global, developer-env, never
@@ -12,7 +12,7 @@ import type { ProbeFn, ProbeTarget } from "../src/orchestrator/integration-probe
 import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
 import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import type { RegistryEntry } from "../src/orchestrator/stores/registry";
+import type { CatalogEntry } from "../src/orchestrator/stores/mcp-catalog";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import type { SettingsEvent } from "../src/shared/protocol";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
@@ -27,7 +27,7 @@ afterEach(async () => {
   await provider.close();
 });
 
-function entry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
+function entry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
   return {
     id: "svc",
     name: "Service",
@@ -56,7 +56,7 @@ function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<str
  * custom-stdio servers in the same one. */
 const WORKSPACE_CWD = "/workspace/project";
 
-function harness(registry: RegistryEntry[]) {
+function harness(catalog: CatalogEntry[]) {
   const events: SettingsEvent[] = [];
   const integrationStore = new IntegrationConfigStore(new MemoryKV());
   const secrets = new MemorySecrets();
@@ -69,7 +69,7 @@ function harness(registry: RegistryEntry[]) {
     return { serverName: "fake-server", serverVersion: "1.0", tools: [{ name: "t_one", description: "d" }] };
   };
   const manager = new IntegrationsManager(
-    registry,
+    catalog,
     integrationStore,
     tokens,
     envStore,
@@ -214,7 +214,7 @@ describe("IntegrationsManager — custom escape hatch", () => {
     expect(serialized).toContain("X-Goog-Api-Key");
   });
 
-  it("custom-http OAuth runs the same MCP-spec flow as registry entries", async () => {
+  it("custom-http OAuth runs the same MCP-spec flow as catalog entries", async () => {
     const h = harness([]);
     await h.manager.addCustom(
       "My OAuth",
@@ -232,7 +232,7 @@ describe("IntegrationsManager — custom escape hatch", () => {
     await h.manager.remove("svc");
     expect(await h.tokens.get("svc")).toBeNull();
     expect(h.integrationStore.list()).toEqual([]);
-    // the catalog entry itself is registry data — still there, ready to reconnect
+    // the catalog entry itself is shipped data — still there, ready to reconnect
     expect(h.manager.registryViews().some((r) => r.id === "svc")).toBe(true);
   });
 

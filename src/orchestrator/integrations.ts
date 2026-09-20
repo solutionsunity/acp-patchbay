@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Integrations manager: curated (registry)
+// Integrations manager: curated (catalog)
 // and custom are the same mechanism — MCP servers routed to agents. Owns
 // the connect lifecycle (static key in a configurable header, or MCP-spec
 // OAuth 2.1), routing decisions, and the
@@ -26,7 +26,7 @@ import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { IntegrationTokenStore, type StoredToken } from "./stores/integration-tokens";
 import { IntegrationConfigStore, type IntegrationConfig, type IntegrationSource } from "./stores/integration-configs";
-import { isConnectable, type RegistryEntry } from "./stores/registry";
+import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
 
 export interface IntegrationsManagerHooks {
@@ -101,7 +101,7 @@ function needsToken(source: IntegrationSource): boolean {
  * exists (not connectable). Never called for custom-stdio. */
 function endpointOf(
   source: Exclude<IntegrationSource, { kind: "custom-stdio" }>,
-  entry: RegistryEntry | undefined,
+  entry: CatalogEntry | undefined,
 ): string {
   return source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
 }
@@ -111,7 +111,7 @@ function endpointOf(
  * `Authorization: Bearer`; header mode uses the entry's/user's own shape. */
 function headerShapeOf(
   source: IntegrationSource,
-  entry: RegistryEntry | undefined,
+  entry: CatalogEntry | undefined,
 ): { headerName: string; valuePrefix: string } | null {
   if (source.kind === "custom-stdio") return null;
   if (source.kind === "registry") {
@@ -126,7 +126,7 @@ function headerShapeOf(
 
 export class IntegrationsManager {
   constructor(
-    private readonly registry: readonly RegistryEntry[],
+    private readonly catalog: readonly CatalogEntry[],
     private readonly integrationStore: IntegrationConfigStore,
     private readonly tokens: IntegrationTokenStore,
     /** Env values for custom-stdio servers — SecretStorage-backed
@@ -203,7 +203,7 @@ export class IntegrationsManager {
   }
 
   registryViews(): RegistryEntryView[] {
-    return this.registry.map((r) => ({
+    return this.catalog.map((r) => ({
       id: r.id,
       name: r.name,
       description: r.description,
@@ -311,15 +311,15 @@ export class IntegrationsManager {
     return { url, authType, ...headerShapeOf(source, entry), ...(token !== undefined ? { token } : {}) };
   }
 
-  private entryFor(registryId: string): RegistryEntry | undefined {
-    return this.registry.find((r) => r.id === registryId);
+  private entryFor(registryId: string): CatalogEntry | undefined {
+    return this.catalog.find((r) => r.id === registryId);
   }
 
   /** Resolves the endpoint a connect will use: the entry's fixed URL, or
    * the user-supplied one for per-account services. Null with a reason
    * when it can't — never a silent partial connect. */
   private resolveEndpoint(
-    entry: RegistryEntry,
+    entry: CatalogEntry,
     userSuppliedUrl: string | undefined,
   ): { url: string } | { error: string } {
     if (entry.userUrl) {

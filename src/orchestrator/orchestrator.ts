@@ -71,7 +71,7 @@ import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
-import { loadRegistry } from "./stores/registry";
+import { loadCatalog } from "./stores/mcp-catalog";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { AuthLockStore } from "./stores/auth-locks";
@@ -269,7 +269,7 @@ export class Orchestrator {
     // extension.ts's registerUriHandler feeds callbacks into oauthCallbacks.
     const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
     this.integrations = new IntegrationsManager(
-      loadRegistry(),
+      loadCatalog(),
       this.integrationConfigs,
       this.integrationTokens,
       this.integrationEnv,

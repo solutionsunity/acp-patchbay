@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 /** A curated entry's icon: the verified brand glyph where one exists
- * (registry.ts's curated-only exception — inline SVG, fill=currentColor, so
+ * (mcp-catalog.ts's curated-only exception — inline SVG, fill=currentColor, so
  * it themes exactly like a codicon), else the entry's codicon fallback.
  * Sized to the codicon grid so both spellings sit identically in a row. */
 function EntryIcon(props: { icon: string; brandIcon: { viewBox: string; path: string } | null }) {
@@ -559,7 +559,7 @@ export function IntegrationsSection(props: {
         {state.integrations.map((integration) => {
           // Editing JSON forces the body open — the form lives there.
           const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
-          // A connected curated server keeps its catalog icon (the registry
+          // A connected curated server keeps its catalog icon (the catalog
           // entry is still the id's source of truth; custom servers have none).
           const catalogEntry = state.integrationRegistry.find((r) => r.id === integration.registryId);
           return (

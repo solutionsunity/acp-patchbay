@@ -35,6 +35,23 @@ host can be downloaded before you rely on it.
   [the architecture doc](../docs/architecture.md). A PR that changes behavior
   should keep the docs honest.
 
+## Curated MCP servers
+
+The catalog under Settings → MCP Servers is shipped data:
+[`data/mcp-catalog.json`](../data/mcp-catalog.json), validated by the schema in
+`src/orchestrator/stores/mcp-catalog.ts`. What an entry is — and isn't — is
+[the MCP architecture doc's "The curated set"](../docs/mcp-architecture.md#the-curated-set).
+
+- **To request one**, open a
+  [Curated MCP server request](https://github.com/solutionsunity/acp-patchbay/issues/new?template=mcp_server_request.yml).
+  You don't need to be the vendor or the server's maintainer. The entry is
+  written from the documentation page you link.
+- **To contribute one directly**, open a PR adding a single entry to the data
+  file, every field read from the vendor's docs (`docsUrl` is that page).
+  `brandIcon` is a monochrome path copied from
+  [simple-icons](https://simpleicons.org) (CC0) or `null` — never drawn or
+  guessed. `npm test` loads the file through the schema.
+
 ## Reporting
 
 - Bugs and feature requests: open an issue.

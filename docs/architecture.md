@@ -748,11 +748,11 @@ The auth mechanisms, the curated set, and the transport-selection rules are the
 configured integration reaches an agent. Curated and custom are the same
 mechanism — MCP servers routed to agents:
 
-- **The registry is shipped data from day one.** The PRD decides this: GitHub
-  ships "proving the registry pattern," and a hardcoded integration proves no
-  pattern. One data file, one entry; every field earned by what GitHub
-  demonstrably needs — `id`, `name`, transport, auth type, scopes, bridge launch
-  — nothing speculative. Adding a curated integration is a data change, not code.
+- **The catalog is shipped data from day one** (`data/mcp-catalog.json`). The
+  PRD decides this: GitHub ships "proving the catalog pattern," and a hardcoded
+  integration proves no pattern. One data file; every field earned by what a
+  real vendor demonstrably needs — nothing speculative. Adding a curated server
+  is a data change, not code; the file is the record, no doc restates it.
 - **The agent list is NOT shipped data**: the official ACP registry is the one
   agent source (identity, launch, icon, live-fetched + disk-cached), and
   patchbay's own per-agent curation lives in code tables where every other house

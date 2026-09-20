@@ -408,13 +408,13 @@ export interface IntegrationView {
 export interface RegistryEntryView {
   id: string;
   name: string;
-  /** What the server is for, one line (registry data) — shown on the row,
+  /** What the server is for, one line (catalog data) — shown on the row,
    * searched by the catalog filter. */
   description: string;
-  /** Codicon name for the entry (registry data) — the fallback when
+  /** Codicon name for the entry (catalog data) — the fallback when
    * `brandIcon` is null. Rendered plain so it inherits the row's text color. */
   icon: string;
-  /** Verified monochrome brand glyph (registry.ts — the curated-only
+  /** Monochrome brand glyph (mcp-catalog.ts — the curated-only
    * exception to the Codicons rule): inline SVG path data rendered with
    * fill=currentColor, so color follows text either way. */
   brandIcon: { viewBox: string; path: string } | null;

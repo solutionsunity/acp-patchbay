@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Curated MCP servers can be requested: a "Curated MCP server request" issue
+  form asks for the facts an entry needs and the vendor page they come from;
+  CONTRIBUTING says how an entry is written and lands. The catalog file is
+  now `data/mcp-catalog.json` (it holds MCP servers, and "registry" already
+  means the ACP agent registry), and the architecture doc no longer restates
+  its entries — the data file is the record. (#18)
 - The curated MCP catalog can be narrowed: a search box over name and
   description, and the key / OAuth / local chips double as filter toggles
   (all selected mechanisms must be offered). Every entry gained a one-line

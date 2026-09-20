@@ -1,0 +1,104 @@
+name: Curated MCP server request
+description: Ask for an MCP server to be listed in Patchbay's curated catalog.
+labels: ["enhancement", "catalog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The catalog lists the vendor's **official** MCP server, described from the
+        vendor's own public documentation. Give the facts and the page they come
+        from; the entry is written from that page. You don't need to be the
+        vendor or the server's maintainer — this is a request to list, not to
+        vouch. Until it lands, any server can be added from Settings → MCP
+        Servers → Add a custom MCP server.
+
+  - type: input
+    id: name
+    attributes:
+      label: Server name
+      placeholder: "e.g. Linear"
+    validations:
+      required: true
+
+  - type: input
+    id: description
+    attributes:
+      label: What it is for, in one line
+      description: Shown under the catalog row and matched by search.
+      placeholder: "e.g. Linear — issues, projects, and cycles from your workspace."
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: Vendor documentation for this server
+      description: The vendor's own page that names the endpoint and the auth it accepts. Every other field is read from here.
+      placeholder: "https://…"
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: Remote endpoint
+      description: The fixed MCP URL — or "per-account" if each user has their own.
+      placeholder: "https://mcp.example.com/mcp"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: key
+    attributes:
+      label: Static key
+      description: Does the vendor document connecting with a pasted key or token?
+      options:
+        - "Yes — Authorization: Bearer <key>"
+        - "Yes — a custom header (name it below)"
+        - "No"
+    validations:
+      required: true
+
+  - type: input
+    id: key-details
+    attributes:
+      label: Key details
+      description: Custom header name if any, and the page where a key is issued.
+      placeholder: "X-Example-Key · https://example.com/settings/api-keys"
+
+  - type: dropdown
+    id: oauth
+    attributes:
+      label: OAuth
+      description: Does the vendor document MCP-spec OAuth (browser sign-in, no pre-registered app)?
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: local
+    attributes:
+      label: Official local server (if the vendor documents one)
+      description: The stdio command and its env vars, or the local URL a desktop app serves.
+      placeholder: |
+        npx -y @example/mcp
+        env: EXAMPLE_API_KEY
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Caveats
+      description: Anything a user must know before connecting — regions, prerequisites, gated features.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: This is the vendor's official MCP server, per the documentation linked above.
+          required: true
+        - label: I searched existing issues and the catalog, and it isn't listed or requested already.
+          required: true
