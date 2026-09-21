@@ -25,22 +25,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
-/** A curated entry's icon: the verified brand glyph where one exists
- * (mcp-catalog.ts's curated-only exception — inline SVG, fill=currentColor, so
- * it themes exactly like a codicon), else the entry's codicon fallback.
- * Sized to the codicon grid so both spellings sit identically in a row. */
-function EntryIcon(props: { icon: string; brandIcon: { viewBox: string; path: string } | null }) {
-  if (props.brandIcon === null) return <Icon name={props.icon} />;
+/** A curated entry's vendor mark (mcp-catalog.ts's curated-only exception
+ * to the Codicons rule — inline SVG, fill=currentColor, so it themes
+ * exactly like a codicon). Sized to the codicon grid so it sits in a row
+ * like one. */
+function EntryIcon(props: { glyph: { viewBox: string; path: string } }) {
   return (
     <svg
       width={16}
       height={16}
-      viewBox={props.brandIcon.viewBox}
+      viewBox={props.glyph.viewBox}
       fill="currentColor"
       className="shrink-0"
       aria-hidden="true"
     >
-      <path d={props.brandIcon.path} />
+      <path d={props.glyph.path} />
     </svg>
   );
 }
@@ -275,7 +274,7 @@ function CatalogRow(props: {
     <div className="cat-row">
       <div className="row flex-wrap">
         {/* no color class — inherits the row's text color either way */}
-        <EntryIcon icon={entry.icon} brandIcon={entry.brandIcon} />
+        <EntryIcon glyph={entry.brandIcon} />
         <span className="nm min-w-0">{entry.name}</span>
         {[...mechanismsOf(entry)].map((m) => (
           <MechanismChip key={m} mechanism={m} />
@@ -569,9 +568,7 @@ export function IntegrationsSection(props: {
                   <div className="row flex-wrap">
                     {handle}
                     <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
-                    {catalogEntry !== undefined && (
-                      <EntryIcon icon={catalogEntry.icon} brandIcon={catalogEntry.brandIcon} />
-                    )}
+                    {catalogEntry !== undefined && <EntryIcon glyph={catalogEntry.brandIcon} />}
                     <span className="nm min-w-0">{integration.name}</span>
                     <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
                       {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}

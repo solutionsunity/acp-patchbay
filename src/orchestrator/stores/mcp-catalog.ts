@@ -45,18 +45,14 @@ const catalogEntrySchema = z.object({
    * search matches it. Required: an entry nobody can describe isn't
    * curated. `note` below is a different thing — per-entry caveats. */
   description: z.string().min(1),
-  /** Codicon name for the catalog row — the fallback when no verified
-   * brand glyph exists below. Rendered plain, so it inherits the row's
-   * text color. */
-  icon: z.string().default("server"),
-  /** The curated-only exception to the Codicons rule (recorded
-   * decision, 2026-07-12): a monochrome brand glyph as inline SVG path
-   * data, source-copied from simple-icons (CC0) — shipped data, never
-   * fetched at runtime, rendered with fill=currentColor so color follows
-   * text exactly like a codicon, no CSP change (inline SVG needs none).
-   * Null = simple-icons has no glyph for the vendor; the codicon above is
-   * the honest fallback, never guessed art. */
-  brandIcon: z.object({ viewBox: z.string(), path: z.string() }).nullable().default(null),
+  /** The vendor's mark — the curated-only exception to the Codicons rule
+   * (recorded decision, 2026-07-12): monochrome SVG path data, rendered
+   * with fill=currentColor so color follows text exactly like a codicon,
+   * no CSP change (inline SVG needs none). Not in the data file: every
+   * entry has data/icons/<id>.svg (one path, one viewBox, provenance in
+   * the file's leading comment) and the build folds it in — an entry
+   * without art doesn't build, so there is no fallback to render. */
+  brandIcon: z.object({ viewBox: z.string(), path: z.string() }),
   /** Remote MCP endpoint. "" when `userUrl` — per-account/per-project
    * services (Supabase, Augment) have no fixed public URL to ship. */
   url: z.string(),

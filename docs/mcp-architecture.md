@@ -96,6 +96,14 @@ restate it. Policy for what an entry is:
 - **`description`** says what the server is for; **`note`** carries the caveats
   a user must know before connecting; **`local`** is the vendor's official local
   server when it documents one, offered as a prefill and never auto-run.
+- **The mark is a file, not a field, and every entry has one**:
+  `data/icons/<id>.svg`, one monochrome path with a leading comment naming
+  its source (the vendor's own asset, or simple-icons), folded into the
+  catalog at build and gated there — one `<path>`, one `viewBox`, nothing
+  the renderer would drop; files and entries match one to one or the build
+  fails. A reviewer judges an SVG by eye; nobody can judge path data in a
+  JSON diff. There is no fallback icon: an entry without art is not an
+  entry yet.
 - Requests arrive through the "Curated MCP server request" issue form;
   contributions as a one-entry PR (CONTRIBUTING). Paid services are welcome.
   Listing is public information, so no vendor sign-off is needed and none is
@@ -104,8 +112,9 @@ restate it. Policy for what an entry is:
 - **Facts are re-asked, not assumed.** `scripts/catalog-check.mjs` asks the
   network whether each entry still holds — docs page and endpoint answer,
   OAuth origins still publish protected-resource metadata, npx packages still
-  resolve, brand glyphs still equal simple-icons — with three verdicts (ok,
-  drift, unclear) so a bot-blocked 403 never reads as a dead link. The weekly
+  resolve — with three verdicts (ok, drift, unclear) so a bot-blocked 403
+  never reads as a dead link. Glyphs are not asked: a reviewed copy gated at
+  build is not a fact that moves on its own. The weekly
   workflow keeps one open "MCP Catalog drift" issue: opened when drift appears,
   updated only when the findings change, closed on the first clean run.
 

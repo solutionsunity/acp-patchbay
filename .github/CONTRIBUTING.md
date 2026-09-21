@@ -48,9 +48,11 @@ The catalog under Settings → MCP Servers is shipped data:
   written from the documentation page you link.
 - **To contribute one directly**, open a PR adding a single entry to the data
   file, every field read from the vendor's docs (`docsUrl` is that page).
-  `brandIcon` is a monochrome path copied from
-  [simple-icons](https://simpleicons.org) (CC0) or `null` — never drawn or
-  guessed. `npm test` loads the file through the schema;
+  The entry's mark is `data/icons/<id>.svg`, required: one monochrome
+  `<path>` in a `viewBox`, nothing else, with a leading comment naming
+  where it came from — the vendor's own asset or
+  [simple-icons](https://simpleicons.org) (CC0) — never invented. `npm test`
+  loads the file through the schema and the icons through their gate;
   `node scripts/catalog-check.mjs` asks the network whether every fact still
   holds (the same check runs weekly and files an "MCP Catalog drift" issue).
 

@@ -7,7 +7,7 @@ import type { RegistryEntryView } from "../src/shared/protocol";
 
 function entry(over: Partial<RegistryEntryView> & { id: string }): RegistryEntryView {
   return {
-    name: over.id, description: over.id, icon: "server", brandIcon: null, connectable: true, note: "",
+    name: over.id, description: over.id, brandIcon: { viewBox: "0 0 24 24", path: "M4 4h16v16H4z" }, connectable: true, note: "",
     docsUrl: "", userUrl: false, headerAuth: null, oauth: false, local: null, ...over,
   };
 }

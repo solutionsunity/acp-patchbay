@@ -59,8 +59,7 @@ describe("catalog", () => {
       id: "gated",
       name: "Gated",
       description: "a gated service",
-      icon: "server",
-      brandIcon: null,
+      brandIcon: { viewBox: "0 0 24 24", path: "M4 4h16v16H4z" },
       url: "https://example.test/mcp",
       userUrl: false,
       docsUrl: "https://example.test/docs",
@@ -92,5 +91,12 @@ describe("catalog", () => {
 
   it("every entry has vendor docs to point at", () => {
     for (const e of loadCatalog()) expect(e.docsUrl, e.id).toMatch(/^https:\/\//);
+  });
+
+  it("every entry carries its vendor mark — folded in from data/icons at load, no fallback exists", () => {
+    for (const e of loadCatalog()) {
+      expect(e.brandIcon.viewBox, e.id).toMatch(/^0 0 \d+ \d+$/);
+      expect(e.brandIcon.path.length, e.id).toBeGreaterThan(20);
+    }
   });
 });

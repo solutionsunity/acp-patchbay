@@ -8,6 +8,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import postcss from "postcss";
 import tailwindPostcss from "@tailwindcss/postcss";
+import { CATALOG_JSON, foldCatalog } from "./scripts/catalog-glyphs.mjs";
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -18,6 +19,21 @@ const base = {
   sourcemap: !production,
   minify: production,
   logLevel: "info",
+};
+
+// The curated MCP catalog ships with its brand glyphs folded in from
+// data/icons/<id>.svg — the JSON stays vendor facts a reviewer can read,
+// the bundle carries the shape the webview renders. The fold is also the
+// gate (scripts/catalog-glyphs.mjs): a malformed, missing, or orphaned
+// icon fails the build here, never falls back silently.
+const catalogGlyphs = {
+  name: "catalog-glyphs",
+  setup(build) {
+    build.onLoad({ filter: CATALOG_JSON }, (args) => {
+      const { json, files, iconsDir } = foldCatalog(args.path);
+      return { contents: json, loader: "json", watchFiles: files, watchDirs: [iconsDir] };
+    });
+  },
 };
 
 /** @type {import("esbuild").BuildOptions} */
@@ -37,6 +53,7 @@ const extensionHost = {
   // (reading globalThis.navigator at all is what triggers the logger) —
   // zod only sniffs userAgent for runtime detection.
   banner: { js: 'var navigator = { userAgent: "Node.js" };' },
+  plugins: [catalogGlyphs],
 };
 
 // Tailwind v4 runs alongside esbuild as a CSS build step (stack.md) — only

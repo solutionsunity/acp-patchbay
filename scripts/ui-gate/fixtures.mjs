@@ -131,7 +131,7 @@ export function agentViewState({ live }) {
  * and text have distinct rows to keep and drop. Stripe's caveat note
  * carries the word the text probe types: the note must NOT match. */
 const catalogEntry = (id, name, description, over = {}) => ({
-  id, name, description, icon: "server", brandIcon: null, connectable: true, note: "", docsUrl: "https://example.com/docs",
+  id, name, description, brandIcon: { viewBox: "0 0 24 24", path: "M4 4h16v16H4z" }, connectable: true, note: "", docsUrl: "https://example.com/docs",
   userUrl: false, headerAuth: null, oauth: false, local: null, ...over,
 });
 const catalogEntries = [

@@ -24,9 +24,8 @@ function fakeFetch(table: Record<string, Reply>) {
   return { f, calls };
 }
 
-const GLYPH = "M1 1h2v2H1z";
 const entry = (over: Record<string, unknown> = {}) => ({
-  id: "acme", name: "Acme", description: "d", icon: "server", brandIcon: null,
+  id: "acme", name: "Acme", description: "d",
   url: "https://mcp.acme.test/mcp", userUrl: false, docsUrl: "https://acme.test/docs", note: "",
   auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "", keyUrl: "" }, oauth: false },
   local: null, ...over,
@@ -35,81 +34,69 @@ const entry = (over: Record<string, unknown> = {}) => ({
 const verdict = (findings: Finding[], check: string) => findings.find((x) => x.check === check)!;
 
 describe("catalog drift checker", () => {
-  it("a healthy entry: docs answer, endpoint challenges, metadata published, package on npm, glyph matches", async () => {
+  it("a healthy entry: docs answer, endpoint challenges, metadata published, package on npm", async () => {
     const { f } = fakeFetch({
       "https://acme.test/docs": { status: 200 },
       "https://mcp.acme.test/mcp": { status: 401, headers: { "www-authenticate": 'Bearer resource_metadata="x"' } },
       "https://mcp.acme.test/.well-known/oauth-protected-resource/mcp": { status: 200, body: '{"authorization_servers":["https://auth.acme.test"]}' },
       "https://registry.npmjs.org/@acme/mcp": { status: 200 },
-      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 200, body: `<svg><path d="${GLYPH}"/></svg>` },
     });
     const findings = await checkCatalog(
       [entry({
         auth: { header: null, oauth: true },
         local: { command: "npx", args: ["-y", "@acme/mcp@latest"], envKeys: [], note: "" },
-        brandIcon: { viewBox: "0 0 24 24", path: GLYPH },
       })],
       f,
     );
     expect(findings.map((x: Finding) => [x.check, x.status])).toEqual([
-      ["docs", "ok"], ["endpoint", "ok"], ["oauth", "ok"], ["npm", "ok"], ["brand-icon", "ok"],
+      ["docs", "ok"], ["endpoint", "ok"], ["oauth", "ok"], ["npm", "ok"],
     ]);
     expect(verdict(findings, "endpoint").detail).toBe("401, challenges with Bearer");
     expect(verdict(findings, "oauth").detail).toBe("metadata at /.well-known/oauth-protected-resource/mcp");
   });
 
-  it("drift: docs gone, endpoint gone, no metadata at either well-known path, package unpublished, glyph changed", async () => {
+  it("drift: docs gone, endpoint gone, no metadata at either well-known path, package unpublished", async () => {
     const { f } = fakeFetch({
       "https://acme.test/docs": { status: 404 },
       "https://mcp.acme.test/mcp": { status: 410 },
       "https://registry.npmjs.org/acme-mcp": { status: 404 },
-      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 200, body: '<svg><path d="M0 0"/></svg>' },
     });
     const findings = await checkCatalog(
       [entry({
         auth: { header: null, oauth: true },
         local: { command: "npx", args: ["acme-mcp"], envKeys: [], note: "" },
-        brandIcon: { viewBox: "0 0 24 24", path: GLYPH },
       })],
       f,
     );
     expect(findings.every((x: Finding) => x.status === "drift")).toBe(true);
     expect(verdict(findings, "oauth").detail).toMatch(/no protected-resource metadata/);
-    expect(verdict(findings, "brand-icon").detail).toMatch(/differs/);
   });
 
-  it("unclear, never drift: a 403 to the bot (docs, glyph CDN), a timeout, an unexpected registry status", async () => {
+  it("unclear, never drift: a 403 to the bot, a timeout, an unexpected registry status", async () => {
     const { f } = fakeFetch({
       "https://acme.test/docs": { status: 403 },
       "https://mcp.acme.test/mcp": "throw",
       "https://registry.npmjs.org/acme-mcp": { status: 503 },
-      // the first workflow run: simple-icons' CDN 403s GitHub runners — not a missing glyph
-      "https://cdn.jsdelivr.net/npm/simple-icons/icons/acme.svg": { status: 403 },
     });
     const findings = await checkCatalog(
-      [entry({
-        local: { command: "npx", args: ["acme-mcp"], envKeys: [], note: "" },
-        brandIcon: { viewBox: "0 0 24 24", path: GLYPH },
-      })],
+      [entry({ local: { command: "npx", args: ["acme-mcp"], envKeys: [], note: "" } })],
       f,
     );
     expect(verdict(findings, "docs")).toMatchObject({ status: "unclear", detail: "docsUrl answers 403" });
     expect(verdict(findings, "endpoint")).toMatchObject({ status: "unclear", detail: "no response: ECONNREFUSED" });
     expect(verdict(findings, "npm")).toMatchObject({ status: "unclear" });
-    expect(verdict(findings, "brand-icon")).toMatchObject({ status: "unclear", detail: "simple-icons answers 403" });
     expect(findings.some((x: Finding) => x.status === "drift")).toBe(false);
   });
 
-  it("skips say why: per-account endpoint, key-only entry, docker launcher, desktop-app local, codicon fallback", async () => {
+  it("skips say why: per-account endpoint, key-only entry, docker launcher, desktop-app local", async () => {
     const { f, calls } = fakeFetch({ "https://acme.test/docs": { status: 200 } });
-    // raw-JSON shape: `local` and `brandIcon` absent, as the data file may leave them
+    // raw-JSON shape: `local` absent, as the data file may leave it
     const perAccount: Finding[] = await checkCatalog(
       [{ id: "acme", name: "Acme", description: "d", url: "", userUrl: true, docsUrl: "https://acme.test/docs", auth: { header: null, oauth: true } }],
       f,
     );
     expect(verdict(perAccount, "endpoint")).toMatchObject({ status: "skipped", detail: "per-account endpoint" });
     expect(verdict(perAccount, "oauth")).toMatchObject({ status: "skipped", detail: "per-account endpoint" });
-    expect(verdict(perAccount, "brand-icon")).toMatchObject({ status: "skipped", detail: "codicon fallback" });
 
     const docker = await checkCatalog([entry({ local: { command: "docker", args: ["run"], envKeys: [], note: "" } })], f);
     expect(verdict(docker, "npm").detail).toBe("launcher is docker, not npx");
@@ -117,7 +104,7 @@ describe("catalog drift checker", () => {
     expect(verdict(desktop, "npm").detail).toBe("local HTTP endpoint");
     expect(verdict(desktop, "oauth").detail).toBe("no OAuth mode");
     // skipped checks never touch the network
-    expect(calls.filter((u) => u.includes("npmjs") || u.includes("simpleicons"))).toEqual([]);
+    expect(calls.filter((u) => u.includes("npmjs"))).toEqual([]);
   });
 
   it("npx package derivation: flags skipped, version suffix dropped, scoped names kept whole", () => {

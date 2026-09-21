@@ -207,7 +207,6 @@ export class IntegrationsManager {
       id: r.id,
       name: r.name,
       description: r.description,
-      icon: r.icon,
       brandIcon: r.brandIcon,
       connectable: isConnectable(r),
       note: r.note,

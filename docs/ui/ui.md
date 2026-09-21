@@ -222,7 +222,8 @@ well-known `{"mcpServers": {...}}` shape, per-entry failures labeled), then the
 **Curated catalog** last: a filter toolbar (search over name and description —
 what the row shows, never the caveat note · the `key`/`OAuth`/`local` chips as
 AND-combined toggles · `N of M` while narrowed; an emptied list offers
-`Clear filter`) over compact rows (name · mechanism chips · Docs · `Connect…`,
+`Clear filter`) over compact rows (the vendor's monochrome mark, which every
+entry has, in the row's own text color · name · mechanism chips · Docs · `Connect…`,
 with the entry's one-line description dim underneath, whole — never truncated,
 never behind a hover), one row expanding at a time into its connect form — key
 paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— or run it
