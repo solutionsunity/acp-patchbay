@@ -32,7 +32,9 @@
     "gemini-cli",
     "codex",
     "opencode",
-    "auggie"
+    "auggie",
+    "kimi",
+    "kilo-code"
   ],
   "icon": "media/icon.png",
   "main": "./out/extension.js",
