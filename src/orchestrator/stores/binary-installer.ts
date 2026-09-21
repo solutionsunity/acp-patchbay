@@ -102,7 +102,7 @@ export async function installBinary(
   spec: BinaryInstallSpec,
 ): Promise<InstalledBinary> {
   const destDir = join(cacheRoot, spec.agentId, spec.version);
-  const resolvedCmd = join(destDir, spec.cmd);
+  const resolvedCmd = resolvedBinaryPath(cacheRoot, spec.agentId, spec.version, spec.cmd);
   if (!(await pathExists(resolvedCmd))) {
     // Staging + rename-on-success: `resolvedCmd` existing IS the installed
     // check (isBinaryInstalled), so nothing may appear at that path until

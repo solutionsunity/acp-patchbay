@@ -61,8 +61,8 @@ import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
 import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
-import { installBinary, isBinaryInstalled } from "./stores/binary-installer";
-import { resolveRuntime, runtimeName, type RuntimeKind } from "./runtime-resolver";
+import { resolvedBinaryPath } from "./stores/binary-installer";
+import { resolveLaunch, runtimeName, type DownloadAsk } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { FileKV } from "./stores/file-kv";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
@@ -159,12 +159,6 @@ export class Orchestrator {
   /** Agents (global — never repo-committed), resolved to a spawnable
    * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
   private readonly configuredAgentSpecs = new Map<string, LaunchSpec>();
-  /** A registry `binary` distribution awaiting the one-time download
-   * confirmation — at most one per agentId in flight. */
-  private readonly pendingBinaryConfirms = new Map<
-    string,
-    { agent: RegistryAgent; verifyAfterConnect: boolean }
-  >();
   private readonly terminals = new Map<string, TerminalHandle>();
   private terminalCounter = 0;
   /** agentId → methodId → terminal-auth login recipe (meta.ts), captured
@@ -589,16 +583,17 @@ export class Orchestrator {
         return {};
       },
     }, log, {
-      // Detect-first, sandbox-fallback (runtime-resolver.ts): npx/uvx
-      // launches gate their interpreter on a real round-trip each connect;
-      // only a failed gate downloads a pinned runtime into bin-cache —
-      // behind the same explicit-confirmation ethos as binary installs.
-      resolveRuntime: (spec, onPhase) =>
-        resolveRuntime(spec, {
+      // Launch prerequisites (runtime-resolver.ts), as phases of the
+      // connect on the agent's card: a registry binary agent's own archive,
+      // and — detect-first, sandbox-fallback — the interpreter an npx/uvx
+      // launcher needs, downloaded into bin-cache only on a failed gate.
+      // Every download passes the same explicit confirmation.
+      resolveLaunch: (spec, onPhase) =>
+        resolveLaunch(spec, {
           cacheRoot: this.binaryCacheDir,
           log: this.log,
           onPhase,
-          confirmInstall: (kind, version) => this.confirmRuntimeDownload(kind, version),
+          confirmDownload: (ask) => this.confirmDownload(ask),
         }),
     });
     this.editorStateHost = new EditorStateHost(String(process.pid), {
@@ -1550,21 +1545,7 @@ export class Orchestrator {
    * instead of agents existing only once connected in-window. */
   private loadAgentConfigs(): void {
     for (const agent of this.agentConfigs.list()) {
-      // env deliberately empty here: values live in SecretStorage and are
-      // joined onto the spec at spawn time (connectAgent), read fresh per
-      // connect — never cached in this map.
-      this.configuredAgentSpecs.set(agent.id, {
-        agentId: agent.id,
-        name: agent.name,
-        command: agent.command,
-        args: agent.args,
-        env: {},
-        cwd: this.workspaceCwd,
-        processPolicy: agent.processPolicy,
-        // Stored {mode, options} folds to the knob-id-keyed seed here — the
-        // one door legacy defaults re-enter memory through.
-        defaults: foldSeed(agent.defaults),
-      });
+      this.configuredAgentSpecs.set(agent.id, this.specFromConfig(agent));
       this.agentNames.set(agent.id, agent.name);
       // needsAuth seeds from the persisted lock (auth-evidence.ts), never
       // a literal: a logout witnessed before this reload is still the
@@ -1585,6 +1566,31 @@ export class Orchestrator {
       this.settings.emit(upsert);
     }
     void this.refreshAgentConfigs();
+  }
+
+  /** The spawnable spec a stored config stands for — the one reading of a
+   * record, whether loaded at startup or just saved. env deliberately
+   * empty: values live in SecretStorage and are joined onto the spec at
+   * spawn time (connectAgent), read fresh per connect — never cached here.
+   * Stored {mode, options} folds to the knob-id-keyed seed (the one door
+   * legacy defaults re-enter memory through). A binary agent's archive
+   * facts ride along so a connect after a cache wipe re-acquires it as a
+   * launch phase instead of dying on a missing file. */
+  private specFromConfig(agent: AgentConfig): LaunchSpec {
+    const source = agent.registrySource;
+    return {
+      agentId: agent.id,
+      name: agent.name,
+      command: agent.command,
+      args: agent.args,
+      env: {},
+      cwd: this.workspaceCwd,
+      processPolicy: agent.processPolicy,
+      defaults: foldSeed(agent.defaults),
+      ...(source?.distributionKind === "binary" && source.binary !== undefined
+        ? { binary: { ...source.binary, version: source.pinnedVersion } }
+        : {}),
+    };
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
@@ -1624,16 +1630,10 @@ export class Orchestrator {
       registrySource: prior?.registrySource ?? config.registrySource,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     });
-    this.configuredAgentSpecs.set(config.id, {
-      agentId: config.id,
-      name: config.name,
-      command,
-      args,
-      env: {},
-      cwd: this.workspaceCwd,
-      processPolicy: config.processPolicy,
-      defaults: config.defaults,
-    });
+    // The spec is read back from the store it was just written to — the
+    // same reading the startup load makes, never a second construction.
+    const stored = this.agentConfigs.get(config.id);
+    if (stored !== undefined) this.configuredAgentSpecs.set(config.id, this.specFromConfig(stored));
     this.agentNames.set(config.id, config.name);
     await this.refreshAgentConfigs();
     // The store moved; an open editor re-reads the surface for the new
@@ -1900,17 +1900,17 @@ export class Orchestrator {
     }
   }
 
-  /** Explicit, visible gate on a managed-runtime download — the
-   * never-silent rule binary installs follow, applied to the runtime
-   * fallback. Modal on purpose: the connect is already waiting on this
-   * decision, and declining fails it honestly. */
-  private async confirmRuntimeDownload(kind: RuntimeKind, version: string): Promise<boolean> {
-    const name = `${runtimeName(kind)} ${version}`;
-    const choice = await vscode.window.showWarningMessage(
-      `This agent is launched with ${kind === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${name} into the extension's own storage? Nothing is installed system-wide, and removing the extension removes it.`,
-      { modal: true },
-      "Download",
-    );
+  /** The one explicit, visible gate on any download the launch phase needs
+   * — a managed runtime or a registry agent's own binary (the registry
+   * publishes no checksum, so nothing is ever fetched and run silently).
+   * Modal on purpose: the connect is already waiting on this decision, and
+   * declining fails it honestly on the card. */
+  private async confirmDownload(ask: DownloadAsk): Promise<boolean> {
+    const message =
+      ask.kind === "runtime"
+        ? `This agent is launched with ${ask.runtime === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? Nothing is installed system-wide, and removing the extension removes it.`
+        : `${ask.name} ${ask.version} is distributed as a binary. Download it from ${new URL(ask.archiveUrl).host} into the extension's own storage and run it? The ACP registry publishes no checksum for it. Once per version; nothing is installed system-wide, and removing the extension removes it.`;
+    const choice = await vscode.window.showWarningMessage(message, { modal: true }, "Download");
     return choice === "Download";
   }
 
@@ -1930,21 +1930,19 @@ export class Orchestrator {
   }
 
   /** Resolves a registry agent's declared distribution into a spawnable
-   * spec. npx/uvx are ecosystem-managed installs — spawning them *is*
-   * installing, nothing extra to do. A `binary` distribution not yet cached
-   * for this exact version gates on an explicit download confirmation (no
-   * checksum exists in the registry spec, binary-installer.ts) — `confirmed`
-   * skips that gate once the user has already said yes. Returns null when
-   * the agent can't be resolved right now (unavailable on this platform) or
-   * a confirmation is now pending. */
-  private async resolveRegistryLaunch(
+   * spec — no I/O: npx/uvx are ecosystem-managed installs (spawning them
+   * *is* installing), and a `binary` distribution rides the spec as archive
+   * facts for the connect's launch phase to acquire, on the card, behind
+   * the download confirmation. `command` for a binary is the cached path
+   * the phase will resolve to — deterministic, so the config is honest
+   * before anything is downloaded. Null when the agent can't run on this
+   * platform (the reason is already on the picker row). */
+  private registryLaunch(
     agent: RegistryAgent,
-    verifyAfterConnect: boolean,
-    confirmed = false,
-  ): Promise<{ spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null> {
+  ): { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null {
     const launch = resolveDistribution(agent);
     const cwd = this.workspaceCwd;
-    if ("error" in launch) return null; // reason already visible on the picker row
+    if ("error" in launch) return null;
     switch (launch.kind) {
       case "npx":
       case "uvx":
@@ -1952,30 +1950,24 @@ export class Orchestrator {
           spec: { agentId: agent.id, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
           registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
         };
-      case "binary": {
-        const installed =
-          confirmed || (await isBinaryInstalled(this.binaryCacheDir, agent.id, agent.version, launch.cmd));
-        if (!installed) {
-          this.pendingBinaryConfirms.set(agent.id, { agent, verifyAfterConnect });
-          this.settings.emit({
-            kind: "binaryInstallPending",
-            install: { agentId: agent.id, name: agent.name, archiveUrl: launch.archiveUrl, cmd: launch.cmd },
-          });
-          return null;
-        }
-        const binary = await installBinary(this.binaryCacheDir, {
-          agentId: agent.id,
-          version: agent.version,
-          archiveUrl: launch.archiveUrl,
-          cmd: launch.cmd,
-          args: [...launch.args],
-          env: { ...launch.env },
-        });
+      case "binary":
         return {
-          spec: { agentId: agent.id, name: agent.name, command: binary.command, args: [...binary.args], env: { ...binary.env }, cwd: binary.cwd },
-          registrySource: { registryId: agent.id, distributionKind: "binary", pinnedVersion: agent.version },
+          spec: {
+            agentId: agent.id,
+            name: agent.name,
+            command: resolvedBinaryPath(this.binaryCacheDir, agent.id, agent.version, launch.cmd),
+            args: [...launch.args],
+            env: { ...launch.env },
+            cwd,
+            binary: { archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd },
+          },
+          registrySource: {
+            registryId: agent.id,
+            distributionKind: "binary",
+            pinnedVersion: agent.version,
+            binary: { archiveUrl: launch.archiveUrl, cmd: launch.cmd },
+          },
         };
-      }
     }
   }
 
@@ -2008,7 +2000,9 @@ export class Orchestrator {
       registrySource: registrySource ?? existing?.registrySource ?? null,
       lastSeenVersion: existing?.lastSeenVersion ?? null,
     });
-    this.configuredAgentSpecs.set(spec.agentId, { ...spec, env: {} });
+    // Read back from the store, like every other spec — the one reading.
+    const stored = this.agentConfigs.get(spec.agentId);
+    if (stored !== undefined) this.configuredAgentSpecs.set(spec.agentId, this.specFromConfig(stored));
     await this.refreshAgentConfigs();
   }
 
@@ -2169,12 +2163,6 @@ export class Orchestrator {
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
         void this.logoutAgent(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
-        break;
-      case "confirmBinaryInstall":
-        void this.confirmBinaryInstall(action.agentId);
-        break;
-      case "cancelBinaryInstall":
-        this.cancelBinaryInstall(action.agentId);
         break;
       case "upgradeAgent":
         void this.upgradeAgent(action.agentId);
@@ -2553,24 +2541,11 @@ export class Orchestrator {
     });
   }
 
-  private async confirmBinaryInstall(agentId: string): Promise<void> {
-    const pending = this.pendingBinaryConfirms.get(agentId);
-    this.pendingBinaryConfirms.delete(agentId);
-    this.settings.emit({ kind: "binaryInstallResolved", agentId });
-    if (pending === undefined) return;
-    await this.connectFromSource({ registryId: pending.agent.id }, pending.verifyAfterConnect, true);
-  }
-
-  private cancelBinaryInstall(agentId: string): void {
-    this.pendingBinaryConfirms.delete(agentId);
-    this.settings.emit({ kind: "binaryInstallResolved", agentId });
-  }
-
   /** Re-resolves the registry's current (possibly newer) pinned version and
    * reconnects — the same path a first Add takes, so the version-keyed
-   * used-capability cache and the binary-install confirmation both apply
-   * exactly as they would for a brand-new agent. Never silent: a
-   * still-uncached binary version re-gates on the download confirmation. */
+   * used-capability cache and the launch phase's download confirmation
+   * both apply exactly as they would for a brand-new agent. Never silent: a
+   * still-uncached binary version re-gates on the confirmation. */
   private async upgradeAgent(agentId: string): Promise<void> {
     const config = this.agentConfigs.get(agentId);
     if (config === undefined || config.registrySource === null) return;
@@ -2643,19 +2618,15 @@ export class Orchestrator {
     }
   }
 
-  private async connectFromSource(
-    source: ConnectAgentSource,
-    verifyAfterConnect = false,
-    confirmed = false,
-  ): Promise<void> {
+  private async connectFromSource(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
     let spec: LaunchSpec | null = null;
     let registrySource: AgentConfig["registrySource"] = null;
     let shouldPersist = true;
     if ("registryId" in source) {
       const agent = this.registryData.agents.find((a) => a.id === source.registryId);
       if (agent === undefined) return;
-      const resolved = await this.resolveRegistryLaunch(agent, verifyAfterConnect, confirmed);
-      if (resolved === null) return; // unavailable, or a binary install confirmation is now pending
+      const resolved = this.registryLaunch(agent);
+      if (resolved === null) return; // can't run on this platform
       spec = resolved.spec;
       registrySource = resolved.registrySource;
     } else if ("configuredId" in source) {
@@ -2676,9 +2647,11 @@ export class Orchestrator {
       }
     }
     if (spec === null) return;
-    // Persist FIRST: an Upgrade clicked while the agent happens to be
-    // connecting must still land its new pin — only the connect itself is
-    // skipped. Then "reconnecting" gates alongside "running": a second
+    // Persist FIRST — the card exists from the click, and every download
+    // the launch needs then happens on it as a connect phase. An Upgrade
+    // clicked while the agent happens to be connecting must still land its
+    // new pin — only the connect itself is skipped. "reconnecting" gates
+    // alongside "running": a second
     // Connect during an in-flight connect would re-emit the wholesale
     // upsert (stomping the card mid-connect) just to have pool.connect
     // refuse a moment later.
@@ -2688,8 +2661,12 @@ export class Orchestrator {
       this.log.info(`${spec.agentId}: connect skipped — already ${status}`);
       return;
     }
+    // Spawn what the store says (specFromConfig) — the same reading a
+    // restart makes, so a re-added agent keeps its stored defaults from the
+    // first connect; the registry's env already went to SecretStorage.
+    const launch = this.configuredAgentSpecs.get(spec.agentId) ?? spec;
     try {
-      await this.connectAgent(spec);
+      await this.connectAgent(launch);
       if (verifyAfterConnect) void this.runVerify(spec.agentId);
     } catch {
       // pool already emitted the crashed status with detail

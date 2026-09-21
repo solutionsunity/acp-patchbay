@@ -228,8 +228,15 @@ flowchart TD
   the SDK, no honest comparison exists). Patchbay never mutates PATH or
   installs globally — a user who wants the CLI in their terminal owns that
   install and its update channel.
-- **Runtime resolution** (runtime-resolver.ts, the pool's one launch-phase
-  seam, ahead of warmup and spawn alike): an `npx` agent needs Node.js, a
+- **Launch prerequisites** (runtime-resolver.ts, the pool's one launch-phase
+  seam, ahead of warmup and spawn alike — every download an agent needs
+  happens here, as a labeled phase on the agent's own card, behind one modal
+  confirmation, never as part of adding it). A registry `binary` agent's
+  archive is the first prerequisite: the config persists at the click with
+  the archive facts, and the connect resolves `command` to the cached path,
+  downloading when this version isn't cached (the registry publishes no
+  checksum, so that download is always confirmed). Then **runtime
+  resolution**: an `npx` agent needs Node.js, a
   `uvx` agent needs uv (which provisions its own Python) — neither is
   guaranteed on the machine, and Windows is where the gap bites.
   **Detect-first, sandbox-fallback**, decided over always-sandboxing (Zed

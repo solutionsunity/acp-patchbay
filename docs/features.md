@@ -22,7 +22,9 @@ deliverable, owed before implementation.
   readiness inline. A connection failure surfaces in that same pane with the
   specific reason and a Retry — never a silent bounce to the empty state.
 - Adding agents lives in Settings › Agents only — the one rich form (registry
-  search or any command line that speaks ACP, Verify toggle, binary confirm).
+  search or any command line that speaks ACP, Verify toggle); a binary
+  agent's download is a phase of its connect, shown on its card and confirmed
+  by one modal — never a silent fetch-and-run.
   The view's picker and empty state route there.
 - User can see each agent's live status: untested (configured, never
   connected), running, stopped, crashed, reconnecting — every configured

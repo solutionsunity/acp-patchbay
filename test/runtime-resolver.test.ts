@@ -20,8 +20,11 @@ import {
   prependPath,
   probeVersion,
   requiredRuntime,
+  resolveBinaryLaunch,
+  resolveLaunch,
   resolveRuntime,
   runtimeInstallSpec,
+  type DownloadAsk,
 } from "../src/orchestrator/runtime-resolver";
 
 // POSIX-only guard for tests that need fake shell-script runtimes.
@@ -213,8 +216,8 @@ describe("resolveRuntime", () => {
         ...deps,
         probes: { interpreter: "pb-fake-node", launcher: "pb-fake-npx" },
         install,
-        confirmInstall: async (kind, version) => {
-          confirms.push(`${kind}@${version}`);
+        confirmDownload: async (ask) => {
+          confirms.push(ask.kind === "runtime" ? `${ask.runtime}@${ask.version}` : "agent");
           return true;
         },
       });
@@ -229,7 +232,7 @@ describe("resolveRuntime", () => {
       resolveRuntime(spec("npx"), {
         ...deps,
         probes: { interpreter: "pb-none-node", launcher: "pb-none-npx" },
-        confirmInstall: async () => false,
+        confirmDownload: async () => false,
       }),
     ).rejects.toThrow(/download declined/);
   });
@@ -265,7 +268,7 @@ describe("resolveRuntime", () => {
         ...deps,
         probes: { interpreter: "pb-bad-node", launcher: "pb-bad-npx" },
         install,
-        confirmInstall: async () => true,
+        confirmDownload: async () => true,
       }),
     ).rejects.toThrow(/failed its own gate.*cached copy removed/);
     // The eviction is the self-heal: existence would otherwise short-circuit
@@ -290,7 +293,7 @@ describe("resolveRuntime", () => {
         ...deps,
         probes: { interpreter: "pb-ok-node" }, // launcher = the absolute spec.command
         install,
-        confirmInstall: async () => true,
+        confirmDownload: async () => true,
       }),
     ).rejects.toThrow(/check the agent's command/);
     await expect(stat(installedDir)).resolves.toBeDefined(); // cache survives
@@ -313,7 +316,7 @@ describe("resolveRuntime", () => {
       log: nullLogger,
       probes: { interpreter: "pb-sf-node", launcher: "pb-sf-npx" },
       install,
-      confirmInstall: async () => {
+      confirmDownload: async () => {
         confirms++;
         await new Promise((r) => setTimeout(r, 30)); // hold the flight open
         return true;
@@ -327,5 +330,127 @@ describe("resolveRuntime", () => {
     expect(b.env.PATH!.startsWith(managed)).toBe(true);
     expect(confirms).toBe(1);
     expect(installs).toBe(1);
+  });
+});
+
+// A registry binary agent's archive as the launch phase (issue #22): the
+// spec carries the archive facts, the phase resolves the command — asking
+// once, labeling the download, single-flighting concurrent connects.
+describe("resolveBinaryLaunch", () => {
+  const ARCHIVE = "https://github.com/example/agent/releases/download/1.2.3/agent-linux.tar.gz";
+  const binarySpec = (root: string, id = "bin-agent"): LaunchSpec => ({
+    agentId: id,
+    name: "Bin Agent",
+    command: join(root, id, "1.2.3", "bin/agent"),
+    args: ["--acp"],
+    env: { AGENT_HOME: "x" },
+    cwd: tmp,
+    binary: { archiveUrl: ARCHIVE, version: "1.2.3", cmd: "bin/agent" },
+  });
+  /** A fake install that materializes the cmd where the real one would. */
+  const fakeInstall = (calls: { count: number }) => async (root: string, cat: { agentId: string; version: string; cmd: string; args: readonly string[]; env: Readonly<Record<string, string>> }): Promise<InstalledBinary> => {
+    calls.count++;
+    const dir = join(root, cat.agentId, cat.version);
+    await mkdir(join(dir, "bin"), { recursive: true });
+    await writeFile(join(dir, cat.cmd), "");
+    return { command: join(dir, cat.cmd), args: cat.args, env: cat.env, cwd: dir };
+  };
+
+  it("a spec without archive facts passes through untouched — the same object", async () => {
+    const s = spec("/opt/agents/native-agent");
+    expect(await resolveBinaryLaunch(s, { cacheRoot: tmp, log: nullLogger })).toBe(s);
+  });
+
+  it("not cached: asks once with the agent's name, version and archive; labels the phase; resolves command and cwd", async () => {
+    const root = join(tmp, "bin-cache-agent");
+    const asks: DownloadAsk[] = [];
+    const phases: string[] = [];
+    const calls = { count: 0 };
+    const resolved = await resolveBinaryLaunch(binarySpec(root), {
+      cacheRoot: root,
+      log: nullLogger,
+      install: fakeInstall(calls),
+      confirmDownload: async (ask) => {
+        asks.push(ask);
+        return true;
+      },
+      onPhase: (label) => phases.push(label),
+    });
+    expect(asks).toEqual([{ kind: "agent", name: "Bin Agent", version: "1.2.3", archiveUrl: ARCHIVE }]);
+    expect(phases).toEqual(["downloading Bin Agent 1.2.3…"]);
+    expect(calls.count).toBe(1);
+    expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
+    expect(resolved.cwd).toBe(join(root, "bin-agent", "1.2.3"));
+    expect(resolved.args).toEqual(["--acp"]); // the spec's own, untouched
+    expect(resolved.env).toEqual({ AGENT_HOME: "x" });
+    expect(resolved.binary).toBeDefined(); // facts stay on the spec for the next connect
+  });
+
+  it("cached: no ask, no phase, no install — the path is handed back", async () => {
+    const root = join(tmp, "bin-cache-cached");
+    const calls = { count: 0 };
+    await fakeInstall(calls)(root, { agentId: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
+    calls.count = 0;
+    let asked = false;
+    const resolved = await resolveBinaryLaunch(binarySpec(root), {
+      cacheRoot: root,
+      log: nullLogger,
+      install: fakeInstall(calls),
+      confirmDownload: async () => {
+        asked = true;
+        return true;
+      },
+    });
+    expect(asked).toBe(false);
+    expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
+  });
+
+  it("declined: the connect fails with the agent named, nothing installed", async () => {
+    const root = join(tmp, "bin-cache-declined");
+    const calls = { count: 0 };
+    await expect(
+      resolveBinaryLaunch(binarySpec(root), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: fakeInstall(calls),
+        confirmDownload: async () => false,
+      }),
+    ).rejects.toThrow(/Bin Agent 1\.2\.3 download declined/);
+    expect(calls.count).toBe(0);
+  });
+
+  it("two connects racing for one agent share one ask and one install", async () => {
+    const root = join(tmp, "bin-cache-race");
+    const calls = { count: 0 };
+    let asks = 0;
+    const deps = {
+      cacheRoot: root,
+      log: nullLogger,
+      install: fakeInstall(calls),
+      confirmDownload: async () => {
+        asks++;
+        await new Promise((r) => setTimeout(r, 30));
+        return true;
+      },
+    };
+    const [a, b] = await Promise.all([
+      resolveBinaryLaunch(binarySpec(root), deps),
+      resolveBinaryLaunch(binarySpec(root), deps),
+    ]);
+    expect(a.command).toBe(b.command);
+    expect(asks).toBe(1);
+    expect(calls.count).toBe(1);
+  });
+
+  it("resolveLaunch runs the binary phase, then the runtime phase — a resolved binary needs no runtime", async () => {
+    const root = join(tmp, "bin-cache-launch");
+    const calls = { count: 0 };
+    const resolved = await resolveLaunch(binarySpec(root), {
+      cacheRoot: root,
+      log: nullLogger,
+      install: fakeInstall(calls),
+    });
+    expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
+    expect(resolved.env.PATH).toBeUndefined(); // no managed runtime was injected
   });
 });

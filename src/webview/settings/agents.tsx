@@ -12,18 +12,8 @@ import { Icon } from "../shared/icon";
 import { ConfirmButton, Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
@@ -372,36 +362,6 @@ function AddAgentRow(props: {
   );
 }
 
-/** No checksum exists for a registry `binary` distribution (FORMAT.md) —
- * the first download of each (agent, version) gets an explicit, visible
- * confirmation, never a silent fetch-and-run. */
-function BinaryInstallModal(props: {
-  install: { agentId: string; name: string; archiveUrl: string; cmd: string };
-  onConfirm(): void;
-  onCancel(): void;
-}) {
-  return (
-    <AlertDialog open onOpenChange={(open) => { if (!open) props.onCancel(); }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Download required — {props.install.name}</AlertDialogTitle>
-          <AlertDialogDescription>
-            No checksum exists for this download in the ACP registry — patchbay will fetch it over
-            HTTPS and run what's inside. This happens once per version; cached afterward.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div className="mono">{props.install.archiveUrl}</div>
-        <AlertDialogFooter>
-          <AlertDialogAction className={buttonVariants({ size: "sm" })} onClick={props.onConfirm}>
-            Download &amp; run
-          </AlertDialogAction>
-          <AlertDialogCancel onClick={props.onCancel}>Cancel</AlertDialogCancel>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 /** `needsAuth` gate — runnable methods per card-controls.ts's
  * `runnableLoginMethods` (the one filter for "can patchbay drive a login
  * here?"); recipe-less "env_var"/"terminal" stay declared but never wired
@@ -574,8 +534,6 @@ export function AgentsSection(props: {
   onLogout(agentId: string): void;
   onUpgrade(agentId: string): void;
   onRefreshRegistry(): void;
-  onConfirmBinaryInstall(agentId: string): void;
-  onCancelBinaryInstall(agentId: string): void;
   onReorder(ids: string[]): void;
   /** A card's knob editor is showing (open) or gone — the host opens or
    * ends the throwaway session that reads the agent's surface. */
@@ -653,13 +611,6 @@ export function AgentsSection(props: {
             setAddOpen(false);
           }}
           onRefreshRegistry={props.onRefreshRegistry}
-        />
-      )}
-      {state.pendingBinaryInstall !== null && (
-        <BinaryInstallModal
-          install={state.pendingBinaryInstall}
-          onConfirm={() => props.onConfirmBinaryInstall(state.pendingBinaryInstall!.agentId)}
-          onCancel={() => props.onCancelBinaryInstall(state.pendingBinaryInstall!.agentId)}
         />
       )}
       {ids.length === 0 && (

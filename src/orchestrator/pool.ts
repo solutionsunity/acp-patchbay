@@ -46,7 +46,7 @@ export function authRequiredReasonOf(err: unknown): { reason: string | null } | 
  * backs the launch. `onPhase` surfaces a download in progress as the
  * connect's status detail. A throw is the connect failure: no runtime, no
  * agent. */
-export type RuntimeResolver = (
+export type LaunchResolver = (
   spec: LaunchSpec,
   onPhase: (label: string) => void,
 ) => Promise<LaunchSpec>;
@@ -64,6 +64,12 @@ export interface LaunchSpec {
   /** Per-agent knob defaults, applied post-create — the folded,
    * knob-id-keyed seed (knobs.ts; category is UX-only per ACP). */
   defaults?: KnobSeed;
+  /** A registry `binary` distribution: the archive that provides `command`
+   * (`cmd` is the executable's path inside it). The launch phase
+   * (runtime-resolver.ts resolveBinaryLaunch) resolves `command` to the
+   * cached absolute path, downloading first when this version isn't cached
+   * — a spec without this spawns `command` as given. */
+  binary?: { archiveUrl: string; version: string; cmd: string };
 }
 
 export interface PoolHooks {
@@ -293,7 +299,7 @@ export function warmupSpawn(spec: LaunchSpec): { command: string; args: string[]
 export class AgentPool {
   private entries = new Map<string, Entry>();
   private readonly initializeTimeoutMs: number;
-  private readonly runtimeResolver?: RuntimeResolver;
+  private readonly launchResolver?: LaunchResolver;
 
   constructor(
     private readonly hooks: PoolHooks,
@@ -303,13 +309,14 @@ export class AgentPool {
      * cold `npx`/`uvx` package downloads happen in the labeled warmup phase
      * before the real spawn (warmupSpawn), so this budget measures the
      * agent, not the package manager's network. Tests inject a short one to
-     * exercise the timeout path itself. `resolveRuntime` is the launch-phase
-     * runtime seam — absent (tests, or a host without one) means specs spawn
-     * exactly as given. */
-    opts?: { initializeTimeoutMs?: number; resolveRuntime?: RuntimeResolver },
+     * exercise the timeout path itself. `resolveLaunch` is the launch-phase
+     * prerequisite seam (the agent's own binary, the launcher's runtime) —
+     * absent (tests, or a host without one) means specs spawn exactly as
+     * given. */
+    opts?: { initializeTimeoutMs?: number; resolveLaunch?: LaunchResolver },
   ) {
     this.initializeTimeoutMs = opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS;
-    this.runtimeResolver = opts?.resolveRuntime;
+    this.launchResolver = opts?.resolveLaunch;
   }
 
   get(poolKey: string): PooledAgentView | undefined {
@@ -379,21 +386,23 @@ export class AgentPool {
     this.entries.set(poolKey, entry);
     this.setStatus(entry, "reconnecting");
 
-    // Runtime phase, ahead of everything that spawns: the resolver hands
-    // back the spec reality can run — unchanged when the system runtime
-    // passes its gate, PATH-prepended when a managed runtime backs it. The
-    // resolved spec replaces the connect-time snapshot and feeds warmup and
-    // the real spawn alike: both MUST see the same env or the warmup would
-    // warm a different package cache than the launch reads.
-    if (this.runtimeResolver !== undefined) {
+    // Launch phase, ahead of everything that spawns: the resolver hands
+    // back the spec reality can run — the agent's own binary resolved to
+    // its cached path, and unchanged when the system runtime passes its
+    // gate, PATH-prepended when a managed runtime backs it. Downloads
+    // happen here, labeled on this entry's status. The resolved spec
+    // replaces the connect-time snapshot and feeds warmup and the real
+    // spawn alike: both MUST see the same env or the warmup would warm a
+    // different package cache than the launch reads.
+    if (this.launchResolver !== undefined) {
       try {
-        spec = await this.runtimeResolver(spec, (label) =>
+        spec = await this.launchResolver(spec, (label) =>
           this.setStatus(entry, "reconnecting", label),
         );
         entry.spec = spec;
         this.clearPhaseLabel(entry);
       } catch (err) {
-        const detail = `runtime unavailable — ${(err as Error).message}`;
+        const detail = `launch prerequisite unavailable — ${(err as Error).message}`;
         this.markDead(entry, detail);
         throw new Error(detail);
       }
@@ -1117,7 +1126,7 @@ export class AgentPool {
     }
   }
 
-  /** Clears a transient phase label (runtime download, launcher warmup)
+  /** Clears a transient phase label (binary or runtime download, launcher warmup)
    * back to bare "reconnecting" — one spelling for every labeled phase. */
   private clearPhaseLabel(entry: Entry): void {
     if (entry.detail !== undefined) this.setStatus(entry, "reconnecting");

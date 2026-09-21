@@ -32,6 +32,11 @@ export const agentRegistrySourceSchema = z.object({
   registryId: z.string().min(1),
   distributionKind: z.enum(["npx", "uvx", "binary"]),
   pinnedVersion: z.string().min(1),
+  /** `binary` kind: the archive the pinned version is downloaded from and
+   * the executable's path inside it — what a connect needs to (re)acquire
+   * the binary as a launch phase. Absent on records written before this
+   * field existed: those spawn their recorded absolute `command` as is. */
+  binary: z.object({ archiveUrl: z.string().min(1), cmd: z.string().min(1) }).optional(),
 });
 export type AgentRegistrySource = z.infer<typeof agentRegistrySourceSchema>;
 

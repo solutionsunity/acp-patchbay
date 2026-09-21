@@ -298,7 +298,7 @@ describe("AgentPool", () => {
         ...stubFsTerminalHooks(),
       },
       undefined,
-      { resolveRuntime: async (s) => spec({}, s.agentId) },
+      { resolveLaunch: async (s) => spec({}, s.agentId) },
     );
     const declared = await pool.connect({
       agentId: "resolved",
@@ -326,12 +326,12 @@ describe("AgentPool", () => {
       },
       undefined,
       {
-        resolveRuntime: async () => {
+        resolveLaunch: async () => {
           throw new Error("node did not answer --version");
         },
       },
     );
-    await expect(pool.connect(spec({}, "no-runtime"))).rejects.toThrow(/runtime unavailable/);
+    await expect(pool.connect(spec({}, "no-runtime"))).rejects.toThrow(/launch prerequisite unavailable/);
     const crashed = statuses.find((s) => s.status === "crashed");
     expect(crashed?.detail).toContain("node did not answer --version");
   });

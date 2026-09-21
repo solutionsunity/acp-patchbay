@@ -122,12 +122,6 @@ export type Action =
   /** Only ever offered when the agent declared `auth.logout` — the spec's
    * "Clients MUST NOT call it" otherwise holds by construction. */
   | { kind: "logoutAgent"; agentId: string }
-  /** A registry `binary` distribution not yet cached locally always gates
-   * on this — no checksum exists in the registry spec (binary-installer.ts),
-   * so the first download of each (agent, version) needs an explicit,
-   * visible confirmation, never a silent fetch-and-run. */
-  | { kind: "confirmBinaryInstall"; agentId: string }
-  | { kind: "cancelBinaryInstall"; agentId: string }
   | { kind: "upgradeAgent"; agentId: string }
   | { kind: "refreshRegistry" }
   /** `layer` picks which rule list (permission-rules.ts): "workspace"
@@ -2271,16 +2265,6 @@ export interface AgentKnobsView {
   unavailable?: string;
 }
 
-/** A registry `binary` distribution awaiting the one-time download
- * confirmation (no checksum exists in the registry spec — see
- * binary-installer.ts) before it's fetched and run. */
-export interface PendingBinaryInstallView {
-  agentId: string;
-  name: string;
-  archiveUrl: string;
-  cmd: string;
-}
-
 export interface SettingsState {
   /** The open section — host-owned so it survives webview disposal and so
    * openSettings can deep-link (e.g. the Agent View's "Add or manage"). */
@@ -2322,7 +2306,6 @@ export interface SettingsState {
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
   /** At most one at a time — the Add Agent flow blocks on it. */
-  pendingBinaryInstall: PendingBinaryInstallView | null;
   /** Present while a Verify round-trip (manual click or "Verify after add")
    * is in flight for this agent — the card's Verify control dims and reads
    * "Verifying…" until it clears. */
@@ -2373,7 +2356,6 @@ export const initialSettingsState: SettingsState = {
   sessionsActiveToday: 0,
   agentKnobs: {},
   registryFetchedAt: "",
-  pendingBinaryInstall: null,
   verifyingAgents: {},
   wireLog: { active: false, until: null },
   dataInventory: null,
@@ -2407,8 +2389,6 @@ export type SettingsEvent =
   | { kind: "agentKnobsReleased"; agentId: string }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
-  | { kind: "binaryInstallPending"; install: PendingBinaryInstallView }
-  | { kind: "binaryInstallResolved"; agentId: string }
   | { kind: "agentVerifyStarted"; agentId: string }
   | { kind: "agentVerifyFinished"; agentId: string }
   | { kind: "sectionChanged"; section: SettingsSectionId };
@@ -2468,12 +2448,6 @@ export function reduceSettings(
       };
     case "auditTailChanged":
       return { ...state, auditTail: event.entries };
-    case "binaryInstallPending":
-      return { ...state, pendingBinaryInstall: event.install };
-    case "binaryInstallResolved":
-      return state.pendingBinaryInstall?.agentId === event.agentId
-        ? { ...state, pendingBinaryInstall: null }
-        : state;
     case "agentVerifyStarted":
       return {
         ...state,
@@ -2552,8 +2526,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentKnobsReleased",
   "wireLogChanged",
   "dataInventoryChanged",
-  "binaryInstallPending",
-  "binaryInstallResolved",
   "agentVerifyStarted",
   "agentVerifyFinished",
   "sectionChanged",

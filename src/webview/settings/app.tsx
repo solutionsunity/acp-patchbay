@@ -107,8 +107,6 @@ export function App({ state }: { state: SettingsState }) {
             onLogout={(agentId) => send({ kind: "logoutAgent", agentId })}
             onUpgrade={(agentId) => send({ kind: "upgradeAgent", agentId })}
             onRefreshRegistry={() => send({ kind: "refreshRegistry" })}
-            onConfirmBinaryInstall={(agentId) => send({ kind: "confirmBinaryInstall", agentId })}
-            onCancelBinaryInstall={(agentId) => send({ kind: "cancelBinaryInstall", agentId })}
             onReorder={(ids) => send({ kind: "reorderAgentConfigs", ids })}
             onEditDefaults={(agentId, open) => send({ kind: "editAgentDefaults", agentId, open })}
           />

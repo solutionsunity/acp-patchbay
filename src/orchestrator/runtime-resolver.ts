@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
+// Launch prerequisites: what must exist on disk before an agent can spawn,
+// acquired as a labeled phase of the connect — on the agent's own card,
+// never as part of adding it. Two kinds share one molecule (single-flight
+// per artifact, explicit consent before any download, a phase label while
+// it runs, the binary installer's staging+rename underneath):
+//
 // Runtime resolution for ecosystem launchers: an `npx` agent needs a working
 // Node.js, a `uvx` agent needs uv (which provisions its own Python) —
 // neither is guaranteed on the machine, and Windows is where the gap
@@ -14,6 +20,12 @@
 // the managed runtime is invisible outside the child process. Everything
 // else about the agent (its own state dirs, auth, sessions) stays wherever
 // the agent puts it; only the interpreter is ours.
+//
+// Registry `binary` distributions: the archive provides the command itself.
+// The spec carries the archive facts; the phase resolves `command` to the
+// cached absolute path, downloading first when this exact version isn't
+// cached yet. The registry publishes no checksum, so that first download is
+// always confirmed, never a silent fetch-and-run.
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
@@ -252,15 +264,21 @@ export function prependPath(
   return { ...env, [key]: existing === "" ? dir : `${dir}${delimiter}${existing}` };
 }
 
-export interface RuntimeResolveDeps {
+/** What the user is asked to consent to before a download — a pinned
+ * runtime the launcher needs, or a registry agent's own binary archive. */
+export type DownloadAsk =
+  | { kind: "runtime"; runtime: RuntimeKind; version: string }
+  | { kind: "agent"; name: string; version: string; archiveUrl: string };
+
+export interface LaunchResolveDeps {
   /** binary-installer cache root (bin-cache under globalStorage). */
   cacheRoot: string;
   log: Logger;
   /** Explicit first-download gate — the catalog is curated and pinned, but
    * a download is still a download: never silent. Only consulted when a
-   * download would actually happen; a cached runtime never re-asks.
+   * download would actually happen; a cached artifact never re-asks.
    * Absent → allowed (tests). */
-  confirmInstall?: (kind: RuntimeKind, version: string) => Promise<boolean>;
+  confirmDownload?: (ask: DownloadAsk) => Promise<boolean>;
   /** Connect-status label seam, live only while genuinely downloading. */
   onPhase?: (label: string) => void;
   /** Test seams. `probes.launcher` replaces spec.command in the gate;
@@ -269,12 +287,40 @@ export interface RuntimeResolveDeps {
   install?: typeof installBinary;
 }
 
-/** Single-flight per (pseudo-id, version, cacheRoot): concurrent connects
- * of runtime-needing agents (startup fans them out together) must share
- * one confirmation and one install — unlocked, they'd stack modals and
+/** Single-flight per (artifact id, version, cacheRoot): concurrent connects
+ * needing the same artifact (startup fans runtime-needing agents out
+ * together; Connect and Upgrade can race on one agent) must share one
+ * confirmation and one install — unlocked, they'd stack modals and
  * interleave rm/extract/rename inside the same staging directory. The
  * entry clears on settle so a failed install retries fresh next connect. */
 const inflightInstalls = new Map<string, Promise<InstalledBinary>>();
+
+/** The one download molecule: cached → hand it back; not cached → ask,
+ * label the phase, install. `declined` is the thrown message when the user
+ * says no — the connect failure it is. */
+function installOnce(
+  deps: LaunchResolveDeps,
+  catalog: BinaryInstallSpec,
+  gate: { ask: DownloadAsk; phase: string; declined: string },
+): Promise<InstalledBinary> {
+  const flightKey = `${catalog.agentId}@${catalog.version}@${deps.cacheRoot}`;
+  let flight = inflightInstalls.get(flightKey);
+  if (flight === undefined) {
+    flight = (async () => {
+      const cached = await isBinaryInstalled(deps.cacheRoot, catalog.agentId, catalog.version, catalog.cmd);
+      if (!cached) {
+        const allowed = (await deps.confirmDownload?.(gate.ask)) ?? true;
+        if (!allowed) throw new Error(gate.declined);
+        deps.onPhase?.(gate.phase);
+      }
+      return (deps.install ?? installBinary)(deps.cacheRoot, catalog);
+    })();
+    inflightInstalls.set(flightKey, flight);
+    const clear = () => inflightInstalls.delete(flightKey);
+    flight.then(clear, clear);
+  }
+  return flight;
+}
 
 /** The launch-phase decision: given the spec about to spawn, return the
  * spec that actually spawns. Non-launcher specs pass through untouched; a
@@ -287,7 +333,7 @@ const inflightInstalls = new Map<string, Promise<InstalledBinary>>();
  * can be had; the caller surfaces that as the connect failure it is. */
 export async function resolveRuntime(
   spec: LaunchSpec,
-  deps: RuntimeResolveDeps,
+  deps: LaunchResolveDeps,
 ): Promise<LaunchSpec> {
   const kind = requiredRuntime(spec.command);
   if (kind === null) return spec;
@@ -309,27 +355,11 @@ export async function resolveRuntime(
     `${spec.agentId}: system runtime unusable (${system.detail}) — using managed ${runtimeName(kind)} ${catalog.version}`,
   );
 
-  const flightKey = `${catalog.agentId}@${catalog.version}@${deps.cacheRoot}`;
-  let flight = inflightInstalls.get(flightKey);
-  if (flight === undefined) {
-    flight = (async () => {
-      const cached = await isBinaryInstalled(deps.cacheRoot, catalog.agentId, catalog.version, catalog.cmd);
-      if (!cached) {
-        const allowed = (await deps.confirmInstall?.(kind, catalog.version)) ?? true;
-        if (!allowed) {
-          throw new Error(
-            `${runtimeName(kind)} download declined (${system.detail}) — install ${runtimeName(kind)} manually and reconnect`,
-          );
-        }
-        deps.onPhase?.(`downloading ${runtimeName(kind)} ${catalog.version}…`);
-      }
-      return (deps.install ?? installBinary)(deps.cacheRoot, catalog);
-    })();
-    inflightInstalls.set(flightKey, flight);
-    const clear = () => inflightInstalls.delete(flightKey);
-    flight.then(clear, clear);
-  }
-  const installed = await flight;
+  const installed = await installOnce(deps, catalog, {
+    ask: { kind: "runtime", runtime: kind, version: catalog.version },
+    phase: `downloading ${runtimeName(kind)} ${catalog.version}…`,
+    declined: `${runtimeName(kind)} download declined (${system.detail}) — install ${runtimeName(kind)} manually and reconnect`,
+  });
   const env = prependPath(spec.env, dirname(installed.command));
 
   // The gate that judged the system runtime judges ours too: a managed
@@ -358,4 +388,38 @@ export async function resolveRuntime(
   }
   deps.log.info(`${spec.agentId}: managed ${runtimeName(kind)} ready (${verified.detail})`);
   return { ...spec, env };
+}
+
+/** A registry `binary` agent's own archive, as the launch phase: the spec
+ * names the command relative to the archive; this hands back the spec with
+ * `command` resolved to the cached absolute path (and the install dir as
+ * cwd, where the archive's siblings live), downloading first when this
+ * exact version isn't cached — one confirmation, one install, however many
+ * connects race for it. Specs without archive facts pass through untouched.
+ * Throws when the user declines: the connect fails on the card, and the
+ * next Connect asks again. */
+export async function resolveBinaryLaunch(
+  spec: LaunchSpec,
+  deps: LaunchResolveDeps,
+): Promise<LaunchSpec> {
+  if (spec.binary === undefined) return spec;
+  const { archiveUrl, version, cmd } = spec.binary;
+  const installed = await installOnce(
+    deps,
+    { agentId: spec.agentId, version, archiveUrl, cmd, args: spec.args, env: spec.env },
+    {
+      ask: { kind: "agent", name: spec.name, version, archiveUrl },
+      phase: `downloading ${spec.name} ${version}…`,
+      declined: `${spec.name} ${version} download declined — Connect again to be asked again`,
+    },
+  );
+  deps.log.info(`${spec.agentId}: binary ${version} ready (${installed.command})`);
+  return { ...spec, command: installed.command, cwd: installed.cwd };
+}
+
+/** The pool's one launch-phase seam: every prerequisite, in the order the
+ * spawn needs them — the agent's own binary first (it *is* the command),
+ * then the runtime its launcher needs. */
+export async function resolveLaunch(spec: LaunchSpec, deps: LaunchResolveDeps): Promise<LaunchSpec> {
+  return resolveRuntime(await resolveBinaryLaunch(spec, deps), deps);
 }

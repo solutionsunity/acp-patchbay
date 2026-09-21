@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Adding a binary-distributed agent (OpenCode, Kimi CLI, Cursor, …) shows its
+  card at once, with the archive download as a phase on it — the same way an
+  npx agent shows its package download. The download used to run before the
+  card existed, so two binary adds looked queued and a second install prompt
+  replaced the first; the prompt is now the one modal every launch download
+  passes, asked once per version. (#22)
 - Curated MCP servers can be requested: a "Curated MCP server request" issue
   form asks for the facts an entry needs and the vendor page they come from;
   CONTRIBUTING says how an entry is written and lands. The catalog file is
