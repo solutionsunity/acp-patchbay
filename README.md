@@ -6,6 +6,8 @@
 
 [![Marketplace](https://vsmarketplacebadges.dev/version-short/SolutionsUnity.acp-patchbay.svg?style=flat-square&label=Marketplace&labelColor=1e1e1e&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
 [![Installs](https://vsmarketplacebadges.dev/installs-short/SolutionsUnity.acp-patchbay.svg?style=flat-square&label=Installs&labelColor=1e1e1e&color=2ea44f)](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
+[![Open VSX](https://img.shields.io/open-vsx/v/SolutionsUnity/acp-patchbay?style=flat-square&label=Open%20VSX&labelColor=1e1e1e&color=a60ee5)](https://open-vsx.org/extension/SolutionsUnity/acp-patchbay)
+[![Open VSX downloads](https://img.shields.io/open-vsx/dt/SolutionsUnity/acp-patchbay?style=flat-square&label=Downloads&labelColor=1e1e1e&color=a60ee5)](https://open-vsx.org/extension/SolutionsUnity/acp-patchbay)
 [![License Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-5b9bd5?style=flat-square&labelColor=1e1e1e&logo=apache&logoColor=white)](LICENSE)
 
 ACP Patchbay is a unified VS Code client for any
@@ -16,7 +18,9 @@ capabilities you can trust, and deep editor context. Every agent connects; how d
 each one goes is shown in the capability matrix, never guessed. Stop learning a new
 extension every time you switch agents.
 
-[**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
+[**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay) &nbsp;·&nbsp; [**Install from Open VSX →**](https://open-vsx.org/extension/SolutionsUnity/acp-patchbay)
+
+<sub>VS Code from the Marketplace; Cursor, Windsurf, VSCodium and other VS Code–compatible editors from Open VSX.</sub>
 
 [Product page](https://solutionsunity.com/products/vscode-acp-patchbay) &nbsp;·&nbsp; [Source](https://github.com/solutionsunity/acp-patchbay)
 
