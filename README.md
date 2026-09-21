@@ -9,9 +9,12 @@
 [![License Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-5b9bd5?style=flat-square&labelColor=1e1e1e&logo=apache&logoColor=white)](LICENSE)
 
 ACP Patchbay is a unified VS Code client for any
-[ACP](https://agentclientprotocol.com)-compatible coding agent — consistent chat,
-capabilities you can trust, and deep editor context. Stop learning a new extension
-every time you switch agents.
+[ACP](https://agentclientprotocol.com)-compatible coding agent — Claude Code,
+Gemini CLI, Codex, OpenCode, Auggie, Kimi, Kilo, and every other agent in the live
+[ACP registry](https://agentclientprotocol.com/registry). Consistent chat,
+capabilities you can trust, and deep editor context. Every agent connects; how deep
+each one goes is shown in the capability matrix, never guessed. Stop learning a new
+extension every time you switch agents.
 
 [**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=SolutionsUnity.acp-patchbay)
 

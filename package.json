@@ -25,7 +25,14 @@
     "agent",
     "mcp",
     "agent-client-protocol",
-    "ai"
+    "ai",
+    "ai-agent",
+    "coding-agent",
+    "claude-code",
+    "gemini-cli",
+    "codex",
+    "opencode",
+    "auggie"
   ],
   "icon": "media/icon.png",
   "main": "./out/extension.js",
