@@ -757,9 +757,11 @@ mechanism — MCP servers routed to agents:
 
 - **The catalog is shipped data from day one** (`data/mcp-catalog.json`). The
   PRD decides this: GitHub ships "proving the catalog pattern," and a hardcoded
-  integration proves no pattern. One data file; every field earned by what a
-  real vendor demonstrably needs — nothing speculative. Adding a curated server
-  is a data change, not code; the file is the record, no doc restates it.
+  integration proves no pattern. One data file of vendor facts, plus one
+  reviewable mark per entry beside it (`data/icons/<id>.svg`, folded into the
+  catalog at build behind a gate); every field earned by what a real vendor
+  demonstrably needs — nothing speculative. Adding a curated server is a data
+  change, not code; the files are the record, no doc restates them.
 - **The agent list is NOT shipped data**: the official ACP registry is the one
   agent source (identity, launch, icon, live-fetched + disk-cached), and
   patchbay's own per-agent curation lives in code tables where every other house
