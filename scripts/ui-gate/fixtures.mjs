@@ -66,6 +66,22 @@ export const chatTranscript = [
     kind: "text", id: "x5",
     text: "## Sources\n\n- <https://raw.githubusercontent.com/odoo/odoo/17.0/addons/web/static/src/views/form/form_controller.scss>\n- api.github.com/repos/odoo/odoo/commits?path=addons/web/static/src/views/form/form_controller.scss&sha=17.0\n- `postgresql://user:password@localhost:5432/a_database_with_a_long_name?sslmode=require`",
   },
+  // A write proposal larger than the card's preview: the card must say how
+  // many lines it is not showing and offer the full diff; a short, resolved
+  // one shows everything and offers nothing (issue #27).
+  {
+    kind: "diff", id: "d-long", file: "/ws/src/api.ts", additions: 60, deletions: 0,
+    lines: Array.from({ length: 60 }, (_, i) => ({ kind: "add", text: `line ${i + 1}` })),
+    resolution: null,
+  },
+  {
+    kind: "diff", id: "d-short", file: "/ws/src/api.ts", additions: 2, deletions: 1,
+    lines: [
+      { kind: "context", text: "a" }, { kind: "del", text: "b" },
+      { kind: "add", text: "c" }, { kind: "add", text: "d" },
+    ],
+    resolution: { accepted: true, auto: false },
+  },
 ];
 
 /** A queued prompt that is one unbreakable token — the narrow shot gates

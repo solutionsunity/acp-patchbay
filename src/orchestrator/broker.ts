@@ -77,6 +77,11 @@ const TURN_CANCELLED = "__patchbay-turn-cancelled__";
 
 export class PermissionBroker {
   private pending = new Map<string, Pending>();
+  /** A pending write proposal's full texts, keyed by its diff block — held
+   * exactly as long as the decision is open, so the full change can open in
+   * the editor's own diff view while the card shows a bounded preview.
+   * Never persisted; dropped the moment the proposal resolves. */
+  private proposals = new Map<string, { path: string; oldText: string; newText: string }>();
 
   constructor(
     private readonly rules: PermissionRulesStore,
@@ -111,6 +116,12 @@ export class PermissionBroker {
     if (root !== null && isUnder(path, root)) return "allow";
     if (fileWriteScope === "workspace+temp" && isUnder(path, tmpdir())) return "allow";
     return "ask";
+  }
+
+  /** The full texts of a write proposal still awaiting the user — null once
+   * resolved, auto-accepted, or unknown. */
+  proposedDiff(blockId: string): { path: string; oldText: string; newText: string } | null {
+    return this.proposals.get(blockId) ?? null;
   }
 
   /** Resolves a user's click on a permission or diff card. */
@@ -281,7 +292,9 @@ export class PermissionBroker {
       { optionId: "accept", label: "Accept", kind: "allow_once" },
       { optionId: "reject", label: "Reject", kind: "reject_once" },
     ]);
+    this.proposals.set(blockId, { path, oldText: oldContent, newText: newContent });
     const optionId = await this.awaitOption(blockId, sessionId);
+    this.proposals.delete(blockId);
     const cancelled = optionId === TURN_CANCELLED;
     const accepted = optionId === "accept";
     this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted, auto: cancelled });

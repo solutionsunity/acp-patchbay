@@ -114,6 +114,16 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] mermaid pan/zoom controls present`, (await p.$('[data-streamdown="mermaid-block"] button[title="Zoom in"]')) !== null);
   check(`[${theme}] mermaid open-in-editor action present`, (await p.$('[data-streamdown="mermaid-block-actions"] button[title="Open in editor — full size"]')) !== null);
   check(`[${theme}] broken mermaid shows honest fallback`, (await p.$("text=diagram didn't parse")) !== null);
+
+  // ── write proposal cards: a bounded preview that says what it omits, and
+  // the full diff one click away in VS Code's own diff editor ──
+  const longDiff = await p.$(".card .diff-body .more");
+  const longDiffText = longDiff === null ? "" : (await longDiff.textContent()).trim();
+  check(`[${theme}] oversize proposal names its omitted lines ("${longDiffText}")`, longDiffText.startsWith("20 more lines"));
+  check(`[${theme}] pending proposal offers the full diff`, (await p.$(".card .diff-file .open-diff")) !== null);
+  const diffCards = await p.$$(".card .diff-body");
+  check(`[${theme}] both proposal cards rendered`, diffCards.length === 2);
+  check(`[${theme}] short proposal omits nothing`, (await p.$$(".card .diff-body .more")).length === 1);
   check(`[${theme}] katex rendered`, (await p.$(".katex")) !== null);
   check(`[${theme}] currency $ not eaten by math`, (await p.$("text=$5 and $10 stay currency")) !== null);
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);

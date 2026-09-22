@@ -1435,6 +1435,24 @@ export class Orchestrator {
     return vscode.Uri.file(file);
   }
 
+  /** A pending write proposal, in full — the card is a bounded preview and
+   * the decision deserves the whole change. Left: the file as it is on disk
+   * at proposal time (the gate's own reading — a new file diffs against
+   * empty); right: what the agent wants to write. Both are snapshots the
+   * broker holds only while the decision is open, so a stale click after
+   * resolution is a no-op, like the other openers. */
+  private async openProposedDiff(blockId: string): Promise<void> {
+    const proposal = this.broker.proposedDiff(blockId);
+    if (proposal === null) return;
+    const name = basename(proposal.path);
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      await this.diffTempFile(blockId, `current-${name}`, proposal.oldText),
+      await this.diffTempFile(blockId, `proposed-${name}`, proposal.newText),
+      `${name} — proposed write (accept or reject on the card)`,
+    );
+  }
+
   /** Agent-reported tool-call diffs — the texts come back from the
    * session-manager's stash; both sides are snapshots, so both ride temp files. */
   private async openToolCallDiff(sessionId: string, toolCallId: string, path: string): Promise<void> {
@@ -2270,6 +2288,9 @@ export class Orchestrator {
         break;
       case "copyIntegrationJson":
         void this.copyIntegrationJson(action.integrationId);
+        break;
+      case "openProposedDiff":
+        void this.openProposedDiff(action.blockId).catch(this.logCatch(`openProposedDiff ${action.blockId}`));
         break;
       case "openToolCallDiff":
         void this.openToolCallDiff(action.sessionId, action.toolCallId, action.path).catch(

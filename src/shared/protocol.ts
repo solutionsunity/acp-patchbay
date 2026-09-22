@@ -187,6 +187,9 @@ export type Action =
   | { kind: "copyIntegrationJson"; integrationId: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
+  /** Open a pending write proposal — the diff card's full change — in VS
+   * Code's native diff editor; a no-op once the proposal has resolved. */
+  | { kind: "openProposedDiff"; blockId: string }
   /** Open a file in the editor by absolute path — the read-out strip's
    * files-panel rows (the view never touches fs). */
   | { kind: "openFile"; path: string }

@@ -45,8 +45,18 @@ export function PermissionCard({ block }: { block: Extract<ChatBlock, { kind: "p
   );
 }
 
+/** The card's body is a preview, not the change: a transcript card cannot
+ * be the surface for an unbounded diff. Past this many lines the card says
+ * exactly how many it is not showing — the decision is made against the
+ * full change in VS Code's own diff editor, one click away while pending. */
+const DIFF_PREVIEW_LINES = 40;
+
 export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }> }) {
   const send = useActions();
+  const { resolution } = block;
+  const pending = resolution === null;
+  const omitted = Math.max(0, block.lines.length - DIFF_PREVIEW_LINES);
+  const openFull = () => send({ kind: "openProposedDiff", blockId: block.id });
   return (
     <div className="card">
       <div className="diff-file">
@@ -54,22 +64,34 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
         <span className="plus">+{block.additions}</span>
         <span className="minus">−{block.deletions}</span>
         <span className="st ml-auto">
-          {block.resolution !== null && (
-            <span className={block.resolution.accepted ? "text-ok" : undefined}>
-              <Icon name={block.resolution.accepted ? "check" : "close"} />{" "}
-              {block.resolution.accepted
-                ? `${block.resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
+          {resolution === null ? (
+            <button type="button" className="open-diff" onClick={openFull} title="Open the full change in the diff editor">
+              <Icon name="go-to-file" /> Open diff
+            </button>
+          ) : (
+            <span className={resolution.accepted ? "text-ok" : undefined}>
+              <Icon name={resolution.accepted ? "check" : "close"} />{" "}
+              {resolution.accepted
+                ? `${resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
                 : "rejected — disk untouched"}
             </span>
           )}
         </span>
       </div>
       <div className="diff-body">
-        {block.lines.slice(0, 40).map((line, i) => (
+        {block.lines.slice(0, DIFF_PREVIEW_LINES).map((line, i) => (
           <div key={i} className={line.kind === "add" ? "add" : line.kind === "del" ? "del" : ""}>
             {line.text}
           </div>
         ))}
+        {omitted > 0 &&
+          (pending ? (
+            <button type="button" className="more" onClick={openFull}>
+              {omitted} more lines not shown — open the full diff
+            </button>
+          ) : (
+            <div className="more">{omitted} more lines not shown</div>
+          ))}
       </div>
       {block.resolution === null && (
         <div className="acts">

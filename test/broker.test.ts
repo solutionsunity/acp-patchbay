@@ -271,3 +271,49 @@ describe("resolveProbePermissionRequest — probe sessions answer, never dangle"
     expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
   });
 });
+
+/** The gate reads the file before it proposes, so the card's event lands a
+ * tick after the call — wait for it rather than assume it. */
+async function proposedEvent(events: AgentViewEvent[]) {
+  for (let i = 0; i < 50; i++) {
+    const e = events.find((e) => e.kind === "diffProposed");
+    if (e?.kind === "diffProposed") return e;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("diffProposed never emitted");
+}
+
+describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
+  // The diff card is a bounded preview; the full change opens in VS Code's
+  // own diff editor from the texts the gate is already holding while the
+  // decision is pending. Held exactly as long as the decision is open —
+  // never persisted, never kept once resolved (issue #27).
+  it("holds old and new text while the proposal is pending, and drops them on resolution", async () => {
+    const { broker, events } = harness();
+    const path = join(dir, "outside.txt"); // outside the workspace → asks
+    const pending = broker.gateFileWrite("s1", path, "new content\n");
+    const proposed = await proposedEvent(events);
+    expect(broker.proposedDiff(proposed.blockId)).toEqual({ path, oldText: "", newText: "new content\n" });
+    broker.resolve(proposed.blockId, "accept");
+    await expect(pending).resolves.toEqual({ accepted: true });
+    expect(broker.proposedDiff(proposed.blockId)).toBeNull();
+  });
+
+  it("a cancelled turn drops them too; an unknown id is null, never a throw", async () => {
+    const { broker, events } = harness();
+    const pending = broker.gateFileWrite("s1", join(dir, "outside.txt"), "x");
+    const proposed = await proposedEvent(events);
+    broker.cancelPending("s1");
+    await pending;
+    expect(broker.proposedDiff(proposed.blockId)).toBeNull();
+    expect(broker.proposedDiff("never-existed")).toBeNull();
+  });
+
+  it("an auto-allowed write never holds anything — there is no decision to inform", async () => {
+    const { broker, events } = harness();
+    await broker.gateFileWrite("s1", join(workspaceRoot, "inside.txt"), "x");
+    const proposed = events.find((e) => e.kind === "diffProposed");
+    if (proposed?.kind !== "diffProposed") throw new Error("unreachable");
+    expect(broker.proposedDiff(proposed.blockId)).toBeNull();
+  });
+});

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A write proposal's diff card no longer ends silently at forty lines. The
+  body is a bounded preview that now says how many lines it is not showing,
+  and while the proposal is open the card offers "Open diff": the full change
+  in VS Code's own diff editor, the file as it is against what the agent
+  wants to write. Accept and Reject stay on the card; the texts are held
+  only until the decision lands. (#27)
 - Removed: the Settings section "Rules · skills · commands" and the capability
   matrix's "locations mapped" row. It listed files the user already manages in
   each agent's own native locations, which is a mirror, not a capability. The
