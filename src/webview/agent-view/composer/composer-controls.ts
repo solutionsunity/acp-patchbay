@@ -16,6 +16,12 @@ export interface ComposerControls {
    * standing auth lock holds — a locked agent's prompts would queue at
    * the turn-start door instead of sending, so the box says why up front. */
   enabled: boolean;
+  /** The Stop role of the send button: a turn is in flight on a running
+   * process, so there is something to cancel. Deliberately blind to the
+   * auth lock — the lock is per agent, the turn is per session, and a
+   * sibling session's `auth_required` mid-turn must not strand this one's
+   * only exit. Sending and stopping have opposite preconditions. */
+  stop: boolean;
   placeholder: string;
 }
 
@@ -34,7 +40,9 @@ export function composerControls(
   incoming: boolean,
 ): ComposerControls {
   const needsAuth = agent?.needsAuth === true;
-  const enabled = session !== null && agent?.status === "running" && !needsAuth;
+  const running = session !== null && agent?.status === "running";
+  const enabled = running && !needsAuth;
+  const stop = running && session.live;
   const placeholder = enabled
     ? `Message ${agent!.name} — / commands · @ context`
     : incoming
@@ -42,5 +50,5 @@ export function composerControls(
       : needsAuth && agent !== null
         ? `${agent.name} needs login — Log in on its card in Settings › Agents`
         : "Connect an agent to start";
-  return { enabled, placeholder };
+  return { enabled, stop, placeholder };
 }

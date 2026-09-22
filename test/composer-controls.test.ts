@@ -39,11 +39,13 @@ describe("composerControls", () => {
   it("no session, or a non-running agent, locks with the connect hint — whatever needsAuth says", () => {
     expect(composerControls(null, agent({}), false)).toEqual({
       enabled: false,
+      stop: false,
       placeholder: "Connect an agent to start",
     });
     expect(composerControls(session, agent({ status: "stopped" }), false).enabled).toBe(false);
     expect(composerControls(session, null, false)).toEqual({
       enabled: false,
+      stop: false,
       placeholder: "Connect an agent to start",
     });
     // Stopped + logged out (the card right after Logout): the login hint
@@ -58,6 +60,26 @@ describe("composerControls", () => {
     const cleared = composerControls(session, agent({ needsAuth: false }), false);
     expect(locked.enabled).toBe(false);
     expect(cleared.enabled).toBe(true);
+  });
+
+  // Send and Stop have opposite preconditions: Send needs a healthy agent
+  // ready for a prompt, Stop needs only a turn in flight on a live process.
+  // The lock is per agent, a turn is per session — a second session's RPC
+  // settling auth_required raises the lock while this session's prompt is
+  // still streaming, and that turn's only exit is Stop (issue #24).
+  it("a live turn on a running-but-locked agent keeps Stop open while Send stays shut", () => {
+    const c = composerControls({ ...session, live: true }, agent({ needsAuth: true }), false);
+    expect(c.enabled).toBe(false);
+    expect(c.stop).toBe(true);
+  });
+
+  it("Stop follows the turn, not the lock: closed with no live turn, closed on a dead process", () => {
+    expect(composerControls(session, agent({}), false).stop).toBe(false);
+    expect(composerControls({ ...session, live: true }, agent({}), false).stop).toBe(true);
+    // The process is gone, so there is nothing to cancel — the turn will
+    // settle on its own teardown path.
+    expect(composerControls({ ...session, live: true }, agent({ status: "stopped" }), false).stop).toBe(false);
+    expect(composerControls(null, agent({}), false).stop).toBe(false);
   });
 
   it("a new chat in flight locks the box and names the starting agent — no session exists yet", () => {

@@ -80,7 +80,7 @@ export function Composer(props: {
   const drag = useRef<{ y0: number; h0: number } | null>(null);
   const submitRef = useRef<(() => void) | null>(null);
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
-  const { enabled, placeholder } = composerControls(props.session, props.agent, props.incoming);
+  const { enabled, stop, placeholder } = composerControls(props.session, props.agent, props.incoming);
   const sessionId = props.session?.id ?? "";
   const live = props.session?.live ?? false;
 
@@ -299,12 +299,13 @@ export function Composer(props: {
         )}
         {/* theme-token primary (brand fills superseded — theme.css
             identity palette); while a turn is live it becomes Stop,
-            which is destructive. */}
+            which is destructive. Each role has its own gate (composerControls
+            says why they differ). */}
         <Button
           variant={live ? "destructive" : "default"}
           size="icon"
           className="ml-auto size-[26px] rounded-[7px]"
-          disabled={!enabled}
+          disabled={live ? !stop : !enabled}
           title={live ? "Stop" : "Send"}
           aria-label={live ? "Stop" : "Send"}
           onClick={sendOrStop}

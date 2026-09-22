@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop works mid-turn even when the agent is flagged as needing login. The
+  flag is per agent and a turn is per session, so a second chat hitting
+  `auth_required` used to disable the Stop button of a turn still streaming
+  in the first — "Stop" showed, looked live, and did nothing. The button now
+  gates each of its roles on its own precondition: Send on a healthy agent,
+  Stop on a turn in flight. (#24)
 - Adding a binary-distributed agent (OpenCode, Kimi CLI, Cursor, …) shows its
   card at once, with the archive download as a phase on it — the same way an
   npx agent shows its package download. The download used to run before the
