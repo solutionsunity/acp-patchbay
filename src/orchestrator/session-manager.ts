@@ -49,6 +49,7 @@ import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
+import { continuityReachable } from "./stores/session-continuity";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -91,9 +92,21 @@ export interface SessionManagerHooks {
   continuityFor?(sessionId: string, agentId: string): SessionContinuity | undefined;
   /** Write-through for the same row: a patch merges the named fields
    * (empty array/string deletes a field); `null` forgets the whole row —
-   * fired when the session leaves for good (closed, pruned from the
-   * agent's own list, its agent removed, zero-turn recreate). */
-  onContinuity?(sessionId: string, agentId: string, patch: SessionContinuity | null): void;
+   * fired when the session leaves for good (closed, zero-turn recreate).
+   * `cwd` is the session's workspace: rows are reconciled per workspace.
+   * Only ever called through `noteContinuity`, which refuses a patch for
+   * an agent whose rows could never be read back. */
+  onContinuity?(sessionId: string, agentId: string, cwd: string, patch: SessionContinuity | null): void;
+  /** After a complete `session/list` walk: the agent's rows for this
+   * workspace against what the walk reported — `keep` false, the row
+   * leaves. */
+  reconcileContinuity?(agentId: string, cwd: string, keep: (sessionId: string) => boolean): void;
+  /** Every row of the agent, every workspace: the agent was removed, or
+   * its handshake cannot bring a session back (no list, or no rung). */
+  forgetAgentContinuity?(agentId: string): void;
+  /** The composer draft as the view holds it — the in-window truth a
+   * zero-turn recreate carries to the fresh id. */
+  draftOf?(sessionId: string): string | undefined;
   /** Fires when a real session attaches on an agent (new/load/resume, at
    * the one attach ceremony) — the deferred-probe trigger for latched
    * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
@@ -819,7 +832,7 @@ export class SessionManager {
     this.contextStash.delete(sessionId);
     this.diffEpoch.delete(sessionId);
     if (agentId !== undefined) {
-      this.hooks.onContinuity?.(sessionId, agentId, null);
+      this.noteContinuity(sessionId, agentId, null);
       // Shield against a session/list walk already in flight: its earlier
       // pages predate this close and must not resurrect the row.
       let tombs = this.closedDuringSync.get(agentId);
@@ -875,12 +888,13 @@ export class SessionManager {
       this.promptQueues.delete(sessionId);
       this.contextStash.delete(sessionId);
       this.diffEpoch.delete(sessionId);
-      // Same contract as the auth lock: cleared with the agent's config —
-      // a removed agent's rows have no sync left to prune them.
-      this.hooks.onContinuity?.(sessionId, agentId, null);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
     }
     this.closedDuringSync.delete(agentId);
+    // Same contract as the auth lock: cleared with the agent's config — a
+    // removed agent's rows have no walk left to reconcile them. By agent,
+    // not by index: rows of other workspaces were never indexed here.
+    this.hooks.forgetAgentContinuity?.(agentId);
   }
 
   /** Drops bookkeeping for sessions whose connection just died — a stale
@@ -958,7 +972,11 @@ export class SessionManager {
    * dropping known rows the agent no longer reports — only happens after a
    * *complete* pagination walk: a truncated read must never erase. */
   async syncAgentSessions(agentId: string): Promise<void> {
-    if (this.pool.get(agentId)?.declared?.sessionList !== true) return;
+    const declared = this.pool.get(agentId)?.declared;
+    // A handshake that cannot bring a session back makes every row of the
+    // agent unreadable — rows from before the writer refused them included.
+    if (!continuityReachable(declared)) this.hooks.forgetAgentContinuity?.(agentId);
+    if (declared?.sessionList !== true) return;
     await this.walkAgentSessions(agentId);
   }
 
@@ -1047,10 +1065,13 @@ export class SessionManager {
       this.contextStash.delete(sessionId);
       this.promptQueues.delete(sessionId);
       this.diffEpoch.delete(sessionId);
-      this.hooks.onContinuity?.(sessionId, agentId, null);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
       this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
+    // The durable rows by the same truth, index or not: a session deleted
+    // while no window was open never entered `known`, and its row would
+    // otherwise outlive it. Same live exemption as above.
+    this.hooks.reconcileContinuity?.(agentId, cwd, (id) => seen.has(id) || this.sessions.has(id));
   }
 
   /** One listed session into the view. Title rule: the agent's title wins
@@ -1324,7 +1345,7 @@ export class SessionManager {
       const entry = this.known.get(sessionId);
       if (entry !== undefined) {
         entry.knobs = confirmedFromKnobs(knobs);
-        this.hooks.onContinuity?.(sessionId, entry.agentId, { knobs: entry.knobs });
+        this.noteContinuity(sessionId, entry.agentId, { knobs: entry.knobs });
       }
     }
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
@@ -1496,7 +1517,7 @@ export class SessionManager {
   private persistRoots(sessionId: string, roots: readonly string[]): void {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
-    this.hooks.onContinuity?.(sessionId, agentId, { roots: [...roots] });
+    this.noteContinuity(sessionId, agentId, { roots: [...roots] });
   }
 
   /** Pushes the canonical root list to a *live* attachment. Three cases:
@@ -1598,9 +1619,9 @@ export class SessionManager {
     if (heldWords !== undefined && heldWords.length > 0) {
       this.promptQueues.set(sessionId, heldWords);
     }
-    const carriedDraft = this.hooks.continuityFor?.(oldId, old.agentId)?.draft;
-    this.hooks.onContinuity?.(oldId, old.agentId, null);
-    this.hooks.onContinuity?.(sessionId, old.agentId, {
+    const carriedDraft = this.hooks.draftOf?.(oldId);
+    this.noteContinuity(oldId, old.agentId, null);
+    this.noteContinuity(sessionId, old.agentId, {
       roots: [...roots],
       chips: fresh.pendingContext.map(persistChip),
       ...(heldWords !== undefined && heldWords.length > 0 ? { queue: [...heldWords] } : {}),
@@ -1968,13 +1989,28 @@ export class SessionManager {
     });
   }
 
-  /** Durable copies of the queue and the chip row — written through at
-   * every mutation so a window reload finds the truth. Resolution through
-   * sessions-or-known: both live and merely-listed sessions persist. */
+  /** The one continuity write. A patch is refused for an agent whose rows
+   * could never be read back — no `session/list` to name the session after
+   * a reload, or no rung to open it — so nothing is stored for a reader
+   * that cannot come; forgetting (`null`) always passes. The predicate
+   * reads the handshake the pool holds for the agent (kept past a stop),
+   * so a stopped agent's detached session still writes honestly. */
+  private noteContinuity(sessionId: string, agentId: string, patch: SessionContinuity | null): void {
+    if (patch !== null) {
+      const poolKey = this.sessions.get(sessionId)?.poolKey ?? agentId;
+      if (!continuityReachable(this.pool.get(poolKey)?.declared)) return;
+    }
+    this.hooks.onContinuity?.(sessionId, agentId, this.cwd(), patch);
+  }
+
+  /** Durable copies of the queue, the chip row, and the composer draft —
+   * written through at every mutation so a window reload finds the truth.
+   * Resolution through sessions-or-known: both live and merely-listed
+   * sessions persist; an unknown id writes nothing. */
   private persistQueue(sessionId: string): void {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
-    this.hooks.onContinuity?.(sessionId, agentId, {
+    this.noteContinuity(sessionId, agentId, {
       queue: [...(this.promptQueues.get(sessionId) ?? [])],
     });
   }
@@ -1984,7 +2020,15 @@ export class SessionManager {
     const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
     const chips = session?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
-    this.hooks.onContinuity?.(sessionId, agentId, { chips: chips.map(persistChip) });
+    this.noteContinuity(sessionId, agentId, { chips: chips.map(persistChip) });
+  }
+
+  /** The draft is opaque here (serialized editor state); the view mirror
+   * is the orchestrator's, this is only its durable copy. */
+  persistDraft(sessionId: string, draft: string): void {
+    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
+    if (agentId === undefined) return;
+    this.noteContinuity(sessionId, agentId, { draft });
   }
 
   /** Decodes persisted chips back into the view (image bytes read from the

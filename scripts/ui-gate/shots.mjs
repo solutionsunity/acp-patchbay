@@ -223,6 +223,11 @@ for (const theme of Object.keys(THEMES)) {
   const firstTitle = await p.$eval(".drawer .s-row .nm", (el) => el.textContent);
   check(`[${theme}] drawer sorts latest activity on top`, firstTitle === "refactor bar");
   check(`[${theme}] unseen completion shows the blue dot`, (await p.$(".drawer .unseen-dot")) !== null);
+  const unlisted = await p.$$eval(".drawer .unlisted", (els) => els.map((el) => el.textContent));
+  check(
+    `[${theme}] an agent without session/list is named in the drawer`,
+    unlisted.length === 1 && unlisted[0].startsWith("Augment doesn't report its sessions"),
+  );
   await p.screenshot({ path: `${OUT}/sessions-drawer-${theme}.png` });
   await p.close();
 

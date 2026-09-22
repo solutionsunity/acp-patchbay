@@ -108,6 +108,18 @@ export const chatPlan = [
   { content: "run the suite", status: "pending" },
 ];
 
+/** A full capability matrix for an agent that declared session/load but no
+ * session/list — every row present, as the reducer always carries it. */
+const unlistedMatrix = Object.fromEntries(
+  [
+    "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation", "resources.subscribe",
+    "prompt.image", "prompt.audio", "prompt.embeddedContext", "session.fork", "session.load",
+    "session.resume", "session.list", "session.delete", "session.close",
+    "session.additionalDirectories", "mcp.http", "mcp.sse", "usage", "concurrentSessions",
+    "auth", "auth.logout",
+  ].map((row) => [row, { declared: row === "session.load", used: false }]),
+);
+
 /** Complete stored-preferences object, as every snapshot carries. */
 const preferences = {
   soundOnDone: false, knobSource: "agent-default", idleCloseMinutes: 60, composerStats: true,
@@ -117,7 +129,11 @@ const preferences = {
  * completed-turn view — where the RTL regression hid. */
 export function agentViewState({ live }) {
   return {
-    agents: [{ id: "fake", name: "Claude Code", status: "running", needsAuth: false }],
+    // `silent` declared no session/list — the sessions drawer must say so
+    agents: [
+      { id: "fake", name: "Claude Code", status: "running", needsAuth: false },
+      { id: "silent", name: "Augment", status: "stopped", needsAuth: false },
+    ],
     // s2: newer activity + unseen — must sort above the active s1 and show
     // the blue dot in the sessions drawer.
     sessions: [
@@ -131,7 +147,7 @@ export function agentViewState({ live }) {
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
-    capabilities: {}, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
+    capabilities: { silent: unlistedMatrix }, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
     // matches g3's diff-bearing edit below — the files panel's +/- badge
     fileDiffStats: { s1: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } },
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},

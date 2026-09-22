@@ -63,14 +63,16 @@ deliverable, owed before implementation.
 - Branching is out of the current release. `session/fork` stays a
   capability-matrix row; no UI feature rides it yet.
 - The agent owns the sessions — 100%. The agent's own `session/list` is the
-  only session list; patchbay persists no session records at all — no index,
-  no transcripts. What patchbay holds: a **decision audit** (permissions
+  only session list; patchbay persists no session index and no transcripts.
+  What patchbay holds: a **decision audit** (permissions
   granted, tools approved, routing chosen — those events happened in patchbay
   and belong to it) and an in-memory **render cache** — disposable, rebuilt
   wholesale from `session/load` replay on every reopen, never merged. Replay
   always wins; there is no reconciliation logic anywhere. Agents without
   `session/list` show only their currently-open sessions, and nothing survives
-  a reload — a deliberate scope decision, not a limitation.
+  a reload — a deliberate scope decision, not a limitation — and the Sessions
+  drawer names each such agent, so the missing history is explained where it
+  is felt.
 - A session continued outside patchbay (the agent's own CLI, another editor) simply
   appears complete on reopen — the replay carries the detour, because the truth was
   never patchbay's.

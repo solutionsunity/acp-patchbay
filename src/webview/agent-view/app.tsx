@@ -186,6 +186,7 @@ export function App({
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
+          capabilities={state.capabilities}
           activeSessionId={state.activeSessionId}
           detach={detach}
           onNew={newChat}

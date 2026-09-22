@@ -11,6 +11,7 @@ import { useActions } from "../shared/actions";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { timeAgo } from "../shared/time";
+import { unlistedAgents } from "./drawer-notes";
 import { Dot } from "./header";
 import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,7 @@ export function AgentsDrawer(props: {
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
+  capabilities: AgentViewState["capabilities"];
   activeSessionId: string | null;
   /** detachWindows preference — off hides "Open in new window". */
   detach: boolean;
@@ -164,6 +166,16 @@ export function SessionsDrawer(props: {
           </div>
         );
       })}
+      {/* The list is the agents' own session/list — an agent without one
+          has no history here, and the drawer says so rather than leaving
+          an unexplained gap. */}
+      {unlistedAgents(props.agents, props.capabilities).map((a) => (
+        <div className="s-row cursor-default unlisted" key={a.id}>
+          <span className="sub">
+            {a.name} doesn&apos;t report its sessions — only the ones open in this window are listed.
+          </span>
+        </div>
+      ))}
       <div className="foot" onClick={props.onNew}>
         <Icon name="add" /> New session
       </div>

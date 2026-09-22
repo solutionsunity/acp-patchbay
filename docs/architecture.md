@@ -17,7 +17,8 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Known sessions** — the session-manager's routing index of the agent's
   own `session/list` (session id → owning agent, plus the knob seed the
   wire cannot re-report), repopulated every connect. Patchbay persists no
-  session records; there is no durable index. Nothing the view shows lives
+  session index: the durable continuity row is per-session state keyed by
+  the agent's own id, never a list source. Nothing the view shows lives
   here — title, activity stamp, liveness, the unseen mark have one home,
   the Agent View's canonical row; the manager reads such a fact through a
   hook when it needs one, never a copy.
@@ -139,7 +140,7 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): id → agent, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session records — no index, no transcripts. Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision). |
+| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): id → agent, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
 | Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
@@ -643,11 +644,21 @@ agent's own copy too), the **held prompt queue**, prepared **context chips**
 (image bytes stay in the attachments stash; the row carries the file
 reference, and a reference whose temp file the OS reclaimed drops honestly
 on rehydration), and the **composer draft**. Not a cache of readable
-reality — the same justification as the auth locks. Written through at each
-mutation's chokepoint; rehydrated once, when `session/list` re-enters the
-session (roots/queue/draft re-emit into the view immediately, chips decode
-async, knobs ride the known row into the reattach rule). Rows leave with
-their session: close, list-prune, agent removal, zero-turn recreate,
+reality — the same justification as the auth locks. Written through one
+chokepoint (`noteContinuity`); rehydrated once, when `session/list` re-enters
+the session (roots/queue/draft re-emit into the view immediately, chips
+decode async, knobs ride the known row into the reattach rule). That
+re-entry is the row's only reader, so a row exists only where it can come:
+one predicate (`continuityReachable` — the agent declares `session/list`
+*and* a rung to open the session, `session/load` or `session/resume`) gates
+the writer, and an agent failing it drops every row it has at connect. Each
+row carries its workspace cwd, since `session/list` is read per cwd: after
+every complete walk the agent's rows for that workspace are reconciled
+against what the walk reported (live sessions exempt), which also reclaims a
+session deleted while no window was open. A row without a cwd on record was
+written before the field existed — the first walk that names it stamps it,
+one that does not drops it. Rows leave with their session: close,
+walk-reconcile, agent removal (every workspace), zero-turn recreate,
 erase-all. Held words rehydrated behind a standing auth lock stay held;
 opening the session (or the lock clearing) is their release, and a new
 prompt sent while held words wait joins the queue *behind* them — order is

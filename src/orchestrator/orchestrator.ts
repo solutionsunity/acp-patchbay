@@ -670,12 +670,23 @@ export class Orchestrator {
         },
         onKnobsConfirmed: (agentId, seed) => void this.composerKnobs.record(agentId, seed),
         continuityFor: (sessionId, agentId) => this.sessionContinuity.read(sessionId, agentId),
-        onContinuity: (sessionId, agentId, patch) => {
+        onContinuity: (sessionId, agentId, sessionCwd, patch) => {
           void (patch === null
             ? this.sessionContinuity.forget(sessionId, agentId)
-            : this.sessionContinuity.patch(sessionId, agentId, patch)
+            : this.sessionContinuity.patch(sessionId, agentId, sessionCwd, patch)
           ).catch((err: Error) => this.log.error(`session continuity ${sessionId} — ${err.message}`));
         },
+        reconcileContinuity: (agentId, sessionCwd, keep) => {
+          void this.sessionContinuity
+            .reconcile(agentId, sessionCwd, keep)
+            .catch((err: Error) => this.log.error(`session continuity reconcile ${agentId} — ${err.message}`));
+        },
+        forgetAgentContinuity: (agentId) => {
+          void this.sessionContinuity
+            .forgetAgent(agentId)
+            .catch((err: Error) => this.log.error(`session continuity drop ${agentId} — ${err.message}`));
+        },
+        draftOf: (sessionId) => this.agentView.current.drafts[sessionId],
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         workspaceRoots: workspaceRootsView,
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
@@ -1297,20 +1308,19 @@ export class Orchestrator {
     }
   }
 
-  /** The session draft's one write: durable row + view mirror. The draft is
-   * opaque here (serialized editor state); the row dies with the session,
-   * so an unknown id writes nothing. Unchanged drafts write nothing: every
-   * save rewrites the whole machine KV file, and the debounce ticks while a
-   * user merely moves the caret. The view mirror is what sibling views
-   * (detached panels) and the next session switch read — the composer
-   * applies drafts only when idle, so echoes never fight the keyboard. */
+  /** The session draft's one write: durable row (through the session
+   * manager's continuity gate) + view mirror. Unchanged drafts write
+   * nothing: every save rewrites the whole machine KV file, and the
+   * debounce ticks while a user merely moves the caret. The view mirror is
+   * what sibling views (detached panels) and the next session switch read —
+   * the composer applies drafts only when idle, so echoes never fight the
+   * keyboard. */
   private saveDraft(sessionId: string, draft: string): void {
-    const agentId = this.agentView.current.sessions.find((v) => v.id === sessionId)?.agentId;
-    if (agentId === undefined) return;
-    if ((this.sessionContinuity.read(sessionId, agentId)?.draft ?? "") === draft) return;
-    void this.sessionContinuity
-      .patch(sessionId, agentId, { draft })
-      .catch((err: Error) => this.log.error(`draft save ${sessionId} — ${err.message}`));
+    // A draft for a row the view no longer has (a stale panel's late save)
+    // would sit in the mirror with nothing to show it — refused whole.
+    if (!this.agentView.current.sessions.some((v) => v.id === sessionId)) return;
+    if ((this.agentView.current.drafts[sessionId] ?? "") === draft) return;
+    this.sessionManager.persistDraft(sessionId, draft);
     this.agentView.emit({ kind: "sessionDraftChanged", sessionId, draft });
   }
 

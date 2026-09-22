@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Per-session continuity rows (knobs, roots, held prompts, chips, draft) no
+  longer accumulate for sessions nothing can bring back. A row's only reader
+  is the agent's own `session/list` naming the session again after a reload,
+  followed by `session/load` or `session/resume` to open it; rows were
+  written for every agent regardless, and reclaimed only through an in-memory
+  index that a reload empties — so an agent without `session/list` left a
+  row per session forever, and even a list-capable agent leaked the rows of
+  sessions deleted while no window was open. Now one predicate gates the
+  writer: no row unless the agent declares the list and a rung. Each row
+  records its workspace, and every complete list walk reconciles that
+  workspace's rows against what the agent reported; an agent whose handshake
+  cannot bring sessions back drops all its rows at connect, and agent removal
+  drops them by agent rather than by index. Rows from earlier builds carry no
+  workspace: the first walk that names one stamps it, one that does not
+  drops it. The Sessions drawer now names each agent that declared no
+  `session/list`, so a missing history is explained where it is felt. (#29)
 - In a multi-root workspace every folder now reaches the agent. The first
   folder was the session's working directory and the rest went nowhere,
   while the roots chip counted them all. Folders beyond the first ride as

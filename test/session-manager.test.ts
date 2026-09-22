@@ -144,11 +144,18 @@ function harness(opts?: {
       authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
       readFileLive: (path) => readFile(path, "utf8"),
       continuityFor: (sessionId, agentId) => continuity.read(sessionId, agentId),
-      onContinuity: (sessionId, agentId, patch) => {
+      onContinuity: (sessionId, agentId, sessionCwd, patch) => {
         void (patch === null
           ? continuity.forget(sessionId, agentId)
-          : continuity.patch(sessionId, agentId, patch));
+          : continuity.patch(sessionId, agentId, sessionCwd, patch));
       },
+      reconcileContinuity: (agentId, sessionCwd, keep) => {
+        void continuity.reconcile(agentId, sessionCwd, keep);
+      },
+      forgetAgentContinuity: (agentId) => {
+        void continuity.forgetAgent(agentId);
+      },
+      draftOf: (sessionId) => events.reduce(reduceAgentView, initialAgentViewState).drafts[sessionId],
     },
     () => cwd,
     undefined,
@@ -1388,7 +1395,7 @@ describe("SessionManager", () => {
     });
     locked = true; // logout witnessed
     await h1.sessionManager.sendPrompt(sessionId, "held words"); // → held row
-    await store.patch(sessionId, "smq6", { draft: "half-typed thought" }); // the orchestrator's debounced save
+    h1.sessionManager.persistDraft(sessionId, "half-typed thought"); // the orchestrator's debounced save
     await h1.pool.stop("smq6");
 
     // window 2: fresh memory, lock still standing — the row restores everything
@@ -1420,6 +1427,163 @@ describe("SessionManager", () => {
     }
     expect(h2.state().promptQueue[sessionId] ?? []).toEqual([]);
     await h2.pool.stop("smq6");
+  });
+
+  // The row's lifetime, issue #29: a row is written only where the agent's
+  // own list can name the session again and the ladder can open it — the
+  // same predicate the reclaim depends on. Anything else is stored for a
+  // reader that never comes.
+  describe("continuity rows live only where they can be read back (issue #29)", () => {
+    const CONTINUITY_KEY = "acpPatchbay.sessionContinuity";
+    const MODEL_KNOB = [
+      {
+        id: "model",
+        name: "Model",
+        category: "model" as const,
+        type: "select" as const,
+        currentValue: "default",
+        options: [
+          { value: "default", name: "Default" },
+          { value: "sonnet", name: "Sonnet" },
+        ],
+      },
+    ];
+
+    it("an agent without session/list writes no row — knobs, roots, chips, held words, draft alike; a list+resume agent writes them all", async () => {
+      let locked = false;
+      const kv = new MemoryKV();
+      const store = new SessionContinuityStore(kv);
+      const h = harness({ continuityStore: store, authLocked: () => locked });
+      const script = (list: boolean): FakeAgentScript => ({
+        declare: {
+          sessionCapabilities: { additionalDirectories: {}, resume: {}, ...(list ? { list: {} } : {}) },
+        },
+        configOptions: MODEL_KNOB,
+        turn: [{ type: "chunk", text: "x" }],
+      });
+      const stage = async (agentId: string) => {
+        const sessionId = await h.sessionManager.createSession(agentId, "Fake Agent", cwd);
+        await h.sessionManager.sendPrompt(sessionId, "first turn");
+        await h.sessionManager.setKnob(sessionId, "model", "sonnet");
+        await h.sessionManager.addRoot(sessionId, "/repo/extra");
+        h.sessionManager.addContext(sessionId, { kind: "selection", id: `${agentId}-chip`, label: "a.ts:1", content: "x" });
+        locked = true;
+        await h.sessionManager.sendPrompt(sessionId, "held words");
+        locked = false;
+        h.sessionManager.persistDraft(sessionId, "half a thought");
+        return sessionId;
+      };
+
+      await h.pool.connect(spec(script(false), "c29-nolist"));
+      const unlisted = await stage("c29-nolist");
+      // the view holds everything the user staged — only the durable copy is refused
+      expect(h.state().contextRoots[unlisted]).toEqual(["/repo/extra"]);
+      expect(h.state().promptQueue[unlisted]).toMatchObject([{ text: "held words" }]);
+      expect(store.list()).toEqual([]);
+
+      await h.pool.connect(spec(script(true), "c29-list"));
+      const listed = await stage("c29-list");
+      expect(store.list().map((r) => r.agentId)).toEqual(["c29-list"]);
+      expect(store.read(listed, "c29-list")).toMatchObject({
+        knobs: { model: "sonnet" },
+        roots: ["/repo/extra"],
+        chips: [{ id: "c29-list-chip" }],
+        queue: [{ text: "held words" }],
+        draft: "half a thought",
+      });
+      expect(store.list()[0]?.cwd).toBe(cwd);
+
+      await h.pool.stop("c29-nolist");
+      await h.pool.stop("c29-list");
+    });
+
+    it("connecting an agent that cannot bring sessions back drops every row it has — older builds' rows included, every workspace", async () => {
+      const kv = new MemoryKV();
+      const store = new SessionContinuityStore(kv);
+      await store.patch("stale", "c29-load", cwd, { draft: "old words" });
+      await store.patch("stale-elsewhere", "c29-load", "/elsewhere", { draft: "old words" });
+      await store.patch("other", "c29-other", cwd, { draft: "stays" });
+      await kv.update(CONTINUITY_KEY, [
+        ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
+        { id: "c29-load\u0000legacy", agentId: "c29-load", draft: "no cwd" },
+      ]);
+      const h = harness({ continuityStore: store });
+      // load without list: a rung, but nothing ever names the id again
+      await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
+      await h.sessionManager.syncAgentSessions("c29-load");
+      expect(store.list().map((r) => r.id)).toEqual(["c29-other\u0000other"]);
+      await h.pool.stop("c29-load");
+    });
+
+    it("a complete list walk reconciles this workspace's rows: unreported rows leave, an older row the walk names is stamped and rehydrated, other workspaces untouched", async () => {
+      const kv = new MemoryKV();
+      const store = new SessionContinuityStore(kv);
+      const script: FakeAgentScript = {
+        declare: { loadSession: true, sessionCapabilities: { list: {} } },
+        turn: [{ type: "chunk", text: "x" }],
+      };
+      const h1 = harness({ continuityStore: store });
+      await h1.pool.connect(spec(script, "c29-walk"));
+      const sessionId = await h1.sessionManager.createSession("c29-walk", "Fake Agent", cwd);
+      await h1.sessionManager.sendPrompt(sessionId, "persisted agent-side");
+      await h1.pool.stop("c29-walk");
+
+      // while patchbay was closed: one session deleted in the agent's own
+      // store, one row from a build that recorded no cwd
+      await store.patch("deleted-while-closed", "c29-walk", cwd, { draft: "gone" });
+      await store.patch("other-ws", "c29-walk", "/elsewhere", { draft: "stays" });
+      await kv.update(CONTINUITY_KEY, [
+        ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
+        { id: `c29-walk\u0000${sessionId}`, agentId: "c29-walk", draft: "legacy draft" },
+      ]);
+
+      const h2 = harness({ continuityStore: store });
+      await h2.pool.connect(spec(script, "c29-walk"));
+      await h2.sessionManager.syncAgentSessions("c29-walk");
+      expect(store.read("deleted-while-closed", "c29-walk")).toBeUndefined();
+      expect(store.read("other-ws", "c29-walk")).toEqual({ draft: "stays" });
+      expect(store.read(sessionId, "c29-walk")).toEqual({ draft: "legacy draft" });
+      expect(store.list().find((r) => r.id === `c29-walk\u0000${sessionId}`)?.cwd).toBe(cwd);
+      expect(h2.state().drafts[sessionId]).toBe("legacy draft");
+      await h2.pool.stop("c29-walk");
+    });
+
+    it("a live zero-turn session's row survives a walk that does not report it yet", async () => {
+      const store = new SessionContinuityStore(new MemoryKV());
+      const h = harness({ continuityStore: store });
+      await h.pool.connect(
+        spec({ declare: { loadSession: true, sessionCapabilities: { list: {} } }, configOptions: MODEL_KNOB }, "c29-live"),
+      );
+      const sessionId = await h.sessionManager.createSession("c29-live", "Fake Agent", cwd);
+      await h.sessionManager.setKnob(sessionId, "model", "sonnet");
+      expect(store.read(sessionId, "c29-live")?.knobs).toEqual({ model: "sonnet" });
+      await h.sessionManager.syncRunningAgents(); // the agent persists nothing until the first turn
+      expect(store.read(sessionId, "c29-live")?.knobs).toEqual({ model: "sonnet" });
+      await h.pool.stop("c29-live");
+    });
+
+    it("agent removal drops rows the index never saw, in every workspace", async () => {
+      const store = new SessionContinuityStore(new MemoryKV());
+      await store.patch("never-indexed", "c29-rm", "/elsewhere", { draft: "x" });
+      await store.patch("keep", "c29-keep", cwd, { draft: "y" });
+      const h = harness({ continuityStore: store });
+      h.sessionManager.forgetAgentSessions("c29-rm");
+      expect(store.list().map((r) => r.agentId)).toEqual(["c29-keep"]);
+    });
+
+    it("a zero-turn recreate carries the composer draft from the view — an agent that writes no row still keeps the words", async () => {
+      const h = harness();
+      await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "c29-draft"));
+      const oldId = await h.sessionManager.createSession("c29-draft", "Fake Agent", cwd);
+      // the orchestrator's draft path: durable write (refused here) + view mirror
+      h.sessionManager.persistDraft(oldId, "typed before any turn");
+      h.events.push({ kind: "sessionDraftChanged", sessionId: oldId, draft: "typed before any turn" });
+      await h.sessionManager.addRoot(oldId, "/repo/backend");
+      const newId = h.state().activeSessionId!;
+      expect(newId).not.toBe(oldId);
+      expect(h.state().drafts[newId]).toBe("typed before any turn");
+      await h.pool.stop("c29-draft");
+    });
   });
 
   it("a failed root re-apply detaches the session — the next prompt re-enters the ladder, never a corpse", async () => {

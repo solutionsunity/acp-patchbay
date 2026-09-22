@@ -33,15 +33,16 @@ export class GlobalRecordStore<T extends { id: string }> {
   }
 
   async upsert(value: T): Promise<void> {
-    const current = this.list();
-    const index = current.findIndex((v) => v.id === value.id);
-    if (index === -1) current.push(value);
-    else current[index] = value;
-    await this.kv.update(this.key, current);
+    await this.rewrite((current) => {
+      const index = current.findIndex((v) => v.id === value.id);
+      if (index === -1) current.push(value);
+      else current[index] = value;
+      return current;
+    });
   }
 
   async remove(id: string): Promise<void> {
-    await this.kv.update(this.key, this.list().filter((v) => v.id !== id));
+    await this.rewrite((current) => current.filter((v) => v.id !== id));
   }
 
   /** Persist a new array order. `ids` is a view's picture of the order at
@@ -50,9 +51,17 @@ export class GlobalRecordStore<T extends { id: string }> {
    * stale picture can never lose data. */
   async reorder(ids: readonly string[]): Promise<void> {
     const rank = new Map(ids.map((id, i) => [id, i]));
-    const current = this.list();
-    const named = current.filter((v) => rank.has(v.id));
-    named.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
-    await this.kv.update(this.key, [...named, ...current.filter((v) => !rank.has(v.id))]);
+    await this.rewrite((current) => {
+      const named = current.filter((v) => rank.has(v.id));
+      named.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+      return [...named, ...current.filter((v) => !rank.has(v.id))];
+    });
+  }
+
+  /** The one write: every mutation is a transform of the whole list
+   * followed by a single KV update, so a multi-row change (a reconcile,
+   * a per-agent drop) costs one file rewrite, never one per row. */
+  protected async rewrite(transform: (current: T[]) => T[]): Promise<void> {
+    await this.kv.update(this.key, transform(this.list()));
   }
 }

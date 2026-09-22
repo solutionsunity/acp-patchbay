@@ -74,7 +74,7 @@ describe("eraseAllData", () => {
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
     await composerKnobs.record("claude", { mode: "code" });
     await authLocks.upsert({ id: "claude", lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
-    await sessionContinuity.patch("s1", "claude", { knobs: { mode: "code" }, draft: "half a thought" });
+    await sessionContinuity.patch("s1", "claude", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
     let stashWiped = false;
 
     await eraseAllData({

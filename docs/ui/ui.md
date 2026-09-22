@@ -127,7 +127,10 @@ connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
 per session: live-dot (turn in flight) · title · agent + state subtitle · kebab
-(same actions as the session row). Footer: `＋ New chat` (the same smart ＋).
+(same actions as the session row). Below the rows, one line per agent whose
+handshake declared no `session/list`: `{agent} doesn't report its sessions —
+only the ones open in this window are listed`. Footer: `＋ New chat` (the same
+smart ＋).
 
 ### 7 · Chat pane states
 
