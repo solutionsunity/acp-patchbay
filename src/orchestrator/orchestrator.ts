@@ -28,7 +28,7 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { ASSET_LOCATIONS, resolveAgentAssets, type FsLike } from "./asset-locations";
-import { ATTACHMENTS_DIR } from "./attachments";
+import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
@@ -2454,11 +2454,7 @@ export class Orchestrator {
     await this.sessionManager.addRoot(sessionId, uri.fsPath);
   }
 
-  /** "Attach files by... picker" — reuses the same
-   * context-chip mechanism the composer's "current file" adder already
-   * uses, just for an arbitrary file the user picks rather than the active
-   * editor. */
-  /** Composer drop, lane 3 (external non-image file): the webview holds
+  /** Composer drop of an external non-image file: the webview holds
    * bytes with no host path — browsers hide dropped files' paths, and in a
    * remote setup the client-side path would be meaningless here anyway.
    * Staged to a temp file once, at add time; the chip rides the prompt as a
@@ -2490,13 +2486,14 @@ export class Orchestrator {
     });
   }
 
-  /** Composer drop, lane 1 (URIs — VS Code explorer, editor tabs): the file
-   * already has a host path, so no bytes cross the webview. Images in the
-   * universally-accepted wire set ride as image chips (bytes read here,
-   * host-side); everything else — including images too big or too exotic
-   * for the wire — becomes an attachment chip whose resource_link the agent
-   * reads itself. That fallback is strictly honest, so nothing in this lane
-   * is ever refused. */
+  /** "Attach file" picker — the host-side byte producer: the file already
+   * has a host path, so no bytes cross the webview. Images in the wire set
+   * ride as image chips (bytes read here); everything else — including
+   * images too big or too exotic for the wire — becomes an attachment chip
+   * at its real path, whose resource_link the agent reads itself. That
+   * fallback is strictly honest, so nothing picked is ever refused. A
+   * picked file is at rest on disk, hence a link, not a text snapshot: the
+   * inline `file` chip is for the editor buffer, which may be dirty. */
   private async addFilePickerContext(sessionId: string): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: false,
@@ -2506,14 +2503,26 @@ export class Orchestrator {
     });
     const uri = picked?.[0];
     if (uri === undefined) return;
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    this.sessionManager.addContext(sessionId, {
-      id: chipId(),
-      kind: "file",
-      label: `File: ${uri.fsPath}`,
-      content: Buffer.from(bytes).toString("utf8"),
-      sourceUri: uri.toString(),
-    });
+    const name = basename(uri.fsPath);
+    const { size } = await vscode.workspace.fs.stat(uri);
+    const form = pickedFileForm(name, size, this.preferences.get().attachmentMaxMB * 1024 * 1024);
+    if (form.kind === "image") {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      this.sessionManager.addContext(sessionId, {
+        id: chipId(),
+        kind: "image",
+        label: `Image: ${name}`,
+        content: Buffer.from(bytes).toString("base64"),
+        mimeType: form.mimeType,
+      });
+    } else {
+      this.sessionManager.addContext(sessionId, {
+        id: chipId(),
+        kind: "attachment",
+        label: `File: ${name}`,
+        path: uri.fsPath,
+      });
+    }
   }
 
   /** Copy config: the server as an `mcpServers` document (the shape Import

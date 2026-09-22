@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Attaching a file with the picker no longer corrupts anything that is not
+  UTF-8 text. A picked file used to be decoded as text into a chip, so an
+  image, a PDF, or an archive reached the agent as mojibake with no error.
+  The picker now takes the same decision paste and drop take — one shared
+  admission table for both runtimes — and a picked file rides in the form
+  it is: a wire-set image under the cap as an image chip, everything else
+  as a link to its real path that the agent reads itself. (#25)
 - Stop works mid-turn even when the agent is flagged as needing login. The
   flag is per agent and a turn is per session, so a second chat hitting
   `auth_required` used to disable the Stop button of a turn still streaming

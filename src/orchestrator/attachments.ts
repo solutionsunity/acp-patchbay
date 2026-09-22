@@ -11,24 +11,38 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { classify, wireImageExtension, wireImageMimeOf } from "../shared/attachment-policy";
 
 export const ATTACHMENTS_DIR = join(tmpdir(), "acp-patchbay-attachments");
 
-/** Exactly the ingress's wire set — an image chip can't carry anything
- * else (composer/ingress.ts admits or re-encodes), so the "img" fallback
- * below is a can't-happen guard, not a live path. Replayed images reuse it:
- * an unknown replayed mime lands on the honest generic extension. */
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-};
-
 /** Deterministic stash filename for an image — callers put it on the
- * transcript part before (or without awaiting) the bytes landing. */
+ * transcript part before (or without awaiting) the bytes landing. An image
+ * chip can't carry a mime outside the wire set (the admission table admits
+ * or re-encodes), so the "img" fallback is a can't-happen guard, not a live
+ * path. Replayed images reuse it: an unknown replayed mime lands on the
+ * honest generic extension. */
 export function imageFileName(id: string, mimeType: string): string {
-  return `${id}.${IMAGE_EXTENSIONS[mimeType] ?? "img"}`;
+  return `${id}.${wireImageExtension(mimeType) ?? "img"}`;
+}
+
+/** What a file the user picked by path becomes — the host's reading of
+ * the shared admission table. The only type source here is the file name
+ * (no platform reported one), so the mime is either a wire-set one or
+ * absent, never guessed. The two branches the host cannot take both land
+ * on the attachment form: re-encode (no decoder in the extension host —
+ * and unreachable anyway, since a name never yields a non-wire image mime)
+ * and refuse-size (nothing crosses a wire; the path alone is enough for the
+ * agent to read it itself). */
+export function pickedFileForm(
+  fileName: string,
+  size: number,
+  maxBytes: number,
+): { kind: "image"; mimeType: string } | { kind: "attachment" } {
+  const mimeType = wireImageMimeOf(fileName);
+  if (mimeType !== undefined && classify(mimeType, size, maxBytes) === "image-passthrough") {
+    return { kind: "image", mimeType };
+  }
+  return { kind: "attachment" };
 }
 
 /** Writes an image's bytes into the stash; returns the absolute path. */

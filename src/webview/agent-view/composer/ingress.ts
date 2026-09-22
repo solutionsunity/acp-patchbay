@@ -1,32 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Attachment ingress — the ONE admission point for bytes entering patchbay
-// from the composer (paste and external drops share it; any future producer
-// joins here). Owns the whole decision table: the size cap, the image
-// pass-through set, PNG re-encoding for everything decodable outside it,
-// and every refusal string. Downstream code (chips, the prompt chokepoint,
-// the wire) only ever sees attachments this module admitted — which is what
-// lets the image chip's mimeType be a required field with no defaults
-// anywhere: type and bytes are proven to match here, at the moment they
-// enter, and nowhere later.
-//
-// Refusal, not guessing — but refusal is the LAST rung: an image the
-// platform can't decode is still honestly attachable as a file (original
-// bytes, original type — the agent reads it itself), so only oversize is
-// ever refused, and always with a visible message: never sent half-known,
-// never silently dropped at prompt time after the user composed around it.
-
-/** Images every major LLM API accepts as-is (Anthropic, OpenAI, Google all
- * document exactly this set) — an industry constant, not any one agent's
- * quirk table. Anything else that Chromium can decode is re-encoded to PNG
- * so type and bytes stay true together. */
-const WIRE_IMAGE_MIMES: ReadonlySet<string> = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
+// Attachment ingress — the webview's admission point for bytes entering
+// patchbay from the composer (paste and external drops share it). The
+// decision — size cap, image pass-through set, what gets re-encoded, what
+// is refused — is the shared admission table's; this module owns only the
+// webview's byte work: reading the blob, and the PNG re-encode through the
+// platform's own decoder. Downstream code (chips, the prompt chokepoint,
+// the wire) only ever sees attachments admitted here — which is what lets
+// the image chip's mimeType be a required field with no defaults anywhere:
+// type and bytes are proven to match at the moment they enter, and
+// nowhere later.
+import { classify, refusalMessage } from "../../../shared/attachment-policy";
 
 export interface IngestedImage {
   base64: string;
@@ -46,23 +31,6 @@ export interface IngressOutcome {
   images: IngestedImage[];
   files: IngestedFile[];
   refusals: string[];
-}
-
-/** The pure admission decision, separated from the byte work so it is
- * directly testable: what happens to a candidate of this type and size. */
-export function classify(
-  mimeType: string,
-  size: number,
-  maxBytes: number,
-): "refuse-size" | "image-passthrough" | "image-reencode" | "file" {
-  if (size > maxBytes) return "refuse-size";
-  if (!mimeType.startsWith("image/")) return "file";
-  return WIRE_IMAGE_MIMES.has(mimeType) ? "image-passthrough" : "image-reencode";
-}
-
-export function refusalMessage(name: string, size: number, maxBytes: number): string {
-  const mb = (n: number) => (n / (1024 * 1024)).toFixed(1);
-  return `${name}: ${mb(size)} MB exceeds the ${mb(maxBytes)} MB attachment limit (Settings → Preferences)`;
 }
 
 /** Run every candidate through the decision table. Never throws — each

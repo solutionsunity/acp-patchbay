@@ -716,27 +716,33 @@ The differentiator (the PRD's current-release scope), shipped complete:
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a
   `ResourceLink`. Same data, best form the agent accepts (features §1).
-- **One attachment ingress** (composer/ingress.ts): every byte
-  entering from the composer — paste or external drop — passes one admission point
-  that owns the size cap (Preferences, default 10MB), the image pass-through set
-  {png, jpeg, gif, webp} (the set every major LLM API accepts — an industry
-  constant, not any agent's quirk table), PNG re-encoding for other decodable
-  image types (decodable = Chromium's `createImageBitmap`: bmp/ico/avif in
-  practice; svg blobs notably fail it), and every refusal message. An image the
-  platform can't re-encode degrades to the file lane — original bytes, original
-  type, attached as a resource_link the agent reads itself — so refusal is
-  size-only. Nothing is ever guessed: the image chip's `mimeType` is a required
-  field with no defaults
-  anywhere downstream, because the platform that produced the bytes is the only
-  honest source (the spec requires the field to *describe the payload*).
-  Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s the whole
-  turn on formats outside that set (the Auggie dossier).
-- **File attach** (paste, OS drop, or picker): picker reads ride inline
-  `ContentBlock::Resource` when `promptCapabilities.embeddedContext` is declared,
-  `ResourceLink` otherwise. Paste and drop carry bytes only (browsers hide
-  paths; a client path means nothing to a remote host), so non-images are
-  staged to a temp file at add time and linked from there. Directory drops
-  are refused in the current release — a deliberate scope decision:
+- **One attachment admission table** (shared/attachment-policy.ts): every byte
+  that becomes a chip passes one decision, whichever runtime produced it — the
+  webview ingress (composer/ingress.ts: paste and external drop) or the extension
+  host (the file picker). The table owns the size cap (Preferences, default
+  10MB), the image pass-through set {png, jpeg, gif, webp} (the set every major
+  LLM API accepts — an industry constant, not any agent's quirk table) with the
+  file-name spellings that announce it, the re-encode verdict for other image
+  types, and every refusal message. Each runtime owns only its byte work: the
+  webview re-encodes decodable non-wire images to PNG (decodable = Chromium's
+  `createImageBitmap`: bmp/ico/avif in practice; svg blobs notably fail it); the
+  host has no decoder, so a picked non-wire image lands on the attachment form.
+  An image the platform can't re-encode degrades to the file lane — original
+  bytes, original type, attached as a resource_link the agent reads itself — so
+  refusal is size-only. Nothing is ever guessed: the image chip's `mimeType` is a
+  required field with no defaults anywhere downstream, because the platform that
+  produced the bytes — or, for a picked path, the wire set the file name names —
+  is the only honest source (the spec requires the field to *describe the
+  payload*). Motivating incident: auggie 0.32.0 declares `prompt.image` but 400s
+  the whole turn on formats outside that set (the Auggie dossier).
+- **File attach** (paste, OS drop, or picker): a picked file has a host path,
+  so nothing crosses the webview — a wire-set image under the cap rides as an
+  image chip (bytes read host-side), everything else as a `ResourceLink` to its
+  real path, the agent reading it itself. A picked file is at rest, hence a link;
+  the inline text chip is for the editor buffer, which may be dirty. Paste and
+  drop carry bytes only (browsers hide paths; a client path means nothing to a
+  remote host), so non-images are staged to a temp file at add time and linked
+  from there. Directory drops are refused in the current release — a deliberate scope decision:
   expanding a tree is policy (depth, excludes), not a default. What a
   webview can receive, as observed 2026-09-19 on VS Code 1.10x–1.138 and
   verified in its sources: an OS file drop reaches the composer only while
