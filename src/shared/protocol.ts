@@ -264,7 +264,8 @@ export type PersistedChip =
   | { kind: "attachment"; id: string; label: string; path: string; mimeType?: string };
 
 /** The survives-reload family: session-scoped state the wire cannot
- * re-report (agents reset knobs on load; ACP has no read-back for roots;
+ * re-report (agents reset knobs on load; roots are read back only where
+ * `session/list` reports them and that read-back is not yet consumed;
  * queue, chips, and draft are user-staged input that exists nowhere else).
  * One row per session in stores/session-continuity.ts, dropped when the
  * session leaves for good. */
@@ -613,7 +614,6 @@ export type CapabilityRowId =
   | "fs.writeTextFile"
   | "terminal"
   | "elicitation"
-  | "roots.listChanged"
   | "resources.subscribe"
   | "prompt.image"
   | "prompt.audio"
@@ -1122,11 +1122,11 @@ export interface AgentViewState {
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
   /** User-added external context roots, per session (workspace folders
    * are always active and need no chip; these are the
-   * removable, explicit ones). Passed to the agent as `additionalDirectories`.
-   * ACP has no live-update request, but `session/load`/`session/resume` "set
-   * the complete list" — so a change re-applies to a live session through an
-   * in-place re-attach; only an agent declaring neither waits for the next
-   * reload/branch. */
+   * removable, explicit ones). Passed to the agent as `additionalDirectories`
+   * — only where advertised. ACP sets the list on lifecycle requests alone,
+   * so a change after the first turn re-applies through `session/resume`
+   * ("sets the complete list"); an add that could not land is refused at
+   * the writer, and the roots chip says why. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
   /** Workspace folders — the always-active roots every session gets as its
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip

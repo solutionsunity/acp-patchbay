@@ -64,6 +64,11 @@ function harness(opts?: {
   pinned?: ReadonlySet<string>;
   /** Stand-in for the orchestrator's connect-on-demand — records the asks. */
   onConnectForSession?(sessionId: string): void;
+  /** Stand-in for the open workspace's folders (reality read, never stored)
+   * — the first is the cwd; the rest must reach the agent as additional
+   * directories. Mutable through the returned array to simulate a folder
+   * change. */
+  workspaceRoots?: readonly string[];
 }): {
   pool: AgentPool;
   sessionManager: SessionManager;
@@ -74,9 +79,11 @@ function harness(opts?: {
   silentEvents: AgentViewEvent[];
   resyncCount(): number;
   state(): AgentViewState;
+  workspaceRoots: string[];
 } {
   const events: AgentViewEvent[] = [];
   const silentEvents: AgentViewEvent[] = [];
+  const workspaceRoots = [...(opts?.workspaceRoots ?? [])];
   const continuity = opts?.continuityStore ?? new SessionContinuityStore(new MemoryKV());
   let resyncs = 0;
   let sessionManager!: SessionManager;
@@ -117,6 +124,7 @@ function harness(opts?: {
       },
       contextRootsFor: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
+      workspaceRoots: () => workspaceRoots,
       currentTranscript: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
       titleOf: (sessionId) =>
@@ -155,6 +163,7 @@ function harness(opts?: {
     silentEvents,
     resyncCount: () => resyncs,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
+    workspaceRoots,
   };
 }
 
@@ -163,6 +172,11 @@ function textOf(block: ChatBlock | undefined): string {
     ? block.text
     : "";
 }
+
+/** An agent on which roots work end to end: it advertises
+ * `additionalDirectories` (the spec forbids sending the field otherwise)
+ * and `session/resume` (the one re-apply rung after a turn). */
+const ROOTS_CAPS = { sessionCapabilities: { additionalDirectories: {}, resume: {} } } as const;
 
 describe("SessionManager", () => {
   it("streams a full turn into the transcript and clears live on completion", async () => {
@@ -1151,10 +1165,10 @@ describe("SessionManager", () => {
     await h.pool.stop("sm10");
   });
 
-  it("context roots on a zero-turn session: recreated with the new list — works for every agent, path normalized", async () => {
+  it("context roots on a zero-turn session: recreated with the new list — path normalized", async () => {
     const h = harness();
     // Deliberately no load/resume declared: the zero-turn rung is session/new.
-    await h.pool.connect(spec({ turn: [{ type: "echoRoots" }] }, "sm11"));
+    await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm11"));
     const oldId = await h.sessionManager.createSession("sm11", "Fake Agent", cwd);
 
     await h.sessionManager.addRoot(oldId, "/repo/backend/"); // trailing slash normalized away
@@ -1170,26 +1184,93 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11");
   });
 
-  it("context roots after a turn: re-applied in place via session/load — no manual reload, same sessionId", async () => {
+  it("after a turn, an agent that advertises the field but not session/resume: add is refused at the writer — nothing recorded, nothing sent", async () => {
     const h = harness();
     await h.pool.connect(
-      spec({ declare: { loadSession: true }, turn: [{ type: "echoRoots" }] }, "sm11l"),
+      spec(
+        { declare: { loadSession: true, sessionCapabilities: { additionalDirectories: {} } }, turn: [{ type: "echoRoots" }] },
+        "sm11l",
+      ),
     );
     const sessionId = await h.sessionManager.createSession("sm11l", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "first turn");
 
+    // load would replay the whole session for one root — never used for
+    // roots; without resume there is no re-apply, so the root is refused
+    // rather than recorded as if it landed (the chip's gate says the same)
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
-    expect(h.state().activeSessionId).toBe(sessionId); // in place, never recreated
+    expect(h.state().contextRoots[sessionId] ?? []).toEqual([]);
+    expect(h.state().activeSessionId).toBe(sessionId);
     await h.sessionManager.sendPrompt(sessionId, "roots?");
     const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
-    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
-
-    await h.sessionManager.removeRoot(sessionId, "/repo/backend");
-    await h.sessionManager.sendPrompt(sessionId, "roots?");
-    const after = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
-    expect(after?.kind === "text" && JSON.parse(after.text)).toEqual([]);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
 
     await h.pool.stop("sm11l");
+  });
+
+  it("multi-root workspace: every folder beyond the cwd rides as an additional directory — at session/new, on a root change, and on a folder change (issue #28)", async () => {
+    const h = harness({ workspaceRoots: [cwd, "/repo/second", "/repo/third"] });
+    await h.pool.connect(
+      spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm28"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm28", "Fake Agent", cwd);
+    const wireRoots = async () => {
+      await h.sessionManager.sendPrompt(sessionId, "roots?");
+      const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+      return echoed?.kind === "text" ? (JSON.parse(echoed.text) as string[]) : null;
+    };
+    // session/new: the folders the chip already counts — minus the cwd,
+    // which travels as cwd — reached the agent
+    expect(await wireRoots()).toEqual(["/repo/second", "/repo/third"]);
+    // a user-added external root joins the same list, never replaces it
+    await h.sessionManager.addRoot(sessionId, "/repo/backend");
+    expect(await wireRoots()).toEqual(["/repo/second", "/repo/third", "/repo/backend"]);
+    // a workspace folder removed at runtime: the chip would update — the
+    // wire must too, or the two lists diverge again by a rarer path
+    h.workspaceRoots.splice(2, 1); // drop /repo/third
+    await h.sessionManager.reapplyWorkspaceRoots();
+    expect(await wireRoots()).toEqual(["/repo/second", "/repo/backend"]);
+    // the durable row carries only the user-added root — folders are read
+    // from reality, never stored
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    await h.pool.stop("sm28");
+  });
+
+  it("an agent that does not advertise additionalDirectories never receives the field (spec MUST) — folders and adds alike", async () => {
+    const h = harness({ workspaceRoots: [cwd, "/repo/second"] });
+    await h.pool.connect(
+      spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm28n"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm28n", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
+    // an add is refused at the writer: never recorded as a root that landed
+    await h.sessionManager.addRoot(sessionId, "/repo/backend");
+    expect(h.state().contextRoots[sessionId] ?? []).toEqual([]);
+    await h.pool.stop("sm28n");
+  });
+
+  it("a root added during a live turn is applied before the held prompt fires — the next prompt runs on the new list", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ declare: ROOTS_CAPS, stepDelayMs: 150, turn: [{ type: "echoRoots" }] }, "sm28t"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm28t", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "warm-up"); // everPrompted: the resume rung, not recreate
+    const slow = h.sessionManager.sendPrompt(sessionId, "slow turn");
+    await new Promise((r) => setTimeout(r, 30)); // the turn is in flight
+    await h.sessionManager.addRoot(sessionId, "/repo/backend"); // deferred to turn end
+    const held = h.sessionManager.sendPrompt(sessionId, "roots?"); // held until the turn ends
+    await Promise.all([slow, held]);
+    for (let i = 0; i < 100; i++) {
+      const texts = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text");
+      if (texts.length >= 3) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
+    await h.pool.stop("sm28t");
   });
 
   it("root re-apply retains user-steered knobs — the re-attach resets agent defaults, patchbay re-seeds", async () => {
@@ -1197,7 +1278,7 @@ describe("SessionManager", () => {
     await h.pool.connect(
       spec(
         {
-          declare: { loadSession: true },
+          declare: ROOTS_CAPS,
           turn: [{ type: "echoRoots" }],
           configOptions: [
             {
@@ -1222,7 +1303,7 @@ describe("SessionManager", () => {
 
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
 
-    // session/load handed back the script defaults ("default") — the
+    // session/resume handed back the script defaults ("default") — the
     // re-seed must have restored the user's confirmed value.
     const model = h.state().sessionKnobs[sessionId]!.find((k) => k.id === "model");
     expect(model?.currentValue).toBe("sonnet");
@@ -1291,7 +1372,7 @@ describe("SessionManager", () => {
     let locked = false;
     const store = new SessionContinuityStore(new MemoryKV());
     const script: FakeAgentScript = {
-      declare: { loadSession: true, sessionCapabilities: { list: {} } },
+      declare: { loadSession: true, sessionCapabilities: { list: {}, additionalDirectories: {}, resume: {} } },
       turn: [{ type: "chunk", text: "x" }],
     };
     const h1 = harness({ continuityStore: store, authLocked: () => locked });
@@ -1344,7 +1425,7 @@ describe("SessionManager", () => {
   it("a failed root re-apply detaches the session — the next prompt re-enters the ladder, never a corpse", async () => {
     const h = harness();
     await h.pool.connect(
-      spec({ declare: { loadSession: true }, failLoad: true, turn: [{ type: "echoRoots" }] }, "sm11f"),
+      spec({ declare: ROOTS_CAPS, failResume: true, turn: [{ type: "echoRoots" }] }, "sm11f"),
     );
     const sessionId = await h.sessionManager.createSession("sm11f", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "first turn");
@@ -1357,11 +1438,11 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11f");
   });
 
-  it("context roots re-apply via session/resume on a resume-only agent — transcript untouched", async () => {
+  it("context roots after a turn re-apply in place via session/resume — same sessionId, transcript untouched", async () => {
     const h = harness();
     await h.pool.connect(
       spec(
-        { declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] },
+        { declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] },
         "sm11r",
       ),
     );
@@ -1933,7 +2014,7 @@ describe("session activity stamp — one home", () => {
 
   it("a zero-turn recreate inherits the title from the view's row — the manager keeps no copy", async () => {
     const h = harness();
-    await h.pool.connect(spec({ turn: [{ type: "echoRoots" }] }, "st5"));
+    await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "st5"));
     const oldId = await h.sessionManager.createSession("st5", "Fake Agent", cwd);
     // an agent-pushed title lands on the row only (session_info_update path)
     await h.sessionManager.handleUpdate("st5", {

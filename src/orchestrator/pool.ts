@@ -700,6 +700,17 @@ export class AgentPool {
     return this.connect(spec ?? entry.spec, { poolKey, reportAs, isolated });
   }
 
+  /** `additionalDirectories` crosses the wire only when the agent advertises
+   * the session capability — the spec's MUST for clients. A non-advertising
+   * agent gets no field at all, never an empty list; the roots the caller
+   * composed simply do not travel, and the capability row says so. */
+  private dirsIfAdvertised(
+    declared: DeclaredCapabilities | null,
+    additionalDirectories: string[],
+  ): { additionalDirectories?: string[] } {
+    return declared?.sessionAdditionalDirectories === true ? { additionalDirectories } : {};
+  }
+
   async newSession(
     poolKey: string,
     cwd: string,
@@ -710,7 +721,7 @@ export class AgentPool {
     const response = await this.request(entry, acp.methods.agent.session.new, {
       cwd,
       mcpServers,
-      additionalDirectories,
+      ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
     entry.sessions.add(response.sessionId);
     this.log.debug(`${poolKey}: session/new -> ${response.sessionId}`);
@@ -752,7 +763,7 @@ export class AgentPool {
       sessionId,
       cwd,
       mcpServers,
-      additionalDirectories,
+      ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
     entry.sessions.add(response.sessionId);
     this.log.debug(`${poolKey}: session/fork ${sessionId} -> ${response.sessionId}`);
@@ -796,7 +807,7 @@ export class AgentPool {
         sessionId,
         cwd,
         mcpServers,
-        additionalDirectories,
+        ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
       },
       { failureIsRoutine: true },
     );
@@ -859,7 +870,7 @@ export class AgentPool {
         sessionId,
         cwd,
         mcpServers,
-        additionalDirectories,
+        ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
       },
       { failureIsRoutine: true },
     );

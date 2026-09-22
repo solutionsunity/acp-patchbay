@@ -125,9 +125,8 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     "fs.writeTextFile": cell(CLIENT_DECLARES.fs),
     terminal: cell(CLIENT_DECLARES.terminal),
     elicitation: cell(CLIENT_DECLARES.elicitation),
-    // MCP-level (not ACP) capabilities of the agent's own MCP client, only
+    // MCP-level (not ACP) capability of the agent's own MCP client, only
     // observable once the local MCP server exists to capture that handshake.
-    "roots.listChanged": cell(false),
     "resources.subscribe": cell(false),
     "prompt.image": cell(declared.promptImage),
     "prompt.audio": cell(declared.promptAudio),
@@ -212,7 +211,6 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   elicitation: [{ via: "clientRequest", method: methods.client.elicitation.create }],
   // MCP-side: observable only in the local MCP server's handshake with the
   // agent's own MCP client, not on the ACP wire.
-  "roots.listChanged": [],
   "resources.subscribe": [],
   // Session-manager only sends these block types where declared (the
   // resource-link fallback otherwise), so a mark can't outrun the claim.
@@ -231,11 +229,9 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   "session.list": [{ via: "agentRequest", method: methods.agent.session.list }],
   "session.delete": [{ via: "agentRequest", method: methods.agent.session.delete }],
   "session.close": [{ via: "agentRequest", method: methods.agent.session.close }],
-  // Pool sends the field on every lifecycle request regardless of the claim
-  // (best-effort roots), so the declared check lives in the proof: a
-  // non-declaring agent resolving a request that happened to carry dirs
-  // proves nothing — it may have silently ignored the field (the exact
-  // bridge behavior this table exists to catch).
+  // The pool puts the field on a lifecycle request only when the agent
+  // advertises it (the spec's MUST), so a request that carried directories
+  // and resolved is by construction a declaring agent honoring the field.
   "session.additionalDirectories": (
     [
       methods.agent.session.new,
@@ -246,9 +242,7 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   ).map((method) => ({
     via: "agentRequest" as const,
     method,
-    when: (params: unknown, prior: { declared: DeclaredCapabilities | null }) =>
-      prior.declared?.sessionAdditionalDirectories === true &&
-      carriesAdditionalDirectories(params),
+    when: carriesAdditionalDirectories,
   })),
   // Proof would be the agent connecting to an attached http/sse server —
   // not visible on the ACP wire.
@@ -292,7 +286,6 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
  * claim, or a feature would gate on a capability the new connect never
  * declared. */
 export const USED_MAY_OUTRUN_CLAIM: ReadonlySet<CapabilityRowId> = new Set<CapabilityRowId>([
-  "roots.listChanged",
   "resources.subscribe",
   "usage",
   "concurrentSessions",

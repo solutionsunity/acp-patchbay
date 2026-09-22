@@ -101,10 +101,16 @@ export interface SessionManagerHooks {
    * here, which is exactly what makes this the honest "real session" fact. */
   onRealSessionAttached?(agentId: string, sessionId: string): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
-   * read back on reopen/branch since ACP has no live-update request for
-   * `additionalDirectories`; a fresh `LiveSession` needs the durable copy,
+   * read back on reopen/branch: ACP sets `additionalDirectories` only on
+   * the lifecycle requests (new/load/resume/fork), so the list must be
+   * re-sent whole each time; a fresh `LiveSession` needs the durable copy,
    * not a SessionManager-local one that would vanish with it. */
   contextRootsFor?(sessionId: string): readonly string[];
+  /** The open workspace's folders, read from reality at every composition
+   * (never stored — a reload reads them again). The first is the session
+   * cwd; the rest reach the agent as additional directories, so the wire
+   * carries exactly the list the roots chip counts. */
+  workspaceRoots?(): readonly string[];
   /** The render cache as it currently stands (AgentViewState-held) — the
    * resume rung shows it behind the seam notice: it's the only history
    * there is (patchbay persists no transcripts). */
@@ -593,13 +599,10 @@ export class SessionManager {
     const contextToken = `ctx-${++this.contextTokenCounter}`;
     const mcpServers = await this.mcpServersFor(contextToken, agentId);
     const cwd = opts.cwd ?? this.cwd();
-    // Roots: an explicit override wins (recreate paths); a known session
-    // defaults to its canonical list (AgentViewState-held); a fresh
-    // session has none yet.
-    const roots = [
-      ...(opts.roots ??
-        (target.via !== "new" ? (this.hooks.contextRootsFor?.(target.sessionId) ?? []) : [])),
-    ];
+    // Roots: an explicit override wins (recreate paths); otherwise the one
+    // composition — workspace folders beyond the cwd, then the session's
+    // canonical user-added list (a fresh session has no user-added ones).
+    const roots = [...(opts.roots ?? this.rootsFor(target.via !== "new" ? target.sessionId : null, cwd))];
     if (target.via === "new") {
       const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
@@ -1422,11 +1425,20 @@ export class SessionManager {
   /** External context roots: patchbay holds no local
    * copy — the canonical list lives in AgentViewState, read back via
    * `contextRootsFor` so this stays "append/remove, republish, re-apply."
-   * ACP has no live-update request for `additionalDirectories`, but
-   * `session/load` and `session/resume` both "set the complete list" — so
-   * a change re-applies to the live attachment immediately (reapplyRoots);
-   * only an agent declaring neither waits for the next reload/branch. */
+   * ACP sets `additionalDirectories` only on lifecycle requests, so a
+   * change re-applies to the live attachment through one (reapplyRoots).
+   *
+   * Refused at this writer — nothing recorded, nothing persisted — when the
+   * root could never land: the agent does not advertise the field (the
+   * pool would not send it), or the session has turns and the agent lacks
+   * `session/resume` (the one re-apply rung; a load replay is too high a
+   * price for a root). A root recorded as if it had landed would be the
+   * chip lying; the chip's own gate derives the same verdict for display. */
   async addRoot(sessionId: string, path: string): Promise<void> {
+    if (!this.canAddRoot(sessionId)) {
+      this.log.info(`session ${sessionId}: root add refused — the agent cannot receive it on this session`);
+      return;
+    }
     // Folder pickers hand back "/x/y/" — normalize at the one chokepoint;
     // agents receive directory paths, never path-with-separator spellings.
     const normalized = path.replace(/(?<=.)[\\/]+$/, "");
@@ -1445,6 +1457,42 @@ export class SessionManager {
     await this.reapplyRoots(sessionId);
   }
 
+  /** The one composition of what crosses the wire as additional
+   * directories: the workspace's folders other than the session cwd (the
+   * cwd travels as cwd), then the session's user-added external roots.
+   * The roots chip counts the same two lists, so display and wire cannot
+   * disagree — they are derived from the same facts. */
+  private rootsFor(sessionId: string | null, cwd: string): string[] {
+    const folders = (this.hooks.workspaceRoots?.() ?? []).filter((f) => f !== cwd);
+    const added = sessionId === null ? [] : (this.hooks.contextRootsFor?.(sessionId) ?? []);
+    return [...folders, ...added];
+  }
+
+  /** Whether a root added now could reach the agent on this session: the
+   * field must be advertised (else the pool never sends it), and after the
+   * first turn the agent must offer `session/resume` (a zero-turn session
+   * re-mints itself for free). One verdict, shared in shape with the chip's
+   * display gate. */
+  private canAddRoot(sessionId: string): boolean {
+    const live = this.sessions.get(sessionId);
+    const poolKey = live?.poolKey ?? this.known.get(sessionId)?.agentId;
+    const declared = poolKey === undefined ? undefined : this.pool.get(poolKey)?.declared;
+    if (declared?.sessionAdditionalDirectories !== true) return false;
+    const hasTurns =
+      live?.everPrompted === true || (this.hooks.currentTranscript?.(sessionId) ?? []).length > 0;
+    return !hasTurns || declared.sessionResume === true;
+  }
+
+  /** A workspace folder was added or removed: every live session's wire
+   * list is re-applied, the same rung a user-added root takes. Without
+   * this the chip would update from reality while the agent kept the old
+   * list. */
+  async reapplyWorkspaceRoots(): Promise<void> {
+    for (const sessionId of [...this.sessions.keys()]) {
+      await this.reapplyRoots(sessionId);
+    }
+  }
+
   private persistRoots(sessionId: string, roots: readonly string[]): void {
     const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
     if (agentId === undefined) return;
@@ -1460,13 +1508,13 @@ export class SessionManager {
    *   404 *and kill the live session* (claude-agent-acp 0.57). Free by
    *   construction — there is no history to carry — and it covers every
    *   agent, load/resume declared or not.
-   * - **Has turns**: in place on the same connection — `session/load`
-   *   where declared (replay rebuilds the render cache wholesale — the
-   *   standing rule), else `session/resume` (real memory, no replay,
-   *   transcript untouched); both "set the complete list". Neither
-   *   declared → nothing to do; the next attach reads the canonical list
-   *   anyway, and the roots chip says so for exactly that rung.
-   * - **Turn in flight**: deferred to turn end (`rootsDirty`).
+   * - **Has turns**: in place on the same connection via `session/resume`
+   *   (real memory, no replay, transcript untouched; "sets the complete
+   *   list"). Not declared → nothing to do: adds are refused at the writer
+   *   for that rung and the chip says so; a folder change waits for the
+   *   next attach, which reads the composed list anyway.
+   * - **Turn in flight**: deferred to turn end (`rootsDirty`), applied
+   *   before the held queue drains so the next prompt runs on the new list.
    *
    * Failure is logged, never thrown — but the local attachment is dropped:
    * a failed re-attach may have taken the agent-side session with it, and
@@ -1483,9 +1531,12 @@ export class SessionManager {
       await this.recreateEmpty(sessionId, session);
       return;
     }
-    const declared = this.pool.get(session.poolKey)?.declared;
-    const via = declared?.loadSession === true ? ("load" as const) : ("resume" as const);
-    if (via === "resume" && declared?.sessionResume !== true) return;
+    // Resume is the only re-apply rung after a turn: real memory, no
+    // replay. A load would rebuild the whole transcript for one root —
+    // never used for roots. No resume → nothing to do; the writer already
+    // refused the add (canAddRoot), and a folder change simply waits for
+    // the next attach, which reads the composed list anyway.
+    if (this.pool.get(session.poolKey)?.declared?.sessionResume !== true) return;
     // The re-attach resets agent-side knob state to its defaults (observed:
     // claude-agent-acp rebuilds session config on load) — but the user asked
     // to change *roots*, nothing else. Re-seed the confirmed combination
@@ -1493,19 +1544,10 @@ export class SessionManager {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      let knobs: NormalizedKnobs;
-      if (via === "load") {
-        // plain null, not sealRun: the replay rebuilds the transcript
-        // wholesale and re-delivers the run's text — a flushed tail here
-        // would land on a block the reset is about to erase
-        session.openRun = null;
-        knobs = await this.loadSilently(sessionId, session.poolKey, session.agentId);
-      } else {
-        ({ knobs } = await this.attachSession({ via, sessionId }, session.poolKey, session.agentId));
-      }
+      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.poolKey, session.agentId);
       this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed);
-      this.log.info(`session ${sessionId}: roots re-applied via session/${via}`);
+      this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
     } catch (err) {
       // An involuntary detach like any other: the chips the view renders
       // must survive it (the next attach restores them).
@@ -1526,9 +1568,11 @@ export class SessionManager {
    * user-steered knob values (re-seeded via applySeed, silently skipped
    * where the fresh session doesn't offer them). */
   private async recreateEmpty(oldId: string, old: LiveSession): Promise<void> {
+    // `roots` = the user-added list, which is what the durable row carries;
+    // the wire gets the full composition (workspace folders included).
     const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
     const { sessionId, knobs } = await this.attachSession({ via: "new" }, old.poolKey, old.agentId, {
-      roots,
+      roots: this.rootsFor(oldId, this.cwd()),
     });
     // Sidebar-pointer semantics, NOT isActiveSession (which also counts
     // pinned panels): re-activating because a detached panel showed the
@@ -1864,8 +1908,12 @@ export class SessionManager {
         current.lastActivityAt = Date.now();
         if (current.turnSettled === turnSettled) current.turnSettled = null;
         if (current.rootsDirty) {
+          // Awaited on purpose: settleTurn drains the held queue, and a
+          // prompt firing while the resume is still in flight would run on
+          // the old list — the change the user made mid-turn must land
+          // before the next prompt goes out.
           current.rootsDirty = false;
-          void this.reapplyRoots(sessionId);
+          await this.reapplyRoots(sessionId);
         }
       }
       this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });

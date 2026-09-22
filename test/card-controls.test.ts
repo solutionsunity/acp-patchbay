@@ -14,7 +14,7 @@ import type {
 
 const ROWS: readonly CapabilityRowId[] = [
   "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation",
-  "roots.listChanged", "resources.subscribe", "prompt.image", "prompt.audio",
+  "resources.subscribe", "prompt.image", "prompt.audio",
   "prompt.embeddedContext", "session.fork", "session.load", "session.resume",
   "session.list", "session.delete", "session.close",
   "session.additionalDirectories", "mcp.http", "mcp.sse", "usage",

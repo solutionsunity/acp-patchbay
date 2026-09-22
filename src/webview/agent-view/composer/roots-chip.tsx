@@ -1,31 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Context roots: workspace folders are the always-active
-// baseline — fixed, non-removable, but shown so the count reflects reality.
-// `roots` is the removable, user-added external set, passed to the agent as
-// `additionalDirectories`. A change re-applies to the live session in place
-// (session/load or session/resume "set the complete list"); only an agent
-// declaring neither waits for the next reload/branch — and only then does
-// the note say so (`applyLive`).
+// Context roots: workspace folders are the always-active baseline — fixed,
+// non-removable, shown so the count reflects reality; the first is the
+// session cwd, the rest ride as `additionalDirectories`. `roots` is the
+// removable, user-added external set, on the same field. What the chip
+// says about delivery and adding comes from one pure gate
+// (roots-controls.ts), derived from the same declared facts the writers
+// hold — an agent that never advertised the field is told so, in the same
+// words the writer refuses with.
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import type { RootsControls } from "./roots-controls";
 
 export function RootsChip({
   sessionId,
   roots,
   workspaceRoots,
-  applyLive,
+  controls,
 }: {
   sessionId: string;
   roots: readonly string[];
   workspaceRoots: readonly string[];
-  applyLive: boolean;
+  controls: RootsControls;
 }) {
   const send = useActions();
   const count = workspaceRoots.length + roots.length;
+  // The cwd always reaches the agent (it is the cwd); every other row is
+  // delivered only where the field is — the label says which.
+  const rowLabel = (isCwd: boolean) => (isCwd || controls.delivered ? "workspace" : "not delivered");
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -37,10 +42,10 @@ export function RootsChip({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" side="top" className="w-auto min-w-56">
-        {workspaceRoots.map((r) => (
+        {workspaceRoots.map((r, i) => (
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
             <code>{r}</code>
-            <span className="text-muted-foreground">workspace</span>
+            <span className="text-muted-foreground">{rowLabel(i === 0)}</span>
           </div>
         ))}
         {roots.map((r) => (
@@ -62,13 +67,14 @@ export function RootsChip({
           variant="ghost"
           size="sm"
           className="w-full justify-start"
+          disabled={!controls.canAdd}
           onClick={() => send({ kind: "addContextRoot", sessionId })}
         >
           <b>+ Add folder…</b>
-          {!applyLive && (
-            <span className="text-muted-foreground">takes effect next reload/branch</span>
-          )}
         </Button>
+        {controls.note !== null && (
+          <div className="px-2 py-1 text-xs text-muted-foreground">{controls.note}</div>
+        )}
       </PopoverContent>
     </Popover>
   );

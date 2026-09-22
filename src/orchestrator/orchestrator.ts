@@ -621,9 +621,13 @@ export class Orchestrator {
       vscode.workspace.onDidCloseTextDocument(pushEditorContext),
       vscode.workspace.onDidChangeTextDocument(pushEditorContext), // dirty-flag flips
       vscode.workspace.onDidSaveTextDocument(pushEditorContext),
-      vscode.workspace.onDidChangeWorkspaceFolders(() =>
-        this.agentView.emit({ kind: "workspaceRootsChanged", roots: workspaceRootsView() }),
-      ),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        // The chip and the wire read the same folders: the view re-renders
+        // from reality, and every live session's additional directories are
+        // re-applied so the agent's list moves with it.
+        this.agentView.emit({ kind: "workspaceRootsChanged", roots: workspaceRootsView() });
+        void this.sessionManager.reapplyWorkspaceRoots().catch(this.logCatch("reapply workspace roots"));
+      }),
     );
 
     this.sessionManager = new SessionManager(
@@ -673,6 +677,7 @@ export class Orchestrator {
           ).catch((err: Error) => this.log.error(`session continuity ${sessionId} — ${err.message}`));
         },
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
+        workspaceRoots: workspaceRootsView,
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
         isDeleteUsed: (agentId) =>

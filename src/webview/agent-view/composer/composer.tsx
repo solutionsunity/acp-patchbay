@@ -22,6 +22,7 @@ import type { SessionTotals } from "../chat/view-model";
 import { FilesChip } from "./files-chip";
 import { ingestFiles } from "./ingress";
 import { composerControls } from "./composer-controls";
+import type { RootsControls } from "./roots-controls";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
 import { basename } from "./menus";
@@ -41,9 +42,9 @@ export function Composer(props: {
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
   workspaceRoots: readonly string[];
-  /** Whether a root change re-applies to the live session (agent declares
-   * session/load or session/resume) — drives the roots chip's honesty note. */
-  rootsApplyLive: boolean;
+  /** The roots chip's gate (roots-controls.ts): whether shown roots reach
+   * the agent, whether adding is live, and the one-line reason when not. */
+  rootsControls: RootsControls;
   /** Paths the orchestrator holds a first-touch baseline for — feeds the
    * files chip's diff-vs-open-file row behavior. */
   diffableFiles: ReadonlySet<string>;
@@ -181,7 +182,7 @@ export function Composer(props: {
               sessionId={sessionId}
               roots={props.contextRoots}
               workspaceRoots={props.workspaceRoots}
-              applyLive={props.rootsApplyLive}
+              controls={props.rootsControls}
             />
           )}
           {enabled && props.liveSelection !== null && (

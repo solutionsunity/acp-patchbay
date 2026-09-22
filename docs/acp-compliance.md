@@ -71,11 +71,11 @@ chapters (see §19).
 
 | Surface | Verdict | Notes |
 |---|---|---|
-| `session/new` | ✅ | `pool.ts:newSession`; cwd, mcpServers, additionalDirectories. |
+| `session/new` | ✅ | `pool.ts:newSession`; cwd, mcpServers, and `additionalDirectories` only when the agent advertises `sessionCapabilities.additionalDirectories` (client MUST — `pool.ts:dirsIfAdvertised`, one gate for new/load/resume/fork). |
 | `session/load` full-replay consumption | ✅ | Every replayed update kind is consumed (§9), with message-boundary fidelity per `messageId` (§8). Replay reduces silently into canonical state and lands in the webview as one wholesale swap (`loadSilently`/`ChannelHost.resync`); an `inFlight` guard keeps live prompt echoes from double-rendering. |
 | `session/resume` | ✅ | `pool.ts:resumeSession`; capability-gated on declared + used per the capability rule; an honest seam notice marks where the cached view ends and the agent's unreplayed memory continues (`session-manager.ts:resumeReattach`). |
 | `session/fork` | ✅ | Same adoption posture; `session.fork` capability row; native fork gates on *used*. |
-| Roots re-apply (`additionalDirectories` set-complete-list) | ✅ | `session-manager.ts:reapplyRoots` — the three-case rung (recreate / in-place load-or-resume / deferred to turn end) is a recorded design. |
+| Roots re-apply (`additionalDirectories` set-complete-list) | ✅ | `session-manager.ts:reapplyRoots` — the three-case rung (recreate on a zero-turn session / in place via `session/resume` only, never `load` / deferred to turn end and awaited before the held queue drains) is a recorded design; where no rung applies the add is refused at the writer (`session-manager.ts:canAddRoot`) and the roots chip says so. |
 
 ## 5. Session list / delete / close
 

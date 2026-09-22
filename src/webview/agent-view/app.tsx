@@ -14,6 +14,7 @@ import { Chat } from "./chat/chat";
 import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
+import { rootsControls } from "./composer/roots-controls";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
 import { QueueBand } from "./queue-band";
@@ -154,16 +155,14 @@ export function App({
         workspaceRoots={state.workspaceRoots}
         diffableFiles={derived.diffableFiles}
         fileDiffStats={active !== null ? (state.fileDiffStats[active.id] ?? {}) : {}}
-        rootsApplyLive={
-          // declared drives the mechanism itself (the continuation ladder is
-          // declared-gated), so the honesty note follows declared too; a
-          // session with nothing in it re-applies by recreation regardless
-          (active !== null &&
-            ((state.transcripts[active.id]?.length ?? 0) === 0 ||
-              state.capabilities[active.agentId]?.["session.load"]?.declared === true ||
-              state.capabilities[active.agentId]?.["session.resume"]?.declared === true)) ||
-          false
-        }
+        rootsControls={rootsControls({
+          advertised:
+            active !== null &&
+            state.capabilities[active.agentId]?.["session.additionalDirectories"]?.declared === true,
+          resumeDeclared:
+            active !== null && state.capabilities[active.agentId]?.["session.resume"]?.declared === true,
+          hasTurns: active !== null && (state.transcripts[active.id]?.length ?? 0) > 0,
+        })}
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}
         workspaceFiles={state.workspaceFiles}

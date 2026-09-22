@@ -60,7 +60,6 @@ describe("matrixFromDeclared", () => {
   it("elicitation and MCP-level rows are not declared until later phases", () => {
     const matrix = matrixFromDeclared(noDeclared);
     expect(matrix.elicitation).toEqual({ declared: false, used: false });
-    expect(matrix["roots.listChanged"]).toEqual({ declared: false, used: false });
     expect(matrix["resources.subscribe"]).toEqual({ declared: false, used: false });
   });
 

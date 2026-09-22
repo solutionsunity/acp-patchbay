@@ -16,7 +16,6 @@ const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
   { id: "fs.writeTextFile", label: "fs.writeTextFile" },
   { id: "terminal", label: "terminal" },
   { id: "elicitation", label: "elicitation" },
-  { id: "roots.listChanged", label: "roots.listChanged" },
   { id: "resources.subscribe", label: "resources.subscribe" },
   { id: "prompt.image", label: "prompt.image" },
   { id: "prompt.audio", label: "prompt.audio" },

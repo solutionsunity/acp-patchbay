@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- In a multi-root workspace every folder now reaches the agent. The first
+  folder was the session's working directory and the rest went nowhere,
+  while the roots chip counted them all. Folders beyond the first ride as
+  ACP additional directories — on session open, on every roots change, and
+  when a folder is added or removed while sessions are live — composed once
+  from the same facts the chip shows. Roots now follow the protocol's own
+  rules: the field is sent only to agents that advertise it (the spec's
+  MUST — it used to go to every agent), a change after the first turn
+  re-applies through `session/resume` only (a full `session/load` replay is
+  too high a price for a root), and where neither applies the chip says so
+  — "not delivered" rows on an agent without the capability, "add before
+  the first prompt" on one without resume — instead of counting a root that
+  never landed. A root added during a live turn now lands before the next
+  held prompt fires. The capability matrix's `roots.listChanged` row is
+  gone: an MCP-side placeholder ACP superseded before it was ever built. (#28)
 - A write proposal's diff card no longer ends silently at forty lines. The
   body is a bounded preview that now says how many lines it is not showing,
   and while the proposal is open the card offers "Open diff": the full change

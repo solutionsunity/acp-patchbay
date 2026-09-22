@@ -324,9 +324,9 @@ flowchart LR
 
 Rows (`CapabilityRowId`, protocol.ts) are **hand-picked** against the ACP spec's
 declared capability surface, not derived automatically: `fs.readTextFile` /
-`writeTextFile`, `terminal`, `elicitation`, `roots.listChanged`,
-`resources.subscribe`, `promptCapabilities.image` / `audio` / `embeddedContext`,
-`session.fork` / `load` / `resume`, `mcp.http` / `sse`, usage/context reporting,
+`writeTextFile`, `terminal`, `elicitation`, `resources.subscribe`,
+`promptCapabilities.image` / `audio` / `embeddedContext`, `session.fork` /
+`load` / `resume` / `additionalDirectories`, `mcp.http` / `sse`, usage/context reporting,
 concurrent-session behavior. A new ACP capability needs a row added here before it can show up
 at all — a deliberate scope decision (ACP's capability surface is still
 settling, and rows need human-curated meaning and a check strategy anyway, so a
@@ -636,7 +636,8 @@ read-only to the session layer, the seed's fallback, never its record.
 session (`stores/session-continuity.ts`, machine store) carries everything a
 window reload would otherwise lose and the wire cannot re-report: the
 agent-confirmed **knob combination** (agents reset knobs on load), user-added
-**context roots** (ACP has no read-back for `additionalDirectories` — and a
+**context roots** (`additionalDirectories` are read back only where
+`session/list` reports them, and that read-back is not yet consumed — and a
 re-attach *re-applies* the local list, so losing it would overwrite the
 agent's own copy too), the **held prompt queue**, prepared **context chips**
 (image bytes stay in the attachments stash; the row carries the file
@@ -690,10 +691,27 @@ The differentiator (the PRD's current-release scope), shipped complete:
   file counts while its document is open, the selection only while its tab
   is on screen.
 - **Context roots**: a session's roots are the workspace folders plus user-added
-  external folders (multi-repo work). Delivered protocol-native (`roots` +
-  `roots.listChanged` where declared; adapter fallback otherwise). Patchbay
-  passes roots and never indexes — retrieval depth is the agent's own engine,
-  and the UI never implies otherwise.
+  external folders (multi-repo work). Delivered protocol-native: the first
+  workspace folder is the session `cwd`; every other folder and every user-added
+  root rides as `additionalDirectories` — one composition in the session
+  manager feeds `session/new` and every re-apply, and the roots chip counts the
+  same two facts, so display and wire cannot disagree. The field crosses the
+  wire **only when the agent advertises
+  `sessionCapabilities.additionalDirectories`** (the spec's MUST for clients —
+  the pool holds it; a non-advertising agent gets no field, the chip labels
+  every row beyond the cwd "not delivered", and the matrix row is the fact).
+  After the first turn the one re-apply rung is `session/resume` (real memory,
+  no replay; it sets the complete list) — `session/load` is never used for a
+  root, a full replay being too high a price — so on an agent without resume a
+  root is refused at the writer once the session has turns, and the chip says
+  to add it before the first prompt; a zero-turn session re-mints itself for
+  free. A change during a live turn applies at turn end, before the held queue
+  drains. Workspace folders are read from reality at each composition, never
+  stored; only user-added roots persist. A folder added or removed at runtime
+  re-applies to every live session. Read-back exists where `session/list` is
+  declared (`SessionInfo.additionalDirectories`) and is not yet consumed.
+  Patchbay passes roots and never indexes — retrieval depth is the agent's own
+  engine, and the UI never implies otherwise.
 - **File operations go through ACP, not MCP**: the orchestrator advertises the `fs`
   capability, so `fs/read_text_file` serves live unsaved buffers and
   `fs/write_text_file` lands as a native diff the user accepts or rejects before
@@ -709,8 +727,11 @@ The differentiator (the PRD's current-release scope), shipped complete:
 | Capability | Native path | Fallback |
 |---|---|---|
 | `elicitation` | Elicitation request | Tool `request_user_input(schema)`; orchestrator renders the form, returns the answer as a tool result |
-| `roots.listChanged` | Push notification | Roots injected into the next `session/prompt` |
 | `resources.subscribe` | Live push | `get_workspace_state` tool; one turn of staleness accepted |
+
+Roots are not on this table: ACP carries them itself, on the session lifecycle
+(§ Context roots below), so the local MCP server never needed to learn them from
+the agent's MCP client.
 
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a

@@ -57,6 +57,9 @@ export interface FakeAgentScript {
   /** Lying mode: session/load 404s *and drops the live session* — observed
    * claude-agent-acp 0.57 behavior on a never-persisted sessionId. */
   failLoad?: boolean;
+  /** session/resume rejects and drops the session — the corpse-leaving
+   * variant on the resume rung (roots re-apply failure). */
+  failResume?: boolean;
   /** Modes offered at session/new (P8 knobs). */
   modes?: acp.SessionModeState | null;
   /** model/effort/etc. config options offered at session/new (P8 knobs). */
@@ -667,6 +670,10 @@ const app = acp
   .onRequest("session/resume", (ctx): acp.ResumeSessionResponse => {
     if (script.declare?.sessionCapabilities?.resume == null) {
       throw acp.RequestError.methodNotFound("session/resume");
+    }
+    if (script.failResume === true) {
+      sessions.delete(ctx.params.sessionId); // the corpse-leaving variant
+      throw acp.RequestError.invalidRequest(`Resource not found: ${ctx.params.sessionId}`);
     }
     // Context restored, no replay — the defining contrast with session/load.
     const { sessionId, cwd } = ctx.params;

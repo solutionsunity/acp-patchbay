@@ -6,8 +6,9 @@
 // prompt queue, prepared-but-unsent context chips (image bytes stay in the
 // attachments stash; the row carries the file reference), and the composer
 // draft. None of it is a cache of readable reality: agents reset knob
-// state on session/load, ACP has no read-back for additionalDirectories,
-// and the rest is user-staged input that exists nowhere else — the same
+// state on session/load, additionalDirectories are read back only where
+// session/list reports them (not yet consumed), and the rest is
+// user-staged input that exists nowhere else — the same
 // not-a-cache justification as the auth locks. One lifetime contract:
 // rows leave with their session (close, the agent's own session/list no
 // longer reporting it, agent removal, zero-turn recreate, erase-all).
