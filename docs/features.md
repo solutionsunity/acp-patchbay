@@ -162,14 +162,6 @@ deliverable, owed before implementation.
   return later as an opt-in feature; deliberately not built until the need is
   demonstrated.)
 
-### Rules, skills, commands
-
-- User can see and edit each agent's rules, skills, and commands from Settings —
-  the files stay in the agent's own native locations, and the agent reads them
-  from the workspace itself; patchbay never passes them down.
-- The current release maps Claude Code and Augment locations; an unmapped agent
-  is shown as such — never silently skipped.
-
 ### Permissions
 
 - User can define permission rules once — command allowlists, file-write scope —

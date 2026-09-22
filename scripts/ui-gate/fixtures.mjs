@@ -159,9 +159,9 @@ export function settingsState() {
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false },
     ],
     registryAgents: [
-      { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null, assetsMapped: true },
-      { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null, assetsMapped: false },
-      { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login", assetsMapped: true },
+      { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null },
+      { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null },
+      { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login" },
     ],
     capabilities: {
       claude: {
@@ -177,7 +177,7 @@ export function settingsState() {
     },
     capabilitiesResetAt: {}, agentProtocol: { claude: 1 }, authMethods: {},
     commandRules: [], machineCommandRules: [], fileWriteScope: "workspace",
-    auditTail: [], integrationRegistry: catalogEntries, integrations: [], connectFlow: {}, assets: {},
+    auditTail: [], integrationRegistry: catalogEntries, integrations: [], connectFlow: {},
     agentConfigs: [{
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       env: { API_KEY: "sk-fixture" }, processPolicy: "auto", defaults: {}, registrySource: null, lastSeenVersion: null,

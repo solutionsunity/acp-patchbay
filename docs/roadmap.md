@@ -21,10 +21,13 @@ release by momentum.
   true gating for uncooperative agents; heavy on paths, terminals, and UX, so it
   earns its way in later.
 
-- **Shared source for rules/skills/commands** — one base directory with
-  compatibility symlinks into each agent's native locations (the
-  [dotagent](https://github.com/solutionsunity/dotagent) pattern), or full supply
-  by patchbay. The current release proves the management surface first.
+- **Rules, skills, commands delivery** — the user authors them once and patchbay
+  supplies each agent in that agent's own standard (a per-agent mapping earned by
+  verifying each registry agent's layout, or a shared base with compatibility
+  symlinks into native locations — the
+  [dotagent](https://github.com/solutionsunity/dotagent) pattern). Bar to enter:
+  ACP, or a cross-agent standard the registry's agents actually honor, carries a
+  channel for it. Until then the files stay the agent's own, read from `cwd`.
 
 - **Localization** — internationalize the extension along two axes: content
   correctness (RTL/bidi, CJK layout) for passthrough text that is never ours to

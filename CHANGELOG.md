@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Removed: the Settings section "Rules · skills · commands" and the capability
+  matrix's "locations mapped" row. It listed files the user already manages in
+  each agent's own native locations, which is a mirror, not a capability. The
+  feature as intended is delivery — author once, patchbay supplies each agent
+  in its own standard — and ACP carries no channel for it yet; it returns when
+  one exists (roadmap). Skills never appeared in the old list because the
+  resolver kept only files and a skill is a directory; removal supersedes the
+  fix. (#26)
 - Attaching a file with the picker no longer corrupts anything that is not
   UTF-8 text. A picked file used to be decoded as text into a chip, so an
   image, a PDF, or an archive reached the agent as mojibake with no error.

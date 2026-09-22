@@ -340,15 +340,6 @@ td.cap {
   color: var(--pb-text-faint);
 }
 
-tr.sep td {
-  background: var(--pb-panel);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--pb-text-faint);
-  text-align: left;
-}
-
 .legend {
   display: flex;
   gap: 18px;

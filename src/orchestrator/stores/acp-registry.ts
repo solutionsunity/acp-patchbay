@@ -3,8 +3,8 @@
 
 // Client for the official ACP agent registry (agentclientprotocol/registry)
 // — THE agent source (the pre-registry roster overlay is retired; patchbay's
-// own curation lives in code tables: asset-locations.ts ASSET_LOCATIONS).
-// Cached to disk (globalStorageUri —
+// own per-agent curation lives in code tables, meta.ts META_EXTENSIONS being
+// the standing one). Cached to disk (globalStorageUri —
 // per-machine, never synced) so a cold start or an offline CDN still has
 // agents to show; refreshed at activation and on a slow timer. This is a
 // static-data fetch with no agent involved, so the "never on a schedule"
@@ -15,7 +15,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RegistryAgentView } from "../../shared/protocol";
-import { ASSET_LOCATIONS } from "../asset-locations";
 
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const CACHE_FILENAME = "acp-registry-cache.json";
@@ -133,7 +132,6 @@ export function registryAgentView(
     name: agent.name,
     description: agent.description,
     icon: icons[agent.id] ?? null,
-    assetsMapped: agent.id in ASSET_LOCATIONS,
     unavailableReason: "error" in resolved ? resolved.error : null,
     version: agent.version,
   };

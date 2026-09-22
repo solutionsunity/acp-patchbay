@@ -327,9 +327,7 @@ declared capability surface, not derived automatically: `fs.readTextFile` /
 `writeTextFile`, `terminal`, `elicitation`, `roots.listChanged`,
 `resources.subscribe`, `promptCapabilities.image` / `audio` / `embeddedContext`,
 `session.fork` / `load` / `resume`, `mcp.http` / `sse`, usage/context reporting,
-concurrent-session behavior. One patchbay-side row rides along: rules/skills/
-commands locations (mapped / not mapped), sourced from the asset-location code
-table (`ASSET_LOCATIONS`, asset-locations.ts) rather than the handshake. A new ACP capability needs a row added here before it can show up
+concurrent-session behavior. A new ACP capability needs a row added here before it can show up
 at all — a deliberate scope decision (ACP's capability surface is still
 settling, and rows need human-curated meaning and a check strategy anyway, so a
 schema-driven dynamic list wouldn't remove the manual step), not a limitation.
@@ -456,8 +454,9 @@ Stance: **core ACP is the floor; extensions are per-agent adapter knowledge**,
 recorded in code tables (meta.ts) and consumed only when a features bullet requires what
 core ACP cannot carry. A consumed extension becomes a capability row — present by
 observation, used like everything else. Vendor depth that never reaches the
-wire (hooks, subagent definitions, skills) is files in `cwd` — the rules/skills/
-commands surface is its channel, no protocol involved.
+wire (hooks, subagent definitions, skills, rules, commands) is files in `cwd`
+the agent reads itself — patchbay has no surface for them and no protocol is
+involved (§ Rules, skills, commands).
 
 ### Wire-extension modules
 
@@ -490,7 +489,7 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   silent behavioral quirk (nothing on the wire announces it before it bites
   — e.g. Auggie's first-session mcpServers latch) cannot be shape-gated, so
   its extension module carries an id-keyed curated entry, the
-  ASSET_LOCATIONS discipline: earned by reproduction, version-stamped,
+  META_EXTENSIONS discipline: earned by reproduction, version-stamped,
   dated. Core still never names the vendor — the id lives in the module.
 - **Deliberately NOT a hook/plugin framework.** Function-extension systems
   (Odoo-style inheritance, hook buses) earn their complexity from third-party
@@ -771,8 +770,8 @@ mechanism — MCP servers routed to agents:
 - **The agent list is NOT shipped data**: the official ACP registry is the one
   agent source (identity, launch, icon, live-fetched + disk-cached), and
   patchbay's own per-agent curation lives in code tables where every other house
-  knowledge does — `ASSET_LOCATIONS` (asset-locations.ts), `META_EXTENSIONS`
-  (meta.ts). The custom-command escape hatch covers anything the registry omits.
+  knowledge does — `META_EXTENSIONS` (meta.ts), knob quirks (knobs.ts). The
+  custom-command escape hatch covers anything the registry omits.
 - **Custom escape hatch**: add any MCP server (command or URL, with auth).
 - **Capability-conditional transport**: an agent declaring `mcp.http` gets the
   remote server passed through as a real `type: "http"` entry — its own MCP
@@ -817,23 +816,18 @@ flowchart TD
 
 ## Rules, skills, commands
 
-The current release is management, not delivery: the files live in each agent's
-**own native locations** (`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them from
-`cwd` itself — patchbay never passes them down. Settings is where the user sees and
-edits them, per agent, in place. No patchbay dialect (prd: not a new protocol), no
-injection machinery.
+Not a patchbay surface. The files live in each agent's **own native locations**
+(`.claude/`, `CLAUDE.md`, `.augment/`, …) and the agent reads them from `cwd`
+itself; users already manage them per agent, or generalize across agents with a
+tool built for that (the [dotagent](https://github.com/solutionsunity/dotagent)
+pattern). The intended feature is delivery — the user authors once and patchbay
+supplies each agent in its own standard — and ACP carries no channel for it
+(roadmap: Rules, skills, commands delivery).
 
-- The per-agent location mapping lives in the `ASSET_LOCATIONS` code table; the
-  current release ships Claude Code and Augment mappings — the agents in real use. An unmapped agent is shown as
-  such — never silently skipped, never guessed.
 - Commands the agent advertises back (`available_commands_update`) appear in the
   chat input as autocomplete and are sent as ordinary prompts. This is also the
   only compaction lever besides a fresh session: an advertised `/compact` is just
   one of these commands.
-- Parked (a future release), stated as a scope decision: a shared base with
-  compatibility symlinks into each agent's locations (the
-  [dotagent](https://github.com/solutionsunity/dotagent) pattern) or full supply
-  by patchbay. The current release proves the management surface first.
 
 ## Permission broker
 

@@ -7,8 +7,8 @@ behavior, and the communication trail with its vendor. This is the
 public repo), the dossier section is what gets handed over.
 
 **Division of knowledge, held strictly:** anything patchbay *consumes* lives
-in code tables (`META_EXTENSIONS` in meta.ts, `ASSET_LOCATIONS` in
-asset-locations.ts, knob quirks in knobs.ts) — machine-actionable mechanism.
+in code tables (`META_EXTENSIONS` in meta.ts, knob quirks in knobs.ts) —
+machine-actionable mechanism.
 These files hold human-communicable evidence. Each note names its module; code
 does not name the note — the binding is held from the doc side. One direction,
 never two truths.

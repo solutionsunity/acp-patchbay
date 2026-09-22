@@ -81,7 +81,7 @@ orchestrator layer on top:
    current file, diagnostics, or any other file; pasting an image just works.
 
 Settings (gear icon) is where the capability matrix, integrations, permission
-rules, and agent / session / rules-skills-commands management live.
+rules, and agent / session management live.
 
 ## Uninstalling cleanly
 

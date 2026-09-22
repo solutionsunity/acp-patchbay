@@ -146,8 +146,7 @@ Left nav + cards, grouped in three non-collapsing headers that *are* the placeme
 contract: **This machine** (Agents · Capability matrix · MCP Servers · Preferences
 — everything global to this machine), **Trust** (Permissions · Audit · Data — the
 one trust surface: the contract, the evidence, what's held and the way out; one
-verb per page), **This workspace** (Rules · skills · commands — files in the
-workspace itself). Groups don't collapse: eight items don't earn the interaction.
+verb per page). Groups don't collapse: seven items don't earn the interaction.
 Nav footer restates the credential rule: SecretStorage only.
 
 ### Agents
@@ -201,8 +200,7 @@ state.
 ### Capability matrix
 
 Legend ● ◌ — · one column per agent · a reconnected agent wears a `reset <time>`
-chip (used resets on every reconnect). Protocol rows from the handshake; a
-separated **patchbay-side** row (`rules/skills/commands locations`). Rows are
+chip (used resets on every reconnect). Protocol rows from the handshake. Rows are
 hand-picked against the ACP spec's declared capability surface, not derived
 automatically — noted above the table. Cell tooltips explain consequences ("not
 declared — this capability is unavailable"). Footer note: behavior rows get marked
@@ -289,10 +287,3 @@ credentials, caches, rules, session records permanently) and the reach limit (ot
 workspaces' records need their own window). Explicit and user-triggered, never a
 lifecycle side effect.
 
-### Rules · skills · commands
-
-Per-agent cards for **mapped** agents: native paths (mono) + counts + ✎ edit in
-place — files stay in the agent's own locations, the agent reads its own `cwd`.
-Unmapped agent card states it plainly (`not mapped — locations unknown, never
-guessed`). Footer note: shared source / symlinks (dotagent pattern) is a future
-version.

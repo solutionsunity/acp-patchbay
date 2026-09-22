@@ -1,5 +1,5 @@
 // The ACP registry is the one agent source; patchbay's own curation lives
-// in code tables (ASSET_LOCATIONS, KNOWN_BYPASS_BRIDGES). registryAgentView
+// in code tables (META_EXTENSIONS, knob quirks). registryAgentView
 // is the registry × curation × platform join — tested against a fixture
 // payload (network-free, same fixture philosophy as the fake agent).
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,7 +30,6 @@ describe("registryAgentView", () => {
       name: "Claude Agent",
       description: "ACP wrapper for Anthropic's Claude",
       icon: "data:image/svg+xml;base64,QQ==",
-      assetsMapped: true, // ASSET_LOCATIONS ships a claude-acp mapping
       unavailableReason: null,
       version: "0.56.0",
     });
@@ -41,9 +40,8 @@ describe("registryAgentView", () => {
     expect(view.unavailableReason).toContain("no distribution");
   });
 
-  it("an uncurated agent is honestly unmapped and icon-less", () => {
+  it("an uncurated agent is honestly icon-less", () => {
     const view = registryAgentView(registryAgent({ id: "brand-new-agent" }), {});
-    expect(view.assetsMapped).toBe(false);
     expect(view.icon).toBeNull();
   });
 });

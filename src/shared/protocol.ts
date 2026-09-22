@@ -47,8 +47,7 @@ export type SettingsSectionId =
   | "preferences"
   | "permissions"
   | "audit"
-  | "data"
-  | "assets";
+  | "data";
 
 export type Action =
   /** Opens (or reveals) the Settings panel; `section` additionally navigates
@@ -186,8 +185,6 @@ export type Action =
   /** Copies the server as a `{"mcpServers": {name: entry}}` document — the
    * shape `importIntegrationsJson` reads back and other clients take. */
   | { kind: "copyIntegrationJson"; integrationId: string }
-  | { kind: "refreshAgentAssets"; agentId: string }
-  | { kind: "openAssetFile"; agentId: string; path: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
   /** Open a file in the editor by absolute path — the read-out strip's
@@ -442,29 +439,6 @@ export interface ConnectFlowView {
   reason?: string;
 }
 
-// ── rules, skills, commands ─────────────────────────────────────────────────
-// v1 is management, not delivery: files live in each agent's own native
-// locations; patchbay lists what's on disk and lets the user jump to it —
-// real editing happens in the normal VS Code editor, never a webview dialect.
-
-export interface AssetFileView {
-  /** Relative to the workspace root. */
-  path: string;
-}
-
-export interface AssetCategoryView {
-  /** null = this category isn't mapped for this agent (asset-locations.ts) —
-   * shown as unmapped, never guessed. */
-  files: readonly AssetFileView[] | null;
-}
-
-export interface AgentAssetsView {
-  agentId: string;
-  rules: AssetCategoryView;
-  commands: AssetCategoryView;
-  skills: AssetCategoryView;
-}
-
 // ── revision application (view side; pure, unit-tested) ─────────────────────
 
 export interface Versioned<S> {
@@ -613,9 +587,6 @@ export interface RegistryAgentView {
    * already-authored `img-src data:` CSP and never talks to the CDN itself.
    * Null before the first successful fetch. */
   icon: string | null;
-  /** rules/skills/commands locations known for this agent (asset-locations.ts
-   * code table). */
-  assetsMapped: boolean;
   /** Not addable right now — no distribution published for this platform.
    * Shown on the Add Agent picker, never silently hidden. */
   unavailableReason: string | null;
@@ -2287,8 +2258,6 @@ export interface SettingsState {
    * flight or just failed; cleared once `integrationsChanged` reports it
    * connected. */
   connectFlow: Readonly<Record<string, ConnectFlowView>>;
-  /** Keyed by agentId — populated as each connects (and on-demand refresh). */
-  assets: Readonly<Record<string, AgentAssetsView>>;
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as registry/custom (`{ configuredId }`). */
@@ -2349,7 +2318,6 @@ export const initialSettingsState: SettingsState = {
   integrationRegistry: [],
   integrations: [],
   connectFlow: {},
-  assets: {},
   agentConfigs: [],
   sessionsActiveToday: 0,
   agentKnobs: {},
@@ -2378,7 +2346,6 @@ export type SettingsEvent =
   /** In-flight/failed connect state cleared without an outcome — the
    * user cancelled a browser flow that will never answer. */
   | { kind: "integrationConnectResolved"; registryId: string }
-  | { kind: "agentAssetsChanged"; assets: AgentAssetsView }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
@@ -2420,7 +2387,6 @@ export function reduceSettings(
         capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
         agentProtocol: dropKey(state.agentProtocol, event.agentId),
         authMethods: dropKey(state.authMethods, event.agentId),
-        assets: dropKey(state.assets, event.agentId),
         agentKnobs: dropKey(state.agentKnobs, event.agentId),
         verifyingAgents: dropKey(state.verifyingAgents, event.agentId),
       };
@@ -2486,8 +2452,6 @@ export function reduceSettings(
           [event.registryId]: { status: "failed", reason: event.reason },
         },
       };
-    case "agentAssetsChanged":
-      return { ...state, assets: { ...state.assets, [event.assets.agentId]: event.assets } };
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };
     case "sessionStatsChanged":
@@ -2517,7 +2481,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "integrationConnectStarted",
   "integrationConnectFailed",
   "integrationConnectResolved",
-  "agentAssetsChanged",
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",

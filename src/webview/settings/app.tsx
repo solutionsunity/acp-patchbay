@@ -11,7 +11,6 @@ import { useActions } from "../shared/actions";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
 import { AgentsSection } from "./agents";
-import { AssetsSection } from "./assets";
 import { AuditSection } from "./audit";
 import { DataSection } from "./data";
 import { IntegrationsSection } from "./integrations";
@@ -22,9 +21,8 @@ import { PreferencesSection } from "./preferences";
 /** Grouped by what the group *is*, not by theme: "This machine" is what's
  * global to this machine (the wiring — agents, integrations, the matrix
  * observing them — and behavior preferences; machine store/SecretStorage),
- * "Trust" is the one trust surface, "This workspace" is what lives
- * in the workspace itself (asset files the agent reads from its own cwd).
- * The nav teaches the placement contract instead of captioning it. */
+ * "Trust" is the one trust surface. The nav teaches the placement contract
+ * instead of captioning it. */
 const NAV_GROUPS = [
   {
     label: "This machine",
@@ -46,10 +44,6 @@ const NAV_GROUPS = [
       { id: "audit", icon: "eye", label: "Audit" },
       { id: "data", icon: "database", label: "Data" },
     ],
-  },
-  {
-    label: "This workspace",
-    items: [{ id: "assets", icon: "note", label: "Rules · skills · commands" }],
   },
 ] as const satisfies ReadonlyArray<{
   label: string;
@@ -172,13 +166,6 @@ export function App({ state }: { state: SettingsState }) {
             state={state}
             onRefresh={() => send({ kind: "refreshDataInventory" })}
             onEraseAll={() => send({ kind: "eraseAllData" })}
-          />
-        )}
-        {section === "assets" && (
-          <AssetsSection
-            state={state}
-            onRefresh={(agentId) => send({ kind: "refreshAgentAssets", agentId })}
-            onOpen={(agentId, path) => send({ kind: "openAssetFile", agentId, path })}
           />
         )}
       </main>

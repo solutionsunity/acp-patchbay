@@ -27,7 +27,6 @@ import {
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
-import { ASSET_LOCATIONS, resolveAgentAssets, type FsLike } from "./asset-locations";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
 import { eraseAllData } from "./erase-all";
@@ -1359,40 +1358,6 @@ export class Orchestrator {
     }
   }
 
-  /** vscode.workspace.fs, shaped to asset-locations.ts's vscode-free FsLike
-   * so the resolution logic itself stays unit-testable. */
-  private readonly assetFs: FsLike = {
-    stat: async (path) => {
-      try {
-        const s = await vscode.workspace.fs.stat(vscode.Uri.file(path));
-        return { isDirectory: (s.type & vscode.FileType.Directory) !== 0 };
-      } catch {
-        return null; // not present in this workspace — an honest outcome, not an error
-      }
-    },
-    readdir: async (path) => {
-      const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(path));
-      return entries.map(([name, type]) => ({ name, isDirectory: (type & vscode.FileType.Directory) !== 0 }));
-    },
-  };
-
-  /** Rules/skills/commands: v1
-   * is management, not delivery — lists what's on disk per the asset table's
-   * mapping, an unmapped agent shown as such, never guessed. Runs on every
-   * connect and on the Settings section's explicit refresh. */
-  private async refreshAgentAssets(agentId: string): Promise<void> {
-    // Keyed by the registry id when the config records one (heals configs
-    // whose own id predates the registry naming), the agent id otherwise.
-    const key = this.agentConfigs.get(agentId)?.registrySource?.registryId ?? agentId;
-    const assets = await resolveAgentAssets(
-      this.assetFs,
-      this.workspaceCwd,
-      agentId,
-      ASSET_LOCATIONS[key] ?? null,
-    );
-    this.settings.emit({ kind: "agentAssetsChanged", assets });
-  }
-
   /** A rendered mermaid SVG, opened as an editor-area panel — the agent
    * view's column is narrow (even the in-chat fullscreen stops at it); the
    * files area is where a diagram can breathe. Pan/zoom is hand-rolled
@@ -1499,14 +1464,6 @@ export class Orchestrator {
       vscode.Uri.file(path),
       `${name} — since first agent touch (this session)`,
     );
-  }
-
-  /** Real editing happens in VS Code's own editor, never a webview dialect
-   * — Settings is a navigational index onto files
-   * that already live in the agent's own native locations. */
-  private openAssetFile(path: string): void {
-    const abs = vscode.Uri.file(join(this.workspaceCwd, path));
-    void vscode.window.showTextDocument(abs);
   }
 
   /** Native notification mirroring the inline card, shown only when the
@@ -1876,7 +1833,6 @@ export class Orchestrator {
     const env = await this.agentEnv.get(spec.agentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
     await this.pool.connect(merged);
-    void this.refreshAgentAssets(spec.agentId);
     void this.warnOnPathDivergence(merged);
   }
 
@@ -2315,9 +2271,6 @@ export class Orchestrator {
       case "copyIntegrationJson":
         void this.copyIntegrationJson(action.integrationId);
         break;
-      case "refreshAgentAssets":
-        void this.refreshAgentAssets(action.agentId);
-        break;
       case "openToolCallDiff":
         void this.openToolCallDiff(action.sessionId, action.toolCallId, action.path).catch(
           this.logCatch(`openToolCallDiff ${action.path}`),
@@ -2330,9 +2283,6 @@ export class Orchestrator {
         // the webviews' own runtime errors — surfaced here so the Output
         // channel is the durable record behind the in-view errors chip
         this.log.error(`webview ${action.view}: ${action.message}`);
-        break;
-      case "openAssetFile":
-        this.openAssetFile(action.path);
         break;
       case "openFile":
         // read-out strip files panel — path is absolute (tool-call locations)
