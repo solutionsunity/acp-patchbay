@@ -84,6 +84,7 @@ edits) get no ± — absence over fake.
 | Tool call | 🛠 card | title + spinner while running → ✓/✗; collapsible |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header |
 | Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when the view is hidden the same request surfaces as a native notification |
+| Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool |
 | Diff | 📝 card | file + `+n −m`, a bounded body preview that states how many lines it omits, and **Open diff** (VS Code's own diff editor, current vs proposed) while the proposal is open; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible |
 | Crash banner | ⚠ red strip | shown the moment the agent dies; `Restart` is the one action; after restart, the continuation is labeled |
 

@@ -69,7 +69,7 @@ class FakeEditorStateHost {
         return [{ file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" }];
       case "requestUserInput": {
         const realSessionId = this.contextTokenToSession.get(req.sessionId) ?? req.sessionId;
-        return { resolvedFor: realSessionId };
+        return { action: "accept", content: { resolvedFor: realSessionId } };
       }
       default:
         return null;

@@ -520,3 +520,23 @@ describe("saved roots (issue #32) — one stored truth, both channels", () => {
     expect(reduceSettings(initialSettingsState, event).savedRoots).toEqual(savedRoots);
   });
 });
+
+describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
+  it("a resolved card says which of the three answers the user gave", () => {
+    const asked: AgentViewEvent = {
+      kind: "elicitationRequested",
+      sessionId: "s1",
+      blockId: "e1",
+      message: "Which database?",
+      fields: [{ name: "db", type: "string", required: true }],
+    };
+    for (const outcome of ["accepted", "declined", "cancelled"] as const) {
+      const state = replay(initialAgentViewState, [
+        asked,
+        { kind: "elicitationResolved", sessionId: "s1", blockId: "e1", outcome },
+      ]);
+      const block = state.transcripts.s1!.find((b) => b.kind === "elicitation");
+      expect(block?.kind === "elicitation" && block.resolution).toEqual({ outcome });
+    }
+  });
+});

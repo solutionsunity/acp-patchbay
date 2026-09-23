@@ -317,3 +317,62 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     expect(broker.proposedDiff(proposed.blockId)).toBeNull();
   });
 });
+
+// Elicitation rides the same broker path as every other gated ask (one
+// card language): the block goes out, the user's answer comes back in the
+// wire's own vocabulary, and a cancelled turn answers it like any other
+// pending request.
+describe("PermissionBroker.askElicitation — the agent asks the user", () => {
+  const form = {
+    message: "Which database?",
+    fields: [{ name: "db", type: "string" as const, required: true }],
+  };
+
+  it("emits the card and answers with what the user typed", async () => {
+    const { broker, events } = harness();
+    const answer = broker.askElicitation("s1", form);
+    const asked = events.find((e) => e.kind === "elicitationRequested");
+    expect(asked).toMatchObject({ sessionId: "s1", message: "Which database?" });
+    const blockId = (asked as { blockId: string }).blockId;
+
+    broker.resolveElicitation(blockId, { action: "accept", content: { db: "prod" } });
+    expect(await answer).toEqual({ action: "accept", content: { db: "prod" } });
+    expect(events.at(-1)).toMatchObject({
+      kind: "elicitationResolved",
+      blockId,
+      outcome: "accepted",
+    });
+  });
+
+  it("declining and cancelling are different answers — the agent learns which", async () => {
+    const { broker, events } = harness();
+    const declined = broker.askElicitation("s1", form);
+    broker.resolveElicitation((events.at(-1) as { blockId: string }).blockId, { action: "decline" });
+    expect(await declined).toEqual({ action: "decline" });
+    expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "declined" });
+
+    const cancelled = broker.askElicitation("s1", form);
+    broker.resolveElicitation(
+      (events.filter((e) => e.kind === "elicitationRequested").at(-1) as { blockId: string }).blockId,
+      { action: "cancel" },
+    );
+    expect(await cancelled).toEqual({ action: "cancel" });
+    expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "cancelled" });
+  });
+
+  it("a stopped turn answers every elicitation it left open — never a dangling request", async () => {
+    const { broker, events } = harness();
+    const answer = broker.askElicitation("s1", form);
+    const other = broker.askElicitation("s2", form);
+    broker.cancelPending("s1");
+    expect(await answer).toEqual({ action: "cancel" });
+    expect(events.some((e) => e.kind === "elicitationResolved" && e.sessionId === "s1")).toBe(true);
+    // s2's ask belongs to another session's turn and stays open
+    let settled = false;
+    void other.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    broker.cancelPending("s2");
+    await other;
+  });
+});

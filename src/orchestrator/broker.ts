@@ -20,7 +20,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, sep } from "node:path";
-import type { AgentViewEvent, PermissionOptionView } from "../shared/protocol";
+import type {
+  AgentViewEvent,
+  ElicitationAnswer,
+  ElicitationField,
+  PermissionOptionView,
+} from "../shared/protocol";
 import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
@@ -71,6 +76,14 @@ interface Pending {
   resolve(optionId: string): void;
 }
 
+/** An open elicitation: the session it belongs to, and the answer its
+ * waiting caller is owed. Same bookkeeping as a permission ask — a
+ * question on the wire is always owed an answer. */
+interface PendingAsk {
+  sessionId: string;
+  answer(answer: ElicitationAnswer): void;
+}
+
 /** Resolution sentinel for a turn-cancelled request — never a real optionId
  * (agents mint their own ids; this shape is patchbay-reserved). */
 const TURN_CANCELLED = "__patchbay-turn-cancelled__";
@@ -82,6 +95,7 @@ export class PermissionBroker {
    * the editor's own diff view while the card shows a bounded preview.
    * Never persisted; dropped the moment the proposal resolves. */
   private proposals = new Map<string, { path: string; oldText: string; newText: string }>();
+  private asks = new Map<string, PendingAsk>();
 
   constructor(
     private readonly rules: PermissionRulesStore,
@@ -124,6 +138,54 @@ export class PermissionBroker {
     return this.proposals.get(blockId) ?? null;
   }
 
+  /** The agent wants structured input from the user: the card goes out and
+   * this resolves when the user answers it. Every producer rides this —
+   * the agent's own `elicitation/create` and the local MCP server's
+   * question tool — so there is one card language and one place that owes
+   * an answer. Declining and cancelling are distinct answers, carried
+   * back as the wire names them. */
+  askElicitation(
+    sessionId: string,
+    form: { message: string; fields: readonly ElicitationField[] },
+  ): Promise<ElicitationAnswer> {
+    const blockId = newBlockId("elicit");
+    this.hooks.emit({
+      kind: "elicitationRequested",
+      sessionId,
+      blockId,
+      message: form.message,
+      fields: form.fields,
+    });
+    return new Promise((resolve) => {
+      this.asks.set(blockId, {
+        sessionId,
+        answer: (answer) => {
+          this.hooks.emit({
+            kind: "elicitationResolved",
+            sessionId,
+            blockId,
+            outcome:
+              answer.action === "accept"
+                ? "accepted"
+                : answer.action === "decline"
+                  ? "declined"
+                  : "cancelled",
+          });
+          resolve(answer);
+        },
+      });
+    });
+  }
+
+  /** The user answered an elicitation card. Unknown id = already answered
+   * (a stopped turn got there first) — a no-op, never a second answer. */
+  resolveElicitation(blockId: string, answer: ElicitationAnswer): void {
+    const ask = this.asks.get(blockId);
+    if (ask === undefined) return;
+    this.asks.delete(blockId);
+    ask.answer(answer);
+  }
+
   /** Resolves a user's click on a permission or diff card. */
   resolve(requestId: string, optionId: string): void {
     this.pending.get(requestId)?.resolve(optionId);
@@ -132,13 +194,20 @@ export class PermissionBroker {
 
   /** Turn cancellation duty (an ACP MUST): every pending
    * session/request_permission for the session resolves with the cancelled
-   * outcome — the agent is never left hanging on a stopped turn. Same duty
-   * when the session is closed under an in-flight turn. */
+   * outcome, and every open elicitation is cancelled — the agent is never
+   * left hanging on a stopped turn. Same duty when the session is closed
+   * under an in-flight turn. */
   cancelPending(sessionId: string): void {
     for (const [requestId, p] of [...this.pending]) {
       if (p.sessionId !== sessionId) continue;
       this.pending.delete(requestId);
       p.resolve(TURN_CANCELLED);
+    }
+    // An elicitation the stopped turn left open is owed an answer too —
+    // the user dismissed it by stopping, which is exactly `cancel`.
+    for (const [blockId] of [...this.asks]) {
+      if (this.asks.get(blockId)?.sessionId !== sessionId) continue;
+      this.resolveElicitation(blockId, { action: "cancel" });
     }
   }
 

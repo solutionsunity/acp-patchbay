@@ -37,6 +37,10 @@ export type TurnStep =
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
   | { type: "echoRoots" }
+  /** Asks the user through ACP elicitation, then echoes what came back —
+   * only when the client declared the mode, which is the spec's own rule
+   * for an agent. */
+  | { type: "elicit"; message: string; requestedSchema?: unknown }
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> }
   | { type: "infoUpdate"; title: string };
 
@@ -343,6 +347,34 @@ async function runTurn(
         });
         break;
       }
+      case "elicit": {
+        const declared = (clientCapabilities as { elicitation?: { form?: unknown } } | null)?.elicitation;
+        if (declared?.form == null) {
+          await emitUpdate(cx, sessionId, cwd, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "elicitation: client declares no form mode" },
+          });
+          break;
+        }
+        const response = await cx.request(acp.methods.client.elicitation.create, {
+          mode: "form",
+          sessionId,
+          message: step.message,
+          requestedSchema: (step.requestedSchema ?? {
+            type: "object",
+            properties: { answer: { type: "string", title: "Answer" } },
+            required: ["answer"],
+          }) as acp.ElicitationSchema,
+        });
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `elicitation: ${response.action} ${JSON.stringify((response as { content?: unknown }).content ?? null)}`,
+          },
+        });
+        break;
+      }
       case "echoRoots": {
         // Proves additionalDirectories actually reached session/new|load|fork
         // on the wire (P12) — the fake agent stored whatever it was given.
@@ -476,10 +508,14 @@ async function callMcpTool(
 }
 
 let authenticated = false;
+/** What the client declared at initialize — an agent may only use a
+ * capability the client claimed, so the scripted steps check it. */
+let clientCapabilities: acp.ClientCapabilities | null = null;
 
 const app = acp
   .agent({ name: script.name ?? "fake-agent" })
-  .onRequest("initialize", (): acp.InitializeResponse => {
+  .onRequest("initialize", (ctx): acp.InitializeResponse => {
+    clientCapabilities = ctx.params.clientCapabilities ?? null;
     if (script.exitAfterMs !== undefined) setTimeout(() => process.exit(1), script.exitAfterMs);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,

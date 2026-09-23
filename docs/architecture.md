@@ -308,8 +308,7 @@ declared row: the spec's "Clients MUST NOT call it" holds by construction;
 `session/load` → `session.load`; `session/prompt` → `prompt.image` / `audio` /
 `embeddedContext` when the prompt actually carried that block type), an
 incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
-`terminal/create` — and `elicitation/create` the moment P7 registers its
-handler), and a `session/update` kind tag arriving (`usage_update` → `usage`).
+`terminal/create`, `elicitation/create`), and a `session/update` kind tag arriving (`usage_update` → `usage`).
 The same table serves both verdicts: a fact riding a successful call marks its
 rows used; the same fact riding a failed call marks them suspect. No call site
 anywhere names a row; adding a `CapabilityRowId` forces a table entry (the

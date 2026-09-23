@@ -14,6 +14,7 @@ import {
   type IpcRequest,
   type IpcResponse,
 } from "../src/mcp/ipc-protocol";
+import type { ElicitationAnswer } from "../src/shared/protocol";
 
 const MCP_SERVER = join(process.cwd(), "out", "mcp-server.js");
 
@@ -22,7 +23,7 @@ class FakeIpcHost {
   server: Server;
   socketPath: string;
   requests: IpcRequest[] = [];
-  elicitationAnswer: Record<string, unknown> | null = { confirmed: true };
+  elicitationAnswer: ElicitationAnswer = { action: "accept", content: { confirmed: true } };
 
   constructor(id: string) {
     this.socketPath = join(tmpdir(), `patchbay-test-ipc-${id}.sock`);
@@ -218,15 +219,49 @@ describe("local MCP server (real bundled subprocess)", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual({ confirmed: true });
   });
 
-  it("request_user_input reports cancellation as an error result, not a thrown exception", async () => {
-    host.elicitationAnswer = null; // simulates the user cancelling
+  it("request_user_input forwards its fields as the elicitation schema, defaults included", async () => {
+    await client.initialize();
+    await client.callTool("request_user_input", {
+      message: "Setup?",
+      properties: [
+        { name: "who", type: "string", title: "Name", required: true, default: "hello" },
+        { name: "n", type: "number", default: 42 },
+        { name: "on", type: "boolean", default: true },
+      ],
+    });
+    const forwarded = host.requests.find((r) => r.method === "requestUserInput");
+    expect(forwarded?.params).toEqual({
+      message: "Setup?",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          who: { type: "string", title: "Name", default: "hello" },
+          n: { type: "number", default: 42 },
+          on: { type: "boolean", default: true },
+        },
+        required: ["who"],
+      },
+    });
+  });
+
+  it("request_user_input with no fields forwards no schema", async () => {
+    await client.initialize();
+    await client.callTool("request_user_input", { message: "Confirm?" });
+    expect(host.requests.find((r) => r.method === "requestUserInput")?.params).toEqual({ message: "Confirm?" });
+  });
+
+  it.each([
+    ["decline", "declined"],
+    ["cancel", "cancelled"],
+  ] as const)("request_user_input reports a %s by name, as an error result rather than a thrown exception", async (action, text) => {
+    host.elicitationAnswer = { action };
     await client.initialize();
     const result = (await client.callTool("request_user_input", { message: "Confirm?" })) as {
       content: { text: string }[];
       isError?: boolean;
     };
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toBe("cancelled");
+    expect(result.content[0]!.text).toBe(text);
   });
 
   it("an unknown tool name reports an error result", async () => {

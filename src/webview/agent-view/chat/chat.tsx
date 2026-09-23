@@ -105,10 +105,15 @@ function Block({
   block,
   live,
   sessionId,
+  agentName,
 }: {
   block: ChatBlock;
   live: boolean;
   sessionId: string;
+  /** Who is speaking in this session — the elicitation card must name the
+   * agent asking (an ACP client duty), and the name lives in the agents
+   * list, never copied into a block. */
+  agentName: string;
 }) {
   switch (block.kind) {
     case "user":
@@ -136,7 +141,7 @@ function Block({
     case "terminal":
       return <TerminalCard block={block} />;
     case "elicitation":
-      return <ElicitationCard block={block} />;
+      return <ElicitationCard block={block} agentName={agentName} />;
     case "notice":
       // System voice — visually distinct from agent prose on purpose (the
       // honesty seam: e.g. where a resumed session's cached view ends).
@@ -188,6 +193,8 @@ export function Chat(props: {
   const send = useActions();
   const { agents } = props.state;
   const active = props.activeSession;
+  const agentName =
+    props.state.agents.find((a) => a.id === active?.agentId)?.name ?? active?.agentId ?? "The agent";
   const activeId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
@@ -439,6 +446,7 @@ export function Chat(props: {
             block={item.block}
             live={item.block.id === liveBlockId}
             sessionId={active.id}
+            agentName={agentName}
           />
         ),
       )}

@@ -82,19 +82,24 @@ export function declaredFromInitialize(
  * What patchbay itself declares to every agent — the single source for both
  * the wire claim (`clientCapabilitiesWire`, sent at initialize) and the
  * matrix's client-side cells (`matrixFromDeclared`), so the two can never
- * drift. `elicitation` stays false until the adapter is wired — declaring it
- * earlier would be the exact lie bet #2 exists to prevent.
+ * drift. Each elicitation mode is declared on its own and only once its
+ * path is wired end to end — declaring one earlier would be the exact lie
+ * the capability rule exists to prevent.
  */
 const CLIENT_DECLARES: {
   fs: boolean;
   terminal: boolean;
-  elicitation: boolean;
+  /** Form mode: the agent asks a question, the card collects the answer. */
+  elicitationForm: boolean;
+  /** URL mode: the agent sends the user to a page (OAuth and the like). */
+  elicitationUrl: boolean;
   sessionConfigOptions: boolean;
   authTerminal: boolean;
 } = {
   fs: true,
   terminal: true,
-  elicitation: false,
+  elicitationForm: true,
+  elicitationUrl: false,
   // Agents MUST only offer terminal-type auth methods to a client that
   // declares this, so declaring is what makes the surface reachable at all
   // — true because the executor is wired (the orchestrator's terminal
@@ -109,16 +114,15 @@ const CLIENT_DECLARES: {
   sessionConfigOptions: true,
 };
 
-/** CLIENT_DECLARES in its wire form. Elicitation is UNSTABLE and
- * object-shaped on the wire — omitted entirely while false (absent is how
- * ACP says "unsupported"); flipping CLIENT_DECLARES.elicitation is the only
- * change the elicitation adapter needs here. */
+/** CLIENT_DECLARES in its wire form. Elicitation is object-shaped, one key
+ * per mode: a mode patchbay does not present is left out entirely, which is
+ * how ACP says "unsupported" — an agent then never sends that mode. */
 export function clientCapabilitiesWire(): ClientCapabilities {
   const meta = clientMetaWire();
   return {
     fs: { readTextFile: CLIENT_DECLARES.fs, writeTextFile: CLIENT_DECLARES.fs },
     terminal: CLIENT_DECLARES.terminal,
-    ...(CLIENT_DECLARES.elicitation ? { elicitation: {} } : {}),
+    ...(Object.keys(elicitationWire()).length > 0 ? { elicitation: elicitationWire() } : {}),
     // `{ boolean: {} }` = "agents may include type:'boolean' entries" —
     // knobs.ts supports them, so the claim is the truth.
     ...(CLIENT_DECLARES.sessionConfigOptions
@@ -146,6 +150,14 @@ function authMethodKind(method: object): "agent" | "terminal" | "unsupported" {
   return terminalAuthOf(method) !== null ? "terminal" : "unsupported";
 }
 
+/** The declared modes, exactly as they ride initialize. */
+function elicitationWire(): { form?: Record<string, never>; url?: Record<string, never> } {
+  return {
+    ...(CLIENT_DECLARES.elicitationForm ? { form: {} } : {}),
+    ...(CLIENT_DECLARES.elicitationUrl ? { url: {} } : {}),
+  };
+}
+
 function cell(declared: boolean): { declared: boolean; used: boolean } {
   return { declared, used: false };
 }
@@ -161,7 +173,9 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
     "fs.readTextFile": cell(CLIENT_DECLARES.fs),
     "fs.writeTextFile": cell(CLIENT_DECLARES.fs),
     terminal: cell(CLIENT_DECLARES.terminal),
-    elicitation: cell(CLIENT_DECLARES.elicitation),
+    // One row for the feature: declared once patchbay presents any mode,
+    // used when an agent actually asks.
+    elicitation: cell(Object.keys(elicitationWire()).length > 0),
     // MCP-level (not ACP) capability of the agent's own MCP client, only
     // observable once the local MCP server exists to capture that handshake.
     "resources.subscribe": cell(false),

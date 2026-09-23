@@ -128,6 +128,9 @@ deliverable.
 - Permission requests appear inline with the choices the requester actually
   offers — the agent's own options verbatim, patchbay's own for the gates it
   runs — and are impossible to miss when the view is hidden.
+- When an agent needs an answer from the user, it can ask with a small form
+  in the chat; the user answers, declines, or dismisses it, and the agent
+  learns which.
 - Context/token usage is shown when the agent reports it and cleanly absent when it
   doesn't — never a fake number.
 - User can stop a running turn at any time.

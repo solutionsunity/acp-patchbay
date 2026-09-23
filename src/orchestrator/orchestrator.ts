@@ -8,7 +8,7 @@ import { statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { methods } from "@agentclientprotocol/sdk";
+import { methods, type CreateElicitationResponse } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -25,6 +25,7 @@ import {
   type CapabilityRowId,
   type ConnectAgentSource,
   type DataInventoryRow,
+  type ElicitationAnswer,
   type PermissionOptionView,
   type SavedRootScope,
   type SavedRootsView,
@@ -38,11 +39,13 @@ import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
 import { parseCommandLine } from "./command-line";
+import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { foldSeed, normalizeKnobs } from "./knobs";
 import { terminalAuthOf, type TerminalAuth } from "./capabilities";
+import { formFieldsOf } from "./elicitation";
 import { sessionKnobExtras } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { runLoginTask } from "./login-task";
@@ -187,11 +190,6 @@ export class Orchestrator {
   /** In-flight session/list syncs per agent — awaited by the startup
    * restore so "found or not" is judged against a settled list. */
   private readonly pendingSyncs = new Map<string, Promise<void>>();
-  private readonly pendingElicitations = new Map<
-    string,
-    { sessionId: string; resolve(values: Record<string, unknown> | null): void }
-  >();
-  private elicitationCounter = 0;
   private isolationCounter = 0;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
   /** Set by the webview host as the Agent View mounts/unmounts (wired in
@@ -449,6 +447,43 @@ export class Orchestrator {
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
+      onElicitation: async (agentId, params) => {
+        const asked = params as { sessionId?: string; requestId?: unknown; requestedSchema?: unknown };
+        const refuse = (why: string): CreateElicitationResponse => {
+          this.log.info(`${agentId}: declined an elicitation — ${why}`);
+          return { action: "decline" };
+        };
+        // Request scope (an ask outside any session, e.g. during auth) has
+        // no surface here: the transcript is the only place patchbay can
+        // ask a question, so the honest answer is a decline, never a
+        // dangling request.
+        const sessionId = asked.sessionId;
+        if (sessionId === undefined) return refuse("it is not tied to a session");
+        // A throwaway session — the probe's or the defaults editor's — is
+        // invisible by construction; the user never saw the question, which
+        // is exactly what `cancel` means (same rule as permission asks).
+        if (
+          this.capabilityTracker.isProbeSession(agentId, sessionId) ||
+          this.defaultsEditor.owns(agentId, sessionId)
+        ) {
+          this.log.info(`${agentId}: cancelled an elicitation on a throwaway session`);
+          return { action: "cancel" };
+        }
+        if (params.mode !== "form") return refuse(`patchbay does not present "${params.mode}" elicitations`);
+        const fields = formFieldsOf(asked.requestedSchema);
+        if (fields === null) return refuse("its form has a field patchbay cannot present");
+        const answer = await this.broker.askElicitation(sessionId, { message: params.message, fields });
+        // The card produced each value against the field type this schema
+        // normalized, so the content matches what the agent asked for.
+        return answer.action === "accept"
+          ? {
+              action: "accept",
+              // Each value was produced against the field type this schema
+              // normalized, so the content matches what the agent asked for.
+              content: answer.content as Record<string, string | number | boolean | string[]>,
+            }
+          : { action: answer.action };
+      },
       onPermissionRequest: async (agentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
@@ -1170,40 +1205,28 @@ export class Orchestrator {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
-  /** The local MCP server's `request_user_input` tool (elicitation fallback;
-   * native ACP elicitation is still
-   * unstable in the SDK, so this is the only path in v1).
+  /** The local MCP server's `request_user_input` tool — the fallback for an
+   * agent that asks through MCP instead of ACP's own elicitation request.
    * `contextToken` is what the MCP server subprocess was spawned with —
    * translated back to the real sessionId so the form lands in the right
    * transcript. */
   private requestUserInput(
     contextToken: string,
-    params: { message: string; properties: Array<{ name: string; type: string; title?: string; description?: string; required?: boolean }> },
-  ): Promise<Record<string, unknown> | null> {
+    params: RequestUserInputParams,
+  ): Promise<ElicitationAnswer> {
     // Unknown token = the session it named is gone (tokens are minted at
     // attach and retired at close). There is no transcript to ask in, so
-    // the honest answer is "no answer" — never a guessed session id, which
-    // could be a *different* live session by now (ids are agent-minted and
-    // legally recycled).
+    // the user never saw the question — a cancel, never a guessed session
+    // id, which could be a *different* live session by now (ids are
+    // agent-minted and legally recycled).
     const sessionId = this.contextTokenToSession.get(contextToken);
-    if (sessionId === undefined) return Promise.resolve(null);
-    const blockId = `elicit-${++this.elicitationCounter}`;
-    this.agentView.emit({
-      kind: "elicitationRequested",
-      sessionId,
-      blockId,
-      message: params.message,
-      fields: params.properties.map((p) => ({
-        name: p.name,
-        type: p.type as "string" | "number" | "integer" | "boolean",
-        title: p.title,
-        description: p.description,
-        required: p.required ?? false,
-      })),
-    });
-    return new Promise((resolve) => {
-      this.pendingElicitations.set(blockId, { sessionId, resolve });
-    });
+    if (sessionId === undefined) return Promise.resolve({ action: "cancel" });
+    // Same parser as the agent's own elicitation request. A field it cannot
+    // present fails the tool call with the reason, rather than rendering a
+    // guessed control.
+    const fields = params.requestedSchema === undefined ? [] : formFieldsOf(params.requestedSchema);
+    if (fields === null) return Promise.reject(new Error("the form has a field patchbay cannot present"));
+    return this.broker.askElicitation(sessionId, { message: params.message, fields });
   }
 
   /** Process-policy decision for a new top-level session: `isolated`
@@ -2261,19 +2284,9 @@ export class Orchestrator {
         // nothing (the selection persists via setPreferences on change).
         playDoneSound(this.log, action.sound);
         break;
-      case "resolveElicitation": {
-        const pending = this.pendingElicitations.get(action.requestId);
-        if (pending === undefined) break;
-        this.pendingElicitations.delete(action.requestId);
-        this.agentView.emit({
-          kind: "elicitationResolved",
-          sessionId: pending.sessionId,
-          blockId: action.requestId,
-          cancelled: action.values === null,
-        });
-        pending.resolve(action.values);
+      case "resolveElicitation":
+        this.broker.resolveElicitation(action.requestId, action.answer);
         break;
-      }
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();
         if (selection === null) {

@@ -12,7 +12,8 @@
 // and the client here is the agent, which holds no root list of its own —
 // the orchestrator does, so the server reads it there and hands it over.
 import type { IpcClient } from "./ipc-client";
-import type { ElicitationPropertyView, RootsResult } from "./ipc-protocol";
+import type { ElicitationAnswer } from "../shared/protocol";
+import type { RequestUserInputParams, RootsResult } from "./ipc-protocol";
 
 export interface McpToolDef {
   name: string;
@@ -55,7 +56,7 @@ export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "request_user_input",
     description:
-      "Ask the user a question with a small structured form (elicitation fallback — works with every agent regardless of native ACP elicitation support).",
+      "Ask the user a question with a small structured form (elicitation fallback — works with every agent regardless of native ACP elicitation support). Returns the answers as JSON, or an error result: \"declined\" means the user refused — do not ask again; \"cancelled\" means the form was dismissed without an answer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,6 +72,10 @@ export const TOOL_DEFS: McpToolDef[] = [
               title: { type: "string" },
               description: { type: "string" },
               required: { type: "boolean" },
+              default: {
+                type: ["string", "number", "boolean"],
+                description: "Pre-filled value; ignored unless it matches the field's type.",
+              },
             },
             required: ["name", "type"],
           },
@@ -110,18 +115,24 @@ export async function callTool(
       return textResult(((await ipc.request("getRoots")) as RootsResult).roots);
     case "request_user_input": {
       const message = typeof args.message === "string" ? args.message : "";
-      const properties = Array.isArray(args.properties)
-        ? (args.properties as ElicitationPropertyView[]).map((p) => ({
-            name: p.name,
-            type: p.type,
-            title: p.title,
-            description: p.description,
-            required: p.required ?? false,
-          }))
-        : [];
-      const answer = await ipc.request("requestUserInput", { message, properties });
-      if (answer === null) return { content: [{ type: "text", text: "cancelled" }], isError: true };
-      return textResult(answer);
+      // The tool's field list is only a flatter spelling of the schema an
+      // agent's own elicitation request carries, so it is re-spelled here
+      // and the host reads both with one parser — types, defaults, limits.
+      // Validation stays there: nothing in this list is trusted yet.
+      const params: RequestUserInputParams = { message };
+      if (Array.isArray(args.properties) && args.properties.length > 0) {
+        const properties: Record<string, unknown> = {};
+        const required: unknown[] = [];
+        for (const item of args.properties as Array<Record<string, unknown>>) {
+          const { name, required: isRequired, ...schema } = item ?? {};
+          properties[String(name)] = schema;
+          if (isRequired === true) required.push(name);
+        }
+        params.requestedSchema = { type: "object", properties, required };
+      }
+      const answer = (await ipc.request("requestUserInput", params)) as ElicitationAnswer;
+      if (answer.action === "accept") return textResult(answer.content);
+      return { content: [{ type: "text", text: answer.action === "decline" ? "declined" : "cancelled" }], isError: true };
     }
     default:
       return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };

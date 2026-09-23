@@ -159,7 +159,11 @@ export type Action =
    * platform default chime) host-side, exactly as a finishing turn would.
    * Preview only: nothing is stored. */
   | { kind: "previewDoneSound"; sound: string }
-  | { kind: "resolveElicitation"; requestId: string; values: Record<string, unknown> | null }
+  /** The user's answer to an elicitation card, in the wire's own
+   * vocabulary: accept carries what they typed (reviewed and editable
+   * until they press it), decline is a refusal, cancel is a dismissal.
+   * Decline and cancel are different answers and the agent is told which. */
+  | { kind: "resolveElicitation"; requestId: string; answer: ElicitationAnswer }
   | { kind: "addSelectionContext"; sessionId: string }
   | { kind: "addFileContext"; sessionId: string }
   | { kind: "addDiagnosticsContext"; sessionId: string }
@@ -986,24 +990,54 @@ export interface TerminalBlock {
   exitCode: number | null;
 }
 
-/** The elicitation fallback: a local MCP
- * tool renders this as a small form, universal across agents regardless of
- * native ACP elicitation support — which the SDK itself marks unstable/
- * experimental, so v1 uses only this path. */
+/** One form field. Two producers, one card: the agent's own
+ * `elicitation/create` (ACP, form mode) and the local MCP server's
+ * `request_user_input` tool — the fallback for an agent that asks its
+ * questions through MCP instead. */
 export interface ElicitationField {
   name: string;
-  type: "string" | "number" | "integer" | "boolean";
+  /** The control to render. "select"/"multiselect" are choices the agent
+   * offered (their options ride below); the rest are typed free input. */
+  type: "string" | "number" | "integer" | "boolean" | "select" | "multiselect";
   title?: string;
   description?: string;
   required: boolean;
+  /** Present exactly on the two choice types — the offered values with the
+   * labels the agent gave them. */
+  options?: readonly { value: string; label: string; description?: string }[];
+  /** The agent's declared default, pre-filled (present only when it fits
+   * the field: a string, a number, a boolean, an offered option, or a list
+   * of offered options). */
+  default?: string | number | boolean | readonly string[];
+  /** The limits the form declares, checked before Send. Text: length,
+   * pattern, format. Numbers: range. Multi-choice: how many picks. */
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  format?: "email" | "uri" | "date" | "date-time";
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
+
+/** What the user did with the card, as the wire names it. */
+export type ElicitationOutcome = "accepted" | "declined" | "cancelled";
+
+/** The answer travelling back: the action, plus the content an accept
+ * carries. Same vocabulary as ACP's own response, so nothing is translated
+ * between the card and the wire. */
+export type ElicitationAnswer =
+  | { action: "accept"; content: Record<string, unknown> }
+  | { action: "decline" }
+  | { action: "cancel" };
 
 export interface ElicitationBlock {
   kind: "elicitation";
   id: string;
   message: string;
   fields: readonly ElicitationField[];
-  resolution: { cancelled: boolean } | null;
+  resolution: { outcome: ElicitationOutcome } | null;
 }
 
 /** A patchbay-authored transcript marker — system voice, never agent prose.
@@ -1415,7 +1449,7 @@ export type AgentViewEvent =
       message: string;
       fields: readonly ElicitationField[];
     }
-  | { kind: "elicitationResolved"; sessionId: string; blockId: string; cancelled: boolean }
+  | { kind: "elicitationResolved"; sessionId: string; blockId: string; outcome: ElicitationOutcome }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
@@ -2066,7 +2100,7 @@ export function reduceAgentView(
     case "elicitationResolved":
       return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) => ({
         ...b,
-        resolution: { cancelled: event.cancelled },
+        resolution: { outcome: event.outcome },
       }));
     case "contextChipAdded":
       return {

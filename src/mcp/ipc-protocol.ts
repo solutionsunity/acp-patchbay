@@ -101,17 +101,12 @@ export interface WorkspaceStateSnapshot {
   selection: SelectionInfo | null;
 }
 
-export interface ElicitationPropertyView {
-  name: string;
-  type: "string" | "number" | "integer" | "boolean";
-  title?: string;
-  description?: string;
-  required: boolean;
-}
-
 export interface RequestUserInputParams {
   message: string;
-  properties: ElicitationPropertyView[];
+  /** The form as a JSON Schema — the same shape an agent's own elicitation
+   * request carries — unvalidated until the host parses it. Absent for a
+   * message-only confirm. */
+  requestedSchema?: unknown;
 }
 
 /** Reads newline-delimited JSON messages from a socket-like stream. */

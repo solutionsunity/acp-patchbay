@@ -87,6 +87,12 @@ export interface PoolHooks {
     agentId: string,
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
+  /** The agent asks the user for structured input; absent → cancelled,
+   * which is the honest answer when no surface exists to show it. */
+  onElicitation?(
+    agentId: string,
+    params: acp.CreateElicitationRequest,
+  ): Promise<acp.CreateElicitationResponse>;
   /** Fired the instant a wire fact bears on a capability row: "used" when
    * the fact rode a request that succeeded, "suspect" when it rode one that
    * failed (suspicion, not conviction — the failure may not be the row's
@@ -502,6 +508,13 @@ export class AgentPool {
           return Promise.resolve<acp.RequestPermissionResponse>({
             outcome: { outcome: "cancelled" },
           });
+        }),
+      )
+      .onRequest(
+        ...proven(acp.methods.client.elicitation.create, (ctx) => {
+          const handler = this.hooks.onElicitation;
+          if (handler) return handler(reportAs, ctx.params);
+          return Promise.resolve<acp.CreateElicitationResponse>({ action: "cancel" });
         }),
       )
       .onNotification(acp.methods.client.session.update, (ctx) => {

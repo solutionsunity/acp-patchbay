@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Agents can now ask you questions with a form in the chat. ACP's
+  elicitation reached the stable protocol, and patchbay declares its form
+  mode: the question arrives as a card naming the agent, with one control
+  per field (text, number, Yes/No, a choice, or several) and the agent's
+  defaults already filled in. Send stays disabled until required fields
+  are filled and the form's limits hold; Decline and Cancel reach the
+  agent as themselves, so a "no" is not mistaken for a dismissal. Claude
+  Code's multiple-choice questions arrive this way. A form with a field
+  patchbay cannot show is declined rather than guessed at. The
+  `request_user_input` tool that patchbay's MCP server offers every agent
+  now uses the same card and rules, including defaults, and tells the
+  agent whether you declined or cancelled. Link-based questions (sign-in
+  pages) are not supported yet. (#36)
 - A login method patchbay cannot run is now shown without a button instead
   of being offered as if the agent handled it. Auth method types reached
   the stable protocol, so the type an agent declares is read directly: a

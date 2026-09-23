@@ -28,14 +28,15 @@ import {
   type SelectionInfo,
   type WorkspaceStateSnapshot,
 } from "../mcp/ipc-protocol";
+import type { ElicitationAnswer } from "../shared/protocol";
 
 export interface EditorStateHostHooks {
   /** Renders an elicitation form card in the given session's transcript and
-   * resolves with the user's answers, or null if cancelled. */
+   * resolves with what the user did: answered, declined, or cancelled. */
   requestUserInput(
     sessionId: string,
     params: RequestUserInputParams,
-  ): Promise<Record<string, unknown> | null>;
+  ): Promise<ElicitationAnswer>;
   /** The session's complete root list, cwd first — what the session
    * manager composes for the wire, read fresh per call so a subprocess
    * never holds a copy the user has since changed. Empty for a session

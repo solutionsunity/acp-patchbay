@@ -62,9 +62,14 @@ describe("matrixFromDeclared", () => {
     expect(matrix.terminal).toEqual({ declared: true, used: false });
   });
 
-  it("elicitation and MCP-level rows are not declared until later phases", () => {
+  it("client-side rows carry patchbay's own claim, whatever the agent declared", () => {
     const matrix = matrixFromDeclared(noDeclared);
-    expect(matrix.elicitation).toEqual({ declared: false, used: false });
+    // Elicitation is a client capability: the agent declares nothing, so
+    // this row is patchbay's claim in every agent's column — used is what
+    // varies per agent, once one actually asks.
+    expect(matrix.elicitation).toEqual({ declared: true, used: false });
+    // MCP-level, not ACP: observable only in the local server's handshake
+    // with the agent's own MCP client.
     expect(matrix["resources.subscribe"]).toEqual({ declared: false, used: false });
   });
 
