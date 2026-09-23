@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Folders you always work with can be saved once, for this workspace or for
+  every workspace, and every new session starts with them. Before, each
+  extra directory (a backend repo beside a frontend, a framework's source
+  checkout) cost a click in every new chat. Settings › Saved roots manages
+  both lists; the roots chip saves an added root in one click and links
+  there. Saved roots ride the new session's first request, so an agent that
+  cannot take roots later still gets them; the session's MCP servers get
+  them too, and now hear a new session's list once it exists instead of
+  finding none. A session owns its list once started: saving changes new
+  sessions only. A saved path is stored absolute and must be a folder; a
+  root whose folder is gone is skipped at every session start or reopen,
+  with a notice in the chat, and a saved one is marked in Settings until
+  you restore or remove it. (#32)
 - A session's roots now reach its MCP servers, not only the agent. The
   agent learned them through ACP, and the servers attached to the session
   learned nothing: patchbay's own editor-state server served without

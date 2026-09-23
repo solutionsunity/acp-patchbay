@@ -509,3 +509,14 @@ describe("state-truth regressions — weak evidence never overwrites strong", ()
     expect(state.hydrating.s1).toBeUndefined();
   });
 });
+
+describe("saved roots (issue #32) — one stored truth, both channels", () => {
+  it("savedRootsChanged lands in the agent view and in Settings alike", () => {
+    const savedRoots = { workspace: ["/src/lib"], machine: ["/src/odoo"], missing: ["/src/odoo"] };
+    const event = { kind: "savedRootsChanged", savedRoots } as const;
+    expect(initialAgentViewState.savedRoots).toEqual({ workspace: null, machine: [], missing: [] });
+    expect(initialSettingsState.savedRoots).toEqual({ workspace: null, machine: [], missing: [] });
+    expect(reduceAgentView(initialAgentViewState, event).savedRoots).toEqual(savedRoots);
+    expect(reduceSettings(initialSettingsState, event).savedRoots).toEqual(savedRoots);
+  });
+});

@@ -17,10 +17,12 @@ import { IntegrationsSection } from "./integrations";
 import { MatrixSection } from "./matrix";
 import { PermissionsSection } from "./permissions";
 import { PreferencesSection } from "./preferences";
+import { RootsSection } from "./roots";
 
 /** Grouped by what the group *is*, not by theme: "This machine" is what's
  * global to this machine (the wiring — agents, integrations, the matrix
- * observing them — and behavior preferences; machine store/SecretStorage),
+ * observing them — and behavior preferences; machine store/SecretStorage;
+ * Saved roots also carries this workspace's list, beside the machine one),
  * "Trust" is the one trust surface. The nav teaches the placement contract
  * instead of captioning it. */
 const NAV_GROUPS = [
@@ -31,6 +33,7 @@ const NAV_GROUPS = [
       { id: "matrix", icon: "table", label: "Capability matrix" },
       { id: "integrations", icon: "server", label: "MCP Servers" },
       { id: "preferences", icon: "settings-gear", label: "Preferences" },
+      { id: "roots", icon: "root-folder", label: "Saved roots" },
     ],
   },
   // Formerly two groups (Trust / Transparency) — merged, not deleted: all
@@ -111,6 +114,14 @@ export function App({ state }: { state: SettingsState }) {
             state={state}
             onSet={(patch) => send({ kind: "setPreferences", patch })}
             onPreview={(sound) => send({ kind: "previewDoneSound", sound })}
+          />
+        )}
+        {section === "roots" && (
+          <RootsSection
+            state={state}
+            onAdd={(scope) => send({ kind: "pickSavedRoot", scope })}
+            onEdit={(replacing, scope) => send({ kind: "pickSavedRoot", scope, replacing })}
+            onRemove={(path, scope) => send({ kind: "unsaveRoot", path, scope })}
           />
         )}
         {section === "integrations" && (

@@ -96,7 +96,7 @@ Context row (above):
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots |
+| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots. An added row also names its saved list ("saved · this workspace" / "saved · every workspace", read-only) or offers **Save** — a menu, this workspace first, disabled with no folder open; "Manage saved roots…" opens Settings › Saved roots, the one place a saved root is removed |
 | Selection ghost chip | ⌖ dashed, lit | **the live-selection indicator**: appears only while the IDE has a selection; click solidifies it into context. Editor-side twin: right-click → add to context. These two are the whole selection story |
 | Context chips | 📄 ⌖ ⚠ 🖼 | attached files, solidified selection, diagnostics, images; × removes |
 | Adder | ＋ dashed | one popover: Files · Selection · Problems · Roots · Attach (image/file — never disabled; converts to the best form the agent accepts) |
@@ -147,9 +147,10 @@ readable without the Output panel.
 
 Left nav + cards, grouped in three non-collapsing headers that *are* the placement
 contract: **This machine** (Agents · Capability matrix · MCP Servers · Preferences
-— everything global to this machine), **Trust** (Permissions · Audit · Data — the
+· Saved roots — everything global to this machine, plus Saved roots' own
+per-workspace list beside its machine one), **Trust** (Permissions · Audit · Data — the
 one trust surface: the contract, the evidence, what's held and the way out; one
-verb per page). Groups don't collapse: seven items don't earn the interaction.
+verb per page). Groups don't collapse: eight items don't earn the interaction.
 Nav footer restates the credential rule: SecretStorage only.
 
 ### Agents
@@ -273,6 +274,20 @@ the stored truth — the page never assumes its own write landed:
 - **Composer stats** — show/hide the composer's session-stats strip (default
   shown). Pure render furniture: hiding it changes nothing else.
 
+### Saved roots
+
+The folders every new session starts with, beyond the workspace's own — two
+cards, one shape (list + change + remove + `Add folder…`; add and change both
+open the native folder picker, a change replacing its entry in place):
+*this workspace* (the default) and *every workspace*. With no folder open the
+workspace card says there is no workspace to save to. A saved folder gone
+from disk carries a warning mark — needs the user's action: restore, change, or
+remove;
+sessions skip it meanwhile, each with a notice in its chat. The page states the
+ownership rule: a session owns its list once started, so a change here reaches
+new sessions only, and removing a root from one session leaves these lists
+alone. The roots chip's Save writes the same lists.
+
 ### Permissions
 
 Command rules in **two layers**, one card each, identical shape (`pattern → allow /
@@ -286,7 +301,7 @@ green: **workspace rules and machine rules live in developer-owned storage, neve
 in the repo either way; a cloned repository cannot arrive pre-authorized.** Decision
 audit: recent entries, mono, append-only. Last card: **Disconnect & erase all
 data** — AlertDialog-confirmed; states what dies (every process now; configs,
-credentials, caches, rules, session records permanently) and the reach limit (other
+credentials, caches, rules, saved roots, session records permanently) and the reach limit (other
 workspaces' records need their own window). Explicit and user-triggered, never a
 lifecycle side effect.
 

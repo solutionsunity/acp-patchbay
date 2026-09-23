@@ -88,7 +88,7 @@ rules, and agent / session management live.
 VS Code has no uninstall hook, and secrets can survive uninstall — so a clean
 slate is an explicit act: **Settings → Permissions → "Disconnect & erase all
 data"** stops every agent and deletes everything patchbay stored on this machine
-(configs, credentials, caches, rules, the audit). Run it *before* uninstalling. It
+(configs, credentials, caches, rules, saved roots, the audit). Run it *before* uninstalling. It
 covers the current window's workspace records and deletes by the current config
 lists — so run it while those configs still exist.
 

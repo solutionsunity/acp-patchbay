@@ -153,6 +153,7 @@ export function App({
         contextChips={active !== null ? (state.contextChips[active.id] ?? []) : []}
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         workspaceRoots={state.workspaceRoots}
+        savedRoots={state.savedRoots}
         diffableFiles={derived.diffableFiles}
         fileDiffStats={active !== null ? (state.fileDiffStats[active.id] ?? {}) : {}}
         rootsControls={rootsControls({

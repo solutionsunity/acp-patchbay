@@ -25,6 +25,7 @@ import {
   PermissionRulesStore,
 } from "../src/orchestrator/stores/permission-rules";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
+import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 
 describe("SpawnRegistryStore", () => {
   it("records spawns keyed by pid and clears them on observed exit", async () => {
@@ -118,6 +119,35 @@ describe("PermissionRulesStore", () => {
     });
     expect(store.get().commandRules).toHaveLength(1);
     expect(store.get().fileWriteScope).toBe("always-ask");
+  });
+});
+
+describe("SavedRootsStore — the roots every new session starts with", () => {
+  it("adds a path once, removes it, and keeps each scope apart even over one store", async () => {
+    const kv = new MemoryKV();
+    const workspace = new SavedRootsStore(kv, "workspace");
+    const machine = new SavedRootsStore(kv, "machine");
+    await workspace.add("/src/lib");
+    await workspace.add("/src/lib");
+    await machine.add("/src/odoo");
+    expect(workspace.list()).toEqual(["/src/lib"]);
+    expect(machine.list()).toEqual(["/src/odoo"]);
+    await workspace.remove("/src/lib");
+    expect(workspace.list()).toEqual([]);
+    expect(machine.list()).toEqual(["/src/odoo"]);
+    await machine.wipe();
+    expect(machine.list()).toEqual([]);
+  });
+
+  it("replace keeps the saved order; a replacement already saved just drops the old entry", async () => {
+    const store = new SavedRootsStore(new MemoryKV(), "workspace");
+    await store.add("/a");
+    await store.add("/b");
+    await store.add("/c");
+    await store.replace("/b", "/b2");
+    expect(store.list()).toEqual(["/a", "/b2", "/c"]);
+    await store.replace("/a", "/c");
+    expect(store.list()).toEqual(["/b2", "/c"]);
   });
 });
 

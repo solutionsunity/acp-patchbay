@@ -115,7 +115,13 @@ deliverable.
   handed to the agent through the protocol where it supports that, and to
   the session's MCP servers regardless. The chip says, per root, who holds
   it: the servers always; the agent now, at its next open, or never — never
-  pretending. Roots another client set on the same session show up here, where the
+  pretending. Folders the user always works with are saved once — for this
+  workspace (the default) or for every workspace — and every new session
+  starts with them; managed in Settings, with a one-click save from the chip.
+  A session owns its list once started: saving shapes new sessions, never an
+  open one. A root whose folder is gone is skipped whenever a session starts
+  or reopens, and the session says so; a saved one is flagged in Settings as
+  needing the user's action. Roots another client set on the same session show up here, where the
   agent reports them. What the agent's engine does with roots is the
   agent's business — patchbay passes, it does not index.
 - Slash commands the agent advertises are discoverable and invokable in the input.

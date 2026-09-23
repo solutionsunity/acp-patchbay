@@ -23,6 +23,7 @@ import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 
 let dir: string;
@@ -55,6 +56,8 @@ describe("eraseAllData", () => {
     const preferences = new PreferencesStore(globalKv);
     const composerKnobs = new ComposerKnobsStore(globalKv);
     const sessionContinuity = new SessionContinuityStore(globalKv);
+    const workspaceSavedRoots = new SavedRootsStore(workspaceKv, "workspace");
+    const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
@@ -75,6 +78,8 @@ describe("eraseAllData", () => {
     await composerKnobs.record("claude", { mode: "code" });
     await authLocks.upsert({ id: "claude", lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
     await sessionContinuity.patch("s1", "claude", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
+    await workspaceSavedRoots.add("/src/lib");
+    await machineSavedRoots.add("/src/odoo");
     let stashWiped = false;
 
     await eraseAllData({
@@ -83,6 +88,7 @@ describe("eraseAllData", () => {
       integrationTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastConnected, lastActiveSession,
       preferences, composerKnobs, sessionContinuity,
+      workspaceSavedRoots, machineSavedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
     });
 
@@ -104,6 +110,8 @@ describe("eraseAllData", () => {
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
     expect(composerKnobs.get("claude")).toBeUndefined();
     expect(composerKnobs.count()).toBe(0);
+    expect(workspaceSavedRoots.list()).toEqual([]);
+    expect(machineSavedRoots.list()).toEqual([]);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });

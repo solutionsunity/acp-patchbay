@@ -146,6 +146,7 @@ each with different truth semantics, so each gets different placement:
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Agent + integration configs | Agents (launch config, defaults), integrations, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
+| Saved roots | Folders every new session starts with | `workspaceState` (this workspace, the default) + machine store (every workspace) | A preference read at session birth only; per-user either way, never repo-shipped |
 | Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + machine store (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); config records carry no env. Values are read at the moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself) — and shown back to their owner: the Settings channel carries them (that webview exists only while Settings is open), the forms show what is stored and save what is in the box. User-typed is readable — env values, a header API key; an OAuth token, flow-minted, never reaches a webview. *(Supersedes 2026-09-19 the write-only forms: key names only, blank meant keep.)* HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
 
@@ -737,7 +738,22 @@ The differentiator (the PRD's current-release scope), shipped complete:
   states per row who holds it: the servers always; the agent now, at the next
   open, or never. Workspace folders are read from reality at each composition, never
   stored; only user-added roots persist. A folder added or removed at runtime
-  re-applies to every live session. The last lifecycle request wins, whole
+  re-applies to every live session. **Saved roots** (Settings, two scopes:
+  this workspace in `workspaceState`, every workspace in the machine store)
+  seed a session at birth — composed into its `session/new` list, minus the
+  cwd, the workspace folders, and duplicates, then recorded as its own
+  user-added roots, so an agent with no re-apply rung still takes them. A
+  preference, not a session fact: the store is read at birth and never
+  after, and nothing in it reaches an open session. A save stores an
+  absolute path to an existing folder — a relative one resolves against the
+  workspace at save, anything else is refused with a message. Every
+  lifecycle request and every server read checks each root is a folder on
+  disk right now: one that is gone is skipped (the user's list is kept), the
+  session gets a notice naming it, and Settings marks a saved one as needing
+  action — reality read at each publish, never a stored flag. A `session/new`'s
+  servers start before the agent names the session, so any early read of
+  the list finds nothing; they are told once the session exists, the same
+  push a root change sends. The last lifecycle request wins, whole
   list, whichever client sent it — so a `session/list` row that reports the
   session's roots (`SessionInfo.additionalDirectories`, the complete list the
   last writer set) **replaces** the intended user-added list, never merges

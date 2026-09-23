@@ -69,6 +69,12 @@ function harness(opts?: {
    * directories. Mutable through the returned array to simulate a folder
    * change. */
   workspaceRoots?: readonly string[];
+  /** Stand-in for the orchestrator's saved-roots read — this workspace's
+   * list, then every workspace's, as stored (duplicates and all). */
+  savedRoots?: readonly string[];
+  /** Folders gone from disk — stand-in for the orchestrator's reality
+   * read. Mutable through the returned array. */
+  missingRoots?: readonly string[];
 }): {
   pool: AgentPool;
   sessionManager: SessionManager;
@@ -83,11 +89,17 @@ function harness(opts?: {
   /** Every `rootsChanged` the manager fired — the orchestrator's cue to
    * tell the session's MCP subprocesses. */
   rootsChanged: string[];
+  missingRoots: string[];
+  /** Every `rootsMissing` report — the orchestrator's cue to republish the
+   * saved roots with their missing marks. */
+  rootsMissing: string[][];
 } {
   const events: AgentViewEvent[] = [];
   const silentEvents: AgentViewEvent[] = [];
   const workspaceRoots = [...(opts?.workspaceRoots ?? [])];
   const rootsChanged: string[] = [];
+  const missingRoots = [...(opts?.missingRoots ?? [])];
+  const rootsMissing: string[][] = [];
   const continuity = opts?.continuityStore ?? new SessionContinuityStore(new MemoryKV());
   let resyncs = 0;
   let sessionManager!: SessionManager;
@@ -129,6 +141,9 @@ function harness(opts?: {
       contextRootsFor: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       workspaceRoots: () => workspaceRoots,
+      savedRoots: () => opts?.savedRoots ?? [],
+      rootExists: (path) => !missingRoots.includes(path),
+      rootsMissing: (paths) => rootsMissing.push([...paths]),
       rootsChanged: (sessionId) => rootsChanged.push(sessionId),
       currentTranscript: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
@@ -177,6 +192,8 @@ function harness(opts?: {
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
     workspaceRoots,
     rootsChanged,
+    missingRoots,
+    rootsMissing,
   };
 }
 
@@ -1189,6 +1206,9 @@ describe("SessionManager", () => {
     expect(newId).not.toBe(oldId);
     expect(h.state().sessions.some((s) => s.id === oldId)).toBe(false);
     expect(h.state().contextRoots[newId]).toEqual(["/repo/backend"]);
+    // each birth tells its own servers once the session exists: the old
+    // shell's at creation and on the add, the fresh one's at its re-mint
+    expect(h.rootsChanged).toEqual([oldId, oldId, newId]);
 
     await h.sessionManager.sendPrompt(newId, "roots?");
     const echoed = h.state().transcripts[newId]!.filter((b) => b.kind === "text").at(-1);
@@ -1217,7 +1237,7 @@ describe("SessionManager", () => {
     // session's and the servers read it now
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
     expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
-    expect(h.rootsChanged).toEqual([sessionId]);
+    expect(h.rootsChanged).toEqual([sessionId, sessionId]); // birth, then the add
     expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/repo/backend"]);
     expect(h.state().activeSessionId).toBe(sessionId);
     await h.sessionManager.sendPrompt(sessionId, "roots?");
@@ -1274,7 +1294,7 @@ describe("SessionManager", () => {
     // on the agent: no field to send, so no re-attach is made for it
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
     expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
-    expect(h.rootsChanged).toEqual([sessionId]);
+    expect(h.rootsChanged).toEqual([sessionId, sessionId]); // birth, then the add
     expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/repo/second", "/repo/backend"]);
     await h.sessionManager.sendPrompt(sessionId, "roots?");
     const again = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
@@ -1282,6 +1302,107 @@ describe("SessionManager", () => {
     // one session/new, one prompt, one prompt: nothing re-attached
     expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
     await h.pool.stop("sm28n");
+  });
+
+  // Saved roots (issue #32): a preference that shapes a session's birth and
+  // nothing after — the session owns its list from then on.
+  it("saved roots seed a new session: sent at session/new, then the session's own list — each once, never what it already has (issue #32)", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    const h = harness({
+      continuityStore: store,
+      workspaceRoots: [cwd, "/repo/second"],
+      savedRoots: ["/src/odoo", cwd, "/repo/second", "/src/lib", "/src/odoo"],
+    });
+    // Resume deliberately not declared: nothing after birth re-applies in
+    // place, so an echo that carries them proves session/new did. List +
+    // load make the session's row durable.
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true, sessionCapabilities: { list: {}, additionalDirectories: {} } },
+          turn: [{ type: "echoRoots" }],
+        },
+        "sm32",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm32", "Fake Agent", cwd);
+
+    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo", "/src/lib"]);
+    expect(store.read(sessionId, "sm32")?.roots).toEqual(["/src/odoo", "/src/lib"]);
+    // servers spawned during session/new could only ask before the id was
+    // known — they are told once the session and its list exist
+    expect(h.rootsChanged).toEqual([sessionId]);
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/repo/second", "/src/odoo", "/src/lib"]);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/src/odoo", "/src/lib"]);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]); // no re-attach
+
+    // the session's own act from here: removing one leaves the others
+    await h.sessionManager.removeRoot(sessionId, "/src/odoo");
+    expect(h.state().contextRoots[sessionId]).toEqual(["/src/lib"]);
+    await h.pool.stop("sm32");
+  });
+
+  it("saved roots reach the servers of an agent that does not advertise the field — the field itself is never sent (issue #32)", async () => {
+    const h = harness({ savedRoots: ["/src/odoo"] });
+    await h.pool.connect(
+      spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm32n"),
+    );
+    const sessionId = await h.sessionManager.createSession("sm32n", "Fake Agent", cwd);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo"]);
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/src/odoo"]);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
+    await h.pool.stop("sm32n");
+  });
+
+  // A root is a folder on disk: every lifecycle request checks, skips a
+  // folder that is gone, and says so in the session (issue #32).
+  it("a saved root gone from disk: not seeded, not sent, not served — the session says which, and the saved list is told (issue #32)", async () => {
+    const h = harness({ savedRoots: ["/src/odoo", "/src/gone"], missingRoots: ["/src/gone"] });
+    await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm32m"));
+    const sessionId = await h.sessionManager.createSession("sm32m", "Fake Agent", cwd);
+
+    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo"]);
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/src/odoo"]);
+    expect(h.rootsMissing).toEqual([["/src/gone"]]);
+    const notice = h.state().transcripts[sessionId]!.find((b) => b.kind === "notice");
+    expect(notice?.kind === "notice" && notice.text).toContain("/src/gone");
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/src/odoo"]);
+    await h.pool.stop("sm32m");
+  });
+
+  it("a session's own root gone from disk: kept on its list, skipped at the next open and by its servers, with a notice (issue #32)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true, sessionCapabilities: { list: {}, additionalDirectories: {}, resume: {} } },
+          turn: [{ type: "echoRoots" }],
+        },
+        "sm32g",
+      ),
+    );
+    const firstId = await h.sessionManager.createSession("sm32g", "Fake Agent", cwd);
+    await h.sessionManager.addRoot(firstId, "/repo/backend"); // zero-turn: re-minted
+    const sessionId = h.state().activeSessionId!;
+    await h.sessionManager.sendPrompt(sessionId, "first turn");
+
+    h.missingRoots.push("/repo/backend");
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd]);
+    await h.sessionManager.reload(sessionId);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]); // the user's list, untouched
+    expect(h.rootsMissing).toEqual([["/repo/backend"]]);
+    const notice = h.state().transcripts[sessionId]!.filter((b) => b.kind === "notice").at(-1);
+    expect(notice?.kind === "notice" && notice.text).toContain("/repo/backend");
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
+    await h.pool.stop("sm32g");
   });
 
   // The agent's own roots report (issue #33): a session/list row may carry

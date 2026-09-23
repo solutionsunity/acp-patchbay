@@ -4,9 +4,10 @@
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.
+import { statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
@@ -24,6 +25,8 @@ import {
   type ConnectAgentSource,
   type DataInventoryRow,
   type PermissionOptionView,
+  type SavedRootScope,
+  type SavedRootsView,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
@@ -45,7 +48,7 @@ import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
 import { AgentPool, authRequiredReasonOf, type LaunchSpec } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { resolveExecutableWin32 } from "./spawn-resolve";
-import { SessionManager } from "./session-manager";
+import { normalizeRootPath, SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
 import { listDoneSounds, playDoneSound } from "./sound";
@@ -70,6 +73,7 @@ import { IntegrationTokenStore } from "./stores/integration-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
+import { SavedRootsStore } from "./stores/saved-roots";
 import { loadCatalog } from "./stores/mcp-catalog";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
@@ -118,6 +122,8 @@ export class Orchestrator {
   readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
+  readonly workspaceSavedRoots: SavedRootsStore;
+  readonly machineSavedRoots: SavedRootsStore;
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
   readonly sessionContinuity: SessionContinuityStore;
@@ -236,6 +242,8 @@ export class Orchestrator {
     }).catch((error: unknown) => log.info(`legacy recovery failed: ${String(error)}`));
     this.permissionRules = new PermissionRulesStore(context.workspaceState);
     this.machinePermissionRules = new MachineRulesStore(machineKV);
+    this.workspaceSavedRoots = new SavedRootsStore(context.workspaceState, "workspace");
+    this.machineSavedRoots = new SavedRootsStore(machineKV, "machine");
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
     this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
@@ -298,6 +306,7 @@ export class Orchestrator {
         // session to come back to — startupSettled clears it either way.
         restoring: this.lastActiveSession.get() !== undefined,
         workspaceRoots: workspaceRootsView(),
+        savedRoots: this.savedRootsView(),
         preferences: this.preferences.get(),
       },
       reduceAgentView,
@@ -314,6 +323,7 @@ export class Orchestrator {
         integrationRegistry: this.integrations.registryViews(),
         preferences: this.preferences.get(),
         doneSounds: listDoneSounds(),
+        savedRoots: this.savedRootsView(),
       },
       reduceSettings,
       coalesceSettingsEvent,
@@ -632,6 +642,9 @@ export class Orchestrator {
         // from reality, and every live session's additional directories are
         // re-applied so the agent's list moves with it.
         this.agentView.emit({ kind: "workspaceRootsChanged", roots: workspaceRootsView() });
+        // the first folder in, or the last out, opens or closes this
+        // workspace's saved list
+        this.publishSavedRoots();
         void this.sessionManager.reapplyWorkspaceRoots().catch(this.logCatch("reapply workspace roots"));
       }),
     );
@@ -702,6 +715,14 @@ export class Orchestrator {
           }
         },
         workspaceRoots: workspaceRootsView,
+        savedRoots: () => {
+          const saved = this.savedRootsView();
+          return [...(saved.workspace ?? []), ...saved.machine];
+        },
+        rootExists: isFolder,
+        // a skipped saved root earns its mark in Settings now, not at the
+        // page's next unrelated refresh
+        rootsMissing: () => this.publishSavedRoots(),
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
         isDeleteUsed: (agentId) =>
@@ -894,6 +915,8 @@ export class Orchestrator {
       preferences: this.preferences,
       composerKnobs: this.composerKnobs,
       sessionContinuity: this.sessionContinuity,
+      workspaceSavedRoots: this.workspaceSavedRoots,
+      machineSavedRoots: this.machineSavedRoots,
       tempStashes: {
         wipe: async () => {
           await rm(ATTACHMENTS_DIR, { recursive: true, force: true });
@@ -917,6 +940,7 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
     await this.integrations.refresh();
     this.publishRules();
+    this.publishSavedRoots();
     // An open Preferences page settles back to the defaults it now holds
     // (and the agent view's composer stats with it).
     const preferences = this.preferences.get();
@@ -1796,6 +1820,8 @@ export class Orchestrator {
         placement: "workspaceState",
         detail: `${n(rules.commandRules.length, "rule")} · scope: ${rules.fileWriteScope}`,
       },
+      { id: "machine-saved-roots", label: "Saved roots — every workspace", placement: "globalStorage file", detail: n(this.machineSavedRoots.list().length, "folder") },
+      { id: "workspace-saved-roots", label: "Saved roots — this workspace", placement: "workspaceState", detail: n(this.workspaceSavedRoots.list().length, "folder") },
       { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: n(await this.decisionAudit.count(), "entry") },
     ];
     this.settings.emit({ kind: "dataInventoryChanged", rows });
@@ -2360,6 +2386,17 @@ export class Orchestrator {
       case "addContextRoot":
         void this.addContextRoot(action.sessionId);
         break;
+      case "saveRoot":
+        void this.saveRoot(action.scope, action.path).catch(this.logCatch("saveRoot"));
+        break;
+      case "pickSavedRoot":
+        void this.pickSavedRoot(action.scope, action.replacing).catch(this.logCatch("pickSavedRoot"));
+        break;
+      case "unsaveRoot":
+        void this.savedRootsIn(action.scope)
+          .remove(action.path)
+          .then(() => this.publishSavedRoots(), this.logCatch("unsaveRoot"));
+        break;
       case "removeContextRoot":
         void this.sessionManager
           .removeRoot(action.sessionId, action.path)
@@ -2444,6 +2481,63 @@ export class Orchestrator {
     const uri = picked?.[0];
     if (uri === undefined) return;
     await this.sessionManager.addRoot(sessionId, uri.fsPath);
+  }
+
+  /** The saved roots as both channels show them: this workspace's list
+   * exists only while a folder is open — an empty window has no workspace
+   * to save to. */
+  private savedRootsView(): SavedRootsView {
+    const workspaceOpen = (vscode.workspace.workspaceFolders ?? []).length > 0;
+    const workspace = workspaceOpen ? this.workspaceSavedRoots.list() : null;
+    const machine = this.machineSavedRoots.list();
+    return {
+      workspace,
+      machine,
+      missing: [...new Set([...(workspace ?? []), ...machine])].filter((p) => !isFolder(p)),
+    };
+  }
+
+  private savedRootsIn(scope: SavedRootScope): SavedRootsStore {
+    return scope === "workspace" ? this.workspaceSavedRoots : this.machineSavedRoots;
+  }
+
+  /** The one writer of a saved root, from the chip or from Settings.
+   * Saving shapes the sessions born from now on — never a live one. What
+   * is stored is an absolute path to a folder that exists: a relative one
+   * resolves against the workspace here, once, so every later session
+   * reads the same folder; anything that isn't a folder is refused, said. */
+  private async saveRoot(scope: SavedRootScope, path: string, replacing?: string): Promise<void> {
+    if (scope === "workspace" && this.savedRootsView().workspace === null) return;
+    const absolute = normalizeRootPath(isAbsolute(path) ? path : resolve(this.workspaceCwd, path));
+    if (!isFolder(absolute)) {
+      void vscode.window.showWarningMessage(`Not saved: ${absolute} is not a folder on this machine.`);
+      return;
+    }
+    const store = this.savedRootsIn(scope);
+    await (replacing === undefined ? store.add(absolute) : store.replace(replacing, absolute));
+    this.publishSavedRoots();
+  }
+
+  /** Settings' add, or its edit of one entry: the picker opens where that
+   * entry points while the folder still exists — a gone one opens at the
+   * picker's default, the user is finding its new home. */
+  private async pickSavedRoot(scope: SavedRootScope, replacing?: string): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      openLabel: replacing === undefined ? "Save as root" : "Use this folder",
+      ...(replacing !== undefined && isFolder(replacing) ? { defaultUri: vscode.Uri.file(replacing) } : {}),
+    });
+    const uri = picked?.[0];
+    if (uri === undefined) return;
+    await this.saveRoot(scope, uri.fsPath, replacing);
+  }
+
+  private publishSavedRoots(): void {
+    const event = { kind: "savedRootsChanged", savedRoots: this.savedRootsView() } as const;
+    this.settings.emit(event);
+    this.agentView.emit(event);
   }
 
   /** Composer drop of an external non-image file: the webview holds
@@ -2862,4 +2956,11 @@ export class Orchestrator {
     this.wireStatusItem?.dispose();
     if (this.wireStatusTimer !== null) clearInterval(this.wireStatusTimer);
   }
+}
+
+/** A root is a folder on disk right now — the one reality read behind
+ * every lifecycle request's roots, the MCP servers' list, the saved lists'
+ * marks, and a save. */
+function isFolder(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
 }

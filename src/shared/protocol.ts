@@ -45,9 +45,31 @@ export type SettingsSectionId =
   | "matrix"
   | "integrations"
   | "preferences"
+  | "roots"
   | "permissions"
   | "audit"
   | "data";
+
+/** Where a saved root lives: "workspace" — this workspace only
+ * (workspaceState, never the repo), the default; "machine" — every
+ * workspace on this machine. */
+export type SavedRootScope = "workspace" | "machine";
+
+/** The folders every new session starts with, beyond the workspace's own.
+ * `workspace` is null in a window with no folder open: there is no
+ * workspace to save to. `missing` names the saved folders gone from disk
+ * as of the last read — each needs the user's action (restore or remove);
+ * sessions skip them meanwhile. */
+export interface SavedRootsView {
+  workspace: readonly string[] | null;
+  machine: readonly string[];
+  missing: readonly string[];
+}
+
+export const NO_SAVED_ROOTS: SavedRootsView = { workspace: null, machine: [], missing: [] };
+
+/** What both saving surfaces say where `workspace` is null. */
+export const NO_WORKSPACE_TO_SAVE = "No folder open — there is no workspace to save to.";
 
 export type Action =
   /** Opens (or reveals) the Settings panel; `section` additionally navigates
@@ -218,6 +240,14 @@ export type Action =
   | { kind: "reorderIntegrations"; ids: readonly string[] }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
+  /** Saved roots — the folders every new session starts with. `saveRoot`
+   * is the roots chip's shortcut for a root already on the session;
+   * `pickSavedRoot` is Settings' add — or, with `replacing`, its edit of
+   * that entry in place — through the native folder picker; removal lives
+   * in Settings alone. */
+  | { kind: "saveRoot"; path: string; scope: SavedRootScope }
+  | { kind: "pickSavedRoot"; scope: SavedRootScope; replacing?: string }
+  | { kind: "unsaveRoot"; path: string; scope: SavedRootScope }
   /** Byte-carrying attachment adds, both produced by the composer's one
    * ingress processor (composer/ingress.ts) — validated, size-capped, and
    * (for images) normalized there, so the orchestrator never receives bytes
@@ -1123,16 +1153,20 @@ export interface AgentViewState {
   sessionKnobs: Readonly<Record<string, readonly SessionKnobView[]>>;
   /** User-added external context roots, per session (workspace folders
    * are always active and need no chip; these are the
-   * removable, explicit ones). Passed to the agent as `additionalDirectories`
-   * — only where advertised. ACP sets the list on lifecycle requests alone,
-   * so a change after the first turn re-applies through `session/resume`
-   * ("sets the complete list"); an add that could not land is refused at
-   * the writer, and the roots chip says why. */
+   * removable, explicit ones) — seeded at birth from the saved roots, the
+   * session's own from then on. Passed to the agent as
+   * `additionalDirectories` — only where advertised. ACP sets the list on
+   * lifecycle requests alone, so a change after the first turn re-applies
+   * through `session/resume` ("sets the complete list"); the session's MCP
+   * servers read it at once, and the roots chip says per row who holds it. */
   contextRoots: Readonly<Record<string, readonly string[]>>;
   /** Workspace folders — the always-active roots every session gets as its
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
    * reflects reality instead of counting only the user-added extras. */
   workspaceRoots: readonly string[];
+  /** The saved roots, both scopes — the chip names a saved row's scope
+   * and offers the save on the rest. */
+  savedRoots: SavedRootsView;
   /** Live IDE selection — the ghost chip's presence signal (appears
    * only while the IDE has a selection). Position only; never the text. */
   liveSelection: LiveSelectionView | null;
@@ -1242,6 +1276,7 @@ export const initialAgentViewState: AgentViewState = {
   contextRoots: {},
   drafts: {},
   workspaceRoots: [],
+  savedRoots: NO_SAVED_ROOTS,
   liveSelection: null,
   openEditors: [],
   workspaceFiles: { query: "", files: [], dirs: [] },
@@ -1447,7 +1482,10 @@ export type AgentViewEvent =
   /** The complete stored preferences (never a patch) — one event, both
    * channels: the Preferences page renders it, the agent view gates its
    * composer stats on it. */
-  | { kind: "preferencesChanged"; preferences: PreferencesView };
+  | { kind: "preferencesChanged"; preferences: PreferencesView }
+  /** Both saved lists, complete — one event, both channels: Settings
+   * manages them, the roots chip reads them. */
+  | { kind: "savedRootsChanged"; savedRoots: SavedRootsView };
 
 function reduceAgents(
   agents: readonly AgentSummary[],
@@ -2115,6 +2153,8 @@ export function reduceAgentView(
       return { ...state, workspaceFiles: { query: event.query, files: event.files, dirs: event.dirs } };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
+    case "savedRootsChanged":
+      return { ...state, savedRoots: event.savedRoots };
     default:
       return state; // events belonging only to the settings channel (same shared union)
   }
@@ -2295,6 +2335,8 @@ export interface SettingsState {
    * platform's own sound directory at activation) — the Turn-end picker's
    * options. Empty on platforms with no enumerable set. */
   doneSounds: readonly string[];
+  /** Saved roots page snapshot — same event as the agent view's copy. */
+  savedRoots: SavedRootsView;
 }
 
 /** One row of the Data page's storage inventory — a store, where it lives
@@ -2331,6 +2373,7 @@ export const initialSettingsState: SettingsState = {
   dataInventory: null,
   preferences: DEFAULT_PREFERENCES,
   doneSounds: [],
+  savedRoots: NO_SAVED_ROOTS,
 };
 
 export type SettingsEvent =
@@ -2470,6 +2513,8 @@ export function reduceSettings(
       return { ...state, dataInventory: event.rows };
     case "preferencesChanged":
       return { ...state, preferences: event.preferences };
+    case "savedRootsChanged":
+      return { ...state, savedRoots: event.savedRoots };
     case "sectionChanged":
       return { ...state, section: event.section };
     default:

@@ -75,7 +75,7 @@ export function DataSection(props: {
           label="Erase all data"
           variant="destructive"
           confirmLabel="Erase everything patchbay stored?"
-          title="Every agent stops now. Configs, credentials, caches, rules, and session records are deleted permanently. Other workspaces' session indexes are out of this window's reach — reopen them and erase again if needed."
+          title="Every agent stops now. Configs, credentials, caches, rules, saved roots, and session records are deleted permanently. Other workspaces' session indexes are out of this window's reach — reopen them and erase again if needed."
           onConfirm={props.onEraseAll}
         />
       </div>

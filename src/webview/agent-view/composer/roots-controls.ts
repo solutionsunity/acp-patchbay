@@ -11,6 +11,7 @@
 // derives that from the same declared facts the session manager's
 // re-apply reads, so the chip tells the truth the writer holds. Adding is
 // never gated: a root reaches the servers regardless.
+import type { SavedRootsView } from "../../../shared/protocol";
 
 /** When the agent gets a root added now. */
 export type AgentDelivery =
@@ -64,4 +65,17 @@ export function rootsControls(facts: {
 export function rootHolders(agent: AgentDelivery, isCwd: boolean): string {
   if (isCwd || agent === "live") return "agent + MCP";
   return agent === "nextOpen" ? "MCP · agent at next open" : "MCP only";
+}
+
+/** A user-added row's save state: already saved — named by the list that
+ * holds it, managed in Settings — or offered for saving, where "this
+ * workspace" needs an open folder. */
+export type RootSaving =
+  | { kind: "saved"; label: string }
+  | { kind: "unsaved"; workspaceOpen: boolean };
+
+export function rootSaving(path: string, saved: SavedRootsView): RootSaving {
+  if (saved.workspace?.includes(path) === true) return { kind: "saved", label: "saved · this workspace" };
+  if (saved.machine.includes(path)) return { kind: "saved", label: "saved · every workspace" };
+  return { kind: "unsaved", workspaceOpen: saved.workspace !== null };
 }

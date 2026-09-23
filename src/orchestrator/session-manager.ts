@@ -123,8 +123,19 @@ export interface SessionManagerHooks {
    * folder came or went) — the orchestrator tells the session's MCP
    * subprocesses, which re-read `rootsOf`. Fired for attached sessions
    * only: a session with no live attachment has no subprocesses to tell,
-   * and its next attach spawns ones that read the list fresh. */
+   * and its next load or resume spawns ones that read the list fresh. A
+   * `session/new` is the exception, fired at birth: its subprocesses start
+   * before the agent has named the session, so any early read found none. */
   rootsChanged?(sessionId: string): void;
+  /** The saved roots, both scopes as stored (this workspace's first) —
+   * read when a session is born, never after. */
+  savedRoots?(): readonly string[];
+  /** Whether a root is a folder on disk right now — read at every
+   * lifecycle request and every server read. Absent: every root is. */
+  rootExists?(path: string): boolean;
+  /** Roots a lifecycle request skipped because they are gone from disk —
+   * the orchestrator re-reads the saved lists' marks. */
+  rootsMissing?(paths: readonly string[]): void;
   /** The open workspace's folders, read from reality at every composition
    * (never stored — a reload reads them again). The first is the session
    * cwd; the rest reach the agent as additional directories, so the wire
@@ -215,6 +226,13 @@ export function harnessEnvelopeTag(text: string): string | null {
     rest = rest.slice(m[0].length).trimStart();
   }
   return first;
+}
+
+/** A root path as agents and saved lists receive it: folder pickers hand
+ * back "/x/y/", and a directory is never spelled with a trailing
+ * separator (a bare "/" stays itself). */
+export function normalizeRootPath(path: string): string {
+  return path.replace(/(?<=.)[\\/]+$/, "");
 }
 
 function deriveTitle(promptText: string): string {
@@ -624,21 +642,28 @@ export class SessionManager {
     poolKey: string,
     agentId: string,
     opts: { cwd?: string; roots?: readonly string[] } = {},
-  ): Promise<{ sessionId: string; knobs: NormalizedKnobs }> {
+  ): Promise<{ sessionId: string; knobs: NormalizedKnobs; missing: string[] }> {
     const contextToken = `ctx-${++this.contextTokenCounter}`;
     const mcpServers = await this.mcpServersFor(contextToken, agentId);
     const cwd = opts.cwd ?? this.cwd();
-    // Roots: an explicit override wins (recreate paths); otherwise the one
+    // Roots: an explicit list wins (every session/new — a birth seeded
+    // from the saved roots, a recreate carrying its own); otherwise the one
     // composition — workspace folders beyond the cwd, then the session's
-    // canonical user-added list (a fresh session has no user-added ones).
-    const roots = [...(opts.roots ?? this.rootsFor(target.via !== "new" ? target.sessionId : null, cwd))];
+    // canonical user-added list. A folder gone from disk is skipped, never
+    // sent: the list stays the user's, the wire carries what exists.
+    const composed = opts.roots ?? this.rootsFor(target.via !== "new" ? target.sessionId : null, cwd);
+    const missing = composed.filter((p) => !this.onDisk(p));
+    const roots = composed.filter((p) => !missing.includes(p));
+    if (missing.length > 0) this.hooks.rootsMissing?.(missing);
     if (target.via === "new") {
       const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
       this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
+      // the session isn't in the view yet — its caller says what was skipped
       return {
         sessionId: r.sessionId,
         knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
+        missing,
       };
     }
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
@@ -647,10 +672,29 @@ export class SessionManager {
         ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
         : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
     this.hooks.onRealSessionAttached?.(agentId, target.sessionId);
+    this.noticeMissingRoots(target.sessionId, missing);
     return {
       sessionId: target.sessionId,
       knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
+      missing,
     };
+  }
+
+  private onDisk(path: string): boolean {
+    return this.hooks.rootExists?.(path) ?? true;
+  }
+
+  /** Says, in the session, which roots its last lifecycle request skipped
+   * — never a silent narrowing of what the user set up. */
+  private noticeMissingRoots(sessionId: string, missing: readonly string[]): void {
+    if (missing.length === 0) return;
+    const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
+    const notice: ChatBlock = {
+      kind: "notice",
+      id: newBlockId("notice"),
+      text: `Not found on disk, so neither the agent nor the MCP servers got ${missing.length === 1 ? "this root" : "these roots"}: ${missing.join(", ")}. Restore the folder, or remove it from the roots (saved ones in Settings › Saved roots).`,
+    };
+    this.emitterFor(sessionId)({ kind: "transcriptSeeded", sessionId, blocks: [...blocks, notice] });
   }
 
   /** Sanitizer report channel (knobs.ts guards) — dropped wire entries land
@@ -731,7 +775,12 @@ export class SessionManager {
     cwd: string,
   ): Promise<string> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    const { sessionId, knobs } = await this.attachSession({ via: "new" }, poolKey, agentId, { cwd });
+    const saved = this.savedRootsFor(cwd);
+    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, poolKey, agentId, {
+      cwd,
+      roots: [...this.rootsFor(null, cwd), ...saved],
+    });
+    const seeded = saved.filter((p) => !missing.includes(p));
     this.sessions.set(sessionId, liveSession(agentId, poolKey));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
@@ -744,6 +793,14 @@ export class SessionManager {
       updatedAt: now,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
+    // The saved roots are this session's own from here on — the same list
+    // a user-added root joins.
+    if (seeded.length > 0) {
+      this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: seeded });
+      this.persistRoots(sessionId, seeded);
+    }
+    this.noticeMissingRoots(sessionId, missing);
+    this.hooks.rootsChanged?.(sessionId);
     this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
     this.publishKnobs(sessionId, knobs);
     await this.applySeedFor(agentId, sessionId);
@@ -1541,9 +1598,7 @@ export class SessionManager {
    * states, from the same declared facts the pool holds, whether and when
    * the agent gets it. */
   async addRoot(sessionId: string, path: string): Promise<void> {
-    // Folder pickers hand back "/x/y/" — normalize at the one chokepoint;
-    // agents receive directory paths, never path-with-separator spellings.
-    const normalized = path.replace(/(?<=.)[\\/]+$/, "");
+    const normalized = normalizeRootPath(path);
     const current = this.hooks.contextRootsFor?.(sessionId) ?? [];
     if (current.includes(normalized)) return;
     this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: [...current, normalized] });
@@ -1570,13 +1625,21 @@ export class SessionManager {
     return [...folders, ...added];
   }
 
+  /** The saved roots a session born at `cwd` starts with — each once, and
+   * none it already has by being here (the cwd, a workspace folder). One
+   * gone from disk is dropped at the attach, which says so. */
+  private savedRootsFor(cwd: string): string[] {
+    const present = new Set([cwd, ...(this.hooks.workspaceRoots?.() ?? [])]);
+    return [...new Set(this.hooks.savedRoots?.() ?? [])].filter((p) => !present.has(p));
+  }
+
   /** The session's complete root list as its MCP servers read it: the cwd
-   * first, then exactly what `rootsFor` composes for the wire — one
-   * composition, so the servers and the agent can never be told two
-   * different lists. */
+   * first, then exactly what `rootsFor` composes for the wire, minus any
+   * folder gone from disk as the wire skips it — one composition, so the
+   * servers and the agent can never be told two different lists. */
   rootsOf(sessionId: string): string[] {
     const cwd = this.cwd();
-    return [cwd, ...this.rootsFor(sessionId, cwd)];
+    return [cwd, ...this.rootsFor(sessionId, cwd).filter((p) => this.onDisk(p))];
   }
 
   /** A workspace folder was added or removed: every live session's wire
@@ -1685,7 +1748,7 @@ export class SessionManager {
     // `roots` = the user-added list, which is what the durable row carries;
     // the wire gets the full composition (workspace folders included).
     const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
-    const { sessionId, knobs } = await this.attachSession({ via: "new" }, poolKey, agentId, {
+    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, poolKey, agentId, {
       roots: this.rootsFor(oldId, this.cwd()),
     });
     // Sidebar-pointer semantics, NOT isActiveSession (which also counts
@@ -1757,6 +1820,10 @@ export class SessionManager {
         : []),
     );
     if (wasActive) this.hooks.emit({ kind: "sessionActivated", sessionId });
+    // A birth like any other: the session says what was skipped, and its
+    // servers hear its list once it exists.
+    this.noticeMissingRoots(sessionId, missing);
+    this.hooks.rootsChanged?.(sessionId);
     // the empty shell: freed agent-side where possible, forgotten either
     // way — only while its process still exists; a dead connection took
     // it along.

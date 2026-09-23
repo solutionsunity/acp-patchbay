@@ -40,6 +40,8 @@ export interface EraseTargets {
   lastActiveSession: Wipeable;
   preferences: Wipeable;
   composerKnobs: Wipeable;
+  workspaceSavedRoots: Wipeable;
+  machineSavedRoots: Wipeable;
   /** The attachment/diff temp stashes: pasted-image bytes and diff
    * snapshots are user content — "deletes everything patchbay ever
    * stored" includes them, not just the rows that referenced them. */
@@ -83,5 +85,7 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.lastActiveSession.wipe();
   await targets.preferences.wipe();
   await targets.composerKnobs.wipe();
+  await targets.workspaceSavedRoots.wipe();
+  await targets.machineSavedRoots.wipe();
   await targets.tempStashes.wipe();
 }

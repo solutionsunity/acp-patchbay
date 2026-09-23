@@ -8,22 +8,33 @@
 // who holds it: the session's MCP servers always do, the agent as the one
 // pure gate (roots-controls.ts) derives from the declared facts the writer
 // holds. Where the agent takes the list only at its next open, the note
-// offers that open — the same reload the session row's menu has.
+// offers that open — the same reload the session row's menu has. An
+// added row also says whether it is saved for new sessions; the chip only
+// saves (the shortcut), Settings manages the saved lists.
+import { NO_WORKSPACE_TO_SAVE, type SavedRootsView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { rootHolders, type RootsControls } from "./roots-controls";
+import { rootHolders, rootSaving, type RootsControls } from "./roots-controls";
 
 export function RootsChip({
   sessionId,
   roots,
   workspaceRoots,
+  savedRoots,
   controls,
 }: {
   sessionId: string;
   roots: readonly string[];
   workspaceRoots: readonly string[];
+  savedRoots: SavedRootsView;
   controls: RootsControls;
 }) {
   const send = useActions();
@@ -49,6 +60,7 @@ export function RootsChip({
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
             <code>{r}</code>
             <span className="text-muted-foreground">{rootHolders(controls.agent, false)}</span>
+            <SaveControl path={r} saved={savedRoots} />
             <Button
               variant="ghost"
               size="sm"
@@ -69,6 +81,14 @@ export function RootsChip({
         >
           <b>+ Add folder…</b>
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start text-muted-foreground"
+          onClick={() => send({ kind: "openSettings", section: "roots" })}
+        >
+          Manage saved roots…
+        </Button>
         {controls.note !== null && (
           <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
             <span>{controls.note}</span>
@@ -86,5 +106,34 @@ export function RootsChip({
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Saved: the list that holds it, read-only here. Unsaved: one Save menu,
+ * this workspace first (the default scope). */
+function SaveControl({ path, saved }: { path: string; saved: SavedRootsView }) {
+  const send = useActions();
+  const state = rootSaving(path, saved);
+  if (state.kind === "saved") return <span className="text-muted-foreground">{state.label}</span>;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-5 px-1" title="Save for new sessions">
+          Save
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          disabled={!state.workspaceOpen}
+          title={state.workspaceOpen ? undefined : NO_WORKSPACE_TO_SAVE}
+          onSelect={() => send({ kind: "saveRoot", path, scope: "workspace" })}
+        >
+          Save for this workspace
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => send({ kind: "saveRoot", path, scope: "machine" })}>
+          Save for every workspace
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

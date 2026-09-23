@@ -30,7 +30,7 @@ import { PromptEditor } from "./prompt-editor";
 import { RootsChip } from "./roots-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { AvailableCommand } from "../../../shared/protocol";
+import type { AvailableCommand, SavedRootsView } from "../../../shared/protocol";
 
 export function Composer(props: {
   agent: AgentSummary | null;
@@ -42,6 +42,7 @@ export function Composer(props: {
   contextChips: readonly ContextChip[];
   contextRoots: readonly string[];
   workspaceRoots: readonly string[];
+  savedRoots: SavedRootsView;
   /** The roots chip's gate (roots-controls.ts): whether shown roots reach
    * the agent, whether adding is live, and the one-line reason when not. */
   rootsControls: RootsControls;
@@ -182,6 +183,7 @@ export function Composer(props: {
               sessionId={sessionId}
               roots={props.contextRoots}
               workspaceRoots={props.workspaceRoots}
+              savedRoots={props.savedRoots}
               controls={props.rootsControls}
             />
           )}

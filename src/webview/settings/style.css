@@ -376,6 +376,11 @@ td.cap {
   color: var(--pb-err);
 }
 
+/* a row's non-destructive action — hover says "act", not "delete" */
+.rule .e.edit:hover {
+  color: var(--pb-text);
+}
+
 .verdict {
   font-size: 11px;
   padding: 1px 9px;
