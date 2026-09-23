@@ -9,6 +9,10 @@ import {
 } from "../src/orchestrator/auth-evidence";
 
 const AT = "2026-07-21T00:00:00.000Z";
+/** An RPC that started after the lock was raised — evidence earned under it. */
+const AFTER = "2026-07-21T00:00:01.000Z";
+/** An RPC that started before the lock — evidence earned on pre-lock credentials. */
+const BEFORE = "2026-07-20T23:59:59.000Z";
 const loggedOut: AuthLock = { kind: "loggedOut", reason: LOGGED_OUT_REASON, at: AT };
 const promptLock: AuthLock = {
   kind: "authRequired",
@@ -53,16 +57,16 @@ describe("locking evidence", () => {
   });
 
   it("logout succeeding is the strongest lock, not a clear", () => {
-    const r = applyAuthEvidence(null, { kind: "rpcOk", method: "logout" }, AT);
+    const r = applyAuthEvidence(null, { kind: "rpcOk", method: "logout", startedAt: BEFORE }, AT);
     expect(r).toEqual({ changed: true, lock: loggedOut });
-    expect(applyAuthEvidence(loggedOut, { kind: "rpcOk", method: "logout" }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(loggedOut, { kind: "rpcOk", method: "logout", startedAt: AFTER }, AT).changed).toBe(false);
   });
 
   it("a failed terminal login locks under its local method — no wire success can same-method-clear it", () => {
     const r = applyAuthEvidence(null, { kind: "loginFailed", reason: "exit 1" }, AT);
     expect(r.changed && r.lock?.kind === "authRequired" && r.lock.method).toBe("terminal-login");
     const lock = r.changed ? r.lock! : null;
-    expect(applyAuthEvidence(lock, { kind: "rpcOk", method: "session/new" }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(lock, { kind: "rpcOk", method: "session/new", startedAt: AFTER }, AT).changed).toBe(false);
   });
 });
 
@@ -70,7 +74,7 @@ describe("clearing evidence", () => {
   it("authenticate and a completed prompt clear any lock — both exercise credentials on every agent", () => {
     for (const method of ["authenticate", "session/prompt"]) {
       for (const lock of [loggedOut, promptLock, newLock]) {
-        expect(applyAuthEvidence(lock, { kind: "rpcOk", method }, AT)).toEqual({
+        expect(applyAuthEvidence(lock, { kind: "rpcOk", method, startedAt: AFTER }, AT)).toEqual({
           changed: true,
           lock: null,
         });
@@ -86,7 +90,7 @@ describe("clearing evidence", () => {
   });
 
   it("same-method contradiction clears — a strict agent's session/new lock heals on the next session/new", () => {
-    expect(applyAuthEvidence(newLock, { kind: "rpcOk", method: "session/new" }, AT)).toEqual({
+    expect(applyAuthEvidence(newLock, { kind: "rpcOk", method: "session/new", startedAt: AFTER }, AT)).toEqual({
       changed: true,
       lock: null,
     });
@@ -95,15 +99,36 @@ describe("clearing evidence", () => {
 
 describe("non-bearing evidence — the bugs this table exists to prevent", () => {
   it("session/new success never clears a witnessed logout (the Claude reconnect-launder bug)", () => {
-    expect(applyAuthEvidence(loggedOut, { kind: "rpcOk", method: "session/new" }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(loggedOut, { kind: "rpcOk", method: "session/new", startedAt: AFTER }, AT).changed).toBe(false);
   });
 
   it("session/new success never clears a prompt-raised lock (the Verify-away flapping bug)", () => {
-    expect(applyAuthEvidence(promptLock, { kind: "rpcOk", method: "session/new" }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(promptLock, { kind: "rpcOk", method: "session/new", startedAt: AFTER }, AT).changed).toBe(false);
   });
 
   it("unrelated successes bear nothing on an unlocked agent", () => {
-    expect(applyAuthEvidence(null, { kind: "rpcOk", method: "session/new" }, AT).changed).toBe(false);
-    expect(applyAuthEvidence(null, { kind: "rpcOk", method: "session/list" }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(null, { kind: "rpcOk", method: "session/new", startedAt: AFTER }, AT).changed).toBe(false);
+    expect(applyAuthEvidence(null, { kind: "rpcOk", method: "session/list", startedAt: AFTER }, AT).changed).toBe(false);
+  });
+
+  // Evidence is earned when the RPC starts, not when it settles: a prompt
+  // that left on pre-lock credentials says nothing about the lock raised
+  // while it ran — whether that lock came from a sibling session's -32000
+  // or from a witnessed logout (issue #35).
+  it("a success that started before the lock was raised bears nothing — the stale-evidence launder", () => {
+    for (const method of ["authenticate", "session/prompt"]) {
+      for (const lock of [loggedOut, promptLock]) {
+        expect(applyAuthEvidence(lock, { kind: "rpcOk", method, startedAt: BEFORE }, AT).changed).toBe(false);
+      }
+    }
+    // same-method contradiction is subject to the same ordering
+    expect(applyAuthEvidence(newLock, { kind: "rpcOk", method: "session/new", startedAt: BEFORE }, AT).changed).toBe(false);
+    // started in the same instant the lock was written: not after it
+    expect(applyAuthEvidence(promptLock, { kind: "rpcOk", method: "session/prompt", startedAt: AT }, AT).changed).toBe(false);
+  });
+
+  it("a wire auth_required locks whenever it settles — the wire said locked, order is irrelevant", () => {
+    const r = applyAuthEvidence(null, { kind: "authRequired", method: "session/prompt", reason: null }, AT);
+    expect(r.changed).toBe(true);
   });
 });

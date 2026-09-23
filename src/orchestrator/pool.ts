@@ -110,12 +110,15 @@ export interface PoolHooks {
    * only clear a lock it actually contradicts. `reason` is the -32000
    * error's own message — the agent's login instruction, and the only
    * guidance on the wire when `authMethods` is empty (Auggie); null when
-   * blank, absent on "ok". Like onCapabilityEvidence: synchronous, never
-   * awaited. */
+   * blank, absent on "ok". `startedAt` is when the call left: a success is
+   * evidence about the credentials at that moment, and the table orders it
+   * against the lock it would clear. Like onCapabilityEvidence:
+   * synchronous, never awaited. */
   onAuthWireFact?(
     agentId: string,
     method: string,
     settled: "ok" | "auth_required",
+    startedAt: string,
     reason?: string | null,
   ): void;
   /** Wire-log tap (Audit page, opt-in): gates the tap's per-chunk work —
@@ -913,9 +916,10 @@ export class AgentPool {
    * their names (they arrive from orchestrator/extensions/ modules). */
   async unstableRequest(poolKey: string, method: string, params: unknown): Promise<unknown> {
     const entry = this.running(poolKey);
+    const startedAt = new Date().toISOString();
     try {
       const result = await entry.connection!.agent.request<unknown>(method, params);
-      this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok");
+      this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok", startedAt);
       return result;
     } catch (err) {
       // Untracked for capabilities by design — but auth is orthogonal: an
@@ -923,7 +927,7 @@ export class AgentPool {
       // swallowing it would leave the card claiming otherwise.
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {
-        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", auth.reason);
+        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", startedAt, auth.reason);
       }
       throw err;
     }
@@ -1010,6 +1014,7 @@ export class AgentPool {
       priorSessionCount,
       declared: entry.declared,
     };
+    const startedAt = new Date().toISOString();
     try {
       const result = await entry.connection!.agent.request(method, params);
       // The response trust boundary (response-guards.ts): validated and
@@ -1024,12 +1029,12 @@ export class AgentPool {
       const cancelled =
         method === acp.methods.agent.session.prompt &&
         (guarded as { stopReason?: string }).stopReason === "cancelled";
-      if (!cancelled) this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok");
+      if (!cancelled) this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok", startedAt);
       return guarded;
     } catch (err) {
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {
-        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", auth.reason);
+        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", startedAt, auth.reason);
       } else if (opts?.failureIsRoutine !== true && this.capabilityEvidenceBearing(entry)) {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");

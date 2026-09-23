@@ -20,6 +20,14 @@
 // a lock: the user's explicit action, the strongest evidence there is.
 // Patchbay's own login flows (authenticate round-trip, terminal login
 // exiting 0) are affirmative auth actions and clear any lock.
+//
+// The second rule is evidence ordering. A wire success is earned when the
+// call leaves, not when it settles: a prompt that left on valid
+// credentials and finished after a lock was raised — a sibling session's
+// -32000, a witnessed logout — says nothing about that lock. So a success
+// bears on a lock only if its RPC started after the lock's `at`; older
+// evidence never overwrites newer state. A wire `auth_required` needs no
+// ordering: whenever it settles, the wire said locked.
 import { methods } from "@agentclientprotocol/sdk";
 
 /** A standing reason the agent is unusable without login. `loggedOut` is
@@ -33,8 +41,9 @@ export type AuthLock =
   | { kind: "authRequired"; method: string; reason: string | null; at: string };
 
 export type AuthEvidence =
-  /** An outgoing agent RPC settled successfully. */
-  | { kind: "rpcOk"; method: string }
+  /** An outgoing agent RPC settled successfully. `startedAt` is when the
+   * call left — the moment the credentials it proves were exercised. */
+  | { kind: "rpcOk"; method: string; startedAt: string }
   /** An outgoing agent RPC settled `auth_required` (-32000). */
   | { kind: "authRequired"; method: string; reason: string | null }
   /** A terminal login flow (recipe or typed method) exited 0. */
@@ -102,6 +111,9 @@ export function applyAuthEvidence(
         return { changed: true, lock: { kind: "loggedOut", reason: LOGGED_OUT_REASON, at } };
       }
       if (current === null) return { changed: false };
+      // Earned before the lock existed (or in the same instant): the
+      // success predates what it would clear and bears nothing on it.
+      if (evidence.startedAt <= current.at) return { changed: false };
       if (CLEARS_ANY_LOCK.has(evidence.method)) return { changed: true, lock: null };
       // Same-method contradiction: the method that raised the lock now
       // succeeded. Anything else — session/new on a lazy-auth agent being

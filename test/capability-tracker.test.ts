@@ -68,11 +68,11 @@ function harness(kv = new MemoryKV()): {
     // through the real authority table (auth-evidence.ts), only a
     // transition emits, and only an affirmative auth action's clear marks
     // the auth row — the same transitions the extension host runs.
-    onAuthWireFact: (agentId, method, settled, reason) => {
+    onAuthWireFact: (agentId, method, settled, startedAt, reason) => {
       const result = applyAuthEvidence(
         locks.get(agentId) ?? null,
         settled === "ok"
-          ? { kind: "rpcOk", method }
+          ? { kind: "rpcOk", method, startedAt }
           : { kind: "authRequired", method, reason: reason ?? null },
         new Date().toISOString(),
       );

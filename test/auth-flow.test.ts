@@ -85,11 +85,11 @@ function harness(): {
     // Mirrors orchestrator.noteAuthEvidence exactly: one writer, the
     // authority table decides, only a transition emits, and only an
     // affirmative auth action's clear marks the auth row used.
-    onAuthWireFact: (agentId, method, settled, reason) => {
+    onAuthWireFact: (agentId, method, settled, startedAt, reason) => {
       const result = applyAuthEvidence(
         locks.get(agentId) ?? null,
         settled === "ok"
-          ? { kind: "rpcOk", method }
+          ? { kind: "rpcOk", method, startedAt }
           : { kind: "authRequired", method, reason: reason ?? null },
         new Date().toISOString(),
       );
@@ -207,6 +207,31 @@ describe("auth flows on the wire", () => {
     // The prompt honestly ended the lock — but patchbay's auth path never
     // fired, so the row stays declared: clearing ≠ proving.
     expect(capabilityState(h.state().capabilities.lazy!.auth)).toBe("declared");
+
+    await h.pool.stop("lazy");
+  });
+
+  // Issue #35: evidence is earned when the RPC leaves, not when it settles.
+  // A prompt that left on valid credentials, with a lock raised while it
+  // ran (a sibling session's -32000, a witnessed logout), finishes "ok" and
+  // must not clear that lock — its success predates it. The next prompt,
+  // started under the lock, is real evidence and clears.
+  it("a prompt in flight when the lock is raised does not clear it on completion; one started after it does", async () => {
+    const h = harness();
+    h.seedAgent("lazy");
+    await h.pool.connect(spec({ ...LAZY, stepDelayMs: 300, turn: [{ type: "chunk", text: "slow" }] }, "lazy"));
+    const { sessionId } = await h.pool.newSession("lazy", cwd);
+
+    const inFlight = h.pool.prompt("lazy", sessionId, [{ type: "text", text: "left before the lock" }]);
+    await new Promise((r) => setTimeout(r, 50)); // the prompt is on the wire
+    h.locks.set("lazy", { kind: "loggedOut", reason: LOGGED_OUT_REASON, at: new Date().toISOString() });
+    await inFlight;
+    expect(h.locks.get("lazy")).toMatchObject({ kind: "loggedOut" });
+    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(0);
+
+    await h.pool.prompt("lazy", sessionId, [{ type: "text", text: "started under the lock" }]);
+    expect(h.locks.get("lazy")).toBeUndefined();
+    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(1);
 
     await h.pool.stop("lazy");
   });

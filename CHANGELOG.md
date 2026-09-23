@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A prompt that was already running when an agent's auth lock was raised
+  can no longer clear that lock by finishing. A completed prompt is the
+  wire fact that proves credentials, but it proves them as of the moment
+  the call left, and the authority table judged only what the evidence
+  was, never when it was earned — so a long turn started before a sibling
+  session hit `auth_required`, or before a logout, unlocked the composer on
+  completion and the next prompt hit the wall again. Every success now
+  carries when its call started and bears only on a lock older than that.
+  The special case that suspended clears during a logout is gone, covered
+  by the rule. (#35)
 - The feature inventory (docs/features.md) is re-read against the code and
   says what the product does today, at the altitude of a promise rather than
   a mechanism. (#31)

@@ -419,11 +419,11 @@ export class Orchestrator {
         this.sessionManager.handleUpdate(agentId, notification);
       },
       onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
-      onAuthWireFact: (agentId, method, settled, reason) =>
+      onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
         this.noteAuthEvidence(
           agentId,
           settled === "ok"
-            ? { kind: "rpcOk", method }
+            ? { kind: "rpcOk", method, startedAt }
             : { kind: "authRequired", method, reason: reason ?? null },
         ),
       wireLogActive: () => this.wireLog.active,
@@ -1215,17 +1215,9 @@ export class Orchestrator {
       this.log.debug(`auth evidence for unknown agent ${agentId} dropped (${evidence.kind})`);
       return;
     }
-    // Between the logout RPC resolving and stopAllFor finishing, an
-    // in-flight prompt can settle "ok" — evidence issued on pre-logout
-    // credentials, contradicting nothing. Clears are suspended for that
-    // window; locks still apply.
     const result = applyAuthEvidence(this.authLocks.lockFor(agentId), evidence, new Date().toISOString());
     if (!result.changed) return;
     if (result.lock === null) {
-      if (this.loggingOut.has(agentId)) {
-        this.log.info(`${agentId}: auth clear (${evidence.kind}) ignored — logout in progress`);
-        return;
-      }
       this.authLocks.remove(agentId).catch((err: Error) => {
         this.log.error(`${agentId}: auth-lock remove failed — ${err.message}`);
       });
@@ -2826,19 +2818,9 @@ export class Orchestrator {
    * credentials. The card lands on stopped + the logout reason, and the
    * lock persists (auth-evidence.ts) — a reconnect carries it until real
    * login evidence clears it. */
-  /** Agents mid-logout: clears are suspended (noteAuthEvidence) until the
-   * processes are down — a prompt finishing on pre-logout credentials must
-   * not launder the witnessed logout. */
-  private readonly loggingOut = new Set<string>();
-
   private async logoutAgent(agentId: string): Promise<void> {
-    this.loggingOut.add(agentId);
-    try {
-      await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
-      await this.pool.stopAllFor(agentId);
-    } finally {
-      this.loggingOut.delete(agentId);
-    }
+    await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
+    await this.pool.stopAllFor(agentId);
   }
 
   /** Brackets a Verify round-trip (manual click or "Verify after add") with

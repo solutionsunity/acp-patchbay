@@ -391,7 +391,12 @@ fact means for auth.
   success clears only a lock that same method raised (a strict agent's
   `session/new` failure is honestly contradicted by a later `session/new`
   success). A bare connect, and a lazy-auth agent's `session/new` passing,
-  bear nothing — the transitions that used to launder a logout.
+  bear nothing — the transitions that used to launder a logout. And a
+  success bears only on a lock older than its call: evidence is earned when
+  the RPC leaves, so a prompt that left on valid credentials and finished
+  after the lock was raised — a sibling session's `auth_required`, a
+  witnessed logout — contradicts nothing. Every lock carries its `at`;
+  every success carries when it started; the table orders the two.
 - **Locks persist** (machine store, `stores/auth-locks.ts`): reload +
   autoConnect cannot launder a witnessed logout. Not a cache of readable
   reality — the wire has no auth query; the witnessed event is the only
@@ -402,10 +407,8 @@ fact means for auth.
   — honestly end the lock without marking the row: clearing ≠ proving, and
   a transient -32000 healing itself must not fabricate a proof. Never by
   `session/new` succeeding.
-- Two windows the writer refuses: evidence for an agent whose config no
-  longer exists (a terminal login left open across a Remove), and clears
-  arriving between the logout RPC resolving and the processes stopping (a
-  prompt finishing on pre-logout credentials contradicts nothing).
+- One thing the writer refuses on its own: evidence for an agent whose
+  config no longer exists (a terminal login left open across a Remove).
 - **A standing lock is a turn-start precondition** — the consumer side of
   the authority. The one adjudication every prompt passes (session-manager's
   `sendPrompt` top, ahead of any transcript write or wire call; the queue
