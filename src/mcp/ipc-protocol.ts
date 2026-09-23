@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Wire format between the local MCP server (spawned as the *agent's* own
-// subprocess — ACP's stdio transport model) and the orchestrator that
-// actually holds live VS Code state. The MCP server can't reach vscode APIs
-// itself (it's not running in the extension host), so every tool call
-// forwards over this newline-delimited JSON channel to whoever does.
-// One socket for the orchestrator's whole lifetime; sessionId disambiguates
-// which session's editor context / elicitation card a call belongs to.
+// Wire format between the subprocesses an agent spawns from a session's
+// mcpServers entries — patchbay's local MCP server and its stdio-to-HTTP
+// bridge — and the orchestrator that actually holds live VS Code state.
+// Neither subprocess can reach vscode APIs (they don't run in the extension
+// host), so everything forwards over this newline-delimited JSON channel to
+// whoever does. One socket for the orchestrator's whole lifetime; every
+// subprocess belongs to exactly one session and names it on every message.
 export interface IpcRequest {
   id: number;
-  /** Disambiguates which session an editor-state/elicitation call belongs
-   * to; for the integration-bridge methods there is no session, so the
-   * bridge passes its integrationId here instead — same field, same "which
-   * caller" role, just a different kind of caller. */
+  /** The session the calling subprocess serves — the correlation token it
+   * was spawned with, which the orchestrator maps back to the real ACP
+   * session id. */
   sessionId: string;
   method:
     | "getSelection"
@@ -21,9 +20,17 @@ export interface IpcRequest {
     | "getDiagnostics"
     | "getOpenEditors"
     | "getWorkspaceState"
+    | "getRoots"
+    | "watchRoots"
     | "requestUserInput"
     | "getIntegrationToken";
   params?: unknown;
+}
+
+/** Params of `getIntegrationToken`: which integration's credential the
+ * bridge is presenting. */
+export interface IntegrationTokenParams {
+  integrationId: string;
 }
 
 /** Result of `getIntegrationToken` — null when the integration isn't
@@ -33,10 +40,35 @@ export interface IntegrationTokenResult {
   accessToken: string;
 }
 
+/** Result of `getRoots`: the session's complete root list — the cwd, the
+ * workspace's other folders, the user-added external roots — as absolute
+ * paths in that order. The same list the agent receives through ACP where
+ * it takes the field; here it reaches the MCP servers regardless. */
+export interface RootsResult {
+  roots: string[];
+}
+
 export interface IpcResponse {
   id: number;
   result?: unknown;
   error?: string;
+}
+
+/** The one message the orchestrator pushes on its own: a subprocess that
+ * sent `watchRoots` hears every change to its session's root list, and
+ * re-reads the list with `getRoots` — the notification carries no data,
+ * so a subscriber can never hold a stale copy of a list it was told about. */
+export interface IpcNotification {
+  method: "rootsChanged";
+}
+
+export function isIpcNotification(message: unknown): message is IpcNotification {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    !("id" in message) &&
+    (message as { method?: unknown }).method === "rootsChanged"
+  );
 }
 
 export interface SelectionInfo {

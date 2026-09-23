@@ -112,9 +112,10 @@ deliverable.
 - The open workspace's folders are the session's context roots, and the user
   can add external ones (the backend repo while working in the frontend).
   Shown as a chip — added ones removable, workspace folders fixed — and
-  handed to the agent through the protocol where it supports that; where it
-  does not, the chip says the root is not delivered rather than pretending.
-  Roots another client set on the same session show up here, where the
+  handed to the agent through the protocol where it supports that, and to
+  the session's MCP servers regardless. The chip says, per root, who holds
+  it: the servers always; the agent now, at its next open, or never — never
+  pretending. Roots another client set on the same session show up here, where the
   agent reports them. What the agent's engine does with roots is the
   agent's business — patchbay passes, it does not index.
 - Slash commands the agent advertises are discoverable and invokable in the input.

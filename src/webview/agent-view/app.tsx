@@ -161,6 +161,8 @@ export function App({
             state.capabilities[active.agentId]?.["session.additionalDirectories"]?.declared === true,
           resumeDeclared:
             active !== null && state.capabilities[active.agentId]?.["session.resume"]?.declared === true,
+          loadDeclared:
+            active !== null && state.capabilities[active.agentId]?.["session.load"]?.declared === true,
           hasTurns: active !== null && (state.transcripts[active.id]?.length ?? 0) > 0,
         })}
         liveSelection={state.liveSelection}

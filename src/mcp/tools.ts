@@ -7,9 +7,12 @@
 // supports basic tool calling, whereas resources/subscribe support is
 // uneven, so a tools-only design sidesteps needing a second path at all
 // (get_workspace_state *is* the resources.subscribe fallback, staying the
-// only path rather than one of two).
+// only path rather than one of two). Roots are a tool for the same
+// reason in reverse: MCP's own roots flow has the *server* ask the client,
+// and the client here is the agent, which holds no root list of its own —
+// the orchestrator does, so the server reads it there and hands it over.
 import type { IpcClient } from "./ipc-client";
-import type { ElicitationPropertyView } from "./ipc-protocol";
+import type { ElicitationPropertyView, RootsResult } from "./ipc-protocol";
 
 export interface McpToolDef {
   name: string;
@@ -41,6 +44,12 @@ export const TOOL_DEFS: McpToolDef[] = [
   {
     name: "get_workspace_state",
     description: "A combined snapshot: open editors, diagnostics, and current selection.",
+    inputSchema: { type: "object" },
+  },
+  {
+    name: "get_roots",
+    description:
+      "The folders this session works in, as absolute paths: the workspace folders and any extra roots the user added to the session.",
     inputSchema: { type: "object" },
   },
   {
@@ -97,6 +106,8 @@ export async function callTool(
       return textResult(await ipc.request("getOpenEditors"));
     case "get_workspace_state":
       return textResult(await ipc.request("getWorkspaceState"));
+    case "get_roots":
+      return textResult(((await ipc.request("getRoots")) as RootsResult).roots);
     case "request_user_input": {
       const message = typeof args.message === "string" ? args.message : "";
       const properties = Array.isArray(args.properties)

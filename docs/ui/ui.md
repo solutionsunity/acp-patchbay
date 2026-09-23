@@ -96,7 +96,7 @@ Context row (above):
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Honest states from one gate: an agent that doesn't advertise the field shows every row beyond the cwd as "not delivered" and adding is off (reference paths with `@`); after the first turn, adding needs `session/resume` — without it the note says to add before the first prompt |
+| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots |
 | Selection ghost chip | ⌖ dashed, lit | **the live-selection indicator**: appears only while the IDE has a selection; click solidifies it into context. Editor-side twin: right-click → add to context. These two are the whole selection story |
 | Context chips | 📄 ⌖ ⚠ 🖼 | attached files, solidified selection, diagnostics, images; × removes |
 | Adder | ＋ dashed | one popover: Files · Selection · Problems · Roots · Attach (image/file — never disabled; converts to the best form the agent accepts) |

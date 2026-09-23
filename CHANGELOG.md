@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- A session's roots now reach its MCP servers, not only the agent. The
+  agent learned them through ACP, and the servers attached to the session
+  learned nothing: patchbay's own editor-state server served without
+  knowing the session's scope, and a remote integration behind the bridge
+  was never told. The local server now offers the list as a `get_roots`
+  tool, and the bridge declares MCP's client-side `roots` capability on the
+  agent's behalf, answers `roots/list` with the session's folders, and
+  sends `list_changed` the moment the list moves. Since a root always
+  reaches the servers, adding one is no longer refused where the agent
+  could not take it; the chip names, per root, who holds it — the servers
+  always, the agent now, at its next open (with a "Reopen now"), or never.
+  Servers the agent connects to itself are the agent's own MCP client's
+  affair. (#34)
 - A session's roots set by another client are no longer overwritten by
   patchbay's own list at the next open. An agent that lists its sessions
   may report each one's complete root list, and patchbay never read it: the
@@ -60,9 +73,8 @@
   MUST — it used to go to every agent), a change after the first turn
   re-applies through `session/resume` only (a full `session/load` replay is
   too high a price for a root), and where neither applies the chip says so
-  — "not delivered" rows on an agent without the capability, "add before
-  the first prompt" on one without resume — instead of counting a root that
-  never landed. A root added during a live turn now lands before the next
+  instead of counting a root that never landed. A root added during a live
+  turn now lands before the next
   held prompt fires. The capability matrix's `roots.listChanged` row is
   gone: an MCP-side placeholder ACP superseded before it was ever built. (#28)
 - A write proposal's diff card no longer ends silently at forty lines. The

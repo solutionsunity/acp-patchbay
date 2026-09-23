@@ -718,18 +718,24 @@ The differentiator (the PRD's current-release scope), shipped complete:
   workspace folder is the session `cwd`; every other folder and every user-added
   root rides as `additionalDirectories` — one composition in the session
   manager feeds `session/new` and every re-apply, and the roots chip counts the
-  same two facts, so display and wire cannot disagree. The field crosses the
+  same two facts, so display and wire cannot disagree. The list has two
+  readers. The agent reads it through the protocol, and the field crosses the
   wire **only when the agent advertises
   `sessionCapabilities.additionalDirectories`** (the spec's MUST for clients —
-  the pool holds it; a non-advertising agent gets no field, the chip labels
-  every row beyond the cwd "not delivered", and the matrix row is the fact).
-  After the first turn the one re-apply rung is `session/resume` (real memory,
-  no replay; it sets the complete list) — `session/load` is never used for a
-  root, a full replay being too high a price — so on an agent without resume a
-  root is refused at the writer once the session has turns, and the chip says
-  to add it before the first prompt; a zero-turn session re-mints itself for
-  free. A change during a live turn applies at turn end, before the held queue
-  drains. Workspace folders are read from reality at each composition, never
+  the pool holds it; a non-advertising agent gets no field, and the matrix
+  row is the fact). After the first turn the one re-apply rung is
+  `session/resume` (real memory, no replay; it sets the complete list) —
+  `session/load` is never used for a re-apply, a full replay being too high a
+  price — so on an agent without resume the agent's copy waits for the next
+  open (the reload the chip's note offers, where `session/load` exists; never,
+  where neither rung does); a zero-turn session re-mints itself for free. A
+  change during a live turn applies at turn end, before the held queue drains.
+  The session's MCP servers read the same list through patchbay's own channel,
+  at once and whatever the agent's rung (the local server's `get_roots` tool,
+  and MCP's own client-side roots on the bridge path — see the adapters table
+  below), so a root is always accepted at the writer, and the chip's one gate
+  states per row who holds it: the servers always; the agent now, at the next
+  open, or never. Workspace folders are read from reality at each composition, never
   stored; only user-added roots persist. A folder added or removed at runtime
   re-applies to every live session. The last lifecycle request wins, whole
   list, whichever client sent it — so a `session/list` row that reports the
@@ -764,9 +770,24 @@ The differentiator (the PRD's current-release scope), shipped complete:
 | `elicitation` | Elicitation request | Tool `request_user_input(schema)`; orchestrator renders the form, returns the answer as a tool result |
 | `resources.subscribe` | Live push | `get_workspace_state` tool; one turn of staleness accepted |
 
-Roots are not on this table: ACP carries them itself, on the session lifecycle
-(§ Context roots below), so the local MCP server never needed to learn them from
-the agent's MCP client.
+Roots take this table's direction in reverse: MCP's own roots flow has the
+*server* ask the *client* (`roots/list`, `notifications/roots/list_changed`),
+and the client on every MCP wire here is the agent, which holds no root list —
+patchbay does. So the local server reads the session's list from the
+orchestrator and hands it to the agent as a tool (`get_roots`); and on the
+bridge path, where patchbay's stdio-to-HTTP bridge sits between the agent and
+a remote server, the bridge declares the `roots` capability on top of the
+agent's `initialize`, answers `roots/list` from the orchestrator with `file://`
+URIs (the spec's MUST), and sends `list_changed` when the list moves — the
+agent never sees the exchange. Both read one composition
+(`session-manager.ts:rootsOf`: cwd first, then the wire list) and hear of
+changes over the IPC socket (`watchRoots`, then a `rootsChanged` push per
+change; the subscriber re-reads, never holds a copy). Servers the agent
+connects to itself (`type: "http"` passthrough, custom stdio) learn roots only
+from the agent's own MCP client, which no agent surveyed forwards today.
+Whether a remote server can use a local path is its own business: patchbay
+delivers what the spec allows and does not guess at what a server will do
+with it.
 
 - **Image paste is never disabled**: `promptCapabilities.image` →
   `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a

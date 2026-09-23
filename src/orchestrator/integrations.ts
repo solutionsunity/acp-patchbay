@@ -770,6 +770,7 @@ export class IntegrationsManager {
     agentId: string,
     bridgeScriptPath: string,
     ipcSocketPath: string,
+    contextToken: string,
     declaresHttp: boolean,
   ): Promise<McpServer[]> {
     const servers: McpServer[] = [];
@@ -831,6 +832,7 @@ export class IntegrationsManager {
         args: [bridgeScriptPath],
         env: [
           { name: "ACP_PATCHBAY_IPC", value: ipcSocketPath },
+          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
           { name: "ACP_PATCHBAY_INTEGRATION_ID", value: integration.id },
           { name: "ACP_PATCHBAY_INTEGRATION_URL", value: url },
           ...(header !== null

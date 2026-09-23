@@ -1,23 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The roots chip's gate as a pure function — the roots sibling of
-// composer-controls.ts, extracted for the same reason: every reachable
+// The roots chip's delivery verdict as a pure function — the roots sibling
+// of composer-controls.ts, extracted for the same reason: every reachable
 // state of the facts it reads is named in a test, never an inline render
-// expression. A UX courtesy, not the invariant: the pool never sends
-// `additionalDirectories` to an agent that does not advertise it, and the
-// session manager refuses an add that could not land. This derives the
-// same verdict for display, from the same two declared facts and the
-// session's turn count, so the chip tells the truth the writers hold.
+// expression. A session's root list has two readers. The MCP servers
+// patchbay attaches always have it, live — telling them is patchbay's own
+// act. The agent has it only through the protocol, and only on a lifecycle
+// request, so whether and when the agent gets a root is what varies; this
+// derives that from the same declared facts the session manager's
+// re-apply reads, so the chip tells the truth the writer holds. Adding is
+// never gated: a root reaches the servers regardless.
+
+/** When the agent gets a root added now. */
+export type AgentDelivery =
+  /** With the next prompt: the session is fresh (re-minted for free) or
+   * the agent re-applies in place through `session/resume`. */
+  | "live"
+  /** The agent cannot take it mid-session but can reopen: it rides the
+   * next `session/load`. */
+  | "nextOpen"
+  /** The agent never gets it on this session: the field is not advertised,
+   * or the session has turns and the agent offers no way to reopen. */
+  | "never";
 
 export interface RootsControls {
-  /** Whether the roots the chip shows actually reach the agent — false
-   * for an agent that does not advertise the field, where every row is
-   * labelled as not delivered. */
-  delivered: boolean;
-  /** Whether "Add folder…" is live. */
-  canAdd: boolean;
-  /** The one-line reason when it is not, or null. */
+  agent: AgentDelivery;
+  /** The one-line reason when the agent's delivery is not live, or null. */
   note: string | null;
 }
 
@@ -26,22 +35,33 @@ export function rootsControls(facts: {
   advertised: boolean;
   /** The agent declares `session/resume` — the one re-apply rung after a turn. */
   resumeDeclared: boolean;
+  /** The agent declares `session/load` — the rung a reopen takes. */
+  loadDeclared: boolean;
   /** The session has at least one turn (a zero-turn session re-mints itself for free). */
   hasTurns: boolean;
 }): RootsControls {
   if (!facts.advertised) {
     return {
-      delivered: false,
-      canAdd: false,
-      note: "this agent doesn't support extra roots — reference paths with @ instead",
+      agent: "never",
+      note: "this agent doesn't take extra roots — the MCP servers have them; reference paths with @ for the agent",
     };
   }
-  if (facts.hasTurns && !facts.resumeDeclared) {
+  if (!facts.hasTurns || facts.resumeDeclared) return { agent: "live", note: null };
+  if (facts.loadDeclared) {
     return {
-      delivered: true,
-      canAdd: false,
-      note: "add roots before the first prompt — this agent can't re-apply them mid-session",
+      agent: "nextOpen",
+      note: "this agent takes new roots at its next open — the MCP servers have them now",
     };
   }
-  return { delivered: true, canAdd: true, note: null };
+  return {
+    agent: "never",
+    note: "this agent can't take roots after the first prompt — the MCP servers have them",
+  };
+}
+
+/** The row label: who holds this root. The cwd is the agent's working
+ * directory, delivered by definition. */
+export function rootHolders(agent: AgentDelivery, isCwd: boolean): string {
+  if (isCwd || agent === "live") return "agent + MCP";
+  return agent === "nextOpen" ? "MCP · agent at next open" : "MCP only";
 }

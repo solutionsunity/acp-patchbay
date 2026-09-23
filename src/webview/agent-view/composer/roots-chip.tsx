@@ -4,16 +4,16 @@
 // Context roots: workspace folders are the always-active baseline — fixed,
 // non-removable, shown so the count reflects reality; the first is the
 // session cwd, the rest ride as `additionalDirectories`. `roots` is the
-// removable, user-added external set, on the same field. What the chip
-// says about delivery and adding comes from one pure gate
-// (roots-controls.ts), derived from the same declared facts the writers
-// hold — an agent that never advertised the field is told so, in the same
-// words the writer refuses with.
+// removable, user-added external set, on the same field. Every row names
+// who holds it: the session's MCP servers always do, the agent as the one
+// pure gate (roots-controls.ts) derives from the declared facts the writer
+// holds. Where the agent takes the list only at its next open, the note
+// offers that open — the same reload the session row's menu has.
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { RootsControls } from "./roots-controls";
+import { rootHolders, type RootsControls } from "./roots-controls";
 
 export function RootsChip({
   sessionId,
@@ -28,9 +28,6 @@ export function RootsChip({
 }) {
   const send = useActions();
   const count = workspaceRoots.length + roots.length;
-  // The cwd always reaches the agent (it is the cwd); every other row is
-  // delivered only where the field is — the label says which.
-  const rowLabel = (isCwd: boolean) => (isCwd || controls.delivered ? "workspace" : "not delivered");
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -45,12 +42,13 @@ export function RootsChip({
         {workspaceRoots.map((r, i) => (
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
             <code>{r}</code>
-            <span className="text-muted-foreground">{rowLabel(i === 0)}</span>
+            <span className="text-muted-foreground">{rootHolders(controls.agent, i === 0)}</span>
           </div>
         ))}
         {roots.map((r) => (
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
             <code>{r}</code>
+            <span className="text-muted-foreground">{rootHolders(controls.agent, false)}</span>
             <Button
               variant="ghost"
               size="sm"
@@ -67,13 +65,24 @@ export function RootsChip({
           variant="ghost"
           size="sm"
           className="w-full justify-start"
-          disabled={!controls.canAdd}
           onClick={() => send({ kind: "addContextRoot", sessionId })}
         >
           <b>+ Add folder…</b>
         </Button>
         {controls.note !== null && (
-          <div className="px-2 py-1 text-xs text-muted-foreground">{controls.note}</div>
+          <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+            <span>{controls.note}</span>
+            {controls.agent === "nextOpen" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1"
+                onClick={() => send({ kind: "reloadSession", sessionId })}
+              >
+                Reopen now
+              </Button>
+            )}
+          </div>
         )}
       </PopoverContent>
     </Popover>

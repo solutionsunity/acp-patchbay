@@ -16,7 +16,10 @@ implementation time, since vendors move.
   auth handshake: it talks to patchbay's stdio-to-HTTP bridge
   (`integration-bridge.js`), which fetches a current token from the orchestrator
   over IPC and attaches it to outbound requests. That bridge architecture is
-  fixed; this document decides *how the orchestrator obtains tokens*.
+  fixed; this document decides *how the orchestrator obtains tokens*. (The
+  bridge carries one more thing of patchbay's on the agent's behalf — the
+  session's roots, as MCP's client-side `roots` capability; that mechanism is
+  recorded with the local server in the architecture doc.)
 - Patchbay orchestrates ACP agents; it is not itself an AI agent. MCP is the
   attachment language agents understand, so **every curated integration is a
   remote MCP server** — no bespoke per-service API clients, ever.

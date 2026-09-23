@@ -119,6 +119,12 @@ export interface SessionManagerHooks {
    * re-sent whole each time; a fresh `LiveSession` needs the durable copy,
    * not a SessionManager-local one that would vanish with it. */
   contextRootsFor?(sessionId: string): readonly string[];
+  /** The session's root list moved (a root added or removed, a workspace
+   * folder came or went) — the orchestrator tells the session's MCP
+   * subprocesses, which re-read `rootsOf`. Fired for attached sessions
+   * only: a session with no live attachment has no subprocesses to tell,
+   * and its next attach spawns ones that read the list fresh. */
+  rootsChanged?(sessionId: string): void;
   /** The open workspace's folders, read from reality at every composition
    * (never stored — a reload reads them again). The first is the session
    * cwd; the rest reach the agent as additional directories, so the wire
@@ -1527,20 +1533,14 @@ export class SessionManager {
   /** External context roots: patchbay holds no local
    * copy — the canonical list lives in AgentViewState, read back via
    * `contextRootsFor` so this stays "append/remove, republish, re-apply."
-   * ACP sets `additionalDirectories` only on lifecycle requests, so a
-   * change re-applies to the live attachment through one (reapplyRoots).
-   *
-   * Refused at this writer — nothing recorded, nothing persisted — when the
-   * root could never land: the agent does not advertise the field (the
-   * pool would not send it), or the session has turns and the agent lacks
-   * `session/resume` (the one re-apply rung; a load replay is too high a
-   * price for a root). A root recorded as if it had landed would be the
-   * chip lying; the chip's own gate derives the same verdict for display. */
+   * The list has two readers: the agent, which ACP tells only on lifecycle
+   * requests (so a change re-applies to the live attachment through one,
+   * reapplyRoots), and the session's MCP servers, which the orchestrator
+   * tells at once through `rootsChanged`. A root is therefore always
+   * accepted — it reaches the servers regardless — and the chip's gate
+   * states, from the same declared facts the pool holds, whether and when
+   * the agent gets it. */
   async addRoot(sessionId: string, path: string): Promise<void> {
-    if (!this.canAddRoot(sessionId)) {
-      this.log.info(`session ${sessionId}: root add refused — the agent cannot receive it on this session`);
-      return;
-    }
     // Folder pickers hand back "/x/y/" — normalize at the one chokepoint;
     // agents receive directory paths, never path-with-separator spellings.
     const normalized = path.replace(/(?<=.)[\\/]+$/, "");
@@ -1570,17 +1570,13 @@ export class SessionManager {
     return [...folders, ...added];
   }
 
-  /** Whether a root added now could reach the agent on this session: the
-   * field must be advertised (else the pool never sends it), and after the
-   * first turn the agent must offer `session/resume` (a zero-turn session
-   * re-mints itself for free). One verdict, shared in shape with the chip's
-   * display gate. */
-  private canAddRoot(sessionId: string): boolean {
-    const live = this.sessions.get(sessionId);
-    const poolKey = live?.poolKey ?? this.known.get(sessionId)?.agentId;
-    const declared = poolKey === undefined ? undefined : this.pool.get(poolKey)?.declared;
-    if (declared?.sessionAdditionalDirectories !== true) return false;
-    return !this.hasTurns(sessionId) || declared.sessionResume === true;
+  /** The session's complete root list as its MCP servers read it: the cwd
+   * first, then exactly what `rootsFor` composes for the wire — one
+   * composition, so the servers and the agent can never be told two
+   * different lists. */
+  rootsOf(sessionId: string): string[] {
+    const cwd = this.cwd();
+    return [cwd, ...this.rootsFor(sessionId, cwd)];
   }
 
   /** A workspace folder was added or removed: every live session's wire
@@ -1599,7 +1595,9 @@ export class SessionManager {
     this.noteContinuity(sessionId, agentId, { roots: [...roots] });
   }
 
-  /** Pushes the canonical root list to a *live* attachment. Three cases:
+  /** Pushes the canonical root list to a *live* attachment: the session's
+   * MCP servers are told first, unconditionally; the agent's copy then
+   * moves through a lifecycle request, where one applies. Three cases:
    *
    * - **Never prompted, nothing shown**: recreate — `session/new` with the
    *   complete list, same row/title/knobs, old shell closed. The one
@@ -1610,9 +1608,9 @@ export class SessionManager {
    *   agent, load/resume declared or not.
    * - **Has turns**: in place on the same connection via `session/resume`
    *   (real memory, no replay, transcript untouched; "sets the complete
-   *   list"). Not declared → nothing to do: adds are refused at the writer
-   *   for that rung and the chip says so; a folder change waits for the
-   *   next attach, which reads the composed list anyway.
+   *   list"). Not declared → nothing to do: the list is recorded and the
+   *   chip says the agent takes it at the next open; a folder change waits
+   *   for the next attach, which reads the composed list anyway.
    * - **Turn in flight**: deferred to turn end (`rootsDirty`), applied
    *   before the held queue drains so the next prompt runs on the new list.
    *
@@ -1623,6 +1621,13 @@ export class SessionManager {
   private async reapplyRoots(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return; // not attached — next attach picks the list up
+    // The session's MCP servers hear it now, whatever the agent's rung:
+    // telling them is patchbay's own act, no lifecycle request involved.
+    this.hooks.rootsChanged?.(sessionId);
+    const declared = this.pool.get(session.poolKey)?.declared;
+    // An agent that never advertised the field gets no field on any
+    // request — a re-attach would carry nothing, so none is made.
+    if (declared?.sessionAdditionalDirectories !== true) return;
     if (session.inFlight) {
       session.rootsDirty = true;
       return;
@@ -1633,10 +1638,11 @@ export class SessionManager {
     }
     // Resume is the only re-apply rung after a turn: real memory, no
     // replay. A load would rebuild the whole transcript for one root —
-    // never used for roots. No resume → nothing to do; the writer already
-    // refused the add (canAddRoot), and a folder change simply waits for
-    // the next attach, which reads the composed list anyway.
-    if (this.pool.get(session.poolKey)?.declared?.sessionResume !== true) return;
+    // never used for roots. No resume → nothing to do here: the list is
+    // recorded, the chip says the agent takes it at the next open, and
+    // that open (or a folder change's next attach) reads the composed
+    // list anyway.
+    if (declared.sessionResume !== true) return;
     // The re-attach resets agent-side knob state to its defaults (observed:
     // claude-agent-acp rebuilds session config on load) — but the user asked
     // to change *roots*, nothing else. Re-seed the confirmed combination

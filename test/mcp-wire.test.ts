@@ -55,8 +55,12 @@ class FakeIpcHost {
         return [{ file: "/ws/a.ts", dirty: false }];
       case "getWorkspaceState":
         return { openEditors: [], diagnostics: [], selection: null };
+      case "getRoots":
+        return { roots: ["/ws", "/ws/backend"] };
       case "requestUserInput":
         return this.elicitationAnswer;
+      default:
+        return null;
     }
   }
 
@@ -156,7 +160,7 @@ describe("local MCP server (real bundled subprocess)", () => {
     expect(result.capabilities.tools).toBeDefined();
   });
 
-  it("lists all six tools", async () => {
+  it("lists all seven tools", async () => {
     await client.initialize();
     const tools = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -164,11 +168,22 @@ describe("local MCP server (real bundled subprocess)", () => {
         "get_current_file",
         "get_diagnostics",
         "get_open_editors",
+        "get_roots",
         "get_selection",
         "get_workspace_state",
         "request_user_input",
       ].sort(),
     );
+  });
+
+  // Issue #34: the session's roots reach the local server too — read from
+  // the orchestrator for the session the server was spawned with, never
+  // asked of the agent (whose MCP client holds no list).
+  it("get_roots reads the session's root list over IPC, for its own session", async () => {
+    await client.initialize();
+    const roots = JSON.parse(await toolText(client, "get_roots"));
+    expect(roots).toEqual(["/ws", "/ws/backend"]);
+    expect(host.requests.some((r) => r.method === "getRoots" && r.sessionId === "session-1")).toBe(true);
   });
 
   it("get_selection forwards over IPC and returns real-shaped data", async () => {

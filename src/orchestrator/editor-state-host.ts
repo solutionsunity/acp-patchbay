@@ -2,10 +2,12 @@
 // Copyright 2026 Solutions Unity
 
 // The vscode-touching side of the IPC bridge: listens on a local socket,
-// answers the local MCP server's tool calls with real editor state. This is
-// the only place that needs vscode.window/workspace/languages for MCP
-// purposes — the MCP server subprocess itself (src/mcp/server-main.ts) is
-// plain Node, spawned by the agent, and never touches vscode directly.
+// answers the tool calls of the subprocesses an agent spawns from a
+// session's mcpServers entries with real editor state and session facts.
+// This is the only place that needs vscode.window/workspace/languages for
+// MCP purposes — the subprocesses themselves (src/mcp/server-main.ts,
+// src/integrations/bridge-main.ts) are plain Node, spawned by the agent,
+// and never touch vscode directly.
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,11 +17,14 @@ import {
   parseLines,
   type CurrentFileInfo,
   type DiagnosticInfo,
+  type IntegrationTokenParams,
   type IntegrationTokenResult,
+  type IpcNotification,
   type IpcRequest,
   type IpcResponse,
   type OpenEditorInfo,
   type RequestUserInputParams,
+  type RootsResult,
   type SelectionInfo,
   type WorkspaceStateSnapshot,
 } from "../mcp/ipc-protocol";
@@ -31,6 +36,11 @@ export interface EditorStateHostHooks {
     sessionId: string,
     params: RequestUserInputParams,
   ): Promise<Record<string, unknown> | null>;
+  /** The session's complete root list, cwd first — what the session
+   * manager composes for the wire, read fresh per call so a subprocess
+   * never holds a copy the user has since changed. Empty for a session
+   * that is gone (tokens are minted at attach and retired at close). */
+  sessionRoots(sessionId: string): readonly string[];
   /** The one other thing spawned subprocesses need from the extension host
    * that isn't editor state: a currently-valid token for a connected
    * integration, refreshed transparently server-side if needed. This host is
@@ -62,6 +72,10 @@ export class EditorStateHost {
    * the change event, validated on every read (see currentEditor). */
   private lastTextEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
   private subscription: vscode.Disposable | null = null;
+  /** Sockets that asked to hear about their session's root changes, by
+   * the session they serve. A socket leaves when it closes — the agent
+   * that spawned the subprocess ended it. */
+  private readonly rootWatchers = new Map<Socket, string>();
 
   constructor(
     workspaceId: string,
@@ -108,11 +122,22 @@ export class EditorStateHost {
       buffer = rest;
       for (const message of messages) void this.handleRequest(socket, message as IpcRequest);
     });
+    socket.on("error", () => {});
+    socket.on("close", () => this.rootWatchers.delete(socket));
+  }
+
+  /** The session's root list changed: every subprocess of that session
+   * that asked to hear it is told, and re-reads the list itself. */
+  notifyRootsChanged(sessionId: string): void {
+    const notification: IpcNotification = { method: "rootsChanged" };
+    for (const [socket, watched] of this.rootWatchers) {
+      if (watched === sessionId) socket.write(encodeLine(notification));
+    }
   }
 
   private async handleRequest(socket: Socket, request: IpcRequest): Promise<void> {
     try {
-      const result = await this.dispatch(request);
+      const result = await this.dispatch(socket, request);
       const response: IpcResponse = { id: request.id, result };
       socket.write(encodeLine(response));
     } catch (err) {
@@ -121,7 +146,7 @@ export class EditorStateHost {
     }
   }
 
-  private async dispatch(request: IpcRequest): Promise<unknown> {
+  private async dispatch(socket: Socket, request: IpcRequest): Promise<unknown> {
     switch (request.method) {
       case "getSelection":
         return this.getSelection();
@@ -133,13 +158,20 @@ export class EditorStateHost {
         return this.getOpenEditors();
       case "getWorkspaceState":
         return this.getWorkspaceState();
+      case "getRoots": {
+        const result: RootsResult = { roots: [...this.hooks.sessionRoots(request.sessionId)] };
+        return result;
+      }
+      case "watchRoots":
+        this.rootWatchers.set(socket, request.sessionId);
+        return {};
       case "requestUserInput":
         return this.hooks.requestUserInput(
           request.sessionId,
           request.params as RequestUserInputParams,
         );
       case "getIntegrationToken":
-        return this.hooks.getIntegrationToken(request.sessionId);
+        return this.hooks.getIntegrationToken((request.params as IntegrationTokenParams).integrationId);
     }
   }
 

@@ -597,6 +597,12 @@ export class Orchestrator {
     });
     this.editorStateHost = new EditorStateHost(String(process.pid), {
       requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
+      // Same token discipline as requestUserInput: an unknown token names
+      // a session that is gone, and a gone session has no roots.
+      sessionRoots: (contextToken) => {
+        const sessionId = this.contextTokenToSession.get(contextToken);
+        return sessionId === undefined ? [] : this.sessionManager.rootsOf(sessionId);
+      },
       getIntegrationToken: (integrationId) => this.integrations.getToken(integrationId),
     });
     this.editorStateHost.start();
@@ -688,6 +694,13 @@ export class Orchestrator {
         },
         draftOf: (sessionId) => this.agentView.current.drafts[sessionId],
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
+        rootsChanged: (sessionId) => {
+          // Every subprocess of the session was spawned with one of its
+          // tokens (one per attach; a re-attach mints a fresh one).
+          for (const [token, mapped] of this.contextTokenToSession) {
+            if (mapped === sessionId) this.editorStateHost.notifyRootsChanged(token);
+          }
+        },
         workspaceRoots: workspaceRootsView,
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
@@ -727,6 +740,7 @@ export class Orchestrator {
           agentId,
           this.integrationBridgeScriptPath,
           this.editorStateHost.socketPath,
+          contextToken,
           declaresHttp,
         );
         // Env and header values are secrets by classification, and this

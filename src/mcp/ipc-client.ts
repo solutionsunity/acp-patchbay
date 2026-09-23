@@ -6,7 +6,14 @@
 // Plain Node net socket — no vscode dependency, so this half can run
 // wherever the agent spawns it.
 import { connect, type Socket } from "node:net";
-import { encodeLine, parseLines, type IpcRequest, type IpcResponse } from "./ipc-protocol";
+import {
+  encodeLine,
+  isIpcNotification,
+  parseLines,
+  type IpcNotification,
+  type IpcRequest,
+  type IpcResponse,
+} from "./ipc-protocol";
 
 export class IpcClient {
   private socket: Socket | null = null;
@@ -15,9 +22,14 @@ export class IpcClient {
   private pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
   private connectPromise: Promise<void> | null = null;
 
+  /**
+   * `onNotification` hears what the orchestrator pushes unprompted (only
+   * ever `rootsChanged`, and only after this client sent `watchRoots`).
+   */
   constructor(
     private readonly socketPath: string,
     private readonly sessionId: string,
+    private readonly onNotification: (notification: IpcNotification) => void = () => {},
   ) {}
 
   private ensureConnected(): Promise<void> {
@@ -31,7 +43,10 @@ export class IpcClient {
         this.buffer += chunk;
         const { messages, rest } = parseLines(this.buffer);
         this.buffer = rest;
-        for (const message of messages) this.handleResponse(message as IpcResponse);
+        for (const message of messages) {
+          if (isIpcNotification(message)) this.onNotification(message);
+          else this.handleResponse(message as IpcResponse);
+        }
       });
       // A post-connect socket error must not crash the process as an
       // unhandled 'error' event (the `once` above is consumed by then) —

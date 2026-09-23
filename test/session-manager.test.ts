@@ -80,10 +80,14 @@ function harness(opts?: {
   resyncCount(): number;
   state(): AgentViewState;
   workspaceRoots: string[];
+  /** Every `rootsChanged` the manager fired — the orchestrator's cue to
+   * tell the session's MCP subprocesses. */
+  rootsChanged: string[];
 } {
   const events: AgentViewEvent[] = [];
   const silentEvents: AgentViewEvent[] = [];
   const workspaceRoots = [...(opts?.workspaceRoots ?? [])];
+  const rootsChanged: string[] = [];
   const continuity = opts?.continuityStore ?? new SessionContinuityStore(new MemoryKV());
   let resyncs = 0;
   let sessionManager!: SessionManager;
@@ -125,6 +129,7 @@ function harness(opts?: {
       contextRootsFor: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       workspaceRoots: () => workspaceRoots,
+      rootsChanged: (sessionId) => rootsChanged.push(sessionId),
       currentTranscript: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
       titleOf: (sessionId) =>
@@ -171,6 +176,7 @@ function harness(opts?: {
     resyncCount: () => resyncs,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
     workspaceRoots,
+    rootsChanged,
   };
 }
 
@@ -1191,7 +1197,11 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11");
   });
 
-  it("after a turn, an agent that advertises the field but not session/resume: add is refused at the writer — nothing recorded, nothing sent", async () => {
+  // A root has two readers (issue #34): the session's MCP servers, told at
+  // once through the orchestrator, and the agent, told only on a lifecycle
+  // request. So an add is always recorded; what the agent's rung decides
+  // is when — or whether — the agent's own list moves.
+  it("after a turn, an agent that advertises the field but not session/resume: the root is recorded and the servers told; the agent takes it at the next open (issue #34)", async () => {
     const h = harness();
     await h.pool.connect(
       spec(
@@ -1202,15 +1212,23 @@ describe("SessionManager", () => {
     const sessionId = await h.sessionManager.createSession("sm11l", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "first turn");
 
-    // load would replay the whole session for one root — never used for
-    // roots; without resume there is no re-apply, so the root is refused
-    // rather than recorded as if it landed (the chip's gate says the same)
+    // load would replay the whole session for one root — never used for a
+    // re-apply; without resume the agent's copy waits, but the list is the
+    // session's and the servers read it now
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
-    expect(h.state().contextRoots[sessionId] ?? []).toEqual([]);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    expect(h.rootsChanged).toEqual([sessionId]);
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/repo/backend"]);
     expect(h.state().activeSessionId).toBe(sessionId);
     await h.sessionManager.sendPrompt(sessionId, "roots?");
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
-    expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
+    const before = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(before?.kind === "text" && JSON.parse(before.text)).toEqual([]);
+
+    // the next open — the reload the chip's note offers — carries the whole list
+    await h.sessionManager.reload(sessionId);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const after = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(after?.kind === "text" && JSON.parse(after.text)).toEqual(["/repo/backend"]);
 
     await h.pool.stop("sm11l");
   });
@@ -1252,9 +1270,17 @@ describe("SessionManager", () => {
     await h.sessionManager.sendPrompt(sessionId, "roots?");
     const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
-    // an add is refused at the writer: never recorded as a root that landed
+    // an add is recorded for the servers (issue #34) and never re-applied
+    // on the agent: no field to send, so no re-attach is made for it
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
-    expect(h.state().contextRoots[sessionId] ?? []).toEqual([]);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    expect(h.rootsChanged).toEqual([sessionId]);
+    expect(h.sessionManager.rootsOf(sessionId)).toEqual([cwd, "/repo/second", "/repo/backend"]);
+    await h.sessionManager.sendPrompt(sessionId, "roots?");
+    const again = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(again?.kind === "text" && JSON.parse(again.text)).toEqual([]);
+    // one session/new, one prompt, one prompt: nothing re-attached
+    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
     await h.pool.stop("sm28n");
   });
 
