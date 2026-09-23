@@ -44,7 +44,13 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
 
 ## Capability gaps
 
-*(none load-bearing observed)*
+- Declares `sessionCapabilities.additionalDirectories` and `session/list`,
+  but its list rows carry `sessionId`, `cwd`, `title`, `updatedAt` only —
+  the optional `SessionInfo.additionalDirectories` read-back is never sent
+  (v0.81.0, npm package read 2026-09-23; the Claude Agent SDK's session
+  listing exposes no roots for the bridge to report). Spec-legal (the
+  report is a MAY). Patchbay reads an omitted field as not reported, so
+  the intended list stands.
 
 ## Behavioral notes
 

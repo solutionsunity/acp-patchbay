@@ -74,19 +74,30 @@ function guardAuthMethod(entry: unknown, log: DropLog): Record<string, unknown> 
 }
 
 /** One session/list row: identity (sessionId, cwd) is structural — a row
- * without it is dropped whole; title and updatedAt (the drawer's sort key)
- * degrade to absent so one malformed field can never poison the snapshot
- * the webview renders from. */
+ * without it is dropped whole; title, updatedAt (the drawer's sort key),
+ * and the reported roots degrade to absent so one malformed field can never
+ * poison the snapshot the webview renders from. Absent roots read as "not
+ * reported", so a malformed list can never clear a session's roots. */
 function guardListedSession(entry: unknown, log: DropLog): Record<string, unknown> | null {
   const e = record(entry);
   if (e === null || !isString(e.sessionId) || e.sessionId === "" || !isString(e.cwd)) {
     log("session/list: dropped malformed row");
     return null;
   }
+  let additionalDirectories: string[] | undefined;
+  if (e.additionalDirectories != null) {
+    const dirs = e.additionalDirectories;
+    if (Array.isArray(dirs) && dirs.every((d) => isString(d) && d !== "")) {
+      additionalDirectories = dirs as string[];
+    } else {
+      log("session/list: malformed additionalDirectories on a row — read as not reported");
+    }
+  }
   return {
     ...e,
     title: isString(e.title) ? e.title : undefined,
     updatedAt: isString(e.updatedAt) ? e.updatedAt : undefined,
+    additionalDirectories,
   };
 }
 

@@ -1117,7 +1117,10 @@ export class SessionManager {
         kind: "sessionListed",
         session: { id: info.sessionId, agentId, title, live: false, updatedAt: at },
       });
-      if (cont?.roots !== undefined && cont.roots.length > 0) {
+      if (info.additionalDirectories !== undefined) {
+        // the view has no list for this session yet; the row may
+        this.adoptReportedRoots(info.sessionId, info.additionalDirectories, [], cont?.roots ?? []);
+      } else if (cont?.roots !== undefined && cont.roots.length > 0) {
         this.hooks.emit({ kind: "contextRootsChanged", sessionId: info.sessionId, roots: cont.roots });
       }
       if (cont?.queue !== undefined && cont.queue.length > 0) {
@@ -1138,12 +1141,44 @@ export class SessionManager {
       }
       return;
     }
+    // A session known but not open here: whoever opened it last set its
+    // roots, and the report is that list. Open here, patchbay is the last
+    // writer and the report can only echo or trail a re-apply in flight —
+    // adopting it would revert the chip to a list already replaced.
+    if (info.additionalDirectories !== undefined && !this.sessions.has(info.sessionId)) {
+      // view and row hold the same list here — every change writes both
+      const held = this.hooks.contextRootsFor?.(info.sessionId) ?? [];
+      this.adoptReportedRoots(info.sessionId, info.additionalDirectories, held, held);
+    }
     // Only what the wire carried rides — the row's own is the truth
     // otherwise (silence is no event at all), and the reducer's newest-wins
     // keeps a local prompt ahead of a trailing wire read.
     const meta = wireMeta(info);
     if (meta.title === undefined && meta.updatedAt === undefined) return;
     this.hooks.emit({ kind: "sessionRefreshed", sessionId: info.sessionId, ...meta });
+  }
+
+  /** The agent's own report of a session's roots, from its `session/list`
+   * row: the complete list the last lifecycle request set, by whichever
+   * client sent it. It replaces the user-added list — never merged with it —
+   * after the workspace folders are taken out, since `rootsFor` composes
+   * those from reality at every open and the row keeps only what the user
+   * added. An omitted field never reaches here: the report is optional, so
+   * silence says nothing about the list, and the intended list stands.
+   * `shown` is what the view lists now, `stored` what the row carries —
+   * each is written only where it differs, so a walk that reports what is
+   * already held moves nothing. */
+  private adoptReportedRoots(
+    sessionId: string,
+    reported: readonly string[],
+    shown: readonly string[],
+    stored: readonly string[],
+  ): void {
+    const folders = new Set(this.hooks.workspaceRoots?.() ?? []);
+    const added = reported.filter((p) => !folders.has(p));
+    const same = (a: readonly string[]) => a.length === added.length && a.every((p, i) => p === added[i]);
+    if (!same(shown)) this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: added });
+    if (!same(stored)) this.persistRoots(sessionId, added);
   }
 
   /** One-click reload: re-attach on demand, even when the session

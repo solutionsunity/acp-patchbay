@@ -10,7 +10,13 @@ ecosystem.
 
 ## Capability gaps
 
-*(none recorded)*
+- Declares `sessionCapabilities.additionalDirectories` and `session/list`,
+  but its list rows carry `sessionId`, `cwd`, `title`, `updatedAt` only —
+  the optional `SessionInfo.additionalDirectories` read-back is never sent
+  (source read 2026-09-23, `main`; the bridge keeps a session's roots in
+  memory only, and Codex's own thread record has no field for them).
+  Spec-legal (the report is a MAY). Patchbay reads an omitted field as
+  not reported, so the intended list stands.
 
 ## Behavioral notes
 

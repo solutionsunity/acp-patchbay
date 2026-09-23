@@ -2,7 +2,7 @@
 // stop turn; close; slash-command advertisement; render cache rebuilt
 // wholesale from session/load replay after a crash. Sessions are the
 // agent's truth: patchbay persists no index and no transcripts.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1256,6 +1256,102 @@ describe("SessionManager", () => {
     await h.sessionManager.addRoot(sessionId, "/repo/backend");
     expect(h.state().contextRoots[sessionId] ?? []).toEqual([]);
     await h.pool.stop("sm28n");
+  });
+
+  // The agent's own roots report (issue #33): a session/list row may carry
+  // the complete list the last lifecycle request set — whichever client
+  // sent it. A present list replaces patchbay's intended list for a session
+  // not open here (replaced, never merged), minus the workspace folders
+  // patchbay composes itself, so the row keeps only what the user added.
+  // An omitted field says nothing: the report is optional, and the agents
+  // that declare the field omit it on every row today — the reload case
+  // below ("held words, roots, chips, and draft survive") pins that the
+  // row stands then.
+  describe("a session/list row reporting the session's roots (issue #33)", () => {
+    const REPORT_CAPS = {
+      loadSession: true,
+      sessionCapabilities: { list: {}, additionalDirectories: {}, resume: {} },
+    } as const;
+    const reportFile = () => join(cwd, "reported-roots.json");
+    const report = (roots: string[]) => writeFile(reportFile(), JSON.stringify(roots));
+
+    it("a listed session enters with the reported list, the row following it; a later report replaces again, and an empty one clears", async () => {
+      const store = new SessionContinuityStore(new MemoryKV());
+      const script: FakeAgentScript = {
+        declare: REPORT_CAPS,
+        listRootsFrom: reportFile(),
+        turn: [{ type: "chunk", text: "x" }],
+      };
+      const h1 = harness({ continuityStore: store });
+      await h1.pool.connect(spec(script, "c33"));
+      const sessionId = await h1.sessionManager.createSession("c33", "Fake Agent", cwd);
+      await h1.sessionManager.sendPrompt(sessionId, "first turn");
+      await h1.sessionManager.addRoot(sessionId, "/repo/extra");
+      expect(store.read(sessionId, "c33")?.roots).toEqual(["/repo/extra"]);
+      await h1.pool.stop("c33");
+
+      // another client set the roots while no window was open: first sight
+      await report(["/other/root"]);
+      const h2 = harness({ continuityStore: store });
+      await h2.pool.connect(spec(script, "c33"));
+      await h2.sessionManager.syncAgentSessions("c33");
+      expect(h2.state().contextRoots[sessionId]).toEqual(["/other/root"]);
+      expect(store.read(sessionId, "c33")?.roots).toEqual(["/other/root"]);
+
+      // a known session, still not open here: the next walk's report wins again
+      await report(["/other/root", "/third"]);
+      await h2.sessionManager.syncAgentSessions("c33");
+      expect(h2.state().contextRoots[sessionId]).toEqual(["/other/root", "/third"]);
+
+      // an empty report is a report
+      await report([]);
+      await h2.sessionManager.syncAgentSessions("c33");
+      expect(h2.state().contextRoots[sessionId]).toEqual([]);
+      expect(store.read(sessionId, "c33")?.roots).toBeUndefined(); // the row carries no empty list
+      await h2.pool.stop("c33");
+    });
+
+    it("a session open here is not adopted — patchbay is its last writer", async () => {
+      const script: FakeAgentScript = {
+        declare: REPORT_CAPS,
+        listRootsFrom: reportFile(),
+        turn: [{ type: "chunk", text: "x" }],
+      };
+      const h = harness();
+      await h.pool.connect(spec(script, "c33o"));
+      const sessionId = await h.sessionManager.createSession("c33o", "Fake Agent", cwd);
+      await h.sessionManager.sendPrompt(sessionId, "first turn");
+      await h.sessionManager.addRoot(sessionId, "/repo/extra");
+      await report(["/stale/root"]);
+      await h.sessionManager.syncAgentSessions("c33o");
+      expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+      await h.pool.stop("c33o");
+    });
+
+    it("the agent reports the composed list — workspace folders are subtracted, the row keeps only the user's roots, and the wire gets the same composition back", async () => {
+      const store = new SessionContinuityStore(new MemoryKV());
+      const script: FakeAgentScript = {
+        declare: REPORT_CAPS,
+        listRootsFrom: reportFile(),
+        turn: [{ type: "echoRoots" }],
+      };
+      const h1 = harness({ continuityStore: store, workspaceRoots: [cwd, "/repo/second"] });
+      await h1.pool.connect(spec(script, "c33w"));
+      const sessionId = await h1.sessionManager.createSession("c33w", "Fake Agent", cwd);
+      await h1.sessionManager.sendPrompt(sessionId, "first turn");
+      await h1.pool.stop("c33w");
+
+      await report(["/repo/second", "/repo/extra"]);
+      const h2 = harness({ continuityStore: store, workspaceRoots: [cwd, "/repo/second"] });
+      await h2.pool.connect(spec(script, "c33w"));
+      await h2.sessionManager.syncAgentSessions("c33w");
+      expect(h2.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+      expect(store.read(sessionId, "c33w")?.roots).toEqual(["/repo/extra"]);
+      await h2.sessionManager.sendPrompt(sessionId, "roots?");
+      const echoed = h2.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+      expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/repo/extra"]);
+      await h2.pool.stop("c33w");
+    });
   });
 
   it("a root added during a live turn is applied before the held prompt fires — the next prompt runs on the new list", async () => {

@@ -76,6 +76,7 @@ chapters (see §19).
 | `session/resume` | ✅ | `pool.ts:resumeSession`; capability-gated on declared + used per the capability rule; an honest seam notice marks where the cached view ends and the agent's unreplayed memory continues (`session-manager.ts:resumeReattach`). |
 | `session/fork` | ✅ | Same adoption posture; `session.fork` capability row; native fork gates on *used*. |
 | Roots re-apply (`additionalDirectories` set-complete-list) | ✅ | `session-manager.ts:reapplyRoots` — the three-case rung (recreate on a zero-turn session / in place via `session/resume` only, never `load` / deferred to turn end and awaited before the held queue drains) is a recorded design; where no rung applies the add is refused at the writer (`session-manager.ts:canAddRoot`) and the roots chip says so. |
+| Roots read-back (`SessionInfo.additionalDirectories` on `session/list`) | ✅ | `session-manager.ts:adoptReportedRoots` — a present list replaces the intended user-added list (never merged: spec MUST NOT), workspace folders subtracted, for sessions not open here; a malformed list degrades to not reported (`response-guards.ts:guardListedSession`). **Deliberate departure:** an omitted field is read as *not reported*, not as *no roots* — the spec makes the report a MAY, so omission cannot distinguish the two, and it lets the client's list differ from any reported list. Observed: claude-agent-acp 0.81.0 and codex-acp declare the field and omit it on every row. Raised upstream as a spec question. |
 
 ## 5. Session list / delete / close
 

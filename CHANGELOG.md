@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A session's roots set by another client are no longer overwritten by
+  patchbay's own list at the next open. An agent that lists its sessions
+  may report each one's complete root list, and patchbay never read it: the
+  persisted user-added list was the only truth even where the agent could
+  contradict it. A reported list now replaces the persisted one for any
+  session not open in this window (workspace folders subtracted, never
+  merged, per spec); an omitted field changes nothing, since the report is
+  optional and the agents that declare the field send none today. (#33)
 - A prompt that was already running when an agent's auth lock was raised
   can no longer clear that lock by finishing. A completed prompt is the
   wire fact that proves credentials, but it proves them as of the moment

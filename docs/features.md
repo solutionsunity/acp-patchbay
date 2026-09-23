@@ -114,8 +114,9 @@ deliverable.
   Shown as a chip — added ones removable, workspace folders fixed — and
   handed to the agent through the protocol where it supports that; where it
   does not, the chip says the root is not delivered rather than pretending.
-  What the agent's engine does with roots is the agent's business — patchbay
-  passes, it does not index.
+  Roots another client set on the same session show up here, where the
+  agent reports them. What the agent's engine does with roots is the
+  agent's business — patchbay passes, it does not index.
 - Slash commands the agent advertises are discoverable and invokable in the input.
 - Permission requests appear inline with the choices the requester actually
   offers — the agent's own options verbatim, patchbay's own for the gates it

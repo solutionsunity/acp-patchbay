@@ -6,8 +6,10 @@
 // prompt queue, prepared-but-unsent context chips (image bytes stay in the
 // attachments stash; the row carries the file reference), and the composer
 // draft. None of it is a cache of readable reality: agents reset knob
-// state on session/load, additionalDirectories are read back only where
-// session/list reports them (not yet consumed), and the rest is
+// state on session/load; the roots are the list this client intends to
+// send at the next open (a session/list row may report the list the last
+// writer set, and a reported list replaces the intended one, but the
+// report is optional and most agents send none); and the rest is
 // user-staged input that exists nowhere else — the same
 // not-a-cache justification as the auth locks.
 //

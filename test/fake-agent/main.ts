@@ -77,6 +77,12 @@ export interface FakeAgentScript {
    * optional activity stamp; absent by default, as many agents send none) —
    * lets tests pin what the wire claims against what the client observed. */
   listUpdatedAt?: string;
+  /** Path to a JSON string array: while the file exists, every session/list
+   * row reports it as `additionalDirectories` — another client wrote the
+   * session's roots last, and this process reports what it left. Without
+   * the file a row reports the list this process holds for the session,
+   * and a session it only knows from disk carries no field at all. */
+  listRootsFrom?: string;
   /** session/set_config_option answers with the new state in the required
    * response field only — no config_option_update echo. Spec-conformant, not
    * a lie: claude-agent-acp behaves this way for client-initiated sets. */
@@ -623,9 +629,18 @@ const app = acp
       throw acp.RequestError.methodNotFound("session/list");
     }
     const cwd = ctx.params.cwd ?? null;
-    const meta = (id: string) => ({
+    const reportedRoots =
+      script.listRootsFrom !== undefined && existsSync(script.listRootsFrom)
+        ? (JSON.parse(readFileSync(script.listRootsFrom, "utf8")) as string[])
+        : undefined;
+    const meta = (id: string, held?: string[]) => ({
       ...(script.listWithTitles ? { title: `fake:${id}` } : {}),
       ...(script.listUpdatedAt !== undefined ? { updatedAt: script.listUpdatedAt } : {}),
+      ...(reportedRoots !== undefined
+        ? { additionalDirectories: reportedRoots }
+        : held !== undefined
+          ? { additionalDirectories: held }
+          : {}),
     });
     const infos = new Map<string, acp.SessionInfo>();
     // The durable store is what survives this process dying — exactly how a
@@ -639,7 +654,7 @@ const app = acp
     }
     for (const s of sessions.values()) {
       if (cwd !== null && s.cwd !== cwd) continue;
-      infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...meta(s.id) });
+      infos.set(s.id, { sessionId: s.id, cwd: s.cwd, ...meta(s.id, s.additionalDirectories) });
     }
     if (script.lies?.malformedListRows) {
       // Off-spec on purpose: number where ISO string belongs + a row with no

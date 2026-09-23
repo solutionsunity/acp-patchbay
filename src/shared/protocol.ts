@@ -264,9 +264,10 @@ export type PersistedChip =
   | { kind: "attachment"; id: string; label: string; path: string; mimeType?: string };
 
 /** The survives-reload family: session-scoped state the wire cannot
- * re-report (agents reset knobs on load; roots are read back only where
- * `session/list` reports them and that read-back is not yet consumed;
- * queue, chips, and draft are user-staged input that exists nowhere else).
+ * re-report (agents reset knobs on load; roots are the list this client
+ * intends to send at the next open, and a `session/list` row reporting
+ * the session's roots replaces it — most agents report none; queue,
+ * chips, and draft are user-staged input that exists nowhere else).
  * One row per session in stores/session-continuity.ts, dropped when the
  * session leaves for good. */
 export interface SessionContinuity {

@@ -648,10 +648,11 @@ read-only to the session layer, the seed's fallback, never its record.
 session (`stores/session-continuity.ts`, machine store) carries everything a
 window reload would otherwise lose and the wire cannot re-report: the
 agent-confirmed **knob combination** (agents reset knobs on load), user-added
-**context roots** (`additionalDirectories` are read back only where
-`session/list` reports them, and that read-back is not yet consumed — and a
-re-attach *re-applies* the local list, so losing it would overwrite the
-agent's own copy too), the **held prompt queue**, prepared **context chips**
+**context roots** (the list this client intends to send at the next open —
+every open re-sends the whole list, so losing it would overwrite the
+agent's own copy; a `session/list` row that reports the session's roots
+replaces it, see the roots bullet under the local MCP server), the **held
+prompt queue**, prepared **context chips**
 (image bytes stay in the attachments stash; the row carries the file
 reference, and a reference whose temp file the OS reclaimed drops honestly
 on rehydration), and the **composer draft**. Not a cache of readable
@@ -730,8 +731,20 @@ The differentiator (the PRD's current-release scope), shipped complete:
   free. A change during a live turn applies at turn end, before the held queue
   drains. Workspace folders are read from reality at each composition, never
   stored; only user-added roots persist. A folder added or removed at runtime
-  re-applies to every live session. Read-back exists where `session/list` is
-  declared (`SessionInfo.additionalDirectories`) and is not yet consumed.
+  re-applies to every live session. The last lifecycle request wins, whole
+  list, whichever client sent it — so a `session/list` row that reports the
+  session's roots (`SessionInfo.additionalDirectories`, the complete list the
+  last writer set) **replaces** the intended user-added list, never merges
+  with it (the spec's MUST NOT), minus the workspace folders read from
+  reality; adopted only for sessions not open here, since for an open one
+  patchbay is the last writer and the report can only echo or trail a
+  re-apply in flight. An **omitted field changes nothing**: the report is a
+  MAY, so silence cannot tell "no roots" from "not implemented", and the spec
+  lets the client's list differ from any reported list — a deliberate
+  departure from its "omitted and empty are equivalent" line, which the two
+  agents that declare the field (claude-agent-acp, codex-acp) contradict by
+  omitting it on every row. A malformed report degrades to not reported at
+  the response boundary, so a bad row can never clear a session's roots.
   Patchbay passes roots and never indexes — retrieval depth is the agent's own
   engine, and the UI never implies otherwise.
 - **File operations go through ACP, not MCP**: the orchestrator advertises the `fs`

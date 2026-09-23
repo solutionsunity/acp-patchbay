@@ -102,6 +102,25 @@ describe("session/list", () => {
     expect(messages).toHaveLength(2);
   });
 
+  it("a row's reported roots ride only as a string array — anything else is read as not reported", () => {
+    const { messages, log } = drops();
+    const guarded = guardResponse(
+      "session/list",
+      {
+        sessions: [
+          { sessionId: "a", cwd: "/w", additionalDirectories: ["/x", "/y"] },
+          { sessionId: "b", cwd: "/w", additionalDirectories: [] },
+          { sessionId: "c", cwd: "/w" },
+          { sessionId: "d", cwd: "/w", additionalDirectories: "/x" },
+          { sessionId: "e", cwd: "/w", additionalDirectories: ["/x", 7] },
+        ],
+      },
+      log,
+    );
+    expect(guarded.sessions.map((s) => s.additionalDirectories)).toEqual([["/x", "/y"], [], undefined, undefined, undefined]);
+    expect(messages).toHaveLength(2);
+  });
+
   it("a malformed cursor passes through untouched — truncation policy is the consumer's", () => {
     const { log } = drops();
     const guarded = guardResponse("session/list", { sessions: [], nextCursor: 99 }, log);
