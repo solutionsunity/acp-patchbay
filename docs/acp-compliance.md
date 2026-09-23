@@ -1,7 +1,9 @@
 # ACP Protocol Compliance — facts
 
 Facts as checked **2026-07-12** against the pinned wire surface of
-`@agentclientprotocol/sdk` **1.2.1** (ground truth for method names and type unions)
+`@agentclientprotocol/sdk` **1.2.1** (ground truth for method names and type unions),
+with the type unions and stability markers (§9, §10, §19) re-checked **2026-09-23**
+against **1.5.0**
 and https://agentclientprotocol.com/protocol/v1 (ground truth for normative
 MUST/SHOULD/MAY language). Patchbay is a **Client**: compliance means (a) every
 client-side duty is met, and (b) every agent-side surface the protocol lets a client
@@ -59,7 +61,7 @@ client SHOULD expect post-logout operations to fail with auth errors.
 | Evidence-gated auth state | ✅ | One writer (`orchestrator.noteAuthEvidence`) over one authority table (`auth-evidence.ts`): wire `auth_required` and a successful `logout` lock; `authenticate` success, terminal login exit 0, a completed prompt, or a success contradicting the lock's own method clear; a bare connect or a lazy-auth agent's `session/new` success bears nothing. Locks persist machine-side (`stores/auth-locks.ts`) — reload/reconnect cannot launder a witnessed logout, a success bears only on a lock older than its call (every success carries when its RPC started; a prompt in flight when the lock was raised clears nothing), and evidence for removed agents is dropped. The matrix `auth` row is proven only by the affirmative actions (authenticate round-trip, terminal login exit 0), never by `session/new` or by a lock merely clearing. |
 | `logout` gated on `auth.logout` declared | ✅ | `pool.ts:logout`; `auth.logout` capability row. |
 | Post-auth-error honesty | ✅ | The pool's chokepoints report the wire fact — `-32000`, or a rejection the extensions door reads as an auth failure (`extensions/turn-auth-failure.ts`: `-32603` carrying an auth-classified `data.errorKind`, the claude-agent-acp shape for a credential failing mid-turn); `noteAuthEvidence` is the single writer (row above). `auth_required` never raises capability suspicion (per capability-verification rule). Spec names no numeric code; `-32000` is the observed convention — recorded as such, not as spec. |
-| Typed auth methods (unstable auth-methods RFD) | ✅ | Adopted extension `extensions/auth-method-types.ts`: `auth.terminal` opt-in declared at initialize; a `type: "terminal"` method runs as the agent's own spawn command with the method's args appended and env merged, in a visible terminal, then re-probes (orchestrator `typedLoginViaTerminal` → the terminal-auth executor, exit-code-then-probe evidence chain included). `authenticate` is never called on a terminal-kind method — login success is always terminal-ran-plus-reprobe, never the RPC's word. `type: "env_var"` classifies but stays declared-unwired (no executor yet — visible extension point, not filled); malformed typed shapes degrade to the stable default. |
+| Typed auth methods (auth-methods RFD; stable in the 1.5.0 schema — `env_var` dropped, `terminal \| agent` remain) | ✅ | Adopted extension `extensions/auth-method-types.ts`: `auth.terminal` opt-in declared at initialize; a `type: "terminal"` method runs as the agent's own spawn command with the method's args appended and env merged, in a visible terminal, then re-probes (orchestrator `typedLoginViaTerminal` → the terminal-auth executor, exit-code-then-probe evidence chain included). `authenticate` is never called on a terminal-kind method — login success is always terminal-ran-plus-reprobe, never the RPC's word. `type: "env_var"` classifies but stays declared-unwired (no executor yet — visible extension point, not filled); malformed typed shapes degrade to the stable default. |
 
 ## 4. Session setup — new / load / resume / fork
 
@@ -135,7 +137,7 @@ against this project's own honesty rules, which bind harder than the spec here.
 
 ## 9. Session updates — the full union
 
-SDK 1.2.1 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
+SDK 1.5.0 `sessionUpdate` union (16 kinds) vs `session-manager.ts:handleUpdate`:
 
 | Kind | Verdict | Notes |
 |---|---|---|
@@ -144,7 +146,8 @@ SDK 1.2.1 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 | `user_message_chunk` | ✅ | Delta semantics with `messageId`-governed boundaries (§8); `inFlight` guard against live echo. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
-| `plan_update` / `plan_removed` | ⛔ | UNSTABLE as of 1.2.1 ("not part of the spec yet") and modeling a *different* plan system than the stable whole-replace `plan`: multi-plan (`PlanId`-keyed), three content forms. Gated behind a client capability patchbay does not declare, so no conforming agent sends them; the stable `plan` already covers the feature. Watch each SDK bump (the exhaustive `handleUpdate` switch forces the look); adopt when it lands in the published spec — contribution upstream is an option if the shape stalls. |
+| `plan_update` / `plan_removed` | ⛔ | UNSTABLE as of 1.5.0 ("not part of the spec yet") and modeling a *different* plan system than the stable whole-replace `plan`: multi-plan (`PlanId`-keyed), three content forms. Gated behind a client capability patchbay does not declare, so no conforming agent sends them; the stable `plan` already covers the feature. Watch each SDK bump (the exhaustive `handleUpdate` switch forces the look); adopt when it lands in the published spec — contribution upstream is an option if the shape stalls. |
+| `notice` / `compaction_update` / `compaction_summary_chunk` | ⛔ | UNSTABLE as of 1.5.0, new since 1.2.1 (session-notices and compaction RFDs). Each is gated behind a client session capability (`notices`, `compaction`) patchbay does not declare, so no conforming agent sends them. Revisit when they land in the published spec. |
 | `available_commands_update` | ✅ | Name/description/input-hint all consumed; the hint shows in the composer's slash menu. |
 | `current_mode_update` | ✅ | Modes surface only; config surface deliberately owns its own confirmations (knobs.ts normalizer — spec forbids category as a correctness key). |
 | `config_option_update` | ✅ | Spec: notification carries complete state — consumed as a whole-replace. |
@@ -154,7 +157,9 @@ SDK 1.2.1 `sessionUpdate` union (13 kinds) vs `session-manager.ts:handleUpdate`:
 
 ## 10. Tool calls
 
-`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.2.1).
+`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.5.0). The
+optional `ToolCall.name` (programmatic tool name, stabilized 2026-09-17) is not
+consumed: the card names the call by its `title`, which every agent sends.
 
 | Duty | Verdict | Notes |
 |---|---|---|
@@ -235,17 +240,18 @@ The per-command input hint rides through to the slash menu.
 
 ## 19. Unstable SDK surface — adoption stances
 
-Stability markers as of SDK **1.2.1**. Stance: adopt only what has a proven consumer,
+Stability markers as of SDK **1.5.0**. Stance: adopt only what has a proven consumer,
 always gated on declared (+ used where it gates UI), never silently.
 
-| Surface | 1.2.1 marker | Stance |
+| Surface | 1.5.0 marker | Stance |
 |---|---|---|
-| `session/resume` | `@experimental` residue only; the published v1 schema lists it | **Adopted** — real agents declare it; capability-gated and used-tracked. |
-| `session/fork` | UNSTABLE | **Adopted** — same posture; native fork gates on *used*. |
+| `session/resume` | stable | **Adopted** — real agents declare it; capability-gated and used-tracked. |
+| `session/fork` | UNSTABLE (the SDK method is still `unstable_forkSession`) | **Adopted** — same posture; native fork gates on *used*. |
 | `session/close` | stable | **Adopted** (§5). |
 | `session.configOptions` client capability | stable | **Declared** (§2, §16). |
 | `session_info_update`, `usage_update` | stable | **Adopted** — purely additive notifications with visible value. |
-| Elicitation (session-scoped, form mode) | UNSTABLE; MultiSelect types reshaped in 1.2.1 | **Planned** — declared `false` until the adapter is real; flipping `CLIENT_DECLARES.elicitation` is the only wire change needed; adopts whatever shape is current when it lands. |
+| Elicitation (form and url modes, `elicitation/create` + `elicitation/complete`) | stable (spec 2026-07-24; SDK 1.4.0) | **Adopt** (decided 2026-09-23) — declared `false` until each mode's path is wired; the claim flips per mode, last. |
+| Session notices, context compaction | UNSTABLE (new since 1.2.1) | **Declined** (§9). |
 | `plan_update` / `plan_removed` | UNSTABLE | **Declined** (§9). |
 | Providers config (`ProviderId`), NES (`NesSuggestionId`), position encoding | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (the Auggie dossier). |
 

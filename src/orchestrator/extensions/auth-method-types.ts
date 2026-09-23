@@ -2,10 +2,10 @@
 // Copyright 2026 Solutions Unity
 
 // Wire extension: typed auth methods — the auth-methods RFD
-// (agentclientprotocol.com/rfds/auth-methods), UNSTABLE: `type`/`args`/`env`
-// on AuthMethod and the `auth.terminal` client capability are not in the v1
-// stable schema, so the fields ride the raw initialize response untyped and
-// are validated here, the one place that knows the shape.
+// (agentclientprotocol.com/rfds/auth-methods). `type`/`args`/`env` on
+// AuthMethod and the `auth.terminal` client capability ride the raw
+// initialize response, which the SDK hands over unvalidated, so they are
+// validated here, the one place that knows the shape.
 //
 // The terminal type's contract (RFD): `command` cannot be specified — the
 // client re-runs the agent's OWN spawn command ("the exact same binary with
@@ -16,9 +16,10 @@
 // declaration an agent MUST NOT include terminal entries, so declaring is
 // what makes the surface reachable at all.
 //
-// Adopted 2026-07-21. RETIRE when the RFD stabilizes into the v1 schema:
-// the SDK then types these fields — delete this file plus its exports in
-// extensions/index.ts and read the SDK types at the call sites.
+// Adopted 2026-07-21. The SDK 1.5.0 schema now types these fields as
+// stable (`terminal | agent`; `env_var` dropped) but still validates no
+// response, so this is spec surface held in an extension: it moves into
+// core's response guards and declared capabilities, with its validation.
 import { z } from "zod";
 
 const typedTerminalSchema = z.object({

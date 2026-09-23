@@ -2938,6 +2938,13 @@ export class SessionManager {
         // patchbay does not declare, so a conforming agent never sends them;
         // the whole-replace `plan` model already covers the feature.
         break;
+      case "notice":
+      case "compaction_update":
+      case "compaction_summary_chunk":
+        // Declined for now: unstable, and each gated behind a client
+        // session capability (notices, compaction) patchbay does not
+        // declare, so a conforming agent never sends them.
+        break;
       default:
         // Compile-time exhaustive over the SDK's SessionUpdate union: a new
         // kind on an SDK upgrade fails typecheck here and demands a verdict
