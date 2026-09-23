@@ -2559,8 +2559,11 @@ export class Orchestrator {
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the
     // new session — focus it instead of minting a sibling blank shell.
+    // One whose connection died is still that session: it is minted again
+    // from its row (the ladder's zero-turn rung) on the same path a fresh
+    // create takes, connect-on-demand included.
     const draft = this.sessionManager.findNeverPrompted(agentId);
-    if (draft !== undefined) {
+    if (draft !== undefined && this.sessionManager.isLive(draft)) {
       this.sessionManager.activate(draft);
       return;
     }
@@ -2573,8 +2576,9 @@ export class Orchestrator {
         await this.connectAgent(spec);
       }
       // sessionCreated itself clears the connect pane (reducer) — success
-      // needs no extra event.
-      await this.sessionManager.createSession(agentId, agentName, this.workspaceCwd);
+      // needs no extra event; the re-mint emits the same event.
+      if (draft !== undefined) await this.sessionManager.reviveNew(draft);
+      else await this.sessionManager.createSession(agentId, agentName, this.workspaceCwd);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });

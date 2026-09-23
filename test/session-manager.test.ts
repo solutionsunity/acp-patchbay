@@ -1654,6 +1654,68 @@ describe("SessionManager", () => {
     await h.pool.stop("sm11p");
   });
 
+  // Issue #30: a never-prompted session whose connection died is still the
+  // agent's new session. The agent persisted nothing for it, so no rung can
+  // bring the id back — but the row, and everything the user staged on it,
+  // is patchbay's. The next use mints the session again from the row.
+  describe("a never-prompted session whose connection died (issue #30)", () => {
+    async function untilStatus(h: ReturnType<typeof harness>, agentId: string, status: string): Promise<void> {
+      const start = Date.now();
+      while (h.pool.get(agentId)?.status !== status) {
+        if (Date.now() - start > 3000) throw new Error(`${agentId} never reached ${status}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
+
+    it("new-session focus still finds the row, and the first prompt re-mints it carrying the draft — no sibling", async () => {
+      const h = harness();
+      await h.pool.connect(spec({ exitAfterMs: 150 }, "c30a"));
+      const oldId = await h.sessionManager.createSession("c30a", "Fake Agent", cwd);
+      h.events.push({ kind: "sessionDraftChanged", sessionId: oldId, draft: "typed before the crash" });
+      await untilStatus(h, "c30a", "crashed");
+      expect(h.sessionManager.isLive(oldId)).toBe(false);
+      expect(h.sessionManager.findNeverPrompted("c30a")).toBe(oldId);
+
+      await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "c30a"));
+      await h.sessionManager.sendPrompt(oldId, "first words");
+      const rows = h.state().sessions.filter((s) => s.agentId === "c30a");
+      expect(rows).toHaveLength(1);
+      const newId = rows[0]!.id;
+      expect(newId).not.toBe(oldId);
+      expect(h.state().transcripts[newId]?.some((b) => b.kind === "user")).toBe(true);
+      expect(textOf(h.state().transcripts[newId]?.at(-2))).toBe("ok");
+      expect(h.state().drafts[newId]).toBe("typed before the crash");
+      // the first prompt ended newness on the fresh id, and named it
+      expect(h.sessionManager.findNeverPrompted("c30a")).toBeUndefined();
+      expect(rows[0]!.title).toBe("first words");
+      await h.pool.stop("c30a");
+    });
+
+    it("opening the dead row re-mints it — one live session, focused, chips carried", async () => {
+      const h = harness();
+      await h.pool.connect(spec({ exitAfterMs: 150 }, "c30b"));
+      const oldId = await h.sessionManager.createSession("c30b", "Fake Agent", cwd);
+      h.sessionManager.addContext(oldId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
+      await untilStatus(h, "c30b", "crashed");
+
+      await h.pool.connect(spec({}, "c30b"));
+      h.sessionManager.activate(oldId);
+      const start = Date.now();
+      let newId: string | undefined;
+      for (;;) {
+        const rows = h.state().sessions.filter((s) => s.agentId === "c30b");
+        newId = rows.find((s) => s.id !== oldId && h.sessionManager.isLive(s.id))?.id;
+        if (newId !== undefined) break;
+        if (Date.now() - start > 3000) throw new Error("the dead row was never re-minted");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(h.state().sessions.filter((s) => s.agentId === "c30b")).toHaveLength(1);
+      expect(h.state().activeSessionId).toBe(newId);
+      expect(h.state().contextChips[newId]).toMatchObject([{ id: "c30-chip" }]);
+      await h.pool.stop("c30b");
+    });
+  });
+
   it("a still-new session is findable for add-session focus; the first prompt ends that", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm14"));

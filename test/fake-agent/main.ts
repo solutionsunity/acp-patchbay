@@ -60,6 +60,9 @@ export interface FakeAgentScript {
   /** session/resume rejects and drops the session — the corpse-leaving
    * variant on the resume rung (roots re-apply failure). */
   failResume?: boolean;
+  /** The process dies this many ms after initialize — a connection death
+   * under whatever sessions exist by then, prompted or not. */
+  exitAfterMs?: number;
   /** Modes offered at session/new (P8 knobs). */
   modes?: acp.SessionModeState | null;
   /** model/effort/etc. config options offered at session/new (P8 knobs). */
@@ -468,6 +471,7 @@ let authenticated = false;
 const app = acp
   .agent({ name: script.name ?? "fake-agent" })
   .onRequest("initialize", (): acp.InitializeResponse => {
+    if (script.exitAfterMs !== undefined) setTimeout(() => process.exit(1), script.exitAfterMs);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: script.declare ?? {},

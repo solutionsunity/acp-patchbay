@@ -299,6 +299,20 @@ interface KnownSession {
    * hooks) rehydrates it when the listed session re-enters — a restored
    * window is not a deliberate fresh entry. */
   knobs?: KnobSeed;
+  /** True once auto-derived from the first prompt, or set by the agent —
+   * either way, later auto-titling must not clobber it again. */
+  titled: boolean;
+  /** At least one prompt has been sent on this session, or it came back
+   * from the agent's own list (a listed session has prior turns). This is
+   * the "new session" fact: `!everPrompted` blocks the reaper (a new
+   * session never auto-closes), makes "add session" focus this one instead
+   * of minting a sibling, and picks the ladder's zero-turn rung: until it
+   * is set the agent may have persisted nothing — session/load has been
+   * observed to 404 *and kill the live session* on a never-prompted id
+   * (claude-agent-acp) — so a never-prompted session is minted again
+   * rather than loaded. Lives on the row, not the attachment: an
+   * involuntary drop keeps the row, and the row must still know it is new. */
+  everPrompted: boolean;
 }
 
 interface LiveSession {
@@ -307,9 +321,6 @@ interface LiveSession {
    * itself when sharing, a synthetic instance id when process-policy
    * isolated it. */
   poolKey: string;
-  /** True once auto-derived from the first prompt, or explicitly renamed —
-   * either way, later auto-titling must not clobber it again. */
-  titled: boolean;
   /** The at-most-one open prose run — every chunk arm continues or replaces
    * it through `runBlockFor` (the one place the continuation rule lives);
    * everything that interrupts prose (a tool call, a placeholder, a prompt
@@ -338,15 +349,6 @@ interface LiveSession {
   /** A root change landed mid-turn — re-applied (reapplyRoots) on turn end
    * instead of yanking the attachment under the in-flight prompt. */
   rootsDirty: boolean;
-  /** At least one prompt has been sent on this attachment (or it came back
-   * from history — load and resume both imply prior turns). This is the
-   * "new session" fact: `!everPrompted` blocks the reaper (a new session
-   * never auto-closes) and makes "add session" focus this one instead of
-   * minting a sibling. Until it's set the agent may have persisted nothing:
-   * session/load has been observed to 404 *and kill the live session* on a
-   * never-prompted id (claude-agent-acp), so zero-turn root changes
-   * recreate instead. */
-  everPrompted: boolean;
   /** Epoch ms of the last prompt or session/update — the idle reaper's basis. */
   lastActivityAt: number;
   /** toolCallIds seen pending/in_progress and not yet resolved — the turn-end
@@ -374,18 +376,16 @@ interface LiveSession {
  * prefix each family's blocks carry. */
 type RunChannel = "user" | "text" | "thought";
 
-function liveSession(agentId: string, poolKey: string, titled: boolean): LiveSession {
+function liveSession(agentId: string, poolKey: string): LiveSession {
   return {
     agentId,
     poolKey,
-    titled,
     openRun: null,
     pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
     turnSettled: null,
     rootsDirty: false,
-    everPrompted: false,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
     replayTurnDirty: false,
@@ -453,6 +453,8 @@ export class SessionManager {
    * joins the one in flight. Two interleaved walks would each clear the
    * other's close tombstones (closedDuringSync) and race the prune. */
   private walks = new Map<string, Promise<void>>();
+  /** In-flight zero-turn re-mints by retired id (see recreateFromRow). */
+  private recreating = new Map<string, Promise<string>>();
   /** Rapid re-clicks must not stack replays — one hydration per session. */
   private hydrating = new Set<string>();
   /** Sessions inside a session/load replay window: their transcript events
@@ -514,15 +516,23 @@ export class SessionManager {
     return this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
   }
 
-  /** The still-new (never-prompted) live session for an agent, if one
-   * exists — "add session" focuses it instead of minting a sibling: a new
-   * session is unclosable and unreopenable (agents 404 load/resume on a
-   * zero-turn id), so stacking blank shells helps no one. */
+  /** The still-new (never-prompted) session for an agent, if one exists —
+   * "add session" focuses it instead of minting a sibling: a new session is
+   * unclosable, so stacking blank shells helps no one. Rows, not
+   * attachments: a never-prompted session whose connection died is still
+   * the agent's new session, and its next use re-mints it (the ladder's
+   * zero-turn rung). */
   findNeverPrompted(agentId: string): string | undefined {
-    for (const [sessionId, session] of this.sessions) {
-      if (session.agentId === agentId && !session.everPrompted) return sessionId;
+    for (const [sessionId, row] of this.known) {
+      if (row.agentId === agentId && !row.everPrompted) return sessionId;
     }
     return undefined;
+  }
+
+  /** The "new session" fact, read from its one home. An id the manager does
+   * not know is never new — nothing to re-mint from. */
+  private hasTurns(sessionId: string): boolean {
+    return this.known.get(sessionId)?.everPrompted ?? true;
   }
 
   /** Frees an idle session's agent-side resources: `session/close` on the
@@ -587,7 +597,7 @@ export class SessionManager {
     if (idleCloseMs === null) return;
     const cutoff = Date.now() - idleCloseMs;
     for (const [sessionId, session] of [...this.sessions]) {
-      if (!session.everPrompted) continue;
+      if (!this.hasTurns(sessionId)) continue;
       if (session.lastActivityAt > cutoff) continue;
       if (this.hooks.isActiveSession?.(sessionId) ?? false) continue;
       if (this.hooks.isUnseen?.(sessionId) ?? false) continue;
@@ -716,10 +726,10 @@ export class SessionManager {
   ): Promise<string> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     const { sessionId, knobs } = await this.attachSession({ via: "new" }, poolKey, agentId, { cwd });
-    this.sessions.set(sessionId, liveSession(agentId, poolKey, false));
+    this.sessions.set(sessionId, liveSession(agentId, poolKey));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
-    this.known.set(sessionId, { agentId });
+    this.known.set(sessionId, { agentId, titled: false, everPrompted: false });
     const summary: SessionSummary = {
       id: sessionId,
       agentId,
@@ -795,7 +805,9 @@ export class SessionManager {
       if (outcome.attached) {
         // Held words whose firing trigger died with the old window:
         // opening the session is their release (locks still hold them).
-        this.drainQueue(sessionId);
+        // The zero-turn rung may have minted a fresh id — the words moved
+        // with it.
+        this.drainQueue(outcome.sessionId);
         return;
       }
       if (outcome.reason === "failed") return;
@@ -1097,6 +1109,8 @@ export class SessionManager {
       const cont = this.hooks.continuityFor?.(info.sessionId, agentId);
       this.known.set(info.sessionId, {
         agentId,
+        titled: true,
+        everPrompted: true, // listed = persisted agent-side = prior turns
         ...(cont?.knobs !== undefined ? { knobs: cont.knobs } : {}),
       });
       this.hooks.emit({
@@ -1163,9 +1177,9 @@ export class SessionManager {
       this.sessions.delete(sessionId);
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
-      await this.ensureAttached(sessionId, agentId);
+      const liveId = await this.ensureAttached(sessionId, agentId);
       // Held words kept across the reload re-drain once hydrating clears.
-      setImmediate(() => this.drainQueue(sessionId));
+      setImmediate(() => this.drainQueue(liveId));
     } finally {
       this.hydrating.delete(sessionId);
       this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
@@ -1186,9 +1200,7 @@ export class SessionManager {
       );
     }
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    // reopened sessions keep whatever title they already have
-    this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
-    this.sessions.get(sessionId)!.everPrompted = true; // came back from history
+    this.sessions.set(sessionId, liveSession(agentId, poolKey));
     let knobs: NormalizedKnobs;
     try {
       knobs = await this.loadSilently(sessionId, poolKey, agentId);
@@ -1205,25 +1217,32 @@ export class SessionManager {
     this.publishKnobs(sessionId, knobs);
   }
 
-  /** THE attach ladder — the rung order exists here and nowhere else:
+  /** THE attach ladder — the rung order exists here and nowhere else.
+   * First the zero-turn rung: a never-prompted session has nothing
+   * agent-side to load or resume, so it is minted again from its row,
+   * everything the user staged carried over, and the fresh id returned —
+   * the one case where the id changes, and not a continuation faked (there
+   * was nothing to continue: a new session knows it is new). Then
    * `session/load` wherever declared (the only path where what the user
    * sees and what the agent remembers are provably the same), else
    * `session/resume` (the agent's real memory behind an honest seam
    * notice). Nothing below: patchbay never mints a session and calls it a
-   * continuation, and the session id never changes out from under the
-   * caller. Exhaustion is the caller's policy, so the outcome is returned,
-   * not thrown: `failed` = a declared rung broke (logged here, suspect mark
-   * already landed at the wire chokepoint); `no-rung` = the agent declares
-   * neither. */
+   * continuation. Exhaustion is the caller's policy, so the outcome is
+   * returned, not thrown: `failed` = a declared rung broke (logged here,
+   * suspect mark already landed at the wire chokepoint); `no-rung` = the
+   * agent declares neither. */
   private async attach(
     sessionId: string,
     agentId: string,
   ): Promise<
-    | { attached: true }
+    | { attached: true; sessionId: string }
     | { attached: false; reason: "failed"; error: Error }
     | { attached: false; reason: "no-rung" }
   > {
-    if (this.sessions.has(sessionId)) return { attached: true };
+    if (this.sessions.has(sessionId)) return { attached: true, sessionId };
+    if (!this.hasTurns(sessionId)) {
+      return { attached: true, sessionId: await this.recreateFromRow(sessionId) };
+    }
     const declared = this.pool.get(agentId)?.declared;
     // Read before any rung publishes: the attach's own publishKnobs
     // overwrites this snapshot with the agent's reset state.
@@ -1234,7 +1253,7 @@ export class SessionManager {
         await this.reopen(sessionId, agentId);
         this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
-        return { attached: true };
+        return { attached: true, sessionId };
       } catch (err) {
         // The agent may no longer hold this session — descend to resume
         // rather than erroring forever.
@@ -1247,7 +1266,7 @@ export class SessionManager {
         await this.resumeReattach(sessionId, agentId);
         this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
-        return { attached: true };
+        return { attached: true, sessionId };
       } catch (err) {
         this.sessions.delete(sessionId);
         error = err as Error;
@@ -1258,11 +1277,39 @@ export class SessionManager {
     return { attached: false, reason: "no-rung" };
   }
 
+  /** The zero-turn rung, coalesced per id: the open path and a prompt can
+   * both reach a dead never-prompted row in the same tick, and one row
+   * must become one session, not two. */
+  private recreateFromRow(oldId: string): Promise<string> {
+    const inFlight = this.recreating.get(oldId);
+    if (inFlight !== undefined) return inFlight;
+    const run = this.recreateEmpty(oldId, undefined).finally(() => {
+      if (this.recreating.get(oldId) === run) this.recreating.delete(oldId);
+    });
+    this.recreating.set(oldId, run);
+    return run;
+  }
+
+  /** "New session" for an agent whose never-prompted session lost its
+   * connection: the row is still the new session — run the ladder on it
+   * (the zero-turn rung mints it again, carrying what the user staged) and
+   * point the view at the result. Throws like createSession does, so the
+   * caller's connect pane can say why. */
+  async reviveNew(sessionId: string): Promise<string> {
+    const agentId = this.known.get(sessionId)?.agentId;
+    if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
+    const liveId = await this.ensureAttached(sessionId, agentId);
+    this.activate(liveId);
+    return liveId;
+  }
+
   /** The prompt/reload exhaustion policy: attach or throw — a prompt with
-   * no session behind it must fail loudly on the caller's error channel. */
-  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
+   * no session behind it must fail loudly on the caller's error channel.
+   * Returns the id to continue on: the caller's own, or the fresh one the
+   * zero-turn rung minted. */
+  private async ensureAttached(sessionId: string, agentId: string): Promise<string> {
     const outcome = await this.attach(sessionId, agentId);
-    if (outcome.attached) return;
+    if (outcome.attached) return outcome.sessionId;
     throw outcome.reason === "failed"
       ? outcome.error
       : new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
@@ -1275,8 +1322,7 @@ export class SessionManager {
    * with replay — there is none. */
   private async resumeReattach(sessionId: string, agentId: string): Promise<void> {
     const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    this.sessions.set(sessionId, liveSession(agentId, poolKey, true));
-    this.sessions.get(sessionId)!.everPrompted = true; // came back from history
+    this.sessions.set(sessionId, liveSession(agentId, poolKey));
     const { knobs } = await this.attachSession({ via: "resume", sessionId }, poolKey, agentId);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
@@ -1499,9 +1545,7 @@ export class SessionManager {
     const poolKey = live?.poolKey ?? this.known.get(sessionId)?.agentId;
     const declared = poolKey === undefined ? undefined : this.pool.get(poolKey)?.declared;
     if (declared?.sessionAdditionalDirectories !== true) return false;
-    const hasTurns =
-      live?.everPrompted === true || (this.hooks.currentTranscript?.(sessionId) ?? []).length > 0;
-    return !hasTurns || declared.sessionResume === true;
+    return !this.hasTurns(sessionId) || declared.sessionResume === true;
   }
 
   /** A workspace folder was added or removed: every live session's wire
@@ -1548,7 +1592,7 @@ export class SessionManager {
       session.rootsDirty = true;
       return;
     }
-    if (!session.everPrompted && (this.hooks.currentTranscript?.(sessionId) ?? []).length === 0) {
+    if (!this.hasTurns(sessionId)) {
       await this.recreateEmpty(sessionId, session);
       return;
     }
@@ -1583,32 +1627,43 @@ export class SessionManager {
     }
   }
 
-  /** The zero-turn rung of reapplyRoots: mint the session again with the
-   * complete root list and retire the empty shell. Everything the user has
-   * already invested carries over — title/index row, pending context chips,
-   * user-steered knob values (re-seeded via applySeed, silently skipped
-   * where the fresh session doesn't offer them). */
-  private async recreateEmpty(oldId: string, old: LiveSession): Promise<void> {
+  /** The zero-turn rung — of reapplyRoots (a root added to a never-prompted
+   * session) and of the attach ladder (a never-prompted session whose
+   * connection died): the agent persisted nothing for it, so mint the
+   * session again and retire the empty shell. Everything the user has
+   * already invested carries over — title/index row, pending context chips
+   * (live, or stashed by the drop), held words, draft, user-steered knob
+   * values (re-seeded via applySeed, silently skipped where the fresh
+   * session doesn't offer them). `old` is the live attachment when there
+   * still is one. Returns the fresh id. */
+  private async recreateEmpty(oldId: string, old: LiveSession | undefined): Promise<string> {
+    const row = this.known.get(oldId);
+    if (row === undefined) throw new Error(`unknown session ${oldId}`);
+    const agentId = row.agentId;
+    const poolKey = old?.poolKey ?? (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     // `roots` = the user-added list, which is what the durable row carries;
     // the wire gets the full composition (workspace folders included).
     const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
-    const { sessionId, knobs } = await this.attachSession({ via: "new" }, old.poolKey, old.agentId, {
+    const { sessionId, knobs } = await this.attachSession({ via: "new" }, poolKey, agentId, {
       roots: this.rootsFor(oldId, this.cwd()),
     });
     // Sidebar-pointer semantics, NOT isActiveSession (which also counts
     // pinned panels): re-activating because a detached panel showed the
     // old id would hijack the sidebar from whatever it is actually on.
     const wasActive = this.hooks.isPointerActive?.(oldId) ?? false;
-    const seed = confirmedFromKnobs(old.knobs);
-    const fresh = liveSession(old.agentId, old.poolKey, old.titled);
-    fresh.pendingContext = old.pendingContext;
+    // The row's knob snapshot is what every publish wrote — the same fact a
+    // live attachment holds, from its one durable home.
+    const seed = row.knobs ?? {};
+    const fresh = liveSession(agentId, poolKey);
+    fresh.pendingContext = old?.pendingContext ?? this.contextStash.get(oldId) ?? [];
+    this.contextStash.delete(oldId);
     this.sessions.set(sessionId, fresh);
     this.sessions.delete(oldId);
     const now = new Date().toISOString();
     // The fresh id inherits the retired row's title — read from the one
     // place it lives, the view's row.
     const title = this.hooks.titleOf?.(oldId) ?? "Untitled session";
-    this.known.set(sessionId, { agentId: old.agentId });
+    this.known.set(sessionId, { agentId, titled: row.titled, everPrompted: false });
     this.known.delete(oldId);
     // Everything the user invested migrates to the fresh id — held words
     // and draft included (they'd otherwise vanish with sessionClosed).
@@ -1620,8 +1675,8 @@ export class SessionManager {
       this.promptQueues.set(sessionId, heldWords);
     }
     const carriedDraft = this.hooks.draftOf?.(oldId);
-    this.noteContinuity(oldId, old.agentId, null);
-    this.noteContinuity(sessionId, old.agentId, {
+    this.noteContinuity(oldId, agentId, null);
+    this.noteContinuity(sessionId, agentId, {
       roots: [...roots],
       chips: fresh.pendingContext.map(persistChip),
       ...(heldWords !== undefined && heldWords.length > 0 ? { queue: [...heldWords] } : {}),
@@ -1630,8 +1685,8 @@ export class SessionManager {
     // Same shield as close(): an in-flight session/list walk's stale page
     // must not resurrect the retired shell.
     {
-      let tombs = this.closedDuringSync.get(old.agentId);
-      if (tombs === undefined) this.closedDuringSync.set(old.agentId, (tombs = new Set()));
+      let tombs = this.closedDuringSync.get(agentId);
+      if (tombs === undefined) this.closedDuringSync.set(agentId, (tombs = new Set()));
       tombs.add(oldId);
     }
     this.hooks.emit(
@@ -1640,7 +1695,7 @@ export class SessionManager {
         kind: "sessionCreated",
         session: {
           id: sessionId,
-          agentId: old.agentId,
+          agentId,
           title,
           live: false,
           updatedAt: now,
@@ -1661,15 +1716,20 @@ export class SessionManager {
         : []),
     );
     if (wasActive) this.hooks.emit({ kind: "sessionActivated", sessionId });
-    // the empty shell: freed agent-side where possible, forgotten either way
-    if (this.pool.get(old.poolKey)?.declared?.sessionClose === true) {
-      void this.pool.closeSession(old.poolKey, oldId).catch(() => {});
-    } else {
-      this.pool.forgetSession(old.poolKey, oldId);
+    // the empty shell: freed agent-side where possible, forgotten either
+    // way — only while its process still exists; a dead connection took
+    // it along.
+    if (old !== undefined) {
+      if (this.pool.get(old.poolKey)?.declared?.sessionClose === true) {
+        void this.pool.closeSession(old.poolKey, oldId).catch(() => {});
+      } else {
+        this.pool.forgetSession(old.poolKey, oldId);
+      }
     }
     this.publishKnobs(sessionId, knobs);
     await this.applySeed(sessionId, seed);
-    this.log.info(`session ${oldId}: zero-turn — recreated as ${sessionId} to apply context roots`);
+    this.log.info(`session ${oldId}: zero-turn — recreated as ${sessionId}`);
+    return sessionId;
   }
 
   async sendPrompt(
@@ -1729,7 +1789,14 @@ export class SessionManager {
     this.turnStarting.add(sessionId);
     let session: LiveSession;
     try {
-      await this.ensureAttached(sessionId, agentId);
+      const liveId = await this.ensureAttached(sessionId, agentId);
+      if (liveId !== sessionId) {
+        // The zero-turn rung minted a fresh id: the turn continues there,
+        // the door's mark included.
+        this.turnStarting.delete(sessionId);
+        this.turnStarting.add(liveId);
+        sessionId = liveId;
+      }
       const attached = this.sessions.get(sessionId);
       if (attached === undefined) throw new Error(`session ${sessionId} vanished during attach`);
       session = attached;
@@ -1750,15 +1817,16 @@ export class SessionManager {
     this.sealRun(sessionId, session);
     session.inFlight = true;
     this.turnStarting.delete(sessionId);
-    session.everPrompted = true;
+    const row = this.known.get(sessionId);
+    if (row !== undefined) row.everPrompted = true;
     session.lastActivityAt = Date.now();
     let settleTurn!: () => void;
     const turnSettled = new Promise<void>((resolve) => (settleTurn = resolve));
     session.turnSettled = turnSettled;
 
     const events: AgentViewEvent[] = [];
-    if (!session.titled) {
-      session.titled = true;
+    if (row !== undefined && !row.titled) {
+      row.titled = true;
       events.push({ kind: "sessionRefreshed", sessionId, title: deriveTitle(text) });
     }
     // Duration basis is send→stop, deliberately not first-chunk→stop: the
@@ -2788,8 +2856,7 @@ export class SessionManager {
       // An agent-authored title marks the session titled even when the text
       // matches what's shown — the first prompt's auto-title must never
       // clobber it (the agent's title wins, in both directions of time).
-      const live = this.sessions.get(sessionId);
-      if (live !== undefined) live.titled = true;
+      this.known.get(sessionId)!.titled = true;
     }
     if (meta.title === undefined && meta.updatedAt === undefined) return;
     this.hooks.emit({ kind: "sessionRefreshed", sessionId, ...meta });

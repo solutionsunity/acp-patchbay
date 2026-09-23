@@ -49,7 +49,9 @@ deliverable, owed before implementation.
   policy (Settings), decided by used concurrent-session behavior in `auto` mode.
 - A brand-new session knows it is new: clicking "new session" for an agent that
   already has a never-prompted session focuses that one instead of minting a
-  sibling. The first prompt is what ends newness.
+  sibling — after a crash too: the row is still the new session, and its next
+  use brings it back with everything staged on it. The first prompt is what
+  ends newness.
 - User can switch and close sessions. Switching never closes the session being
   left; an attached session auto-closes (`session/close`, resources freed, row
   kept) only when *all* hold: not new, nothing in progress, not
@@ -82,7 +84,9 @@ deliverable, owed before implementation.
   reload (re-`load` from the agent) to rejoin truth. Driving one session from two
   places simultaneously is agent-side undefined behavior, out of scope and stated
   as such.
-- Opening a closed session rides the ladder: `session/load` (replay = truth) >
+- Opening a closed session rides the ladder: a never-prompted session is
+  minted again (the agent holds nothing for it; the draft, chips, held words,
+  title, and knob choices carry over) > `session/load` (replay = truth) >
   `session/resume` (context live, a notice says history can't be shown) >
   cannot open — nothing in hand, nothing to fetch, said as such.
 - User can see and change the session's model, mode, and effort when the agent

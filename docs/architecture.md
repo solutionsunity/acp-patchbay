@@ -167,13 +167,18 @@ as an opt-in; the extension point is visible, deliberately unfilled.
   behavior is *used*, isolate otherwise), `shared` (force, user accepts risk),
   `isolated` (one process per top-level session).
 - Crash → visible immediately; restart is one action. After reconnect: the
-  attach ladder — `session/load` (replay = truth) > `session/resume` (context
-  back, seam notice: no visible history) > honestly not reopenable. Patchbay
-  never mints a session and calls it a continuation.
+  attach ladder — a never-prompted session is minted again from its row
+  (nothing agent-side to open; the fresh id carries what the user staged) >
+  `session/load` (replay = truth) > `session/resume` (context back, seam
+  notice: no visible history) > honestly not reopenable. Patchbay never
+  mints a session and calls it a continuation — the zero-turn rung continues
+  nothing, a new session knows it is new.
 
 ```mermaid
 flowchart TD
-    R(["Reconnect / reopen a session"]) --> Q1{"declared session/load?"}
+    R(["Reconnect / reopen a session"]) --> Q0{"ever prompted?"}
+    Q0 -- no --> Z["session/new again from the row<br/><small>title, chips, held words, draft, knobs carried; old id retired</small>"]
+    Q0 -- yes --> Q1{"declared session/load?"}
     Q1 -- yes --> L["session/load — full replay<br/><small>replay is truth</small>"]
     Q1 -- no --> Q2{"declared session/resume?"}
     Q2 -- yes --> RS["session/resume<br/><small>context back; seam notice: no visible history</small>"]
@@ -204,7 +209,10 @@ flowchart TD
   never load-or-resume: patchbay persists no transcripts, so closing anything
   less than fully-replayable would destroy the only copy. "New session" for
   an agent with a never-prompted session focuses it instead of minting a
-  sibling.
+  sibling — a row fact (`everPrompted` on the known row, with `titled`), so
+  it holds after an involuntary drop too: the dead row is still the new
+  session, and its next use by any door (new-session focus, drawer click,
+  a prompt) re-mints it.
 - **Launcher health** (launcher-health.ts — one central module, consulted at
   the chokepoints, never inlined): npx/uvx stay the installers — a
   patchbay-owned install store was **considered and rejected** (it fixes

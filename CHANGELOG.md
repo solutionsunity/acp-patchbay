@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- After a crash or process death, "new session" no longer mints a blank
+  sibling next to a dead never-prompted one. The newness fact lived on the
+  live attachment, which the drop discards while keeping the row, so the row
+  was still there but no longer counted as new — and even found, it could
+  not be used: the agent holds nothing for a zero-turn session, so load and
+  resume have nothing to open. Newness (and whether a title has been set)
+  now live on the session row, and the attach ladder gains a zero-turn rung:
+  a never-prompted session is minted again from its row on its next use —
+  new-session focus, a drawer click, or a prompt typed into it — carrying
+  the draft, chips, held words, title, and knob choices, with the dead id
+  retired. One row, one session, by every door. (#30)
 - Per-session continuity rows (knobs, roots, held prompts, chips, draft) no
   longer accumulate for sessions nothing can bring back. A row's only reader
   is the agent's own `session/list` naming the session again after a reload,
