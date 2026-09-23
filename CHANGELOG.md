@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The feature inventory (docs/features.md) is re-read against the code and
+  says what the product does today, at the altitude of a promise rather than
+  a mechanism. (#31)
 - After a crash or process death, "new session" no longer mints a blank
   sibling next to a dead never-prompted one. The newness fact lived on the
   live attachment, which the drop discards while keeping the row, so the row

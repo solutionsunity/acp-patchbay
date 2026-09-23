@@ -205,8 +205,8 @@ flowchart TD
   404 load/resume on zero-turn ids), nothing in flight, not unseen-completed
   (blue mark), prompt box empty (structural: the composer exists only for
   the active session, which is always exempt), idle past the auto-close time
-  (default 60 min — a user setting soon), and declared `session/load` —
-  never load-or-resume: patchbay persists no transcripts, so closing anything
+  (a user setting, default 60 min, zero disables), and declared `session/close`
+  plus `session/load` — never resume: patchbay persists no transcripts, so closing anything
   less than fully-replayable would destroy the only copy. "New session" for
   an agent with a never-prompted session focuses it instead of minting a
   sibling — a row fact (`everPrompted` on the known row, with `titled`), so
