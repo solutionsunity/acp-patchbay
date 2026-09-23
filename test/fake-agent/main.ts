@@ -63,6 +63,9 @@ export interface FakeAgentScript {
   /** The process dies this many ms after initialize — a connection death
    * under whatever sessions exist by then, prompted or not. */
   exitAfterMs?: number;
+  /** Lines printed raw to stdout before the protocol starts — an agent
+   * that logs to the protocol channel (a banner, a debug print). */
+  stdoutNoise?: string[];
   /** Modes offered at session/new (P8 knobs). */
   modes?: acp.SessionModeState | null;
   /** model/effort/etc. config options offered at session/new (P8 knobs). */
@@ -713,6 +716,8 @@ const app = acp
   .onNotification("session/cancel", (ctx) => {
     sessions.get(ctx.params.sessionId)?.pending?.abort();
   });
+
+for (const line of script.stdoutNoise ?? []) process.stdout.write(`${line}\n`);
 
 const stream = acp.ndJsonStream(
   Writable.toWeb(process.stdout),

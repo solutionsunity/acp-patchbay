@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nullLogger } from "../src/orchestrator/logger";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { WireLog, WIRE_LOG_TTL_MS } from "../src/orchestrator/wire-log";
 import type { FakeAgentScript } from "./fake-agent/main";
@@ -154,5 +155,30 @@ describe("AgentPool wire tap", () => {
     for (const f of frames) expect(() => JSON.parse(f.line)).not.toThrow();
 
     await pool.stop("tap");
+  });
+
+  it("names an agent that writes non-protocol lines, once per connection, with no content — the session goes on", async () => {
+    const logged: string[] = [];
+    const log = { ...nullLogger, warn: (m: string) => logged.push(m) };
+    const pool = new AgentPool(
+      {
+        onStatusChanged: () => {},
+        onDeclaredCaptured: () => {},
+        onSessionUpdate: () => {},
+        wireLogActive: () => false,
+        onWireFrame: () => {},
+        ...stubFsTerminalHooks(),
+      },
+      log,
+    );
+    await pool.connect(spec({ stdoutNoise: ["Starting agent v1 secret=abc", "42", "{not json"] }, "noisy"));
+    const { sessionId } = await pool.newSession("noisy", cwd);
+    expect(sessionId).toBeTruthy(); // not interrupted
+
+    const notes = logged.filter((m) => m.includes("noisy"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("wire log");
+    expect(notes[0]).not.toContain("secret");
+    await pool.stop("noisy");
   });
 });

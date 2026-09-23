@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- An agent that writes something other than protocol messages to its
+  protocol channel (a banner, a debug print) is now named once in the
+  Patchbay log, without the content, pointing at the wire log for the full
+  case. The session is not interrupted.
 - Folders you always work with can be saved once, for this workspace or for
   every workspace, and every new session starts with them. Before, each
   extra directory (a backend repo beside a frontend, a framework's source

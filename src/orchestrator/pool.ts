@@ -934,15 +934,25 @@ export class AgentPool {
   }
 
   /** Attaches the wire-log tap to one direction of a connection's stdio.
-   * Zero-cost while the log is off: chunks are dropped before decode, and
-   * the partial-line buffer resets so a mid-frame enable never emits a torn
-   * frame as if it were whole. */
+   * Outgoing is zero-cost while the log is off: chunks are dropped before
+   * decode. Incoming is always line-assembled, for one more reader: an
+   * agent writing lines that aren't protocol messages (a banner, a debug
+   * print) is named once per connection in the log — never the content,
+   * which may carry anything; the wire log shows every case. The SDK
+   * answers each such line with a parse error and the session goes on.
+   * Only the first character is tested — a line that doesn't open a JSON
+   * object or array can't be a message; malformed JSON that does is left
+   * to the wire log. Whenever nothing reads a direction, its partial-line
+   * buffer resets, as for the log being off. */
   private tapLines(agentId: string, direction: "→" | "←", stream: NodeJS.ReadableStream): void {
     const { onWireFrame, wireLogActive } = this.hooks;
-    if (onWireFrame === undefined) return;
+    const watchNoise = direction === "←";
+    if (onWireFrame === undefined && !watchNoise) return;
     let buffer = "";
+    let noted = false;
     stream.on("data", (chunk: Buffer | string) => {
-      if (wireLogActive?.() !== true) {
+      const logging = onWireFrame !== undefined && wireLogActive?.() === true;
+      if (!logging && (!watchNoise || noted)) {
         buffer = "";
         return;
       }
@@ -952,7 +962,14 @@ export class AgentPool {
         if (nl === -1) break;
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
-        if (line !== "") onWireFrame(agentId, direction, line);
+        if (line === "") continue;
+        if (logging) onWireFrame(agentId, direction, line);
+        if (watchNoise && !noted && line[0] !== "{" && line[0] !== "[") {
+          noted = true;
+          this.log.warn(
+            `${agentId}: the agent wrote output that isn't a protocol message — ignored, the session goes on. Turn on the wire log to see it.`,
+          );
+        }
       }
       // A runaway partial line (a frame far beyond any sane size) is not
       // worth holding — this is a debug tap, never the protocol path.

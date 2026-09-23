@@ -448,6 +448,15 @@ Decisions, recorded:
 - **Tap lives in pool.ts** — the sole channel on the wire — line-assembled so
   redaction always sees whole frames, and zero-cost while off (chunks dropped
   before decode). Frames over 8 KB are truncated with an honest marker.
+- **Non-protocol output is named, never shown, outside the log.** An agent
+  that writes lines to its protocol channel that aren't messages (a banner,
+  a debug print) gets one line in the Patchbay log per connection — the
+  agent's name, never the content, which may carry anything — pointing at
+  the wire log for the full case. The SDK answers each such line with a
+  JSON-RPC parse error and the session goes on. So the incoming direction is
+  always line-assembled until that note fires; the check is the line's first
+  character (a message opens a JSON object or array), so malformed JSON that
+  opens one is left to the wire log.
 
 ## Protocol extensions (`_meta`)
 
