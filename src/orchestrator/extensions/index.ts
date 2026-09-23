@@ -20,11 +20,6 @@ export { probeDeferredFor } from "./first-session-mcp-latch";
 
 export { turnAuthFailureReasonOf } from "./turn-auth-failure";
 
-export {
-  authCapabilityWire,
-  typedAuthMethodOf,
-  type TypedTerminalAuth,
-} from "./auth-method-types";
 
 /** A stateful text filter over one prose run's delta stream. `push` may
  * withhold a suffix that could still become a wire-extension shape;

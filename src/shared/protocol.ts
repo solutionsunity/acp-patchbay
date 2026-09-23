@@ -559,23 +559,25 @@ export interface OpenEditorView {
 
 /** One of `initialize`'s declared `authMethods` (ACP schema, stable).
  * `kind` discriminates what patchbay can do with it: "agent" (the wire's
- * absent/default `type`, stable — the agent handles auth itself via
+ * absent or `"agent"` type — the agent handles auth itself via
  * `authenticate`), "terminal-recipe" (a parseable `_meta["terminal-auth"]`
  * recipe — adopted extension, meta.ts; patchbay runs the recipe in a
  * VS Code terminal, never calls `authenticate` on it), and "terminal"
- * (the UNSTABLE typed surface — adopted extension, auth-method-types.ts;
- * patchbay re-runs the agent's own spawn command with the method's args
- * appended, in a terminal, and likewise never calls `authenticate` on it)
- * are actionable. The recipe/args stay orchestrator-side — the UI only
- * needs to know the method is runnable. "env_var" (typed, no executor
- * wired) is shown as declared, never wired to a Log-in button. */
+ * (the spec's terminal type; patchbay re-runs the agent's own spawn command
+ * with the method's args appended, in a terminal, and likewise never calls
+ * `authenticate` on it) are actionable. The recipe/args stay
+ * orchestrator-side — the UI only needs to know the method is runnable.
+ * "unsupported" is every method patchbay cannot drive (a type outside the
+ * spec's `terminal | agent`, or a terminal whose args/env didn't parse):
+ * shown as declared, never wired to a Log-in button, and never passed to
+ * `authenticate` — the spec allows that call only for the agent type. */
 export interface AuthMethodView {
   id: string;
   name: string;
   /** The wire's optional `description` — stable on all method shapes, meant
    * for display; normalized to null when the agent omits it. */
   description: string | null;
-  kind: "agent" | "terminal-recipe" | "env_var" | "terminal";
+  kind: "agent" | "terminal-recipe" | "terminal" | "unsupported";
 }
 
 /**

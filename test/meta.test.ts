@@ -122,21 +122,34 @@ describe("auth method kind classification", () => {
     expect(declared.authMethods[0]!.kind).toBe("agent");
   });
 
-  it("recipe-less typed methods classify by the typed-auth extension's parse", () => {
+  it("recipe-less methods classify by the wire's own type", () => {
     const declared = declaredFromInitialize(
       initWith([
         { id: "t", name: "Terminal", type: "terminal", args: ["--cli"] },
+        { id: "a", name: "Agent", type: "agent" },
         { id: "e", name: "Env", type: "env_var" },
+        { id: "o", name: "Future", type: "oauth" },
       ]),
     );
-    expect(declared.authMethods.map((m) => m.kind)).toEqual(["terminal", "env_var"]);
+    // env_var left the spec and oauth was never in it: a type patchbay
+    // cannot drive is shown, never run — and never passed to `authenticate`,
+    // which the spec allows only for the agent type.
+    expect(declared.authMethods.map((m) => m.kind)).toEqual([
+      "terminal",
+      "agent",
+      "unsupported",
+      "unsupported",
+    ]);
   });
 
-  it("a malformed typed terminal degrades to the stable default — never a runnable kind", () => {
+  it("a malformed typed terminal is never a runnable kind", () => {
     const declared = declaredFromInitialize(
-      initWith([{ id: "t", name: "Terminal", type: "terminal", args: "login" }]),
+      initWith([
+        { id: "t", name: "Terminal", type: "terminal", args: "login" },
+        { id: "e", name: "Env", type: "terminal", env: ["A"] },
+      ]),
     );
-    expect(declared.authMethods[0]!.kind).toBe("agent");
+    expect(declared.authMethods.map((m) => m.kind)).toEqual(["unsupported", "unsupported"]);
   });
 
   it("a malformed recipe falls back to the type field, honestly", () => {

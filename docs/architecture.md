@@ -518,8 +518,10 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   module ecosystems; patchbay's deviations are first-party and curated —
   the `_meta` table (meta.ts) plus the modules in `orchestrator/extensions/`
   (removed-draft models surface, first-session mcpServers latch, render
-  directive rewriter, typed auth methods, turn-time auth failure code at
-  this writing). Free interception
+  directive rewriter, turn-time auth failure code at this writing).
+  Retirement is the same mechanism in reverse: the typed auth-method module
+  left when its RFD landed in the published schema — its parse moved into
+  core (capabilities.ts), where the spec's own surface belongs. Free interception
   would dissolve the one-door discipline (knobs.ts, CAPABILITY_PROOFS) that
   this codebase is built on. None of them demand shared machinery yet — each
   composes by hand-named export through `extensions/index.ts`; a registry

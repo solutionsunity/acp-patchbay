@@ -364,8 +364,8 @@ function AddAgentRow(props: {
 
 /** `needsAuth` gate — runnable methods per card-controls.ts's
  * `runnableLoginMethods` (the one filter for "can patchbay drive a login
- * here?"); recipe-less "env_var"/"terminal" stay declared but never wired
- * to a button. Same action either way: the orchestrator routes by method. */
+ * here?"); an "unsupported" method stays declared but never wired to a
+ * button. Same action either way: the orchestrator routes by method. */
 function LoginControl(props: {
   agentId: string;
   methods: readonly AuthMethodView[];

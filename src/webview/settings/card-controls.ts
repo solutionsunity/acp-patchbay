@@ -44,11 +44,11 @@ export interface AgentCardControls {
   remove: { show: boolean };
 }
 
-/** The wire's runnable subset — "agent"-kind (stable `authenticate`),
+/** The wire's runnable subset — "agent"-kind (`authenticate`),
  * "terminal-recipe" (adopted terminal-auth extension), and "terminal"
- * (adopted typed-auth extension — the agent's own command re-run in a
- * terminal with the method's args appended). "env_var" stays declared but
- * never wired to a button. One filter for the Log-in control's method list
+ * (the spec's terminal type — the agent's own command re-run in a
+ * terminal with the method's args appended). "unsupported" stays declared
+ * but never wired to a button. One filter for the Log-in control's method list
  * and every predicate that asks "can patchbay drive a login here?". */
 export function runnableLoginMethods(methods: readonly AuthMethodView[]): readonly AuthMethodView[] {
   return methods.filter(

@@ -41,7 +41,8 @@ import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { foldSeed, normalizeKnobs } from "./knobs";
-import { sessionKnobExtras, typedAuthMethodOf, type TypedTerminalAuth } from "./extensions";
+import { terminalAuthOf, type TerminalAuth } from "./capabilities";
+import { sessionKnobExtras } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { runLoginTask } from "./login-task";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
@@ -170,10 +171,10 @@ export class Orchestrator {
    * fresh at every connect from the raw initialize response — never
    * persisted, never sent to a webview. */
   private readonly authRecipes = new Map<string, ReadonlyMap<string, TerminalAuthRecipe>>();
-  /** agentId → methodId → typed terminal method (auth-method-types.ts),
-   * captured alongside authRecipes — wire args/env only; the command is the
+  /** agentId → methodId → the spec's terminal auth method, captured
+   * alongside authRecipes — wire args/env only; the command is the
    * agent's own spawn spec, composed at click time, never stored. */
-  private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TypedTerminalAuth>>();
+  private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TerminalAuth>>();
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
@@ -398,22 +399,22 @@ export class Orchestrator {
         const version = raw.agentInfo?.version ?? null;
         this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
         if (version !== null) void this.recordSeenVersion(agentId, version);
-        // terminal-auth recipes (meta.ts) and typed terminal methods
-        // (auth-method-types.ts), fresh per connect — command paths are
+        // terminal-auth recipes (meta.ts) and the spec's terminal auth
+        // methods, fresh per connect — command paths are
         // machine-absolute and never persisted; the webview only ever sees
         // the method's kind, both captures stay host-side. A recipe wins
         // over the typed surface, matching the kind precedence
         // (capabilities.ts).
         const recipes = new Map<string, TerminalAuthRecipe>();
-        const typed = new Map<string, TypedTerminalAuth>();
+        const typed = new Map<string, TerminalAuth>();
         for (const m of raw.authMethods ?? []) {
           const recipe = terminalAuthRecipeOf(m._meta);
           if (recipe !== null) {
             recipes.set(m.id, recipe);
             continue;
           }
-          const t = typedAuthMethodOf(m);
-          if (t !== null && t.kind === "terminal") typed.set(m.id, t.terminal);
+          const terminal = terminalAuthOf(m);
+          if (terminal !== null) typed.set(m.id, terminal);
         }
         this.authRecipes.set(agentId, recipes);
         this.typedTerminalAuth.set(agentId, typed);
@@ -2163,7 +2164,7 @@ export class Orchestrator {
             this.logCatch(`terminal login ${action.agentId}`),
           );
         } else if (typed !== undefined) {
-          // typed terminal method (auth-method-types.ts): same executor,
+          // the spec's terminal auth method: same executor,
           // recipe composed from the agent's own spawn spec at click time —
           // `authenticate` is never called on it either, so a login's
           // success is always terminal-ran-plus-reprobe, never the RPC's
@@ -2858,7 +2859,7 @@ export class Orchestrator {
     }
   }
 
-  /** Typed terminal method (auth-method-types.ts): the wire pins the
+  /** The spec's terminal auth method: the wire pins the
    * command to the agent's own spawn — spec read fresh from the store (a
    * Settings edit applies here exactly as it would to the next spawn) with
    * SecretStorage env merged at the last moment, the method's args APPENDED
@@ -2868,7 +2869,7 @@ export class Orchestrator {
    * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
    * guards, and it must not win here any more than it can at spawn;
    * not-found falls back to the bare name and lets the task report it. */
-  private async typedLoginViaTerminal(agentId: string, typed: TypedTerminalAuth): Promise<void> {
+  private async typedLoginViaTerminal(agentId: string, typed: TerminalAuth): Promise<void> {
     const spec = this.configuredAgentSpecs.get(agentId);
     if (spec === undefined) {
       this.log.warn(`typed terminal login: no configured spec for ${agentId}`);

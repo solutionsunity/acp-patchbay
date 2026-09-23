@@ -2,7 +2,12 @@
 // and the reducer's capability handling — the parts of P5 that don't need a
 // live agent at all.
 import { describe, expect, it } from "vitest";
-import { matrixFromDeclared, rowsProvenBy } from "../src/orchestrator/capabilities";
+import {
+  clientCapabilitiesWire,
+  matrixFromDeclared,
+  rowsProvenBy,
+  terminalAuthOf,
+} from "../src/orchestrator/capabilities";
 import {
   capabilityState,
   hasUnusedProbe,
@@ -325,5 +330,34 @@ describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
     const opusLimited = { status: "limited" as const, window: "seven_day_opus" };
     state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 170, size: 200, plan: opusLimited });
     expect(state.sessionUsage.s1!.plan).toEqual({ seven_day_opus: opusLimited, five_hour: fiveHourOk });
+  });
+});
+
+// Typed terminal login (ACP auth methods, stable in the 1.5.0 schema): the
+// wire's `args`/`env` are what the login executor runs, so they are parsed
+// at this one boundary — the SDK types them but validates no response.
+describe("terminalAuthOf — the executable half of a typed terminal method", () => {
+  it("parses args and env; a bare terminal method is legal and runs the agent's own command", () => {
+    expect(terminalAuthOf({ id: "t", name: "T", type: "terminal", args: ["login"], env: { A: "1" } })).toEqual({
+      args: ["login"],
+      env: { A: "1" },
+    });
+    expect(terminalAuthOf({ id: "t", name: "T", type: "terminal" })).toEqual({ args: [], env: {} });
+  });
+
+  it("is null for anything it cannot run — no type, another type, malformed halves, junk", () => {
+    expect(terminalAuthOf({ id: "a", name: "A" })).toBeNull();
+    expect(terminalAuthOf({ id: "a", name: "A", type: "agent" })).toBeNull();
+    expect(terminalAuthOf({ id: "e", name: "E", type: "env_var" })).toBeNull();
+    expect(terminalAuthOf({ id: "t", name: "T", type: "terminal", args: "login" })).toBeNull();
+    expect(terminalAuthOf({ id: "t", name: "T", type: "terminal", env: ["A"] })).toBeNull();
+    expect(terminalAuthOf(null)).toBeNull();
+    expect(terminalAuthOf("terminal")).toBeNull();
+  });
+});
+
+describe("auth.terminal client opt-in", () => {
+  it("rides initialize — an agent gating its terminal login offers on it sees the claim", () => {
+    expect((clientCapabilitiesWire() as { auth?: unknown }).auth).toEqual({ terminal: true });
   });
 });

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A login method patchbay cannot run is now shown without a button instead
+  of being offered as if the agent handled it. Auth method types reached
+  the stable protocol, so the type an agent declares is read directly: a
+  terminal method runs in a terminal as before, an agent-handled one asks
+  the agent, and anything else — a type from outside the spec, or a
+  terminal whose details didn't parse — is listed and left alone, never
+  answered with a call the spec reserves for agent-handled logins.
 - An agent that writes something other than protocol messages to its
   protocol channel (a banner, a debug print) is now named once in the
   Patchbay log, without the content, pointing at the wire log for the full

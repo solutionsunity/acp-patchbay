@@ -28,7 +28,7 @@ function matrixOf(overrides: Partial<Record<CapabilityRowId, { declared: boolean
 }
 
 const agentMethod: AuthMethodView = { id: "claude-login", name: "Log in with Claude", description: null, kind: "agent" };
-const envVarOnly: AuthMethodView = { id: "key", name: "API key", description: null, kind: "env_var" };
+const undrivable: AuthMethodView = { id: "key", name: "API key", description: null, kind: "unsupported" };
 const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
@@ -84,14 +84,14 @@ describe("agentCardControls", () => {
     }
   });
 
-  // The escape hatch survives: auth resolvable only out of band (an
-  // env_var-only offer — the value has to arrive via Settings, not a
-  // button) still gets a manual re-check.
+  // The escape hatch survives: auth resolvable only out of band (the only
+  // offer is a method patchbay cannot drive — the user logs in the agent's
+  // own way) still gets a manual re-check.
   it("needsAuth without a runnable login method: verify offered as the escape hatch", () => {
     const c = agentCardControls(inputs({
       agent: summary({ needsAuth: true }),
       matrix: matrixOf({ auth: { declared: true, used: true } }),
-      authMethods: [envVarOnly],
+      authMethods: [undrivable],
     }));
     expect(c.login.show).toBe(true); // renders the no-runnable-method note
     expect(c.verify.show).toBe(true);

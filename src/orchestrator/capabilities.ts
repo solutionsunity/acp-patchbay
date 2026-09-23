@@ -12,9 +12,37 @@ import {
   type InitializeResponse,
   type PromptRequest,
 } from "@agentclientprotocol/sdk";
+import { z } from "zod";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
-import { authCapabilityWire, typedAuthMethodOf } from "./extensions";
 import { clientMetaWire, terminalAuthRecipeOf } from "./meta";
+
+/** The executable half of the spec's terminal auth method — what the login
+ * executor composes with the agent's own spawn spec at click time. The
+ * method cannot name a command: the client re-runs the agent's OWN spawn
+ * command ("the exact same binary with the exact same setup", the spec's
+ * security floor) with these args appended and this env layered over. Wire
+ * data, no command and no machine paths, so holding it between connect and
+ * click persists nothing sensitive. */
+export interface TerminalAuth {
+  args: string[];
+  env: Record<string, string>;
+}
+
+const terminalAuthSchema = z.object({
+  type: z.literal("terminal"),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string(), z.string()).default({}),
+});
+
+/** A method's executable half, or null when patchbay cannot run it (any
+ * other type, or a terminal whose args/env didn't parse). The SDK types
+ * these fields but validates no response, so this is the one place they are
+ * parsed — and the one rule both the kind below and the login executor
+ * read, so a button can never appear over a shape that didn't parse. */
+export function terminalAuthOf(method: unknown): TerminalAuth | null {
+  const parsed = terminalAuthSchema.safeParse(method);
+  return parsed.success ? { args: parsed.data.args, env: parsed.data.env } : null;
+}
 
 export function declaredFromInitialize(
   init: InitializeResponse,
@@ -40,18 +68,11 @@ export function declaredFromInitialize(
       id: m.id,
       name: m.name,
       description: m.description ?? null,
-      // A parseable `_meta["terminal-auth"]` recipe wins over the typed
-      // surface: Auggie ships its recipe on a type-less method (schema-default
-      // "agent") whose `authenticate` is a no-op, so type-first would wire a
-      // button to nothing. Otherwise the unstable `type` field is the
-      // extension module's parse (auth-method-types.ts): "terminal" is wired
-      // to the typed login executor, "env_var" stays declared-but-unwired,
-      // and absent/malformed degrades to the stable default ("agent" handles
-      // auth itself via `authenticate`).
-      kind:
-        terminalAuthRecipeOf(m._meta) !== null
-          ? "terminal-recipe"
-          : (typedAuthMethodOf(m)?.kind ?? "agent"),
+      // A parseable `_meta["terminal-auth"]` recipe wins over the wire's
+      // own type: Auggie ships its recipe on a type-less method (schema
+      // default "agent") whose `authenticate` is a no-op, so type-first
+      // would wire a button to nothing.
+      kind: terminalAuthRecipeOf(m._meta) !== null ? "terminal-recipe" : authMethodKind(m),
     })),
     authLogout: caps.auth?.logout != null,
   };
@@ -69,10 +90,16 @@ const CLIENT_DECLARES: {
   terminal: boolean;
   elicitation: boolean;
   sessionConfigOptions: boolean;
+  authTerminal: boolean;
 } = {
   fs: true,
   terminal: true,
   elicitation: false,
+  // Agents MUST only offer terminal-type auth methods to a client that
+  // declares this, so declaring is what makes the surface reachable at all
+  // — true because the executor is wired (the orchestrator's terminal
+  // login path).
+  authTerminal: true,
   // Stabilized in SDK 1.2.1 (compliance G14): patchbay consumes config
   // options end to end — knobs.ts normalizes select AND boolean types — so
   // not declaring was the honesty gap in reverse: an agent honoring
@@ -97,16 +124,26 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     ...(CLIENT_DECLARES.sessionConfigOptions
       ? { session: { configOptions: { boolean: {} } } }
       : {}),
-    // Adopted typed-auth extension (auth-method-types.ts — the declare and
-    // the executor live there and in the orchestrator's typed login path;
-    // nothing here names the key). No CLIENT_DECLARES entry: that record is
-    // the stable-surface claim set, and this claim is the module's to make
-    // and retire with itself.
-    ...authCapabilityWire(),
+    ...(CLIENT_DECLARES.authTerminal ? { auth: { terminal: true } } : {}),
     // Adopted _meta extensions (meta.ts — the declare flags there are the
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
+}
+
+/** What patchbay can do with one declared method, from the wire's own
+ * `type`: the spec's set is `terminal | agent`, and an absent type means
+ * agent (the schema default). Anything else — a type outside the spec, or a
+ * terminal whose executable half didn't parse — is shown and never run:
+ * `authenticate` is the agent type's call alone (spec MUST NOT), so there
+ * is no honest fallback to it. */
+function authMethodKind(method: object): "agent" | "terminal" | "unsupported" {
+  // The union types `type` only on its terminal arm; the wire may carry any
+  // string, which is exactly what this classifies.
+  const { type } = method as { type?: string };
+  if (type === undefined || type === "agent") return "agent";
+  if (type !== "terminal") return "unsupported";
+  return terminalAuthOf(method) !== null ? "terminal" : "unsupported";
 }
 
 function cell(declared: boolean): { declared: boolean; used: boolean } {
