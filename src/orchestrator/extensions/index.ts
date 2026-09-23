@@ -20,7 +20,6 @@ export { probeDeferredFor } from "./first-session-mcp-latch";
 
 export { turnAuthFailureReasonOf } from "./turn-auth-failure";
 
-
 /** A stateful text filter over one prose run's delta stream. `push` may
  * withhold a suffix that could still become a wire-extension shape;
  * whoever closes the run MUST `flush` so the tail lands (raw) instead of

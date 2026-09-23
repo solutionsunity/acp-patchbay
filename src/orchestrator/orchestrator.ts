@@ -20,6 +20,7 @@ import {
   type Action,
   type AgentConfigView,
   type AgentViewEvent,
+  type AuthMethodView,
   type AgentViewState,
   type CapabilityRowId,
   type ConnectAgentSource,
@@ -175,6 +176,11 @@ export class Orchestrator {
    * alongside authRecipes — wire args/env only; the command is the
    * agent's own spawn spec, composed at click time, never stored. */
   private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TerminalAuth>>();
+  /** agentId → methodId → what patchbay may do with it (capabilities.ts's
+   * one classification, as captured). The writer's own copy: a webview
+   * hiding a button is a courtesy, and `authenticate` is the agent type's
+   * call alone (spec MUST NOT), so the refusal lives here. */
+  private readonly authMethodKinds = new Map<string, ReadonlyMap<string, AuthMethodView["kind"]>>();
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
@@ -400,11 +406,10 @@ export class Orchestrator {
         this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
         if (version !== null) void this.recordSeenVersion(agentId, version);
         // terminal-auth recipes (meta.ts) and the spec's terminal auth
-        // methods, fresh per connect — command paths are
-        // machine-absolute and never persisted; the webview only ever sees
-        // the method's kind, both captures stay host-side. A recipe wins
-        // over the typed surface, matching the kind precedence
-        // (capabilities.ts).
+        // methods, fresh per connect — command paths are machine-absolute
+        // and never persisted; the webview only ever sees the method's
+        // kind, both captures stay host-side. A recipe wins over the
+        // wire's type, the same precedence the kind is classified by.
         const recipes = new Map<string, TerminalAuthRecipe>();
         const typed = new Map<string, TerminalAuth>();
         for (const m of raw.authMethods ?? []) {
@@ -418,6 +423,7 @@ export class Orchestrator {
         }
         this.authRecipes.set(agentId, recipes);
         this.typedTerminalAuth.set(agentId, typed);
+        this.authMethodKinds.set(agentId, new Map(declared.authMethods.map((m) => [m.id, m.kind])));
       },
       onSessionUpdate: (agentId, notification) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
@@ -898,6 +904,7 @@ export class Orchestrator {
     this.contextTokenToSession.clear();
     this.authRecipes.clear();
     this.typedTerminalAuth.clear();
+    this.authMethodKinds.clear();
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
@@ -1679,6 +1686,7 @@ export class Orchestrator {
     await this.agentEnv.remove(agentId);
     this.authRecipes.delete(agentId);
     this.typedTerminalAuth.delete(agentId);
+    this.authMethodKinds.delete(agentId);
     await this.authLocks.remove(agentId);
     await rm(join(this.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
     this.configuredAgentSpecs.delete(agentId);
@@ -2155,6 +2163,15 @@ export class Orchestrator {
         break;
       case "authenticateAgent": {
         // failure leaves needsAuth set — the honest signal, no separate reply channel
+        if (this.authMethodKinds.get(action.agentId)?.get(action.methodId) === "unsupported") {
+          // A method patchbay cannot drive never reaches a wire call: the
+          // card shows no button for it, and this is the writer holding the
+          // same line — `authenticate` belongs to the agent type alone.
+          this.log.warn(
+            `${action.agentId}: ignored a login on "${action.methodId}" — patchbay can't run this method's type`,
+          );
+          break;
+        }
         const recipe = this.authRecipes.get(action.agentId)?.get(action.methodId);
         const typed = this.typedTerminalAuth.get(action.agentId)?.get(action.methodId);
         if (recipe !== undefined) {
