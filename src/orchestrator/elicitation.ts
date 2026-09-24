@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The agent's requested schema → the card's fields. ACP carries a JSON
-// Schema (primitive properties only); the card renders controls, so the
-// shape is normalized once here — the same division knobs.ts draws for the
-// config surface: the host reads the wire, the webview renders what it is
-// given.
+// The agent's elicitation request → what the card shows. Form mode carries
+// a JSON Schema (primitive properties only) that becomes fields; url mode
+// carries an address that becomes a checked link. Both are normalized once
+// here — the same division knobs.ts draws for the config surface: the host
+// reads the wire, the webview renders what it is given.
 //
 // Refusal is part of the contract. A property this cannot present (an
 // unknown type, a choice with no options) makes the whole form null: the
 // caller then declines the request, which is a legal answer. Dropping the
 // field instead would send the agent content the user never gave, and
 // guessing a control for an unknown type would be worse.
-import type { ElicitationField } from "../shared/protocol";
+import type { CreateElicitationResponse } from "@agentclientprotocol/sdk";
+import type {
+  ElicitationAnswer,
+  ElicitationAsk,
+  ElicitationField,
+  ElicitationLink,
+  LinkWarning,
+} from "../shared/protocol";
 
 interface Option {
   value: string;
@@ -160,4 +167,90 @@ export function formFieldsOf(requestedSchema: unknown): ElicitationField[] | nul
     fields.push(field);
   }
   return fields.length > 0 ? fields : null;
+}
+
+/** Hosts that never leave this machine — dev sign-in callbacks live here,
+ * so neither plain http nor a bare IP says anything suspicious about them. */
+function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
+function isIpLiteral(hostname: string): boolean {
+  return hostname.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+}
+
+/** The agent's URL as a link the card can show and the browser can open,
+ * or null when it must not be opened at all: unparseable, or any scheme
+ * but http(s) — `command:`, `vscode:`, `file:` or `javascript:` would act
+ * inside the editor or on disk instead of showing a page. The href is the
+ * parsed form, so what the card shows is exactly what opens (a Unicode
+ * host shows as the punycode it really is). */
+export function linkOf(url: unknown): ElicitationLink | null {
+  if (typeof url !== "string") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  const { hostname } = parsed;
+  const loopback = isLoopback(hostname);
+  const warnings: LinkWarning[] = [];
+  if (hostname.split(".").some((label) => label.startsWith("xn--"))) warnings.push("punycode");
+  if (parsed.username !== "" || parsed.password !== "") warnings.push("credentials");
+  if (!loopback && isIpLiteral(hostname)) warnings.push("ip-host");
+  if (!loopback && parsed.protocol === "http:") warnings.push("insecure");
+  return { href: parsed.href, host: parsed.host, warnings };
+}
+
+/** What an agent's `elicitation/create` asks for, decided in one place:
+ *  - `ask`: present it — a form, or a link carrying the id the agent's
+ *    completion notice will name;
+ *  - `refuse`: a legal decline, with the reason for the log;
+ *  - `invalid`: a mode patchbay never declared — the spec's answer is an
+ *    invalid-params error, not a decline.
+ * Request-scoped asks (no session, e.g. during login) are refused: no agent
+ * sends them yet, and a transcript is where the card lives. */
+export type ElicitationRequestReading =
+  | { kind: "ask"; sessionId: string; message: string; ask: ElicitationAsk; elicitationId?: string }
+  | { kind: "refuse"; why: string }
+  | { kind: "invalid"; why: string };
+
+export function readElicitationRequest(params: unknown): ElicitationRequestReading {
+  const p = record(params) ?? {};
+  const mode = p.mode;
+  if (mode !== "form" && mode !== "url") return { kind: "invalid", why: `patchbay does not present "${String(mode)}" elicitations` };
+  const sessionId = str(p.sessionId);
+  if (sessionId === undefined) return { kind: "refuse", why: "it is not tied to a session" };
+  const message = typeof p.message === "string" ? p.message : "";
+  if (mode === "form") {
+    const fields = formFieldsOf(p.requestedSchema);
+    return fields === null
+      ? { kind: "refuse", why: "its form has a field patchbay cannot present" }
+      : { kind: "ask", sessionId, message, ask: { mode: "form", fields } };
+  }
+  const link = linkOf(p.url);
+  const elicitationId = str(p.elicitationId);
+  if (link === null) return { kind: "refuse", why: "its address is not an http(s) page" };
+  if (elicitationId === undefined) return { kind: "refuse", why: "its link carries no elicitation id" };
+  return { kind: "ask", sessionId, message, ask: { mode: "url", link }, elicitationId };
+}
+
+/** The card's answer as the agent's response. A request the agent withdrew
+ * (`signal` aborted) gets the request-cancelled error instead — thrown as
+ * an abort-named error, which is what the SDK turns into that code. A
+ * link's accept is consent to open it; the page happens out of band, so it
+ * carries no content. */
+export function elicitationResponseOf(
+  ask: ElicitationAsk,
+  answer: ElicitationAnswer,
+  signal?: AbortSignal,
+): CreateElicitationResponse {
+  if (signal?.aborted === true) throw new DOMException("the agent withdrew the question", "AbortError");
+  if (answer.action !== "accept") return { action: answer.action };
+  if (ask.mode === "url") return { action: "accept" };
+  // Each value was produced against the field type this schema
+  // normalized, so the content matches what the agent asked for.
+  return { action: "accept", content: answer.content as Record<string, string | number | boolean | string[]> };
 }

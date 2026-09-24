@@ -22,6 +22,7 @@ function harness() {
   const machineRules = new MachineRulesStore(new MemoryKV());
   const audit = new DecisionAuditStore(dir);
   const events: AgentViewEvent[] = [];
+  const opened: string[] = [];
   let auditRefreshes = 0;
   const broker = new PermissionBroker(
     rules,
@@ -29,12 +30,13 @@ function harness() {
     {
       emit: (...evs) => events.push(...evs),
       onAuditWritten: () => auditRefreshes++,
+      openLink: (href) => opened.push(href),
     },
     () => workspaceRoot,
     undefined,
     machineRules,
   );
-  return { broker, rules, machineRules, audit, events, refreshCount: () => auditRefreshes };
+  return { broker, rules, machineRules, audit, events, opened, refreshCount: () => auditRefreshes };
 }
 
 describe("PermissionBroker.evaluateCommand", () => {
@@ -325,7 +327,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
 describe("PermissionBroker.askElicitation — the agent asks the user", () => {
   const form = {
     message: "Which database?",
-    fields: [{ name: "db", type: "string" as const, required: true }],
+    ask: { mode: "form" as const, fields: [{ name: "db", type: "string" as const, required: true }] },
   };
 
   it("emits the card and answers with what the user typed", async () => {
@@ -374,5 +376,153 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
     expect(settled).toBe(false);
     broker.cancelPending("s2");
     await other;
+  });
+
+  it("a question the agent withdraws settles as withdrawn and answers cancel", async () => {
+    const { broker, events } = harness();
+    const withdraw = new AbortController();
+    const answer = broker.askElicitation("s1", form, withdraw.signal);
+    withdraw.abort();
+    expect(await answer).toEqual({ action: "cancel" });
+    expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "withdrawn" });
+    // the user's late click is a no-op, never a second answer
+    broker.resolveElicitation((events.at(-1) as { blockId: string }).blockId, { action: "decline" });
+    expect(events.filter((e) => e.kind === "elicitationResolved")).toHaveLength(1);
+  });
+});
+
+describe("PermissionBroker url asks — a page the user opens", () => {
+  const signIn = {
+    message: "Sign in",
+    ask: { mode: "url" as const, link: { href: "https://auth.example.com/", host: "auth.example.com", warnings: [] } },
+    completion: { agentId: "a1", elicitationId: "e1" },
+  };
+  const blockOf = (events: AgentViewEvent[]) =>
+    (events.find((e) => e.kind === "elicitationRequested") as { blockId: string }).blockId;
+
+  it("opens only on accept, re-opens while the agent waits, and stops once the agent completes it", async () => {
+    const { broker, events, opened } = harness();
+    const answer = broker.askElicitation("s1", signIn);
+    const blockId = blockOf(events);
+    expect(opened).toEqual([]);
+    broker.reopenLink(blockId); // not accepted yet — nothing to re-open
+    expect(opened).toEqual([]);
+
+    broker.resolveElicitation(blockId, { action: "accept", content: {} });
+    expect(await answer).toEqual({ action: "accept", content: {} });
+    expect(opened).toEqual(["https://auth.example.com/"]);
+    broker.reopenLink(blockId);
+    expect(opened).toHaveLength(2);
+
+    broker.completeLink("a1", "e1");
+    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", sessionId: "s1", blockId, state: "completed" });
+    broker.reopenLink(blockId);
+    expect(opened).toHaveLength(2);
+  });
+
+  it("a declined link never opens", async () => {
+    const { broker, events, opened } = harness();
+    const answer = broker.askElicitation("s1", signIn);
+    broker.resolveElicitation(blockOf(events), { action: "decline" });
+    expect(await answer).toEqual({ action: "decline" });
+    expect(opened).toEqual([]);
+  });
+
+  it("completion ids are matched per agent; an unknown or repeated one is ignored", async () => {
+    const { broker, events } = harness();
+    void broker.askElicitation("s1", signIn);
+    broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
+    const before = events.length;
+    broker.completeLink("a2", "e1"); // another agent's id space
+    broker.completeLink("a1", "nope");
+    expect(events).toHaveLength(before);
+    broker.completeLink("a1", "e1");
+    broker.completeLink("a1", "e1");
+    expect(events.filter((e) => e.kind === "elicitationLinkSettled")).toHaveLength(1);
+  });
+
+  it("a completion before the user answers settles the card as completed and answers cancel — the user chose nothing", async () => {
+    const { broker, events, opened } = harness();
+    const answer = broker.askElicitation("s1", signIn);
+    broker.completeLink("a1", "e1");
+    expect(await answer).toEqual({ action: "cancel" });
+    expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "completed" });
+    expect(opened).toEqual([]);
+  });
+
+  it("a completion that overtakes its question is held, and the question settles completed the moment it arrives", async () => {
+    const { broker, events, opened } = harness();
+    broker.completeLink("a1", "e1");
+    expect(events).toEqual([]);
+    const answer = broker.askElicitation("s1", signIn);
+    expect(await answer).toEqual({ action: "cancel" });
+    expect(events.map((e) => e.kind)).toEqual(["elicitationRequested", "elicitationResolved"]);
+    expect(events.at(-1)).toMatchObject({ outcome: "completed" });
+    expect(opened).toEqual([]);
+  });
+
+  it("a repeated completion is never held — a later question may reuse a finished id", async () => {
+    const { broker, events } = harness();
+    void broker.askElicitation("s1", signIn);
+    broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
+    broker.completeLink("a1", "e1");
+    broker.completeLink("a1", "e1"); // a repeat, after the link finished
+    const reused = broker.askElicitation("s1", signIn);
+    let settled = false;
+    void reused.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false); // waits for the user like any new question
+  });
+
+  it("a withdrawal that overtakes the completion still ends as completed — the finished flow is the fact that stands", async () => {
+    const { broker, events } = harness();
+    const withdraw = new AbortController();
+    const answer = broker.askElicitation("s1", signIn, withdraw.signal);
+    withdraw.abort();
+    expect(await answer).toEqual({ action: "cancel" });
+    broker.completeLink("a1", "e1");
+    expect(events.filter((e) => e.kind === "elicitationResolved").map((e) => (e as { outcome: string }).outcome)).toEqual(
+      ["withdrawn", "completed"],
+    );
+  });
+
+  it("a declined link the agent later finishes keeps the user's answer and is marked done", async () => {
+    const { broker, events } = harness();
+    void broker.askElicitation("s1", signIn);
+    broker.resolveElicitation(blockOf(events), { action: "decline" });
+    broker.completeLink("a1", "e1");
+    expect(events.at(-1)).toMatchObject({ kind: "elicitationLinkSettled", state: "completed" });
+    expect(events.filter((e) => e.kind === "elicitationResolved")).toHaveLength(1);
+  });
+
+  it("held completions die with the agent's connection", async () => {
+    const { broker } = harness();
+    broker.completeLink("a1", "e1");
+    broker.forgetAgent("a1");
+    const answer = broker.askElicitation("s1", signIn);
+    let settled = false;
+    void answer.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+  });
+
+  it("the address alone decides what opens — a link nobody will report done still opens and re-opens", async () => {
+    const { broker, events, opened } = harness();
+    void broker.askElicitation("s1", { message: signIn.message, ask: signIn.ask });
+    const blockId = blockOf(events);
+    broker.resolveElicitation(blockId, { action: "accept", content: {} });
+    broker.reopenLink(blockId);
+    expect(opened).toEqual(["https://auth.example.com/", "https://auth.example.com/"]);
+  });
+
+  it("a stopped turn ends the wait on an opened page", async () => {
+    const { broker, events, opened } = harness();
+    void broker.askElicitation("s1", signIn);
+    const blockId = blockOf(events);
+    broker.resolveElicitation(blockId, { action: "accept", content: {} });
+    broker.cancelPending("s1");
+    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", sessionId: "s1", blockId, state: "ended" });
+    broker.reopenLink(blockId);
+    expect(opened).toHaveLength(1);
   });
 });

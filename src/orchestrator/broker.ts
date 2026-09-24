@@ -23,7 +23,8 @@ import { dirname, sep } from "node:path";
 import type {
   AgentViewEvent,
   ElicitationAnswer,
-  ElicitationField,
+  ElicitationAsk,
+  ElicitationOutcome,
   PermissionOptionView,
 } from "../shared/protocol";
 import { computeLineDiff } from "./diff";
@@ -48,6 +49,10 @@ export interface BrokerHooks {
     detail: string,
     options: readonly PermissionOptionView[],
   ): void;
+  /** Opens a page in the system browser — outside the editor, where
+   * neither patchbay nor the agent's model can see the page or what the
+   * user types into it. Called only on the user's own click. */
+  openLink?(href: string): void;
 }
 
 let blockCounter = 0;
@@ -76,13 +81,49 @@ interface Pending {
   resolve(optionId: string): void;
 }
 
+/** Who will report a link done: the agent, under its own id. Ids are
+ * unique among one agent connection's open questions — so a notice is
+ * matched on (agent, id). */
+interface LinkCompletion {
+  agentId: string;
+  elicitationId: string;
+}
+
+/** A page the agent asked the user to open. The address alone decides
+ * what opens; a link nobody will report done simply never completes. */
+interface LinkAsk {
+  sessionId: string;
+  href: string;
+}
+
+/** One link id's card: whether its completion already landed, and whether
+ * the agent withdrew the question before it did. */
+interface LinkRecord {
+  sessionId: string;
+  blockId: string;
+  completed: boolean;
+  withdrawn: boolean;
+}
+
+interface AgentLinks {
+  early: string[];
+  ids: Map<string, LinkRecord>;
+}
+
 /** An open elicitation: the session it belongs to, and the answer its
  * waiting caller is owed. Same bookkeeping as a permission ask — a
  * question on the wire is always owed an answer. */
 interface PendingAsk {
   sessionId: string;
-  answer(answer: ElicitationAnswer): void;
+  link: LinkAsk | null;
+  answer(answer: ElicitationAnswer, outcome?: ElicitationOutcome): void;
 }
+
+const OUTCOME_OF = { accept: "accepted", decline: "declined", cancel: "cancelled" } as const;
+
+/** How many unmatched completion ids to hold per agent — the overtaking
+ * window is one message wide, so a handful is generous. */
+const EARLY_COMPLETIONS_KEPT = 8;
 
 /** Resolution sentinel for a turn-cancelled request — never a real optionId
  * (agents mint their own ids; this shape is patchbay-reserved). */
@@ -96,6 +137,17 @@ export class PermissionBroker {
    * Never persisted; dropped the moment the proposal resolves. */
   private proposals = new Map<string, { path: string; oldText: string; newText: string }>();
   private asks = new Map<string, PendingAsk>();
+  /** Links the user opened whose agent has not reported them done — kept
+   * for "Open again". */
+  private openLinks = new Map<string, LinkAsk>();
+  /** Per agent connection, every link id its questions used, with the card
+   * it belongs to — the one place a completion notice is matched — and the
+   * notices that arrived before their question did. The SDK hands each
+   * incoming message to its handlers without waiting on the one before, so
+   * a notice sent right behind its request, or a withdrawal, can overtake
+   * it; matching by id makes the order not matter. Dies with the
+   * connection. */
+  private linkIds = new Map<string, AgentLinks>();
 
   constructor(
     private readonly rules: PermissionRulesStore,
@@ -143,47 +195,119 @@ export class PermissionBroker {
    * the agent's own `elicitation/create` and the local MCP server's
    * question tool — so there is one card language and one place that owes
    * an answer. Declining and cancelling are distinct answers, carried
-   * back as the wire names them. */
+   * back as the wire names them. A url ask may name who will report it
+   * done; an aborted `signal` (the agent withdrew the request) settles the
+   * card as withdrawn and answers cancel, which the caller turns into the
+   * request-cancelled error. */
   askElicitation(
     sessionId: string,
-    form: { message: string; fields: readonly ElicitationField[] },
+    question: { message: string; ask: ElicitationAsk; completion?: LinkCompletion },
+    signal?: AbortSignal,
   ): Promise<ElicitationAnswer> {
     const blockId = newBlockId("elicit");
-    this.hooks.emit({
-      kind: "elicitationRequested",
-      sessionId,
-      blockId,
-      message: form.message,
-      fields: form.fields,
-    });
+    this.hooks.emit({ kind: "elicitationRequested", sessionId, blockId, message: question.message, ...question.ask });
+    const link = question.ask.mode === "url" ? { sessionId, href: question.ask.link.href } : null;
     return new Promise((resolve) => {
       this.asks.set(blockId, {
         sessionId,
-        answer: (answer) => {
-          this.hooks.emit({
-            kind: "elicitationResolved",
-            sessionId,
-            blockId,
-            outcome:
-              answer.action === "accept"
-                ? "accepted"
-                : answer.action === "decline"
-                  ? "declined"
-                  : "cancelled",
-          });
+        link,
+        answer: (answer, outcome = OUTCOME_OF[answer.action]) => {
+          this.hooks.emit({ kind: "elicitationResolved", sessionId, blockId, outcome });
           resolve(answer);
         },
       });
+      let record: LinkRecord | null = null;
+      if (link !== null && question.completion !== undefined) {
+        const { agentId, elicitationId } = question.completion;
+        const links = this.linksOf(agentId);
+        // A reused id starts fresh: ids are unique only among open questions.
+        record = { sessionId, blockId, completed: false, withdrawn: false };
+        links.ids.set(elicitationId, record);
+        if (links.early.includes(elicitationId)) {
+          links.early = links.early.filter((id) => id !== elicitationId);
+          this.completeLink(agentId, elicitationId);
+          return;
+        }
+      }
+      if (signal === undefined) return;
+      const withdraw = () => {
+        if (this.settleAsk(blockId, { action: "cancel" }, "withdrawn") && record !== null) record.withdrawn = true;
+      };
+      if (signal.aborted) withdraw();
+      else signal.addEventListener("abort", withdraw, { once: true });
     });
   }
 
   /** The user answered an elicitation card. Unknown id = already answered
-   * (a stopped turn got there first) — a no-op, never a second answer. */
+   * (a stopped turn got there first) — a no-op, never a second answer.
+   * Accepting a link is the user's consent: the page opens now, and stays
+   * re-openable until the agent reports it done. */
   resolveElicitation(blockId: string, answer: ElicitationAnswer): void {
+    const link = this.asks.get(blockId)?.link ?? null;
+    if (!this.settleAsk(blockId, answer)) return;
+    if (link === null || answer.action !== "accept") return;
+    this.openLinks.set(blockId, link);
+    this.hooks.openLink?.(link.href);
+  }
+
+  /** "Open again" on an accepted link — only while the agent still waits
+   * on it; the address is the one held here, never one the webview sends. */
+  reopenLink(blockId: string): void {
+    const link = this.openLinks.get(blockId);
+    if (link !== undefined) this.hooks.openLink?.(link.href);
+  }
+
+  /** The agent's `elicitation/complete`: its page is done — the truth for
+   * the card whatever else happened to it. A card still waiting on the user
+   * settles as completed, and its request is answered cancel: the user
+   * chose nothing, and accept would claim a consent never given. A card the
+   * agent withdrew settles as completed too — an agent withdraws right
+   * after its flow finishes, and the two notices can arrive in either
+   * order. A card the user answered keeps their answer and is marked done.
+   * A notice with no question yet is held for one; a repeat for an id that
+   * already completed is ignored, as the spec requires. */
+  completeLink(agentId: string, elicitationId: string): void {
+    const links = this.linksOf(agentId);
+    const record = links.ids.get(elicitationId);
+    if (record === undefined) {
+      links.early = [...links.early, elicitationId].slice(-EARLY_COMPLETIONS_KEPT);
+      return;
+    }
+    if (record.completed) return;
+    record.completed = true;
+    this.openLinks.delete(record.blockId);
+    if (this.settleAsk(record.blockId, { action: "cancel" }, "completed")) return;
+    const { sessionId, blockId } = record;
+    this.hooks.emit(
+      record.withdrawn
+        ? { kind: "elicitationResolved", sessionId, blockId, outcome: "completed" }
+        : { kind: "elicitationLinkSettled", sessionId, blockId, state: "completed" },
+    );
+  }
+
+  /** The agent's connection ended: its completions can no longer meet a
+   * question, and its ids start fresh on the next connection. */
+  forgetAgent(agentId: string): void {
+    this.linkIds.delete(agentId);
+  }
+
+  private linksOf(agentId: string): AgentLinks {
+    let links = this.linkIds.get(agentId);
+    if (links === undefined) {
+      links = { early: [], ids: new Map() };
+      this.linkIds.set(agentId, links);
+    }
+    return links;
+  }
+
+  /** Answers one open ask exactly once — false when it was already
+   * answered. */
+  private settleAsk(blockId: string, answer: ElicitationAnswer, outcome?: ElicitationOutcome): boolean {
     const ask = this.asks.get(blockId);
-    if (ask === undefined) return;
+    if (ask === undefined) return false;
     this.asks.delete(blockId);
-    ask.answer(answer);
+    ask.answer(answer, outcome);
+    return true;
   }
 
   /** Resolves a user's click on a permission or diff card. */
@@ -207,7 +331,14 @@ export class PermissionBroker {
     // the user dismissed it by stopping, which is exactly `cancel`.
     for (const [blockId] of [...this.asks]) {
       if (this.asks.get(blockId)?.sessionId !== sessionId) continue;
-      this.resolveElicitation(blockId, { action: "cancel" });
+      this.settleAsk(blockId, { action: "cancel" });
+    }
+    // An opened page the stopped turn was waiting on: the agent's flow is
+    // gone, so the card stops offering to open it again.
+    for (const [blockId, link] of [...this.openLinks]) {
+      if (link.sessionId !== sessionId) continue;
+      this.openLinks.delete(blockId);
+      this.hooks.emit({ kind: "elicitationLinkSettled", sessionId, blockId, state: "ended" });
     }
   }
 

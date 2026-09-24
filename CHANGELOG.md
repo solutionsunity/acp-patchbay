@@ -13,8 +13,20 @@
   patchbay cannot show is declined rather than guessed at. The
   `request_user_input` tool that patchbay's MCP server offers every agent
   now uses the same card and rules, including defaults, and tells the
-  agent whether you declined or cancelled. Link-based questions (sign-in
-  pages) are not supported yet. (#36)
+  agent whether you declined or cancelled.
+  Agents can also send you to a page — Claude Code uses this to sign in to
+  an MCP server, and Codex passes on an MCP server's own requests. The card shows the full address with its site
+  in bold, warns about addresses built to mislead (an encoded look-alike
+  name, a user name placed before the site, a bare IP address, an
+  unencrypted link), and opens nothing until you click Open; the page then
+  opens in your browser, where neither patchbay nor the agent sees what you
+  type. Only web addresses ever open. While the agent waits, Open again
+  brings the page back if you closed it, and the card marks it completed
+  when the agent reports it done — also when the sign-in finished another
+  way before you answered. A question the agent takes back now reads as
+  withdrawn instead of staying open, forms included. Questions asked
+  outside any session (during connect or login) are declined for now: no
+  agent asks them yet. (#36)
 - A login method patchbay cannot run is now shown without a button instead
   of being offered as if the agent handled it. Auth method types reached
   the stable protocol, so the type an agent declares is read directly: a

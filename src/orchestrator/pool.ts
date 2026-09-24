@@ -88,11 +88,15 @@ export interface PoolHooks {
     params: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
   /** The agent asks the user for structured input; absent → cancelled,
-   * which is the honest answer when no surface exists to show it. */
+   * which is the honest answer when no surface exists to show it.
+   * `signal` aborts when the agent withdraws the request. */
   onElicitation?(
     agentId: string,
     params: acp.CreateElicitationRequest,
+    signal: AbortSignal,
   ): Promise<acp.CreateElicitationResponse>;
+  /** The agent reports a page it sent the user to is done. */
+  onElicitationComplete?(agentId: string, elicitationId: string): void;
   /** Fired the instant a wire fact bears on a capability row: "used" when
    * the fact rode a request that succeeded, "suspect" when it rode one that
    * failed (suspicion, not conviction — the failure may not be the row's
@@ -513,10 +517,13 @@ export class AgentPool {
       .onRequest(
         ...proven(acp.methods.client.elicitation.create, (ctx) => {
           const handler = this.hooks.onElicitation;
-          if (handler) return handler(reportAs, ctx.params);
+          if (handler) return handler(reportAs, ctx.params, ctx.signal);
           return Promise.resolve<acp.CreateElicitationResponse>({ action: "cancel" });
         }),
       )
+      .onNotification(acp.methods.client.elicitation.complete, (ctx) => {
+        this.hooks.onElicitationComplete?.(reportAs, ctx.params.elicitationId);
+      })
       .onNotification(acp.methods.client.session.update, (ctx) => {
         // Chokepoint: the kind tag is the wire fact (e.g. usage_update has
         // no initialize-time claim — its arrival is the only signal), so it

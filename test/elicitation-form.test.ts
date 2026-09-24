@@ -5,7 +5,7 @@
 // left empty is omitted, never sent as "" (an unpicked choice would
 // otherwise arrive as a value the agent never offered).
 import { describe, expect, it } from "vitest";
-import { answerOf, initialDraft } from "../src/webview/agent-view/chat/elicitation-form";
+import { answerOf, initialDraft, linkCardPhase } from "../src/webview/agent-view/chat/elicitation-form";
 import type { ElicitationField } from "../src/shared/protocol";
 
 const text = (over: Partial<ElicitationField> = {}): ElicitationField => ({
@@ -93,5 +93,22 @@ describe("answerOf — what Send carries, and what blocks it", () => {
 
   it("a limit on an empty optional field never blocks — only what is sent is checked", () => {
     expect(answerOf([text({ minLength: 3 })], { t: "" })).toEqual({ content: {}, problems: {} });
+  });
+});
+
+describe("linkCardPhase — every state a link card can be in", () => {
+  const phase = (resolution: "accepted" | "declined" | "cancelled" | "withdrawn" | "completed" | null, linkState?: "waiting" | "completed" | "ended") =>
+    linkCardPhase({ resolution: resolution === null ? null : { outcome: resolution }, linkState });
+
+  it("maps the user's answer and the agent's follow-up to one phase", () => {
+    expect(phase(null)).toBe("ask");
+    expect(phase("accepted", "waiting")).toBe("waiting");
+    expect(phase("accepted", "ended")).toBe("opened");
+    expect(phase("accepted", "completed")).toBe("completed");
+    for (const outcome of ["declined", "cancelled", "withdrawn"] as const) expect(phase(outcome)).toBe("settled");
+  });
+
+  it("a link the agent finished before anyone answered reads as completed", () => {
+    expect(phase("completed", "completed")).toBe("completed");
   });
 });

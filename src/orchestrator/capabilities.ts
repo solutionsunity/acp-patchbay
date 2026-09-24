@@ -99,7 +99,7 @@ const CLIENT_DECLARES: {
   fs: true,
   terminal: true,
   elicitationForm: true,
-  elicitationUrl: false,
+  elicitationUrl: true,
   // Agents MUST only offer terminal-type auth methods to a client that
   // declares this, so declaring is what makes the surface reachable at all
   // — true because the executor is wired (the orchestrator's terminal

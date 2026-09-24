@@ -1,16 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The elicitation card's answer check as pure functions — extracted for the
+// The elicitation card's logic as pure functions — extracted for the
 // reason composer-controls.ts and roots-controls.ts are: every state the
 // card can be in is named in a test, never an inline render expression.
-// The spec asks a client to validate before replying and to pre-fill
+// For forms, the spec asks a client to validate before replying and to pre-fill
 // declared defaults, and says accepted content should conform to the
 // requested schema. So: a field the user left empty is omitted, never sent
 // as "" (an unpicked choice would arrive as a value the agent never
 // offered); a required one blocks Send; and every limit the form declares
 // is checked on what would actually be sent.
-import type { ElicitationField } from "../../../shared/protocol";
+import type { ElicitationBlock, ElicitationField } from "../../../shared/protocol";
+
+/** Where a link card stands, from the user's answer and the agent's
+ * follow-up together:
+ *  - `ask`: not answered — address, warnings, Open / Decline / Cancel;
+ *  - `waiting`: opened, the agent still waits on the page — Open again;
+ *  - `opened`: opened, and the session stopped waiting on it;
+ *  - `completed`: the agent reported the page done — whether or not the
+ *    user ever clicked, since the agent can finish another way;
+ *  - `settled`: declined, cancelled, or withdrawn. */
+export type LinkCardPhase = "ask" | "waiting" | "opened" | "completed" | "settled";
+
+export function linkCardPhase(block: Pick<ElicitationBlock, "resolution" | "linkState">): LinkCardPhase {
+  if (block.linkState === "completed") return "completed";
+  if (block.resolution === null) return "ask";
+  if (block.resolution.outcome !== "accepted") return "settled";
+  return block.linkState === "waiting" ? "waiting" : "opened";
+}
 
 /** What the user has in each field right now: text-like and choice fields
  * as the string the control holds ("" = nothing given), multi-choice as the

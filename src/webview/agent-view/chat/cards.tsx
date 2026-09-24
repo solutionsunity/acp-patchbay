@@ -5,22 +5,32 @@
 // broker path, one card language.
 // Each resolves itself through useActions (requestId = its own block id).
 import { useState } from "react";
-import type { ChatBlock } from "../../../shared/protocol";
+import type { ChatBlock, LinkWarning } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
-import { answerOf, initialDraft, type Draft } from "./elicitation-form";
+import { answerOf, initialDraft, linkCardPhase, type Draft } from "./elicitation-form";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-/** What the resolved card says the user did — the wire's three answers in
- * the user's words. */
+/** What the resolved card says happened — the wire's three answers in the
+ * user's words, or the agent taking its question back. */
 const RESOLVED_LABEL = {
   accepted: "answered",
   declined: "declined",
   cancelled: "cancelled",
+  withdrawn: "withdrawn by the agent",
+  completed: "completed",
 } as const;
+
+/** Why a link deserves a second look, said to the user. */
+const LINK_WARNING_TEXT: Record<LinkWarning, string> = {
+  punycode: "The address uses an encoded international name — it can imitate another site.",
+  credentials: "The address puts a user name before the site — a common way to disguise where it goes.",
+  "ip-host": "The site is a bare IP address, not a named site.",
+  insecure: "The connection is not encrypted (http).",
+};
 
 export function PermissionCard({ block }: { block: Extract<ChatBlock, { kind: "permission" }> }) {
   const send = useActions();
@@ -150,17 +160,124 @@ export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "ter
   );
 }
 
+type ElicitationBlock = Extract<ChatBlock, { kind: "elicitation" }>;
+
 /** The agent is asking the user something (ACP elicitation, or the local
- * MCP server's question tool — one card either way). Client duties the
- * spec names: the asking agent is identified, the answers start at the
- * declared defaults and stay editable until Send, Send waits until the
- * answer fits the form (elicitation-form.ts), and declining is offered
- * separately from cancelling — the agent is told which of the two it got. */
-export function ElicitationCard({
+ * MCP server's question tool — one card either way): fields to fill in, or
+ * a page to open. Client duties the spec names for both: the asking agent
+ * is identified, and declining is offered separately from cancelling — the
+ * agent is told which of the two it got. */
+export function ElicitationCard({ block, agentName }: { block: ElicitationBlock; agentName: string }) {
+  return block.mode === "url" ? (
+    <LinkQuestion block={block} agentName={agentName} />
+  ) : (
+    <FormQuestion block={block} agentName={agentName} />
+  );
+}
+
+/** Decline and Cancel, the two ways of not answering — shared by both
+ * question shapes. */
+function NotAnswering({ blockId }: { blockId: string }) {
+  const send = useActions();
+  const answer = (action: "decline" | "cancel") =>
+    send({ kind: "resolveElicitation", requestId: blockId, answer: { action } });
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => answer("decline")}>
+        Decline
+      </Button>
+      <Button variant="destructive" size="sm" onClick={() => answer("cancel")}>
+        Cancel
+      </Button>
+    </>
+  );
+}
+
+/** A page to open. Spec duties: the full address and its host are shown
+ * before consent, nothing is fetched until the user clicks, and the page
+ * opens in the system browser where neither patchbay nor the model can see
+ * it. The address is shown as text, never as a clickable link — Open is the
+ * one way through, and it is the consent. */
+function LinkQuestion({
   block,
   agentName,
 }: {
-  block: Extract<ChatBlock, { kind: "elicitation" }>;
+  block: Extract<ElicitationBlock, { mode: "url" }>;
+  agentName: string;
+}) {
+  const send = useActions();
+  const { link } = block;
+  const address = (
+    <div className="px-2.5 pb-2 text-sm">
+      <div>
+        Opens <b>{link.host}</b> in your browser:
+      </div>
+      <div className="font-mono text-[12px] break-all select-text">{link.href}</div>
+      {link.warnings.map((w) => (
+        <div key={w} className="flex items-center gap-1.5 text-[11px] text-warn">
+          <Icon name="warning" /> {LINK_WARNING_TEXT[w]}
+        </div>
+      ))}
+    </div>
+  );
+
+  const phase = linkCardPhase(block);
+  if (phase === "ask") {
+    return (
+      <div className="card perm">
+        <div className="card-hd">
+          <Icon name="link-external" /> {agentName} asks you to open a page: {block.message}
+        </div>
+        {address}
+        <div className="acts">
+          <Button
+            size="sm"
+            onClick={() =>
+              send({ kind: "resolveElicitation", requestId: block.id, answer: { action: "accept", content: {} } })
+            }
+          >
+            Open in browser
+          </Button>
+          <NotAnswering blockId={block.id} />
+        </div>
+      </div>
+    );
+  }
+  const settled = phase === "settled" && block.resolution !== null ? RESOLVED_LABEL[block.resolution.outcome] : null;
+  return (
+    <div className="card perm">
+      <div className="card-hd">
+        <Icon name="link-external" /> {agentName} asked you to open a page: {block.message}
+      </div>
+      {phase === "waiting" && address}
+      <div className="resolved">
+        <Icon name={settled === null ? "check" : "close"} />{" "}
+        {settled ??
+          (phase === "completed"
+            ? "completed"
+            : phase === "waiting"
+              ? `opened in your browser — waiting for ${agentName} to finish`
+              : "opened in your browser")}
+      </div>
+      {phase === "waiting" && (
+        <div className="acts">
+          <Button variant="outline" size="sm" onClick={() => send({ kind: "reopenElicitationLink", requestId: block.id })}>
+            Open again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Fields to fill in. Spec duties: the answers start at the declared
+ * defaults and stay editable until Send, and Send waits until the answer
+ * fits the form (elicitation-form.ts). */
+function FormQuestion({
+  block,
+  agentName,
+}: {
+  block: Extract<ElicitationBlock, { mode: "form" }>;
   agentName: string;
 }) {
   const send = useActions();
@@ -189,8 +306,6 @@ export function ElicitationCard({
 
   const { content, problems } = answerOf(block.fields, draft);
   const blocked = Object.keys(problems).length > 0;
-  const answer = (action: "decline" | "cancel") =>
-    send({ kind: "resolveElicitation", requestId: block.id, answer: { action } });
 
   return (
     <div className="card perm">
@@ -268,12 +383,7 @@ export function ElicitationCard({
         >
           Send
         </Button>
-        <Button variant="outline" size="sm" onClick={() => answer("decline")}>
-          Decline
-        </Button>
-        <Button variant="destructive" size="sm" onClick={() => answer("cancel")}>
-          Cancel
-        </Button>
+        <NotAnswering blockId={block.id} />
       </div>
     </div>
   );

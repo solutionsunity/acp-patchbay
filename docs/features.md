@@ -131,6 +131,10 @@ deliverable.
 - When an agent needs an answer from the user, it can ask with a small form
   in the chat; the user answers, declines, or dismisses it, and the agent
   learns which.
+- When an agent needs the user to visit a page — signing in to a service,
+  for one — it shows the full address first and opens it in the browser
+  only when the user says so; nothing the user does on that page passes
+  through patchbay or the agent.
 - Context/token usage is shown when the agent reports it and cleanly absent when it
   doesn't — never a fake number.
 - User can stop a running turn at any time.

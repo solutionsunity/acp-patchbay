@@ -361,6 +361,12 @@ describe("terminalAuthOf — the executable half of a typed terminal method", ()
   });
 });
 
+describe("elicitation client claim", () => {
+  it("names each presented mode explicitly — ACP reads an absent mode as unsupported", () => {
+    expect(clientCapabilitiesWire().elicitation).toEqual({ form: {}, url: {} });
+  });
+});
+
 describe("auth.terminal client opt-in", () => {
   it("rides initialize — an agent gating its terminal login offers on it sees the claim", () => {
     expect((clientCapabilitiesWire() as { auth?: unknown }).auth).toEqual({ terminal: true });

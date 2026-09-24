@@ -41,6 +41,13 @@ export type TurnStep =
    * only when the client declared the mode, which is the spec's own rule
    * for an agent. */
   | { type: "elicit"; message: string; requestedSchema?: unknown }
+  /** Sends the user to a page (url mode), declared-mode rule as above.
+   * `complete`: after an accept, reports the page done. `withdraw`: takes
+   * the request back before the user answers (the spec's cancel-request),
+   * after a beat so the card exists first. `finishFirst`: the flow
+   * finishes before the user answers — reports it done right behind the
+   * request, with no pause, so the notice can overtake it; then withdraws. */
+  | { type: "elicitUrl"; url: string; elicitationId: string; then?: "complete" | "withdraw" | "finishFirst" }
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> }
   | { type: "infoUpdate"; title: string };
 
@@ -373,6 +380,46 @@ async function runTurn(
             text: `elicitation: ${response.action} ${JSON.stringify((response as { content?: unknown }).content ?? null)}`,
           },
         });
+        break;
+      }
+      case "elicitUrl": {
+        const say = (text: string) =>
+          emitUpdate(cx, sessionId, cwd, { sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+        const declared = (clientCapabilities as { elicitation?: { url?: unknown } } | null)?.elicitation;
+        if (declared?.url == null) {
+          await say("elicitation: client declares no url mode");
+          break;
+        }
+        const params: acp.CreateElicitationRequest = {
+          mode: "url",
+          sessionId,
+          message: "Sign in",
+          url: step.url,
+          elicitationId: step.elicitationId,
+        };
+        if (step.then === "withdraw" || step.then === "finishFirst") {
+          const withdraw = new AbortController();
+          const asked = cx.request(acp.methods.client.elicitation.create, params, {
+            cancellationSignal: withdraw.signal,
+          });
+          if (step.then === "finishFirst") {
+            await cx.notify(acp.methods.client.elicitation.complete, { elicitationId: step.elicitationId });
+          } else {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          withdraw.abort();
+          const outcome = await asked.then(
+            (r) => `answered ${r.action}`,
+            (err: unknown) => `withdrawn ${(err as { code?: number }).code ?? "?"}`,
+          );
+          await say(`elicitation: ${outcome}`);
+          break;
+        }
+        const response = await cx.request(acp.methods.client.elicitation.create, params);
+        await say(`elicitation: ${response.action} ${JSON.stringify((response as { content?: unknown }).content ?? null)}`);
+        if (step.then === "complete" && response.action === "accept") {
+          await cx.notify(acp.methods.client.elicitation.complete, { elicitationId: step.elicitationId });
+        }
         break;
       }
       case "echoRoots": {

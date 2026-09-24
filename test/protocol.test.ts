@@ -528,9 +528,10 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
       sessionId: "s1",
       blockId: "e1",
       message: "Which database?",
+      mode: "form",
       fields: [{ name: "db", type: "string", required: true }],
     };
-    for (const outcome of ["accepted", "declined", "cancelled"] as const) {
+    for (const outcome of ["accepted", "declined", "cancelled", "withdrawn", "completed"] as const) {
       const state = replay(initialAgentViewState, [
         asked,
         { kind: "elicitationResolved", sessionId: "s1", blockId: "e1", outcome },
@@ -538,5 +539,37 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
       const block = state.transcripts.s1!.find((b) => b.kind === "elicitation");
       expect(block?.kind === "elicitation" && block.resolution).toEqual({ outcome });
     }
+  });
+
+  it("a link card waits once opened, and its follow-up lands whether or not it was answered", () => {
+    const asked: AgentViewEvent = {
+      kind: "elicitationRequested",
+      sessionId: "s1",
+      blockId: "e1",
+      message: "Sign in",
+      mode: "url",
+      link: { href: "https://auth.example.com/", host: "auth.example.com", warnings: [] },
+    };
+    const card = (events: AgentViewEvent[]) =>
+      replay(initialAgentViewState, [asked, ...events]).transcripts.s1!.find((b) => b.kind === "elicitation");
+    const resolved = (outcome: "accepted" | "declined" | "completed"): AgentViewEvent => ({
+      kind: "elicitationResolved",
+      sessionId: "s1",
+      blockId: "e1",
+      outcome,
+    });
+    const settled = (state: "completed" | "ended"): AgentViewEvent => ({
+      kind: "elicitationLinkSettled",
+      sessionId: "s1",
+      blockId: "e1",
+      state,
+    });
+    expect(card([])?.kind === "elicitation" && card([])?.linkState).toBeFalsy();
+    expect(card([resolved("accepted")])).toMatchObject({ linkState: "waiting" });
+    expect(card([resolved("declined")])?.kind === "elicitation" && card([resolved("declined")])?.linkState).toBeFalsy();
+    expect(card([resolved("accepted"), settled("completed")])).toMatchObject({ linkState: "completed" });
+    expect(card([resolved("accepted"), settled("ended")])).toMatchObject({ linkState: "ended" });
+    // finished by the agent before the user answered: one fact, done
+    expect(card([resolved("completed")])).toMatchObject({ linkState: "completed", resolution: { outcome: "completed" } });
   });
 });

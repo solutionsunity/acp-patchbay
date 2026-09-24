@@ -164,6 +164,9 @@ export type Action =
    * until they press it), decline is a refusal, cancel is a dismissal.
    * Decline and cancel are different answers and the agent is told which. */
   | { kind: "resolveElicitation"; requestId: string; answer: ElicitationAnswer }
+  /** Open an accepted link's page again (the tab was closed mid-flow).
+   * Names the card, never the address: the host opens the link it holds. */
+  | { kind: "reopenElicitationLink"; requestId: string }
   | { kind: "addSelectionContext"; sessionId: string }
   | { kind: "addFileContext"; sessionId: string }
   | { kind: "addDiagnosticsContext"; sessionId: string }
@@ -1021,8 +1024,34 @@ export interface ElicitationField {
   maxItems?: number;
 }
 
-/** What the user did with the card, as the wire names it. */
-export type ElicitationOutcome = "accepted" | "declined" | "cancelled";
+/** How a card was settled: the user's three answers as the wire names
+ * them, or the agent's doing before the user chose — "withdrawn" (it took
+ * the question back) or "completed" (the page's flow finished without the
+ * user). */
+export type ElicitationOutcome = "accepted" | "declined" | "cancelled" | "withdrawn" | "completed";
+
+/** Why a link deserves a second look before opening: an encoded
+ * international host that can imitate another site, a user name placed
+ * before the host to disguise it, a bare IP address instead of a named
+ * site, or an unencrypted connection to anything but this machine. */
+export type LinkWarning = "punycode" | "credentials" | "ip-host" | "insecure";
+
+/** A page the agent asks the user to open. `href` is exactly what opens —
+ * shown in full before consent — and `host` is where it goes. */
+export interface ElicitationLink {
+  href: string;
+  host: string;
+  warnings: readonly LinkWarning[];
+}
+
+/** What is asked: fields to fill in, or a page to open in the browser. */
+export type ElicitationAsk =
+  | { mode: "form"; fields: readonly ElicitationField[] }
+  | { mode: "url"; link: ElicitationLink };
+
+/** An opened link's follow-up: the agent is waiting on the page, reported
+ * it finished, or the session moved on without it. */
+export type LinkState = "waiting" | "completed" | "ended";
 
 /** The answer travelling back: the action, plus the content an accept
  * carries. Same vocabulary as ACP's own response, so nothing is translated
@@ -1032,13 +1061,14 @@ export type ElicitationAnswer =
   | { action: "decline" }
   | { action: "cancel" };
 
-export interface ElicitationBlock {
+export type ElicitationBlock = {
   kind: "elicitation";
   id: string;
   message: string;
-  fields: readonly ElicitationField[];
   resolution: { outcome: ElicitationOutcome } | null;
-}
+  /** A url ask's follow-up — absent until the user opens the page. */
+  linkState?: LinkState;
+} & ElicitationAsk;
 
 /** A patchbay-authored transcript marker — system voice, never agent prose.
  * Exists for the honesty seams: e.g. the session/resume rung shows where
@@ -1442,14 +1472,11 @@ export type AgentViewEvent =
   | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
   | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
-  | {
-      kind: "elicitationRequested";
-      sessionId: string;
-      blockId: string;
-      message: string;
-      fields: readonly ElicitationField[];
-    }
+  | ({ kind: "elicitationRequested"; sessionId: string; blockId: string; message: string } & ElicitationAsk)
   | { kind: "elicitationResolved"; sessionId: string; blockId: string; outcome: ElicitationOutcome }
+  /** An opened link's follow-up moved: the agent reported the page done,
+   * or the session stopped waiting on it. */
+  | { kind: "elicitationLinkSettled"; sessionId: string; blockId: string; state: "completed" | "ended" }
   | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
   | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
@@ -2089,19 +2116,24 @@ export function reduceAgentView(
         running: false,
         exitCode: event.exitCode,
       }));
-    case "elicitationRequested":
-      return appendBlock(state, event.sessionId, {
-        kind: "elicitation",
-        id: event.blockId,
-        message: event.message,
-        fields: event.fields,
-        resolution: null,
-      });
+    case "elicitationRequested": {
+      const { kind: _kind, sessionId, blockId, ...asked } = event;
+      return appendBlock(state, sessionId, { kind: "elicitation", id: blockId, ...asked, resolution: null });
+    }
     case "elicitationResolved":
       return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) => ({
         ...b,
         resolution: { outcome: event.outcome },
+        // An accepted link opened in the browser; the agent's page is now
+        // in play until it reports back. A link the agent finished before
+        // the user answered is simply done.
+        ...(b.mode === "url" && event.outcome === "accepted" ? { linkState: "waiting" as const } : {}),
+        ...(b.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
       }));
+    case "elicitationLinkSettled":
+      return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) =>
+        b.mode === "url" ? { ...b, linkState: event.state } : b,
+      );
     case "contextChipAdded":
       return {
         ...state,

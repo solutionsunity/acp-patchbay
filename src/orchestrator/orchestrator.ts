@@ -8,7 +8,7 @@ import { statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { methods, type CreateElicitationResponse } from "@agentclientprotocol/sdk";
+import { methods, RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -45,7 +45,7 @@ import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { foldSeed, normalizeKnobs } from "./knobs";
 import { terminalAuthOf, type TerminalAuth } from "./capabilities";
-import { formFieldsOf } from "./elicitation";
+import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
 import { sessionKnobExtras } from "./extensions";
 import { checkPathDivergence } from "./launcher-health";
 import { runLoginTask } from "./login-task";
@@ -96,6 +96,13 @@ import { type TerminalHandle } from "./terminal-runner";
 let chipSeq = 0;
 const chipId = () => `chip-${Date.now()}-${chipSeq++}`;
 
+/** A web page in the system browser — outside the editor, so neither
+ * patchbay nor an agent's model sees the page or what the user types. The
+ * one way patchbay opens a page: integration sign-in and an agent's link
+ * alike. */
+function openInBrowser(href: string): Thenable<boolean> {
+  return vscode.env.openExternal(vscode.Uri.parse(href));
+}
 
 function optionViewsFromAcp(
   options: readonly { optionId: string; name: string; kind: string }[],
@@ -290,7 +297,7 @@ export class Orchestrator {
         },
         authorize: async (authorizationUrl, state) => {
           const pending = this.oauthCallbacks.wait(state);
-          await vscode.env.openExternal(vscode.Uri.parse(authorizationUrl));
+          await openInBrowser(authorizationUrl);
           return pending;
         },
       },
@@ -367,8 +374,12 @@ export class Orchestrator {
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidateAgent(agentId);
         }
-        // The editor's session rode the connection that just ended.
-        if (status !== "running") this.defaultsEditor.forget(agentId);
+        // The editor's session rode the connection that just ended, and so
+        // did any completion notice still waiting for its question.
+        if (status !== "running") {
+          this.defaultsEditor.forget(agentId);
+          this.broker.forgetAgent(agentId);
+        }
         // Every connect of a list-capable agent syncs its own session
         // history into the list — the wire is the ONLY list (patchbay
         // persists no session records). The promise is tracked so the
@@ -447,18 +458,14 @@ export class Orchestrator {
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
-      onElicitation: async (agentId, params) => {
-        const asked = params as { sessionId?: string; requestId?: unknown; requestedSchema?: unknown };
-        const refuse = (why: string): CreateElicitationResponse => {
-          this.log.info(`${agentId}: declined an elicitation — ${why}`);
+      onElicitation: async (agentId, params, signal) => {
+        const reading = readElicitationRequest(params);
+        if (reading.kind === "invalid") throw RequestError.invalidParams({ reason: reading.why });
+        if (reading.kind === "refuse") {
+          this.log.info(`${agentId}: declined an elicitation — ${reading.why}`);
           return { action: "decline" };
-        };
-        // Request scope (an ask outside any session, e.g. during auth) has
-        // no surface here: the transcript is the only place patchbay can
-        // ask a question, so the honest answer is a decline, never a
-        // dangling request.
-        const sessionId = asked.sessionId;
-        if (sessionId === undefined) return refuse("it is not tied to a session");
+        }
+        const { sessionId, message, ask, elicitationId } = reading;
         // A throwaway session — the probe's or the defaults editor's — is
         // invisible by construction; the user never saw the question, which
         // is exactly what `cancel` means (same rule as permission asks).
@@ -469,21 +476,14 @@ export class Orchestrator {
           this.log.info(`${agentId}: cancelled an elicitation on a throwaway session`);
           return { action: "cancel" };
         }
-        if (params.mode !== "form") return refuse(`patchbay does not present "${params.mode}" elicitations`);
-        const fields = formFieldsOf(asked.requestedSchema);
-        if (fields === null) return refuse("its form has a field patchbay cannot present");
-        const answer = await this.broker.askElicitation(sessionId, { message: params.message, fields });
-        // The card produced each value against the field type this schema
-        // normalized, so the content matches what the agent asked for.
-        return answer.action === "accept"
-          ? {
-              action: "accept",
-              // Each value was produced against the field type this schema
-              // normalized, so the content matches what the agent asked for.
-              content: answer.content as Record<string, string | number | boolean | string[]>,
-            }
-          : { action: answer.action };
+        const answer = await this.broker.askElicitation(
+          sessionId,
+          { message, ask, ...(elicitationId !== undefined ? { completion: { agentId, elicitationId } } : {}) },
+          signal,
+        );
+        return elicitationResponseOf(ask, answer, signal);
       },
+      onElicitationComplete: (agentId, elicitationId) => this.broker.completeLink(agentId, elicitationId),
       onPermissionRequest: async (agentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
@@ -870,6 +870,7 @@ export class Orchestrator {
         onAuditWritten: () => void this.refreshAuditTail(),
         notifyPending: (requestId, title, detail, options) =>
           this.notifyIfHidden(requestId, title, detail, options),
+        openLink: (href) => void openInBrowser(href),
       },
       () => this.workspaceRoot,
       undefined, // default NodeTerminalRunner
@@ -1226,7 +1227,7 @@ export class Orchestrator {
     // guessed control.
     const fields = params.requestedSchema === undefined ? [] : formFieldsOf(params.requestedSchema);
     if (fields === null) return Promise.reject(new Error("the form has a field patchbay cannot present"));
-    return this.broker.askElicitation(sessionId, { message: params.message, fields });
+    return this.broker.askElicitation(sessionId, { message: params.message, ask: { mode: "form", fields } });
   }
 
   /** Process-policy decision for a new top-level session: `isolated`
@@ -2286,6 +2287,9 @@ export class Orchestrator {
         break;
       case "resolveElicitation":
         this.broker.resolveElicitation(action.requestId, action.answer);
+        break;
+      case "reopenElicitationLink":
+        this.broker.reopenLink(action.requestId);
         break;
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();
