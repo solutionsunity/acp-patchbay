@@ -32,6 +32,11 @@ import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import { NodeTerminalRunner, type TerminalRunner } from "./terminal-runner";
 
+/** How one of patchbay's own gates settled. `cancelled` is the turn
+ * stopping under an open card — the user never decided, which is not the
+ * same as rejecting. */
+export type GateOutcome = "accepted" | "rejected" | "cancelled";
+
 export interface BrokerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Refresh Settings' audit tail after every write. */
@@ -461,7 +466,7 @@ export class PermissionBroker {
     sessionId: string,
     path: string,
     newContent: string,
-  ): Promise<{ accepted: boolean }> {
+  ): Promise<GateOutcome> {
     let oldContent = "";
     try {
       oldContent = await readFile(path, "utf8");
@@ -485,7 +490,7 @@ export class PermissionBroker {
     if (verdict === "allow") {
       this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted: true, auto: true });
       await this.writeAudit({ kind: "auto-allow", sessionId, file: path });
-      return { accepted: true };
+      return "accepted";
     }
 
     this.hooks.notifyPending?.(blockId, "File write", path, [
@@ -503,7 +508,7 @@ export class PermissionBroker {
       sessionId,
       file: path,
     });
-    return { accepted };
+    return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
   }
 
   /** Patchbay's own mandatory gate on terminal/create — asks before the
@@ -511,15 +516,15 @@ export class PermissionBroker {
   async gateCommand(
     sessionId: string,
     command: string,
-  ): Promise<{ accepted: boolean }> {
+  ): Promise<GateOutcome> {
     const verdict = this.evaluateCommand(command);
     if (verdict === "deny") {
       await this.writeAudit({ kind: "auto-deny", sessionId, command });
-      return { accepted: false };
+      return "rejected";
     }
     if (verdict === "allow") {
       await this.writeAudit({ kind: "auto-allow", sessionId, command });
-      return { accepted: true };
+      return "accepted";
     }
 
     const blockId = newBlockId("perm");
@@ -549,7 +554,7 @@ export class PermissionBroker {
       sessionId,
       command,
     });
-    return { accepted };
+    return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
   }
 
   get runner(): TerminalRunner {

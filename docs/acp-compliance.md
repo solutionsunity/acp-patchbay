@@ -190,12 +190,13 @@ consumed: the card names the call by its `title`, which every agent sends.
 | `fs/write_text_file` creates file (MUST) | ✅ | `broker.ts:applyFileWrite` — `mkdir -p` + write. |
 | Write vs. open dirty editor | ✅ | `orchestrator.ts:writeTextFileLive` — the mirror of `readTextFileLive`. An open editor gets the write via `WorkspaceEdit` + save: visible, undoable, buffer and disk agree at once. No editor → plain disk write. A failed apply throws to the agent — a silent disk fallback would recreate the buffer/disk divergence this exists to prevent. Covered end-to-end in `test/vscode/live-write.test.ts`. |
 | Permission gating | ✅ | Writes gate through the broker; reads are free by design (recorded stance: read = editor state the user already shows the agent). |
+| Error replies say what happened | ✅ | `client-replies.ts` — the one place a client-side "no" becomes a reply, for fs and terminal alike. Missing file on read → `-32002` (`RequestError.resourceNotFound`, spec-defined) for that path, from VS Code's `FileNotFound` or Node's `ENOENT`. Turn stopped under an open write/command card → `-32800` (the spec's Request cancelled; the cancellation MUST names only `session/request_permission`, and the request-cancellation RFD answers `-32800` regardless of cancellation source). User rejection (a click or a deny rule) → `-32803` with the message naming the request: ACP's `ErrorCode` is open (`\| number`) but defines no permission-denied code, so this takes LSP's RequestFailed, the lineage ACP took `-32800` from — a choice within the spec, not a deviation (decided 2026-09-25). Never success. Any other failure stays `-32603`. Covered by `test/fs-terminal.test.ts` (real handlers, `client-host.ts`) and, for VS Code's own not-found error, `test/vscode/live-write.test.ts`. |
 
 ## 13. Terminals (client-exposed)
 
 | Duty | Verdict | Notes |
 |---|---|---|
-| All five methods | ✅ | `pool.ts` handlers → `terminal-runner.ts`; create gates the command through the broker. |
+| All five methods | ✅ | `client-host.ts` handlers → `terminal-runner.ts`; create gates the command through the broker, and a refused command is answered like a refused write (§12). |
 | Kill ends the whole tree | ✅ | Process-group spawn (`treeSpawnOptions`) — ACP's contract is "the command stops", not "its top process stops". |
 | Truncate from the beginning when over `outputByteLimit` | ✅ | `tailBytes` counts real bytes and cuts at a UTF-8 code-point boundary — surrogate pairs stay whole by construction. |
 | Output survives release when embedded in tool calls | ✅ | Terminal blocks live in the transcript; release invalidates the id, not the rendered history. |

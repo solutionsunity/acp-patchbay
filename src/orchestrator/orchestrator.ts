@@ -33,7 +33,8 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
-import { applyFileWrite, PermissionBroker, sliceTextFileRead } from "./broker";
+import { applyFileWrite, PermissionBroker } from "./broker";
+import { ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
@@ -87,7 +88,6 @@ import { SessionContinuityStore } from "./stores/session-continuity";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
-import { type TerminalHandle } from "./terminal-runner";
 
 /** Context-chip id mint. The timestamp alone collided once a multi-file
  * drop started dispatching several adds in the same millisecond (duplicate
@@ -176,8 +176,7 @@ export class Orchestrator {
   /** Agents (global — never repo-committed), resolved to a spawnable
    * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
   private readonly configuredAgentSpecs = new Map<string, LaunchSpec>();
-  private readonly terminals = new Map<string, TerminalHandle>();
-  private terminalCounter = 0;
+  private readonly clientHost: ClientHost;
   /** agentId → methodId → terminal-auth login recipe (meta.ts), captured
    * fresh at every connect from the raw initialize response — never
    * persisted, never sent to a webview. */
@@ -534,105 +533,7 @@ export class Orchestrator {
           ? { outcome: { outcome: "cancelled" } }
           : { outcome: { outcome: "selected", optionId: result.optionId } };
       },
-      // fs/terminal used-marking happens in pool.ts's incoming-request
-      // chokepoint when these handlers resolve (capabilities.ts
-      // CAPABILITY_PROOFS) — a rejected write still resolves, so it still
-      // counts: the agent routing writes through patchbay's gate is the
-      // brokered path firing, and a rejection is the gate working.
-      onReadTextFile: async (_agentId, params) => {
-        const content = await this.readTextFileLive(params.path);
-        return { content: sliceTextFileRead(content, params.line, params.limit) };
-      },
-      onWriteTextFile: async (_agentId, params) => {
-        // Pre-image captured before anything moves — the gate-side baseline
-        // source for "since first agent touch" diffs. Buffer truth, same
-        // lookup the write itself uses; noted at card time (not acceptance)
-        // so every diff card the user can see has an answerable baseline.
-        const pre = await this.readTextFileLive(params.path).catch(() => "");
-        this.sessionManager.noteFileBaseline(params.sessionId, params.path, pre);
-        const { accepted } = await this.broker.gateFileWrite(params.sessionId, params.path, params.content);
-        if (accepted) {
-          await this.writeTextFileLive(params.path, params.content);
-          // Only once the content actually landed — a rejected write left
-          // disk (and the baseline) untouched, so its ± badge stays absent
-          // rather than claiming a change that never happened.
-          this.sessionManager.noteFileWrite(params.sessionId, params.path, params.content);
-        }
-        return {};
-      },
-      onCreateTerminal: async (_agentId, params) => {
-        const command = [params.command, ...(params.args ?? [])].join(" ");
-        const { accepted } = await this.broker.gateCommand(params.sessionId, command);
-        if (!accepted) throw new Error("command rejected by permission rules");
-
-        const handle = this.broker.runner.create({
-          command: params.command,
-          args: params.args ?? [],
-          env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
-          cwd: params.cwd ?? null,
-          outputByteLimit: params.outputByteLimit ?? null,
-        });
-        const terminalId = `term-${++this.terminalCounter}`;
-        this.terminals.set(terminalId, handle);
-        if (handle.pid !== null) {
-          const pid = handle.pid;
-          void commandOf(pid).then((cmd) => {
-            // Already exited (fast command) → the record would only be stale.
-            if (cmd !== "" && handle.exitStatus() === null) {
-              void this.spawnRegistry.add(pid, cmd, "terminal");
-            }
-          });
-          handle.onExit(() => void this.spawnRegistry.removePid(pid));
-        }
-        const blockId = `term-block-${terminalId}`;
-        this.agentView.emit({ kind: "terminalStarted", sessionId: params.sessionId, blockId, command });
-        handle.onData((chunk) =>
-          this.agentView.emit({
-            kind: "terminalOutputAppended",
-            sessionId: params.sessionId,
-            blockId,
-            chunk,
-          }),
-        );
-        handle.onExit((status) =>
-          this.agentView.emit({
-            kind: "terminalExited",
-            sessionId: params.sessionId,
-            blockId,
-            exitCode: status.exitCode,
-          }),
-        );
-        return { terminalId };
-      },
-      onTerminalOutput: async (_agentId, params) => {
-        const handle = this.terminals.get(params.terminalId);
-        if (!handle) throw new Error(`unknown terminal ${params.terminalId}`);
-        const { output, truncated } = handle.currentOutput();
-        const exit = handle.exitStatus();
-        return {
-          output,
-          truncated,
-          exitStatus: exit ? { exitCode: exit.exitCode, signal: exit.signal } : null,
-        };
-      },
-      onWaitForTerminalExit: async (_agentId, params) => {
-        const handle = this.terminals.get(params.terminalId);
-        if (!handle) throw new Error(`unknown terminal ${params.terminalId}`);
-        return handle.waitForExit();
-      },
-      onKillTerminal: async (_agentId, params) => {
-        this.terminals.get(params.terminalId)?.kill();
-        return {};
-      },
-      onReleaseTerminal: async (_agentId, params) => {
-        // ACP release semantics: a still-running command is killed — before
-        // this, releasing dropped the handle and left the process running
-        // with nothing pointing at it.
-        const handle = this.terminals.get(params.terminalId);
-        if (handle !== undefined && handle.exitStatus() === null) handle.kill();
-        this.terminals.delete(params.terminalId);
-        return {};
-      },
+      ...clientRequestHooks(() => this.clientHost),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
       // connect on the agent's card: a registry binary agent's own archive,
@@ -876,6 +777,24 @@ export class Orchestrator {
       undefined, // default NodeTerminalRunner
       this.machinePermissionRules,
     );
+    this.clientHost = new ClientHost({
+      broker: this.broker,
+      sessionManager: this.sessionManager,
+      readLive: (path) => this.readTextFileLive(path),
+      writeLive: (path, content) => this.writeTextFileLive(path, content),
+      emit: (event) => this.agentView.emit(event),
+      trackProcess: (handle) => {
+        if (handle.pid === null) return;
+        const pid = handle.pid;
+        void commandOf(pid).then((cmd) => {
+          // Already exited (fast command) → the record would only be stale.
+          if (cmd !== "" && handle.exitStatus() === null) {
+            void this.spawnRegistry.add(pid, cmd, "terminal");
+          }
+        });
+        handle.onExit(() => void this.spawnRegistry.removePid(pid));
+      },
+    });
 
     void this.refreshAuditTail();
     this.loadAgentConfigs();
@@ -931,10 +850,8 @@ export class Orchestrator {
    * automatic; the Settings action is the only caller. */
   private async eraseEverything(): Promise<void> {
     this.log.info("erase all data: stopping every process");
-    for (const handle of this.terminals.values()) {
-      if (handle.pid !== null && handle.exitStatus() === null) killTree(handle.pid, "SIGKILL");
-    }
-    this.terminals.clear();
+    for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
+    this.clientHost.clear();
     await this.pool.disposeAll();
     this.sessionManager.reset();
     this.contextTokenToSession.clear();
@@ -1010,9 +927,7 @@ export class Orchestrator {
     await this.lastConnected.write(
       this.pool.list().filter((v) => v.status === "running").map((v) => v.spec.agentId),
     );
-    for (const handle of this.terminals.values()) {
-      if (handle.pid !== null && handle.exitStatus() === null) killTree(handle.pid, "SIGKILL");
-    }
+    for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     await Promise.race([
       this.pool.disposeAll(),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),

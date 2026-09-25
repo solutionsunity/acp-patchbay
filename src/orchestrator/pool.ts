@@ -13,6 +13,7 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
+import { isRefusal } from "./client-replies";
 import {
   clientCapabilitiesWire,
   declaredFromInitialize,
@@ -98,7 +99,8 @@ export interface PoolHooks {
   /** The agent reports a page it sent the user to is done. */
   onElicitationComplete?(agentId: string, elicitationId: string): void;
   /** Fired the instant a wire fact bears on a capability row: "used" when
-   * the fact rode a request that succeeded, "suspect" when it rode one that
+   * the fact rode a request that succeeded (or, incoming, one patchbay
+   * deliberately refused), "suspect" when it rode one that
    * failed (suspicion, not conviction — the failure may not be the row's
    * fault). Which fact bears on which row lives in one place —
    * capabilities.ts's CAPABILITY_PROOFS table — consulted at pool.ts's
@@ -106,7 +108,7 @@ export interface PoolHooks {
    * session/update kind tag arrived); no call site ever names a row itself
    * (declared ≠ used). Only the outgoing
    * chokepoint can report "suspect": a client-side handler throwing is
-   * patchbay's own gate rejecting, never the agent failing. Called
+   * patchbay's own side answering or failing, never the agent. Called
    * synchronously and never awaited so it can't block the RPC it's
    * reporting on. */
   onCapabilityEvidence?(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void;
@@ -484,25 +486,38 @@ export class AgentPool {
     );
 
     // Chokepoint: every incoming request registers through `proven`, so a
-    // handler resolving marks whatever row the proof table ties to its
+    // handler answering marks whatever row the proof table ties to its
     // method (capabilities.ts CAPABILITY_PROOFS) — registration sites never
-    // name rows, and a future handler (elicitation) marks for free.
+    // name rows, and a future handler (elicitation) marks for free. A
+    // refusal is an answer too: a rejected write is the gate working, a
+    // missing file is fs reporting truthfully — the agent routed the call
+    // through patchbay either way. Only a fault proves nothing.
     const proven = <M extends acp.ClientRequestMethod>(
       method: M,
       handler: acp.ClientRequestHandlersByMethod[M],
-    ): [M, acp.ClientRequestHandlersByMethod[M]] => [
-      method,
-      (async (ctx: never) => {
-        const result = await (handler as (ctx: never) => Promise<unknown>)(ctx);
-        // Same version gate as the outgoing chokepoint: a mismatched
-        // isolated build's facts must not persist against the shared
-        // version on any of the three chokepoints.
+    ): [M, acp.ClientRequestHandlersByMethod[M]] => {
+      // Same version gate as the outgoing chokepoint: a mismatched
+      // isolated build's facts must not persist against the shared
+      // version on any of the three chokepoints.
+      const prove = () => {
         if (this.capabilityEvidenceBearing(entry)) {
           this.markProven(reportAs, { via: "clientRequest", method });
         }
-        return result;
-      }) as acp.ClientRequestHandlersByMethod[M],
-    ];
+      };
+      return [
+        method,
+        (async (ctx: never) => {
+          try {
+            const result = await (handler as (ctx: never) => Promise<unknown>)(ctx);
+            prove();
+            return result;
+          } catch (err) {
+            if (isRefusal(err)) prove();
+            throw err;
+          }
+        }) as acp.ClientRequestHandlersByMethod[M],
+      ];
+    };
     const connection = acp
       .client({ name: "acp-patchbay" })
       .onRequest(

@@ -230,9 +230,9 @@ export type CapabilityProof =
     }
   | {
       /** The agent called one of patchbay's client methods and the handler
-       * resolved. A rejected fs write still resolves — the gate working *is*
-       * the brokered path firing; a rejected terminal create throws, so it
-       * never marks. */
+       * answered — resolved, or refused on purpose (client-replies.ts): a
+       * rejected write or command is the gate working, which *is* the
+       * brokered path firing. A fault never marks. */
       via: "clientRequest";
       method: string;
     }

@@ -211,7 +211,8 @@ deliverable.
 
 - Agents that route file changes through patchbay get a diff to accept or
   reject before anything touches disk — inline in the chat, with the full
-  change one click away in the editor's own diff view. The capability matrix
+  change one click away in the editor's own diff view. A change you reject is
+  reported to the agent as rejected, never as done. The capability matrix
   shows which agents deliver this brokered tier row by row; for agents that
   write on their own, the matrix's honest not-declared cells and live terminal
   visibility carry the honesty in the current release.

@@ -310,7 +310,11 @@ declared row: the spec's "Clients MUST NOT call it" holds by construction;
 incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
 `terminal/create`, `elicitation/create`), and a `session/update` kind tag arriving (`usage_update` → `usage`).
 The same table serves both verdicts: a fact riding a successful call marks its
-rows used; the same fact riding a failed call marks them suspect. No call site
+rows used; the same fact riding a failed call marks them suspect. For an
+incoming client request, success means patchbay answered: a deliberate refusal
+(a rejected write or command, a missing file) is the path working and marks
+used, a fault marks nothing, and suspect is never raised — the failing side
+is patchbay, not the agent. No call site
 anywhere names a row; adding a `CapabilityRowId` forces a table entry (the
 Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
 carries every hit, called synchronously and never awaited so it can't block
@@ -783,7 +787,10 @@ The differentiator (the PRD's current-release scope), shipped complete:
   capability, so `fs/read_text_file` serves live unsaved buffers and
   `fs/write_text_file` lands as a native diff the user accepts or rejects before
   disk is touched. Permission rules (file-write scope) can auto-accept; the diff
-  remains visible either way.
+  remains visible either way. Every "no" on the client side — a rejected write
+  or command, a turn stopped under an open card, a missing file — is answered
+  from one place (`client-replies.ts`) with the code that says what happened;
+  a refusal still proves the capability used, since the path fired.
 - **Terminal**: orchestrator advertises `terminal`; commands run in a visible
   pseudoterminal, output streams live, gated by the same broker rules as everything
   else.

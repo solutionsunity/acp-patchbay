@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A file change you reject is now reported to the agent as rejected. Before,
+  the agent was told the write succeeded, carried on as if the file had
+  changed, and its picture of your workspace no longer matched the disk. A
+  rejected command gets the same honest reply instead of a generic internal
+  error, and a stopped turn with a card still open is reported as cancelled
+  rather than rejected. Reading a file that doesn't exist now tells the
+  agent "not found" for that path, so it no longer mistakes a missing file
+  for patchbay breaking. (#39)
 - Agents can now ask you questions with a form in the chat. ACP's
   elicitation reached the stable protocol, and patchbay declares its form
   mode: the question arrives as a card naming the agent, with one control

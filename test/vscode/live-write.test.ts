@@ -14,7 +14,7 @@ import * as vscode from "vscode";
 interface Internal {
   orchestrator: {
     agentView: {
-      current: { transcripts: Record<string, Array<{ id: string; kind: string }>> };
+      current: { transcripts: Record<string, Array<{ id: string; kind: string; text?: string }>> };
     };
     broker: { resolve(requestId: string, optionId: string): void };
     connectAgent(spec: {
@@ -98,6 +98,42 @@ suite("live-buffer write (W1)", () => {
       );
     } finally {
       await orchestrator.pool.stop("live-write-e2e");
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("a read of a missing file reaches the agent as -32002 for that path", async function () {
+    // VS Code's own FileSystemError, not Node's ENOENT — the vocabulary only
+    // the real extension host produces.
+    this.timeout(20000);
+    const { orchestrator } = await internal();
+    const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
+    const fakeAgentPath = join(extension.extensionUri.fsPath, "out-test", "fake-agent.mjs");
+    const cwd = await mkdtemp(join(tmpdir(), "patchbay-live-read-"));
+    const missing = join(cwd, "missing.txt");
+    try {
+      await orchestrator.connectAgent({
+        agentId: "live-read-e2e",
+        name: "Live Read Fake",
+        command: process.execPath,
+        args: [fakeAgentPath],
+        env: {
+          FAKE_AGENT_SCRIPT: JSON.stringify({
+            declare: { promptCapabilities: {} },
+            turn: [{ type: "readFile", path: missing }],
+          }),
+        },
+        cwd,
+      });
+      const sessionId = await orchestrator.sessionManager.createSession("live-read-e2e", "Live Read Fake", cwd);
+      await orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
+        .filter((b) => b.kind === "text")
+        .map((b) => b.text ?? "")
+        .join("");
+      assert.strictEqual(text, `read: failed (-32002 Resource not found: ${missing})`);
+    } finally {
+      await orchestrator.pool.stop("live-read-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

@@ -172,6 +172,12 @@ async function emitUpdate(
   await cx.notify(acp.methods.client.session.update, { sessionId, update });
 }
 
+/** A client request's error reply as the agent received it — code first,
+ * because the code is what tells "refused" from "not found" from "broke". */
+function replyError(err: unknown): string {
+  return err instanceof acp.RequestError ? `${err.code} ${err.message}` : (err as Error).message;
+}
+
 const defaultTurn: TurnStep[] = [
   { type: "chunk", text: "Hello from the fake agent. " },
   { type: "chunk", text: "This turn is scripted." },
@@ -276,7 +282,7 @@ async function runTurn(
           });
           result = "write: ok";
         } catch (err) {
-          result = `write: rejected (${(err as Error).message})`;
+          result = `write: rejected (${replyError(err)})`;
         }
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
@@ -285,13 +291,19 @@ async function runTurn(
         break;
       }
       case "readFile": {
-        const response = await cx.request(acp.methods.client.fs.readTextFile, {
-          sessionId,
-          path: step.path,
-        });
+        let result: string;
+        try {
+          const response = await cx.request(acp.methods.client.fs.readTextFile, {
+            sessionId,
+            path: step.path,
+          });
+          result = `read: ${response.content}`;
+        } catch (err) {
+          result = `read: failed (${replyError(err)})`;
+        }
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `read: ${response.content}` },
+          content: { type: "text", text: result },
         });
         break;
       }
@@ -317,7 +329,7 @@ async function runTurn(
           });
           result = `command: exit=${exit.exitCode} output=${out.output.trim()}`;
         } catch (err) {
-          result = `command: rejected (${(err as Error).message})`;
+          result = `command: rejected (${replyError(err)})`;
         }
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",

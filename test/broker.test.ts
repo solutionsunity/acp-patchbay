@@ -137,7 +137,7 @@ describe("PermissionBroker audit trail", () => {
       fileWriteScope: "workspace",
     });
     const result = await broker.gateCommand("s1", "npm run build");
-    expect(result.accepted).toBe(true);
+    expect(result).toBe("accepted");
     expect(refreshCount()).toBe(1);
     const tail = await audit.tail(10);
     expect(tail).toHaveLength(1);
@@ -151,7 +151,7 @@ describe("PermissionBroker audit trail", () => {
       fileWriteScope: "workspace",
     });
     const result = await broker.gateCommand("s1", "rm -rf /");
-    expect(result.accepted).toBe(false);
+    expect(result).toBe("rejected");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "auto-deny", command: "rm -rf /" });
   });
@@ -165,9 +165,20 @@ describe("PermissionBroker audit trail", () => {
     if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(requested.blockId, "allow_once");
     const result = await pending;
-    expect(result.accepted).toBe(true);
+    expect(result).toBe("accepted");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "user-allow", command: "curl example.com" });
+  });
+
+  it("a command the user rejects on its card settles rejected", async () => {
+    const { broker, events, audit } = harness();
+    const pending = broker.gateCommand("s1", "curl example.com");
+    const requested = events.find((e) => e.kind === "permissionRequested");
+    if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
+    broker.resolve(requested.blockId, "reject_once");
+    await expect(pending).resolves.toBe("rejected");
+    const tail = await audit.tail(10);
+    expect(tail[0]).toMatchObject({ kind: "user-reject", command: "curl example.com" });
   });
 
   it("cancelPending resolves every pending request of the session as cancelled (spec § Cancellation)", async () => {
@@ -183,7 +194,8 @@ describe("PermissionBroker audit trail", () => {
 
     broker.cancelPending("s1");
     await expect(agentReq).resolves.toEqual({ cancelled: true });
-    await expect(commandGate).resolves.toEqual({ accepted: false });
+    // the user never decided — cancelled, never passed off as a reject
+    await expect(commandGate).resolves.toBe("cancelled");
 
     // cards resolved visibly, honestly labeled — never left looking open
     const resolved = events.filter((e) => e.kind === "permissionResolved");
@@ -197,7 +209,7 @@ describe("PermissionBroker audit trail", () => {
     const s2Req = requested.find((e) => e.kind === "permissionRequested" && e.sessionId === "s2");
     if (s2Req?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(s2Req.blockId, "allow_once");
-    await expect(otherSession).resolves.toEqual({ accepted: true });
+    await expect(otherSession).resolves.toBe("accepted");
   });
 
   it("allow_always persists a new rule so the next call auto-allows", async () => {
@@ -212,7 +224,7 @@ describe("PermissionBroker audit trail", () => {
     // second call for the same command now auto-allows, no card
     const events2Before = events.length;
     const second = await broker.gateCommand("s1", "npm run lint");
-    expect(second.accepted).toBe(true);
+    expect(second).toBe("accepted");
     expect(events.slice(events2Before).some((e) => e.kind === "permissionRequested")).toBe(false);
   });
 });
@@ -297,7 +309,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     const proposed = await proposedEvent(events);
     expect(broker.proposedDiff(proposed.blockId)).toEqual({ path, oldText: "", newText: "new content\n" });
     broker.resolve(proposed.blockId, "accept");
-    await expect(pending).resolves.toEqual({ accepted: true });
+    await expect(pending).resolves.toBe("accepted");
     expect(broker.proposedDiff(proposed.blockId)).toBeNull();
   });
 
@@ -306,7 +318,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     const pending = broker.gateFileWrite("s1", join(dir, "outside.txt"), "x");
     const proposed = await proposedEvent(events);
     broker.cancelPending("s1");
-    await pending;
+    await expect(pending).resolves.toBe("cancelled");
     expect(broker.proposedDiff(proposed.blockId)).toBeNull();
     expect(broker.proposedDiff("never-existed")).toBeNull();
   });

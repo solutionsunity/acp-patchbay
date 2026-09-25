@@ -1,13 +1,14 @@
-// P6 gate: agent edit arrives as a diff, reject leaves disk untouched;
-// terminal commands are gated the same way. Wires the pool's fs/terminal
-// hooks the way Orchestrator does, minus vscode (live-buffer reads and the
-// visible-pty wrapper are vscode-only and covered by manual smoke instead).
+// Patchbay's gate: an agent edit arrives as a diff, a reject leaves disk
+// untouched and reaches the agent as an error; terminal commands are gated
+// the same way. Runs the extension's real fs/terminal handlers (ClientHost),
+// minus vscode (the live-buffer read/write is covered by the vscode suite).
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import { applyFileWrite, PermissionBroker } from "../src/orchestrator/broker";
+import { ClientHost, clientRequestHooks, type ClientHostDeps } from "../src/orchestrator/client-host";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionManager } from "../src/orchestrator/session-manager";
 import { tailBytes } from "../src/orchestrator/terminal-runner";
@@ -21,7 +22,6 @@ import {
   type PermissionOptionView,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
-import { stubFsTerminalHooks } from "./support/stub-hooks";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -51,13 +51,13 @@ function optionViewsFromAcp(
   return options.map((o) => ({ optionId: o.optionId, label: o.name, kind: o.kind as PermissionOptionView["kind"] }));
 }
 
-/** Mirrors orchestrator.ts's fs/terminal wiring without vscode. */
-function harness() {
+/** orchestrator.ts's fs/terminal wiring without vscode. `live` swaps the
+ * live-buffer read/write — plain disk by default — to inject a fault. */
+function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> = {}) {
   const rules = new PermissionRulesStore(new MemoryKV());
   const audit = new DecisionAuditStore(dir);
   const events: AgentViewEvent[] = [];
-  const terminals = new Map<string, ReturnType<PermissionBroker["runner"]["create"]>>();
-  let terminalCounter = 0;
+  const evidence: string[] = [];
 
   const broker = new PermissionBroker(
     rules,
@@ -71,43 +71,8 @@ function harness() {
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    ...stubFsTerminalHooks(),
-    onReadTextFile: async (_agentId, params) => ({ content: await readFile(params.path, "utf8") }),
-    onWriteTextFile: async (_agentId, params) => {
-      const { accepted } = await broker.gateFileWrite(params.sessionId, params.path, params.content);
-      if (accepted) await applyFileWrite(params.path, params.content);
-      return {};
-    },
-    onCreateTerminal: async (_agentId, params) => {
-      const command = [params.command, ...(params.args ?? [])].join(" ");
-      const { accepted } = await broker.gateCommand(params.sessionId, command);
-      if (!accepted) throw new Error("command rejected by permission rules");
-      const handle = broker.runner.create({
-        command: params.command,
-        args: params.args ?? [],
-        env: {},
-        cwd: params.cwd ?? null,
-        outputByteLimit: params.outputByteLimit ?? null,
-      });
-      const terminalId = `term-${++terminalCounter}`;
-      terminals.set(terminalId, handle);
-      return { terminalId };
-    },
-    onTerminalOutput: async (_agentId, params) => {
-      const handle = terminals.get(params.terminalId)!;
-      const { output, truncated } = handle.currentOutput();
-      const exit = handle.exitStatus();
-      return { output, truncated, exitStatus: exit ? { exitCode: exit.exitCode, signal: exit.signal } : null };
-    },
-    onWaitForTerminalExit: async (_agentId, params) => terminals.get(params.terminalId)!.waitForExit(),
-    onKillTerminal: async (_agentId, params) => {
-      terminals.get(params.terminalId)?.kill();
-      return {};
-    },
-    onReleaseTerminal: async (_agentId, params) => {
-      terminals.delete(params.terminalId);
-      return {};
-    },
+    onCapabilityEvidence: (_agentId, row, ev) => evidence.push(`${row}:${ev}`),
+    ...clientRequestHooks(() => host),
     onPermissionRequest: async (_agentId, params) => {
       const subject =
         params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
@@ -129,6 +94,17 @@ function harness() {
     { emit: (...evs) => events.push(...evs) },
     () => workspaceRoot,
   );
+  // The extension's own handlers; only the live-buffer read/write differ
+  // (plain disk here — there is no editor to hold a buffer).
+  const host = new ClientHost({
+    broker,
+    sessionManager,
+    readLive: (path) => readFile(path, "utf8"),
+    writeLive: applyFileWrite,
+    ...live,
+    emit: (ev) => events.push(ev),
+    trackProcess: () => {},
+  });
 
   return {
     pool,
@@ -136,6 +112,7 @@ function harness() {
     rules,
     sessionManager,
     events,
+    evidence,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
   };
 }
@@ -186,14 +163,79 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     h.broker.resolve(diffBlock.id, "reject");
     await turn;
 
-    expect(textOf(sessionId, h.events)).toContain("write: ok"); // fs/write_text_file itself doesn't error on reject
-    await expect(readFile(outside, "utf8")).rejects.toThrow(); // but disk was never touched
+    // the agent hears the rejection — never a success for a write that didn't land
+    expect(textOf(sessionId, h.events)).toContain(`write: rejected (-32803 The user rejected the write to ${outside})`);
+    await expect(readFile(outside, "utf8")).rejects.toThrow(); // and disk was never touched
+    // a rejection is the gate working — the brokered path fired
+    expect(h.evidence).toContain("fs.writeTextFile:used");
     const resolvedDiff = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
     expect(resolvedDiff.kind === "diff" && resolvedDiff.resolution).toEqual({
       accepted: false,
       auto: false,
     });
     await h.pool.stop("w2");
+  });
+
+  it("a write whose turn stops before the user decides is answered cancelled, not rejected", async () => {
+    const h = harness();
+    const outside = join(dir, "outside.txt");
+    await h.pool.connect(spec({ turn: [{ type: "writeFile", path: outside, content: "x\n" }] }, "w3"));
+    const sessionId = await h.sessionManager.createSession("w3", "Fake Agent", workspaceRoot);
+
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
+    h.broker.cancelPending(sessionId);
+    await turn;
+
+    expect(textOf(sessionId, h.events)).toContain(
+      `write: rejected (-32800 Request cancelled: the turn was stopped before the user decided on the write to ${outside})`,
+    );
+    await expect(readFile(outside, "utf8")).rejects.toThrow();
+    await h.pool.stop("w3");
+  });
+
+  it("a read of a missing file is -32002 for that path, never an internal error", async () => {
+    const h = harness();
+    const missing = join(workspaceRoot, "missing.txt");
+    await h.pool.connect(spec({ turn: [{ type: "readFile", path: missing }] }, "r2"));
+    const sessionId = await h.sessionManager.createSession("r2", "Fake Agent", workspaceRoot);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+    expect(textOf(sessionId, h.events)).toContain(`read: failed (-32002 Resource not found: ${missing})`);
+    // fs answered truthfully — the path fired
+    expect(h.evidence).toContain("fs.readTextFile:used");
+    await h.pool.stop("r2");
+  });
+
+  // A fault is patchbay failing, not a refusal: it stays -32603 (the SDK's
+  // internal error) and proves nothing. Injected rather than provoked through
+  // a real fs condition — which conditions count as refusals is decided in
+  // one place, and a test here must not decide it by accident.
+  it("an accepted write that fails to land is a fault: internal error, nothing proven", async () => {
+    const h = harness({ writeLive: () => Promise.reject(new Error("apply failed")) });
+    const target = join(workspaceRoot, "c.txt");
+    await h.pool.connect(spec({ turn: [{ type: "writeFile", path: target, content: "x\n" }] }, "w4"));
+    const sessionId = await h.sessionManager.createSession("w4", "Fake Agent", workspaceRoot);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+
+    expect(textOf(sessionId, h.events)).toContain("write: rejected (-32603 Internal error)");
+    expect(h.evidence).not.toContain("fs.writeTextFile:used");
+    expect(h.evidence).not.toContain("fs.writeTextFile:suspect");
+    // no ± badge for a write that never landed
+    expect(h.events.some((e) => e.kind === "fileDiffStatChanged")).toBe(false);
+    await h.pool.stop("w4");
+  });
+
+  it("a read that fails for any reason but a missing file is a fault: internal error, nothing proven", async () => {
+    const h = harness({ readLive: () => Promise.reject(Object.assign(new Error("device busy"), { code: "EBUSY" })) });
+    const file = join(workspaceRoot, "d.txt");
+    await h.pool.connect(spec({ turn: [{ type: "readFile", path: file }] }, "r3"));
+    const sessionId = await h.sessionManager.createSession("r3", "Fake Agent", workspaceRoot);
+    await h.sessionManager.sendPrompt(sessionId, "go");
+
+    expect(textOf(sessionId, h.events)).toContain("read: failed (-32603 Internal error)");
+    expect(h.evidence).not.toContain("fs.readTextFile:used");
+    expect(h.evidence).not.toContain("fs.readTextFile:suspect");
+    await h.pool.stop("r3");
   });
 
   it("reads see current disk content", async () => {
@@ -237,7 +279,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     );
     const sessionId = await h.sessionManager.createSession("c2", "Fake Agent", workspaceRoot);
     await h.sessionManager.sendPrompt(sessionId, "go");
-    expect(textOf(sessionId, h.events).some((t) => t.startsWith("command: rejected"))).toBe(true);
+    expect(textOf(sessionId, h.events)).toContain(
+      `command: rejected (-32803 The user rejected the command \`${process.execPath} -e 1\`)`,
+    );
+    expect(h.evidence).toContain("terminal:used");
     await h.pool.stop("c2");
   });
 
