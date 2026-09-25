@@ -2084,6 +2084,24 @@ describe("SessionManager", () => {
 
     await h.pool.stop("sm14");
   });
+
+  it("open work counts conversations a stop would disconnect — never-prompted ones cost nothing (issue #47)", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 300 }, "w47"));
+    const fresh = await h.sessionManager.createSession("w47", "Fake Agent", cwd);
+    expect(h.sessionManager.openWork("w47")).toEqual({ conversations: 0, turns: 0 });
+
+    const turn = h.sessionManager.sendPrompt(fresh, "go");
+    await vi.waitFor(() => expect(h.sessionManager.openWork("w47")).toEqual({ conversations: 1, turns: 1 }));
+    await turn;
+    expect(h.sessionManager.openWork("w47")).toEqual({ conversations: 1, turns: 0 });
+
+    await h.sessionManager.createSession("w47", "Fake Agent", cwd);
+    expect(h.sessionManager.openWork("w47")).toEqual({ conversations: 1, turns: 0 });
+    expect(h.sessionManager.openWork("other-agent")).toEqual({ conversations: 0, turns: 0 });
+
+    await h.pool.stop("w47");
+  });
 });
 
 // ── session history: the agent's own session/list is the only list there

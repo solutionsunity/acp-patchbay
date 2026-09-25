@@ -2616,12 +2616,34 @@ export class Orchestrator {
    * reconnects — the same path a first Add takes, so the version-keyed
    * used-capability cache and the launch phase's download confirmation
    * both apply exactly as they would for a brand-new agent. Never silent: a
-   * still-uncached binary version re-gates on the confirmation. */
+   * still-uncached binary version re-gates on the confirmation, and a stop
+   * that would disconnect open conversations asks first — here, not at any one
+   * button, so every surface that offers Upgrade gets the same question. */
   private async upgradeAgent(agentId: string): Promise<void> {
     const config = this.agentConfigs.get(agentId);
     if (config === undefined || config.registrySource === null) return;
-    if (this.pool.get(agentId)?.status === "running") await this.pool.stop(agentId);
+    if (this.pool.get(agentId)?.status === "running") {
+      if (!(await this.confirmUpgrade(config.name, this.sessionManager.openWork(agentId)))) return;
+      await this.pool.stop(agentId);
+    }
     await this.connectFromSource({ registryId: config.registrySource.registryId });
+  }
+
+  /** Modal, and only when the stop costs something: conversations attached
+   * to the connection are disconnected, and a running turn is cut off. */
+  private async confirmUpgrade(
+    agentName: string,
+    work: { conversations: number; turns: number },
+  ): Promise<boolean> {
+    if (work.conversations === 0) return true;
+    const plural = work.conversations === 1 ? "" : "s";
+    const turns = work.turns === 0 ? "" : ` — ${work.turns} still running and will be cut off`;
+    const choice = await vscode.window.showWarningMessage(
+      `Upgrade ${agentName}? It restarts the agent, disconnecting ${work.conversations} open conversation${plural}${turns}.`,
+      { modal: true },
+      "Upgrade",
+    );
+    return choice === "Upgrade";
   }
 
   /** One intent, one click: connect if needed, then create and

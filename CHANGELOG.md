@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Upgrading an agent now asks first when it would interrupt your work.
+  Upgrade restarts the agent, and it used to do so right away, cutting off
+  every conversation on that agent — a running turn included. It now says
+  how many conversations the restart disconnects and how many are mid-turn,
+  and does nothing unless you confirm. An agent with no conversation yet
+  upgrades straight away, as before. (#47)
 - Everything in the chat that expands — a thought, a turn's summary line,
   an embedded file, an injected message, a tool call and a run of them —
   now opens the same way and can be reached with the keyboard; the turn

@@ -555,6 +555,21 @@ export class SessionManager {
     return undefined;
   }
 
+  /** What stopping this connection would disconnect: the conversations on
+   * it, and the turns among them still running (those are cut off). A
+   * never-prompted session doesn't count — it has nothing to lose and is
+   * minted again from its row on next use. */
+  openWork(poolKey: string): { conversations: number; turns: number } {
+    let conversations = 0;
+    let turns = 0;
+    for (const [sessionId, session] of this.sessions) {
+      if (session.poolKey !== poolKey) continue;
+      if (session.inFlight) turns++;
+      if (session.inFlight || this.hasTurns(sessionId)) conversations++;
+    }
+    return { conversations, turns };
+  }
+
   /** The "new session" fact, read from its one home. An id the manager does
    * not know is never new — nothing to re-mint from. */
   private hasTurns(sessionId: string): boolean {
