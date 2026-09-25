@@ -10,9 +10,9 @@
 import type {
   AgentConfigView,
   AgentSummary,
+  AgentUpdate,
   AuthMethodView,
   CapabilityMatrix,
-  RegistryAgentView,
 } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 
@@ -23,7 +23,8 @@ export interface AgentCardInputs {
   config: AgentConfigView | undefined;
   matrix: CapabilityMatrix | undefined;
   authMethods: readonly AuthMethodView[];
-  registryAgents: readonly RegistryAgentView[];
+  /** The orchestrator's update fact for this agent, if any. */
+  update: AgentUpdate | undefined;
   /** The shared in-progress signal (verifyingAgents[id]) — a verify or
    * logout round-trip is in flight. */
   verifying: boolean;
@@ -38,8 +39,9 @@ export interface AgentCardControls {
   verify: { show: boolean; disabled: boolean; busy: boolean };
   connect: { show: boolean };
   /** Non-null when the registry is ahead of the pinned version — drives
-   * both the badge and the Upgrade button. Never auto-applied. */
-  upgrade: { from: string; to: string } | null;
+   * the upgrade chip, which is both the indicator and the action. Never
+   * auto-applied. */
+  upgrade: AgentUpdate | null;
   edit: { show: boolean };
   remove: { show: boolean };
 }
@@ -56,27 +58,8 @@ export function runnableLoginMethods(methods: readonly AuthMethodView[]): readon
   );
 }
 
-/** Registry version vs. what this config is pinned to — null when there's
- * nothing to compare (custom command, or already current). Linked through
- * the config's own registrySource.registryId — never the config id, which
- * may predate the registry naming. */
-export function updateAvailable(
-  registryAgents: readonly RegistryAgentView[],
-  config: AgentConfigView | undefined,
-): { from: string; to: string } | null {
-  if (config?.registrySource == null) return null;
-  const latest = registryAgents.find((r) => r.id === config.registrySource!.registryId)?.version;
-  if (latest == null || latest === config.registrySource.pinnedVersion) return null;
-  // The wire's own fact outranks the pinned ask: a connection that already
-  // reported the registry's latest (a launcher serving a newer build than
-  // the pin) has no upgrade to offer — badging it would let the pin lie
-  // about reality.
-  if (config.lastSeenVersion === latest) return null;
-  return { from: config.registrySource.pinnedVersion, to: latest };
-}
-
 export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
-  const { agent, config, matrix, authMethods, registryAgents, verifying } = inputs;
+  const { agent, config, matrix, authMethods, update, verifying } = inputs;
   // No summary at all = the orchestrator never saw this config — the honest
   // unknown is "untested", never a claimed "stopped".
   const status = agent?.status ?? "untested";
@@ -119,7 +102,7 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     stop: { show: running },
     verify: { show: running && needsVerify, disabled: verifying, busy: verifying },
     connect: { show: !running && config !== undefined },
-    upgrade: updateAvailable(registryAgents, config),
+    upgrade: update ?? null,
     edit: { show: true },
     remove: { show: config !== undefined },
   };

@@ -2,14 +2,17 @@
 // Copyright 2026 Solutions Unity
 
 // Top bar: current-session agent indicator, the other sessions' attention
-// read-out (passed in as children), errors chip, session/new buttons. The agent chip is a read-out, not a picker — agent choice
-// happens where it matters, in the new-chat flow; Settings lives in the
+// read-out (passed in as children), errors chip, session/new buttons. The
+// agent chip is a read-out, not a picker — agent choice happens where it
+// matters, in the new-chat flow; its one control is the upgrade chip,
+// present only while the agent has a newer version. Settings lives in the
 // native view title bar (package.json view/title), not here. The usage
 // gauge lives in the composer's stats strip (composer/stats.tsx).
 import type { ReactNode } from "react";
-import type { AgentStatus, AgentSummary } from "../../shared/protocol";
+import type { AgentStatus, AgentSummary, AgentUpdate } from "../../shared/protocol";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
+import { UpgradeChip } from "../shared/upgrade-chip";
 import { Button } from "@/components/ui/button";
 
 export function Dot({ status }: { status: AgentStatus | "none" }) {
@@ -18,6 +21,8 @@ export function Dot({ status }: { status: AgentStatus | "none" }) {
 
 export function Header(props: {
   agent: AgentSummary | null;
+  update: AgentUpdate | null;
+  onUpgrade(): void;
   onSessions(): void;
   onNew(): void;
   children?: ReactNode;
@@ -28,6 +33,9 @@ export function Header(props: {
         <div className="agent-chip" title="Current session's agent">
           <Dot status={props.agent.status} />
           <span className="name">{props.agent.name}</span>
+          {props.update !== null && (
+            <UpgradeChip agentName={props.agent.name} update={props.update} onUpgrade={props.onUpgrade} />
+          )}
         </div>
       )}
       {/* two spacers center the read-out in the free space — where the eye

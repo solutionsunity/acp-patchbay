@@ -20,6 +20,7 @@ import {
   reduceSettings,
   type Action,
   type AgentConfigView,
+  type AgentUpdate,
   type AgentViewEvent,
   type AuthMethodView,
   type AgentViewState,
@@ -34,6 +35,7 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { openAsks, type OpenAsk } from "../shared/attention";
+import { agentUpdates } from "./agent-updates";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
@@ -145,6 +147,10 @@ export class Orchestrator {
   /** The current ACP registry snapshot (agents + icons) — replaced whenever
    * the registry refreshes; every agent lookup elsewhere reads this. */
   private registryData: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
+  /** The update fact as last published, and the updates already announced
+   * this window ("agentId@version") — each newer version is told once. */
+  private updates: Readonly<Record<string, AgentUpdate>> = {};
+  private readonly announcedUpdates = new Set<string>();
   readonly pool: AgentPool;
   readonly sessionManager: SessionManager;
   readonly capabilityTracker: CapabilityTracker;
@@ -348,7 +354,12 @@ export class Orchestrator {
 
     this.acpRegistry = new AcpRegistryStore(
       join(context.globalStorageUri.fsPath, "registry"),
-      (data) => this.applyRegistryData(data),
+      // A fetch that landed is the registry's fresh word — the moment a
+      // newer version becomes news (the cached copy at start is not).
+      (data) => {
+        this.applyRegistryData(data);
+        void this.announceUpdates();
+      },
     );
 
     // Wire log: sink is lazy (no empty Output channel for a feature never
@@ -1884,6 +1895,7 @@ export class Orchestrator {
       })),
     );
     this.settings.emit({ kind: "agentConfigsChanged", configs });
+    this.publishUpdates();
   }
 
   /** `agentInfo.version` is reality ("reality is the source of
@@ -1909,6 +1921,53 @@ export class Orchestrator {
     } as const;
     this.agentView.emit(event);
     this.settings.emit(event);
+    this.publishUpdates();
+  }
+
+  /** Recomputes the update fact from its two inputs — the registry and the
+   * configs (pin + last seen version) — and publishes it to both channels
+   * when it changed. Called wherever either input moves. */
+  private publishUpdates(): void {
+    const updates = agentUpdates(this.registryData.agents, this.agentConfigs.list());
+    if (JSON.stringify(updates) === JSON.stringify(this.updates)) return;
+    this.updates = updates;
+    const event = { kind: "agentUpdatesChanged", updates } as const;
+    this.agentView.emit(event);
+    this.settings.emit(event);
+  }
+
+  /** Tells the user about each newer agent version once per window, with
+   * the upgrade one click away: a single update upgrades from the
+   * notification; several open a pick of which to upgrade, all checked.
+   * Every upgrade takes the one Upgrade path, its confirmation included —
+   * and only while the update is still the fact: a notification answered
+   * after the agent was upgraded elsewhere restarts nothing. */
+  private async announceUpdates(): Promise<void> {
+    const fresh = Object.entries(this.updates).filter(([id, u]) => !this.announcedUpdates.has(`${id}@${u.to}`));
+    if (fresh.length === 0) return;
+    for (const [id, u] of fresh) this.announcedUpdates.add(`${id}@${u.to}`);
+    const nameOf = (id: string) => this.agentConfigs.get(id)?.name ?? id;
+    if (fresh.length === 1) {
+      const [id, u] = fresh[0]!;
+      const picked = await vscode.window.showInformationMessage(
+        `${nameOf(id)} ${u.to} is available — you run ${u.from}.`,
+        "Upgrade",
+      );
+      if (picked === "Upgrade" && this.updates[id] !== undefined) await this.upgradeAgent(id);
+      return;
+    }
+    const picked = await vscode.window.showInformationMessage(
+      `Updates are available for ${fresh.length} agents.`,
+      "Upgrade…",
+    );
+    if (picked !== "Upgrade…") return;
+    const chosen = await vscode.window.showQuickPick(
+      fresh.map(([id, u]) => ({ label: nameOf(id), description: `${u.from} → ${u.to}`, picked: true, id })),
+      { canPickMany: true, placeHolder: "Upgrade which agents?" },
+    );
+    for (const item of chosen ?? []) {
+      if (this.updates[item.id] !== undefined) await this.upgradeAgent(item.id);
+    }
   }
 
   /** Connect an agent from config or registry; upserts it into both channel

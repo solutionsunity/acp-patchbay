@@ -93,7 +93,8 @@ body {
   padding: 8px 10px 4px;
 }
 
-/* a read-out of the active session's agent — deliberately not interactive */
+/* a read-out of the active session's agent — not a picker; its only control
+ * is the upgrade chip inside it, shown while a newer version exists */
 .agent-chip {
   display: flex;
   align-items: center;

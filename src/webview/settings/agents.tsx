@@ -9,10 +9,10 @@ import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, 
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
+import { UpgradeChip } from "../shared/upgrade-chip";
 import { ConfirmButton, Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -648,7 +648,7 @@ export function AgentsSection(props: {
             config,
             matrix,
             authMethods: state.authMethods[id] ?? [],
-            registryAgents: state.registryAgents,
+            update: state.updates[id],
             verifying: state.verifyingAgents[id] === true,
           });
           const saveConfig = (patch: Partial<AgentConfigView>) =>
@@ -689,9 +689,11 @@ export function AgentsSection(props: {
                     <AgentIcon icon={registry?.icon} />
                     <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
                     {controls.upgrade !== null && (
-                      <Badge className="border-warn/40 text-warn" title={`registry has v${controls.upgrade.to}, pinned to v${controls.upgrade.from}`}>
-                        update available
-                      </Badge>
+                      <UpgradeChip
+                        agentName={a?.name ?? effectiveConfig.name}
+                        update={controls.upgrade}
+                        onUpgrade={() => props.onUpgrade(id)}
+                      />
                     )}
                     <span className="flex-1" />
                     {controls.login.show && (
@@ -727,11 +729,6 @@ export function AgentsSection(props: {
                     {controls.connect.show && (
                       <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
                         <Icon name="plug" />
-                      </Button>
-                    )}
-                    {controls.upgrade !== null && (
-                      <Button variant="outline" size="icon" className="size-8" title={`Upgrade to v${controls.upgrade.to}`} aria-label={`Upgrade to v${controls.upgrade.to}`} onClick={() => props.onUpgrade(id)}>
-                        <Icon name="arrow-circle-up" />
                       </Button>
                     )}
                     {controls.edit.show && (

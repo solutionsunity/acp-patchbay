@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A newer agent version now reaches you without a visit to Settings. When
+  patchbay learns of one, a notification says so with Upgrade one click
+  away — for several agents at once, one notification lets you pick which
+  to upgrade. While a session with that agent is open, an amber chip with
+  the new version sits on the agent's name above the chat; click it to
+  upgrade. The agent's Settings card shows the same chip where the "update
+  available" badge and a separate, easy-to-miss Upgrade button used to be.
+  Nothing upgrades on its own, and each upgrade still asks first when it
+  would disconnect open conversations. (#37)
 - A session waiting on you now says so wherever you are looking. A question
   from an agent used to wait silently until you happened to open the
   Agent View, and a session waiting in the background looked like any

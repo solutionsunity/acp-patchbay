@@ -98,8 +98,8 @@ Two webviews and one near-empty native settings page:
    Never credentials: `settings.json` syncs.
 
 Native surfaces — the status bar item (active session, connection health, usage),
-the waiting-on-you notifications, the Agent View's badge, and command palette
-entries — are direct orchestrator consumers: same state, no webview in the path.
+the waiting-on-you and agent-update notifications, the Agent View's badge, and
+command palette entries — are direct orchestrator consumers: same state, no webview in the path.
 
 > Agents, sessions, and chat are one surface (the Features doc). Settings remains
 > its own webview because it is genuinely a different activity, not because panels
@@ -268,6 +268,17 @@ flowchart TD
   managed runtime changes which interpreter runs, never where the agent
   keeps sessions, auth, or config, so terminal and patchbay copies stay
   one history.
+- **Agent updates** — one orchestrator fact (agent-updates.ts): a registry
+  config whose pinned version trails the registry's, unless the running
+  agent already reported the registry's version (the wire outranks the
+  pin). Recomputed wherever an input moves — a registry read, any config
+  write — and published whole to both channels; the Settings card, the
+  Agent View's agent chip and the notice all read it, none derives it. A
+  registry *fetch* landing (activation, the 12 h refresh, a manual refresh
+  — never the cached copy read at start) announces each newer version once
+  per window. Upgrade is always the user's click, through the one upgrade
+  path: it re-resolves the registry version like a first add, and asks
+  before a stop that would disconnect open conversations.
 
 ## Agent capability matrix
 

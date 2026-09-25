@@ -107,7 +107,13 @@ export function App({
   return (
     <div className="sidebar">
       {!pinned && (
-        <Header agent={activeAgent} onSessions={openSessions} onNew={newChat}>
+        <Header
+          agent={activeAgent}
+          update={activeAgent !== null ? (state.updates[activeAgent.id] ?? null) : null}
+          onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", agentId: activeAgent.id })}
+          onSessions={openSessions}
+          onNew={newChat}
+        >
           <AttentionIndicators
             elsewhere={elsewhere(state)}
             agents={state.agents}

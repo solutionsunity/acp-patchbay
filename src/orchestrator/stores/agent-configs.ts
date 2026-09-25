@@ -26,8 +26,8 @@ export const agentDefaultsSchema = z.object({
 });
 
 /** Present only when this config was created from the official ACP agent
- * registry — the pinned version drives the "update available" badge and is
- * what gets re-resolved on Upgrade. Absent for custom commands. */
+ * registry — the pinned version drives the update fact (the upgrade chip)
+ * and is what gets re-resolved on Upgrade. Absent for custom commands. */
 export const agentRegistrySourceSchema = z.object({
   registryId: z.string().min(1),
   distributionKind: z.enum(["npx", "uvx", "binary"]),

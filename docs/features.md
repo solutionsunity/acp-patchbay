@@ -26,6 +26,11 @@ deliverable.
   case; a binary agent's download is a phase of its connect, shown on its card
   and confirmed by one modal — never a silent fetch-and-run. The view's picker
   and empty state route to Settings.
+- A newer version of a registry agent reaches the user without a visit to
+  Settings: a notification when patchbay learns of it, with Upgrade one click
+  away (several at once: pick which), and an upgrade chip on the agent's name
+  above the chat while one of its sessions is the one open. Nothing upgrades on its
+  own, and an upgrade that would interrupt open conversations asks first.
 - User can see each agent's live status: untested (configured, never
   connected), running, stopped, crashed, reconnecting — every configured
   agent is visible from the first frame, not only once connected.

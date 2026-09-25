@@ -9,7 +9,6 @@ import type {
   AuthMethodView,
   CapabilityMatrix,
   CapabilityRowId,
-  RegistryAgentView,
 } from "../src/shared/protocol";
 
 const ROWS: readonly CapabilityRowId[] = [
@@ -43,7 +42,7 @@ function inputs(over: Partial<AgentCardInputs> = {}): AgentCardInputs {
     config,
     matrix: matrixOf(),
     authMethods: [],
-    registryAgents: [],
+    update: undefined,
     verifying: false,
     ...over,
   };
@@ -165,11 +164,8 @@ describe("agentCardControls", () => {
     expect(c.edit.show).toBe(true);
   });
 
-  it("upgrade: registry ahead of pinned version, linked via registrySource", () => {
-    const pinned = { id: "a1", registrySource: { registryId: "reg-a", distributionKind: "npx", pinnedVersion: "1.0.0" } } as unknown as AgentConfigView;
-    const registry = [{ id: "reg-a", version: "1.2.0" }] as unknown as readonly RegistryAgentView[];
-    expect(agentCardControls(inputs({ config: pinned, registryAgents: registry })).upgrade).toEqual({ from: "1.0.0", to: "1.2.0" });
-    expect(agentCardControls(inputs({ config: pinned, registryAgents: [{ id: "reg-a", version: "1.0.0" }] as unknown as readonly RegistryAgentView[] })).upgrade).toBeNull();
+  it("upgrade: shows the orchestrator's update fact, and nothing without one", () => {
+    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" } })).upgrade).toEqual({ from: "1.0.0", to: "1.2.0" });
     expect(agentCardControls(inputs()).upgrade).toBeNull();
   });
 

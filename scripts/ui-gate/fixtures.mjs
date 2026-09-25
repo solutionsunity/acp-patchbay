@@ -156,6 +156,9 @@ export function agentViewState({ live }) {
     activeSessionId: "s1",
     chatConnect: null,
     registryAgents: [],
+    // the active session's agent has a newer version — the agent chip's
+    // upgrade chip (#37)
+    updates: { fake: { from: "1.0.0", to: "1.2.0" } },
     transcripts: {
       s1: chatTranscript,
       s3: [{ kind: "elicitation", id: "q-s3", message: "Which database?", mode: "form", fields: [], resolution: null }],
@@ -207,6 +210,8 @@ export function settingsState() {
       { id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false },
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false },
     ],
+    // the card's upgrade chip (#37)
+    updates: { claude: { from: "0.9.0", to: "1.0.0" } },
     registryAgents: [
       { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null },
       { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null },

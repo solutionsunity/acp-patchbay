@@ -38,7 +38,7 @@ never split panels.
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Agent chip | ● dot + name | live status of the session's agent — a read-out, not a picker |
+| Agent chip | ● dot + name (+ ⬆ version) | live status of the session's agent — a read-out, not a picker. While the agent has a newer registry version, an amber `⬆ 1.2.0` chip inside it upgrades on click (asking first when open conversations would be disconnected) |
 | Other sessions | ● n per session mark, centered in the header | appears only when a session other than the ones on screen is waiting on you, finished unseen, or running; one trigger — click → a list grouped waiting / finished / running (a waiting row names what it is blocked on); a row opens that session. Always the list, even for one: the counts move, and the list names the session before the user leaves the one they are reading |
 | Sessions | 🕘 | click → **Sessions drawer** |
 | New chat | ＋ | one intent, one click: zero agents → Settings; exactly one → starts it directly, connecting in-pane if needed; several → Agents drawer as the picker |
@@ -172,7 +172,9 @@ to pick, ✕ to clear) or a custom command line. Buttons in order: `Add` (submit
 whichever mode is active) · the mode toggle itself (`Add custom…` in registry
 mode, `Add from list` in custom mode) · `Verify after add` checkbox.
 
-Per-agent card: launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
+Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
+registry has a newer version than the pin — the same chip as the Agent View's,
+indicator and action in one · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
 · process policy select — `auto` states its reason (`shared, concurrency used ✓`
 vs `isolated, not yet used`) · default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config

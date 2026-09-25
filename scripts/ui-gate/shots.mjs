@@ -293,6 +293,10 @@ for (const theme of Object.keys(THEMES)) {
     `[${theme}] the header counts the other sessions by mark`,
     (await attention.innerText()).replace(/\s+/g, " ").trim() === "1 1 1",
   );
+  check(
+    `[${theme}] the agent chip offers the upgrade to the newer version`,
+    (await p.locator('.agent-chip button[aria-label="Upgrade Claude Code to 1.2.0"]').count()) === 1,
+  );
   await p.locator(".hdr").screenshot({ path: `${OUT}/header-attention-${theme}.png` });
   await attention.click();
   await p.waitForSelector('[role="group"][aria-label="Waiting on you"]');
@@ -420,6 +424,10 @@ for (const theme of Object.keys(THEMES)) {
   p = await page(browser, theme, { width: 900, height: 500 });
   await renderView(p, "settings", settingsState());
   await p.waitForSelector(".section h1");
+  check(
+    `[${theme}] a card with an update shows its upgrade chip — the indicator is the action`,
+    (await p.locator('button[aria-label="Upgrade Claude Code to 1.0.0"]').count()) === 1,
+  );
   await p.screenshot({ path: `${OUT}/settings-${theme}.png` });
   const [btnColor, bodyColor] = await p.evaluate(() => {
     // Row actions are icon-only buttons (aria-label carries the semantics).

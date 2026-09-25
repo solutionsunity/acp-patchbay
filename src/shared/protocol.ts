@@ -355,8 +355,9 @@ export interface AgentConfigView {
    * Always the folded shape here; the store's legacy {mode, options} split
    * is folded at the orchestrator boundary (knobs.ts foldSeed). */
   defaults: KnobSeed;
-  /** Present only for agents added from the official ACP registry — drives
-   * the "update available" comparison against the registry's live version. */
+  /** Present only for agents added from the official ACP registry — links
+   * the card to its registry row. The update comparison reads the store's
+   * copy orchestrator-side and arrives here as `updates`. */
   registrySource: AgentRegistrySourceView | null;
   /** `agentInfo.version` last captured at connect — what the used-
    * capability cache is actually keyed against (reality over the pinned
@@ -524,6 +525,13 @@ export type CoalesceHook<E> = (prev: E, next: E) => E | null;
  * would light up for a dead process. This is live process state; the matrix
  * is durable proven-ness of the declared surface. */
 export type AgentStatus = "untested" | "running" | "stopped" | "crashed" | "reconnecting";
+
+/** A registry agent's newer version than the one its config pins — never
+ * applied on its own; Upgrade is always the user's click. */
+export interface AgentUpdate {
+  from: string;
+  to: string;
+}
 
 export interface AgentSummary {
   id: string;
@@ -1224,6 +1232,9 @@ export interface AgentViewState {
   restoring: boolean;
   /** The ACP registry's agents (acp-registry.ts) for the pickers. */
   registryAgents: readonly RegistryAgentView[];
+  /** Agents with a newer registry version than they run — the upgrade
+   * chip's source. */
+  updates: Readonly<Record<string, AgentUpdate>>;
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
   /** The pinned plan widget's source — the most recent plan snapshot, or
@@ -1396,6 +1407,7 @@ export const initialAgentViewState: AgentViewState = {
   chatConnect: null,
   restoring: false,
   registryAgents: [],
+  updates: {},
   transcripts: {},
   activePlan: {},
   activeTurn: {},
@@ -1617,6 +1629,8 @@ export type AgentViewEvent =
   /** Full replace — the registry × overlay merge changed (refresh, or a new
    * version landed upstream). */
   | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string }
+  /** The complete update fact (never a patch) — one event, both channels. */
+  | { kind: "agentUpdatesChanged"; updates: Readonly<Record<string, AgentUpdate>> }
   /** The complete stored preferences (never a patch) — one event, both
    * channels: the Preferences page renders it, the agent view gates its
    * composer stats on it. */
@@ -1886,6 +1900,8 @@ export function reduceAgentView(
       // The agent view needs only the list; the settings channel also keeps
       // the snapshot's fetchedAt for the Add Agent card's freshness line.
       return { ...state, registryAgents: event.agents };
+    case "agentUpdatesChanged":
+      return { ...state, updates: event.updates };
     case "chatConnectStarted":
       return { ...state, chatConnect: { agentId: event.agentId, status: "connecting", forSessionId: event.forSessionId } };
     case "chatConnectFailed":
@@ -2443,6 +2459,9 @@ export interface SettingsState {
   section: SettingsSectionId;
   agents: readonly AgentSummary[];
   registryAgents: readonly RegistryAgentView[];
+  /** Agents with a newer registry version than they run — the card's
+   * upgrade chip. */
+  updates: Readonly<Record<string, AgentUpdate>>;
   capabilities: Readonly<Record<string, CapabilityMatrix>>;
   capabilitiesResetAt: Readonly<Record<string, string>>;
   /** Negotiated ACP protocol version per agent (initialize response) —
@@ -2512,6 +2531,7 @@ export const initialSettingsState: SettingsState = {
   section: "agents",
   agents: [],
   registryAgents: [],
+  updates: {},
   capabilities: {},
   capabilitiesResetAt: {},
   agentProtocol: {},
@@ -2598,6 +2618,8 @@ export function reduceSettings(
       };
     case "registryChanged":
       return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
+    case "agentUpdatesChanged":
+      return { ...state, updates: event.updates };
     case "capabilitiesDeclared":
       return {
         ...state,
