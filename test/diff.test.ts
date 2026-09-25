@@ -44,13 +44,48 @@ describe("computeLineDiff", () => {
     expect(r.additions).toBe(0);
   });
 
-  it("a trailing newline is a real empty final line, not a quirk to hide", () => {
+  // A newline ends a line, it doesn't open one — the count wc -l, git and
+  // VS Code give. Read the other way, a new 40-line file counted +41: the
+  // phantom empty line only cancels when both sides end in a newline.
+  it("a trailing newline ends the last line — a new file of n lines is +n", () => {
     const r = computeLineDiff("", "hello\n");
-    expect(r.additions).toBe(2);
-    expect(r.lines).toEqual([
-      { kind: "add", text: "hello" },
-      { kind: "add", text: "" },
+    expect(r.additions).toBe(1);
+    expect(r.lines).toEqual([{ kind: "add", text: "hello" }]);
+    expect(computeLineDiff("", "a\nb\nc\n")).toMatchObject({ additions: 3, deletions: 0 });
+    expect(computeLineDiff("a\nb\nc\n", "")).toMatchObject({ additions: 0, deletions: 3 });
+  });
+
+  it("only one trailing newline is a terminator — a blank last line still counts", () => {
+    expect(computeLineDiff("", "a\n\n")).toMatchObject({ additions: 2 });
+  });
+
+  it("adding or dropping only the final newline changes no line", () => {
+    expect(computeLineDiff("a\nb", "a\nb\n")).toMatchObject({ additions: 0, deletions: 0 });
+  });
+
+  // Measured before the trim: one changed line cost 393 ms / ~200 MB at
+  // 5,000 lines and ~2 s / ~800 MB at 10,000, synchronously on the
+  // extension host — agents that send whole files send them twice per edit.
+  it("a one-line change in a huge file costs a scan, not a quadratic table", () => {
+    const n = 50_000;
+    const old = Array.from({ length: n }, (_, i) => `line ${i}`).join("\n") + "\n";
+    const t0 = performance.now();
+    const r = computeLineDiff(old, old.replace("line 25000\n", "CHANGED\n"));
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(r).toMatchObject({ additions: 1, deletions: 1 });
+    expect(r.lines).toHaveLength(n + 1);
+  });
+
+  it("the shared start and end stay in the preview, in order, around the change", () => {
+    expect(computeLineDiff("a\nb\nc\nd", "a\nb\nX\nd").lines).toEqual([
+      { kind: "context", text: "a" },
+      { kind: "context", text: "b" },
+      { kind: "del", text: "c" },
+      { kind: "add", text: "X" },
+      { kind: "context", text: "d" },
     ]);
+    // a repeated line on the seam is counted once, never twice
+    expect(computeLineDiff("x\nx\nx", "x\nx")).toMatchObject({ additions: 0, deletions: 1 });
   });
 
   it("CRLF and LF are the same line boundary — mixed-source sides never mark every line changed", () => {

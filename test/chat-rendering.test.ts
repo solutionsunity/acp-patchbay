@@ -7,6 +7,7 @@ import {
   deriveTranscript,
   formatDuration,
   TOOL_RUN_MIN,
+  diffTotal,
   toolFileRows,
 } from "../src/webview/agent-view/chat/view-model";
 import {
@@ -33,7 +34,7 @@ function tool(id: string, over: Partial<ToolCallBlock> = {}): ToolCallBlock {
     output: null,
     locations: [],
     content: [],
-    diffFiles: [],
+    diffs: {},
     denied: false,
     interrupted: false,
     ...over,
@@ -242,27 +243,23 @@ describe("deriveTranscript: per-turn rollups", () => {
     expect(totals).toEqual({ prompts: 3, toolCalls: 4, files: ["/ws/a.ts", "/ws/b.ts"] });
   });
 
-  it("diffableFiles ⟺ answerable baseline: tool_call diffFiles and gate diff cards; gate writes count as files only when accepted", () => {
+  it("edited files: edit calls by location, gate writes only once accepted", () => {
     const diff = (id: string, file: string, accepted: boolean | null): ChatBlock => ({
       kind: "diff", id, file, additions: 1, deletions: 0, lines: [],
       resolution: accepted === null ? null : { accepted, auto: false },
     });
     const blocks: ChatBlock[] = [
       user("u1"),
-      // locations-only edit: a row, but no ± (no texts anywhere to answer with)
       tool("t1", { toolKind: "edit", locations: [{ path: "/ws/plain.ts", line: null }] }),
-      // agent-reported diff content: ± via diffFiles
-      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/rich.ts", line: null }], diffFiles: ["/ws/rich.ts"] }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/rich.ts", line: null }], diffs: { "/ws/rich.ts": { additions: 2, deletions: 1 } } }),
       // gate cards: accepted counts as a touched file; rejected and pending
-      // don't (nothing was written) — ± regardless, baseline noted at card time
+      // don't (nothing was written)
       diff("d1", "/ws/gate.ts", true),
       diff("d2", "/ws/rejected.ts", false),
       diff("d3", "/ws/pending.ts", null),
       turnEnd("e1"),
     ];
-    const { totals, diffableFiles } = deriveTranscript(blocks, false);
-    expect(totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
-    expect(diffableFiles).toEqual(new Set(["/ws/rich.ts", "/ws/gate.ts", "/ws/rejected.ts", "/ws/pending.ts"]));
+    expect(deriveTranscript(blocks, false).totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
   });
 
   it("injected user envelopes reset the turn but never count as prompts", () => {
@@ -364,7 +361,7 @@ describe("transcriptSeeded normalization", () => {
     });
     expect(state.transcripts[S]![0]).toEqual({
       kind: "toolCall", id: "t1", title: "Read", status: "completed",
-      toolKind: "other", input: null, output: null, locations: [], content: [], diffFiles: [], denied: false,
+      toolKind: "other", input: null, output: null, locations: [], content: [], diffs: {}, denied: false,
       interrupted: false,
     });
   });
@@ -392,19 +389,28 @@ describe("toolFileRows", () => {
           { path: "/ws/a.ts", line: 40 },
           { path: "/ws/a.ts", line: 12 },
         ],
-        diffFiles: ["/ws/a.ts"],
+        diffs: { "/ws/a.ts": { additions: 3, deletions: 1 } },
       }),
     ).toEqual([
-      { path: "/ws/a.ts", lines: [12, 40], diff: true },
-      { path: "/ws/b.ts", lines: [], diff: false },
+      { path: "/ws/a.ts", lines: [12, 40], diff: { additions: 3, deletions: 1 } },
+      { path: "/ws/b.ts", lines: [], diff: null },
     ]);
   });
 
   it("a file known only from diff content still gets its row, after the reported ones", () => {
-    expect(toolFileRows({ locations: [{ path: "/ws/a.ts", line: 3 }], diffFiles: ["/ws/z.ts"] })).toEqual([
-      { path: "/ws/a.ts", lines: [3], diff: false },
-      { path: "/ws/z.ts", lines: [], diff: true },
+    expect(toolFileRows({ locations: [{ path: "/ws/a.ts", line: 3 }], diffs: { "/ws/z.ts": { additions: 1, deletions: 0 } } })).toEqual([
+      { path: "/ws/a.ts", lines: [3], diff: null },
+      { path: "/ws/z.ts", lines: [], diff: { additions: 1, deletions: 0 } },
     ]);
+  });
+
+  it("the card total sums every file's diff, and is absent without one", () => {
+    const rows = toolFileRows({
+      locations: [{ path: "/ws/a.ts", line: 1 }],
+      diffs: { "/ws/a.ts": { additions: 3, deletions: 1 }, "/ws/b.ts": { additions: 0, deletions: 2 } },
+    });
+    expect(diffTotal(rows)).toEqual({ additions: 3, deletions: 3 });
+    expect(diffTotal(toolFileRows({ locations: [{ path: "/ws/a.ts", line: 1 }], diffs: {} }))).toBeNull();
   });
 });
 

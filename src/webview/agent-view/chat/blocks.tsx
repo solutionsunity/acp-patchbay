@@ -11,6 +11,7 @@ import {
   terminalBlockId,
   unrenderedLabel,
   type ContentPart,
+  type DiffStat,
   type TerminalBlock,
   type ToolCallBlock,
   type UserPart,
@@ -23,7 +24,8 @@ import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { TerminalView } from "./cards";
 import { AgentMarkdown } from "./markdown";
-import { toolFileRows } from "./view-model";
+import { DiffStatText } from "./diff-stat";
+import { diffTotal, toolFileRows } from "./view-model";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
  * `[@name](file://… | zed://…)`. Structured mentions arrive as their own
@@ -298,6 +300,16 @@ const LINK =
 /** A reported file in a tool call's header: the title's own color, a step
  * quieter — never louder than the title. */
 const HEADER_LINK = `${LINK} truncate font-mono text-[11px] opacity-70 hover:opacity-100`;
+/** The lines a diff adds and removes, as the button that opens it — an
+ * edit's own report is the one place a change is counted. */
+function DiffCount({ stat, title, onClick }: { stat: DiffStat; title: string; onClick: () => void }) {
+  return (
+    <button type="button" className={`diff-count shrink-0 font-mono text-[11px] ${LINK}`} title={title} onClick={stopThen(onClick)}>
+      <DiffStatText stat={stat} />
+    </button>
+  );
+}
+
 /** A small caps label over a section of a card's details. */
 const SECTION_LABEL = "text-[10.5px] uppercase tracking-wide text-muted-foreground";
 
@@ -311,13 +323,15 @@ function stopThen(act: () => void) {
 }
 
 /** Collapsed by default: title, the first file the call reported as a link
- * (`name:line`, "+N" for the other files), and status. The link opens the
- * file at the line the agent named; the rest of the header toggles the
- * details — two targets, because opening a file takes the editor's focus
- * while showing details costs nothing. Expanded: one row per file — name,
- * then every line the agent reported in it, then "diff" when the call
- * carried one (VS Code's native diff editor, never an inline diff view) —
- * listed only when it says more than the header link; then what the tool
+ * (`name:line`, "+N" for the other files), the lines the call's diffs add
+ * and remove, and status. The link opens the file at the line the agent
+ * named; the ± opens the diff (VS Code's native diff editor, never an
+ * inline diff view) — or, when several files carry one, the details where
+ * each has its own; the rest of the header toggles the details — separate
+ * targets, because opening an editor takes focus while showing details
+ * costs nothing. Expanded: one row per file — name, then every line the
+ * agent reported in it, then its ± when the call carried a diff for it —
+ * listed only when it says more than the header; then what the tool
  * produced for the user, as the agent presented it; then the raw wire
  * payload behind its own toggle. A terminal the call runs in shows under
  * the header, always visible. */
@@ -334,14 +348,20 @@ export function ToolCallCard({
   const send = useActions();
   const [open, setOpen] = useState(false);
   const rows = toolFileRows(block);
-  const listFiles = rows.length > 1 || rows.some((r) => r.diff || r.lines.length > 1);
+  const total = diffTotal(rows);
+  const diffRows = rows.filter((r) => r.diff !== null);
+  const first = block.locations[0];
+  // Listed only when the rows say more than the header: several files, a
+  // file with several lines, or a file known only from a diff (the header
+  // links locations only).
+  const listFiles = rows.length > 1 || rows.some((r) => r.lines.length > 1) || (first === undefined && rows.length > 0);
   const shown = block.content.filter((p) => p.kind !== "terminal");
   const terminals = block.content.flatMap((p) => (p.kind === "terminal" ? [p.terminalId] : []));
   const hasRaw = block.input !== null || block.output !== null;
   const expandable = listFiles || shown.length > 0 || hasRaw;
   const openAt = (path: string, line: number | undefined) =>
     send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
-  const first = block.locations[0];
+  const openDiff = (path: string) => send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path });
   return (
     <div className="card">
       {/* The header is a mouse target for the whole row; the keyboard's is
@@ -374,6 +394,13 @@ export function ToolCallCard({
           >
             +{rows.length - 1}
           </button>
+        )}
+        {total !== null && (
+          <DiffCount
+            stat={total}
+            title={diffRows.length === 1 ? "Open this edit in VS Code's diff editor" : "Show each file's diff"}
+            onClick={() => (diffRows.length === 1 ? openDiff(diffRows[0]!.path) : setOpen(true))}
+          />
         )}
         {expandable && (
           <Disclosure open={open} onToggle={() => setOpen((v) => !v)} label={open ? "Hide details" : "Show details"} />
@@ -414,17 +441,14 @@ export function ToolCallCard({
                         {dir}
                       </span>
                     )}
-                    {r.diff && (
-                      <button
-                        type="button"
-                        className={`ml-auto flex shrink-0 items-center gap-1 text-muted-foreground ${LINK}`}
-                        title="Open in VS Code's diff editor"
-                        onClick={stopThen(() =>
-                          send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path: r.path }),
-                        )}
-                      >
-                        <Icon name="diff" /> diff
-                      </button>
+                    {r.diff !== null && (
+                      <span className="ml-auto">
+                        <DiffCount
+                          stat={r.diff}
+                          title="Open this file's edit in VS Code's diff editor"
+                          onClick={() => openDiff(r.path)}
+                        />
+                      </span>
                     )}
                   </div>
                 );

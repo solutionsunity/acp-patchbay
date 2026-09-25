@@ -223,13 +223,6 @@ export type Action =
    * files-panel rows (the view never touches fs). */
   /** `line` is the location's 1-based line — absent opens at the top. */
   | { kind: "openFile"; path: string; line?: number }
-  /** The files panel's ± — native diff of the session's first-touch
-   * pre-image against the live file. Texts stay orchestrator-side
-   * (fileBaselines); the view only ever names the path. */
-  | { kind: "openSessionFileDiff"; sessionId: string; path: string }
-  /** Files panel opening: re-read reality for each diff-bearing path so
-   * the ± shown matches the diff a click would open. */
-  | { kind: "refreshFileDiffStats"; sessionId: string }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
    * big diagram can breathe. */
@@ -948,11 +941,12 @@ export interface ToolCallBlock {
    * agent meant the user to see. Replaced wholesale by an update that
    * carries `content` (ACP: the field is a collection replacement). */
   content: readonly ToolContentPart[];
-  /** Paths with agent-reported diff content (ToolCallContent type:"diff").
-   * The texts stay orchestrator-side; expanding the card offers "Open
-   * diff", routed to VS Code's native diff editor — never an inline diff
-   * view. */
-  diffFiles: readonly string[];
+  /** Per path with agent-reported diff content (ToolCallContent
+   * type:"diff"): the lines this call's diffs add and remove — counted as
+   * the agent reported them, whole file or changed regions. The texts stay
+   * orchestrator-side; the card's ± opens them in VS Code's native diff
+   * editor — never an inline diff view. */
+  diffs: Readonly<Record<string, DiffStat>>;
   /** True once the permission broker rejected this call's own
    * session/request_permission — "blocked by permission" and "command
    * failed" are different facts, told apart at a glance. */
@@ -965,6 +959,12 @@ export interface ToolCallBlock {
    * tool_call_update always wins: any fresh upsert clears it, since the
    * wire is still talking about this call after all. */
   interrupted: boolean;
+}
+
+/** Lines one diff adds and removes. */
+export interface DiffStat {
+  additions: number;
+  deletions: number;
 }
 
 /** The agent-reported token counts for one turn (PromptResponse.usage —
@@ -1268,12 +1268,6 @@ export interface AgentViewState {
   authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Present only once `usage` is used — absence over fake. */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
-  /** Per session, per path: cumulative +/- since the session's first-touch
-   * baseline (fileBaselines) — the same numbers the files panel's ± opens
-   * to, computed orchestrator-side (computeLineDiff) since the texts never
-   * reach the webview. Absent for a path until a real change is known
-   * (session-manager.noteFileChange) — absence over fake. */
-  fileDiffStats: Readonly<Record<string, Readonly<Record<string, { additions: number; deletions: number }>>>>;
   /** Explicitly attached context, pending inclusion in the next prompt. */
   contextChips: Readonly<Record<string, readonly ContextChip[]>>;
   /** Prompts accepted mid-turn, waiting for the turn to end (QueuedPrompt).
@@ -1426,7 +1420,6 @@ export const initialAgentViewState: AgentViewState = {
   capabilitiesResetAt: {},
   authMethods: {},
   sessionUsage: {},
-  fileDiffStats: {},
   contextChips: {},
   promptQueue: {},
   sessionKnobs: {},
@@ -1516,7 +1509,7 @@ export type AgentViewEvent =
       output?: string;
       locations?: readonly ToolLocation[];
       content?: readonly ToolContentPart[];
-      diffFiles?: readonly string[];
+      diffs?: Readonly<Record<string, DiffStat>>;
     }
   /** The broker rejected this tool call's session/request_permission. */
   | { kind: "toolCallDenied"; sessionId: string; blockId: string }
@@ -1561,10 +1554,6 @@ export type AgentViewEvent =
       lines: readonly { kind: DiffLineKind; text: string }[];
     }
   | { kind: "diffResolved"; sessionId: string; blockId: string; accepted: boolean; auto: boolean }
-  /** Cumulative baseline-vs-latest +/- for one file this session (the files
-   * panel's ± badge) — recomputed on every real content advance: an
-   * agent-reported tool_call diff, or an accepted gate write. */
-  | { kind: "fileDiffStatChanged"; sessionId: string; path: string; additions: number; deletions: number }
   | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
   | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
@@ -1836,7 +1825,7 @@ function upsertToolCall(
       output: event.output ?? null,
       locations: event.locations ?? [],
       content: event.content ?? [],
-      diffFiles: event.diffFiles ?? [],
+      diffs: event.diffs ?? {},
       denied: false,
       interrupted: false,
     });
@@ -1853,7 +1842,7 @@ function upsertToolCall(
     output: event.output ?? existing.output,
     locations: event.locations ?? existing.locations,
     content: event.content ?? existing.content,
-    diffFiles: event.diffFiles ?? existing.diffFiles,
+    diffs: event.diffs ?? existing.diffs,
     // A trailing tool_call_update still wins: the
     // wire is still talking about this call, so the "abandoned" guess is
     // no longer the freshest fact.
@@ -2010,7 +1999,6 @@ export function reduceAgentView(
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
       const { [event.sessionId]: _d, ...drafts } = state.drafts;
-      const { [event.sessionId]: _fds, ...fileDiffStats } = state.fileDiffStats;
       const { [event.sessionId]: _hy, ...hydrating } = state.hydrating ?? {};
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
@@ -2031,7 +2019,6 @@ export function reduceAgentView(
         sessionUsage,
         promptQueue,
         drafts,
-        fileDiffStats,
         hydrating,
         activeSessionId,
       };
@@ -2057,16 +2044,10 @@ export function reduceAgentView(
       // the same replay — a stale strip must not outlive its source. Same
       // for a stale ticker: no turn survives a transcript rebuild.
       const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
-      // The files strip's ± rows follow the same contract as the texts:
-      // after a reset, only what the replay re-reports comes back — a
-      // pre-reload badge asserting itself over the replayed reality would
-      // be the cache lying.
-      const { [event.sessionId]: _fd, ...fileDiffStats } = state.fileDiffStats;
       return {
         ...withTranscript(state, event.sessionId, []),
         activePlan: { ...state.activePlan, [event.sessionId]: null },
         activeTurn,
-        fileDiffStats,
       };
     }
     case "userMessageAppended":
@@ -2199,17 +2180,6 @@ export function reduceAgentView(
         ...b,
         resolution: { accepted: event.accepted, auto: event.auto },
       }));
-    case "fileDiffStatChanged":
-      return {
-        ...state,
-        fileDiffStats: {
-          ...state.fileDiffStats,
-          [event.sessionId]: {
-            ...state.fileDiffStats[event.sessionId],
-            [event.path]: { additions: event.additions, deletions: event.deletions },
-          },
-        },
-      };
     case "terminalStarted":
       return appendBlock(state, event.sessionId, {
         kind: "terminal",
@@ -2314,7 +2284,7 @@ export function reduceAgentView(
                 output: b.output ?? null,
                 locations: b.locations ?? [],
                 content: b.content ?? [],
-                diffFiles: b.diffFiles ?? [],
+                diffs: b.diffs ?? {},
                 denied: b.denied ?? false,
                 // A persisted still-open snapshot survives a reload with no
                 // live turn behind it — the render-only webview holds no
@@ -2381,7 +2351,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       output: next.output ?? prev.output,
       locations: next.locations ?? prev.locations,
       content: next.content ?? prev.content,
-      diffFiles: next.diffFiles ?? prev.diffFiles,
+      diffs: next.diffs ?? prev.diffs,
     };
   }
   // Usage can report mid-stream (claude-agent-acp does) — only the latest

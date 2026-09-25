@@ -12,12 +12,10 @@ import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import { type PermissionBroker, sliceTextFileRead } from "./broker";
 import { gateRefusal, readFailure, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
-import type { SessionManager } from "./session-manager";
 import type { TerminalHandle } from "./terminal-runner";
 
 export interface ClientHostDeps {
   broker: PermissionBroker;
-  sessionManager: Pick<SessionManager, "noteFileBaseline" | "noteFileWrite">;
   /** The file as the user sees it — an open, possibly unsaved editor wins
    * over disk. Throws the underlying error when the file can't be read. */
   readLive(path: string): Promise<string>;
@@ -44,18 +42,9 @@ export class ClientHost {
   }
 
   async writeTextFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
-    // Pre-image captured before anything moves — the gate-side baseline
-    // source for "since first agent touch" diffs. Buffer truth, same
-    // lookup the write itself uses; noted at card time (not acceptance)
-    // so every diff card the user can see has an answerable baseline.
-    const pre = await this.deps.readLive(params.path).catch(() => "");
-    this.deps.sessionManager.noteFileBaseline(params.sessionId, params.path, pre);
     const outcome = await this.deps.broker.gateFileWrite(params.sessionId, params.path, params.content);
-    // Disk (and the baseline) stay untouched, so the ± badge stays absent
-    // rather than claiming a change that never happened.
     if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${params.path}`);
     await this.deps.writeLive(params.path, params.content);
-    this.deps.sessionManager.noteFileWrite(params.sessionId, params.path, params.content);
     return {};
   }
 

@@ -19,6 +19,7 @@ import {
   type AgentViewEvent,
   type ChatBlock,
   type ContextChip,
+  type DiffStat,
   type KnobSeed,
   type PersistedChip,
   type PlanEntry,
@@ -168,11 +169,6 @@ export interface SessionManagerHooks {
    * view and the user hasn't looked yet — the reaper must not close under
    * an unseen result (reducer-derived `unseen` on the session summary). */
   isUnseen?(sessionId: string): boolean;
-  /** Buffer-truth read of a workspace file (the orchestrator's live-buffer
-   * lookup — dirty editors included). The baseline capture uses it when an
-   * agent's diff omits its pre-image: reality is read, never a silent
-   * claim latched. */
-  readFileLive?(path: string): Promise<string>;
   /** Standing auth lock on this agent (the orchestrator's persisted,
    * evidence-gated auth state). While it holds, no turn may start: the
    * turn-start door queues the words instead of firing them into a wire
@@ -190,6 +186,10 @@ export interface SessionManagerHooks {
 /** session/list pagination guard: 50 pages of history for one workspace is
  * beyond any honest agent — past it, merge what arrived but never prune. */
 const MAX_LIST_PAGES = 50;
+
+/** Joins several changed regions of one file into one openable diff — the
+ * same line on both sides, so it reads as a boundary and never as a change. */
+const REGION_MARKER = "\n⋯\n";
 
 /** How long an honest close/reload waits for a cancelled turn to settle
  * before proceeding anyway (interruptTurn). */
@@ -425,24 +425,10 @@ export class SessionManager {
   private known = new Map<string, KnownSession>();
   /** Agent-reported diff content per tool call (ToolCallContent "diff") —
    * the texts stay here, never in webview state (they can be whole files);
-   * the block carries only the openable paths, and openToolCallDiff reads
-   * back through `toolCallDiff`. Cleared with the session; a replay
+   * the block carries only each path's line counts, and openToolCallDiff
+   * reads back through `toolCallDiff`. Cleared with the session; a replay
    * re-sends tool_call content, so it repopulates itself. */
-  private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string; saidOld: boolean }>>>();
-  /** Per session: each agent-touched path's content before the FIRST touch
-   * — the baseline for the files panel's "since first agent touch" diff.
-   * Fed by both diff sources (agent-reported tool_call diffs here via
-   * stashToolDiffs; the fs/write gate notes its pre-image at the
-   * orchestrator chokepoint); first note wins. Same lifecycle as toolDiffs:
-   * dies with the session, never persisted — after a cold load only what
-   * the agent's replay re-reports comes back, by design (a loaded session
-   * must not look like it remembers more than the wire told it). */
-  private fileBaselines = new Map<string, Map<string, string>>();
-  /** Cumulative +/- since the baseline, per session/path — the same numbers
-   * the files panel's ± opens to, kept alongside the texts so the badge
-   * next to the filename never has to guess. Same lifecycle as
-   * fileBaselines (dies with the session). */
-  private fileStats = new Map<string, Map<string, { additions: number; deletions: number }>>();
+  private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   private contextTokenCounter = 0;
   /** Held words, per session — the turn-start door's queue. Mirrored to the
    * durable continuity row at every mutation, so a window reload or an
@@ -458,10 +444,6 @@ export class SessionManager {
    * it, an unlock poke and a turn-end drain landing in the same window
    * would both pass the gates and fire two concurrent turns. */
   private turnStarting = new Set<string>();
-  /** Per-session diff-accounting generation — bumped by resetDiffAccounting
-   * so an async baseline capture started before a reset discards itself
-   * instead of resurrecting wiped accounting into the replay's fresh maps. */
-  private diffEpoch = new Map<string, number>();
   /** Pending context chips carried across an involuntary LiveSession drop
    * (connection death, isolated-instance death, idle release, reload) —
    * the view keeps rendering them, so the truth they mirror must survive
@@ -732,7 +714,7 @@ export class SessionManager {
     this.replaying.add(sessionId);
     try {
       this.emitterFor(sessionId)({ kind: "transcriptReset", sessionId });
-      this.resetDiffAccounting(sessionId);
+      this.dropToolDiffs(sessionId);
       const { knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId);
       // A finished replay is the same quiet point as a turn end: nothing is
       // in flight, so history that stops on a still-open call is stranded —
@@ -922,12 +904,9 @@ export class SessionManager {
     const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
-    this.fileBaselines.delete(sessionId);
-    this.fileStats.delete(sessionId);
     this.known.delete(sessionId);
     this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
     this.contextStash.delete(sessionId);
-    this.diffEpoch.delete(sessionId);
     if (agentId !== undefined) {
       this.noteContinuity(sessionId, agentId, null);
       // Shield against a session/list walk already in flight: its earlier
@@ -962,11 +941,8 @@ export class SessionManager {
     this.sessions.clear();
     this.known.clear();
     this.toolDiffs.clear();
-    this.fileBaselines.clear();
-    this.fileStats.clear();
     this.promptQueues.clear();
     this.contextStash.clear();
-    this.diffEpoch.clear();
     this.closedDuringSync.clear();
   }
 
@@ -979,12 +955,9 @@ export class SessionManager {
       if (entry.agentId !== agentId) continue;
       this.sessions.delete(sessionId);
       this.toolDiffs.delete(sessionId);
-      this.fileBaselines.delete(sessionId);
-      this.fileStats.delete(sessionId);
       this.known.delete(sessionId);
       this.promptQueues.delete(sessionId);
       this.contextStash.delete(sessionId);
-      this.diffEpoch.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
     }
     this.closedDuringSync.delete(agentId);
@@ -1037,15 +1010,10 @@ export class SessionManager {
   }
 
   /** A transcript reset's other half, orchestrator-side: the reducer just
-   * wiped the view's ± rows, so the baselines and stats they derived from
-   * go too — a retained pre-reset baseline would resurrect the "wiped"
-   * accounting at the next write to the same path. The replay re-reports
-   * what is real (stashToolDiffs re-notes; the write gate re-baselines). */
-  private resetDiffAccounting(sessionId: string): void {
+   * wiped the tool cards, so the diff texts behind them go too. The replay
+   * re-sends every tool call's content, and stashToolDiffs re-stashes it. */
+  private dropToolDiffs(sessionId: string): void {
     this.toolDiffs.delete(sessionId);
-    this.fileBaselines.delete(sessionId);
-    this.fileStats.delete(sessionId);
-    this.diffEpoch.set(sessionId, (this.diffEpoch.get(sessionId) ?? 0) + 1);
   }
 
   /** The stash's other half — called only AFTER an attach rung succeeded:
@@ -1155,13 +1123,10 @@ export class SessionManager {
       // trail the agent's own list).
       this.known.delete(sessionId);
       this.toolDiffs.delete(sessionId);
-      this.fileBaselines.delete(sessionId);
-      this.fileStats.delete(sessionId);
       // The stash too — a pruned id can never re-attach, and an image
       // chip's payload must not sit orphaned until erase-all.
       this.contextStash.delete(sessionId);
       this.promptQueues.delete(sessionId);
-      this.diffEpoch.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
       this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
@@ -1289,7 +1254,7 @@ export class SessionManager {
       // death) keeps its transcript standing, since there the user asked
       // for nothing and yanking it would be hostile.
       this.hooks.emit({ kind: "transcriptReset", sessionId });
-      this.resetDiffAccounting(sessionId);
+      this.dropToolDiffs(sessionId);
       const dying = this.sessions.get(sessionId);
       if (dying !== undefined && dying.pendingContext.length > 0) {
         this.contextStash.set(sessionId, dying.pendingContext);
@@ -2358,164 +2323,51 @@ export class SessionManager {
   }
 
   /** Pulls type:"diff" entries out of a tool call's content: texts stashed
-   * here, paths returned for the event (spread-friendly; absent when the
-   * update carried no content, so "keep existing" merge semantics hold —
-   * present content replaces the collection, per ACP). */
+   * here, each path's line counts returned for the event (spread-friendly).
+   * Absent content keeps what the call had; present content replaces the
+   * collection, per ACP — diffs included, so an update that carries only
+   * text (a failed edit's error) leaves the call with no diff to count.
+   * A diff counts exactly what the agent reported, and each entry only
+   * against its own counterpart: the spec's "original content" doesn't
+   * say whole file, agents send either whole files or just the changed
+   * regions, and a region measured against anything else — another
+   * region, the file on disk — counts lines nobody touched. A missing
+   * oldText is the agent saying "nothing before": every line of newText
+   * counts as added.
+   * Several regions of one file sum, and open as one diff, joined by a
+   * marker line both sides share. */
   private stashToolDiffs(
     sessionId: string,
     toolCallId: string,
     content: readonly { type: string; path?: string; oldText?: string | null; newText?: string }[] | null | undefined,
-    emit: (...events: AgentViewEvent[]) => void,
-  ): { diffFiles: readonly string[] } | Record<string, never> {
+  ): { diffs: Readonly<Record<string, DiffStat>> } | Record<string, never> {
     if (content == null) return {};
-    const diffs = new Map<string, { oldText: string; newText: string; saidOld: boolean }>();
+    const regions = new Map<string, { olds: string[]; news: string[]; additions: number; deletions: number }>();
     for (const c of content) {
       if (c.type !== "diff" || c.path === undefined || c.newText === undefined) continue;
-      diffs.set(c.path, {
-        oldText: c.oldText ?? "",
-        newText: c.newText,
-        // An explicit string (even "") is the agent's claim; null/omitted
-        // is silence — the distinction gates both the baseline note and
-        // the card-stash backfill below.
-        saidOld: typeof c.oldText === "string",
-      });
+      const oldText = c.oldText ?? "";
+      const { additions, deletions } = computeLineDiff(oldText, c.newText);
+      let r = regions.get(c.path);
+      if (r === undefined) regions.set(c.path, (r = { olds: [], news: [], additions: 0, deletions: 0 }));
+      r.olds.push(oldText);
+      r.news.push(c.newText);
+      r.additions += additions;
+      r.deletions += deletions;
     }
-    if (diffs.size === 0) return {}; // content present but no diffs — not a replacement signal for diffs
+    const texts = new Map<string, { oldText: string; newText: string }>();
+    const diffs: Record<string, DiffStat> = {};
+    for (const [path, r] of regions) {
+      texts.set(path, { oldText: r.olds.join(REGION_MARKER), newText: r.news.join(REGION_MARKER) });
+      diffs[path] = { additions: r.additions, deletions: r.deletions };
+    }
     let perSession = this.toolDiffs.get(sessionId);
     if (perSession === undefined) {
       perSession = new Map();
       this.toolDiffs.set(sessionId, perSession);
     }
-    perSession.set(toolCallId, diffs);
-    for (const [path, d] of diffs) {
-      if (d.saidOld) {
-        // The agent said its pre-image (including an explicit "") — trust it.
-        this.noteFileBaseline(sessionId, path, d.oldText);
-        this.noteFileChange(sessionId, path, d.newText, emit);
-      } else if (this.fileBaseline(sessionId, path) !== null) {
-        this.noteFileChange(sessionId, path, d.newText, emit);
-      } else {
-        // Omitted/null oldText is not "the file was empty" — real bridges
-        // send it for existing files, and latching "" here poisoned the
-        // session baseline (first-note-wins) into whole-file-is-new.
-        void this.captureBaseline(sessionId, path, d.newText, emit);
-      }
-    }
-    return { diffFiles: [...diffs.keys()] };
-  }
-
-  /** The no-claim baseline: reads the pre-image from reality (buffer
-   * truth) instead of trusting silence. A file that isn't there reads as
-   * "" — exactly what the wire's null-means-new-file would have meant —
-   * and a misreported existing file gets its true pre-image. On replay no
-   * pre-image survives anywhere, so the earliest observable state becomes
-   * the baseline ("no change since load" — the minimal lie, not the
-   * maximal one). First-note-wins still holds against the fs gate's own
-   * capture. */
-  private async captureBaseline(
-    sessionId: string,
-    path: string,
-    newText: string,
-    emit: (...events: AgentViewEvent[]) => void,
-  ): Promise<void> {
-    const epoch = this.diffEpoch.get(sessionId) ?? 0;
-    const pre = await (this.hooks.readFileLive?.(path).catch(() => "") ?? Promise.resolve(""));
-    if (!this.sessions.has(sessionId)) return; // closed while reading — no dead-map entries
-    // A reset landed while we read: this pre-image belongs to wiped
-    // accounting — the replay re-notes what is real.
-    if ((this.diffEpoch.get(sessionId) ?? 0) !== epoch) return;
-    this.noteFileBaseline(sessionId, path, pre);
-    // The tool card's stash carried the unsaid claim ("" = whole-file-new)
-    // — backfill the recovered pre-image so the card's diff and the files
-    // panel tell one story. Said entries (including a said-empty real new
-    // file) are the agent's own words and stay untouched.
-    if (pre !== "") {
-      for (const perCall of this.toolDiffs.get(sessionId)?.values() ?? []) {
-        const entry = perCall.get(path);
-        if (entry !== undefined && !entry.saidOld && entry.oldText === "") entry.oldText = pre;
-      }
-    }
-    this.noteFileChange(sessionId, path, newText, emit);
-  }
-
-  /** Re-reads reality for every diff-bearing path and re-emits the ± —
-   * fired when the files panel opens, so the numbers shown match the diff
-   * a click opens (baseline vs the LIVE file, not the agent's last
-   * report: terminal edits, user edits, and reverts all move the file
-   * after a report). No watcher, deliberately — reality is read at the
-   * moment someone looks. */
-  async refreshFileDiffStats(sessionId: string): Promise<void> {
-    const perSession = this.fileBaselines.get(sessionId);
-    const read = this.hooks.readFileLive;
-    if (perSession === undefined || read === undefined) return;
-    const epoch = this.diffEpoch.get(sessionId) ?? 0;
-    for (const [path, baseline] of [...perSession]) {
-      const live = await read(path).catch(() => "");
-      if (!this.sessions.has(sessionId)) return;
-      if ((this.diffEpoch.get(sessionId) ?? 0) !== epoch) return;
-      const { additions, deletions } = computeLineDiff(baseline, live);
-      const prev = this.fileStats.get(sessionId)?.get(path);
-      if (prev !== undefined && prev.additions === additions && prev.deletions === deletions) continue;
-      let stats = this.fileStats.get(sessionId);
-      if (stats === undefined) {
-        stats = new Map();
-        this.fileStats.set(sessionId, stats);
-      }
-      stats.set(path, { additions, deletions });
-      this.hooks.emit({ kind: "fileDiffStatChanged", sessionId, path, additions, deletions });
-    }
-  }
-
-  /** First note wins: the earliest known pre-image IS the session baseline
-   * for that path — later writes only move the file further from it. Both
-   * diff sources call in (agent-reported diffs above, the fs/write gate via
-   * the orchestrator); on replay the same route repopulates in wire order. */
-  noteFileBaseline(sessionId: string, path: string, oldText: string): void {
-    let perSession = this.fileBaselines.get(sessionId);
-    if (perSession === undefined) {
-      perSession = new Map();
-      this.fileBaselines.set(sessionId, perSession);
-    }
-    if (!perSession.has(path)) perSession.set(path, oldText);
-  }
-
-  /** The "since first agent touch" left side for one files-panel diff —
-   * null when no pre-image is known (locations-only path, or a cold-loaded
-   * session whose replay carried no diff content; the ± never rendered). */
-  fileBaseline(sessionId: string, path: string): string | null {
-    return this.fileBaselines.get(sessionId)?.get(path) ?? null;
-  }
-
-  /** Recomputes the cumulative +/- (baseline vs newText) and emits it —
-   * called wherever a path's applied content actually advances: an
-   * agent-reported diff (below) or an accepted gate write (orchestrator's
-   * noteFileWrite). Baseline must already be noted (noteFileBaseline runs
-   * first at both call sites) — falls back to "" only for the pathological
-   * case of a stat computed before any baseline, which never happens on
-   * either call path today. */
-  private noteFileChange(
-    sessionId: string,
-    path: string,
-    newText: string,
-    emit: (...events: AgentViewEvent[]) => void,
-  ): void {
-    const baseline = this.fileBaselines.get(sessionId)?.get(path) ?? "";
-    const { additions, deletions } = computeLineDiff(baseline, newText);
-    let perSession = this.fileStats.get(sessionId);
-    if (perSession === undefined) {
-      perSession = new Map();
-      this.fileStats.set(sessionId, perSession);
-    }
-    perSession.set(path, { additions, deletions });
-    emit({ kind: "fileDiffStatChanged", sessionId, path, additions, deletions });
-  }
-
-  /** Gate-write counterpart of stashToolDiffs' per-diff noteFileChange calls
-   * — orchestrator calls this once a write is accepted and applied. Direct
-   * hooks.emit: a gate write only ever happens live, never inside a replay
-   * window, so the emitterFor silence logic doesn't apply. */
-  noteFileWrite(sessionId: string, path: string, content: string): void {
-    this.noteFileChange(sessionId, path, content, this.hooks.emit.bind(this.hooks));
+    if (texts.size === 0) perSession.delete(toolCallId);
+    else perSession.set(toolCallId, texts);
+    return { diffs };
   }
 
   /** Worklist maintenance for the sweep (tool-call analogue of
@@ -2545,9 +2397,7 @@ export class SessionManager {
   /** The stashed texts for one openToolCallDiff action — null when unknown
    * (stale id after a close; the action is simply a no-op then). */
   toolCallDiff(sessionId: string, toolCallId: string, path: string): { oldText: string; newText: string } | null {
-    const entry = this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path);
-    // saidOld is stash bookkeeping (the backfill gate), not diff content.
-    return entry !== undefined ? { oldText: entry.oldText, newText: entry.newText } : null;
+    return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
   }
 
   /** The one prose-run gate: every chunk arm asks it where its text lands.
@@ -2855,7 +2705,7 @@ export class SessionManager {
           ...(update.content != null
             ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
       }
@@ -2877,7 +2727,7 @@ export class SessionManager {
           ...(update.content != null
             ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
+          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
         });
         break;
       }

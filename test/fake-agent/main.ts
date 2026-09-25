@@ -24,7 +24,18 @@ export type TurnStep =
    * embedded resources, audio — sent as-is. */
   | { type: "agentContent"; content: acp.ContentBlock; thought?: boolean }
   | { type: "userEcho"; text: string }
-  | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: acp.ToolCallLocation[] }
+  | {
+      type: "toolCall";
+      id: string;
+      title: string;
+      kind?: acp.ToolKind;
+      rawInput?: unknown;
+      locations?: acp.ToolCallLocation[];
+      /** The call's content as first announced — a later toolDone's
+       * content replaces it (ACP: an update's content is the whole
+       * collection). */
+      content?: acp.ToolCallContent[];
+    }
   | {
       type: "toolDone";
       id: string;
@@ -251,6 +262,7 @@ async function runTurn(
           ...(step.locations !== undefined
             ? { locations: step.locations }
             : {}),
+          ...(step.content !== undefined ? { content: step.content } : {}),
         });
         break;
       case "toolDone":

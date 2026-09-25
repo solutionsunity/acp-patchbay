@@ -98,7 +98,6 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   // (plain disk here — there is no editor to hold a buffer).
   const host = new ClientHost({
     broker,
-    sessionManager,
     readLive: (path) => readFile(path, "utf8"),
     writeLive: applyFileWrite,
     ...live,
@@ -143,10 +142,9 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       h.state().transcripts[sessionId]!.find((b) => b.kind === "diff"),
       "diff",
     );
-    // "hello\n".split("\n") is ["hello", ""] — the trailing empty line is
-    // a real line in the diff, not a quirk; see diff.test.ts for the
-    // dedicated engine coverage.
-    expect(diff.additions).toBe(2);
+    // "hello\n" is one line — its newline ends it (diff.test.ts holds the
+    // engine's line-counting rules).
+    expect(diff.additions).toBe(1);
     expect(diff.resolution).toEqual({ accepted: true, auto: true });
     await h.pool.stop("w1");
   });
@@ -221,8 +219,6 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(textOf(sessionId, h.events)).toContain("write: rejected (-32603 Internal error)");
     expect(h.evidence).not.toContain("fs.writeTextFile:used");
     expect(h.evidence).not.toContain("fs.writeTextFile:suspect");
-    // no ± badge for a write that never landed
-    expect(h.events.some((e) => e.kind === "fileDiffStatChanged")).toBe(false);
     await h.pool.stop("w4");
   });
 

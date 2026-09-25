@@ -18,6 +18,9 @@ as behavioral until a spec clause is pinned)*
 
 ## Behavioral notes
 
+- **`diff` content carries whole files** (0.50.0, 2026-09-25, read from the
+  shipped bundle): `originalContent` → `newContent`, both in the permission
+  request and in the tool call's result.
 - **A missing file is recognized by message text, not by code** (0.50.0,
   2026-09-25, read from the shipped bundle's `AcpFileSystemService`): a
   failed `fs/read_text_file` or `fs/write_text_file` becomes `ENOENT` only

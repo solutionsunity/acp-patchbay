@@ -301,29 +301,11 @@ body {
   font-weight: 600;
 }
 
-/* Head title with its optional session-total badge — the total reuses the
-   row badge's add/del colors, exempt from the head's uppercase/spacing so
-   the numbers read plainly. */
+/* Head title with its optional count (the plan's fraction). */
 .overlay-panel .head .title {
   display: flex;
   align-items: baseline;
   gap: 8px;
-}
-
-.overlay-panel .head .title .stat {
-  display: flex;
-  gap: 4px;
-  text-transform: none;
-  letter-spacing: normal;
-  font-variant-numeric: tabular-nums;
-}
-
-.overlay-panel .head .title .stat .add {
-  color: var(--pb-ok);
-}
-
-.overlay-panel .head .title .stat .del {
-  color: var(--pb-err);
 }
 
 .overlay-panel .head .close {
@@ -386,30 +368,13 @@ body {
   white-space: nowrap;
 }
 
-/* right-anchored cluster: +n/-m badge, dirty dot, go-to-file — whichever of
-   the first two are absent this session, the button still sits flush right */
+/* the dirty dot, flush right */
 .overlay-panel .file-row .right {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: none;
   margin-left: auto;
-}
-
-/* cumulative +/- since first agent touch (fileDiffStats) — same numbers the
-   row's own click (the ± diff) opens to */
-.overlay-panel .file-row .stat {
-  display: flex;
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
-}
-
-.overlay-panel .file-row .stat .add {
-  color: var(--pb-ok);
-}
-
-.overlay-panel .file-row .stat .del {
-  color: var(--pb-err);
 }
 
 /* user's unsaved edits sitting on an agent-touched file */
@@ -419,23 +384,6 @@ body {
   height: 7px;
   border-radius: 50%;
   background: var(--pb-consumed);
-}
-
-/* go-to-file — always present; the row's main click is the diff (when
-   diffable), so opening the file plainly needs its own explicit target */
-.overlay-panel .file-row .gotofile {
-  flex: none;
-  background: none;
-  border: none;
-  border-radius: 4px;
-  color: var(--pb-text-dim);
-  cursor: pointer;
-  padding: 1px 3px;
-}
-
-.overlay-panel .file-row .gotofile:hover {
-  color: var(--pb-text);
-  background: var(--pb-panel);
 }
 
 /* ── crash banner — shown the moment the agent dies; Restart is the one
@@ -733,14 +681,7 @@ body {
   font-size: 12px;
 }
 
-.diff-file .plus {
-  color: var(--pb-ok);
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
-}
-
-.diff-file .minus {
-  color: var(--pb-err);
+.diff-file .diff-stat {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
 }

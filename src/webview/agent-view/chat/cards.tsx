@@ -7,6 +7,7 @@
 import { useState } from "react";
 import type { ChatBlock, LinkWarning } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
+import { DiffStatText } from "./diff-stat";
 import { answerOf, initialDraft, linkCardPhase, type Draft } from "./elicitation-form";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -81,8 +82,9 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
     <div className="card">
       <div className="diff-file">
         <Icon name="diff" /> <code>{block.file}</code>
-        <span className="plus">+{block.additions}</span>
-        <span className="minus">−{block.deletions}</span>
+        <span className="diff-stat">
+          <DiffStatText stat={block} />
+        </span>
         <span className="st ml-auto">
           {resolution === null ? (
             <button type="button" className="open-diff" onClick={openFull} title="Open the full change in the diff editor">

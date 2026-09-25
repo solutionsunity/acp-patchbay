@@ -519,15 +519,6 @@ describe("state-truth regressions — weak evidence never overwrites strong", ()
     expect(state.activeSessionId).toBe("s1");
   });
 
-  it("transcriptReset clears the ± rows — replay re-reports what's real", () => {
-    let state = replay(initialAgentViewState, [session("s1")]);
-    state = reduceAgentView(state, {
-      kind: "fileDiffStatChanged", sessionId: "s1", path: "/f.ts", additions: 3, deletions: 1,
-    });
-    state = reduceAgentView(state, { kind: "transcriptReset", sessionId: "s1" });
-    expect(state.fileDiffStats.s1).toBeUndefined();
-  });
-
   it("sessionClosed drops a hung hydration's ghost key", () => {
     let state = replay(initialAgentViewState, [session("s1")]);
     state = reduceAgentView(state, { kind: "sessionHydrating", sessionId: "s1", hydrating: true });

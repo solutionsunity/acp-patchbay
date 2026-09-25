@@ -5,7 +5,7 @@
 
 const tool = (id, over = {}) => ({
   kind: "toolCall", id, title: id, status: "completed", toolKind: "other",
-  input: null, output: null, locations: [], content: [], diffFiles: [], denied: false, ...over,
+  input: null, output: null, locations: [], content: [], diffs: {}, denied: false, ...over,
 });
 
 /** Interleaved transcript: markdown+code+mermaid (valid & broken), thought,
@@ -27,12 +27,12 @@ export const chatTranscript = [
     text: 'See [the docs](https://example.com/docs) — flow:\n\n```mermaid\ngraph LR\n  A[prompt] --> B{broker}\n  B -->|allow| C[tool runs]\n  B -->|deny| D[blocked]\n```\n\n```ts\nconst pattern: RegExp = /foo/g;\n```',
   },
   { kind: "thought", id: "th1", text: "grep is cheaper than a full parse here — start narrow." },
-  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", content: [{ kind: "text", text: "Found **3 matches** in 2 files:\n\n```console\nsrc/a.ts:12:  foo()\nsrc/a.ts:30:  foo(1)\nsrc/b.ts:40:  return foo\n```" }], locations: [{ path: "/ws/src/a.ts", line: 12 }, { path: "/ws/src/a.ts", line: 30 }, { path: "/ws/src/b.ts", line: 40 }, { path: "/ws/src/c.ts", line: null }], diffFiles: ["/ws/src/a.ts"] }),
+  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", content: [{ kind: "text", text: "Found **3 matches** in 2 files:\n\n```console\nsrc/a.ts:12:  foo()\nsrc/a.ts:30:  foo(1)\nsrc/b.ts:40:  return foo\n```" }], locations: [{ path: "/ws/src/a.ts", line: 12 }, { path: "/ws/src/a.ts", line: 30 }, { path: "/ws/src/b.ts", line: 40 }, { path: "/ws/src/c.ts", line: null }], diffs: { "/ws/src/a.ts": { additions: 3, deletions: 1 } } }),
   tool("g1", { title: "Read a.ts", toolKind: "read" }),
   tool("g2", { title: "Read b.ts", toolKind: "read" }),
   // file-touching + matching the dirty openEditors entry below — lights the
   // read-out strip's files chip and its dirty dot; keeps the run at 5 calls
-  tool("g3", { title: "Edit api.ts", toolKind: "edit", locations: [{ path: "/ws/src/api.ts", line: null }], diffFiles: ["/ws/src/api.ts"] }),
+  tool("g3", { title: "Edit api.ts", toolKind: "edit", locations: [{ path: "/ws/src/api.ts", line: null }], diffs: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } }),
   tool("t9", { title: "rm -rf ./cache", toolKind: "execute", status: "failed", denied: true }),
   {
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
@@ -169,8 +169,6 @@ export function agentViewState({ live }) {
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
     capabilities: { silent: unlistedMatrix }, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
-    // matches g3's diff-bearing edit below — the files panel's +/- badge
-    fileDiffStats: { s1: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } },
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],

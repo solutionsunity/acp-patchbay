@@ -124,6 +124,9 @@ for (const theme of Object.keys(THEMES)) {
   const diffCards = await p.$$(".card .diff-body");
   check(`[${theme}] both proposal cards rendered`, diffCards.length === 2);
   check(`[${theme}] short proposal omits nothing`, (await p.$$(".card .diff-body .more")).length === 1);
+  // one rendering of a count everywhere: only the sides that moved
+  const proposalCounts = await p.$$eval(".card .diff-file .diff-stat", (els) => els.map((el) => el.textContent.replace(/\s+/g, " ").trim()));
+  check(`[${theme}] write cards count like tool cards (${JSON.stringify(proposalCounts)})`, JSON.stringify(proposalCounts) === JSON.stringify(["+60", "+2 −1"]));
   check(`[${theme}] katex rendered`, (await p.$(".katex")) !== null);
   check(`[${theme}] currency $ not eaten by math`, (await p.$("text=$5 and $10 stay currency")) !== null);
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);
@@ -155,11 +158,18 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] the details toggle is a keyboard-reachable button`, (await toolCard.getByRole("button", { name: "Show details" }).count()) === 1);
   await toolCard.locator(".tool-loc").click();
   check(`[${theme}] the file link opens, never toggles the card`, (await toolCard.locator(".tool-files").count()) === 0);
+  // the edit's own ± — the one place a change is counted — opens its diff
+  const headerCount = (await toolCard.locator(".tool-hd .diff-count").innerText()).replace(/\s+/g, " ");
+  check(`[${theme}] the card header counts the call's own diff ("${headerCount}")`, headerCount === "+3 −1");
+  await toolCard.locator(".tool-hd .diff-count").click();
+  const opened = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] the header ± opens that edit's diff`, JSON.stringify(opened) === JSON.stringify({ kind: "openToolCallDiff", sessionId: "s1", toolCallId: "t0", path: "/ws/src/a.ts" }));
+  check(`[${theme}] the ± opens, never toggles the card`, (await toolCard.locator(".tool-files").count()) === 0);
   await toolCard.locator(".tool-loc-more").click();
   const fileRows = toolCard.locator(".tool-files > div");
   check(`[${theme}] +N opens the details: one row per file`, (await fileRows.count()) === 3);
   const firstRow = (await fileRows.first().innerText()).replace(/\s+/g, " ");
-  check(`[${theme}] a file's lines and its diff share its row, path relative to the root ("${firstRow}")`, /a\.ts:12 :30 src .*diff/.test(firstRow));
+  check(`[${theme}] a file's lines and its diff share its row, path relative to the root ("${firstRow}")`, /a\.ts:12 :30 src .*\+3 −1/.test(firstRow));
   check(`[${theme}] details render the agent's content as markdown`, (await toolCard.locator('.msg-agent [data-streamdown="strong"]', { hasText: "3 matches" }).count()) === 1);
   check(`[${theme}] raw input/output sit behind a collapsed raw toggle`, (await toolCard.locator("pre", { hasText: '"pattern"' }).count()) === 0);
   await p.mouse.move(0, 0);
@@ -212,7 +222,7 @@ for (const theme of Object.keys(THEMES)) {
   await termCard.screenshot({ path: `${OUT}/tool-card-terminal-${theme}.png` });
 
   // ── injected user-role envelope: dim collapsed line, never a bubble,
-  // and it must not tick the prompt count (stats row stays "2 6 1 file") ──
+  // and it must not tick the prompt count (stats row stays "2 6") ──
   check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
@@ -259,7 +269,7 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] a returning plan arrives collapsed`, (await p.$(".plan-panel")) === null);
 
   const filesChip = await p.$eval(".readout-strip .chip.files", (el) => el.textContent.trim());
-  check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file");
+  check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file edited");
   await p.click(".readout-strip .chip.plan");
   await p.waitForSelector(".plan-panel", { timeout: 3000 });
   await p.click(".readout-strip .chip.files");
@@ -270,10 +280,12 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForTimeout(300);
   check(`[${theme}] the switched-to panel stays open once the switch settles`, (await p.$(".files-panel")) !== null);
   check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".files-panel .file-row .dirty")) !== null);
-  check(`[${theme}] diff-bearing row shows the diff icon (row click IS the diff)`, (await p.$(".files-panel .file-row .codicon-diff")) !== null);
-  const stat = await p.$eval(".files-panel .file-row .stat", (el) => el.textContent.trim());
-  check(`[${theme}] +/- badge shows cumulative stat ("${stat}")`, stat === "+12-4");
-  check(`[${theme}] go-to-file button always present`, (await p.$(".files-panel .file-row .gotofile")) !== null);
+  // files, never counts: a change is counted only on the edit that
+  // reported it — the panel has no trustworthy "before" for a session
+  check(`[${theme}] the files panel counts no lines`, !/\+\d|−\d|-\d/.test(await p.$eval(".files-panel", (el) => el.textContent)));
+  await p.click(".files-panel .file-row");
+  const openedFile = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] a files-panel row opens the file`, JSON.stringify(openedFile) === JSON.stringify({ kind: "openFile", path: "/ws/src/api.ts" }));
   await p.screenshot({ path: `${OUT}/readout-files-${theme}.png` });
   await p.keyboard.press("Escape");
   check(`[${theme}] Escape closes the files panel`, await p.waitForSelector(".files-panel", { state: "detached", timeout: 3000 }).then(() => true, () => false));
@@ -357,6 +369,40 @@ for (const theme of Object.keys(THEMES)) {
   );
   await p.screenshot({ path: `${OUT}/header-attention-open-${theme}.png` });
   await p.keyboard.press("Escape");
+
+  // ── a call whose diffs span several files: the header ± sums them and
+  // opens the details, where each file's own ± opens its diff; a diff that
+  // changes nothing reads ±0 (appended last so earlier counts hold) ──
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "toolCallUpserted", sessionId: "s1", blockId: "m2", title: "Edit two files", status: "completed", toolKind: "edit",
+        locations: [{ path: "/ws/src/x.ts", line: 3 }],
+        diffs: { "/ws/src/x.ts": { additions: 2, deletions: 1 }, "/ws/src/y.ts": { additions: 0, deletions: 4 } },
+      },
+      { kind: "agentTextDelta", sessionId: "s1", blockId: "sep1", text: "and one more" },
+      {
+        kind: "toolCallUpserted", sessionId: "s1", blockId: "z0", title: "Touch z", status: "completed", toolKind: "edit",
+        locations: [{ path: "/ws/src/z.ts", line: 1 }], diffs: { "/ws/src/z.ts": { additions: 0, deletions: 0 } },
+      },
+    ]),
+  );
+  const multi = p.locator(".card", { hasText: "Edit two files" });
+  await multi.waitFor({ timeout: 3000 });
+  const multiCount = (await multi.locator(".tool-hd .diff-count").textContent()).replace(/\s+/g, " ").trim();
+  check(`[${theme}] a several-file call sums its diffs in the header ("${multiCount}")`, multiCount === "+2 −5");
+  const actionsBefore = await p.evaluate(() => window.__actions.length);
+  await multi.locator(".tool-hd .diff-count").click();
+  check(`[${theme}] the several-file ± opens the details, not one file's diff`, (await multi.locator(".tool-files > div").count()) === 2 && (await p.evaluate(() => window.__actions.length)) === actionsBefore);
+  const rowCounts = await multi.locator(".tool-files .diff-count").allInnerTexts();
+  check(`[${theme}] each file row carries its own ± (${JSON.stringify(rowCounts)})`, JSON.stringify(rowCounts.map((t) => t.replace(/\s+/g, " "))) === JSON.stringify(["+2 −1", "−4"]));
+  await multi.locator(".tool-files .diff-count").nth(1).click();
+  const rowOpened = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] a row's ± opens that file's diff`, JSON.stringify(rowOpened) === JSON.stringify({ kind: "openToolCallDiff", sessionId: "s1", toolCallId: "m2", path: "/ws/src/y.ts" }));
+  await p.mouse.move(0, 0);
+  await multi.screenshot({ path: `${OUT}/tool-card-multi-diff-${theme}.png` });
+  const zero = p.locator(".card", { hasText: "Touch z" });
+  check(`[${theme}] a diff that changes nothing reads ±0`, (await zero.locator(".tool-hd .diff-count").textContent()).trim() === "±0");
 
   // ── sessions drawer: latest activity on top, blue dot on unseen ──
   await p.click('button[aria-label="Sessions"]');

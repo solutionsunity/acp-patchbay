@@ -23,6 +23,10 @@ ecosystem.
 - Terminal-output `_meta` channel — convention shared with claude-agent-acp
   (the architecture doc). Unadopted; adopt via meta.ts
   when a feature needs it.
+- **`diff` content carries whole files** (1.1.2, 2026-09-25, read from the
+  shipped `dist/index.js`). The engine returns a unified patch; the bridge
+  reads the file and reverses the patch to send the full before and after.
+  A new file is `oldText: null`, a deleted one `newText: ""`.
 
 ## Communication log
 

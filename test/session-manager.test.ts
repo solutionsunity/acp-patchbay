@@ -162,7 +162,6 @@ function harness(opts?: {
       connectForSession: (sessionId) => opts?.onConnectForSession?.(sessionId),
       isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
       authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
-      readFileLive: (path) => readFile(path, "utf8"),
       continuityFor: (sessionId, agentId) => continuity.read(sessionId, agentId),
       onContinuity: (sessionId, agentId, sessionCwd, patch) => {
         void (patch === null
@@ -530,97 +529,181 @@ describe("SessionManager", () => {
     await h.pool.stop("sm4");
   });
 
-  // The whole-file-is-new bug: an agent diff omitting oldText used to
-  // latch "" as the session baseline (first-note-wins) — every files-panel
-  // diff and ± badge then claimed the entire file was added. The real
-  // pre-image is read from disk/buffer instead.
-  it("a diff without oldText reads the real pre-image — never whole-file-new", async () => {
-    const { writeFile } = await import("node:fs/promises");
-    const target = join(cwd, "notes.txt");
-    await writeFile(target, "one\ntwo\nthree\n", "utf8");
+  // Issue #48: agents send whole files (Gemini, Codex) or just the changed
+  // regions (Claude, OpenCode's edit input). Each diff is counted against
+  // its own counterpart — a region measured against the file on disk, or
+  // against another edit's region, counted lines nobody touched (+41 −1 for
+  // two one-line edits to a 40-line file).
+  it("an edit counts its own diff — regions against their counterparts, never the file (#48)", async () => {
     const h = harness();
+    const target = "/ws/forty.txt";
     await h.pool.connect(
       spec(
         {
           turn: [
-            { type: "toolCall", id: "t1", title: "Edit" },
-            { type: "toolDone", id: "t1", diff: { path: target, newText: "one\nTWO\nthree\n" } },
+            { type: "toolCall", id: "e1", title: "Edit", kind: "edit" },
+            { type: "toolDone", id: "e1", diff: { path: target, oldText: "line 10", newText: "LINE 10" } },
+            { type: "toolCall", id: "e2", title: "Edit", kind: "edit" },
+            // the post-edit shape: one hunk with its unchanged context
+            { type: "toolDone", id: "e2", diff: { path: target, oldText: "line 29\nline 30\nline 31", newText: "line 29\nLINE 30\nline 31" } },
           ],
         },
-        "smb1",
+        "sm48a",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("smb1", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(sessionId, "edit it");
-    // the capture is async (a reality read) — poll the stat
-    const start = Date.now();
-    let stat: { additions: number; deletions: number } | undefined;
-    while (stat === undefined) {
-      stat = h.state().fileDiffStats[sessionId]?.[target];
-      if (Date.now() - start > 2000) throw new Error("stat never computed");
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(stat).toEqual({ additions: 1, deletions: 1 }); // one changed line, not the whole file
-    await h.pool.stop("smb1");
+    const sessionId = await h.sessionManager.createSession("sm48a", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "edit");
+    const tools = h.state().transcripts[sessionId]!.filter((b) => b.kind === "toolCall");
+    expect(tools.map((t) => assertKind(t, "toolCall").diffs)).toEqual([
+      { [target]: { additions: 1, deletions: 1 } },
+      { [target]: { additions: 1, deletions: 1 } },
+    ]);
+    await h.pool.stop("sm48a");
   });
 
-  it("panel-open refresh recomputes the ± against the live file — outside edits included", async () => {
-    const { writeFile } = await import("node:fs/promises");
-    const target = join(cwd, "refresh.txt");
-    await writeFile(target, "a\nb\nc\n", "utf8");
+  it("several regions of one file sum, and open as one diff joined by a shared marker (#48)", async () => {
     const h = harness();
+    const target = "/ws/multi.ts";
     await h.pool.connect(
       spec(
         {
           turn: [
-            { type: "toolCall", id: "t1", title: "Edit" },
-            { type: "toolDone", id: "t1", diff: { path: target, oldText: "a\nb\nc\n", newText: "a\nB\nc\n" } },
+            { type: "toolCall", id: "m1", title: "Edit", kind: "edit" },
+            {
+              type: "toolDone",
+              id: "m1",
+              content: [
+                { type: "diff", path: target, oldText: "a\nb", newText: "a\nB" },
+                { type: "diff", path: target, oldText: "x\ny\nz", newText: "x\nz" },
+                { type: "diff", path: "/ws/other.ts", oldText: "k", newText: "k\nl" },
+              ],
+            },
           ],
         },
-        "smr1",
+        "sm48b",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("smr1", "Fake Agent", cwd);
+    const sessionId = await h.sessionManager.createSession("sm48b", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "edit");
-    expect(h.state().fileDiffStats[sessionId]?.[target]).toEqual({ additions: 1, deletions: 1 });
-
-    // a terminal/user edit moves the file after the agent's report — the
-    // panel's numbers must follow the diff it opens (baseline vs live)
-    await writeFile(target, "a\nB\nc\nd\ne\n", "utf8");
-    await h.sessionManager.refreshFileDiffStats(sessionId);
-    expect(h.state().fileDiffStats[sessionId]?.[target]).toEqual({ additions: 3, deletions: 1 });
-    await h.pool.stop("smr1");
+    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    expect(tool.diffs).toEqual({
+      [target]: { additions: 1, deletions: 2 },
+      "/ws/other.ts": { additions: 1, deletions: 0 },
+    });
+    // no region is keyed away — both open, side by side, marker on each side
+    expect(h.sessionManager.toolCallDiff(sessionId, "m1", target)).toEqual({
+      oldText: "a\nb\n⋯\nx\ny\nz",
+      newText: "a\nB\n⋯\nx\nz",
+    });
+    await h.pool.stop("sm48b");
   });
 
-  it("an unsaid tool-card pre-image backfills from reality — the card diff matches the panel", async () => {
-    const { writeFile } = await import("node:fs/promises");
-    const target = join(cwd, "card.txt");
-    await writeFile(target, "one\ntwo\n", "utf8");
+  // The overwrite shape: announced as a creation (no oldText, the whole
+  // new file), then corrected by the post-edit update to the real hunk.
+  // The update's content is the whole collection — its diffs replace the
+  // announcement's, counts and openable texts alike.
+  it("an update's diffs replace the announced ones — counts and texts (#48)", async () => {
     const h = harness();
+    const target = "/ws/over.txt";
     await h.pool.connect(
       spec(
         {
           turn: [
-            { type: "toolCall", id: "t9", title: "Edit" },
-            { type: "toolDone", id: "t9", diff: { path: target, newText: "one\nTWO\n" } },
+            {
+              type: "toolCall",
+              id: "o1",
+              title: "Write",
+              kind: "edit",
+              content: [{ type: "diff", path: target, oldText: null, newText: "hello\nworld\n" }],
+            },
+            { type: "toolDone", id: "o1", diff: { path: target, oldText: "a\nb\nc", newText: "hello\nworld" } },
           ],
+          stepDelayMs: 150,
         },
-        "smr2",
+        "sm48d",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("smr2", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(sessionId, "edit");
-    // the capture is async — poll until the stash backfills
+    const sessionId = await h.sessionManager.createSession("sm48d", "Fake Agent", cwd);
+    const turn = h.sessionManager.sendPrompt(sessionId, "overwrite");
+    const card = () => h.state().transcripts[sessionId]?.find((b) => b.kind === "toolCall");
     const start = Date.now();
-    let diff: { oldText: string; newText: string } | null = null;
-    for (;;) {
-      diff = h.sessionManager.toolCallDiff(sessionId, "t9", target);
-      if (diff?.oldText === "one\ntwo\n") break;
-      if (Date.now() - start > 2000) throw new Error(`stash never backfilled: ${JSON.stringify(diff)}`);
-      await new Promise((r) => setTimeout(r, 20));
+    while (card() === undefined) {
+      if (Date.now() - start > 2000) throw new Error("tool call never announced");
+      await new Promise((r) => setTimeout(r, 10));
     }
-    expect(diff).toEqual({ oldText: "one\ntwo\n", newText: "one\nTWO\n" });
-    await h.pool.stop("smr2");
+    // announced: what the agent said — a creation
+    expect(assertKind(card(), "toolCall").diffs).toEqual({ [target]: { additions: 2, deletions: 0 } });
+    await turn;
+    // corrected: the update's hunk, and the texts the ± opens follow it
+    expect(assertKind(card(), "toolCall").diffs).toEqual({ [target]: { additions: 2, deletions: 3 } });
+    expect(h.sessionManager.toolCallDiff(sessionId, "o1", target)).toEqual({ oldText: "a\nb\nc", newText: "hello\nworld" });
+    await h.pool.stop("sm48d");
+  });
+
+  // A failed edit: announced with its diff, then an update whose content is
+  // only the error. The update's content is the whole collection, so the
+  // count goes — a card claiming +1 −1 for an edit that never happened is
+  // the lie this replaces.
+  it("an update carrying only text clears the call's diffs — a failed edit counts nothing (#48)", async () => {
+    const h = harness();
+    const target = "/ws/failed.md";
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            {
+              type: "toolCall",
+              id: "f1",
+              title: "Edit",
+              kind: "edit",
+              content: [{ type: "diff", path: target, oldText: "not there", newText: "never written" }],
+            },
+            {
+              type: "toolDone",
+              id: "f1",
+              content: [{ type: "content", content: { type: "text", text: "String to replace not found in file." } }],
+            },
+          ],
+          stepDelayMs: 150,
+        },
+        "sm48e",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm48e", "Fake Agent", cwd);
+    const turn = h.sessionManager.sendPrompt(sessionId, "edit");
+    const card = () => h.state().transcripts[sessionId]?.find((b) => b.kind === "toolCall");
+    const start = Date.now();
+    while (card() === undefined) {
+      if (Date.now() - start > 2000) throw new Error("tool call never announced");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(assertKind(card(), "toolCall").diffs).toEqual({ [target]: { additions: 1, deletions: 1 } });
+    await turn;
+    expect(assertKind(card(), "toolCall").diffs).toEqual({});
+    expect(h.sessionManager.toolCallDiff(sessionId, "f1", target)).toBeNull();
+    await h.pool.stop("sm48e");
+  });
+
+  it("a diff with no oldText counts every new line as added — what the agent said (#48)", async () => {
+    const h = harness();
+    const target = "/ws/written.txt";
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "w1", title: "Write", kind: "edit" },
+            { type: "toolDone", id: "w1", diff: { path: target, newText: "one\ntwo\nthree" } },
+          ],
+        },
+        "sm48c",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm48c", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "write");
+    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    expect(tool.diffs).toEqual({ [target]: { additions: 3, deletions: 0 } });
+    expect(h.sessionManager.toolCallDiff(sessionId, "w1", target)).toEqual({ oldText: "", newText: "one\ntwo\nthree" });
+    await h.pool.stop("sm48c");
   });
 
   it("held words survive an agent crash and fire after reconnect — only the user discards", async () => {
@@ -1029,7 +1112,7 @@ describe("SessionManager", () => {
     ]);
     const last = tool.content[5]!;
     expect(last.kind === "text" && last.text.endsWith("… truncated (5,000 chars total)")).toBe(true);
-    expect(tool.diffFiles).toEqual(["/ws/a.ts"]);
+    expect(tool.diffs).toEqual({ "/ws/a.ts": { additions: 1, deletions: 1 } });
     // the raw payload stays on the block for the Raw section
     expect(tool.output).toContain('"stdout": "ok"');
     await h.pool.stop("sm44");
@@ -1066,7 +1149,7 @@ describe("SessionManager", () => {
     await h.pool.stop("sm41");
   });
 
-  it("agent-reported diff content: paths ride the block, texts stay orchestrator-side for the native diff editor", async () => {
+  it("agent-reported diff content: counts ride the block, texts stay orchestrator-side for the native diff editor", async () => {
     const h = harness();
     await h.pool.connect(
       spec(
@@ -1086,7 +1169,7 @@ describe("SessionManager", () => {
       h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"),
       "toolCall",
     );
-    expect(tool.diffFiles).toEqual(["/ws/a.ts"]);
+    expect(tool.diffs).toEqual({ "/ws/a.ts": { additions: 1, deletions: 1 } });
     // texts never enter webview state — they come back through the stash
     expect(h.sessionManager.toolCallDiff(sessionId, "d1", "/ws/a.ts")).toEqual({
       oldText: "old\n",

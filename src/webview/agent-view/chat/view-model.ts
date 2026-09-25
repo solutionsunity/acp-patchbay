@@ -14,7 +14,7 @@
 // principle): grouping and per-turn rollups are
 // render arrangements derived here, never separate traversals with separate
 // boundary rules.
-import { terminalBlockId, type ChatBlock, type ToolCallBlock, type ToolCallKind } from "../../../shared/protocol";
+import { terminalBlockId, type ChatBlock, type DiffStat, type ToolCallBlock, type ToolCallKind } from "../../../shared/protocol";
 
 export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
@@ -55,12 +55,6 @@ export interface TranscriptView {
   liveRollup: TurnRollup;
   /** Whole-session counters — live blocks tick these as they land. */
   totals: SessionTotals;
-  /** Paths whose diff texts the orchestrator can answer for — agent-reported
-   * tool_call diffs (diffFiles) plus the fs/write gate's own diff cards. The
-   * files panel renders its ± exactly for these: presence here ⟺ a baseline
-   * exists orchestrator-side, by construction (both derive from the same
-   * wire/gate events), so the button is never a dead click. */
-  diffableFiles: ReadonlySet<string>;
   /** The one live block (last block, text/thought, turn in flight) — null
    * when nothing is receiving deltas. */
   liveBlockId: string | null;
@@ -73,7 +67,6 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
   rollups: new Map(),
   liveRollup: { toolCalls: 0, filesTouched: 0, byKind: {} },
   totals: { prompts: 0, toolCalls: 0, files: [] },
-  diffableFiles: new Set(),
   liveBlockId: null,
 };
 
@@ -81,30 +74,38 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
  * prevent, and hiding a pair costs more clicks than it saves reading.
  * Deliberate threshold, not a tunable. */
 /** One file a tool call touched, as its details list it: every line the
- * agent reported in it (first = where opening lands), and whether the call
- * carried a diff for it. One row per file — its locations and its diff are
- * the same file, never two rows. */
+ * agent reported in it (first = where opening lands), and the lines the
+ * call's diff adds and removes when it carried one. One row per file — its
+ * locations and its diff are the same file, never two rows. */
 export interface ToolFileRow {
   path: string;
   lines: readonly number[];
-  diff: boolean;
+  diff: DiffStat | null;
 }
 
 /** Rows in first-mention order: reported locations first, then files known
  * only from diff content. */
-export function toolFileRows(block: Pick<ToolCallBlock, "locations" | "diffFiles">): ToolFileRow[] {
-  const rows = new Map<string, { path: string; lines: number[]; diff: boolean }>();
+export function toolFileRows(block: Pick<ToolCallBlock, "locations" | "diffs">): ToolFileRow[] {
+  const rows = new Map<string, { path: string; lines: number[]; diff: DiffStat | null }>();
   const row = (path: string) => {
     let r = rows.get(path);
-    if (r === undefined) rows.set(path, (r = { path, lines: [], diff: false }));
+    if (r === undefined) rows.set(path, (r = { path, lines: [], diff: null }));
     return r;
   };
   for (const { path, line } of block.locations) {
     const r = row(path);
     if (line !== null && !r.lines.includes(line)) r.lines.push(line);
   }
-  for (const path of block.diffFiles) row(path).diff = true;
+  for (const [path, diff] of Object.entries(block.diffs)) row(path).diff = diff;
   return [...rows.values()];
+}
+
+/** A call's diffs summed across its files — the card header's ±. Null when
+ * the call carried no diff. */
+export function diffTotal(rows: readonly ToolFileRow[]): DiffStat | null {
+  const diffs = rows.flatMap((r) => (r.diff === null ? [] : [r.diff]));
+  if (diffs.length === 0) return null;
+  return diffs.reduce((a, d) => ({ additions: a.additions + d.additions, deletions: a.deletions + d.deletions }));
 }
 
 /** Block ids of the terminals some tool call embeds in its content. */
@@ -151,7 +152,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   let prompts = 0;
   let totalCalls = 0;
   const allFiles = new Set<string>();
-  const diffableFiles = new Set<string>();
 
   // Terminals a tool call runs in render inside that call's card (ACP: the
   // client displays an embedded terminal's output), so they leave the
@@ -171,7 +171,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
           allFiles.add(path);
         }
       }
-      for (const path of block.diffFiles) diffableFiles.add(path);
       continue;
     }
     flushRun();
@@ -179,8 +178,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
     if (block.kind === "diff") {
       // the fs/write gate's own card: an agent file write even when no
       // tool_call named the path — counted only once actually written
-      // (accepted); ± regardless, its baseline was noted at card time
-      diffableFiles.add(block.file);
       if (block.resolution?.accepted === true) {
         files.add(block.file);
         allFiles.add(block.file);
@@ -208,7 +205,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
     rollups,
     liveRollup: { toolCalls, filesTouched: files.size, byKind },
     totals: { prompts, toolCalls: totalCalls, files: [...allFiles] },
-    diffableFiles,
     liveBlockId,
   };
 }

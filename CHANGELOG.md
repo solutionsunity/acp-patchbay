@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Edited-line counts now match the change the agent made. They ran far
+  higher before — two one-line edits could read `+41 −1` — because some
+  agents (Claude among them) report only the changed part of a file and
+  patchbay took that part for the whole file, and because a file's final
+  newline counted as one more, empty line. Each edit's card now shows its
+  own `+a −d` next to the file link; click it to open that edit in VS
+  Code's diff editor, and a card that edited several files lists each with
+  its own count. An edit that fails no longer shows a count for a change it
+  never made, and the write card you accept or reject counts lines the same
+  way. The files chip above the composer lists the files the agent edited
+  and opens them, but no longer counts lines: once an agent writes a file
+  itself, nothing can tell reliably what it looked like before the session.
+  Its icon is a little smaller, too. Counting is also fast on big files: a
+  one-line edit to a 10,000-line file used to stall patchbay for about two
+  seconds. (#48)
 - The composer's stats are no longer all-or-nothing. Preferences › Composer
   stats now has a switch for each read-out — prompts, tool calls, the
   context-window gauge, the plan-usage gauge — so you keep the ones you want.
@@ -70,8 +85,8 @@
   click it and the file opens with the cursor on that line, whether or not
   the call carried a diff; "+2" says the call touched two more files.
   Expanded, a call lists one row per file: its name, every line the agent
-  pointed at, its folder relative to the workspace, and "diff" when there
-  is one. A line past the end of the file opens at the last line, an image
+  pointed at, its folder relative to the workspace, and the lines the
+  call's diff changed in it, when there is one. A line past the end of the file opens at the last line, an image
   opens in its preview, and a folder the agent reported shows in the
   Explorer. Before, the line was dropped on arrival and the card had no way
   to open the file at all. The files panel's folder labels also stop

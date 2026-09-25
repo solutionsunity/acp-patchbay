@@ -698,7 +698,6 @@ export class Orchestrator {
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
         authLocked: (agentId) => this.authLocks.lockFor(agentId) !== null,
-        readFileLive: (path) => this.readTextFileLive(path),
       },
       () => this.workspaceCwd,
       async (contextToken, agentId) => {
@@ -797,7 +796,6 @@ export class Orchestrator {
     );
     this.clientHost = new ClientHost({
       broker: this.broker,
-      sessionManager: this.sessionManager,
       readLive: (path) => this.readTextFileLive(path),
       writeLive: (path, content) => this.writeTextFileLive(path, content),
       emit: (event) => this.agentView.emit(event),
@@ -1501,23 +1499,6 @@ export class Orchestrator {
       await this.diffTempFile(toolCallId, `before-${name}`, diff.oldText),
       await this.diffTempFile(toolCallId, `after-${name}`, diff.newText),
       `${name} — agent-proposed change`,
-    );
-  }
-
-  /** The files panel's diff — left: the session's first-touch pre-image
-   * (session-manager fileBaselines), right: the live file itself, so the
-   * diff keeps tracking reality as work continues. Null baseline is a stale
-   * click (the row only offers a diff for diff-bearing paths) — no-op, like
-   * openToolCallDiff. */
-  private async openSessionFileDiff(sessionId: string, path: string): Promise<void> {
-    const baseline = this.sessionManager.fileBaseline(sessionId, path);
-    if (baseline === null) return;
-    const name = basename(path);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      await this.diffTempFile(`session-${sessionId}`, `baseline-${name}`, baseline),
-      vscode.Uri.file(path),
-      `${name} — since first agent touch (this session)`,
     );
   }
 
@@ -2456,16 +2437,6 @@ export class Orchestrator {
       case "openFile":
         // files panel rows and tool-call locations — absolute paths
         void this.openFileAt(action.path, action.line).catch(this.logCatch(`openFile ${action.path}`));
-        break;
-      case "openSessionFileDiff":
-        void this.openSessionFileDiff(action.sessionId, action.path).catch(
-          this.logCatch(`openSessionFileDiff ${action.path}`),
-        );
-        break;
-      case "refreshFileDiffStats":
-        void this.sessionManager
-          .refreshFileDiffStats(action.sessionId)
-          .catch(this.logCatch(`refreshFileDiffStats ${action.sessionId}`));
         break;
       case "addOrUpdateAgentConfig":
         void this.addOrUpdateAgentConfig(action.config);

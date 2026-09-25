@@ -20,12 +20,9 @@ import { ReadoutPanel } from "./readout-panel";
 type PanelId = "plan" | "files";
 
 export function ReadoutStrip(props: {
-  sessionId: string;
   plan: readonly PlanEntry[] | null;
   /** Distinct paths the agent touched this session (view-model totals). */
   files: readonly string[];
-  diffable: ReadonlySet<string>;
-  diffStats: Readonly<Record<string, { additions: number; deletions: number }>>;
   openEditors: readonly OpenEditorView[];
   roots: readonly string[];
 }) {
@@ -54,10 +51,7 @@ export function ReadoutStrip(props: {
         )}
         {props.files.length > 0 && (
           <FilesChip
-            sessionId={props.sessionId}
             files={props.files}
-            diffable={props.diffable}
-            diffStats={props.diffStats}
             openEditors={props.openEditors}
             roots={props.roots}
             open={openId === "files"}

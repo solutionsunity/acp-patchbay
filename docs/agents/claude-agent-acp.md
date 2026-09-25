@@ -100,6 +100,18 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   terminal-output `_meta` channel (convention shared with codex-acp).
 - Session titles are SDK-generated in the background; the bridge polls at
   turn-end and pushes `session_info_update` when changed.
+- **`diff` content carries changed regions, not files** (0.81.2, 2026-09-25,
+  read from the shipped `tools.js` / `diff.js`). An Edit's tool call sends
+  its `old_string` → `new_string` — a text match, not whole lines, no line
+  number. The post-edit update replaces it with one `diff` per changed
+  hunk, whole lines with a few lines of context, several for one path when
+  the edit touched several places; each hunk's start line rides the call's
+  `locations`, and its own added/removed counts ride `_meta` (unadopted).
+  A Write's tool call sends `oldText: null` with the full new file even
+  when it overwrites; the post-edit update corrects it to hunks. Legal —
+  the spec's "the original content" doesn't say whole file — and patchbay
+  counts each entry only against its own counterpart (issue #48, where a
+  region taken for a whole file inflated every count).
 
 ## Communication log
 

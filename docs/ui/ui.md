@@ -62,22 +62,18 @@ it is absent while neither exists — no placeholder.
 | Chip | Where | Behavior |
 |---|---|---|
 | Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
-| Files | right | `✎ n files` — present once the agent has touched a file; a way in, not a read-out, so no preference hides it |
+| Files | right | `✎ n files edited` — present once the agent has touched a file; a way in, not a read-out, so no preference hides it |
 
 A chip opens its panel overlaying the chat, growing up from the strip at the
 strip's full width (the drawers' mechanic, mirrored) — X, Escape, re-click, or a
 click elsewhere closes; one panel is open at a time, so opening the other chip's
 panel closes this one. Plan panel: the full checklist (✓ done, ▸ active, ○
-pending). Files panel: the header carries the session's total ± (summed over
-exactly the rows shown, so header and badges can never disagree); one row per
-file, click
-opens it in the editor; a dot marks a file whose open editor holds unsaved changes
-— editor reality, never a stored flag. Rows the orchestrator can answer a diff for
-carry a **±** that opens VS Code's native diff: left = the session's first-touch
-pre-image (session-scoped, dies with the session; a cold load recovers only what
-the agent's replay re-reports — by design), right = the live file, so the diff
-keeps tracking reality. Rows without diff texts (locations-only, terminal-side
-edits) get no ± — absence over fake.
+pending). Files panel: one row per file the agent edited, click opens it in the
+editor; a dot marks a file whose open editor holds unsaved changes — editor
+reality, never a stored flag. It lists files and never counts lines: a change is
+counted only on the tool card of the edit that reported it, because a file the
+agent writes itself leaves patchbay no trustworthy "before" to measure a
+session's worth of change against.
 
 ### 4 · Chat blocks
 
@@ -86,12 +82,12 @@ edits) get no ± — absence over fake.
 | User message | right-aligned bubble | plain content |
 | Agent text | flat, no bubble | markdown, streams live |
 | Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text |
-| Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the rest of the header toggles details. Details: one row per file — name, each reported line, folder relative to the workspace, **diff** when the call carried one — listed only when it says more than the header link; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block |
+| Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + the lines the call's diffs add and remove (**+a −d**) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the ± opens the edit in VS Code's native diff editor — or, when several files carry a diff, the details; the rest of the header toggles details. The count is what the agent reported, whole file or changed regions, each against its own counterpart. Details: one row per file — name, each reported line, folder relative to the workspace, its own **+a −d** (opening its diff) when the call carried one — listed only when it says more than the header; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header |
 | Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification |
 | Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool. Off screen, a native notification names the question with **Open**, which brings the session up — the answer is given in the card |
 | Link | 🔗 card | "*Agent* asks you to open a page:" + the agent's message; the host in bold and the full address as plain text (never a clickable link), with a warning line per suspicious trait; **Open in browser / Decline / Cancel** — Open is the consent and opens the system browser; once opened, "waiting for *Agent* to finish" with **Open again** until the agent reports it done ("completed"); a question the agent takes back reads "withdrawn by the agent" |
-| Diff | 📝 card | file + `+n −m`, a bounded body preview that states how many lines it omits, and **Open diff** (VS Code's own diff editor, current vs proposed) while the proposal is open; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible |
+| Diff | 📝 card | file + its **+a −d** (the tool card's count, one rendering: only the sides that moved), a bounded body preview that states how many lines it omits, and **Open diff** (VS Code's own diff editor, current vs proposed) while the proposal is open; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible |
 | Crash banner | ⚠ red strip | shown the moment the agent dies; `Restart` is the one action; after restart, the continuation is labeled |
 
 ### 5 · Composer
