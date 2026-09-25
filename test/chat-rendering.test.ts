@@ -7,6 +7,7 @@ import {
   deriveTranscript,
   formatDuration,
   TOOL_RUN_MIN,
+  toolFileRows,
 } from "../src/webview/agent-view/chat/view-model";
 import {
   coalesceAgentViewEvent,
@@ -179,10 +180,10 @@ describe("deriveTranscript: per-turn rollups", () => {
   it("counts tool calls and DEDUPES files — 3 edits to one file is 1 file, not 3", () => {
     const blocks: ChatBlock[] = [
       user("u1"),
-      tool("t1", { toolKind: "edit", locations: ["/ws/a.ts"] }),
-      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"] }),
-      tool("t3", { toolKind: "edit", locations: ["/ws/a.ts", "/ws/b.ts"] }),
-      tool("t4", { toolKind: "read", locations: ["/ws/c.ts"] }), // reads never count as touched
+      tool("t1", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }),
+      tool("t3", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }, { path: "/ws/b.ts", line: null }] }),
+      tool("t4", { toolKind: "read", locations: [{ path: "/ws/c.ts", line: null }] }), // reads never count as touched
       turnEnd("e1"),
     ];
     const r = deriveTranscript(blocks, false).rollups.get("e1")!;
@@ -212,7 +213,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       tool("t1", { toolKind: "execute" }),
       turnEnd("e1"),
       user("u2"), // in-flight turn: no turnEnd yet
-      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"], status: "in_progress" }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }], status: "in_progress" }),
       tool("t3", { toolKind: "read" }),
     ];
     const { liveRollup, rollups } = deriveTranscript(blocks, true);
@@ -224,11 +225,11 @@ describe("deriveTranscript: per-turn rollups", () => {
   it("totals span the whole session — prompts counted, files deduped ACROSS turns, live turn included", () => {
     const blocks: ChatBlock[] = [
       user("u1"),
-      tool("t1", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      tool("t1", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }),
       turnEnd("e1"),
       user("u2"),
-      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"] }), // same file, later turn: still 1
-      tool("t3", { toolKind: "edit", locations: ["/ws/b.ts"] }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }), // same file, later turn: still 1
+      tool("t3", { toolKind: "edit", locations: [{ path: "/ws/b.ts", line: null }] }),
       turnEnd("e2"),
       user("u3"), // in-flight turn ticks the totals too
       tool("t4", { toolKind: "read", status: "in_progress" }),
@@ -246,9 +247,9 @@ describe("deriveTranscript: per-turn rollups", () => {
     const blocks: ChatBlock[] = [
       user("u1"),
       // locations-only edit: a row, but no ± (no texts anywhere to answer with)
-      tool("t1", { toolKind: "edit", locations: ["/ws/plain.ts"] }),
+      tool("t1", { toolKind: "edit", locations: [{ path: "/ws/plain.ts", line: null }] }),
       // agent-reported diff content: ± via diffFiles
-      tool("t2", { toolKind: "edit", locations: ["/ws/rich.ts"], diffFiles: ["/ws/rich.ts"] }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/rich.ts", line: null }], diffFiles: ["/ws/rich.ts"] }),
       // gate cards: accepted counts as a touched file; rejected and pending
       // don't (nothing was written) — ± regardless, baseline noted at card time
       diff("d1", "/ws/gate.ts", true),
@@ -267,10 +268,10 @@ describe("deriveTranscript: per-turn rollups", () => {
     });
     const blocks: ChatBlock[] = [
       user("u1"),
-      tool("t1", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      tool("t1", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }),
       turnEnd("e1"),
       injected("i1"), // harness woke the agent — a turn, not a prompt
-      tool("t2", { toolKind: "edit", locations: ["/ws/a.ts"] }),
+      tool("t2", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }] }),
       turnEnd("e2"),
       user("u2"),
     ];
@@ -375,3 +376,32 @@ describe("transcriptSeeded normalization", () => {
     expect(state.transcripts[S]![0]).toMatchObject({ status: "in_progress", interrupted: true });
   });
 });
+
+// Issue #41: a tool call's details list one row per file — its reported
+// lines and its diff are the same file, never two rows.
+describe("toolFileRows", () => {
+  it("merges a file's locations and its diff into one row, lines deduped in order", () => {
+    expect(
+      toolFileRows({
+        locations: [
+          { path: "/ws/a.ts", line: 12 },
+          { path: "/ws/b.ts", line: null },
+          { path: "/ws/a.ts", line: 40 },
+          { path: "/ws/a.ts", line: 12 },
+        ],
+        diffFiles: ["/ws/a.ts"],
+      }),
+    ).toEqual([
+      { path: "/ws/a.ts", lines: [12, 40], diff: true },
+      { path: "/ws/b.ts", lines: [], diff: false },
+    ]);
+  });
+
+  it("a file known only from diff content still gets its row, after the reported ones", () => {
+    expect(toolFileRows({ locations: [{ path: "/ws/a.ts", line: 3 }], diffFiles: ["/ws/z.ts"] })).toEqual([
+      { path: "/ws/a.ts", lines: [3], diff: false },
+      { path: "/ws/z.ts", lines: [], diff: true },
+    ]);
+  });
+});
+

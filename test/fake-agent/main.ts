@@ -21,7 +21,7 @@ export type TurnStep =
   | { type: "chunk"; text: string }
   | { type: "thought"; text: string }
   | { type: "userEcho"; text: string }
-  | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: string[] }
+  | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: acp.ToolCallLocation[] }
   | { type: "toolDone"; id: string; rawOutput?: unknown; diff?: { path: string; oldText?: string; newText: string } }
   | {
       type: "plan";
@@ -233,7 +233,7 @@ async function runTurn(
           status: "in_progress",
           ...(step.rawInput !== undefined ? { rawInput: step.rawInput } : {}),
           ...(step.locations !== undefined
-            ? { locations: step.locations.map((path) => ({ path })) }
+            ? { locations: step.locations }
             : {}),
         });
         break;

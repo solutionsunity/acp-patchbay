@@ -106,10 +106,13 @@ function Block({
   live,
   sessionId,
   agentName,
+  roots,
 }: {
   block: ChatBlock;
   live: boolean;
   sessionId: string;
+  /** Workspace roots — tool-call file rows read relative to them. */
+  roots: readonly string[];
   /** Who is speaking in this session — the elicitation card must name the
    * agent asking (an ACP client duty), and the name lives in the agents
    * list, never copied into a block. */
@@ -131,7 +134,7 @@ function Block({
     case "thought":
       return <Thought text={block.text} live={live} />;
     case "toolCall":
-      return <ToolCallCard block={block} sessionId={sessionId} />;
+      return <ToolCallCard block={block} sessionId={sessionId} roots={roots} />;
     case "turnEnd":
       return null; // rendered by Chat as TurnLine, with its rollup
     case "permission":
@@ -160,6 +163,7 @@ const MemoToolRun = memo(
   ToolRunCard,
   (a, b) =>
     a.sessionId === b.sessionId &&
+    a.roots === b.roots &&
     a.calls.length === b.calls.length &&
     a.calls.every((c, i) => c === b.calls[i]),
 );
@@ -429,7 +433,7 @@ export function Chat(props: {
       )}
       {visible.map((item) =>
         item.kind === "toolRun" ? (
-          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} />
+          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} roots={props.state.workspaceRoots} />
         ) : item.block.kind === "turnEnd" ? (
           <TurnLine
             key={item.block.id}
@@ -447,6 +451,7 @@ export function Chat(props: {
             live={item.block.id === liveBlockId}
             sessionId={active.id}
             agentName={agentName}
+            roots={props.state.workspaceRoots}
           />
         ),
       )}

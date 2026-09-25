@@ -13,10 +13,11 @@ import {
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
+import { basename, splitPath } from "../../shared/path";
 import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
-import { Button } from "@/components/ui/button";
+import { toolFileRows } from "./view-model";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
  * `[@name](file://… | zed://…)`. Structured mentions arrive as their own
@@ -277,20 +278,44 @@ function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
   );
 }
 
-/** Collapsed by default: title + status. Expand reveals input args and
- * output — bounded upstream, rendered mono, never through markdown — and,
- * for calls carrying diff content, "Open diff" per file, routed to VS
- * Code's native diff editor rather than any inline diff view. */
+/** A link that reads as text until hovered — files in a tool call. */
+const LINK =
+  "cursor-pointer border-none bg-transparent p-0 text-inherit hover:text-[var(--vscode-textLink-foreground)] hover:underline";
+/** A reported file in a tool call's header: the title's own color, a step
+ * quieter — never louder than the title. */
+const HEADER_LINK = `${LINK} truncate font-mono text-[11px] opacity-70 hover:opacity-100`;
+
+/** Collapsed by default: title, the first file the call reported as a link
+ * (`name:line`, "+N" for the other files), and status. The link opens the
+ * file at the line the agent named; the rest of the header toggles the
+ * details — two targets, because opening a file takes the editor's focus
+ * while showing details costs nothing. Expanded: one row per file — name,
+ * then every line the agent reported in it, then "diff" when the call
+ * carried one (VS Code's native diff editor, never an inline diff view) —
+ * listed only when it says more than the header link; then input args and
+ * output — bounded upstream, rendered mono, never through markdown. */
 export function ToolCallCard({
   block,
   sessionId,
+  roots,
 }: {
   block: ToolCallBlock;
   sessionId: string;
+  /** Workspace roots — file rows read relative to them. */
+  roots: readonly string[];
 }) {
   const send = useActions();
   const [open, setOpen] = useState(false);
-  const expandable = block.input !== null || block.output !== null || block.diffFiles.length > 0;
+  const rows = toolFileRows(block);
+  const listFiles = rows.length > 1 || rows.some((r) => r.diff || r.lines.length > 1);
+  const expandable = block.input !== null || block.output !== null || listFiles;
+  const openAt = (path: string, line: number | undefined) =>
+    send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
+  const first = block.locations[0];
+  const stop = (act: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    act();
+  };
   return (
     <div className="card">
       <div
@@ -302,26 +327,85 @@ export function ToolCallCard({
           <Icon name={TOOL_ICON[block.toolKind]} />
         </span>
         <span className="min-w-0 flex-1 truncate">{block.title}</span>
-        {expandable && <Icon name={open ? "chevron-down" : "chevron-right"} />}
+        {first !== undefined && (
+          <button
+            type="button"
+            className={`tool-loc min-w-0 max-w-[45%] ${HEADER_LINK}`}
+            title={`Open ${first.path}${first.line === null ? "" : ` at line ${first.line}`}`}
+            onClick={stop(() => openAt(first.path, first.line ?? undefined))}
+          >
+            {basename(first.path)}
+            {first.line !== null && `:${first.line}`}
+          </button>
+        )}
+        {first !== undefined && rows.length > 1 && (
+          <button
+            type="button"
+            className={`tool-loc-more shrink-0 ${HEADER_LINK}`}
+            title="Show the other files this call reported"
+            onClick={stop(() => setOpen(true))}
+          >
+            +{rows.length - 1}
+          </button>
+        )}
+        {expandable && (
+          <span title={open ? "Hide details" : "Show details"} aria-label={open ? "Hide details" : "Show details"}>
+            <Icon name={open ? "chevron-down" : "chevron-right"} />
+          </span>
+        )}
         <ToolCallStatusTag block={block} />
       </div>
       {open && (
         <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
-          {block.diffFiles.map((path) => (
-            <Button
-              variant="outline"
-              size="sm"
-              key={path}
-              className="self-start"
-              title="opens in VS Code's diff editor"
-              onClick={(e) => {
-                e.stopPropagation();
-                send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path });
-              }}
-            >
-              <Icon name="diff" /> Open diff — {path}
-            </Button>
-          ))}
+          {listFiles && (
+            <div className="tool-files flex flex-col gap-0.5 text-[12px]">
+              {rows.map((r) => {
+                const { base, dir } = splitPath(r.path, roots);
+                return (
+                  <div key={r.path} className="flex min-w-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      className={`flex shrink-0 items-center gap-1 font-medium ${LINK}`}
+                      title={`Open ${r.path}${r.lines[0] === undefined ? "" : ` at line ${r.lines[0]}`}`}
+                      onClick={stop(() => openAt(r.path, r.lines[0]))}
+                    >
+                      <Icon name="go-to-file" />
+                      {base}
+                      {r.lines[0] !== undefined && `:${r.lines[0]}`}
+                    </button>
+                    {r.lines.slice(1).map((line) => (
+                      <button
+                        type="button"
+                        key={line}
+                        className={`shrink-0 font-mono text-[11px] text-muted-foreground ${LINK}`}
+                        title={`Open ${r.path} at line ${line}`}
+                        onClick={stop(() => openAt(r.path, line))}
+                      >
+                        :{line}
+                      </button>
+                    ))}
+                    {dir !== "" && (
+                      <span className="min-w-0 truncate text-muted-foreground" title={r.path}>
+                        {dir}
+                      </span>
+                    )}
+                    {r.diff && (
+                      <button
+                        type="button"
+                        className={`ml-auto flex shrink-0 items-center gap-1 text-muted-foreground ${LINK}`}
+                        title="Open in VS Code's diff editor"
+                        onClick={stop(() =>
+                          send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path: r.path }),
+                        )}
+                      >
+                        <Icon name="diff" /> diff
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {block.input !== null && (
             <div>
               <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">input</div>
@@ -347,9 +431,11 @@ export function ToolCallCard({
 export function ToolRunCard({
   calls,
   sessionId,
+  roots,
 }: {
   calls: readonly ToolCallBlock[];
   sessionId: string;
+  roots: readonly string[];
 }) {
   const [open, setOpen] = useState(false);
   const running = calls.find((c) => isToolCallOpen(c.status) && !c.interrupted);
@@ -372,7 +458,7 @@ export function ToolRunCard({
           {weightedIcon} {calls.length} tool calls <Icon name="chevron-down" />
         </div>
         {calls.map((c) => (
-          <ToolCallCard key={c.id} block={c} sessionId={sessionId} />
+          <ToolCallCard key={c.id} block={c} sessionId={sessionId} roots={roots} />
         ))}
       </>
     );

@@ -142,6 +142,27 @@ for (const theme of Object.keys(THEMES)) {
   );
   check(`[${theme}] multi-line fence keeps its lines`, codeLines);
   check(`[${theme}] tool run grouped`, (await p.$("text=5 tool calls")) !== null);
+  // a call's reported file: a header link on the collapsed card (name:line,
+  // "+N" for the rest) that never toggles the card; "+N" opens the details
+  // where every file is listed (expanded, checked, collapsed again so later
+  // shots see the default)
+  await p.click("text=5 tool calls");
+  check(`[${theme}] collapsed tool card links its first file at the reported line`, (await p.$('.tool-loc:has-text("a.ts:12")')) !== null);
+  check(`[${theme}] the rest of the reported files count as +N`, (await p.$('.tool-loc-more:has-text("+2")')) !== null);
+  const toolCard = p.locator(".card:has(.tool-loc)", { hasText: "Grep pattern" });
+  await p.mouse.move(0, 0);
+  await toolCard.screenshot({ path: `${OUT}/tool-card-${theme}.png` });
+  await toolCard.locator(".tool-loc").click();
+  check(`[${theme}] the file link opens, never toggles the card`, (await toolCard.locator(".tool-files").count()) === 0);
+  await toolCard.locator(".tool-loc-more").click();
+  const fileRows = toolCard.locator(".tool-files > div");
+  check(`[${theme}] +N opens the details: one row per file`, (await fileRows.count()) === 3);
+  const firstRow = (await fileRows.first().innerText()).replace(/\s+/g, " ");
+  check(`[${theme}] a file's lines and its diff share its row, path relative to the root ("${firstRow}")`, /a\.ts:12 :30 src .*diff/.test(firstRow));
+  await p.mouse.move(0, 0);
+  await toolCard.screenshot({ path: `${OUT}/tool-card-open-${theme}.png` });
+  await p.click("text=Grep pattern");
+  await p.click("text=5 tool calls");
 
   // ── injected user-role envelope: dim collapsed line, never a bubble,
   // and it must not tick the prompt count (stats row stays "2 5 1 file") ──

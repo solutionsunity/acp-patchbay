@@ -27,12 +27,12 @@ export const chatTranscript = [
     text: 'See [the docs](https://example.com/docs) — flow:\n\n```mermaid\ngraph LR\n  A[prompt] --> B{broker}\n  B -->|allow| C[tool runs]\n  B -->|deny| D[blocked]\n```\n\n```ts\nconst pattern: RegExp = /foo/g;\n```',
   },
   { kind: "thought", id: "th1", text: "grep is cheaper than a full parse here — start narrow." },
-  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", diffFiles: ["/ws/a.ts"] }),
+  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", locations: [{ path: "/ws/src/a.ts", line: 12 }, { path: "/ws/src/a.ts", line: 30 }, { path: "/ws/src/b.ts", line: 40 }, { path: "/ws/src/c.ts", line: null }], diffFiles: ["/ws/src/a.ts"] }),
   tool("g1", { title: "Read a.ts", toolKind: "read" }),
   tool("g2", { title: "Read b.ts", toolKind: "read" }),
   // file-touching + matching the dirty openEditors entry below — lights the
   // read-out strip's files chip and its dirty dot; keeps the run at 5 calls
-  tool("g3", { title: "Edit api.ts", toolKind: "edit", locations: ["/ws/src/api.ts"], diffFiles: ["/ws/src/api.ts"] }),
+  tool("g3", { title: "Edit api.ts", toolKind: "edit", locations: [{ path: "/ws/src/api.ts", line: null }], diffFiles: ["/ws/src/api.ts"] }),
   tool("t9", { title: "rm -rf ./cache", toolKind: "execute", status: "failed", denied: true }),
   {
     kind: "turnEnd", id: "e0", startedAt: "2026-07-07T10:00:00Z", endedAt: "2026-07-07T10:01:29Z",
@@ -151,7 +151,7 @@ export function agentViewState({ live }) {
     // matches g3's diff-bearing edit below — the files panel's +/- badge
     fileDiffStats: { s1: { "/ws/src/api.ts": { additions: 12, deletions: 4 } } },
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
-    contextRoots: { s1: [] }, workspaceRoots: [], liveSelection: null,
+    contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,

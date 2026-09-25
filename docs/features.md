@@ -216,6 +216,8 @@ deliverable.
   shows which agents deliver this brokered tier row by row; for agents that
   write on their own, the matrix's honest not-declared cells and live terminal
   visibility carry the honesty in the current release.
+- Follow the agent: a file its tool call reports reading, searching or
+  editing opens from the chat in one click, at the line the agent named.
 - The agent sees what the user sees: unsaved buffers, not just disk state.
 - The agent can read the problems panel (diagnostics) — current, not stale.
 - Right-click on a selection: add it to the prompt's context.

@@ -88,6 +88,7 @@ import { SessionContinuityStore } from "./stores/session-continuity";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
+import { editorLineOf } from "./tool-locations";
 
 /** Context-chip id mint. The timestamp alone collided once a multi-file
  * drop started dispatching several adds in the same millisecond (duplicate
@@ -1315,6 +1316,33 @@ export class Orchestrator {
     this.settings.emit({ kind: "sessionStatsChanged", sessionsActiveToday: count });
   }
 
+  /** Opens a file in the editor its type calls for (text, image preview,
+   * …). A location line puts the cursor on that line's first non-blank
+   * character, scrolled into view; a file with no text to land in (binary)
+   * opens without one. A directory — some agents report a shell command's
+   * working directory as its location — is revealed in the Explorer, never
+   * opened as a folder. */
+  private async openFileAt(path: string, line: number | undefined): Promise<void> {
+    const uri = vscode.Uri.file(path);
+    if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) {
+      await vscode.commands.executeCommand("revealInExplorer", uri);
+      return;
+    }
+    let selection: vscode.Range | undefined;
+    if (line !== undefined) {
+      const doc = await vscode.workspace.openTextDocument(uri).then(
+        (d) => d,
+        () => null,
+      );
+      if (doc !== null) {
+        const at = doc.lineAt(editorLineOf(line, doc.lineCount));
+        const pos = new vscode.Position(at.lineNumber, at.firstNonWhitespaceCharacterIndex);
+        selection = new vscode.Range(pos, pos);
+      }
+    }
+    await vscode.commands.executeCommand("vscode.open", uri, selection === undefined ? undefined : { selection });
+  }
+
   /** Live-buffer read: an open, possibly-unsaved editor wins over disk
    * ("the agent sees what the user sees"). Falls back to disk for files
    * with no open editor. */
@@ -2303,10 +2331,8 @@ export class Orchestrator {
         this.log.error(`webview ${action.view}: ${action.message}`);
         break;
       case "openFile":
-        // read-out strip files panel — path is absolute (tool-call locations)
-        void vscode.window
-          .showTextDocument(vscode.Uri.file(action.path))
-          .then(undefined, this.logCatch(`openFile ${action.path}`));
+        // files panel rows and tool-call locations — absolute paths
+        void this.openFileAt(action.path, action.line).catch(this.logCatch(`openFile ${action.path}`));
         break;
       case "openSessionFileDiff":
         void this.openSessionFileDiff(action.sessionId, action.path).catch(

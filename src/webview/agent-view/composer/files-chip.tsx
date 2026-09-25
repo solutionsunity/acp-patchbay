@@ -11,16 +11,8 @@ import { useEffect, useRef, useState } from "react";
 import type { OpenEditorView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
+import { splitPath } from "../../shared/path";
 import { count } from "../chat/view-model";
-
-/** Absolute path → { base, dir } with dir relativized against the longest
- * matching workspace root — display only, actions always carry the full path. */
-function splitPath(path: string, roots: readonly string[]): { base: string; dir: string } {
-  const root = roots.filter((r) => path.startsWith(r)).sort((a, b) => b.length - a.length)[0];
-  const rel = root !== undefined ? path.slice(root.length).replace(/^[/\\]/, "") : path;
-  const parts = rel.split(/[/\\]/);
-  return { base: parts.pop() ?? rel, dir: parts.join("/") };
-}
 
 export function FilesChip({
   sessionId,

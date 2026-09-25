@@ -11,7 +11,7 @@ consume is either consumed or deliberately declined *on record here*.
 
 This document states the current fact set only — what is true now, against which
 version, checked when. It carries no fix history; git holds that. Retired gap ids
-(G1–G4, G6–G9, G11, G12, G14) mean "resolved — the resulting behavior is stated as a
+(G1–G4, G6–G9, G11–G14) mean "resolved — the resulting behavior is stated as a
 present-tense fact in its section below."
 
 Verdict vocabulary, used per row:
@@ -169,7 +169,7 @@ consumed: the card names the call by its `title`, which every agent sends.
 | Content `diff` | ✅ | Fully rendered, three surfaces from two sources (agent-reported diffs here; the fs/write gate's pre-image at the orchestrator chokepoint): the tool card's openable per-call diff (`toolCallDiff`), the files panel's since-first-touch baseline diff (`fileBaselines`, first note wins), and the cumulative ± badges (`fileStats`). |
 | Content `content` (regular blocks) | 🟡 | Not rendered — the card shows bounded `rawInput`/`rawOutput` instead, which is patchbay's debug view, not the agent's chosen presentation. → Open gap G5. |
 | Content `terminal` (embedded by id) | 🟡 | Terminal output renders as its own live transcript block (`terminalStarted`/`terminalOutputAppended`) and persists after release — but the content entry is not consumed, so the output is not visually attached to its owning tool-call card. Functionally honest, structurally loose. → Open gap G5. |
-| `locations` follow-along | 🟡 | `path` captured onto the block with click-through; `line` is dropped (opens the file, not the line). → Open gap G13. |
+| `locations` follow-along | ✅ | Each location rides the block as path + line (`tool-locations.ts`) and opens from the tool-call card — the cursor on the named line's first non-blank character, clamped into the file; a directory is revealed in the Explorer. The spec leaves `line`'s base unstated; it is read **1-based** (decided 2026-09-25), because the agents that send one count from 1 — claude-agent-acp (Read `offset ?? 1`, Edit hunk `newStart`), Gemini CLI 0.50 (`start_line`, documented 1-based) — and a whole-file read reports `line: 1`. `0` is taken as the first line. Zed reads it 0-based (its own tools send `start_line - 1`); OpenCode and codex-acp send no line. Covered by `test/tool-locations.test.ts` and `test/vscode/open-location.test.ts`. |
 | `rawInput`/`rawOutput` | ✅ | Bounded (`boundedRaw`, `RAW_CAP`) with an explicit truncation marker — display honesty kept. |
 
 ## 11. Permission requests (`session/request_permission`)
@@ -262,7 +262,6 @@ always gated on declared (+ used where it gates UI), never silently.
 |---|---|---|
 | G5 | SHOULD | Tool-call content: `content`-kind blocks unrendered (card shows raw debug view instead of the agent's chosen presentation); `terminal`-kind entries not linked to their owning card (§10). rendering work (the UI Architecture doc), not a patch. |
 | G10 | SHOULD | Non-text message content renders as placeholder only (§8). Remaining, each its own design discussion: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(c)** image — needs a rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. Sequence alongside G5. |
-| G13 | MAY-level | `ToolCallLocation.line` dropped — follow-along opens the file, not the line (§10). One-field render improvement, no design needed. |
 
 **Verify:** V1 — that the SDK surfaces load-replay notifications before the
 `session/load` response resolves in all transports we use (stdio: confirmed by

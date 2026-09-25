@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A file an agent's tool call reports can now be opened from the chat, at
+  the line the agent named. The file's name sits in the call's header —
+  click it and the file opens with the cursor on that line, whether or not
+  the call carried a diff; "+2" says the call touched two more files.
+  Expanded, a call lists one row per file: its name, every line the agent
+  pointed at, its folder relative to the workspace, and "diff" when there
+  is one. A line past the end of the file opens at the last line, an image
+  opens in its preview, and a folder the agent reported shows in the
+  Explorer. Before, the line was dropped on arrival and the card had no way
+  to open the file at all. The files panel's folder labels also stop
+  misreading a folder whose name merely starts like a workspace root's. (#41)
 - A file change you reject is now reported to the agent as rejected. Before,
   the agent was told the write succeeded, carried on as if the file had
   changed, and its picture of your workspace no longer matched the disk. A

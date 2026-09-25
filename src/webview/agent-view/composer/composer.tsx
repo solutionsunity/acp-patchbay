@@ -25,7 +25,7 @@ import { composerControls } from "./composer-controls";
 import type { RootsControls } from "./roots-controls";
 import { Knobs } from "./knobs";
 import { ComposerStats } from "./stats";
-import { basename } from "./menus";
+import { basename } from "../../shared/path";
 import { PromptEditor } from "./prompt-editor";
 import { RootsChip } from "./roots-chip";
 import { Button } from "@/components/ui/button";

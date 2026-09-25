@@ -221,7 +221,8 @@ export type Action =
   | { kind: "openProposedDiff"; blockId: string }
   /** Open a file in the editor by absolute path — the read-out strip's
    * files-panel rows (the view never touches fs). */
-  | { kind: "openFile"; path: string }
+  /** `line` is the location's 1-based line — absent opens at the top. */
+  | { kind: "openFile"; path: string; line?: number }
   /** The files panel's ± — native diff of the session's first-touch
    * pre-image against the live file. Texts stay orchestrator-side
    * (fileBaselines); the view only ever names the path. */
@@ -876,6 +877,13 @@ export type ToolCallKind =
   | "switch_mode"
   | "other";
 
+/** A file a tool call reported, with the 1-based line the agent pointed at
+ * (null when it named none). */
+export interface ToolLocation {
+  path: string;
+  line: number | null;
+}
+
 export interface ToolCallBlock {
   kind: "toolCall";
   /** == the ACP toolCallId — one block, updated in place as status changes. */
@@ -888,9 +896,10 @@ export interface ToolCallBlock {
    * Bounded at the source with an honest truncation marker, never silently. */
   input: string | null;
   output: string | null;
-  /** File paths this call reported touching (ACP locations) — the per-turn
-   * rollup's "N files" is the deduped set across edit/delete/move calls. */
-  locations: readonly string[];
+  /** Files this call reported touching (ACP locations), each openable from
+   * the card at its line — the per-turn rollup's "N files" is the deduped
+   * path set across edit/delete/move calls. */
+  locations: readonly ToolLocation[];
   /** Paths with agent-reported diff content (ToolCallContent type:"diff").
    * The texts stay orchestrator-side; expanding the card offers "Open
    * diff", routed to VS Code's native diff editor — never an inline diff
@@ -1419,7 +1428,7 @@ export type AgentViewEvent =
       toolKind?: ToolCallKind;
       input?: string;
       output?: string;
-      locations?: readonly string[];
+      locations?: readonly ToolLocation[];
       diffFiles?: readonly string[];
     }
   /** The broker rejected this tool call's session/request_permission. */

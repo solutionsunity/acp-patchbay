@@ -927,7 +927,7 @@ describe("SessionManager", () => {
         {
           turn: [
             { type: "chunk", text: "done" },
-            { type: "toolCall", id: "e1", title: "Edit a.ts", kind: "edit", locations: ["/ws/a.ts"] },
+            { type: "toolCall", id: "e1", title: "Edit a.ts", kind: "edit", locations: [{ path: "/ws/a.ts" }] },
             { type: "toolDone", id: "e1" },
           ],
           usage: { totalTokens: 1200, inputTokens: 1000, outputTokens: 200, cachedReadTokens: 800 },
@@ -948,9 +948,40 @@ describe("SessionManager", () => {
     expect(state.activeTurn[sessionId]).toBeUndefined();
     // locations rode in for the rollup's distinct-files count
     const tool = assertKind(blocks.find((b) => b.kind === "toolCall"), "toolCall");
-    expect(tool.locations).toEqual(["/ws/a.ts"]);
+    expect(tool.locations).toEqual([{ path: "/ws/a.ts", line: null }]);
 
     await h.pool.stop("sm13d");
+  });
+
+  it("a location's line rides the block, read 1-based: 0 is the first line, no line stays none (issue #41)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            {
+              type: "toolCall",
+              id: "r1",
+              title: "Read a.ts",
+              kind: "read",
+              locations: [{ path: "/ws/a.ts", line: 42 }, { path: "/ws/b.ts", line: 0 }, { path: "/ws/c.ts" }],
+            },
+            { type: "toolDone", id: "r1" },
+          ],
+        },
+        "sm41",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm41", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "read it");
+
+    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    expect(tool.locations).toEqual([
+      { path: "/ws/a.ts", line: 42 },
+      { path: "/ws/b.ts", line: 1 },
+      { path: "/ws/c.ts", line: null },
+    ]);
+    await h.pool.stop("sm41");
   });
 
   it("agent-reported diff content: paths ride the block, texts stay orchestrator-side for the native diff editor", async () => {

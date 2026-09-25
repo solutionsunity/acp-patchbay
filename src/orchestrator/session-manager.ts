@@ -50,6 +50,7 @@ import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import { continuityReachable } from "./stores/session-continuity";
+import { toolLocationsOf } from "./tool-locations";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -2841,7 +2842,7 @@ export class SessionManager {
           ...boundedRaw("input", update.rawInput),
           ...boundedRaw("output", update.rawOutput),
           ...(update.locations != null
-            ? { locations: update.locations.map((l) => l.path) }
+            ? { locations: toolLocationsOf(update.locations) }
             : {}),
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });
@@ -2860,7 +2861,7 @@ export class SessionManager {
           ...boundedRaw("input", update.rawInput),
           ...boundedRaw("output", update.rawOutput),
           ...(update.locations != null
-            ? { locations: update.locations.map((l) => l.path) }
+            ? { locations: toolLocationsOf(update.locations) }
             : {}),
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });

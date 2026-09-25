@@ -35,8 +35,8 @@ import {
 } from "lexical";
 import type { AvailableCommand, OpenEditorView, PromptPart } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
+import { basename } from "../../shared/path";
 import {
-  basename,
   buildMentionEntries,
   filterCommands,
   MentionMenu,

@@ -80,6 +80,33 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
 /** "Several" starts at 3 — two cards aren't the wall the grouping exists to
  * prevent, and hiding a pair costs more clicks than it saves reading.
  * Deliberate threshold, not a tunable. */
+/** One file a tool call touched, as its details list it: every line the
+ * agent reported in it (first = where opening lands), and whether the call
+ * carried a diff for it. One row per file — its locations and its diff are
+ * the same file, never two rows. */
+export interface ToolFileRow {
+  path: string;
+  lines: readonly number[];
+  diff: boolean;
+}
+
+/** Rows in first-mention order: reported locations first, then files known
+ * only from diff content. */
+export function toolFileRows(block: Pick<ToolCallBlock, "locations" | "diffFiles">): ToolFileRow[] {
+  const rows = new Map<string, { path: string; lines: number[]; diff: boolean }>();
+  const row = (path: string) => {
+    let r = rows.get(path);
+    if (r === undefined) rows.set(path, (r = { path, lines: [], diff: false }));
+    return r;
+  };
+  for (const { path, line } of block.locations) {
+    const r = row(path);
+    if (line !== null && !r.lines.includes(line)) r.lines.push(line);
+  }
+  for (const path of block.diffFiles) row(path).diff = true;
+  return [...rows.values()];
+}
+
 export const TOOL_RUN_MIN = 3;
 
 const FILE_TOUCHING: ReadonlySet<ToolCallKind> = new Set(["edit", "delete", "move"]);
@@ -123,7 +150,7 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
       totalCalls++;
       byKind[block.toolKind] = (byKind[block.toolKind] ?? 0) + 1;
       if (FILE_TOUCHING.has(block.toolKind)) {
-        for (const path of block.locations) {
+        for (const { path } of block.locations) {
           files.add(path);
           allFiles.add(path);
         }

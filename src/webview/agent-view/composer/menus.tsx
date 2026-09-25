@@ -11,6 +11,7 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
 import type { AvailableCommand, OpenEditorView } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
+import { basename } from "../../shared/path";
 
 /** Keeps the keyboard-selected row visible as arrows walk past the scroll
  * edge — the one navigation nicety a real combobox primitive would give for
@@ -23,10 +24,6 @@ function useScrollSelectedIntoView(selected: number): RefObject<HTMLDivElement |
     ref.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
   return ref;
-}
-
-export function basename(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
 }
 
 export function filterCommands(
