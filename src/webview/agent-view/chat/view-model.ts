@@ -108,7 +108,7 @@ export function toolFileRows(block: Pick<ToolCallBlock, "locations" | "diffFiles
 }
 
 /** Block ids of the terminals some tool call embeds in its content. */
-export function embeddedTerminalIds(blocks: readonly ChatBlock[]): ReadonlySet<string> {
+function embeddedTerminalIds(blocks: readonly ChatBlock[]): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const b of blocks) {
     if (b.kind !== "toolCall") continue;

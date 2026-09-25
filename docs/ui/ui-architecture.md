@@ -53,8 +53,14 @@ and action rows; `Select`/`DropdownMenu` for process mode and default knobs;
 matrix; `Checkbox`/`Command` for permission allowlists; `Form` + labeled fields
 for the MCP/agent forms; the sidebar keeps its 3-group nav (the placement
 contract), never regressing to flat `Tabs`. In **chat**, the same layer covers
-`Accordion` (tool-call/plan expand), `Tooltip` (completion-time hover), `Dialog`
-(permission prompts), `Badge` (status chips). Pull only the components a surface
+`Tooltip` (completion-time hover), `Dialog` (permission prompts), `Badge`
+(status chips). Inline show/hide (a tool call's details, a thought, a turn
+line, an embedded file's snapshot) is not an Accordion: it is one small
+`Disclosure` atom — a native button with `aria-expanded` and the chevron.
+An inline disclosure has none of the four problems Radix is here for (no
+layer to escape, nothing to dismiss, no placement, focus is the button's
+own), so a primitive would add a dependency and solve nothing (decided
+2026-09-25). Pull only the components a surface
 uses — tree-shakeable, the same principle as the Streamdown plugins.
 
 Radix renders overlays via portals; the portal target lives within the webview's
@@ -175,11 +181,16 @@ Two integration notes:
 - Map VS Code's injected theme CSS variables onto the shadcn/Tailwind variable
   names Streamdown expects, so rendered markdown matches the user's active theme
   rather than a hardcoded default palette.
-- Tool calls, diffs, and plans never go through Streamdown. Parse `session/update`
-  content by type upstream; only `agent_message_chunk` / `agent_thought_chunk`
-  text deltas are markdown-rendered. Everything else gets its own dedicated
-  component. Feeding a tool's raw JSON output through a markdown parser is a
-  second, independent source of "broken formatting."
+- Tool calls, diffs, and plans never go through Streamdown as structure. Parse
+  `session/update` content by type upstream; markdown-rendered text is the
+  agent's prose — `agent_message_chunk` / `agent_thought_chunk` text deltas
+  — and the text entries of a tool call's `content`, which is the agent's own
+  presentation of the result and is written as markdown by convention (a
+  command's output arrives in a fenced `console` block). Everything else gets
+  its own dedicated component. A tool's raw JSON (`rawInput`/`rawOutput`)
+  never goes through the parser: it renders verbatim in a `pre` behind the
+  card's raw toggle — feeding it through markdown is a second, independent
+  source of "broken formatting."
 
 ### The transcript: interleaved, heterogeneous, streamed updates
 
