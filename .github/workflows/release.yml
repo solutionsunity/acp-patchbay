@@ -66,6 +66,17 @@ jobs:
             echo "Even minor ($MINOR) -> stable"
           fi
 
+      # The release's own text is the version's CHANGELOG section — its
+      # summary first, then every entry — one home for what a release says.
+      # gh places these notes ahead of the generated ones (the compare link).
+      - name: Release notes from CHANGELOG
+        run: |
+          awk -v v="$version" 'index($0, "## " v " ") == 1 { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,5 +85,6 @@ jobs:
             "acp-patchbay-${version}.vsix" \
             "acp-patchbay-${version}.vsix.sha256" \
             --title "v${version}" \
+            --notes-file release-notes.md \
             --generate-notes \
             ${prerelease}
