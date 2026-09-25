@@ -45,7 +45,8 @@
   error, and a stopped turn with a card still open is reported as cancelled
   rather than rejected. Reading a file that doesn't exist now tells the
   agent "not found" for that path, so it no longer mistakes a missing file
-  for patchbay breaking. (#39)
+  for patchbay breaking; asking about a terminal it was never given is
+  answered as the agent's mistake, not as patchbay failing. (#39)
 - Agents can now ask you questions with a form in the chat. ACP's
   elicitation reached the stable protocol, and patchbay declares its form
   mode: the question arrives as a card naming the agent, with one control

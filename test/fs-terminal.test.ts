@@ -108,6 +108,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
 
   return {
     pool,
+    host,
     broker,
     rules,
     sessionManager,
@@ -333,6 +334,18 @@ async function waitFor(probe: () => boolean | undefined, timeoutMs = 5000): Prom
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+describe("ClientHost — replies for a terminal id it never issued", () => {
+  it("is the agent's bad params (-32602), never the client breaking (-32603)", async () => {
+    const { host } = harness();
+    for (const call of [
+      () => host.terminalOutput({ sessionId: "s", terminalId: "term-404" }),
+      () => host.waitForTerminalExit({ sessionId: "s", terminalId: "term-404" }),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("term-404") });
+    }
+  });
+});
 
 describe("tailBytes (ACP outputByteLimit — bytes, character-boundary cut)", () => {
   it("under the limit passes through untouched", () => {

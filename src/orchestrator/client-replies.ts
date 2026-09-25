@@ -53,3 +53,10 @@ export function readFailure(err: unknown, path: string): unknown {
   const code = (err as { code?: unknown } | null)?.code;
   return code === "FileNotFound" || code === "ENOENT" ? refusal(RequestError.resourceNotFound(path)) : err;
 }
+
+/** A terminal id the agent never got from `terminal/create`, or already
+ * released — the agent's mistake, answered as bad params, never as the
+ * client breaking. */
+export function unknownTerminal(terminalId: string): RequestError {
+  return RequestError.invalidParams({ terminalId }, `unknown terminal ${terminalId}`);
+}

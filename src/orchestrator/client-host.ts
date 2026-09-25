@@ -10,7 +10,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import { type PermissionBroker, sliceTextFileRead } from "./broker";
-import { gateRefusal, readFailure } from "./client-replies";
+import { gateRefusal, readFailure, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
 import type { SessionManager } from "./session-manager";
 import type { TerminalHandle } from "./terminal-runner";
@@ -127,7 +127,7 @@ export class ClientHost {
 
   private terminal(terminalId: string): TerminalHandle {
     const handle = this.terminals.get(terminalId);
-    if (!handle) throw new Error(`unknown terminal ${terminalId}`);
+    if (!handle) throw unknownTerminal(terminalId);
     return handle;
   }
 }
