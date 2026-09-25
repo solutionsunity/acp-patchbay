@@ -17,6 +17,7 @@ import {
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
+import { Disclosure } from "../../shared/disclosure";
 import { ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
@@ -70,21 +71,25 @@ function TurnLine({
     .join(" · ");
   return (
     <div
-      className="cursor-pointer select-none py-0.5 text-[11px] text-muted-foreground"
+      className="py-0.5 text-[11px] text-muted-foreground"
       title={!live && endedAt !== null ? `completed ${new Date(endedAt).toLocaleString()}` : undefined}
-      onClick={() => setOpen((v) => !v)}
-      aria-expanded={open}
     >
-      {live && <span className="spin mr-1.5 inline-block align-middle" />}
-      {parts.join(" · ")}
-      {chip && (
-        <span
-          className={`badge ml-1.5 ${stopReason === "error" ? "text-err" : "text-warn"}`}
-          title="the turn did not end cleanly — this is the agent's stop reason"
-        >
-          {stopReason}
-        </span>
-      )}
+      <Disclosure
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        label={open ? "Hide the turn's breakdown" : "Show the turn's breakdown"}
+      >
+        {live && <span className="spin mr-0.5 inline-block align-middle" />}
+        {parts.join(" · ")}
+        {chip && (
+          <span
+            className={`badge ml-1 ${stopReason === "error" ? "text-err" : "text-warn"}`}
+            title="the turn did not end cleanly — this is the agent's stop reason"
+          >
+            {stopReason}
+          </span>
+        )}
+      </Disclosure>
       {open && (
         <div className="pt-0.5">
           {breakdown !== "" ? breakdown : "no tool calls this turn"}

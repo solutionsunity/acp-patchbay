@@ -45,7 +45,7 @@ export const chatTranscript = [
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
   // non-text pieces of an agent's message: rendered by the message part
-  // renderers, never a "[… not rendered]" line (an embedded file expands;
+  // renderers, never a placeholder line (an embedded file expands;
   // audio keeps a labeled placeholder — nothing plays it)
   { kind: "text", id: "xp0", text: "Attached the notes I used:" },
   { kind: "agentPart", id: "ap1", part: { kind: "context", label: "file:///ws/notes.md", text: "- foo() is called from 3 places\n- b.ts returns it" }, thought: false },

@@ -2415,7 +2415,7 @@ export class Orchestrator {
     const uris = await vscode.workspace.findFiles("**/*", "**/node_modules/**", 2000);
     const q = query.toLowerCase();
     const rankOf = (path: string): number => {
-      const name = path.split(/[\\/]/).pop()!.toLowerCase();
+      const name = basename(path).toLowerCase();
       return name.startsWith(q) ? 0 : name.includes(q) ? 1 : path.toLowerCase().includes(q) ? 2 : 3;
     };
     const rank = (paths: Iterable<string>) =>

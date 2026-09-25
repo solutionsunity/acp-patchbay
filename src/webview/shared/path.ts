@@ -24,3 +24,16 @@ function contains(root: string, path: string): boolean {
   const rest = path.slice(root.length);
   return rest === "" || /[/\\]$/.test(root) || /^[/\\]/.test(rest);
 }
+
+/** The local path a `file://` URI names — null for any other scheme, or a
+ * URI that doesn't parse. A Windows drive path loses the URI's leading
+ * slash (`/C:/ws/a.ts` → `C:/ws/a.ts`). */
+export function filePathOf(uri: string): string | null {
+  if (!uri.startsWith("file://")) return null;
+  try {
+    const path = decodeURIComponent(new URL(uri).pathname);
+    return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+  } catch {
+    return null;
+  }
+}

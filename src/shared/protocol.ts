@@ -831,6 +831,13 @@ export function terminalBlockId(terminalId: string): string {
   return `term-block-${terminalId}`;
 }
 
+/** What a content kind with no renderer says in its place — one wording for
+ * the chat and for copied text. Audio is the one kind a player could show;
+ * none exists yet, a recorded decision. */
+export function unrenderedLabel(type: string): string {
+  return type === "audio" ? "audio · not playable here" : `${type} · not shown here`;
+}
+
 /** A user message flattened for copy/preview — mentions and chips keep a
  * readable spelling, prose stays verbatim. */
 export function userPartsText(parts: readonly UserPart[]): string {
@@ -848,7 +855,7 @@ export function userPartsText(parts: readonly UserPart[]): string {
         case "context":
           return `[${p.label}]`;
         case "unrendered":
-          return `[${p.type} content]`;
+          return `[${unrenderedLabel(p.type)}]`;
       }
     })
     .join("");

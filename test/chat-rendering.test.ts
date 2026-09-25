@@ -13,6 +13,8 @@ import {
   coalesceAgentViewEvent,
   initialAgentViewState,
   reduceAgentView,
+  unrenderedLabel,
+  userPartsText,
   type AgentViewEvent,
   type ChatBlock,
   type ToolCallBlock,
@@ -453,6 +455,21 @@ describe("tool-call content merge", () => {
   it("the coalescer keeps the same rule when it folds two updates into one", () => {
     expect(coalesceAgentViewEvent(upsert(first), upsert())).toMatchObject({ content: first });
     expect(coalesceAgentViewEvent(upsert(first), upsert(second))).toMatchObject({ content: second });
+  });
+});
+
+// One wording for a content kind nothing renders, in the chat and in copied
+// text alike; audio names the player that doesn't exist yet.
+describe("unrenderedLabel", () => {
+  it("audio says it can't be played; other kinds say they aren't shown", () => {
+    expect(unrenderedLabel("audio")).toBe("audio · not playable here");
+    expect(unrenderedLabel("blob resource")).toBe("blob resource · not shown here");
+  });
+
+  it("copied text spells it the way the chat does", () => {
+    expect(userPartsText([{ kind: "text", text: "listen " }, { kind: "unrendered", type: "audio" }])).toBe(
+      "listen [audio · not playable here]",
+    );
   });
 });
 

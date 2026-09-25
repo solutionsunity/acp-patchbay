@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Everything in the chat that expands — a thought, a turn's summary line,
+  an embedded file, an injected message, a tool call and a run of them —
+  now opens the same way and can be reached with the keyboard; the turn
+  line shows its arrow too, so it no longer hides that it opens. A linked
+  file (an `@file` in your message, a link in a thought or a tool's output)
+  now opens in the editor when clicked; it used to do nothing. Content the
+  chat can't show says so plainly: audio reads "audio · not playable here".
 - An agent's images and embedded files now show in the chat. Anything but
   text in an agent's message or thought used to appear as a line like
   "[image content — not rendered]", even though the same content showed

@@ -171,16 +171,31 @@ for (const theme of Object.keys(THEMES)) {
   await toolCard.getByRole("button", { name: "raw" }).click();
   await p.click("text=Grep pattern");
   await p.click("text=5 tool calls");
+  // every show/hide in the chat is one control — a real button the
+  // keyboard reaches, stating its state
+  for (const [what, where] of [
+    ["thought", ".thought"],
+    ["injected envelope", ".injected"],
+    ["embedded-file snapshot", ".user-context"],
+  ]) {
+    check(`[${theme}] ${what} toggles with a keyboard-reachable button`, (await p.locator(`${where} button[aria-expanded]`).count()) > 0);
+  }
+  check(`[${theme}] turn line toggles with a keyboard-reachable button`, (await p.locator('button[aria-expanded][title="Show the turn\'s breakdown"]').count()) > 0);
+  check(`[${theme}] a user's @file mention is a button that opens it`, (await p.locator('.msg-user button.mention-token[title="Open /ws/src/api.ts"]').count()) === 1);
+  // the show/hide controls as the eye meets them (element shots scroll
+  // themselves into view): the turn line and the injected envelope
+  await p.locator('button[title="Show the turn\'s breakdown"]').first().screenshot({ path: `${OUT}/toggle-turn-${theme}.png` });
+  await p.locator(".injected").screenshot({ path: `${OUT}/toggle-injected-${theme}.png` });
   // an agent's non-text content: part renderers, never placeholder prose
   const agentFile = p.locator(".msg-agent .user-context", { hasText: "file:///ws/notes.md" });
   check(`[${theme}] an agent's embedded file renders as an expandable snapshot`, (await agentFile.count()) === 1);
-  check(`[${theme}] audio keeps its labeled placeholder — the recorded floor`, (await p.locator(".msg-agent", { hasText: "[audio content — not rendered]" }).count()) === 1);
+  check(`[${theme}] audio keeps its labeled placeholder — the recorded floor`, (await p.locator(".msg-agent", { hasText: "[audio · not playable here]" }).count()) === 1);
   await agentFile.locator(".prompt-token").click();
   await p.mouse.move(0, 0);
   const partsIntro = p.locator(".msg-agent", { hasText: "Attached the notes I used" });
   await partsIntro.scrollIntoViewIfNeeded();
   const partBoxes = await Promise.all(
-    [partsIntro, agentFile, p.locator(".msg-agent", { hasText: "[audio content" })].map((l) => l.boundingBox()),
+    [partsIntro, agentFile, p.locator(".msg-agent", { hasText: "[audio ·" })].map((l) => l.boundingBox()),
   );
   if (partBoxes.every((b) => b !== null)) {
     const top = Math.min(...partBoxes.map((b) => b.y));

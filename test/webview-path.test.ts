@@ -1,7 +1,7 @@
 // Display labels for paths (files panel, tool-call file rows): relative to the
 // longest containing workspace root, by whole segments only.
 import { describe, expect, it } from "vitest";
-import { splitPath } from "../src/webview/shared/path";
+import { filePathOf, splitPath } from "../src/webview/shared/path";
 
 describe("splitPath", () => {
   it("relativizes against the longest root that contains the path", () => {
@@ -20,5 +20,20 @@ describe("splitPath", () => {
   it("Windows separators and a root given with a trailing separator both work", () => {
     expect(splitPath("C:\\ws\\src\\a.ts", ["C:\\ws"])).toEqual({ base: "a.ts", dir: "src" });
     expect(splitPath("/ws/src/a.ts", ["/ws/"])).toEqual({ base: "a.ts", dir: "src" });
+  });
+});
+
+describe("filePathOf", () => {
+  it("a file URI names its local path, percent-decoded", () => {
+    expect(filePathOf("file:///ws/my%20notes.md")).toBe("/ws/my notes.md");
+  });
+
+  it("a Windows drive path drops the URI's leading slash", () => {
+    expect(filePathOf("file:///C:/ws/a.ts")).toBe("C:/ws/a.ts");
+  });
+
+  it("any other scheme names no local file", () => {
+    expect(filePathOf("https://example.com/a.ts")).toBeNull();
+    expect(filePathOf("zed://file/a.ts")).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import {
   isToolCallOpen,
   userPartsText,
   terminalBlockId,
+  unrenderedLabel,
   type ContentPart,
   type TerminalBlock,
   type ToolCallBlock,
@@ -16,7 +17,8 @@ import {
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
-import { basename, splitPath } from "../../shared/path";
+import { Disclosure } from "../../shared/disclosure";
+import { basename, filePathOf, splitPath } from "../../shared/path";
 import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { TerminalView } from "./cards";
@@ -72,13 +74,14 @@ function ContextPart({ part }: { part: Extract<UserPart, { kind: "context" }> })
   const [open, setOpen] = useState(false);
   return (
     <span className="user-context">
-      <span
-        className="prompt-token cursor-pointer select-none"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
+      <Disclosure
+        open={open}
+        onToggle={() => setOpen(!open)}
+        label={open ? "Hide the snapshot" : "Show the snapshot"}
+        className="prompt-token"
       >
-        <Icon name="link" /> {part.label} <Icon name={open ? "chevron-down" : "chevron-right"} />
-      </span>
+        <Icon name="link" /> {part.label}
+      </Disclosure>
       {open && <pre className="user-context-body">{part.text}</pre>}
     </span>
   );
@@ -89,11 +92,7 @@ function PartView({ part }: { part: UserPart }) {
     case "text":
       return <UserProse text={part.text} />;
     case "mention":
-      return (
-        <span className="prompt-token mention-token" title={part.uri}>
-          @{part.name}
-        </span>
-      );
+      return <MentionToken name={part.name} uri={part.uri} />;
     case "image":
       return <ImagePart part={part} />;
     case "attachment":
@@ -105,8 +104,26 @@ function PartView({ part }: { part: UserPart }) {
     case "context":
       return <ContextPart part={part} />;
     case "unrendered":
-      return <span className="italic text-muted-foreground">[{part.type} content — not rendered]</span>;
+      return <span className="italic text-muted-foreground">[{unrenderedLabel(part.type)}]</span>;
   }
+}
+
+/** A resource_link, wherever it arrives — a user's `@file`, a link in a
+ * thought or a tool's content. A local file opens in the editor; any other
+ * address takes the same path as a link in the agent's prose. */
+function MentionToken({ name, uri }: { name: string; uri: string }) {
+  const send = useActions();
+  const path = filePathOf(uri);
+  const className = `prompt-token mention-token ${LINK}`;
+  return path !== null ? (
+    <button type="button" className={className} title={`Open ${path}`} onClick={stopThen(() => send({ kind: "openFile", path }))}>
+      @{name}
+    </button>
+  ) : (
+    <a className={className} href={uri} title={uri}>
+      @{name}
+    </a>
+  );
 }
 
 /** The human's own prompt bubble — a part sequence rendered in the wire's
@@ -150,15 +167,9 @@ export function Thought({ text, live }: { text: string; live: boolean }) {
   const open = manual ?? live;
   return (
     <div className={`thought ${open ? "open" : ""}`}>
-      <div
-        className="cursor-pointer select-none"
-        onClick={() => setManual(open ? false : true)}
-        aria-expanded={open}
-      >
-        <Icon name="sparkle" /> {live ? "Thinking" : "Thought"}
-        {live && <span>…</span>}{" "}
-        <Icon name={open ? "chevron-down" : "chevron-right"} />
-      </div>
+      <Disclosure open={open} onToggle={() => setManual(!open)} label={open ? "Hide the thought" : "Show the thought"}>
+        <Icon name="sparkle" /> {live ? "Thinking…" : "Thought"}
+      </Disclosure>
       {open && (
         <div className="body">
           <AgentMarkdown text={text} live={live} />
@@ -177,10 +188,9 @@ export function InjectedUser({ text }: { text: string }) {
   const tag = /^<([a-z][a-z0-9-]*)/.exec(text.trim())?.[1] ?? "envelope";
   return (
     <div className={`injected ${open ? "open" : ""}`}>
-      <div className="cursor-pointer select-none" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <Icon name="gear" /> {tag} — injected by the agent harness{" "}
-        <Icon name={open ? "chevron-down" : "chevron-right"} />
-      </div>
+      <Disclosure open={open} onToggle={() => setOpen(!open)} label={open ? "Hide the message" : "Show the message"}>
+        <Icon name="gear" /> {tag} — injected by the agent harness
+      </Disclosure>
       {open && <pre className="body">{text}</pre>}
     </div>
   );
@@ -288,6 +298,17 @@ const LINK =
 /** A reported file in a tool call's header: the title's own color, a step
  * quieter — never louder than the title. */
 const HEADER_LINK = `${LINK} truncate font-mono text-[11px] opacity-70 hover:opacity-100`;
+/** A small caps label over a section of a card's details. */
+const SECTION_LABEL = "text-[10.5px] uppercase tracking-wide text-muted-foreground";
+
+/** A click handler for a control inside a clickable card: acts, and keeps
+ * the click from also toggling the card around it. */
+function stopThen(act: () => void) {
+  return (e: React.MouseEvent) => {
+    e.stopPropagation();
+    act();
+  };
+}
 
 /** Collapsed by default: title, the first file the call reported as a link
  * (`name:line`, "+N" for the other files), and status. The link opens the
@@ -296,8 +317,10 @@ const HEADER_LINK = `${LINK} truncate font-mono text-[11px] opacity-70 hover:opa
  * while showing details costs nothing. Expanded: one row per file — name,
  * then every line the agent reported in it, then "diff" when the call
  * carried one (VS Code's native diff editor, never an inline diff view) —
- * listed only when it says more than the header link; then input args and
- * output — bounded upstream, rendered mono, never through markdown. */
+ * listed only when it says more than the header link; then what the tool
+ * produced for the user, as the agent presented it; then the raw wire
+ * payload behind its own toggle. A terminal the call runs in shows under
+ * the header, always visible. */
 export function ToolCallCard({
   block,
   sessionId,
@@ -319,16 +342,13 @@ export function ToolCallCard({
   const openAt = (path: string, line: number | undefined) =>
     send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
   const first = block.locations[0];
-  const stop = (act: () => void) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    act();
-  };
   return (
     <div className="card">
+      {/* The header is a mouse target for the whole row; the keyboard's is
+          the chevron — the header holds other buttons, so it can't be one. */}
       <div
         className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""}`}
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
-        aria-expanded={expandable ? open : undefined}
       >
         <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]}>
           <Icon name={TOOL_ICON[block.toolKind]} />
@@ -339,7 +359,7 @@ export function ToolCallCard({
             type="button"
             className={`tool-loc min-w-0 max-w-[45%] ${HEADER_LINK}`}
             title={`Open ${first.path}${first.line === null ? "" : ` at line ${first.line}`}`}
-            onClick={stop(() => openAt(first.path, first.line ?? undefined))}
+            onClick={stopThen(() => openAt(first.path, first.line ?? undefined))}
           >
             {basename(first.path)}
             {first.line !== null && `:${first.line}`}
@@ -350,12 +370,14 @@ export function ToolCallCard({
             type="button"
             className={`tool-loc-more shrink-0 ${HEADER_LINK}`}
             title="Show the other files this call reported"
-            onClick={stop(() => setOpen(true))}
+            onClick={stopThen(() => setOpen(true))}
           >
             +{rows.length - 1}
           </button>
         )}
-        {expandable && <DetailsToggle open={open} onToggle={stop(() => setOpen((v) => !v))} />}
+        {expandable && (
+          <Disclosure open={open} onToggle={() => setOpen((v) => !v)} label={open ? "Hide details" : "Show details"} />
+        )}
         <ToolCallStatusTag block={block} />
       </div>
       {open && (
@@ -370,7 +392,7 @@ export function ToolCallCard({
                       type="button"
                       className={`flex shrink-0 items-center gap-1 font-medium ${LINK}`}
                       title={`Open ${r.path}${r.lines[0] === undefined ? "" : ` at line ${r.lines[0]}`}`}
-                      onClick={stop(() => openAt(r.path, r.lines[0]))}
+                      onClick={stopThen(() => openAt(r.path, r.lines[0]))}
                     >
                       <Icon name="go-to-file" />
                       {base}
@@ -382,7 +404,7 @@ export function ToolCallCard({
                         key={line}
                         className={`shrink-0 font-mono text-[11px] text-muted-foreground ${LINK}`}
                         title={`Open ${r.path} at line ${line}`}
-                        onClick={stop(() => openAt(r.path, line))}
+                        onClick={stopThen(() => openAt(r.path, line))}
                       >
                         :{line}
                       </button>
@@ -397,7 +419,7 @@ export function ToolCallCard({
                         type="button"
                         className={`ml-auto flex shrink-0 items-center gap-1 text-muted-foreground ${LINK}`}
                         title="Open in VS Code's diff editor"
-                        onClick={stop(() =>
+                        onClick={stopThen(() =>
                           send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path: r.path }),
                         )}
                       >
@@ -419,23 +441,6 @@ export function ToolCallCard({
         <EmbeddedTerminal key={id} terminalId={id} />
       ))}
     </div>
-  );
-}
-
-/** The chevron that shows or hides a card's details — a real button, so the
- * keyboard reaches it; the header around it stays clickable for the mouse. */
-function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: (e: React.MouseEvent) => void }) {
-  return (
-    <button
-      type="button"
-      className={`flex shrink-0 items-center ${LINK}`}
-      aria-expanded={open}
-      aria-label={open ? "Hide details" : "Show details"}
-      title={open ? "Hide details" : "Show details"}
-      onClick={onToggle}
-    >
-      <Icon name={open ? "chevron-down" : "chevron-right"} />
-    </button>
   );
 }
 
@@ -465,30 +470,29 @@ function RawSection({ input, output }: { input: string | null; output: string | 
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button
-        type="button"
-        className={`flex items-center gap-1 text-[10.5px] uppercase tracking-wide text-muted-foreground ${LINK}`}
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
+      <Disclosure
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        label={open ? "Hide the raw wire payload" : "Show the raw wire payload"}
+        className={SECTION_LABEL}
       >
-        <Icon name={open ? "chevron-down" : "chevron-right"} /> raw
-      </button>
+        raw
+      </Disclosure>
       {open && (
         <div className="mt-1 flex flex-col gap-1.5">
-          {input !== null && (
-            <div>
-              <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">input</div>
-              <pre className="term m-0 whitespace-pre-wrap">{input}</pre>
-            </div>
-          )}
-          {output !== null && (
-            <div>
-              <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">output</div>
-              <pre className="term m-0 whitespace-pre-wrap">{output}</pre>
-            </div>
+          {(
+            [
+              ["input", input],
+              ["output", output],
+            ] as const
+          ).map(
+            ([name, text]) =>
+              text !== null && (
+                <div key={name}>
+                  <div className={SECTION_LABEL}>{name}</div>
+                  <pre className="term m-0 whitespace-pre-wrap">{text}</pre>
+                </div>
+              ),
           )}
         </div>
       )}
@@ -541,19 +545,9 @@ export function ToolRunCard({
   if (open) {
     return (
       <>
-        <div
-          className="card-hd tool-hd cursor-pointer"
-          onClick={() => setOpen(false)}
-          aria-expanded={true}
-        >
+        <div className="card-hd tool-hd cursor-pointer" onClick={() => setOpen(false)}>
           {weightedIcon} {calls.length} tool calls{" "}
-          <DetailsToggle
-            open={true}
-            onToggle={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-            }}
-          />
+          <Disclosure open={true} onToggle={() => setOpen(false)} label="Collapse the tool calls" />
         </div>
         {calls.map((c) => (
           <ToolCallCard key={c.id} block={c} sessionId={sessionId} roots={roots} />
@@ -563,22 +557,12 @@ export function ToolRunCard({
   }
   return (
     <div className="card">
-      <div
-        className="card-hd tool-hd cursor-pointer"
-        onClick={() => setOpen(true)}
-        aria-expanded={false}
-      >
+      <div className="card-hd tool-hd cursor-pointer" onClick={() => setOpen(true)}>
         {weightedIcon}
         <span className="min-w-0 flex-1 truncate">
           {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}
         </span>
-        <DetailsToggle
-          open={false}
-          onToggle={(e) => {
-            e.stopPropagation();
-            setOpen(true);
-          }}
-        />
+        <Disclosure open={false} onToggle={() => setOpen(true)} label="Show each tool call" />
         <span className="st">
           {running !== undefined ? (
             <span className="spin" />
