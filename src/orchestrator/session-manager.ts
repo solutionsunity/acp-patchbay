@@ -555,6 +555,11 @@ export class SessionManager {
     return undefined;
   }
 
+  /** The sessions attached to a connection. */
+  sessionsOn(poolKey: string): readonly string[] {
+    return [...this.sessions].filter(([, session]) => session.poolKey === poolKey).map(([sessionId]) => sessionId);
+  }
+
   /** What stopping this connection would disconnect: the conversations on
    * it, and the turns among them still running (those are cut off). A
    * never-prompted session doesn't count — it has nothing to lose and is

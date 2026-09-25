@@ -18,11 +18,11 @@ interface ChatBlockLike {
 
 interface Internal {
   orchestrator: {
-    isAgentViewVisible(): boolean;
     agentView: {
       revision: number;
       waitForApplied(rev?: number): Promise<number>;
       current: {
+        screen: { pointer: boolean };
         transcripts: Record<string, ChatBlockLike[]>;
         sessions: Array<{ id: string; live: boolean }>;
       };
@@ -107,7 +107,7 @@ suite("chat vertical slice", () => {
       assert.strictEqual(midTurnSession?.live, true, "turn should still be in flight");
 
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
-      await waitFor(() => (orchestrator.isAgentViewVisible() ? undefined : true));
+      await waitFor(() => (orchestrator.agentView.current.screen.pointer ? undefined : true));
 
       // reopen mid-turn — the webview must resync to whatever canonical state
       // has accumulated by now (render cache lives in the orchestrator, not

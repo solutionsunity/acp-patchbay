@@ -15,6 +15,7 @@ import {
   coalesceSettingsEvent,
   initialAgentViewState,
   initialSettingsState,
+  onScreen,
   reduceAgentView,
   reduceSettings,
   type Action,
@@ -32,6 +33,7 @@ import {
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
+import { openAsks, type OpenAsk } from "../shared/attention";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
@@ -199,11 +201,13 @@ export class Orchestrator {
   private readonly pendingSyncs = new Map<string, Promise<void>>();
   private isolationCounter = 0;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
-  /** Set by the webview host as the Agent View mounts/unmounts (wired in
-   * extension.ts to `AgentViewProvider`'s real `onDidChangeVisibility`
-   * signal); defaults to "visible" so native notifications don't fire
-   * spuriously before that's connected. */
-  isAgentViewVisible: () => boolean = () => true;
+  /** Visible agent-view surfaces → the session each pins (null = follows
+   * the active-session pointer). Hidden or disposed surfaces are absent;
+   * the view hosts report through noteSurface. */
+  private readonly visibleSurfaces = new Map<object, string | null>();
+  /** Open asks already accounted for by the native notification — each
+   * new one is judged once, as it arrives. */
+  private knownAsks = new Set<string>();
   /** Sessions shown in their own detached panels (AgentPanelHost, assigned
    * in extension.ts) — reaper-exempt like the active-in-view session: a
    * session in its own window is being looked at. */
@@ -369,6 +373,8 @@ export class Orchestrator {
         const suffix = detail !== undefined ? ` — ${detail}` : "";
         if (status === "crashed") this.log.error(`${agentId}: crashed${suffix}`);
         else this.log.info(`${agentId}: ${status}${suffix}`);
+        if (status !== "running") this.settleAsksOn(agentId);
+        
         // A dead or reconnecting connection invalidates every sessionId that
         // rode it — they must reopen (possibly via session/load) before reuse.
         if (status === "crashed" || status === "reconnecting") {
@@ -406,6 +412,8 @@ export class Orchestrator {
         // Not surfaced in the Agents list (isolated instances are an
         // implementation detail) — only the sessions riding this specific
         // poolKey need to know their process is gone.
+        if (status !== "running") this.settleAsksOn(poolKey);
+        
         if (status === "crashed" || status === "reconnecting") {
           this.sessionManager.invalidatePoolKey(poolKey);
         }
@@ -770,8 +778,6 @@ export class Orchestrator {
       {
         emit: (...events) => this.agentView.emit(...events),
         onAuditWritten: () => void this.refreshAuditTail(),
-        notifyPending: (requestId, title, detail, options) =>
-          this.notifyIfHidden(requestId, title, detail, options),
         openLink: (href) => void openInBrowser(href),
       },
       () => this.workspaceRoot,
@@ -812,6 +818,7 @@ export class Orchestrator {
     this.agentView.onChange(() => {
       this.refreshStatusBar();
       this.publishSessionStats();
+      this.notifyNewAsks();
     });
     this.refreshStatusBar();
     this.publishSessionStats();
@@ -1081,8 +1088,7 @@ export class Orchestrator {
     });
     pick.dispose();
     if (picked === undefined) return;
-    this.sessionManager.open(picked.sessionId);
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    await this.revealSession(picked.sessionId);
   }
 
   /** "Connect agent" — the palette shortcut into the one add path (the
@@ -1504,24 +1510,81 @@ export class Orchestrator {
     );
   }
 
-  /** Native notification mirroring the inline card, shown only when the
-   * Agent View isn't visible ("impossible to
-   * miss when the view is hidden"). `requestId` is the inline card's own
-   * blockId — resolving through it is the same call the card's buttons make,
-   * so whichever surface the user acts on first wins. */
-  private notifyIfHidden(
-    requestId: string,
-    title: string,
-    detail: string,
-    options: readonly PermissionOptionView[],
-  ): void {
-    if (this.isAgentViewVisible()) return;
-    const labels = options.map((o) => o.label);
-    void vscode.window.showWarningMessage(`${title}: ${detail}`, ...labels).then((picked) => {
-      if (picked === undefined) return;
-      const option = options.find((o) => o.label === picked);
-      if (option !== undefined) this.broker.resolve(requestId, option.optionId);
+  /** A surface became visible or hidden (or went away): the view hosts
+   * report here, and the screen fact follows — emitted only on a real
+   * change. `pinned` is the session the surface shows; null = it follows
+   * the active-session pointer. */
+  noteSurface(surface: object, visible: boolean, pinned: string | null): void {
+    if (visible) this.visibleSurfaces.set(surface, pinned);
+    else this.visibleSurfaces.delete(surface);
+    const shows = [...this.visibleSurfaces.values()];
+    const pointer = shows.includes(null);
+    const pinnedIds = [...new Set(shows.filter((id): id is string => id !== null))].sort();
+    const current = this.agentView.current.screen;
+    if (current.pointer === pointer && current.pinned.join("\n") === pinnedIds.join("\n")) return;
+    this.agentView.emit({ kind: "screenChanged", pointer, pinned: pinnedIds });
+  }
+
+  /** A connection that ended can no longer take an answer: every ask still
+   * open on it settles as cancelled — the same answer a stopped turn gives —
+   * so no card, and no "waiting" mark, outlives the process it was asked
+   * on. Read before the sessions are invalidated. */
+  private settleAsksOn(poolKey: string): void {
+    for (const sessionId of this.sessionManager.sessionsOn(poolKey)) this.broker.cancelPending(sessionId);
+  }
+
+  /** The native notification is a projection of the waiting fact, not a
+   * call each ask remembers to make: every ask that starts while its
+   * session is off screen raises one — whatever kind it is. An ask that
+   * arrived on screen never does, even if the user looks away before
+   * answering (the badge and header still count it). */
+  private notifyNewAsks(): void {
+    const state = this.agentView.current;
+    const shown = onScreen(state);
+    const open = new Set<string>();
+    for (const session of state.sessions) {
+      for (const ask of openAsks(state.transcripts[session.id] ?? [])) {
+        open.add(ask.id);
+        if (!this.knownAsks.has(ask.id) && !shown.has(session.id)) this.notifyAsk(session.id, session.title, ask);
+      }
+    }
+    this.knownAsks = open;
+  }
+
+  /** Mirrors the inline card: its own answers where a button can give them
+   * (the same actions the card sends, so whichever surface the user acts
+   * on first wins — a second answer is a no-op), and Open, which brings
+   * the session up. A question is answered only in its card. */
+  private notifyAsk(sessionId: string, title: string, ask: OpenAsk): void {
+    const answers: { label: string; action: Action }[] =
+      ask.kind === "permission"
+        ? ask.options.map((o) => ({
+            label: o.label,
+            action: { kind: "resolvePermission", requestId: ask.id, optionId: o.optionId },
+          }))
+        : ask.kind === "diff"
+          ? [
+              { label: "Accept", action: { kind: "resolveDiff", requestId: ask.id, accept: true } },
+              { label: "Reject", action: { kind: "resolveDiff", requestId: ask.id, accept: false } },
+            ]
+          : [];
+    const what =
+      ask.kind === "permission" ? `${ask.title}: ${ask.detail}` : ask.kind === "diff" ? `File write: ${ask.file}` : ask.message;
+    const labels = [...answers.map((a) => a.label), "Open"];
+    void vscode.window.showWarningMessage(`${title} — ${what}`, ...labels).then((picked) => {
+      if (picked === "Open") void this.revealSession(sessionId);
+      else {
+        const answer = answers.find((a) => a.label === picked);
+        if (answer !== undefined) this.handleAction(answer.action);
+      }
     });
+  }
+
+  /** Brings a session up in the Agent View — the one path for every
+   * "take me there" (the switch-session command, a notification's Open). */
+  private async revealSession(sessionId: string): Promise<void> {
+    this.sessionManager.open(sessionId);
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
   private async refreshAuditTail(): Promise<void> {

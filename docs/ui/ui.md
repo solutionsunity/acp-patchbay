@@ -15,6 +15,7 @@ what it's made of.
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected) |
+| Session mark | ● amber (pulsing) / green (pulsing) / blue | waiting on you / turn in flight / finished while no visible surface showed it — one per session, most urgent first |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | Toast | transient strip, bottom-center | confirmation of an action; never the only record (the audit holds the durable one) |
@@ -37,7 +38,8 @@ never split panels.
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Agent chip | ● dot + name + ▾ | live status of the session's agent; click → **Agents drawer** |
+| Agent chip | ● dot + name | live status of the session's agent — a read-out, not a picker |
+| Other sessions | ● n per session mark, centered in the header | appears only when a session other than the ones on screen is waiting on you, finished unseen, or running; one trigger — click → a list grouped waiting / finished / running (a waiting row names what it is blocked on); a row opens that session. Always the list, even for one: the counts move, and the list names the session before the user leaves the one they are reading |
 | Sessions | 🕘 | click → **Sessions drawer** |
 | New chat | ＋ | one intent, one click: zero agents → Settings; exactly one → starts it directly, connecting in-pane if needed; several → Agents drawer as the picker |
 | Settings | ⚙ | opens the Settings editor tab **directly** — no menu until a menu earns it |
@@ -83,8 +85,8 @@ edits) get no ± — absence over fake.
 | Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text |
 | Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the rest of the header toggles details. Details: one row per file — name, each reported line, folder relative to the workspace, **diff** when the call carried one — listed only when it says more than the header link; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header |
-| Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when the view is hidden the same request surfaces as a native notification |
-| Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool |
+| Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification |
+| Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool. Off screen, a native notification names the question with **Open**, which brings the session up — the answer is given in the card |
 | Link | 🔗 card | "*Agent* asks you to open a page:" + the agent's message; the host in bold and the full address as plain text (never a clickable link), with a warning line per suspicious trait; **Open in browser / Decline / Cancel** — Open is the consent and opens the system browser; once opened, "waiting for *Agent* to finish" with **Open again** until the agent reports it done ("completed"); a question the agent takes back reads "withdrawn by the agent" |
 | Diff | 📝 card | file + `+n −m`, a bounded body preview that states how many lines it omits, and **Open diff** (VS Code's own diff editor, current vs proposed) while the proposal is open; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible |
 | Crash banner | ⚠ red strip | shown the moment the agent dies; `Restart` is the one action; after restart, the continuation is labeled |
@@ -128,7 +130,7 @@ connected` / capability one-liner); clicking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
-per session: live-dot (turn in flight) · title · agent + state subtitle · kebab
+per session: session mark (waiting on you / turn in flight / finished unseen) · title · agent + state subtitle · kebab
 (same actions as the session row). Below the rows, one line per agent whose
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
 only the ones open in this window are listed`. Footer: `＋ New chat` (the same

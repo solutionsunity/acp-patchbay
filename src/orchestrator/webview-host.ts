@@ -29,6 +29,11 @@ import type { ChannelEndpoint } from "./channel";
 
 type Bundle = "agent-view" | "settings";
 
+/** How an agent-view surface tells the orchestrator it became visible or
+ * hidden (disposed = hidden for good). `pinned` is the session it shows;
+ * null = it follows the active-session pointer. */
+export type SurfaceReporter = (surface: object, visible: boolean, pinned: string | null) => void;
+
 export function nonce(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -114,26 +119,45 @@ function bind(
 }
 
 export class AgentViewProvider implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | null = null;
+  private waiting = 0;
+
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly channel: ChannelEndpoint,
-    /** Fires on mount and every visibility flip — the source of truth for
-     * "is the Agent View hidden right now" (native permission notifications
-     * gate on this). */
-    private readonly onVisibilityChanged?: (visible: boolean) => void,
+    private readonly reportSurface: SurfaceReporter,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     const disposables: vscode.Disposable[] = [];
     const webview = view.webview; // .webview throws once disposed — capture now
     bind(webview, this.channel, this.extensionUri, "agent-view", disposables);
-    this.onVisibilityChanged?.(view.visible);
-    disposables.push(view.onDidChangeVisibility(() => this.onVisibilityChanged?.(view.visible)));
+    this.view = view;
+    this.applyBadge();
+    this.reportSurface(view, view.visible, null);
+    disposables.push(view.onDidChangeVisibility(() => this.reportSurface(view, view.visible, null)));
     view.onDidDispose(() => {
-      this.onVisibilityChanged?.(false);
+      if (this.view === view) this.view = null;
+      this.reportSurface(view, false, null);
       this.channel.detach(webview);
       for (const d of disposables) d.dispose();
     });
+  }
+
+  /** Sessions waiting on the user — shown on the view's activity-bar icon,
+   * where it is seen while the view is closed. Held until the view
+   * resolves: a view never opened this window has nothing to badge yet. */
+  setWaiting(count: number): void {
+    this.waiting = count;
+    this.applyBadge();
+  }
+
+  private applyBadge(): void {
+    if (this.view === null) return;
+    this.view.badge =
+      this.waiting === 0
+        ? undefined
+        : { value: this.waiting, tooltip: `${this.waiting} session${this.waiting === 1 ? "" : "s"} waiting on you` };
   }
 }
 
@@ -175,6 +199,7 @@ export class AgentPanelHost {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly channel: ChannelEndpoint,
+    private readonly reportSurface: SurfaceReporter,
   ) {}
 
   /** The reaper-exemption surface: a session shown in its own window is
@@ -221,7 +246,12 @@ export class AgentPanelHost {
   }
 
   private createPanel(title: string, pinSessionId: string | undefined): vscode.WebviewPanel {
-    return boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinSessionId);
+    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinSessionId);
+    const pinned = pinSessionId ?? null;
+    this.reportSurface(panel, panel.visible, pinned);
+    panel.onDidChangeViewState(() => this.reportSurface(panel, panel.visible, pinned));
+    panel.onDidDispose(() => this.reportSurface(panel, false, pinned));
+    return panel;
   }
 
   /** The just-created panel is the active editor — moving it out gives the

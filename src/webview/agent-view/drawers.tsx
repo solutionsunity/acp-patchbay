@@ -7,10 +7,12 @@
 // shell's local UI state.
 import { useState } from "react";
 import type { AgentViewState, AgentSummary, SessionSummary } from "../../shared/protocol";
+import type { SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { timeAgo } from "../shared/time";
+import { MarkDot } from "./attention";
 import { unlistedAgents } from "./drawer-notes";
 import { Dot } from "./header";
 import { SessionActions } from "./session-row";
@@ -95,6 +97,7 @@ export function SessionsDrawer(props: {
   agents: readonly AgentSummary[];
   capabilities: AgentViewState["capabilities"];
   activeSessionId: string | null;
+  markOf(session: SessionSummary): SessionMark | null;
   /** detachWindows preference — off hides "Open in new window". */
   detach: boolean;
   onNew(): void;
@@ -129,15 +132,7 @@ export function SessionsDrawer(props: {
               props.onDone();
             }}
           >
-            {/* green pulse = turn in flight (same green as a running agent);
-                blue = completed since last opened; empty slot otherwise */}
-            {s.live ? (
-              <span className="live-dot" title="Turn in progress" />
-            ) : s.unseen === true ? (
-              <span className="unseen-dot" title="Completed since you last opened it" />
-            ) : (
-              <span className="live-dot-slot" />
-            )}
+            <MarkDot mark={props.markOf(s)} />
             <div>
               <div className="nm">{s.title}</div>
               <div className="sub">

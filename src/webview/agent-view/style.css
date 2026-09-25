@@ -1358,6 +1358,7 @@ button.more,
   border-radius: 50%;
   background: var(--pb-ok);
   animation: pulse 1.4s infinite;
+  flex: none;
 }
 
 .live-dot-slot {
@@ -1365,8 +1366,8 @@ button.more,
   flex: none;
 }
 
-/* a turn completed while the session wasn't open — steady brand blue,
- * no pulse (nothing is running); cleared by opening the session */
+/* a turn completed while no visible surface showed the session — steady
+ * brand blue, no pulse (nothing is running); cleared once one shows it */
 .unseen-dot {
   width: 6px;
   height: 6px;

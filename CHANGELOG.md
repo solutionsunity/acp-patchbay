@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- A session waiting on you now says so wherever you are looking. A question
+  from an agent used to wait silently until you happened to open the
+  Agent View, and a session waiting in the background looked like any
+  other in the list. Now every kind of ask — a permission, a file write, a
+  command, a question — raises a notification when its session isn't on
+  screen (a question's notification opens the session), the Agent View's
+  icon shows how many sessions are waiting, and the header shows the other
+  sessions that are waiting on you, finished while you weren't looking, or
+  running — click it for the list and pick one to open. In the sessions
+  list, a waiting session carries an amber dot. A session that finishes
+  while the view is hidden now keeps its blue "unseen" dot until you
+  actually see it, and one you watched finish in its own window no longer
+  gets one. A permission or question still open when its agent stops or
+  crashes is now closed as cancelled, instead of waiting forever on a
+  process that can no longer take the answer. (#38)
 - Upgrading an agent now asks first when it would interrupt your work.
   Upgrade restarts the agent, and it used to do so right away, cutting off
   every conversation on that agent — a running turn included. It now says

@@ -344,21 +344,46 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     expect(s.sessions.find((x) => x.id === "b")!.updatedAt).toBe("2026-07-09T00:00:00Z");
   });
 
-  it("a turn ending on a non-active session marks it unseen; activation clears it", () => {
-    const end: AgentViewEvent = {
-      kind: "turnEnded",
-      sessionId: "a",
-      blockId: "t1",
-      startedAt: "2026-07-09T10:00:00Z",
-      at: "2026-07-09T10:00:05Z",
-      stopReason: "end_turn",
-      usage: null,
-    };
-    const unseen = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", sessionId: "b" }, end]);
-    expect(unseen.sessions.find((x) => x.id === "a")!.unseen).toBe(true);
+  const end = (sessionId: string): AgentViewEvent => ({
+    kind: "turnEnded",
+    sessionId,
+    blockId: `t-${sessionId}`,
+    startedAt: "2026-07-09T10:00:00Z",
+    at: "2026-07-09T10:00:05Z",
+    stopReason: "end_turn",
+    usage: null,
+  });
+  const viewShown: AgentViewEvent = { kind: "screenChanged", pointer: true, pinned: [] };
+  const unseenOf = (s: AgentViewState, id: string) => s.sessions.find((x) => x.id === id)!.unseen;
+
+  it("a turn ending on a non-active session marks it unseen; activation on a visible view clears it", () => {
+    const unseen = replay(initialAgentViewState, [mk("a"), mk("b"), viewShown, { kind: "sessionActivated", sessionId: "b" }, end("a")]);
+    expect(unseenOf(unseen, "a")).toBe(true);
 
     const seen = replay(unseen, [{ kind: "sessionActivated", sessionId: "a" }]);
-    expect(seen.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
+    expect(unseenOf(seen, "a")).toBeUndefined();
+  });
+
+  it("the active session finishing while the view is hidden is news too — seen only once the view shows it", () => {
+    const hidden = replay(initialAgentViewState, [mk("a"), { kind: "sessionActivated", sessionId: "a" }, end("a")]);
+    expect(unseenOf(hidden, "a")).toBe(true);
+
+    // activating it again while hidden is not seeing it
+    const stillHidden = replay(hidden, [{ kind: "sessionActivated", sessionId: "a" }]);
+    expect(unseenOf(stillHidden, "a")).toBe(true);
+
+    const shown = replay(stillHidden, [viewShown]);
+    expect(unseenOf(shown, "a")).toBeUndefined();
+  });
+
+  it("a visible pinned panel is seeing its session — no dot, and showing one clears it", () => {
+    const pinnedVisible: AgentViewEvent = { kind: "screenChanged", pointer: false, pinned: ["b"] };
+    const s = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", sessionId: "a" }, pinnedVisible, end("b")]);
+    expect(unseenOf(s, "b")).toBeUndefined();
+
+    const later = replay(s, [{ kind: "screenChanged", pointer: false, pinned: [] }, end("b")]);
+    expect(unseenOf(later, "b")).toBe(true);
+    expect(unseenOf(replay(later, [pinnedVisible]), "b")).toBeUndefined();
   });
 
   it("a replay-synthesized boundary (at: null) is history, not news — block lands, no updatedAt bump, no unseen dot", () => {
@@ -376,6 +401,7 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   it("a turn ending on the active session is already seen — watching it complete counts", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
+      viewShown,
       { kind: "sessionActivated", sessionId: "a" },
       { kind: "turnEnded", sessionId: "a", blockId: "t1", startedAt: "x", at: "2026-07-09T10:00:05Z", stopReason: "end_turn", usage: null },
     ]);

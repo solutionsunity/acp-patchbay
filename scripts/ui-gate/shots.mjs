@@ -286,6 +286,23 @@ for (const theme of Object.keys(THEMES)) {
   await p.waitForTimeout(150);
   check(`[${theme}] adder closes on outside click`, (await p.$('[data-slot="popover-content"]')) === null);
 
+  // ── the other sessions (#38): one trigger — waiting, finished unseen,
+  // running — counts the sessions not on screen and opens their list ──
+  const attention = p.locator('button[aria-label^="Other sessions"]');
+  check(
+    `[${theme}] the header counts the other sessions by mark`,
+    (await attention.innerText()).replace(/\s+/g, " ").trim() === "1 1 1",
+  );
+  await p.locator(".hdr").screenshot({ path: `${OUT}/header-attention-${theme}.png` });
+  await attention.click();
+  await p.waitForSelector('[role="group"][aria-label="Waiting on you"]');
+  check(
+    `[${theme}] the list names what a waiting session is blocked on`,
+    (await p.locator('[role="group"][aria-label="Waiting on you"]').innerText()).includes("Question"),
+  );
+  await p.screenshot({ path: `${OUT}/header-attention-open-${theme}.png` });
+  await p.keyboard.press("Escape");
+
   // ── sessions drawer: latest activity on top, blue dot on unseen ──
   await p.click('button[aria-label="Sessions"]');
   await p.waitForSelector(".drawer .s-row");
@@ -293,6 +310,7 @@ for (const theme of Object.keys(THEMES)) {
   const firstTitle = await p.$eval(".drawer .s-row .nm", (el) => el.textContent);
   check(`[${theme}] drawer sorts latest activity on top`, firstTitle === "refactor bar");
   check(`[${theme}] unseen completion shows the blue dot`, (await p.$(".drawer .unseen-dot")) !== null);
+  check(`[${theme}] a session waiting on you shows the amber dot`, (await p.$('.drawer [title="Waiting on you"]')) !== null);
   const unlisted = await p.$$eval(".drawer .unlisted", (els) => els.map((el) => el.textContent));
   check(
     `[${theme}] an agent without session/list is named in the drawer`,

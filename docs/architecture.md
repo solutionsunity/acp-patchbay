@@ -98,8 +98,8 @@ Two webviews and one near-empty native settings page:
    Never credentials: `settings.json` syncs.
 
 Native surfaces — the status bar item (active session, connection health, usage),
-permission notifications, and command palette entries — are direct orchestrator
-consumers: same state, no webview in the path.
+the waiting-on-you notifications, the Agent View's badge, and command palette
+entries — are direct orchestrator consumers: same state, no webview in the path.
 
 > Agents, sessions, and chat are one surface (the Features doc). Settings remains
 > its own webview because it is genuinely a different activity, not because panels
@@ -962,9 +962,22 @@ supplies each agent in its own standard — and ACP carries no channel for it
   client capabilities. `fs/*` is therefore **not a security boundary** — terminal
   gating carries equal rigor, and the matrix shows each agent's actual wire
   conduct row by row rather than silently trusting any of it.
-- Allow-once / allow-always / reject inline in chat; when the Agent View is hidden,
-  the same request surfaces as a native notification. One approval surface,
-  wherever the user is looking.
+- Allow-once / allow-always / reject inline in chat; when no visible surface shows
+  the asking session, the same request surfaces as a native notification. One
+  approval surface, wherever the user is looking.
+- "Waiting on the user" is one derived fact: the open asks (permission, write,
+  terminal, question cards not yet answered) in the canonical transcripts. The
+  native notification is a projection of it — every ask that starts off screen
+  raises one, whatever its kind — never a call each ask site remembers to make
+  (questions once went silent that way). The view badge, the header read-out of
+  the other sessions and the drawer's marks read the same derivation. An ask
+  never outlives its connection: when the process it was asked on stops,
+  crashes or reconnects, every ask still open on it settles as cancelled —
+  otherwise a dead card would pin its session as waiting forever. "On
+  screen" is one fact too: the view hosts report each surface's visibility (the
+  sidebar and the full-view panel follow the active-session pointer; a pinned
+  panel shows its own session), and the unseen mark follows it — a turn that
+  ends where no visible surface shows it is unseen until one does.
 
 ## Context usage
 

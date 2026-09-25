@@ -8,12 +8,14 @@
 // and send their own actions; everything durable comes from snapshots.
 import { useMemo, useState } from "react";
 import type { AgentViewState } from "../../shared/protocol";
+import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
 import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
+import { AttentionIndicators } from "./attention";
 import { rootsControls } from "./composer/roots-controls";
 import { AgentsDrawer, SessionsDrawer } from "./drawers";
 import { Header } from "./header";
@@ -104,7 +106,15 @@ export function App({
 
   return (
     <div className="sidebar">
-      {!pinned && <Header agent={activeAgent} onSessions={openSessions} onNew={newChat} />}
+      {!pinned && (
+        <Header agent={activeAgent} onSessions={openSessions} onNew={newChat}>
+          <AttentionIndicators
+            elsewhere={elsewhere(state)}
+            agents={state.agents}
+            waitingOn={(s) => waitingOn(state, s)}
+          />
+        </Header>
+      )}
       {active !== null && (
         <SessionRow
           session={active}
@@ -191,6 +201,7 @@ export function App({
           agents={state.agents}
           capabilities={state.capabilities}
           activeSessionId={state.activeSessionId}
+          markOf={(s) => sessionMark(state, s)}
           detach={detach}
           onNew={newChat}
           onDone={() => setDrawer(null)}

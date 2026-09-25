@@ -732,9 +732,10 @@ export interface SessionSummary {
    * the agent's own session/list metadata, whichever is newest. The
    * drawer's sort key ("latest" = last activity, not creation). */
   updatedAt: string;
-  /** A turn completed while this session wasn't the open one — the blue
-   * dot. Reducer-derived (turnEnded on a non-active session), cleared by
-   * activation; never persisted — a reload starts with nothing unread. */
+  /** A turn completed while no visible surface showed this session — the
+   * blue dot. Reducer-derived (turnEnded off screen), cleared once a
+   * visible surface renders it; never persisted — a reload starts with
+   * nothing unread. */
   unseen?: boolean;
 }
 
@@ -1296,6 +1297,26 @@ export interface AgentViewState {
    * same event feeds the Settings channel; the agent view reads only what
    * gates its own rendering (composerStats). */
   preferences: PreferencesView;
+  /** What the visible surfaces are rendering right now — the one input to
+   * "on screen" (onScreen). `pointer`: a visible surface follows
+   * activeSessionId (the sidebar, the full agent-view panel); `pinned`:
+   * sessions shown by visible panels of their own. Reported by the view
+   * hosts as visibility flips; nothing is visible until one says so. */
+  screen: ScreenView;
+}
+
+export interface ScreenView {
+  pointer: boolean;
+  pinned: readonly string[];
+}
+
+/** The sessions some visible surface is rendering — what "the user can see
+ * it" means for the unseen mark, the attention indicators, and the native
+ * notification alike. */
+export function onScreen(state: AgentViewState): ReadonlySet<string> {
+  const shown = new Set(state.screen.pinned);
+  if (state.screen.pointer && state.activeSessionId !== null) shown.add(state.activeSessionId);
+  return shown;
 }
 
 export interface UsageInfo {
@@ -1396,6 +1417,7 @@ export const initialAgentViewState: AgentViewState = {
   openEditors: [],
   workspaceFiles: { query: "", files: [], dirs: [] },
   preferences: DEFAULT_PREFERENCES,
+  screen: { pointer: false, pinned: [] },
 };
 
 export type AgentViewEvent =
@@ -1437,6 +1459,8 @@ export type AgentViewEvent =
    * agent's title wins; the stamp only moves forward. */
   | { kind: "sessionRefreshed"; sessionId: string; title?: string; updatedAt?: string }
   | { kind: "sessionActivated"; sessionId: string }
+  /** The visible surfaces changed — shown, hidden, opened, or closed. */
+  | ({ kind: "screenChanged" } & ScreenView)
   | { kind: "sessionClosed"; sessionId: string }
   | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
   /** A session/load hydration is in flight for this session (open of a cold
@@ -1697,6 +1721,17 @@ function withTranscript(
   return { ...state, transcripts: { ...state.transcripts, [sessionId]: blocks } };
 }
 
+/** Seeing is what clears the blue dot: every unseen session a visible
+ * surface now renders loses it. */
+function markSeen(state: AgentViewState): AgentViewState {
+  const shown = onScreen(state);
+  if (!state.sessions.some((s) => s.unseen === true && shown.has(s.id))) return state;
+  return {
+    ...state,
+    sessions: state.sessions.map((s) => (s.unseen === true && shown.has(s.id) ? { ...s, unseen: undefined } : s)),
+  };
+}
+
 function appendBlock(
   state: AgentViewState,
   sessionId: string,
@@ -1935,15 +1970,10 @@ export function reduceAgentView(
     }
     case "sessionActivated":
       return state.sessions.some((s) => s.id === event.sessionId)
-        ? {
-            ...state,
-            activeSessionId: event.sessionId,
-            // opening it is what "seen" means
-            sessions: state.sessions.map((s) =>
-              s.id === event.sessionId && s.unseen === true ? { ...s, unseen: undefined } : s,
-            ),
-          }
+        ? markSeen({ ...state, activeSessionId: event.sessionId })
         : state;
+    case "screenChanged":
+      return markSeen({ ...state, screen: { pointer: event.pointer, pinned: event.pinned } });
     case "sessionClosed": {
       const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
       const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
@@ -2074,12 +2104,11 @@ export function reduceAgentView(
       return {
         ...appended,
         activeTurn,
-        // A turn finished while the user was looking elsewhere → the blue
-        // dot (unseen) until the session is next activated. Watching it
-        // complete counts as seen.
+        // A turn finished while no visible surface showed it → the blue dot
+        // (unseen) until one does. Watching it complete counts as seen.
         sessions: state.sessions.map((s) =>
           s.id === event.sessionId
-            ? { ...s, updatedAt: at, unseen: state.activeSessionId !== event.sessionId || undefined }
+            ? { ...s, updatedAt: at, unseen: !onScreen(state).has(event.sessionId) || undefined }
             : s,
         ),
       };

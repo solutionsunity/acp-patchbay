@@ -4,7 +4,13 @@
 import * as vscode from "vscode";
 import { runLoginTask } from "./orchestrator/login-task";
 import { Orchestrator } from "./orchestrator/orchestrator";
-import { AgentPanelHost, AgentViewProvider, SettingsPanelHost } from "./orchestrator/webview-host";
+import {
+  AgentPanelHost,
+  AgentViewProvider,
+  SettingsPanelHost,
+  type SurfaceReporter,
+} from "./orchestrator/webview-host";
+import { waitingCount } from "./shared/attention";
 
 export interface ExtensionInternal {
   orchestrator: Orchestrator;
@@ -36,24 +42,23 @@ export function activate(context: vscode.ExtensionContext): {
   // Detached agent-view surfaces (editor panels floated to aux windows) —
   // same channel as the sidebar; pinned panels follow the sessions list
   // (dispose on close, retitle on rename) and are idle-reaper exempt.
-  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView);
+  const reportSurface: SurfaceReporter = (surface, visible, pinned) =>
+    orchestrator.noteSurface(surface, visible, pinned);
+  const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface);
   orchestrator.pinnedSessions = () => agentPanelHost.pinnedSessionIds();
-  const unsubscribePanelSync = orchestrator.agentView.onChange(() =>
-    agentPanelHost.syncSessions(orchestrator.agentView.current.sessions),
-  );
+  const agentViewProvider = new AgentViewProvider(context.extensionUri, orchestrator.agentView, reportSurface);
+  const unsubscribeViewSync = orchestrator.agentView.onChange(() => {
+    agentPanelHost.syncSessions(orchestrator.agentView.current.sessions);
+    agentViewProvider.setWaiting(waitingCount(orchestrator.agentView.current));
+  });
 
   context.subscriptions.push(
     orchestrator,
-    vscode.window.registerWebviewViewProvider(
-      "acpPatchbay.agentView",
-      new AgentViewProvider(context.extensionUri, orchestrator.agentView, (visible) => {
-        orchestrator.isAgentViewVisible = () => visible;
-      }),
-    ),
+    vscode.window.registerWebviewViewProvider("acpPatchbay.agentView", agentViewProvider),
     vscode.commands.registerCommand("acpPatchbay.openSettings", () =>
       settingsPanelHost.openOrReveal(),
     ),
-    { dispose: unsubscribePanelSync },
+    { dispose: unsubscribeViewSync },
     // Both re-check the preference: when-clauses hide the entry points, but
     // keybindings and programmatic invocation bypass menus.
     vscode.commands.registerCommand("acpPatchbay.detachAgentView", () => {

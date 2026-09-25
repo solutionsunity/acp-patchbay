@@ -228,8 +228,11 @@ deliverable.
   clicking it jumps to the session.
 - Command palette covers every core action: new session, switch session, connect
   agent, open settings.
-- Permission prompts surface as native notifications when the chat view is hidden —
-  one approval surface, wherever the user happens to be looking.
+- A session waiting on the user — a permission, a file write, a command, a
+  question — says so wherever the user happens to be looking: a native
+  notification when the session is not on screen, a count on the Agent View's
+  icon, and the header's read-out of the other sessions (waiting, finished
+  unseen, running), which lists them and opens any one.
 - Commands the agent runs are visible live — output streams where the user can
   watch, gated by the same permission rules as everything else.
 

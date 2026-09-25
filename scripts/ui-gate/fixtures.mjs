@@ -145,15 +145,21 @@ export function agentViewState({ live }) {
       { id: "silent", name: "Augment", status: "stopped", needsAuth: false },
     ],
     // s2: newer activity + unseen — must sort above the active s1 and show
-    // the blue dot in the sessions drawer.
+    // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
+    // with s2 they fill the header's read-out of the other sessions.
     sessions: [
       { id: "s1", agentId: "fake", title: "find foo", live, updatedAt: "2026-07-09T10:00:00Z" },
       { id: "s2", agentId: "fake", title: "refactor bar", live: false, updatedAt: "2026-07-09T11:00:00Z", unseen: true },
+      { id: "s3", agentId: "fake", title: "migrate the schema", live: true, updatedAt: "2026-07-09T09:00:00Z" },
+      { id: "s4", agentId: "fake", title: "write the release notes", live: true, updatedAt: "2026-07-09T08:00:00Z" },
     ],
     activeSessionId: "s1",
     chatConnect: null,
     registryAgents: [],
-    transcripts: { s1: chatTranscript },
+    transcripts: {
+      s1: chatTranscript,
+      s3: [{ kind: "elicitation", id: "q-s3", message: "Which database?", mode: "form", fields: [], resolution: null }],
+    },
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
@@ -165,6 +171,7 @@ export function agentViewState({ live }) {
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,
+    screen: { pointer: true, pinned: [] },
   };
 }
 

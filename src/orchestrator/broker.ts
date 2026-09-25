@@ -41,19 +41,6 @@ export interface BrokerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Refresh Settings' audit tail after every write. */
   onAuditWritten(): void;
-  /** Native notification mirroring the inline card — only fires when the
-   * caller decides the Agent View is currently hidden (vscode-side check,
-   * kept out of this vscode-free module). `requestId` is the same id
-   * `resolve()` expects, so the notification's button resolves this exact
-   * pending request regardless of whether the inline card also resolves it
-   * first (whichever the user acts on first wins; resolve() is a no-op the
-   * second time since the entry is deleted after the first resolution). */
-  notifyPending?(
-    requestId: string,
-    title: string,
-    detail: string,
-    options: readonly PermissionOptionView[],
-  ): void;
   /** Opens a page in the system browser — outside the editor, where
    * neither patchbay nor the agent's model can see the page or what the
    * user types into it. Called only on the user's own click. */
@@ -414,7 +401,6 @@ export class PermissionBroker {
       detail,
       options,
     });
-    this.hooks.notifyPending?.(blockId, toolTitle, detail, options);
     const optionId = await this.awaitOption(blockId, sessionId);
     if (optionId === TURN_CANCELLED) {
       // The card resolves visibly — an open question the user can no longer
@@ -493,10 +479,6 @@ export class PermissionBroker {
       return "accepted";
     }
 
-    this.hooks.notifyPending?.(blockId, "File write", path, [
-      { optionId: "accept", label: "Accept", kind: "allow_once" },
-      { optionId: "reject", label: "Reject", kind: "reject_once" },
-    ]);
     this.proposals.set(blockId, { path, oldText: oldContent, newText: newContent });
     const optionId = await this.awaitOption(blockId, sessionId);
     this.proposals.delete(blockId);
@@ -536,7 +518,6 @@ export class PermissionBroker {
       detail: command,
       options: STANDARD_OPTIONS,
     });
-    this.hooks.notifyPending?.(blockId, "Terminal", command, STANDARD_OPTIONS);
     const optionId = await this.awaitOption(blockId, sessionId);
     const cancelled = optionId === TURN_CANCELLED;
     const chosen = STANDARD_OPTIONS.find((o) => o.optionId === optionId);
