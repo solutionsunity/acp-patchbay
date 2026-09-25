@@ -233,7 +233,9 @@ for (const theme of Object.keys(THEMES)) {
   // ── read-out strip: plan chip only (files chip moved to the composer) ──
   check(`[${theme}] plan chip shows fraction`, (await p.$(".readout-strip .chip.plan .frac")) !== null);
   check(`[${theme}] no files chip left in the strip`, (await p.$(".readout-strip .chip.files")) === null);
+  check(`[${theme}] plan chip states whether its panel is open`, (await p.locator('.readout-strip .chip.plan[aria-expanded="false"]').count()) === 1);
   await p.click(".readout-strip .chip.plan");
+  check(`[${theme}] plan chip reads open once clicked`, (await p.locator('.readout-strip .chip.plan[aria-expanded="true"]').count()) === 1);
   check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".readout-panel .items .in_progress", { timeout: 3000 })) !== null);
   await p.click(".readout-panel .head .close");
   check(`[${theme}] X closes the plan panel`, (await p.$(".readout-panel")) === null);

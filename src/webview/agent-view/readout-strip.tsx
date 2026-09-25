@@ -91,7 +91,9 @@ export function ReadoutStrip({
       )}
       <div className="chips">
         <button
+          type="button"
           className={`chip plan ${isOpen ? "active" : ""} ${pulse ? "animate-pulse" : ""}`}
+          aria-expanded={isOpen}
           onClick={() => setOpen((v) => !v)}
         >
           <Icon name={isOpen ? "chevron-down" : "chevron-right"} /> Plan{" "}
