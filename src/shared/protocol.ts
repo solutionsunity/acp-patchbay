@@ -793,26 +793,43 @@ export function isToolCallOpen(status: ToolCallStatus): boolean {
   return status === "pending" || status === "in_progress";
 }
 
-/** One piece of a user message — the wire's own content vocabulary kept
- * through to render, instead of flattening everything to a string (which
- * lost mentions, images and context to placeholder text). Sent prompts and
- * session/load replays both map onto this one set, so live and reloaded
- * history render identically. */
-export type UserPart =
+/** One ACP content block as it renders — the wire's own content vocabulary
+ * kept through to render instead of flattened to a string (which lost
+ * mentions, images and context to placeholder text). Every surface that
+ * shows agent or user content maps onto this one set: user messages (sent
+ * and replayed alike), agent messages, and tool-call content. */
+export type ContentPart =
   | { kind: "text"; text: string }
-  /** Inline `@file` mention (a resource_link on the wire). */
+  /** A resource_link — an `@file` mention in a user's message, a link
+   * elsewhere. */
   | { kind: "mention"; name: string; uri: string }
-  /** Image riding the prompt. `file` names its copy in the attachments
-   * stash (previewable); absent when the bytes couldn't be stashed —
-   * degrades to a labeled chip, never an error. */
+  /** An image. `file` names its copy in the attachments stash
+   * (previewable); absent when the bytes couldn't be stashed — degrades to
+   * a labeled chip, never an error. */
   | { kind: "image"; mimeType: string; file?: string }
-  /** File attached whole (a resource_link chip, not an inline mention). */
-  | { kind: "attachment"; name: string; path: string }
-  /** Labeled context snapshot (selection, problems, embedded resource) —
+  /** Labeled text snapshot (selection, problems, embedded resource) —
    * text bounded orchestrator-side, same rule as tool rawInput. */
   | { kind: "context"; label: string; text: string }
-  /** Honesty placeholder for content kinds without a renderer (audio…). */
+  /** Honesty placeholder for content kinds without a renderer (audio, blob
+   * resources) — a recorded floor, not a gap: nothing plays or saves them. */
   | { kind: "unrendered"; type: string };
+
+/** One piece of a user message: any content part, or a file attached whole
+ * (a resource_link chip rather than an inline mention — only a sent prompt
+ * carries one). */
+export type UserPart = ContentPart | { kind: "attachment"; name: string; path: string };
+
+/** One piece of a tool call's `content`, in the agent's order: a content
+ * part, or a terminal the call runs in (by the id `terminal/create`
+ * returned — its block renders inside the card). Diff entries don't appear
+ * here; they are the card's file rows. */
+export type ToolContentPart = ContentPart | { kind: "terminal"; terminalId: string };
+
+/** The transcript block a client terminal renders as — one spelling for the
+ * host that creates it and the tool card that embeds it. */
+export function terminalBlockId(terminalId: string): string {
+  return `term-block-${terminalId}`;
+}
 
 /** A user message flattened for copy/preview — mentions and chips keep a
  * readable spelling, prose stays verbatim. */
@@ -900,6 +917,10 @@ export interface ToolCallBlock {
    * the card at its line — the per-turn rollup's "N files" is the deduped
    * path set across edit/delete/move calls. */
   locations: readonly ToolLocation[];
+  /** The call's `content` minus its diffs, in the agent's order — what the
+   * agent meant the user to see. Replaced wholesale by an update that
+   * carries `content` (ACP: the field is a collection replacement). */
+  content: readonly ToolContentPart[];
   /** Paths with agent-reported diff content (ToolCallContent type:"diff").
    * The texts stay orchestrator-side; expanding the card offers "Open
    * diff", routed to VS Code's native diff editor — never an inline diff
@@ -1429,6 +1450,7 @@ export type AgentViewEvent =
       input?: string;
       output?: string;
       locations?: readonly ToolLocation[];
+      content?: readonly ToolContentPart[];
       diffFiles?: readonly string[];
     }
   /** The broker rejected this tool call's session/request_permission. */
@@ -1735,6 +1757,7 @@ function upsertToolCall(
       input: event.input ?? null,
       output: event.output ?? null,
       locations: event.locations ?? [],
+      content: event.content ?? [],
       diffFiles: event.diffFiles ?? [],
       denied: false,
       interrupted: false,
@@ -1751,6 +1774,7 @@ function upsertToolCall(
     input: event.input ?? existing.input,
     output: event.output ?? existing.output,
     locations: event.locations ?? existing.locations,
+    content: event.content ?? existing.content,
     diffFiles: event.diffFiles ?? existing.diffFiles,
     // A trailing tool_call_update still wins: the
     // wire is still talking about this call, so the "abandoned" guess is
@@ -2208,6 +2232,7 @@ export function reduceAgentView(
                 input: b.input ?? null,
                 output: b.output ?? null,
                 locations: b.locations ?? [],
+                content: b.content ?? [],
                 diffFiles: b.diffFiles ?? [],
                 denied: b.denied ?? false,
                 // A persisted still-open snapshot survives a reload with no
@@ -2274,6 +2299,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       input: next.input ?? prev.input,
       output: next.output ?? prev.output,
       locations: next.locations ?? prev.locations,
+      content: next.content ?? prev.content,
       diffFiles: next.diffFiles ?? prev.diffFiles,
     };
   }

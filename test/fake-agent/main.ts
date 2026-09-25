@@ -22,7 +22,14 @@ export type TurnStep =
   | { type: "thought"; text: string }
   | { type: "userEcho"; text: string }
   | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: acp.ToolCallLocation[] }
-  | { type: "toolDone"; id: string; rawOutput?: unknown; diff?: { path: string; oldText?: string; newText: string } }
+  | {
+      type: "toolDone";
+      id: string;
+      rawOutput?: unknown;
+      diff?: { path: string; oldText?: string; newText: string };
+      /** The call's display content, sent as-is (diff entries included). */
+      content?: acp.ToolCallContent[];
+    }
   | {
       type: "plan";
       entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
@@ -243,7 +250,11 @@ async function runTurn(
           toolCallId: step.id,
           status: "completed",
           ...(step.rawOutput !== undefined ? { rawOutput: step.rawOutput } : {}),
-          ...(step.diff !== undefined ? { content: [{ type: "diff", ...step.diff }] } : {}),
+          ...(step.content !== undefined
+            ? { content: step.content }
+            : step.diff !== undefined
+              ? { content: [{ type: "diff", ...step.diff }] }
+              : {}),
         });
         break;
       case "plan":

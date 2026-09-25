@@ -30,6 +30,7 @@ function tool(id: string, over: Partial<ToolCallBlock> = {}): ToolCallBlock {
     input: null,
     output: null,
     locations: [],
+    content: [],
     diffFiles: [],
     denied: false,
     interrupted: false,
@@ -361,7 +362,7 @@ describe("transcriptSeeded normalization", () => {
     });
     expect(state.transcripts[S]![0]).toEqual({
       kind: "toolCall", id: "t1", title: "Read", status: "completed",
-      toolKind: "other", input: null, output: null, locations: [], diffFiles: [], denied: false,
+      toolKind: "other", input: null, output: null, locations: [], content: [], diffFiles: [], denied: false,
       interrupted: false,
     });
   });
@@ -402,6 +403,56 @@ describe("toolFileRows", () => {
       { path: "/ws/a.ts", lines: [3], diff: false },
       { path: "/ws/z.ts", lines: [], diff: true },
     ]);
+  });
+});
+
+// Issue #44: a terminal a tool call runs in renders inside that call's card,
+// so it leaves the stream — and never splits a run of tool calls.
+describe("deriveTranscript: embedded terminals", () => {
+  const term = (id: string): ChatBlock => ({
+    kind: "terminal", id, command: "npm test", output: "ok", running: false, exitCode: 0,
+  });
+
+  it("a terminal a tool call embeds leaves the stream; one no call claims stays", () => {
+    const blocks: ChatBlock[] = [
+      tool("t1", { content: [{ kind: "terminal", terminalId: "term-1" }] }),
+      term("term-block-term-1"),
+      tool("t2"),
+      tool("t3"),
+      term("term-block-term-2"),
+    ];
+    const items = deriveTranscript(blocks, false).items;
+    // t1..t3 stay one run: the embedded terminal no longer sits between them
+    expect(items.map((i) => (i.kind === "toolRun" ? `run:${i.calls.length}` : i.block.id))).toEqual([
+      "run:3",
+      "term-block-term-2",
+    ]);
+  });
+});
+
+// ACP: an update's `content` replaces the collection; an update without it
+// leaves it alone — through the reducer and the bus coalescer alike (#44).
+describe("tool-call content merge", () => {
+  const upsert = (content?: ToolCallBlock["content"]): AgentViewEvent => ({
+    kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "in_progress",
+    ...(content !== undefined ? { content } : {}),
+  });
+  const first: ToolCallBlock["content"] = [{ kind: "text", text: "a" }];
+  const second: ToolCallBlock["content"] = [{ kind: "text", text: "b" }];
+  const contentAfter = (events: AgentViewEvent[]) => {
+    const state = events.reduce(reduceAgentView, initialAgentViewState);
+    return assertKind(state.transcripts[S]![0], "toolCall").content;
+  };
+
+  it("an update without content keeps it; an update with content replaces it", () => {
+    expect(contentAfter([upsert(first), upsert()])).toEqual(first);
+    expect(contentAfter([upsert(first), upsert(second)])).toEqual(second);
+    expect(contentAfter([upsert(first), upsert([])])).toEqual([]);
+  });
+
+  it("the coalescer keeps the same rule when it folds two updates into one", () => {
+    expect(coalesceAgentViewEvent(upsert(first), upsert())).toMatchObject({ content: first });
+    expect(coalesceAgentViewEvent(upsert(first), upsert(second))).toMatchObject({ content: second });
   });
 });
 

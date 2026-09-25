@@ -152,6 +152,7 @@ for (const theme of Object.keys(THEMES)) {
   const toolCard = p.locator(".card:has(.tool-loc)", { hasText: "Grep pattern" });
   await p.mouse.move(0, 0);
   await toolCard.screenshot({ path: `${OUT}/tool-card-${theme}.png` });
+  check(`[${theme}] the details toggle is a keyboard-reachable button`, (await toolCard.getByRole("button", { name: "Show details" }).count()) === 1);
   await toolCard.locator(".tool-loc").click();
   check(`[${theme}] the file link opens, never toggles the card`, (await toolCard.locator(".tool-files").count()) === 0);
   await toolCard.locator(".tool-loc-more").click();
@@ -159,13 +160,27 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] +N opens the details: one row per file`, (await fileRows.count()) === 3);
   const firstRow = (await fileRows.first().innerText()).replace(/\s+/g, " ");
   check(`[${theme}] a file's lines and its diff share its row, path relative to the root ("${firstRow}")`, /a\.ts:12 :30 src .*diff/.test(firstRow));
+  check(`[${theme}] details render the agent's content as markdown`, (await toolCard.locator('.msg-agent [data-streamdown="strong"]', { hasText: "3 matches" }).count()) === 1);
+  check(`[${theme}] raw input/output sit behind a collapsed raw toggle`, (await toolCard.locator("pre", { hasText: '"pattern"' }).count()) === 0);
   await p.mouse.move(0, 0);
   await toolCard.screenshot({ path: `${OUT}/tool-card-open-${theme}.png` });
+  await toolCard.getByRole("button", { name: "raw" }).click();
+  check(`[${theme}] raw toggle shows the wire input`, (await toolCard.locator("pre", { hasText: '"pattern"' }).count()) === 1);
+  await p.mouse.move(0, 0);
+  await toolCard.screenshot({ path: `${OUT}/tool-card-raw-${theme}.png` });
+  await toolCard.getByRole("button", { name: "raw" }).click();
   await p.click("text=Grep pattern");
   await p.click("text=5 tool calls");
+  // an embedded terminal: inside its tool card, visible without expanding,
+  // and gone from the stream as a card of its own
+  const termCard = p.locator(".card", { hasText: "Run tests" });
+  check(`[${theme}] embedded terminal renders inside its tool card`, (await termCard.locator(".term", { hasText: "12 passed" }).count()) === 1);
+  check(`[${theme}] embedded terminal is not also a card of its own`, (await p.locator(".chat > .card", { hasText: "npm test" }).filter({ hasNotText: "Run tests" }).count()) === 0);
+  await p.mouse.move(0, 0);
+  await termCard.screenshot({ path: `${OUT}/tool-card-terminal-${theme}.png` });
 
   // ── injected user-role envelope: dim collapsed line, never a bubble,
-  // and it must not tick the prompt count (stats row stays "2 5 1 file") ──
+  // and it must not tick the prompt count (stats row stays "2 6 1 file") ──
   check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
@@ -180,7 +195,7 @@ for (const theme of Object.keys(THEMES)) {
   // (files-chip.tsx — moved down from the read-out strip); no usage
   // reported → no gauge ──
   const stats = await p.$eval(".composer-stats", (el) => el.textContent.replace(/\s+/g, " ").trim());
-  check(`[${theme}] composer stats counts prompts+tools+files ("${stats}")`, stats === "2 5 1 file");
+  check(`[${theme}] composer stats counts prompts+tools+files ("${stats}")`, stats === "2 6 1 file");
   check(`[${theme}] no gauge without usage reported`, (await p.$(".composer-stats .gauge")) === null);
 
   // ── read-out strip: plan chip only (files chip moved to the composer) ──

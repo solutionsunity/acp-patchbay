@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A tool call now shows what the tool produced, the way the agent meant it
+  to be read. Expanded, a call used to show two boxes of raw data — the
+  arguments as JSON and the tool's unformatted result — while the output
+  the agent had prepared for you (a command's console output, a summary,
+  an image, an embedded file) was thrown away. That content now renders in
+  the call's details, formatted like the agent's messages, and the raw
+  data sits behind a "raw" toggle for when you need to see exactly what
+  ran. A command that runs in a VS Code terminal now shows inside its tool
+  call, output streaming live, instead of as a separate block further down.
+  The show-details arrow is now a real button, so the keyboard reaches
+  it. (#44)
 - A file an agent's tool call reports can now be opened from the chat, at
   the line the agent named. The file's name sits in the call's header —
   click it and the file opens with the cursor on that line, whether or not

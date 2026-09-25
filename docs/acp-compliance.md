@@ -11,7 +11,7 @@ consume is either consumed or deliberately declined *on record here*.
 
 This document states the current fact set only — what is true now, against which
 version, checked when. It carries no fix history; git holds that. Retired gap ids
-(G1–G4, G6–G9, G11–G14) mean "resolved — the resulting behavior is stated as a
+(G1–G9, G11–G14) mean "resolved — the resulting behavior is stated as a
 present-tense fact in its section below."
 
 Verdict vocabulary, used per row:
@@ -163,14 +163,14 @@ consumed: the card names the call by its `title`, which every agent sends.
 
 | Duty | Verdict | Notes |
 |---|---|---|
-| `tool_call` create + `tool_call_update` merge semantics | ✅ | Upsert with "absent field inherits" in both the reducer and the bus coalescer — matches "only the fields being changed need to be included". Present `content` replaces the diff collection; absent keeps it (`stashToolDiffs`). |
+| `tool_call` create + `tool_call_update` merge semantics | ✅ | Upsert with "absent field inherits" in both the reducer and the bus coalescer — matches "only the fields being changed need to be included". Present `content` replaces the call's display content and its diff collection; absent keeps both (`toolContentOf`, `stashToolDiffs`). |
 | Statuses (`pending/in_progress/completed/failed`) | ✅ | Rendered on the tool card. |
 | Kinds (read/edit/delete/move/search/execute/think/fetch/other) | ✅ | `toolKind` drives iconography; unknown → `other`. |
 | Content `diff` | ✅ | Fully rendered, three surfaces from two sources (agent-reported diffs here; the fs/write gate's pre-image at the orchestrator chokepoint): the tool card's openable per-call diff (`toolCallDiff`), the files panel's since-first-touch baseline diff (`fileBaselines`, first note wins), and the cumulative ± badges (`fileStats`). |
-| Content `content` (regular blocks) | 🟡 | Not rendered — the card shows bounded `rawInput`/`rawOutput` instead, which is patchbay's debug view, not the agent's chosen presentation. → Open gap G5. |
-| Content `terminal` (embedded by id) | 🟡 | Terminal output renders as its own live transcript block (`terminalStarted`/`terminalOutputAppended`) and persists after release — but the content entry is not consumed, so the output is not visually attached to its owning tool-call card. Functionally honest, structurally loose. → Open gap G5. |
+| Content `content` (regular blocks) | ✅ | Rendered in the card's details in the agent's order, through the one content mapping every chat surface shares (`content-parts.ts`): text as the agent's markdown (bounded, like the raw fields), `resource_link` as a mention, images previewed from the attachments stash, embedded text resources as labeled snapshots; audio and blob resources keep a labeled placeholder — a recorded floor, nothing plays or saves them. |
+| Content `terminal` (embedded by id) | ✅ | The terminal renders inside its tool-call card, visible without expanding — command, live state, output as it streams, kept after release — and leaves the transcript stream as a block of its own (`embeddedTerminalIds`). A terminal no call claims still renders standalone. |
 | `locations` follow-along | ✅ | Each location rides the block as path + line (`tool-locations.ts`) and opens from the tool-call card — the cursor on the named line's first non-blank character, clamped into the file; a directory is revealed in the Explorer. The spec leaves `line`'s base unstated; it is read **1-based** (decided 2026-09-25), because the agents that send one count from 1 — claude-agent-acp (Read `offset ?? 1`, Edit hunk `newStart`), Gemini CLI 0.50 (`start_line`, documented 1-based) — and a whole-file read reports `line: 1`. `0` is taken as the first line. Zed reads it 0-based (its own tools send `start_line - 1`); OpenCode and codex-acp send no line. Covered by `test/tool-locations.test.ts` and `test/vscode/open-location.test.ts`. |
-| `rawInput`/`rawOutput` | ✅ | Bounded (`boundedRaw`, `RAW_CAP`) with an explicit truncation marker — display honesty kept. |
+| `rawInput`/`rawOutput` | ✅ | Bounded (`boundedRaw`) with an explicit truncation marker, and shown behind a collapsed **raw** toggle in the card's details: the exact arguments and unformatted result, kept for transparency, never the main view — that is the agent's content. |
 
 ## 11. Permission requests (`session/request_permission`)
 
@@ -260,8 +260,7 @@ always gated on declared (+ used where it gates UI), never silently.
 
 | # | Level | Gap |
 |---|---|---|
-| G5 | SHOULD | Tool-call content: `content`-kind blocks unrendered (card shows raw debug view instead of the agent's chosen presentation); `terminal`-kind entries not linked to their owning card (§10). rendering work (the UI Architecture doc), not a patch. |
-| G10 | SHOULD | Non-text message content renders as placeholder only (§8). Remaining, each its own design discussion: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(c)** image — needs a rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. Sequence alongside G5. |
+| G10 | SHOULD | Non-text message content renders as placeholder only (§8). Remaining, each its own design discussion: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(c)** image — needs a rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. |
 
 **Verify:** V1 — that the SDK surfaces load-replay notifications before the
 `session/load` response resolves in all transports we use (stdio: confirmed by

@@ -98,6 +98,9 @@ deliverable.
 
 - Responses stream live, including tool calls, thoughts, and plans as the agent
   reports them.
+- A tool call shows what the tool produced as the agent presented it —
+  output, images, embedded files — with the exact arguments and raw result
+  one click away; a command it runs in a terminal streams inside it.
 - When the agent maintains a task list / plan, the user can follow it live
   alongside the chat.
 - User can paste an image and any agent receives it in the best form it supports —

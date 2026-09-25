@@ -134,6 +134,16 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
 export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "terminal" }> }) {
   return (
     <div className="card">
+      <TerminalView block={block} />
+    </div>
+  );
+}
+
+/** A client terminal's command, live state and output — standalone as its
+ * own card, or inside the tool call that runs in it. */
+export function TerminalView({ block }: { block: Extract<ChatBlock, { kind: "terminal" }> }) {
+  return (
+    <>
       <div className="card-hd">
         <Icon name="terminal" /> {block.command}
         <span className="st">
@@ -156,7 +166,7 @@ export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "ter
         </span>
       </div>
       <div className="term">{block.output || " "}</div>
-    </div>
+    </>
   );
 }
 

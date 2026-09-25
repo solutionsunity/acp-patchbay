@@ -4,10 +4,13 @@
 // Prose and tool-call blocks of the transcript. Each component consumes the
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import {
   isToolCallOpen,
   userPartsText,
+  terminalBlockId,
+  type ContentPart,
+  type TerminalBlock,
   type ToolCallBlock,
   type UserPart,
 } from "../../../shared/protocol";
@@ -16,6 +19,7 @@ import { Icon } from "../../shared/icon";
 import { basename, splitPath } from "../../shared/path";
 import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
+import { TerminalView } from "./cards";
 import { AgentMarkdown } from "./markdown";
 import { toolFileRows } from "./view-model";
 
@@ -308,7 +312,10 @@ export function ToolCallCard({
   const [open, setOpen] = useState(false);
   const rows = toolFileRows(block);
   const listFiles = rows.length > 1 || rows.some((r) => r.diff || r.lines.length > 1);
-  const expandable = block.input !== null || block.output !== null || listFiles;
+  const shown = block.content.filter((p) => p.kind !== "terminal");
+  const terminals = block.content.flatMap((p) => (p.kind === "terminal" ? [p.terminalId] : []));
+  const hasRaw = block.input !== null || block.output !== null;
+  const expandable = listFiles || shown.length > 0 || hasRaw;
   const openAt = (path: string, line: number | undefined) =>
     send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
   const first = block.locations[0];
@@ -348,11 +355,7 @@ export function ToolCallCard({
             +{rows.length - 1}
           </button>
         )}
-        {expandable && (
-          <span title={open ? "Hide details" : "Show details"} aria-label={open ? "Hide details" : "Show details"}>
-            <Icon name={open ? "chevron-down" : "chevron-right"} />
-          </span>
-        )}
+        {expandable && <DetailsToggle open={open} onToggle={stop(() => setOpen((v) => !v))} />}
         <ToolCallStatusTag block={block} />
       </div>
       {open && (
@@ -406,20 +409,107 @@ export function ToolCallCard({
               })}
             </div>
           )}
-          {block.input !== null && (
+          {shown.map((part, i) => (
+            <ToolContentView key={i} part={part} />
+          ))}
+          {hasRaw && <RawSection input={block.input} output={block.output} />}
+        </div>
+      )}
+      {terminals.map((id) => (
+        <EmbeddedTerminal key={id} terminalId={id} />
+      ))}
+    </div>
+  );
+}
+
+/** The chevron that shows or hides a card's details — a real button, so the
+ * keyboard reaches it; the header around it stays clickable for the mouse. */
+function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: (e: React.MouseEvent) => void }) {
+  return (
+    <button
+      type="button"
+      className={`flex shrink-0 items-center ${LINK}`}
+      aria-expanded={open}
+      aria-label={open ? "Hide details" : "Show details"}
+      title={open ? "Hide details" : "Show details"}
+      onClick={onToggle}
+    >
+      <Icon name={open ? "chevron-down" : "chevron-right"} />
+    </button>
+  );
+}
+
+/** One piece of what the tool produced for the user to see. Text is the
+ * agent's own markdown (console output in fences, labels), rendered like its
+ * messages; every other kind shares the message renderers. */
+function ToolContentView({ part }: { part: ContentPart }) {
+  if (part.kind === "text") {
+    return (
+      <div className="msg-agent min-w-0">
+        <AgentMarkdown text={part.text} live={false} />
+      </div>
+    );
+  }
+  return (
+    <div>
+      <PartView part={part} />
+    </div>
+  );
+}
+
+/** The call's wire payload — the exact arguments that ran and the tool's
+ * unformatted result. Kept for transparency and debugging, one click away
+ * and never the main view: what the agent meant to show is its content. */
+function RawSection({ input, output }: { input: string | null; output: string | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        className={`flex items-center gap-1 text-[10.5px] uppercase tracking-wide text-muted-foreground ${LINK}`}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} /> raw
+      </button>
+      {open && (
+        <div className="mt-1 flex flex-col gap-1.5">
+          {input !== null && (
             <div>
               <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">input</div>
-              <pre className="term m-0 whitespace-pre-wrap">{block.input}</pre>
+              <pre className="term m-0 whitespace-pre-wrap">{input}</pre>
             </div>
           )}
-          {block.output !== null && (
+          {output !== null && (
             <div>
               <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">output</div>
-              <pre className="term m-0 whitespace-pre-wrap">{block.output}</pre>
+              <pre className="term m-0 whitespace-pre-wrap">{output}</pre>
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Client terminals by block id, provided by the chat. Read only by the
+ * embedded terminals themselves, so live output re-renders them and not
+ * every tool card around them. */
+export const TerminalBlocks = createContext<ReadonlyMap<string, TerminalBlock>>(new Map());
+
+/** A terminal the call runs in, always visible under its header — ACP: the
+ * client displays an embedded terminal's output as it is generated. */
+function EmbeddedTerminal({ terminalId }: { terminalId: string }) {
+  const block = useContext(TerminalBlocks).get(terminalBlockId(terminalId));
+  if (block === undefined) {
+    return <div className="px-2.5 pb-2 text-[11px] italic text-muted-foreground">terminal {terminalId} — not started</div>;
+  }
+  return (
+    <div className="border-t border-[var(--pb-border)]">
+      <TerminalView block={block} />
     </div>
   );
 }
@@ -455,7 +545,14 @@ export function ToolRunCard({
           onClick={() => setOpen(false)}
           aria-expanded={true}
         >
-          {weightedIcon} {calls.length} tool calls <Icon name="chevron-down" />
+          {weightedIcon} {calls.length} tool calls{" "}
+          <DetailsToggle
+            open={true}
+            onToggle={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+          />
         </div>
         {calls.map((c) => (
           <ToolCallCard key={c.id} block={c} sessionId={sessionId} roots={roots} />
@@ -474,7 +571,13 @@ export function ToolRunCard({
         <span className="min-w-0 flex-1 truncate">
           {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}
         </span>
-        <Icon name="chevron-right" />
+        <DetailsToggle
+          open={false}
+          onToggle={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+        />
         <span className="st">
           {running !== undefined ? (
             <span className="spin" />

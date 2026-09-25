@@ -5,7 +5,7 @@
 
 const tool = (id, over = {}) => ({
   kind: "toolCall", id, title: id, status: "completed", toolKind: "other",
-  input: null, output: null, locations: [], diffFiles: [], denied: false, ...over,
+  input: null, output: null, locations: [], content: [], diffFiles: [], denied: false, ...over,
 });
 
 /** Interleaved transcript: markdown+code+mermaid (valid & broken), thought,
@@ -27,7 +27,7 @@ export const chatTranscript = [
     text: 'See [the docs](https://example.com/docs) — flow:\n\n```mermaid\ngraph LR\n  A[prompt] --> B{broker}\n  B -->|allow| C[tool runs]\n  B -->|deny| D[blocked]\n```\n\n```ts\nconst pattern: RegExp = /foo/g;\n```',
   },
   { kind: "thought", id: "th1", text: "grep is cheaper than a full parse here — start narrow." },
-  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", locations: [{ path: "/ws/src/a.ts", line: 12 }, { path: "/ws/src/a.ts", line: 30 }, { path: "/ws/src/b.ts", line: 40 }, { path: "/ws/src/c.ts", line: null }], diffFiles: ["/ws/src/a.ts"] }),
+  tool("t0", { title: "Grep pattern", toolKind: "search", input: '{\n  "pattern": "foo"\n}', output: "3 matches", content: [{ kind: "text", text: "Found **3 matches** in 2 files:\n\n```console\nsrc/a.ts:12:  foo()\nsrc/a.ts:30:  foo(1)\nsrc/b.ts:40:  return foo\n```" }], locations: [{ path: "/ws/src/a.ts", line: 12 }, { path: "/ws/src/a.ts", line: 30 }, { path: "/ws/src/b.ts", line: 40 }, { path: "/ws/src/c.ts", line: null }], diffFiles: ["/ws/src/a.ts"] }),
   tool("g1", { title: "Read a.ts", toolKind: "read" }),
   tool("g2", { title: "Read b.ts", toolKind: "read" }),
   // file-touching + matching the dirty openEditors entry below — lights the
@@ -45,6 +45,10 @@ export const chatTranscript = [
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
   { kind: "user", id: "u2", parts: [{ kind: "text", text: "keep going" }] },
+  // a call running in a client terminal: the terminal renders inside its
+  // card (ACP embedded terminal), not as a separate block in the stream
+  tool("x9", { title: "Run tests", toolKind: "execute", status: "completed", input: '{\n  "command": "npm test"\n}', content: [{ kind: "terminal", terminalId: "term-9" }] }),
+  { kind: "terminal", id: "term-block-term-9", command: "npm test", output: "✓ 12 passed (1.4s)", running: false, exitCode: 0 },
   { kind: "text", id: "xbroke", text: "broken-mermaid case:\n\n```mermaid\ngraph LR\n  A[unclosed --> ???blah{{\n```" },
   // path=/excerpt fence attributes (the shape the wire-extension rewriter
   // emits — code-block.tsx caption) on a MULTI-LINE fence: line integrity

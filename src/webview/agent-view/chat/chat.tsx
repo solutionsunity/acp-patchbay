@@ -6,7 +6,7 @@
 // metadata line, and the live elapsed ticker. Long transcripts ride the
 // three-mechanism scale strategy: windowed mount, content-visibility
 // containment (style.css), and memoized rows.
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   userPartsText,
   type AgentViewState,
@@ -17,7 +17,7 @@ import {
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
-import { InjectedUser, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
+import { InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
@@ -202,6 +202,10 @@ export function Chat(props: {
   const activeId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
+  const terminalBlocks = useMemo(
+    () => new Map(blocks.flatMap((b) => (b.kind === "terminal" ? [[b.id, b] as const] : []))),
+    [blocks],
+  );
 
   const [mounted, setMounted] = useState(INITIAL_WINDOW);
   const hidden = Math.max(0, derived.items.length - mounted);
@@ -406,6 +410,7 @@ export function Chat(props: {
   const activeTurnStartedAt = props.state.activeTurn[active.id];
 
   return (
+    <TerminalBlocks.Provider value={terminalBlocks}>
     <div
       className="chat"
       ref={chatRef}
@@ -489,5 +494,6 @@ export function Chat(props: {
         </div>
       )}
     </div>
+    </TerminalBlocks.Provider>
   );
 }

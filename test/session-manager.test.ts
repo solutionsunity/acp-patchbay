@@ -953,6 +953,52 @@ describe("SessionManager", () => {
     await h.pool.stop("sm13d");
   });
 
+  it("a tool call's content rides the block in the agent's order — text bounded, diffs left to the file rows (issue #44)", async () => {
+    const h = harness();
+    const long = "x".repeat(5_000);
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "toolCall", id: "b1", title: "Run build", kind: "execute" },
+            {
+              type: "toolDone",
+              id: "b1",
+              rawOutput: { stdout: "ok" },
+              content: [
+                { type: "content", content: { type: "text", text: "```console\nok\n```" } },
+                { type: "terminal", terminalId: "term-7" },
+                { type: "diff", path: "/ws/a.ts", oldText: "a", newText: "b" },
+                { type: "content", content: { type: "resource_link", name: "a.ts", uri: "file:///ws/a.ts" } },
+                { type: "content", content: { type: "resource", resource: { uri: "file:///ws/n.md", text: "note" } } },
+                { type: "content", content: { type: "audio", data: "AAAA", mimeType: "audio/wav" } },
+                { type: "content", content: { type: "text", text: long } },
+              ],
+            },
+          ],
+        },
+        "sm44",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm44", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "build");
+
+    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    expect(tool.content.slice(0, 5)).toEqual([
+      { kind: "text", text: "```console\nok\n```" },
+      { kind: "terminal", terminalId: "term-7" },
+      { kind: "mention", name: "a.ts", uri: "file:///ws/a.ts" },
+      { kind: "context", label: "file:///ws/n.md", text: "note" },
+      { kind: "unrendered", type: "audio" },
+    ]);
+    const last = tool.content[5]!;
+    expect(last.kind === "text" && last.text.endsWith("… truncated (5,000 chars total)")).toBe(true);
+    expect(tool.diffFiles).toEqual(["/ws/a.ts"]);
+    // the raw payload stays on the block for the Raw section
+    expect(tool.output).toContain('"stdout": "ok"');
+    await h.pool.stop("sm44");
+  });
+
   it("a location's line rides the block, read 1-based: 0 is the first line, no line stays none (issue #41)", async () => {
     const h = harness();
     await h.pool.connect(

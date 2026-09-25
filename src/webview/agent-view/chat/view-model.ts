@@ -14,7 +14,7 @@
 // principle): grouping and per-turn rollups are
 // render arrangements derived here, never separate traversals with separate
 // boundary rules.
-import type { ChatBlock, ToolCallBlock, ToolCallKind } from "../../../shared/protocol";
+import { terminalBlockId, type ChatBlock, type ToolCallBlock, type ToolCallKind } from "../../../shared/protocol";
 
 export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
@@ -107,6 +107,16 @@ export function toolFileRows(block: Pick<ToolCallBlock, "locations" | "diffFiles
   return [...rows.values()];
 }
 
+/** Block ids of the terminals some tool call embeds in its content. */
+export function embeddedTerminalIds(blocks: readonly ChatBlock[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const b of blocks) {
+    if (b.kind !== "toolCall") continue;
+    for (const part of b.content) if (part.kind === "terminal") ids.add(terminalBlockId(part.terminalId));
+  }
+  return ids;
+}
+
 export const TOOL_RUN_MIN = 3;
 
 const FILE_TOUCHING: ReadonlySet<ToolCallKind> = new Set(["edit", "delete", "move"]);
@@ -143,7 +153,13 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   const allFiles = new Set<string>();
   const diffableFiles = new Set<string>();
 
+  // Terminals a tool call runs in render inside that call's card (ACP: the
+  // client displays an embedded terminal's output), so they leave the
+  // stream — and never split a run of tool calls either.
+  const embedded = embeddedTerminalIds(blocks);
+
   for (const block of blocks) {
+    if (block.kind === "terminal" && embedded.has(block.id)) continue;
     if (block.kind === "toolCall") {
       run.push(block);
       toolCalls++;

@@ -8,7 +8,7 @@
 // injected — so the handlers the extension runs are the same ones the tests
 // run.
 import type * as acp from "@agentclientprotocol/sdk";
-import type { AgentViewEvent } from "../shared/protocol";
+import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import { type PermissionBroker, sliceTextFileRead } from "./broker";
 import { gateRefusal, readFailure } from "./client-replies";
 import type { PoolHooks } from "./pool";
@@ -74,7 +74,7 @@ export class ClientHost {
     const terminalId = `term-${++this.terminalCounter}`;
     this.terminals.set(terminalId, handle);
     this.deps.trackProcess(handle);
-    const blockId = `term-block-${terminalId}`;
+    const blockId = terminalBlockId(terminalId);
     const { sessionId } = params;
     this.deps.emit({ kind: "terminalStarted", sessionId, blockId, command });
     handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", sessionId, blockId, chunk }));

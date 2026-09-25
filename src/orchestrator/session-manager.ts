@@ -51,6 +51,7 @@ import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import { continuityReachable } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
+import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 
 export interface SessionManagerHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -2558,38 +2559,19 @@ export class SessionManager {
    *   wire capture proves its replay granularity (auggie's agent-chunk
    *   side is uncaptured — dossier note when it lands). */
   /** Replay counterpart of sendPrompt's part building: one wire content
-   * block of a replayed user message → its UserPart. The whole content
-   * vocabulary maps — text stays literal, resource_link becomes a mention,
-   * image bytes stash to the attachments dir for preview (fire-and-forget;
-   * a failed write degrades to a label chip), embedded text resources
-   * become bounded context snapshots — and only genuinely unrenderable
-   * kinds (audio, blob resources) fall to the honesty placeholder. */
+   * block of a replayed user message → its part, through the one content
+   * mapping every chat surface shares. */
   private userPartOf(sessionId: string, content: ContentBlock): UserPart {
-    switch (content.type) {
-      case "text":
-        return { kind: "text", text: content.text };
-      case "resource_link":
-        return { kind: "mention", name: content.name, uri: content.uri };
-      case "image": {
-        if (content.data === "") return { kind: "image", mimeType: content.mimeType };
-        const file = imageFileName(`replay-${++blockCounter}`, content.mimeType);
-        void stashImage(file, content.data).catch((err: Error) => {
-          this.log.info(`session ${sessionId}: replay image stash failed — ${err.message}`);
-        });
-        return { kind: "image", mimeType: content.mimeType, file };
-      }
-      case "resource":
-        if ("text" in content.resource) {
-          return {
-            kind: "context",
-            label: content.resource.uri,
-            text: boundedText(content.resource.text),
-          };
-        }
-        return { kind: "unrendered", type: "blob resource" };
-      default:
-        return { kind: "unrendered", type: content.type };
-    }
+    return contentPartOf(content, this.imageStash(sessionId, "replay"));
+  }
+
+  /** Images arriving in content are copied to the attachments stash for
+   * preview, fire-and-forget; a failed write only costs the preview. */
+  private imageStash(sessionId: string, source: string): ImageStash {
+    return {
+      id: () => `${source}-${++blockCounter}`,
+      onError: (err) => this.log.info(`session ${sessionId}: ${source} image stash failed — ${err.message}`),
+    };
   }
 
   private runBlockFor(
@@ -2844,6 +2826,9 @@ export class SessionManager {
           ...(update.locations != null
             ? { locations: toolLocationsOf(update.locations) }
             : {}),
+          ...(update.content != null
+            ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
+            : {}),
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });
         break;
@@ -2862,6 +2847,9 @@ export class SessionManager {
           ...boundedRaw("output", update.rawOutput),
           ...(update.locations != null
             ? { locations: toolLocationsOf(update.locations) }
+            : {}),
+          ...(update.content != null
+            ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
             : {}),
           ...this.stashToolDiffs(sessionId, update.toolCallId, update.content, emit),
         });
@@ -3005,19 +2993,10 @@ function toTurnUsage(usage: { totalTokens: number; inputTokens: number; outputTo
 }
 
 /** A tool call's rawInput/rawOutput can be arbitrarily large (a full file
- * read, a long command's stdout) — bound it before it rides every state
- * snapshot, with an honest marker, never a silent cut. Absent stays absent:
- * the spread-friendly shape keeps `undefined` out of the event entirely so
- * the reducer's "absent = keep existing" merge rule holds. */
-const RAW_CAP = 4_000;
-
-/** The bound itself, reusable for any agent-sized text that rides state
- * snapshots (context-chip snapshots on user blocks share the rule). */
-function boundedText(text: string): string {
-  if (text.length <= RAW_CAP) return text;
-  return `${text.slice(0, RAW_CAP)}\n… truncated (${text.length.toLocaleString()} chars total)`;
-}
-
+ * read, a long command's stdout) — bounded like any agent-sized text.
+ * Absent stays absent: the spread-friendly shape keeps `undefined` out of
+ * the event entirely so the reducer's "absent = keep existing" merge rule
+ * holds. */
 function boundedRaw(
   key: "input" | "output",
   raw: unknown,
