@@ -62,8 +62,6 @@ export function App({
     () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
     [blocks, activeLive],
   );
-  // `?? true` guards snapshots minted before the preferences field existed.
-  const showStats = state.preferences?.composerStats ?? true;
   const detach = state.preferences?.detachWindows ?? true;
 
   // A pinned panel whose session closed is about to be disposed by the host
@@ -152,7 +150,16 @@ export function App({
       {active !== null && (
         // keyed by session: which panel is open is per-session render state,
         // not something a session switch should inherit
-        <ReadoutStrip key={active.id} plan={state.activePlan[active.id] ?? null} />
+        <ReadoutStrip
+          key={active.id}
+          sessionId={active.id}
+          plan={state.activePlan[active.id] ?? null}
+          files={derived.totals.files}
+          diffable={derived.diffableFiles}
+          diffStats={state.fileDiffStats[active.id] ?? {}}
+          openEditors={state.openEditors}
+          roots={state.workspaceRoots}
+        />
       )}
       {active !== null && (
         <QueueBand
@@ -170,8 +177,6 @@ export function App({
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         workspaceRoots={state.workspaceRoots}
         savedRoots={state.savedRoots}
-        diffableFiles={derived.diffableFiles}
-        fileDiffStats={active !== null ? (state.fileDiffStats[active.id] ?? {}) : {}}
         rootsControls={rootsControls({
           advertised:
             active !== null &&
@@ -187,10 +192,9 @@ export function App({
         workspaceFiles={state.workspaceFiles}
         knobs={active !== null ? (state.sessionKnobs[active.id] ?? []) : []}
         draft={active !== null ? (state.drafts[active.id] ?? "") : ""}
-        showStats={showStats}
+        preferences={state.preferences}
         totals={derived.totals}
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
-        attachmentMaxMB={state.preferences?.attachmentMaxMB ?? 10}
         onNotice={(msg) => showToast(msg, "warning")}
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}

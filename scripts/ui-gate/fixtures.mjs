@@ -131,8 +131,10 @@ const unlistedMatrix = Object.fromEntries(
 );
 
 /** Complete stored-preferences object, as every snapshot carries. */
-const preferences = {
-  soundOnDone: false, knobSource: "agent-default", idleCloseMinutes: 60, composerStats: true,
+export const preferences = {
+  soundOnDone: false, doneSound: "", knobSource: "agent-default", idleCloseMinutes: 60,
+  statsPrompts: true, statsToolCalls: true, statsContext: true, statsPlanUsage: true,
+  detachWindows: true, attachmentMaxMB: 10,
 };
 
 /** live=true streams the last block (caret, ticker); live=false is the
@@ -238,6 +240,6 @@ export function settingsState() {
     }],
     sessionsActiveToday: 7, agentKnobs: {}, registryFetchedAt: "", verifyingAgents: {},
     wireLog: { active: false, until: null }, dataInventory: null,
-    preferences,
+    preferences, doneSounds: ["Glass", "Ping"],
   };
 }

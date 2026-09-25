@@ -1854,7 +1854,8 @@ export class Orchestrator {
         detail: (() => {
           const p = this.preferences.get();
           const idle = p.idleCloseMinutes <= 0 ? "never" : `${p.idleCloseMinutes} min`;
-          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${p.composerStats ? "shown" : "hidden"}`;
+          const stats = [p.statsPrompts, p.statsToolCalls, p.statsContext, p.statsPlanUsage].filter(Boolean).length;
+          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${stats}/4 shown`;
         })(),
       },
       { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalStorage file", detail: n(this.composerKnobs.count(), "agent record") },

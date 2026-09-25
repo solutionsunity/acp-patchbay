@@ -13,8 +13,29 @@ import type { KV } from "./kv";
 
 const KEY = "acpPatchbay.preferences";
 
+/** A stored record in any shape a released version wrote, brought to the
+ * current one. The one transition so far: `composerStats` (one switch over
+ * the whole strip) split into a switch per read-out — a stored "hidden"
+ * hides all of them, so nobody's strip reappears on upgrade. */
+function migrate(stored: Record<string, unknown>): Partial<PreferencesView> {
+  const { composerStats, ...rest } = stored;
+  const split =
+    composerStats === false
+      ? { statsPrompts: false, statsToolCalls: false, statsContext: false, statsPlanUsage: false }
+      : {};
+  return { ...split, ...(rest as Partial<PreferencesView>) };
+}
+
 export class PreferencesStore {
-  constructor(private readonly kv: KV) {}
+  constructor(private readonly kv: KV) {
+    // Once, at construction: a KV applies an update in memory before its
+    // write settles, so no read ever sees the old shape. Disk is a trust
+    // boundary: a non-object value is left for get() to read as it always has.
+    const stored = kv.get<unknown>(KEY);
+    if (typeof stored === "object" && stored !== null && "composerStats" in stored) {
+      void kv.update(KEY, migrate(stored as Record<string, unknown>));
+    }
+  }
 
   /** Always complete — defaults filled in at read time, never at write. */
   get(): PreferencesView {

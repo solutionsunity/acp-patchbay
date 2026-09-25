@@ -56,18 +56,21 @@ never split panels.
 One row between chat and composer — live-turn read-outs at the eye's resting
 point, deliberately **outside** the composer: its binding rule ("above the input =
 what the agent will see") stays intact because nothing here is context. The strip
-holds the **plan chip only**; it is absent without a plan — no placeholder.
+holds what the agent has done this session — its plan and the files it edited;
+it is absent while neither exists — no placeholder.
 
 | Chip | Where | Behavior |
 |---|---|---|
 | Plan | left | `▸ Plan n/m — current step`, truncating; present only while the agent maintains a plan with >1 tasks; a task completing mid-turn pulses the chip — expand is manual, never forced |
+| Files | right | `✎ n files` — present once the agent has touched a file; a way in, not a read-out, so no preference hides it |
 
-Click opens the **plan panel** overlaying the chat, growing up from the strip (the
-drawers' mechanic, mirrored) — X, Escape, or re-click closes. Plan panel: the full
-checklist (✓ done, ▸ active, ○ pending). The **files panel** (opened from the
-composer's stats row) anchors to the composer instead: the header carries the
-session's total ± (summed over exactly the rows shown, so header and badges
-can never disagree); one row per file, click
+A chip opens its panel overlaying the chat, growing up from the strip at the
+strip's full width (the drawers' mechanic, mirrored) — X, Escape, re-click, or a
+click elsewhere closes; one panel is open at a time, so opening the other chip's
+panel closes this one. Plan panel: the full checklist (✓ done, ▸ active, ○
+pending). Files panel: the header carries the session's total ± (summed over
+exactly the rows shown, so header and badges can never disagree); one row per
+file, click
 opens it in the editor; a dot marks a file whose open editor holds unsaved changes
 — editor reality, never a stored flag. Rows the orchestrator can answer a diff for
 carry a **±** that opens VS Code's native diff: left = the session's first-touch
@@ -119,7 +122,7 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic |
-| Stats strip | 💬 🛠 counts + ring | the one read-out in the dials row: whole-session prompt / tool-call counts, the files chip (session totals; its panel anchors here), and the usage gauge — ring, orange arc = `used/size`, live mid-turn; hover: tokens + cost; **absent** (not grayed) when usage reporting hasn't been used yet. Counts hide at zero; the whole strip is preference-gated (Preferences › Composer stats, default shown) |
+| Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
 | Send / Stop | ↑ / ■ | send prompt / cancel mid-turn |
 
 ### 6 · Drawers
@@ -277,8 +280,10 @@ the stored truth — the page never assumes its own write landed:
   read fresh every sweep, applies without reconnect. The card restates the close
   guards: replayable history only, never the open session, an unseen result, or a
   turn in flight.
-- **Composer stats** — show/hide the composer's session-stats strip (default
-  shown). Pure render furniture: hiding it changes nothing else.
+- **Composer stats** — one switch per read-out: prompts, tool calls, context
+  window, plan usage (all shown by default). Pure render furniture: hiding one
+  changes nothing else. The files chip is not among them — it is a way in, not
+  a read-out, and lives in the read-out strip.
 
 ### Saved roots
 

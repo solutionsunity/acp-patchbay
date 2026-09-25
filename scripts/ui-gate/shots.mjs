@@ -10,7 +10,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
-import { agentViewState, settingsState } from "./fixtures.mjs";
+import { agentViewState, preferences, settingsState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
 const OUT = "out/ui-gate";
@@ -223,37 +223,88 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] user bubble renders the attachment part as a chip`, userTokens.some((t) => t.includes("notes.md")));
 
   // ── composer stats strip: whole-session counts (2 prompts, 5 tool calls
-  // in the fixture) with the files chip slotted between counts and gauge
-  // (files-chip.tsx — moved down from the read-out strip); no usage
-  // reported → no gauge ──
+  // in the fixture) — read-outs only, the files chip lives in the read-out
+  // strip; no usage reported → no gauge ──
   const stats = await p.$eval(".composer-stats", (el) => el.textContent.replace(/\s+/g, " ").trim());
-  check(`[${theme}] composer stats counts prompts+tools+files ("${stats}")`, stats === "2 6 1 file");
+  check(`[${theme}] composer stats counts prompts+tools ("${stats}")`, stats === "2 6");
+  check(`[${theme}] no files chip in the composer`, (await p.$(".composer .chip.files")) === null);
   check(`[${theme}] no gauge without usage reported`, (await p.$(".composer-stats .gauge")) === null);
 
-  // ── read-out strip: plan chip only (files chip moved to the composer) ──
+  // ── read-out strip: plan chip (left) and files chip (right), one open
+  // panel at a time — both Radix popovers anchored to the strip ──
   check(`[${theme}] plan chip shows fraction`, (await p.$(".readout-strip .chip.plan .frac")) !== null);
-  check(`[${theme}] no files chip left in the strip`, (await p.$(".readout-strip .chip.files")) === null);
   check(`[${theme}] plan chip states whether its panel is open`, (await p.locator('.readout-strip .chip.plan[aria-expanded="false"]').count()) === 1);
   await p.click(".readout-strip .chip.plan");
   check(`[${theme}] plan chip reads open once clicked`, (await p.locator('.readout-strip .chip.plan[aria-expanded="true"]').count()) === 1);
-  check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".readout-panel .items .in_progress", { timeout: 3000 })) !== null);
-  await p.click(".readout-panel .head .close");
-  check(`[${theme}] X closes the plan panel`, (await p.$(".readout-panel")) === null);
+  check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".plan-panel .items .in_progress", { timeout: 3000 })) !== null);
+  await p.waitForTimeout(250); // the panel's entry animation (rise) settles
+  const [strip, panel] = await Promise.all([
+    p.$eval(".readout-strip", (el) => el.getBoundingClientRect().toJSON()),
+    p.$eval(".plan-panel", (el) => el.getBoundingClientRect().toJSON()),
+  ]);
+  check(`[${theme}] plan panel grows up from the strip at its width`, Math.abs(panel.bottom - strip.top) <= 1 && Math.abs(panel.width - strip.width) <= 1);
+  await p.click(".plan-panel .head .close");
+  check(`[${theme}] X closes the plan panel`, (await p.$(".plan-panel")) === null);
 
-  // ── files chip: its own button in the stats row, panel anchored to the
-  // composer (same content as the old strip panel — only the anchor moved) ──
-  const filesChip = await p.$eval(".composer-stats .files-btn", (el) => el.textContent.trim());
+  // a plan that goes away takes its open panel with it — the next plan
+  // arrives collapsed, never springing back open unasked
+  const planOf = (n) => Array.from({ length: n }, (_, i) => ({ content: `step ${i + 1}`, status: i === 0 ? "in_progress" : "pending", priority: "medium" }));
+  await p.click(".readout-strip .chip.plan");
+  await p.waitForSelector(".plan-panel", { timeout: 3000 });
+  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", sessionId: "s1", entries }]), planOf(1));
+  await p.waitForSelector(".readout-strip .chip.plan", { state: "detached", timeout: 3000 });
+  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", sessionId: "s1", entries }]), planOf(3));
+  await p.waitForSelector(".readout-strip .chip.plan", { timeout: 3000 });
+  await p.waitForTimeout(250);
+  check(`[${theme}] a returning plan arrives collapsed`, (await p.$(".plan-panel")) === null);
+
+  const filesChip = await p.$eval(".readout-strip .chip.files", (el) => el.textContent.trim());
   check(`[${theme}] files chip counts distinct touched files ("${filesChip}")`, filesChip === "1 file");
-  await p.click(".composer-stats .files-btn");
-  check(`[${theme}] files panel opens from the composer`, (await p.waitForSelector(".files-panel .file-row", { timeout: 3000 })) !== null);
+  await p.click(".readout-strip .chip.plan");
+  await p.waitForSelector(".plan-panel", { timeout: 3000 });
+  await p.click(".readout-strip .chip.files");
+  check(`[${theme}] files panel opens from the strip`, (await p.waitForSelector(".files-panel .file-row", { timeout: 3000 })) !== null);
+  check(`[${theme}] the other chip's panel closes — one open at a time`, (await p.$(".plan-panel")) === null);
+  // the closing sibling must not pull focus back to its own chip — that
+  // reads as focus-outside to the fresh panel and closed it (~its exit)
+  await p.waitForTimeout(300);
+  check(`[${theme}] the switched-to panel stays open once the switch settles`, (await p.$(".files-panel")) !== null);
   check(`[${theme}] dirty editor dot on the touched file`, (await p.$(".files-panel .file-row .dirty")) !== null);
   check(`[${theme}] diff-bearing row shows the diff icon (row click IS the diff)`, (await p.$(".files-panel .file-row .codicon-diff")) !== null);
   const stat = await p.$eval(".files-panel .file-row .stat", (el) => el.textContent.trim());
   check(`[${theme}] +/- badge shows cumulative stat ("${stat}")`, stat === "+12-4");
   check(`[${theme}] go-to-file button always present`, (await p.$(".files-panel .file-row .gotofile")) !== null);
   await p.screenshot({ path: `${OUT}/readout-files-${theme}.png` });
-  await p.click(".files-panel .head .close");
-  check(`[${theme}] X closes the files panel`, (await p.$(".files-panel")) === null);
+  await p.keyboard.press("Escape");
+  check(`[${theme}] Escape closes the files panel`, await p.waitForSelector(".files-panel", { state: "detached", timeout: 3000 }).then(() => true, () => false));
+  check(`[${theme}] focus returns to the chip that opened it`, await p.waitForFunction(() => document.activeElement?.classList.contains("files") === true, null, { timeout: 3000 }).then(() => true, () => false));
+
+  // ── one switch per read-out: each hides on its own; the files chip is a
+  // control and no switch reaches it ──
+  await p.evaluate(() =>
+    window.__patch([
+      { kind: "usageReported", sessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
+    ]),
+  );
+  // patches land asynchronously (postMessage) — wait for the wanted shape
+  const readoutsAre = (want) =>
+    p.waitForFunction(
+      (w) => {
+        const n = (sel) => document.querySelectorAll(`.composer-stats ${sel}`).length;
+        return JSON.stringify({ prompts: n(".codicon-comment"), tools: n(".codicon-tools"), context: n(".gauge"), plan: n(".codicon-pulse") }) === w;
+      },
+      JSON.stringify(want),
+      { timeout: 3000 },
+    ).then(() => true, () => false);
+  const prefsWith = (patch) => p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: prefs }]), { ...preferences, ...patch });
+  check(`[${theme}] all four read-outs show by default`, await readoutsAre({ prompts: 1, tools: 1, context: 1, plan: 1 }));
+  await prefsWith({ statsPrompts: false, statsContext: false });
+  check(`[${theme}] hiding prompts + context leaves tool calls + plan usage`, await readoutsAre({ prompts: 0, tools: 1, context: 0, plan: 1 }));
+  await prefsWith({ statsPrompts: false, statsToolCalls: false, statsContext: false, statsPlanUsage: false });
+  check(`[${theme}] all read-outs hidden`, await readoutsAre({ prompts: 0, tools: 0, context: 0, plan: 0 }));
+  check(`[${theme}] nothing to read out renders no strip at all`, (await p.$(".composer-stats")) === null);
+  check(`[${theme}] the files chip survives every read-out hidden`, (await p.$(".readout-strip .chip.files")) !== null);
+  await prefsWith({});
 
   // ── composer typed triggers (Lexical): keyboard-driven, tokens inline ──
   await p.click(".prompt-editor");
@@ -472,6 +523,16 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] empty filter offers a clear`, (await p.waitForSelector("text=Clear filter", { timeout: 3000 })) !== null);
   await p.click("text=Clear filter");
   check(`[${theme}] clear restores every entry`, (await rowsShown()) === 3);
+
+  // ── settings: composer stats, one switch per read-out ──
+  await p.click('.nav .it:has-text("Preferences")');
+  await p.waitForSelector('h2:text-is("Composer stats")');
+  const statsCard = p.locator(".card", { has: p.locator('h2:text-is("Composer stats")') });
+  check(`[${theme}] composer stats card carries four switches`, (await statsCard.locator('[role="switch"]').count()) === 4);
+  await statsCard.locator("label", { hasText: "context window" }).locator('[role="switch"]').click();
+  const sent = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] a read-out switch patches only its own key`, JSON.stringify(sent) === JSON.stringify({ kind: "setPreferences", patch: { statsContext: false } }));
+  await statsCard.screenshot({ path: `${OUT}/settings-composer-stats-${theme}.png` });
   await p.close();
 }
 

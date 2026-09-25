@@ -11,6 +11,7 @@ import type {
   ContextChip,
   LiveSelectionView,
   OpenEditorView,
+  PreferencesView,
   PromptPart,
   SessionKnobView,
   SessionSummary,
@@ -19,7 +20,6 @@ import type {
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import type { SessionTotals } from "../chat/view-model";
-import { FilesChip } from "./files-chip";
 import { ingestFiles } from "./ingress";
 import { composerControls } from "./composer-controls";
 import type { RootsControls } from "./roots-controls";
@@ -46,11 +46,6 @@ export function Composer(props: {
   /** The roots chip's gate (roots-controls.ts): whether shown roots reach
    * the agent, whether adding is live, and the one-line reason when not. */
   rootsControls: RootsControls;
-  /** Paths the orchestrator holds a first-touch baseline for — feeds the
-   * files chip's diff-vs-open-file row behavior. */
-  diffableFiles: ReadonlySet<string>;
-  /** Cumulative +/- since first touch, per path — the files chip's badges. */
-  fileDiffStats: Readonly<Record<string, { additions: number; deletions: number }>>;
   liveSelection: LiveSelectionView | null;
   openEditors: readonly OpenEditorView[];
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
@@ -58,13 +53,12 @@ export function Composer(props: {
   /** The active session's durable draft copy (state.drafts) — handed to the
    * editor, which reads it only at session switch/mount. */
   draft: string;
-  /** Session stats strip (Preferences composerStats gates it off entirely). */
-  showStats: boolean;
+  /** The stored preferences — the stats strip gates each read-out on its
+   * own; the ingress cap (attachmentMaxMB) is host-owned policy the webview
+   * only applies at the admission point. */
+  preferences: PreferencesView;
   totals: SessionTotals;
   usage: UsageInfo | null;
-  /** Ingress cap (Preferences attachmentMaxMB) — policy is host-owned; the
-   * webview only applies the snapshot's value at the admission point. */
-  attachmentMaxMB: number;
   /** Ingress refusals surface through the app's toast. */
   onNotice(message: string): void;
 }) {
@@ -105,7 +99,7 @@ export function Composer(props: {
    * processor; admitted images/files go up as actions, refusals surface as
    * toasts. Fire-and-forget: ingest never throws. */
   const ingest = (files: File[]) => {
-    void ingestFiles(files, props.attachmentMaxMB * 1024 * 1024).then((out) => {
+    void ingestFiles(files, props.preferences.attachmentMaxMB * 1024 * 1024).then((out) => {
       for (const img of out.images) {
         send({ kind: "addImageContext", sessionId, base64: img.base64, mimeType: img.mimeType, label: img.label });
       }
@@ -288,17 +282,8 @@ export function Composer(props: {
       <div className="input-foot">
         <Knobs sessionId={sessionId} knobs={props.knobs} />
         <span className="flex-1" />
-        {props.showStats && props.session !== null && (
-          <ComposerStats totals={props.totals} usage={props.usage}>
-            <FilesChip
-              sessionId={sessionId}
-              files={props.totals.files}
-              diffable={props.diffableFiles}
-              diffStats={props.fileDiffStats}
-              openEditors={props.openEditors}
-              roots={props.workspaceRoots}
-            />
-          </ComposerStats>
+        {props.session !== null && (
+          <ComposerStats totals={props.totals} usage={props.usage} show={props.preferences} />
         )}
         {/* theme-token primary (brand fills superseded — theme.css
             identity palette); while a turn is live it becomes Stop,

@@ -275,6 +275,34 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
     expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true });
   });
 
+  it("a stored one-switch composerStats splits into a switch per read-out, then is gone", () => {
+    const hidden = new MemoryKV();
+    void hidden.update("acpPatchbay.preferences", { composerStats: false, soundOnDone: true });
+    expect(new PreferencesStore(hidden).get()).toEqual({
+      ...DEFAULT_PREFERENCES,
+      soundOnDone: true,
+      statsPrompts: false,
+      statsToolCalls: false,
+      statsContext: false,
+      statsPlanUsage: false,
+    });
+    expect(hidden.get("acpPatchbay.preferences")).not.toHaveProperty("composerStats");
+
+    // "shown" was the default — it maps to nothing but the key's removal.
+    const shown = new MemoryKV();
+    void shown.update("acpPatchbay.preferences", { composerStats: true });
+    expect(new PreferencesStore(shown).get()).toEqual(DEFAULT_PREFERENCES);
+    expect(shown.get("acpPatchbay.preferences")).toEqual({});
+  });
+
+  it("a stored value that isn't an object never throws at construction", () => {
+    for (const junk of ["composerStats", 42, null]) {
+      const kv = new MemoryKV();
+      void kv.update("acpPatchbay.preferences", junk);
+      expect(() => new PreferencesStore(kv)).not.toThrow();
+    }
+  });
+
   it("wipe returns to factory defaults", async () => {
     const store = new PreferencesStore(new MemoryKV());
     await store.set({ knobSource: "last-session" });

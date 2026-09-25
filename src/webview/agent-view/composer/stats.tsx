@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The composer's session-stats strip (the composerStats preference): whole-
-// session counts from the view-model's single pass, the files chip
-// (children — files-chip.tsx, the one interactive member of this row) slotted
-// between counts and the context-window gauge (moved from the header,
-// smaller). Counts render only when nonzero, the gauge only when the agent
-// reports usage (absence over fake); a fresh session shows
-// nothing at all.
-import type { ReactNode } from "react";
-import type { PlanUsageInfo, UsageInfo } from "../../../shared/protocol";
+// The composer's session-stats strip: whole-session counts from the
+// view-model's single pass, then the context-window gauge (moved from the
+// header, smaller) and the plan-usage gauge — read-outs only, each behind its
+// own preference. Counts render only when nonzero, the gauges only when the
+// agent reports usage (absence over fake); a fresh session shows nothing at
+// all.
+import type { PlanUsageInfo, PreferencesView, UsageInfo } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
 import { count, type SessionTotals } from "../chat/view-model";
 
@@ -105,39 +103,42 @@ function Gauge({ usage }: { usage: UsageInfo }) {
 export function ComposerStats({
   totals,
   usage,
-  children,
+  show,
 }: {
   totals: SessionTotals;
   usage: UsageInfo | null;
-  /** The files chip (composer.tsx) — slotted here, between counts and the
-   * gauge, so the row's order (prompts, tool calls, files, context window)
-   * lives in one place and the icon inherits this span's 12px sizing. */
-  children?: ReactNode;
+  /** The per-read-out preferences — each member gated on its own. */
+  show: Pick<PreferencesView, "statsPrompts" | "statsToolCalls" | "statsContext" | "statsPlanUsage">;
 }) {
   const counts: { icon: string; n: number; tip: string }[] = [
-    { icon: "comment", n: totals.prompts, tip: `${count(totals.prompts, "prompt")} this session` },
-    { icon: "tools", n: totals.toolCalls, tip: `${count(totals.toolCalls, "tool call")} this session` },
-  ];
+    ...(show.statsPrompts
+      ? [{ icon: "comment", n: totals.prompts, tip: `${count(totals.prompts, "prompt")} this session` }]
+      : []),
+    ...(show.statsToolCalls
+      ? [{ icon: "tools", n: totals.toolCalls, tip: `${count(totals.toolCalls, "tool call")} this session` }]
+      : []),
+  ].filter((c) => c.n > 0);
+  // sessionUsage only ever gets an entry alongside marking "usage" used
+  // (pool.ts's notification handler and this both fire off the same
+  // usage_update), so presence here already means used — absent, never
+  // grayed, until then. Same rule for the plan reading.
+  const gauge = show.statsContext ? usage : null;
+  const plan = show.statsPlanUsage && usage?.plan !== undefined && Object.keys(usage.plan).length > 0 ? usage.plan : null;
+  // Nothing to show renders nothing — no empty box holding the send
+  // button's air or a line of its own at narrow widths.
+  if (counts.length === 0 && gauge === null && plan === null) return null;
   return (
     // mr-6 ≈ one counter's width of air before the send button — the strip is
     // a read-out, the button is a control; they must not read as one cluster.
     // Icon size rides the chrome policy (theme.css).
     <span className="composer-stats mr-6 flex items-center gap-2 text-[11px] text-muted-foreground">
-      {counts.map(
-        (c) =>
-          c.n > 0 && (
-            <span key={c.icon} className="flex items-center gap-0.5" title={c.tip}>
-              <Icon name={c.icon} /> {c.n}
-            </span>
-          ),
-      )}
-      {children}
-      {/* sessionUsage only ever gets an entry alongside marking "usage"
-          used (pool.ts's notification handler and this both fire off the
-          same usage_update), so presence here already means used — absent,
-          never grayed, until then. Same rule for the plan reading. */}
-      {usage !== null && <Gauge usage={usage} />}
-      {usage?.plan !== undefined && Object.keys(usage.plan).length > 0 && <PlanGauge plan={usage.plan} />}
+      {counts.map((c) => (
+        <span key={c.icon} className="flex items-center gap-0.5" title={c.tip}>
+          <Icon name={c.icon} /> {c.n}
+        </span>
+      ))}
+      {gauge !== null && <Gauge usage={gauge} />}
+      {plan !== null && <PlanGauge plan={plan} />}
     </span>
   );
 }

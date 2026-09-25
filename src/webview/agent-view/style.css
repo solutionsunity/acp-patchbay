@@ -14,7 +14,7 @@
  * Enforced by test/z-ladder.test.ts. The rungs:
  *   10     floating controls inside content (chat-jump, mermaid toolbar)
  *   20     composer gauge tooltip
- *   30     chat overlay cards (.overlay-panel, .pop)
+ *   30     composer autocomplete (.pop)
  *   40/41  drawer scrim / top drawers
  *   44     fullscreen takeover (mermaid)
  *   46     toast
@@ -214,13 +214,12 @@ body {
   color: var(--pb-accent);
 }
 
-/* ── read-out strip — between chat and composer:
-   plan chip only; its panel overlays the chat, growing up from the strip
-   (bottom: 100% of the relative wrapper). Read-out only — never context, so
-   it lives outside the composer's binding rule. The edited-files chip moved
-   into the composer's foot row (files-chip.tsx) — see .files-chip-wrap. ── */
+/* ── read-out strip — between chat and composer: the plan chip (left) and
+   the edited-files chip (right). Their panels are Radix popovers anchored to
+   the strip (readout-panel.tsx), so they grow up from it at its full width.
+   Read-out only — never context, so it lives outside the composer's
+   binding rule. ── */
 .readout-strip {
-  position: relative;
   border-top: 1px solid var(--pb-border);
 }
 
@@ -257,6 +256,10 @@ body {
   overflow: hidden;
 }
 
+.readout-strip .chip.files {
+  margin-left: auto;
+}
+
 .readout-strip .chip .current {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -267,60 +270,12 @@ body {
   font-weight: 600;
 }
 
-.readout-panel {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  border-top: 1px solid var(--pb-border);
-  border-bottom: 1px solid var(--pb-border);
-}
-
-/* Anchored to the composer foot's files chip (files-chip.tsx) instead of
-   spanning full-width like the strip's panel — it opens upward from its own
-   button, so it's a floating card, not a strip attachment. */
-.files-chip-wrap {
-  position: relative;
-}
-
-.files-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  color: var(--pb-text-dim);
-  background: none;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.files-btn:hover,
-.files-btn.active {
-  color: var(--pb-warn);
-  background: var(--pb-panel-2);
-}
-
-.files-panel {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 0;
-  width: 300px;
-  max-width: 85vw;
-  border-radius: 8px;
-  border: 1px solid var(--pb-border);
-  box-shadow: 0 6px 24px #000a;
-}
-
-/* shared by .readout-panel (plan) and .files-panel (files) — the overlay
-   card's internal structure: sticky header, scrollable item list. */
+/* shared by .plan-panel and .files-panel — the overlay card's internal
+   structure: sticky header, scrollable item list. Portaled popover content,
+   so its layer is the portal band's, never authored here. */
 .overlay-panel {
   max-height: 55vh;
   overflow-y: auto;
-  background: var(--pb-panel);
-  z-index: 30; /* over chat, under the top drawers (40/41) */
   animation: rise 0.16s ease-out;
 }
 
@@ -1113,9 +1068,9 @@ button.more,
  * bottom edge, and Send keeps the bottom-right anchor at every width.
  * Read-outs above, controls below: the same vertical grammar as the
  * read-out strip over the composer. 480px ≈ the worst realistic single row
- * (full knob set + every counter lit) at default font; when stats are
- * hidden (composerStats pref, fresh session) nothing renders and the foot
- * stays one row at any width. */
+ * (full knob set + every counter lit) at default font; with nothing to
+ * read out (every read-out switched off, or a fresh session) the strip
+ * doesn't render and the foot stays one row at any width. */
 @container (max-width: 480px) {
   .input-foot {
     flex-wrap: wrap;

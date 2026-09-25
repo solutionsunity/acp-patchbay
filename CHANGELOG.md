@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The composer's stats are no longer all-or-nothing. Preferences › Composer
+  stats now has a switch for each read-out — prompts, tool calls, the
+  context-window gauge, the plan-usage gauge — so you keep the ones you want.
+  The edited-files chip moved up beside the plan chip, above the composer, and
+  no switch hides it any more: it was the only way into the files panel, and
+  turning off read-outs used to take it away too. Its panel now grows up from
+  that strip like the plan's, and opening one closes the other. If you had the
+  stats hidden, all four stay hidden after the update. (#42)
 - A newer agent version now reaches you without a visit to Settings. When
   patchbay learns of one, a notification says so with Upgrade one click
   away — for several agents at once, one notification lets you pick which

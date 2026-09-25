@@ -108,14 +108,31 @@ export function PreferencesSection(props: {
 
       <PrefCard
         title="Composer stats"
-        help="A read-out strip at the composer's foot: this session's prompt, tool-call, and
-        edited-file counts, plus the context-window gauge when the agent reports usage. Pure
-        display — hiding it changes nothing else."
+        help="Read-outs at the composer's foot, each shown or hidden on its own: this session's
+        prompt and tool-call counts, the context-window gauge and the plan-usage gauge (the
+        gauges only when the agent reports them). Pure display — hiding one changes nothing
+        else. The edited-files chip above the composer is a way in, not a read-out, and always
+        shows."
       >
         <Toggle
-          checked={prefs.composerStats}
-          label={prefs.composerStats ? "shown" : "hidden"}
-          onChange={(composerStats) => props.onSet({ composerStats })}
+          checked={prefs.statsPrompts}
+          label="prompts"
+          onChange={(statsPrompts) => props.onSet({ statsPrompts })}
+        />
+        <Toggle
+          checked={prefs.statsToolCalls}
+          label="tool calls"
+          onChange={(statsToolCalls) => props.onSet({ statsToolCalls })}
+        />
+        <Toggle
+          checked={prefs.statsContext}
+          label="context window"
+          onChange={(statsContext) => props.onSet({ statsContext })}
+        />
+        <Toggle
+          checked={prefs.statsPlanUsage}
+          label="plan usage"
+          onChange={(statsPlanUsage) => props.onSet({ statsPlanUsage })}
         />
       </PrefCard>
 

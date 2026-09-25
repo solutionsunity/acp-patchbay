@@ -1175,8 +1175,8 @@ export interface ChatConnectView {
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
  * non-sensitive). Read fresh orchestrator-side at each point of use
  * (store-truth); this view exists so the Preferences page can render and
- * edit them, and so the agent view can gate its own furniture (composer
- * stats). Declared above AgentViewState because initialAgentViewState
+ * edit them, and so the agent view can gate its own furniture (the
+ * composer's stats read-outs). Declared above AgentViewState because initialAgentViewState
  * seeds from DEFAULT_PREFERENCES. */
 export interface PreferencesView {
   /** System chime when a prompt turn finishes (host-side player — a
@@ -1193,9 +1193,15 @@ export interface PreferencesView {
   /** Idle-release timer (session-manager reapIdle, condition 5) in
    * minutes; 0 disables the reaper entirely. */
   idleCloseMinutes: number;
-  /** The composer's session-stats strip (prompts, tool calls, files,
-   * context gauge) — pure render furniture, so hiding it loses nothing. */
-  composerStats: boolean;
+  /** The composer's session-stats strip, one switch per read-out — pure
+   * render furniture, so hiding any of them loses nothing. Flat keys, not a
+   * nested record: the store merges one level deep, so each member keeps its
+   * own default. The files chip is a control, not a read-out, and has no
+   * switch. */
+  statsPrompts: boolean;
+  statsToolCalls: boolean;
+  statsContext: boolean;
+  statsPlanUsage: boolean;
   /** Detached windows (AgentPanelHost): the session menu's "Open in new
    * window" and the whole-view detach command. Off hides the entry points;
    * panels already open stay open — the pref gates opening, not existence. */
@@ -1212,7 +1218,10 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   doneSound: "",
   knobSource: "agent-default",
   idleCloseMinutes: 60,
-  composerStats: true,
+  statsPrompts: true,
+  statsToolCalls: true,
+  statsContext: true,
+  statsPlanUsage: true,
   detachWindows: true,
   attachmentMaxMB: 10,
 };
@@ -1306,7 +1315,7 @@ export interface AgentViewState {
   workspaceFiles: { query: string; files: readonly string[]; dirs: readonly string[] };
   /** The stored preferences truth as of the last preferencesChanged —
    * same event feeds the Settings channel; the agent view reads only what
-   * gates its own rendering (composerStats). */
+   * gates its own rendering (the composer's stats read-outs). */
   preferences: PreferencesView;
   /** What the visible surfaces are rendering right now — the one input to
    * "on screen" (onScreen). `pointer`: a visible surface follows

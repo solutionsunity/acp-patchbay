@@ -101,7 +101,11 @@ primitive layer, not the component styling. So the rule:
   outside-pointerdown dismiss to the following `click`, which reaches the next
   row's open handler first, so the fresh open is then stomped by the stale
   dismiss. Lift to a single `openId`, and guard the close so only the
-  currently-open row can clear it.
+  currently-open row can clear it. The same race reaches focus: a sibling
+  closed by the shared state rather than by its own outside-click hands focus
+  back to its trigger, which the fresh sibling reads as focus-outside and
+  closes on — so a closing sibling returns focus only when focus has nowhere
+  else to be.
 
 - **The one recorded exception is editor-anchored autocomplete** — the composer's
   `/` and `@` menus. These *cannot* be a `DropdownMenu`/`Popover`, because those
