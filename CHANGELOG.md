@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.84.0 — 2026-09-26
+
+13 enhancements, 17 fixes, one removal, plus a documentation refresh and
+dependency security updates.
+
+- **Agents ask, and you see it** — questions arrive as forms in the chat, and
+  a session waiting on you is flagged wherever you are looking.
+- **Tool calls read as the agent meant them** — the tool's own output, files
+  that open at the line named, and edit counts that match the change.
+- **Roots that stick** — saved folders for every new session, every folder of
+  a multi-root workspace, and roots handed to MCP servers too.
+- **Agent updates find you** — a notice with Upgrade one click away, and an
+  upgrade that asks before cutting off a running conversation.
+- **Composer and catalog** — per-item stats, held prompts you can copy or take
+  back, and a searchable MCP catalog with a request form.
+
+### Changes
 
 - Edited-line counts now match the change the agent made. They ran far
   higher before — two one-line edits could read `+41 −1` — because some
@@ -86,9 +102,9 @@
   the call carried a diff; "+2" says the call touched two more files.
   Expanded, a call lists one row per file: its name, every line the agent
   pointed at, its folder relative to the workspace, and the lines the
-  call's diff changed in it, when there is one. A line past the end of the file opens at the last line, an image
-  opens in its preview, and a folder the agent reported shows in the
-  Explorer. Before, the line was dropped on arrival and the card had no way
+  call's diff changed in it, when there is one. A line past the end of the
+  file opens at the last line, an image opens in its preview, and a folder
+  the agent reported shows in the Explorer. Before, the line was dropped on arrival and the card had no way
   to open the file at all. The files panel's folder labels also stop
   misreading a folder whose name merely starts like a workspace root's. (#41)
 - A file change you reject is now reported to the agent as rejected. Before,
