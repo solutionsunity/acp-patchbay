@@ -20,6 +20,9 @@ import * as acp from "@agentclientprotocol/sdk";
 export type TurnStep =
   | { type: "chunk"; text: string }
   | { type: "thought"; text: string }
+  /** A message (or thought) chunk carrying any content block — images,
+   * embedded resources, audio — sent as-is. */
+  | { type: "agentContent"; content: acp.ContentBlock; thought?: boolean }
   | { type: "userEcho"; text: string }
   | { type: "toolCall"; id: string; title: string; kind?: acp.ToolKind; rawInput?: unknown; locations?: acp.ToolCallLocation[] }
   | {
@@ -220,6 +223,12 @@ async function runTurn(
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_thought_chunk",
           content: { type: "text", text: step.text },
+        });
+        break;
+      case "agentContent":
+        await emitUpdate(cx, sessionId, cwd, {
+          sessionUpdate: step.thought === true ? "agent_thought_chunk" : "agent_message_chunk",
+          content: step.content,
         });
         break;
       case "userEcho":

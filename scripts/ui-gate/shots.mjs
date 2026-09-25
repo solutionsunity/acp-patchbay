@@ -171,6 +171,23 @@ for (const theme of Object.keys(THEMES)) {
   await toolCard.getByRole("button", { name: "raw" }).click();
   await p.click("text=Grep pattern");
   await p.click("text=5 tool calls");
+  // an agent's non-text content: part renderers, never placeholder prose
+  const agentFile = p.locator(".msg-agent .user-context", { hasText: "file:///ws/notes.md" });
+  check(`[${theme}] an agent's embedded file renders as an expandable snapshot`, (await agentFile.count()) === 1);
+  check(`[${theme}] audio keeps its labeled placeholder — the recorded floor`, (await p.locator(".msg-agent", { hasText: "[audio content — not rendered]" }).count()) === 1);
+  await agentFile.locator(".prompt-token").click();
+  await p.mouse.move(0, 0);
+  const partsIntro = p.locator(".msg-agent", { hasText: "Attached the notes I used" });
+  await partsIntro.scrollIntoViewIfNeeded();
+  const partBoxes = await Promise.all(
+    [partsIntro, agentFile, p.locator(".msg-agent", { hasText: "[audio content" })].map((l) => l.boundingBox()),
+  );
+  if (partBoxes.every((b) => b !== null)) {
+    const top = Math.min(...partBoxes.map((b) => b.y));
+    const bottom = Math.max(...partBoxes.map((b) => b.y + b.height));
+    await p.screenshot({ path: `${OUT}/agent-parts-${theme}.png`, clip: { x: 0, y: top - 6, width: 420, height: bottom - top + 12 } });
+  }
+  await agentFile.locator(".prompt-token").click();
   // an embedded terminal: inside its tool card, visible without expanding,
   // and gone from the stream as a card of its own
   const termCard = p.locator(".card", { hasText: "Run tests" });

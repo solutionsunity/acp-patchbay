@@ -44,6 +44,12 @@ export const chatTranscript = [
     kind: "user", id: "inj1", injected: true,
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
+  // non-text pieces of an agent's message: rendered by the message part
+  // renderers, never a "[… not rendered]" line (an embedded file expands;
+  // audio keeps a labeled placeholder — nothing plays it)
+  { kind: "text", id: "xp0", text: "Attached the notes I used:" },
+  { kind: "agentPart", id: "ap1", part: { kind: "context", label: "file:///ws/notes.md", text: "- foo() is called from 3 places\n- b.ts returns it" }, thought: false },
+  { kind: "agentPart", id: "ap2", part: { kind: "unrendered", type: "audio" }, thought: false },
   { kind: "user", id: "u2", parts: [{ kind: "text", text: "keep going" }] },
   // a call running in a client terminal: the terminal renders inside its
   // card (ACP embedded terminal), not as a separate block in the stream

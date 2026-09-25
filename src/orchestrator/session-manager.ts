@@ -2565,6 +2565,27 @@ export class SessionManager {
     return contentPartOf(content, this.imageStash(sessionId, "replay"));
   }
 
+  /** A non-text chunk of an agent's message or thought: its own block
+   * between prose runs (it seals the run it interrupts), through the one
+   * content mapping every chat surface shares — never a placeholder for
+   * content the chat can show. */
+  private emitAgentPart(
+    sessionId: string,
+    session: LiveSession,
+    content: ContentBlock,
+    thought: boolean,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    this.sealRun(sessionId, session);
+    emit({
+      kind: "agentPartAppended",
+      sessionId,
+      blockId: newBlockId("part"),
+      part: contentPartOf(content, this.imageStash(sessionId, "agent")),
+      thought,
+    });
+  }
+
   /** Images arriving in content are copied to the attachments stash for
    * preview, fire-and-forget; a failed write only costs the preview. */
   private imageStash(sessionId: string, source: string): ImageStash {
@@ -2759,7 +2780,7 @@ export class SessionManager {
       case "agent_message_chunk": {
         const messageId = update.messageId ?? null;
         if (update.content.type === "resource_link") {
-          // Renderable, so render it (G10b): a markdown link into the prose
+          // Renderable, so render it: a markdown link into the prose
           // run — never a placeholder for content the reader can use. Rides
           // through the run's rewriter like any prose delta: a bypass would
           // reorder it ahead of text the rewriter is still withholding.
@@ -2773,14 +2794,7 @@ export class SessionManager {
           break;
         }
         if (update.content.type !== "text") {
-          // Same honesty placeholder as the user chunk above (G4).
-          this.sealRun(sessionId, session);
-          emit({
-            kind: "agentTextDelta",
-            sessionId,
-            blockId: newBlockId("text"),
-            text: `*[${update.content.type} content — not rendered]*`,
-          });
+          this.emitAgentPart(sessionId, session, update.content, false, emit);
           break;
         }
         this.emitAgentProse(sessionId, session, messageId, update.content.text, emit);
@@ -2788,15 +2802,7 @@ export class SessionManager {
       }
       case "agent_thought_chunk": {
         if (update.content.type !== "text") {
-          // Same honesty placeholder as the message chunks (G4) — this was
-          // a silent drop once, the one chunk path that didn't say so.
-          this.sealRun(sessionId, session);
-          emit({
-            kind: "agentThoughtDelta",
-            sessionId,
-            blockId: newBlockId("thought"),
-            text: `*[${update.content.type} content — not rendered]*`,
-          });
+          this.emitAgentPart(sessionId, session, update.content, true, emit);
           break;
         }
         const blockId = this.runBlockFor(

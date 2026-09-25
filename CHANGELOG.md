@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An agent's images and embedded files now show in the chat. Anything but
+  text in an agent's message or thought used to appear as a line like
+  "[image content — not rendered]", even though the same content showed
+  fine in your own messages. Images now preview, and an embedded file's
+  contents show as a labeled snapshot you can expand, the same way they do
+  everywhere else in the chat. Audio still shows as a labeled line: nothing
+  in patchbay plays it yet. (#45)
 - A tool call now shows what the tool produced, the way the agent meant it
   to be read. Expanded, a call used to show two boxes of raw data — the
   arguments as JSON and the tool's unformatted result — while the output

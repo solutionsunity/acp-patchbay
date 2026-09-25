@@ -953,6 +953,42 @@ describe("SessionManager", () => {
     await h.pool.stop("sm13d");
   });
 
+  it("an agent's non-text chunks become parts between its prose, never a placeholder (issue #45)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "chunk", text: "Here is the screenshot:" },
+            { type: "agentContent", content: { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" } },
+            { type: "chunk", text: "and the notes:" },
+            { type: "agentContent", content: { type: "resource", resource: { uri: "file:///ws/n.md", text: "note" } } },
+            { type: "agentContent", content: { type: "audio", data: "AAAA", mimeType: "audio/wav" }, thought: true },
+          ],
+        },
+        "sm45",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("sm45", "Fake Agent", cwd);
+    await h.sessionManager.sendPrompt(sessionId, "show me");
+
+    const blocks = h.state().transcripts[sessionId]!.filter((b) => b.kind !== "user" && b.kind !== "turnEnd");
+    const shape = blocks.map((b) =>
+      b.kind === "text" ? `text:${b.text}` : b.kind === "agentPart" ? `part:${b.part.kind}:${b.thought}` : b.kind,
+    );
+    expect(shape).toEqual([
+      "text:Here is the screenshot:",
+      "part:image:false",
+      "text:and the notes:",
+      "part:context:false",
+      "part:unrendered:true",
+    ]);
+    const image = assertKind(blocks[1], "agentPart").part;
+    // the bytes went to the attachments stash for the preview
+    expect(image.kind === "image" && image.file !== undefined).toBe(true);
+    await h.pool.stop("sm45");
+  });
+
   it("a tool call's content rides the block in the agent's order — text bounded, diffs left to the file rows (issue #44)", async () => {
     const h = harness();
     const long = "x".repeat(5_000);
@@ -2776,11 +2812,11 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch1");
   });
 
-  it("non-text thought content gets the type-labeled placeholder, never a silent drop (G11)", async () => {
+  it("non-text thought content is never a silent drop: it renders as a part that stays a thought (G11, #45)", async () => {
     const { h, push, blocks } = await chunkHarness("ch2");
     push({ sessionUpdate: "agent_thought_chunk", content: { type: "image", data: "x", mimeType: "image/png" } });
     expect(blocks()).toHaveLength(1);
-    expect(blocks()[0]).toMatchObject({ kind: "thought", text: "*[image content — not rendered]*" });
+    expect(blocks()[0]).toMatchObject({ kind: "agentPart", thought: true, part: { kind: "image", mimeType: "image/png" } });
     await h.pool.stop("ch2");
   });
 

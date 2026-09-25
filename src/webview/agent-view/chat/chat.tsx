@@ -17,7 +17,7 @@ import {
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
-import { InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
+import { ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
@@ -133,6 +133,13 @@ function Block({
       );
     case "thought":
       return <Thought text={block.text} live={live} />;
+    case "agentPart":
+      // A thought's piece keeps reading as a thought: muted, like its text.
+      return (
+        <div className={block.thought ? "thought open" : "msg-agent"}>
+          <ContentPartView part={block.part} />
+        </div>
+      );
     case "toolCall":
       return <ToolCallCard block={block} sessionId={sessionId} roots={roots} />;
     case "turnEnd":

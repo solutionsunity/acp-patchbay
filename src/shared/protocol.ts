@@ -880,6 +880,17 @@ export interface ThoughtBlock {
   text: string;
 }
 
+/** A non-text piece of an agent's message or thought (an image, an embedded
+ * file, audio) — its own block between prose runs, rendered by the same
+ * part renderers as a user's message and a tool call's content. `thought`
+ * keeps a thought's piece reading as a thought. */
+export interface AgentPartBlock {
+  kind: "agentPart";
+  id: string;
+  part: ContentPart;
+  thought: boolean;
+}
+
 /** ACP's own tool-call taxonomy (ToolKind) — carried verbatim so the card
  * icon can pattern-match by kind instead of a generic spinner-only look. */
 export type ToolCallKind =
@@ -1113,6 +1124,7 @@ export type ChatBlock =
   | UserBlock
   | TextBlock
   | ThoughtBlock
+  | AgentPartBlock
   | ToolCallBlock
   | TurnEndBlock
   | PermissionBlock
@@ -1435,6 +1447,7 @@ export type AgentViewEvent =
   | { kind: "userPartAppended"; sessionId: string; blockId: string; part: UserPart; injected?: boolean }
   | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
   | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
+  | { kind: "agentPartAppended"; sessionId: string; blockId: string; part: ContentPart; thought: boolean }
   | {
       kind: "toolCallUpserted";
       sessionId: string;
@@ -2006,6 +2019,13 @@ export function reduceAgentView(
       return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
     case "agentThoughtDelta":
       return upsertTextBlock(state, event.sessionId, event.blockId, "thought", event.text);
+    case "agentPartAppended":
+      return appendBlock(state, event.sessionId, {
+        kind: "agentPart",
+        id: event.blockId,
+        part: event.part,
+        thought: event.thought,
+      });
     case "toolCallUpserted":
       return upsertToolCall(state, event.sessionId, event);
     case "toolCallDenied":

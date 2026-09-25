@@ -410,7 +410,7 @@ export function ToolCallCard({
             </div>
           )}
           {shown.map((part, i) => (
-            <ToolContentView key={i} part={part} />
+            <ContentPartView key={i} part={part} />
           ))}
           {hasRaw && <RawSection input={block.input} output={block.output} />}
         </div>
@@ -439,10 +439,11 @@ function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: (e: React.
   );
 }
 
-/** One piece of what the tool produced for the user to see. Text is the
- * agent's own markdown (console output in fences, labels), rendered like its
- * messages; every other kind shares the message renderers. */
-function ToolContentView({ part }: { part: ContentPart }) {
+/** One piece of agent-side content — a tool call's content, a non-text
+ * piece of an agent's message. Text is the agent's own markdown (console
+ * output in fences, labels), rendered like its messages; every other kind
+ * shares the user message's part renderers. */
+export function ContentPartView({ part }: { part: ContentPart }) {
   if (part.kind === "text") {
     return (
       <div className="msg-agent min-w-0">

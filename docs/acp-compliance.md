@@ -11,7 +11,7 @@ consume is either consumed or deliberately declined *on record here*.
 
 This document states the current fact set only — what is true now, against which
 version, checked when. It carries no fix history; git holds that. Retired gap ids
-(G1–G9, G11–G14) mean "resolved — the resulting behavior is stated as a
+(G1–G14) mean "resolved — the resulting behavior is stated as a
 present-tense fact in its section below."
 
 Verdict vocabulary, used per row:
@@ -132,7 +132,7 @@ against this project's own honesty rules, which bind harder than the spec here.
 | Prompt out: embedded resource (`embeddedContext`) | ✅ ⛔ | Split by semantics: **context chips** are snapshots the user took — they ride as embedded `resource` blocks where the capability is declared (uri-attributed; selections carry a `#L` fragment), labeled-text fallback otherwise — capability first, fallback second, switched at the `sendPrompt` chokepoint. **@mentions** deliberately stay `resource_link` even when declared: a mention is a reference, not a snapshot — the agent pulls the slice it wants through brokered fs (live buffer, `line`/`limit`). |
 | Receive: text chunks | ✅ | `handleUpdate` text cases. |
 | Receive: `ContentChunk.messageId` (message identity on every chunk) | ✅ | Governs run continuation on all three chunk channels (one gate: `runBlockFor`, session-manager.ts): two non-null ids decide alone — equal continues, different splits (a fused agent-message boundary un-closes markdown fences). With an id missing on either side: user runs never merge (id-less agents replay whole messages per chunk; an agent splitting one message across id-less chunks would be unreconstructable by any client); agent/thought runs always merge — an id-less wire carries no boundary, and splitting on a guess would shred live stream deltas and chunk-log replays alike. Wire-verified 2026-07-12: claude-agent-acp 0.58.1 replays multi-part prompts as several chunks under ONE id and adjacent messages under distinct ids; auggie 0.32.0 omits the field (its agent-chunk replay granularity is uncaptured — until a capture lands, its agent message boundaries are invisible by honest necessity). |
-| Receive: non-text in message chunks (image/audio/resource_link/resource) | 🟡 | Never a silent drop: unrendered content gets a closed in-place placeholder block, type-labeled (`*[image content — not rendered]*`), on all three chunk paths (message/thought/user). `resource_link` renders for real: `@name` merged into the user prose run / `[name](uri)` markdown link in agent prose. Whitespace-only chunks never *open* a run (an open run still takes them — mid-stream spacing is real content) and never sever a neighboring run. Still floored: embedded text-formed `resource` (renderable text), image, audio/blob → open gap G10. |
+| Receive: non-text in message chunks (image/audio/resource_link/resource) | ✅ | Never a silent drop, and never a placeholder for content the chat can show. All three chunk paths (user/message/thought) go through the one content mapping (`content-parts.ts:contentPartOf`), shared with tool-call content: images are stashed and previewed (the webview's `img-src` already trusts its own resource root — no CSP change), embedded text-formed `resource` renders as a labeled, expandable snapshot, `resource_link` as `@name` in user prose or a `[name](uri)` link in agent prose. An agent's non-text piece is its own block between prose runs (`agentPart`, `thought` kept). Audio and blob-formed resources keep a type-labeled placeholder — a recorded floor (decided 2026-09-25): nothing plays or saves them until a surface for that is justified. Whitespace-only chunks never *open* a run (an open run still takes them — mid-stream spacing is real content) and never sever a neighboring run. |
 | Annotations / `_meta` on content | ⛔ | Not consumed; no current agent emits meaning patchbay could render. Unknown fields pass through untouched (safe by construction). |
 
 ## 9. Session updates — the full union
@@ -141,8 +141,8 @@ SDK 1.5.0 `sessionUpdate` union (16 kinds) vs `session-manager.ts:handleUpdate`:
 
 | Kind | Verdict | Notes |
 |---|---|---|
-| `agent_message_chunk` | ✅ | Fully consumed: text streamed; non-text → type-labeled placeholder (rendering the non-text types is §8's 🟡, G10 — not a consumption gap). |
-| `agent_thought_chunk` | ✅ | Block-interruption rule per the UI Architecture doc; same placeholder floor as message chunks. |
+| `agent_message_chunk` | ✅ | Fully consumed: text streamed; non-text rendered as its own part block (§8). |
+| `agent_thought_chunk` | ✅ | Block-interruption rule per the UI Architecture doc; non-text rendered like message chunks, reading as a thought. |
 | `user_message_chunk` | ✅ | Delta semantics with `messageId`-governed boundaries (§8); `inFlight` guard against live echo. |
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
@@ -258,9 +258,7 @@ always gated on declared (+ used where it gates UI), never silently.
 
 ## Open gaps
 
-| # | Level | Gap |
-|---|---|---|
-| G10 | SHOULD | Non-text message content renders as placeholder only (§8). Remaining, each its own design discussion: **(a)** embedded text-formed `resource` — renderable text today, needs only a labeled text render; **(c)** image — needs a rendering + CSP decision (data: images are already allowed for diagrams; an `<img>` block is a deliberate, recorded widening if taken); **(d)** audio / blob-formed resource — placeholder genuinely is the floor until a playback/save surface is justified. |
+None open as of 2026-09-25. A new gap takes the next id (G15).
 
 **Verify:** V1 — that the SDK surfaces load-replay notifications before the
 `session/load` response resolves in all transports we use (stdio: confirmed by
