@@ -822,6 +822,10 @@ The differentiator (the PRD's current-release scope), shipped complete:
   nothing a rule guards. Accepted edge: under `always-ask`, env still can
   (`NODE_OPTIONS=--import=data:…` needs no file) — the rule is the user's own,
   and an unruled command always asks. The audit records env names, never values.
+  A command that names no cwd runs in its session's — the cwd the pool sent when
+  that connection opened the session, the directory the agent was told it works
+  in; a relative cwd (the spec requires absolute) or a session the connection
+  never opened is answered as invalid params before anything is asked.
 - **Adapters for uneven MCP client support** — every capability the local server
   uses has a protocol-native path and a tool-call fallback, chosen per connection at
   handshake:

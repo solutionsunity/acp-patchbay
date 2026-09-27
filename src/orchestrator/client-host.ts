@@ -7,11 +7,12 @@
 // client-replies.ts. Kept vscode-free — the live-buffer read and write are
 // injected — so the handlers the extension runs are the same ones the tests
 // run.
+import { isAbsolute } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import { type PermissionBroker, sliceTextFileRead } from "./broker";
-import { gateRefusal, readFailure, unknownTerminal } from "./client-replies";
+import { gateRefusal, readFailure, relativeCwd, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
 import type { CreateTerminalParams, TerminalHandle } from "./terminal-runner";
 
@@ -49,15 +50,22 @@ export class ClientHost {
     return {};
   }
 
-  async createTerminal(params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse> {
+  /** `sessionCwd` is the cwd the session was opened with — where a command
+   * that names no cwd runs, since that is the directory the agent was told
+   * it works in. */
+  async createTerminal(
+    params: acp.CreateTerminalRequest,
+    sessionCwd: string | null,
+  ): Promise<acp.CreateTerminalResponse> {
+    if (sessionCwd === null) throw unknownSession(params.sessionId);
+    if (params.cwd != null && !isAbsolute(params.cwd)) throw relativeCwd(params.cwd);
     // One description of the run: the gate judges and shows exactly what
-    // the runner then spawns. An omitted cwd is the process's own — what
-    // spawn falls back to anyway, spelled out so the card can say it.
+    // the runner then spawns.
     const run: CreateTerminalParams = {
       command: params.command,
       args: params.args ?? [],
       env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
-      cwd: params.cwd ?? process.cwd(),
+      cwd: params.cwd ?? sessionCwd,
       outputByteLimit: params.outputByteLimit ?? null,
     };
     const command = formatCommandLine(run.command, run.args);
@@ -144,7 +152,7 @@ export function clientRequestHooks(
   return {
     onReadTextFile: (_agentId, params) => host().readTextFile(params),
     onWriteTextFile: (_agentId, params) => host().writeTextFile(params),
-    onCreateTerminal: (_agentId, params) => host().createTerminal(params),
+    onCreateTerminal: (_agentId, params, sessionCwd) => host().createTerminal(params, sessionCwd),
     onTerminalOutput: (_agentId, params) => host().terminalOutput(params),
     onWaitForTerminalExit: (_agentId, params) => host().waitForTerminalExit(params),
     onKillTerminal: (_agentId, params) => host().killTerminal(params),

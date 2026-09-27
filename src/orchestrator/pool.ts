@@ -161,7 +161,13 @@ export interface PoolHooks {
    * live behind these hooks so the pool itself stays vscode-free. */
   onReadTextFile(agentId: string, params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse>;
   onWriteTextFile(agentId: string, params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse>;
-  onCreateTerminal(agentId: string, params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse>;
+  /** `sessionCwd`: the cwd the requesting session was opened with on this
+   * connection — null when this connection never opened it. */
+  onCreateTerminal(
+    agentId: string,
+    params: acp.CreateTerminalRequest,
+    sessionCwd: string | null,
+  ): Promise<acp.CreateTerminalResponse>;
   onTerminalOutput(
     agentId: string,
     params: acp.TerminalOutputRequest,
@@ -196,7 +202,12 @@ interface Entry {
   initializeRaw: acp.InitializeResponse | null;
   status: AgentStatus;
   detail?: string;
-  sessions: Set<string>;
+  /** The sessions this connection opened, each with the cwd it was opened
+   * with — what the agent was told is its working directory there. Set
+   * once the open succeeds: a new or forked session has no id before its
+   * response, and a failed load or resume opened nothing. So a request an
+   * agent sends from inside its own open finds no session here. */
+  sessions: Map<string, string>;
   stopping: boolean;
   stderrTail: string[];
   /** Isolated entries only: the shared connection's `agentInfo.version`
@@ -343,7 +354,7 @@ export class AgentPool {
       status: e.status,
       detail: e.detail,
       declared: e.declared,
-      sessions: [...e.sessions],
+      sessions: [...e.sessions.keys()],
       stderrTail: [...e.stderrTail],
     };
   }
@@ -392,7 +403,7 @@ export class AgentPool {
       declared: null,
       initializeRaw: null,
       status: "reconnecting",
-      sessions: new Set(),
+      sessions: new Map(),
       stopping: false,
       stderrTail: [],
       ...(isolated
@@ -576,7 +587,7 @@ export class AgentPool {
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.create, (ctx) =>
-          this.hooks.onCreateTerminal(reportAs, ctx.params),
+          this.hooks.onCreateTerminal(reportAs, ctx.params, entry.sessions.get(ctx.params.sessionId) ?? null),
         ),
       )
       .onRequest(
@@ -762,7 +773,7 @@ export class AgentPool {
       mcpServers,
       ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
-    entry.sessions.add(response.sessionId);
+    entry.sessions.set(response.sessionId, cwd);
     this.log.debug(`${poolKey}: session/new -> ${response.sessionId}`);
     return response;
   }
@@ -804,7 +815,7 @@ export class AgentPool {
       mcpServers,
       ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
-    entry.sessions.add(response.sessionId);
+    entry.sessions.set(response.sessionId, cwd);
     this.log.debug(`${poolKey}: session/fork ${sessionId} -> ${response.sessionId}`);
     return response;
   }
@@ -850,7 +861,7 @@ export class AgentPool {
       },
       { failureIsRoutine: true },
     );
-    entry.sessions.add(sessionId);
+    entry.sessions.set(sessionId, cwd);
     this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
     return response;
   }
@@ -913,7 +924,7 @@ export class AgentPool {
       },
       { failureIsRoutine: true },
     );
-    entry.sessions.add(sessionId);
+    entry.sessions.set(sessionId, cwd);
     this.log.debug(`${poolKey}: session/resume ${sessionId}`);
     return response;
   }

@@ -197,6 +197,7 @@ consumed: the card names the call by its `title`, which every agent sends.
 | Duty | Verdict | Notes |
 |---|---|---|
 | All five methods | ✅ | `client-host.ts` handlers → `terminal-runner.ts`; create hands the broker the run itself — command, args, env, cwd, the same params the runner spawns — and a refused command is answered like a refused write (§12). |
+| `cwd` absolute; omitted → the client's choice | ✅ | An omitted `cwd` runs in the session's own — the one the pool sent at that session's open on this connection (`client-host.ts:createTerminal`). A relative `cwd` or a session the connection never opened is `-32602`, before the gate. |
 | Kill ends the whole tree | ✅ | Process-group spawn (`treeSpawnOptions`) — ACP's contract is "the command stops", not "its top process stops". |
 | Truncate from the beginning when over `outputByteLimit` | ✅ | `tailBytes` counts real bytes and cuts at a UTF-8 code-point boundary — surrogate pairs stay whole by construction. |
 | Output survives release when embedded in tool calls | ✅ | Terminal blocks live in the transcript; release invalidates the id, not the rendered history. |

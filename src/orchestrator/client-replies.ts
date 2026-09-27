@@ -54,6 +54,18 @@ export function readFailure(err: unknown, path: string): unknown {
   return code === "FileNotFound" || code === "ENOENT" ? refusal(RequestError.resourceNotFound(path)) : err;
 }
 
+/** A session the agent's connection never opened, or already closed — the
+ * agent's mistake, answered as bad params. */
+export function unknownSession(sessionId: string): RequestError {
+  return RequestError.invalidParams({ sessionId }, `unknown session ${sessionId}`);
+}
+
+/** A terminal `cwd` that is not an absolute path — the spec requires one,
+ * and a relative one names no directory the agent could have meant. */
+export function relativeCwd(cwd: string): RequestError {
+  return RequestError.invalidParams({ cwd }, `cwd must be an absolute path: ${cwd}`);
+}
+
 /** A terminal id the agent never got from `terminal/create`, or already
  * released — the agent's mistake, answered as bad params, never as the
  * client breaking. */

@@ -68,7 +68,11 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
 
   let sessionManager!: SessionManager;
   const pool = new AgentPool({
-    onStatusChanged: () => {},
+    // A restart must reach the session manager, or it would prompt a
+    // session the new process never opened (the extension wires the same).
+    onStatusChanged: (agentId, status) => {
+      if (status === "crashed" || status === "reconnecting") sessionManager.invalidateAgent(agentId);
+    },
     onDeclaredCaptured: () => {},
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onCapabilityEvidence: (_agentId, row, ev) => evidence.push(`${row}:${ev}`),
@@ -303,6 +307,51 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.stop("c57");
   });
 
+  it("a command that names no cwd runs in the session's own — the directory the agent was told (issue #64)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] }] }, "c64"),
+    );
+    const sessionId = await h.sessionManager.createSession("c64", "Fake Agent", workspaceRoot);
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
+    const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
+    expect(card.facts).toEqual([{ label: "cwd", value: workspaceRoot }]);
+    h.broker.resolve(card.id, "allow_once");
+    await turn;
+    expect(textOf(sessionId, h.events).some((t) => t.includes(`cwd=${workspaceRoot}`))).toBe(true);
+    await h.pool.stop("c64");
+  });
+
+  for (const [via, declare] of [
+    ["session/load", { loadSession: true }],
+    ["session/resume", { sessionCapabilities: { resume: {} } }],
+  ] as const) {
+    it(`a session re-attached by ${via} after a restart runs a cwd-less command in its own cwd (issue #64)`, async () => {
+      const h = harness();
+      await h.rules.set({ commandRules: [{ pattern: `${process.execPath} *`, verdict: "allow" }], fileWriteScope: "workspace" });
+      const probe = { type: "runCommand" as const, command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] };
+      const agentId = `c64-${via.slice(8)}`;
+      await h.pool.connect(spec({ declare, turn: [probe] }, agentId));
+      const sessionId = await h.sessionManager.createSession(agentId, "Fake Agent", workspaceRoot);
+      await h.sessionManager.sendPrompt(sessionId, "first turn"); // prompted: re-attached, never re-minted
+
+      // a fresh process: its connection has opened nothing until the re-attach
+      await h.pool.restart(agentId);
+      expect(h.pool.get(agentId)?.sessions).toEqual([]);
+      await h.sessionManager.sendPrompt(sessionId, "second turn");
+
+      expect(h.pool.get(agentId)?.sessions).toEqual([sessionId]);
+      const texts = textOf(sessionId, h.events);
+      expect(texts.some((t) => t.includes("-32602"))).toBe(false); // never refused as unknown
+      // load replays the first turn's output before the second runs; resume restores without replay
+      const outputs = texts.filter((t) => t.includes("cwd="));
+      expect(outputs).toHaveLength(via === "session/load" ? 3 : 2);
+      expect(outputs.at(-1)).toContain(`cwd=${workspaceRoot}`);
+      await h.pool.stop(agentId);
+    });
+  }
+
   it("a denied command never spawns a process", async () => {
     const h = harness();
     await h.rules.set({
@@ -394,6 +443,25 @@ describe("ClientHost — replies for a terminal id it never issued", () => {
     ]) {
       await expect(call()).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("term-404") });
     }
+  });
+});
+
+describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
+  it("a session the connection never opened is the agent's bad params — nothing asked, nothing spawned", async () => {
+    const { host, events } = harness();
+    await expect(host.createTerminal({ sessionId: "never-opened", command: "true" }, null)).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringContaining("never-opened"),
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("a relative cwd is the agent's bad params — the spec requires an absolute path", async () => {
+    const { host, events } = harness();
+    await expect(
+      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, workspaceRoot),
+    ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("sub/dir") });
+    expect(events).toEqual([]);
   });
 });
 

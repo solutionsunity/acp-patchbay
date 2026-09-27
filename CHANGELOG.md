@@ -20,6 +20,10 @@
   a rule written as plain text for an argument that contains a space
   (`rm -rf /my dir`) now asks instead of matching; rules using `*` are
   unaffected. (#57)
+- A command the agent runs without naming a directory now runs in the
+  session's directory — the one the agent was told it works in — instead
+  of the editor's own process directory. A relative directory, which the
+  protocol rules out, is refused. (#64)
 
 ## 0.84.0 — 2026-09-26
 
