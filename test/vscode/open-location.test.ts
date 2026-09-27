@@ -19,12 +19,19 @@ async function internal(): Promise<Internal> {
   return api.internal;
 }
 
-/** The active editor's cursor once it shows `path`. */
-async function cursorIn(path: string): Promise<vscode.Position> {
-  return waitFor(() => {
+/** Waits for the active editor to show `path` with the cursor at
+ * [line, character]. `vscode.open` makes the editor active before it
+ * applies the selection, so the first sight of the file can still carry
+ * the cursor at the top — the wait is for the position asserted, and a
+ * timeout names the last one seen. */
+async function assertCursor(path: string, line: number, character: number): Promise<void> {
+  let seen: [number, number] | null = null;
+  await waitFor(() => {
     const editor = vscode.window.activeTextEditor;
-    return editor?.document.uri.fsPath === path ? editor.selection.active : undefined;
-  });
+    if (editor?.document.uri.fsPath !== path) return undefined;
+    seen = [editor.selection.active.line, editor.selection.active.character];
+    return seen[0] === line && seen[1] === character ? true : undefined;
+  }).catch(() => assert.deepStrictEqual(seen, [line, character], `cursor in ${path}`));
 }
 
 suite("open a tool-call location (issue #41)", () => {
@@ -42,8 +49,7 @@ suite("open a tool-call location (issue #41)", () => {
     const file = join(dir, "a.ts");
     await writeFile(file, ["one", "two", "three", "four", "    five();", "six"].join("\n"), "utf8");
     orchestrator.handleAction({ kind: "openFile", path: file, line: 5 });
-    const at = await cursorIn(file);
-    assert.deepStrictEqual([at.line, at.character], [4, 4]);
+    await assertCursor(file, 4, 4);
   });
 
   test("a line past the end opens at the last line", async () => {
@@ -51,8 +57,7 @@ suite("open a tool-call location (issue #41)", () => {
     const file = join(dir, "b.ts");
     await writeFile(file, "one\ntwo\nthree", "utf8");
     orchestrator.handleAction({ kind: "openFile", path: file, line: 500 });
-    const at = await cursorIn(file);
-    assert.strictEqual(at.line, 2);
+    await assertCursor(file, 2, 0);
   });
 
   test("no line opens the file at the top", async () => {
@@ -60,8 +65,7 @@ suite("open a tool-call location (issue #41)", () => {
     const file = join(dir, "c.ts");
     await writeFile(file, "one\ntwo", "utf8");
     orchestrator.handleAction({ kind: "openFile", path: file });
-    const at = await cursorIn(file);
-    assert.strictEqual(at.line, 0);
+    await assertCursor(file, 0, 0);
   });
 
   test("a binary file with a line still opens — in its own editor, the line moot", async () => {
