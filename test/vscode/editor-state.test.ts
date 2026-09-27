@@ -4,6 +4,7 @@
 // test/mcp-wire.test.ts and test/mcp-end-to-end.test.ts (vitest, no vscode
 // available there) — this covers exactly the remaining untested surface:
 // real vscode.window/workspace/languages data.
+import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
 
@@ -82,16 +83,15 @@ suite("EditorStateHost — real vscode data", () => {
     // activeTextEditor reads undefined from here on.
     const panel = vscode.window.createWebviewPanel("patchbayTest", "panel", vscode.ViewColumn.Beside);
     try {
-      await new Promise<void>((resolve) => {
-        if (vscode.window.activeTextEditor === undefined) return resolve();
-        const sub = vscode.window.onDidChangeActiveTextEditor((e) => {
-          if (e === undefined) {
-            sub.dispose();
-            resolve();
-          }
-        });
-      });
-      assert.strictEqual(vscode.window.activeTextEditor, undefined);
+      // VS Code hands the active editor to the panel only in a focused
+      // window; unfocused, the text editor stays active and the scenario
+      // can't be set up — fail naming that, never hang.
+      await waitFor(() => (vscode.window.activeTextEditor === undefined ? true : undefined)).catch(() =>
+        assert.fail(
+          `the panel never became the active editor (window focused: ${vscode.window.state.focused}) — ` +
+            "this test needs its window focused",
+        ),
+      );
 
       const file = orchestrator.editorStateHost.getCurrentFile();
       assert.ok(file, "the file the user was just in stays current");
