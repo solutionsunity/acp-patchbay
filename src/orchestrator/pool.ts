@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
+import { formatCommandLine } from "../shared/command-line";
 import { nullLogger, type Logger } from "./logger";
 import { isRefusal } from "./client-replies";
 import {
@@ -1140,7 +1141,7 @@ export class AgentPool {
   ): Promise<void> {
     const launch = resolveSpawn(warm.command, warm.args, spawnEnv(spec));
     if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
-    this.log.info(`${entry.poolKey}: warming launcher cache (${warm.command} ${warm.args.join(" ")})`);
+    this.log.info(`${entry.poolKey}: warming launcher cache (${formatCommandLine(warm.command, warm.args)})`);
     return new Promise<void>((resolve) => {
       const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "ignore"));
       const label = setTimeout(

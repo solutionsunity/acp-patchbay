@@ -25,6 +25,7 @@ const permission = (sessionId: string, blockId: string): AgentViewEvent => ({
   blockId,
   title: "Terminal",
   detail: "npm test",
+  facts: [],
   options: [{ optionId: "allow_once", label: "Allow once", kind: "allow_once" }],
 });
 

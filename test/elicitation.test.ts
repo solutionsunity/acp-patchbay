@@ -273,7 +273,12 @@ function wireHarness() {
   const broker = new PermissionBroker(
     new PermissionRulesStore(new MemoryKV()),
     new DecisionAuditStore(dir),
-    { emit: (...evs) => events.push(...evs), onAuditWritten: () => {}, openLink: (href) => opened.push(href) },
+    {
+      emit: (...evs) => events.push(...evs),
+      onAuditWritten: () => {},
+      redact: (text) => text,
+      openLink: (href) => opened.push(href),
+    },
     () => [dir],
   );
   let sessionManager!: SessionManager;

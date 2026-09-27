@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PermissionBroker, sliceTextFileRead } from "../src/orchestrator/broker";
+import type { CreateTerminalParams } from "../src/orchestrator/terminal-runner";
+import { parseCommandLine } from "../src/shared/command-line";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -22,6 +24,16 @@ beforeEach(async () => {
 });
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
+/** A value patchbay handed an agent — masked wherever a card shows it. */
+const HANDED_OUT = "sk-handed-out-token";
+
+/** A terminal/create as the gate receives it: the command line read the
+ * way a person writes it, run in the workspace, nothing set. */
+function run(line: string, over: Partial<CreateTerminalParams> = {}): CreateTerminalParams {
+  const parsed = parseCommandLine(line)!;
+  return { ...parsed, env: {}, cwd: workspaceRoot, outputByteLimit: null, ...over };
+}
+
 function harness() {
   const rules = new PermissionRulesStore(new MemoryKV());
   const machineRules = new MachineRulesStore(new MemoryKV());
@@ -35,6 +47,7 @@ function harness() {
     {
       emit: (...evs) => events.push(...evs),
       onAuditWritten: () => auditRefreshes++,
+      redact: (text) => text.split(HANDED_OUT).join("•••"),
       openLink: (href) => opened.push(href),
     },
     () => granted,
@@ -226,7 +239,7 @@ describe("PermissionBroker audit trail", () => {
       commandRules: [{ pattern: "npm run *", verdict: "allow" }],
       fileWriteScope: "workspace",
     });
-    const result = await broker.gateCommand("s1", "npm run build");
+    const result = await broker.gateCommand("s1", run("npm run build"));
     expect(result).toBe("accepted");
     expect(refreshCount()).toBe(1);
     const tail = await audit.tail(10);
@@ -240,7 +253,7 @@ describe("PermissionBroker audit trail", () => {
       commandRules: [{ pattern: "rm -rf *", verdict: "deny" }],
       fileWriteScope: "workspace",
     });
-    const result = await broker.gateCommand("s1", "rm -rf /");
+    const result = await broker.gateCommand("s1", run("rm -rf /"));
     expect(result).toBe("rejected");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "auto-deny", command: "rm -rf /" });
@@ -248,7 +261,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("an ask that the user resolves also writes an audit entry", async () => {
     const { broker, events, audit } = harness();
-    const pending = broker.gateCommand("s1", "curl example.com");
+    const pending = broker.gateCommand("s1", run("curl example.com"));
     // the permission card was emitted with a blockId — resolve it
     const requested = events.find((e) => e.kind === "permissionRequested");
     expect(requested).toBeDefined();
@@ -262,7 +275,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("a command the user rejects on its card settles rejected", async () => {
     const { broker, events, audit } = harness();
-    const pending = broker.gateCommand("s1", "curl example.com");
+    const pending = broker.gateCommand("s1", run("curl example.com"));
     const requested = events.find((e) => e.kind === "permissionRequested");
     if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(requested.blockId, "reject_once");
@@ -279,8 +292,8 @@ describe("PermissionBroker audit trail", () => {
       { optionId: "y", label: "Allow", kind: "allow_once" },
       { optionId: "n", label: "Reject", kind: "reject_once" },
     ]);
-    const commandGate = broker.gateCommand("s1", "curl example.com");
-    const otherSession = broker.gateCommand("s2", "npm run lint");
+    const commandGate = broker.gateCommand("s1", run("curl example.com"));
+    const otherSession = broker.gateCommand("s2", run("npm run lint"));
     // the agent's request is judged before its card shows
     for (let i = 0; i < 50 && events.filter((e) => e.kind === "permissionRequested").length < 3; i++) {
       await new Promise((r) => setTimeout(r, 5));
@@ -321,7 +334,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("allow_always persists a new rule so the next call auto-allows", async () => {
     const { broker, events, rules } = harness();
-    const pending = broker.gateCommand("s1", "npm run lint");
+    const pending = broker.gateCommand("s1", run("npm run lint"));
     const requested = events.find((e) => e.kind === "permissionRequested");
     if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(requested.blockId, "allow_always");
@@ -330,9 +343,62 @@ describe("PermissionBroker audit trail", () => {
 
     // second call for the same command now auto-allows, no card
     const events2Before = events.length;
-    const second = await broker.gateCommand("s1", "npm run lint");
+    const second = await broker.gateCommand("s1", run("npm run lint"));
     expect(second).toBe("accepted");
     expect(events.slice(events2Before).some((e) => e.kind === "permissionRequested")).toBe(false);
+  });
+});
+
+describe("PermissionBroker.gateCommand — the card shows what will run (issue #57)", () => {
+  const card = (events: AgentViewEvent[]) => {
+    const asked = events.find((e) => e.kind === "permissionRequested");
+    if (asked?.kind !== "permissionRequested") throw new Error("no card");
+    return asked;
+  };
+
+  it("lists the directory and every variable the agent sets, a handed-out value masked", async () => {
+    const { broker, events } = harness();
+    void broker.gateCommand(
+      "s1",
+      run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js", API_KEY: HANDED_OUT } }),
+    );
+    expect(card(events)).toMatchObject({
+      detail: "npm test",
+      facts: [
+        { label: "cwd", value: "/elsewhere" },
+        { label: "env", value: "NODE_OPTIONS=--require ./x.js" },
+        { label: "env", value: "API_KEY=•••" },
+      ],
+    });
+    broker.cancelPending("s1");
+  });
+
+  it("keeps argument boundaries: `rm \"a b\"` is never `rm a b`, on the card or to a rule", async () => {
+    const { broker, events, rules } = harness();
+    const pending = broker.gateCommand("s1", run('rm "a b"'));
+    expect(card(events).detail).toBe('rm "a b"');
+    broker.resolve(card(events).blockId, "allow_always");
+    await pending;
+    expect(rules.get().commandRules).toContainEqual({ pattern: 'rm "a b"', verdict: "allow" });
+    expect(broker.evaluateCommand('rm "a b"')).toBe("allow");
+    expect(broker.evaluateCommand("rm a b")).toBe("ask");
+  });
+
+  it("a rule speaks for the command line alone — its directory and environment ride the trust", async () => {
+    const { broker, rules, events } = harness();
+    await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], fileWriteScope: "workspace" });
+    const other = run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js" } });
+    await expect(broker.gateCommand("s1", other)).resolves.toBe("accepted");
+    expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
+  });
+
+  it("the audit names the variables, never their values", async () => {
+    const { broker, rules, audit } = harness();
+    await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], fileWriteScope: "workspace" });
+    await broker.gateCommand("s1", run("npm test", { env: { API_KEY: HANDED_OUT } }));
+    const [entry] = await audit.tail(1);
+    expect(entry).toMatchObject({ kind: "auto-allow", command: "npm test", cwd: workspaceRoot, env: ["API_KEY"] });
+    expect(JSON.stringify(entry)).not.toContain(HANDED_OUT);
   });
 });
 

@@ -53,7 +53,7 @@ export type TurnStep =
   | { type: "crash" }
   | { type: "writeFile"; path: string; content: string }
   | { type: "readFile"; path: string }
-  | { type: "runCommand"; command: string; args?: string[] }
+  | { type: "runCommand"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string }
   | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string | string[] }
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
@@ -342,11 +342,16 @@ async function runTurn(
       case "runCommand": {
         let result: string;
         try {
-          const created = await cx.request(acp.methods.client.terminal.create, {
+          const request: acp.CreateTerminalRequest = {
             sessionId,
             command: step.command,
             args: step.args ?? [],
-          });
+            ...(step.env !== undefined
+              ? { env: Object.entries(step.env).map(([name, value]) => ({ name, value })) }
+              : {}),
+            ...(step.cwd !== undefined ? { cwd: step.cwd } : {}),
+          };
+          const created = await cx.request(acp.methods.client.terminal.create, request);
           const exit = await cx.request(acp.methods.client.terminal.waitForExit, {
             sessionId,
             terminalId: created.terminalId,

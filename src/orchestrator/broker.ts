@@ -20,6 +20,7 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { formatCommandLine } from "../shared/command-line";
 import type {
   AgentViewEvent,
   ElicitationAnswer,
@@ -30,7 +31,7 @@ import type {
 import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
-import { NodeTerminalRunner, type TerminalRunner } from "./terminal-runner";
+import { NodeTerminalRunner, type CreateTerminalParams, type TerminalRunner } from "./terminal-runner";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
@@ -41,6 +42,9 @@ export interface BrokerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Refresh Settings' audit tail after every write. */
   onAuditWritten(): void;
+  /** `text` with every value patchbay handed an agent masked — for agent
+   * text a card shows, which such a value can ride back in. */
+  redact(text: string): string;
   /** Opens a page in the system browser — outside the editor, where
    * neither patchbay nor the agent's model can see the page or what the
    * user types into it. Called only on the user's own click. */
@@ -420,6 +424,7 @@ export class PermissionBroker {
         blockId,
         title: toolTitle,
         detail: files.length > 0 ? files.join(", ") : toolTitle,
+        facts: [],
         options,
       });
     }
@@ -520,18 +525,23 @@ export class PermissionBroker {
   }
 
   /** Patchbay's own mandatory gate on terminal/create — asks before the
-   * process ever spawns; approval is required, not advisory. */
-  async gateCommand(
-    sessionId: string,
-    command: string,
-  ): Promise<GateOutcome> {
+   * process ever spawns; approval is required, not advisory. Handed
+   * exactly what will run: the card shows the command line with its
+   * argument boundaries, the directory, and every variable the agent sets
+   * (values patchbay handed out masked). A rule speaks for the command
+   * line alone — trusting a command trusts it under whatever directory and
+   * environment the agent runs it with. The audit names the variables,
+   * never their values. */
+  async gateCommand(sessionId: string, run: CreateTerminalParams): Promise<GateOutcome> {
+    const command = formatCommandLine(run.command, run.args);
+    const subject = { command, cwd: run.cwd, env: Object.keys(run.env) };
     const verdict = this.evaluateCommand(command);
     if (verdict === "deny") {
-      await this.writeAudit({ kind: "auto-deny", sessionId, command });
+      await this.writeAudit({ kind: "auto-deny", sessionId, ...subject });
       return "rejected";
     }
     if (verdict === "allow") {
-      await this.writeAudit({ kind: "auto-allow", sessionId, command });
+      await this.writeAudit({ kind: "auto-allow", sessionId, ...subject });
       return "accepted";
     }
 
@@ -542,6 +552,10 @@ export class PermissionBroker {
       blockId,
       title: "Terminal",
       detail: command,
+      facts: [
+        { label: "cwd", value: run.cwd },
+        ...Object.entries(run.env).map(([name, value]) => ({ label: "env", value: `${name}=${this.hooks.redact(value)}` })),
+      ],
       options: STANDARD_OPTIONS,
     });
     const optionId = await this.awaitOption(blockId, sessionId);
@@ -559,7 +573,7 @@ export class PermissionBroker {
     await this.writeAudit({
       kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
       sessionId,
-      command,
+      ...subject,
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
   }

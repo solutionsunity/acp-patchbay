@@ -32,7 +32,7 @@ export interface CreateTerminalParams {
   command: string;
   args: string[];
   env: Record<string, string>;
-  cwd: string | null;
+  cwd: string;
   outputByteLimit: number | null;
 }
 
@@ -66,7 +66,7 @@ export class NodeTerminalRunner implements TerminalRunner {
     const exitWaiters: Array<(status: ExitStatus) => void> = [];
 
     const child = spawn(params.command, params.args, {
-      cwd: params.cwd ?? undefined,
+      cwd: params.cwd,
       env: { ...process.env, ...params.env },
       stdio: ["ignore", "pipe", "pipe"],
       // Group leader on POSIX (process-tree.ts): terminal/kill must end the

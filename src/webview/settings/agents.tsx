@@ -6,6 +6,7 @@
 // only what the agent actually offered.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
+import { formatCommandLine } from "../../shared/command-line";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
@@ -42,12 +43,6 @@ const EMPTY_AGENT_CONFIG: AgentConfigView = {
   lastSeenVersion: null,
 };
 
-/** Display-only join for the launch-line input: args carrying whitespace get
- * re-quoted so the round trip through the orchestrator's parser is faithful. */
-function displayCommandLine(command: string, args: readonly string[]): string {
-  return [command, ...args.map((a) => (/\s/.test(a) ? `"${a}"` : a))].filter(Boolean).join(" ");
-}
-
 /** ✎ Edit: launch line, process policy, env. Parsing the line is the
  * orchestrator's job — it's sent raw, args empty. Env shows what is
  * stored and saves what is in the box. Default model/mode/effort
@@ -61,7 +56,7 @@ function AgentConfigForm(props: {
 }) {
   const [id, setId] = useState(props.initial.id);
   const [name, setName] = useState(props.initial.name);
-  const [command, setCommand] = useState(displayCommandLine(props.initial.command, props.initial.args));
+  const [command, setCommand] = useState(props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args));
   const [processPolicy, setProcessPolicy] = useState(props.initial.processPolicy);
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
@@ -637,7 +632,7 @@ export function AgentsSection(props: {
           // No summary at all = the orchestrator never saw this config — the
           // honest unknown is "untested", never a claimed "stopped".
           const status = a?.status ?? "untested";
-          const command = a?.command ?? (config !== undefined ? [config.command, ...config.args].join(" ") : undefined);
+          const command = a?.command ?? (config !== undefined ? formatCommandLine(config.command, config.args) : undefined);
           // Editing forces the body open — the form lives there.
           const detailsOpen = openDetails[id] === true || editing === id;
           // The action cluster's one derivation (card-controls.ts) — every

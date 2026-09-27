@@ -42,6 +42,11 @@ export function PermissionCard({ block }: { block: Extract<ChatBlock, { kind: "p
       </div>
       <div className="q">
         <code>{block.detail}</code>
+        {block.facts.map((fact, i) => (
+          <div key={i} className="fact">
+            <span className="lbl">{fact.label}</span> <code>{fact.value}</code>
+          </div>
+        ))}
       </div>
       {block.resolution === null ? (
         <div className="acts">

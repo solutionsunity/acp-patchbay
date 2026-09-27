@@ -43,7 +43,7 @@ import { eraseAllData } from "./erase-all";
 import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
-import { parseCommandLine } from "./command-line";
+import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
@@ -781,6 +781,7 @@ export class Orchestrator {
       {
         emit: (...events) => this.agentView.emit(...events),
         onAuditWritten: () => void this.refreshAuditTail(),
+        redact: (text) => this.wireLog.redact(text),
         openLink: (href) => void openInBrowser(href),
       },
       (sessionId) => this.sessionManager.grantedRoots(sessionId),
@@ -1600,7 +1601,7 @@ export class Orchestrator {
           id: agent.id,
           name: agent.name,
           status: agent.lastSeenVersion === null ? ("untested" as const) : ("stopped" as const),
-          command: [agent.command, ...agent.args].join(" "),
+          command: formatCommandLine(agent.command, agent.args),
           needsAuth: lock !== null,
           authReason: lock?.reason ?? undefined,
         },
@@ -1961,7 +1962,7 @@ export class Orchestrator {
         id: spec.agentId,
         name: spec.name,
         status: "reconnecting" as const,
-        command: [spec.command, ...spec.args].join(" "),
+        command: formatCommandLine(spec.command, spec.args),
         needsAuth: lock !== null,
         authReason: lock?.reason ?? undefined,
       },

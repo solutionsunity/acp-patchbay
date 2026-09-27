@@ -811,7 +811,17 @@ The differentiator (the PRD's current-release scope), shipped complete:
   a refusal still proves the capability used, since the path fired.
 - **Terminal**: orchestrator advertises `terminal`; commands run in a visible
   pseudoterminal, output streams live, gated by the same broker rules as everything
-  else.
+  else. The gate is handed the run itself — the params the runner then spawns — so
+  the card shows everything that will run: the command line (one formatter, the
+  inverse of the launch-line parser, so argument boundaries survive as text), the
+  cwd, and each env var the agent sets, values patchbay handed out masked by the
+  wire log's own redaction. **A command rule trusts the command** (decided
+  2026-09-27): it matches the command line alone, and the cwd and env the agent
+  picks ride that trust — under the default write scope the agent can already
+  change what an allowed command runs by editing workspace files, so they add
+  nothing a rule guards. Accepted edge: under `always-ask`, env still can
+  (`NODE_OPTIONS=--import=data:…` needs no file) — the rule is the user's own,
+  and an unruled command always asks. The audit records env names, never values.
 - **Adapters for uneven MCP client support** — every capability the local server
   uses has a protocol-native path and a tool-call fallback, chosen per connection at
   handshake:

@@ -1018,11 +1018,20 @@ export interface PermissionOptionView {
   kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
+/** One row an approval card lists under its subject: a condition the
+ * request runs under — a command's working directory, each variable it
+ * sets. */
+export interface PermissionFact {
+  label: string;
+  value: string;
+}
+
 export interface PermissionBlock {
   kind: "permission";
   id: string;
   title: string;
   detail: string;
+  facts: readonly PermissionFact[];
   options: readonly PermissionOptionView[];
   /** Set once resolved — by the user or by a rule. Never re-asked in place. */
   resolution: { label: string; auto: boolean } | null;
@@ -1541,6 +1550,7 @@ export type AgentViewEvent =
       blockId: string;
       title: string;
       detail: string;
+      facts: readonly PermissionFact[];
       options: readonly PermissionOptionView[];
     }
   | { kind: "permissionResolved"; sessionId: string; blockId: string; label: string; auto: boolean }
@@ -2157,6 +2167,7 @@ export function reduceAgentView(
         id: event.blockId,
         title: event.title,
         detail: event.detail,
+        facts: event.facts,
         options: event.options,
         resolution: null,
       });

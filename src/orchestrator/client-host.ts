@@ -8,11 +8,12 @@
 // injected — so the handlers the extension runs are the same ones the tests
 // run.
 import type * as acp from "@agentclientprotocol/sdk";
+import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import { type PermissionBroker, sliceTextFileRead } from "./broker";
 import { gateRefusal, readFailure, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
-import type { TerminalHandle } from "./terminal-runner";
+import type { CreateTerminalParams, TerminalHandle } from "./terminal-runner";
 
 export interface ClientHostDeps {
   broker: PermissionBroker;
@@ -49,17 +50,21 @@ export class ClientHost {
   }
 
   async createTerminal(params: acp.CreateTerminalRequest): Promise<acp.CreateTerminalResponse> {
-    const command = [params.command, ...(params.args ?? [])].join(" ");
-    const outcome = await this.deps.broker.gateCommand(params.sessionId, command);
-    if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
-
-    const handle = this.deps.broker.runner.create({
+    // One description of the run: the gate judges and shows exactly what
+    // the runner then spawns. An omitted cwd is the process's own — what
+    // spawn falls back to anyway, spelled out so the card can say it.
+    const run: CreateTerminalParams = {
       command: params.command,
       args: params.args ?? [],
       env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
-      cwd: params.cwd ?? null,
+      cwd: params.cwd ?? process.cwd(),
       outputByteLimit: params.outputByteLimit ?? null,
-    });
+    };
+    const command = formatCommandLine(run.command, run.args);
+    const outcome = await this.deps.broker.gateCommand(params.sessionId, run);
+    if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
+
+    const handle = this.deps.broker.runner.create(run);
     const terminalId = `term-${++this.terminalCounter}`;
     this.terminals.set(terminalId, handle);
     this.deps.trackProcess(handle);

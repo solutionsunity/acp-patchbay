@@ -653,6 +653,17 @@ body {
   white-space: pre-wrap;
 }
 
+/* the conditions the request runs under — a command's cwd, each env var */
+.perm .q .fact {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.perm .q .fact .lbl {
+  display: inline-block;
+  min-width: 3ch;
+}
+
 .acts {
   display: flex;
   /* the card clips (overflow:hidden) — an unwrapped row of long option

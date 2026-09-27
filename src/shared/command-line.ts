@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Parses a user-supplied "custom command that speaks ACP" into command + args.
-// Handles double/single quotes; no shell interpretation (we spawn without one).
+// A command line as text: the one reading (`parseCommandLine`) and the one
+// writing (`formatCommandLine`), each the other's inverse. Double and single
+// quotes, no escapes, no shell interpretation — commands spawn without one,
+// so an argument's boundaries are real and the text must keep them.
 export function parseCommandLine(
   input: string,
 ): { command: string; args: string[] } | null {
@@ -34,4 +36,17 @@ export function parseCommandLine(
   const [command, ...args] = tokens;
   if (!command) return null;
   return { command, args };
+}
+
+/** The command line a person reads — and `parseCommandLine` reads back to
+ * the same command and args. An argument that is empty or holds
+ * whitespace or a quote is double-quoted, a `"` inside it written as
+ * `"'"'"` (close, single-quoted quote, reopen), so `rm "a b"` never reads
+ * as `rm a b`. */
+export function formatCommandLine(command: string, args: readonly string[]): string {
+  return [command, ...args].map(quoteArg).join(" ");
+}
+
+function quoteArg(arg: string): string {
+  return arg !== "" && !/[\s"']/.test(arg) ? arg : `"${arg.replaceAll('"', `"'"'"`)}"`;
 }

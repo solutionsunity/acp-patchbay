@@ -84,7 +84,7 @@ session's worth of change against.
 | Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text |
 | Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + the lines the call's diffs add and remove (**+a −d**) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the ± opens the edit in VS Code's native diff editor — or, when several files carry a diff, the details; the rest of the header toggles details. The count is what the agent reported, whole file or changed regions, each against its own counterpart. Details: one row per file — name, each reported line, folder relative to the workspace, its own **+a −d** (opening its diff) when the call carried one — listed only when it says more than the header; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block |
 | Terminal | ▣ card | command output streams live inside the card; exit status in header |
-| Permission | 🛡 card | tool + exact command shown; **Allow once / Always / Reject**; resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification |
+| Permission | 🛡 card | tool + exact command shown (argument boundaries kept); a terminal card also lists its cwd and each env var the agent sets, handed-out values masked; **Allow once / Always / Reject**; resolution line notes the decision audit; when no visible surface shows the session the same request surfaces as a native notification |
 | Question | ❓ card | "*Agent* asks:" + the agent's message; one control per field (text, number, Yes/No, choice, multi-choice), declared defaults pre-filled; **Send** stays disabled until required fields are filled and limits hold; **Decline / Cancel** reach the agent as themselves; resolution line records the outcome. The same card serves the MCP `request_user_input` tool. Off screen, a native notification names the question with **Open**, which brings the session up — the answer is given in the card |
 | Link | 🔗 card | "*Agent* asks you to open a page:" + the agent's message; the host in bold and the full address as plain text (never a clickable link), with a warning line per suspicious trait; **Open in browser / Decline / Cancel** — Open is the consent and opens the system browser; once opened, "waiting for *Agent* to finish" with **Open again** until the agent reports it done ("completed"); a question the agent takes back reads "withdrawn by the agent" |
 | Diff | 📝 card | file + its **+a −d** (the tool card's count, one rendering: only the sides that moved), a bounded body preview that states how many lines it omits, and **Open diff** (VS Code's own diff editor, current vs proposed) while the proposal is open; **Accept / Reject before disk is touched**; auto-accept rules change who clicks, not what is visible |
@@ -298,7 +298,8 @@ alone. The roots chip's Save writes the same lists.
 ### Permissions
 
 Command rules in **two layers**, one card each, identical shape (`pattern → allow /
-ask / deny` + add row): *this workspace* (evaluated first — the repo's own
+ask / deny` + add row, and a note that an allow rule trusts the command itself —
+the cwd and env the agent runs it with ride along): *this workspace* (evaluated first — the repo's own
 tightening or loosening) and *this machine* (the fallback floor for every workspace
 — consulted only where the workspace layer stays silent; no rule anywhere means
 ask). File-write scope radios (workspace only / + temp / always ask) with the note

@@ -62,7 +62,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   const broker = new PermissionBroker(
     rules,
     audit,
-    { emit: (...evs) => events.push(...evs), onAuditWritten: () => {} },
+    { emit: (...evs) => events.push(...evs), onAuditWritten: () => {}, redact: (text) => text },
     (sessionId) => sessionManager.grantedRoots(sessionId),
   );
 
@@ -277,6 +277,30 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(texts.some((t) => t.includes("exit=0"))).toBe(true);
     expect(texts.some((t) => t.includes("hi from child"))).toBe(true);
     await h.pool.stop("c1");
+  });
+
+  it("the card shows the directory and environment the command then really runs with (issue #57)", async () => {
+    const h = harness();
+    const probe = "console.log(process.cwd() + '|' + process.env.PB_PROBE)";
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "runCommand", command: process.execPath, args: ["-e", probe], env: { PB_PROBE: "set by agent" }, cwd: dir }] },
+        "c57",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("c57", "Fake Agent", workspaceRoot);
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
+    const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
+    expect(card.detail).toBe(`${process.execPath} -e "${probe}"`);
+    expect(card.facts).toEqual([
+      { label: "cwd", value: dir },
+      { label: "env", value: "PB_PROBE=set by agent" },
+    ]);
+    h.broker.resolve(card.id, "allow_once");
+    await turn;
+    expect(textOf(sessionId, h.events).some((t) => t.includes(`${dir}|set by agent`))).toBe(true);
+    await h.pool.stop("c57");
   });
 
   it("a denied command never spawns a process", async () => {

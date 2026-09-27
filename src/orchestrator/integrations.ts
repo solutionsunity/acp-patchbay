@@ -21,7 +21,7 @@ import type {
   SettingsEvent,
 } from "../shared/protocol";
 import { probeMcpServer, type ProbeFn, type ProbeTarget } from "./integration-probe";
-import { parseCommandLine } from "./command-line";
+import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { IntegrationTokenStore, type StoredToken } from "./stores/integration-tokens";
@@ -254,7 +254,7 @@ export class IntegrationsManager {
         registryId: source.kind === "registry" ? source.registryId : undefined,
         command:
           source.kind === "custom-stdio"
-            ? [source.command, ...source.args].join(" ")
+            ? formatCommandLine(source.command, source.args)
             : source.kind === "custom-http"
               ? source.url
               : undefined,

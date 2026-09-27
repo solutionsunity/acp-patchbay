@@ -10,6 +10,16 @@
   an edit request by every file it names. "Workspace" now also covers every
   folder of a multi-root workspace and the roots added to the session, which
   used to ask. (#56)
+- A command's approval card now shows everything that will run: the
+  directory and each environment variable the agent sets, and arguments
+  keep their boundaries (`rm "a b"` no longer reads as `rm a b`). A value
+  patchbay handed the agent, like an integration token, shows masked.
+  Settings › Permissions now says what an allow rule trusts: the command
+  itself, under whatever directory and environment the agent runs it with.
+  A command rule is matched against the line as the card now shows it, so
+  a rule written as plain text for an argument that contains a space
+  (`rm -rf /my dir`) now asks instead of matching; rules using `*` are
+  unaffected. (#57)
 
 ## 0.84.0 — 2026-09-26
 

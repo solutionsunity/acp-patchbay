@@ -8,6 +8,8 @@
 // inherent). Redaction therefore lives HERE, at the one seam every frame
 // passes, not in the consent popup: values patchbay read out of
 // SecretStorage are registered and masked before a byte reaches the sink.
+// The same mask serves anything else that shows agent-supplied text a
+// handed-out value could ride in (a command's env on its approval card).
 // What an agent echoes back on its own initiative cannot be masked — the
 // disclosure prompt says so.
 //
@@ -80,24 +82,29 @@ export class WireLog {
    * additionally gates on `active` before even assembling lines. */
   frame(agentId: string, direction: "→" | "←", line: string): void {
     if (!this.active) return;
-    let out = line;
-    // Longest first: when one registered value is a prefix of another
-    // (systematic for context tokens — ctx-1/ctx-10), replacing the short
-    // one first would shred the long one and print its tail in clear.
-    // Each value is also masked in its JSON-escaped spelling — the frame is
-    // JSON, so a secret containing `"` or `\` rides the wire escaped and
-    // would never match raw.
+    let out = this.redact(line);
+    if (out.length > MAX_FRAME_CHARS) {
+      out = `${out.slice(0, MAX_FRAME_CHARS)} … [truncated — ${line.length} chars total]`;
+    }
+    this.sink().appendLine(`${new Date().toISOString()} ${direction} ${agentId} ${out}`);
+  }
+
+  /** `text` with every registered value masked. Longest first: when one
+   * registered value is a prefix of another (systematic for context
+   * tokens — ctx-1/ctx-10), replacing the short one first would shred the
+   * long one and print its tail in clear. Each value is also masked in its
+   * JSON-escaped spelling — a frame is JSON, so a secret containing `"` or
+   * `\` rides the wire escaped and would never match raw. */
+  redact(text: string): string {
     const spellings = [...this.secrets]
       .flatMap((secret) => {
         const escaped = JSON.stringify(secret).slice(1, -1);
         return escaped === secret ? [secret] : [secret, escaped];
       })
       .sort((a, b) => b.length - a.length);
+    let out = text;
     for (const secret of spellings) out = out.split(secret).join("•••");
-    if (out.length > MAX_FRAME_CHARS) {
-      out = `${out.slice(0, MAX_FRAME_CHARS)} … [truncated — ${line.length} chars total]`;
-    }
-    this.sink().appendLine(`${new Date().toISOString()} ${direction} ${agentId} ${out}`);
+    return out;
   }
 
   dispose(): void {

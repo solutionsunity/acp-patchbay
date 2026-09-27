@@ -85,6 +85,11 @@ function CommandRulesCard(props: {
           Add rule
         </Button>
       </div>
+      <div className="note mx-0 mb-0 mt-2">
+        An allow rule trusts the command itself: the agent chooses the directory and environment it
+        runs in (cwd, PATH, other variables), and those can change what the command does. The
+        approval card shows them; a rule doesn't look at them.
+      </div>
     </div>
   );
 }
