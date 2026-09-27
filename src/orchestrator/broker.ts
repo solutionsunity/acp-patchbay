@@ -17,9 +17,9 @@
 // given ruleset would answer the same way, so this is a UX rough edge
 // (a possible second "ask" for one logical edit under an "ask" rule), not a
 // correctness or security gap — accepted for v1.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import type {
   AgentViewEvent,
   ElicitationAnswer,
@@ -66,6 +66,27 @@ function patternToRegExp(pattern: string): RegExp {
 function isUnder(path: string, root: string): boolean {
   const normalizedRoot = root.endsWith(sep) ? root : root + sep;
   return path === root || path.startsWith(normalizedRoot);
+}
+
+/** Where a write to `path` lands: its deepest existing ancestor resolved
+ * the way the kernel walks it — every symlink and `..` — with the rest the
+ * write would create appended (nothing there yet to redirect it). Null when
+ * no location can be named: a relative path (ACP paths are absolute), a
+ * link to nowhere (the write would follow it wherever it points), or an
+ * ancestor that can't be walked. */
+async function landingOf(path: string): Promise<string | null> {
+  if (!isAbsolute(path)) return null;
+  const rest: string[] = [];
+  for (let head = path; ; head = dirname(head)) {
+    try {
+      return join(await realpath(head), ...rest);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null;
+      if (await lstat(head).then(() => true, () => false)) return null;
+    }
+    if (dirname(head) === head) return null;
+    rest.unshift(basename(head));
+  }
 }
 
 interface Pending {
@@ -145,7 +166,9 @@ export class PermissionBroker {
     private readonly rules: PermissionRulesStore,
     private readonly audit: DecisionAuditStore,
     private readonly hooks: BrokerHooks,
-    private readonly workspaceRoot: () => string | null,
+    /** The roots a session was given — where its writes may land
+     * without asking under the `workspace` scope. */
+    private readonly grantedRoots: (sessionId: string) => readonly string[],
     private readonly terminals: TerminalRunner = new NodeTerminalRunner(),
     /** Machine-layer command rules — absent in tests that don't exercise
      * layering; the workspace layer alone then behaves as before. */
@@ -167,13 +190,16 @@ export class PermissionBroker {
     return "ask"; // no matching rule in either layer — the safe default, never a silent allow
   }
 
-  evaluateFileWrite(path: string): RuleVerdict {
+  /** Allows only when every path lands inside a root the session was
+   * given (or the temp dir, under `workspace+temp`) — judged where the
+   * write lands, never by the text the agent sent. None named asks. */
+  async evaluateFileWrites(sessionId: string, paths: readonly string[]): Promise<RuleVerdict> {
     const { fileWriteScope } = this.rules.get();
-    if (fileWriteScope === "always-ask") return "ask";
-    const root = this.workspaceRoot();
-    if (root !== null && isUnder(path, root)) return "allow";
-    if (fileWriteScope === "workspace+temp" && isUnder(path, tmpdir())) return "allow";
-    return "ask";
+    if (fileWriteScope === "always-ask" || paths.length === 0) return "ask";
+    const scope = [...this.grantedRoots(sessionId), ...(fileWriteScope === "workspace+temp" ? [tmpdir()] : [])];
+    const roots = (await Promise.all(scope.map(landingOf))).filter((r) => r !== null);
+    const landings = await Promise.all(paths.map(landingOf));
+    return landings.every((l) => l !== null && roots.some((r) => isUnder(l, r))) ? "allow" : "ask";
   }
 
   /** The full texts of a write proposal still awaiting the user — null once
@@ -363,66 +389,58 @@ export class PermissionBroker {
   }
 
   /** The agent's own session/request_permission call — shown with exactly
-   * the options the agent offered. */
+   * the options the agent offered. An edit names its files in the tool
+   * call's `locations`, the one subject ACP guarantees, and is judged by
+   * all of them; any other kind carries nothing a rule can judge, so it
+   * asks. */
   async resolveAgentPermissionRequest(
     sessionId: string,
     toolTitle: string,
     toolKind: string,
-    subject: string | null,
+    locations: readonly string[],
     options: readonly PermissionOptionView[],
   ): Promise<{ optionId: string } | { cancelled: true }> {
-    const verdict =
-      toolKind === "execute" && subject !== null
-        ? this.evaluateCommand(subject)
-        : toolKind === "edit" && subject !== null
-          ? this.evaluateFileWrite(subject)
-          : ("ask" as RuleVerdict);
-
-    if (verdict !== "ask") {
-      const auto = options.find((o) => o.kind === (verdict === "allow" ? "allow_once" : "reject_once"));
+    const files = toolKind === "edit" ? locations : [];
+    const blockId = newBlockId("perm");
+    // The place is held before the judge reads the disk: a turn stopped
+    // meanwhile answers this request too, before any card was shown.
+    const decided = this.awaitOption(blockId, sessionId);
+    const verdict = await this.evaluateFileWrites(sessionId, files);
+    const shown = this.pending.has(blockId);
+    if (shown) {
+      const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
       if (auto !== undefined) {
-        await this.writeAudit({
-          kind: verdict === "allow" ? "auto-allow" : "auto-deny",
-          sessionId,
-          tool: toolTitle,
-          subject,
-        });
+        this.pending.delete(blockId);
+        await this.writeAudit({ kind: "auto-allow", sessionId, tool: toolTitle, files });
         return { optionId: auto.optionId };
       }
+      this.hooks.emit({
+        kind: "permissionRequested",
+        sessionId,
+        blockId,
+        title: toolTitle,
+        detail: files.length > 0 ? files.join(", ") : toolTitle,
+        options,
+      });
     }
-
-    const blockId = newBlockId("perm");
-    const detail = subject ?? toolTitle;
-    this.hooks.emit({
-      kind: "permissionRequested",
-      sessionId,
-      blockId,
-      title: toolTitle,
-      detail,
-      options,
-    });
-    const optionId = await this.awaitOption(blockId, sessionId);
+    const optionId = await decided;
     if (optionId === TURN_CANCELLED) {
       // The card resolves visibly — an open question the user can no longer
       // answer must not keep looking open.
-      this.hooks.emit({
-        kind: "permissionResolved",
-        sessionId,
-        blockId,
-        label: "Cancelled — turn stopped",
-        auto: true,
-      });
-      await this.writeAudit({ kind: "turn-cancelled", sessionId, tool: toolTitle, subject });
+      if (shown) {
+        this.hooks.emit({
+          kind: "permissionResolved",
+          sessionId,
+          blockId,
+          label: "Cancelled — turn stopped",
+          auto: true,
+        });
+      }
+      await this.writeAudit({ kind: "turn-cancelled", sessionId, tool: toolTitle, files });
       return { cancelled: true };
     }
     const chosen = options.find((o) => o.optionId === optionId);
     if (chosen === undefined) return { cancelled: true };
-    // "always" has a rule shape only for commands — file-write "always" would
-    // need a per-path rule kind v1 doesn't have; fileWriteScope is the only lever there.
-    if (toolKind === "execute" && subject !== null) {
-      if (chosen.kind === "allow_always") await this.persistCommandRule(subject, "allow");
-      if (chosen.kind === "reject_always") await this.persistCommandRule(subject, "deny");
-    }
     this.hooks.emit({
       kind: "permissionResolved",
       sessionId,
@@ -434,15 +452,15 @@ export class PermissionBroker {
       kind: `user-${chosen.kind}`,
       sessionId,
       tool: toolTitle,
-      subject,
+      files,
     });
     return { optionId };
   }
 
-  private async persistCommandRule(pattern: string, verdict: RuleVerdict): Promise<void> {
+  private async persistAllowRule(pattern: string): Promise<void> {
     await this.rules.set({
       ...this.rules.get(),
-      commandRules: [...this.rules.get().commandRules, { pattern, verdict }],
+      commandRules: [...this.rules.get().commandRules, { pattern, verdict: "allow" }],
     });
   }
 
@@ -453,15 +471,22 @@ export class PermissionBroker {
     path: string,
     newContent: string,
   ): Promise<GateOutcome> {
+    const blockId = newBlockId("diff");
+    // The place is held before the gate reads the disk: a turn stopped
+    // meanwhile answers this write too, before any card was shown.
+    const decided = this.awaitOption(blockId, sessionId);
     let oldContent = "";
     try {
       oldContent = await readFile(path, "utf8");
     } catch {
       // new file — diff against empty, honestly showing an all-additions diff
     }
+    const verdict = await this.evaluateFileWrites(sessionId, [path]);
+    if (!this.pending.has(blockId)) {
+      await this.writeAudit({ kind: "turn-cancelled", sessionId, file: path });
+      return "cancelled";
+    }
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
-    const blockId = newBlockId("diff");
-    const verdict = this.evaluateFileWrite(path);
 
     this.hooks.emit({
       kind: "diffProposed",
@@ -474,13 +499,14 @@ export class PermissionBroker {
     });
 
     if (verdict === "allow") {
+      this.pending.delete(blockId);
       this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted: true, auto: true });
       await this.writeAudit({ kind: "auto-allow", sessionId, file: path });
       return "accepted";
     }
 
     this.proposals.set(blockId, { path, oldText: oldContent, newText: newContent });
-    const optionId = await this.awaitOption(blockId, sessionId);
+    const optionId = await decided;
     this.proposals.delete(blockId);
     const cancelled = optionId === TURN_CANCELLED;
     const accepted = optionId === "accept";
@@ -522,7 +548,7 @@ export class PermissionBroker {
     const cancelled = optionId === TURN_CANCELLED;
     const chosen = STANDARD_OPTIONS.find((o) => o.optionId === optionId);
     const accepted = chosen?.kind === "allow_once" || chosen?.kind === "allow_always";
-    if (chosen?.kind === "allow_always") await this.persistCommandRule(command, "allow");
+    if (chosen?.kind === "allow_always") await this.persistAllowRule(command);
     this.hooks.emit({
       kind: "permissionResolved",
       sessionId,

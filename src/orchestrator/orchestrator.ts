@@ -162,9 +162,6 @@ export class Orchestrator {
   /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
   readonly oauthCallbacks = new OAuthCallbackRegistry();
 
-  /** The first workspace folder, absent when no folder is open — the
-   * permission broker's write scope (nothing is workspace-scoped then). */
-  private readonly workspaceRoot: string | null;
   /** The one directory this window's work runs in: agents spawn here (and
    * their stdio MCP children inherit it), sessions open here, integration
    * probes execute here, relative asset paths resolve here. The process
@@ -230,9 +227,7 @@ export class Orchestrator {
     context: vscode.ExtensionContext,
     private readonly log: vscode.LogOutputChannel,
   ) {
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-    this.workspaceRoot = workspaceRoot;
-    this.workspaceCwd = workspaceRoot ?? process.cwd();
+    this.workspaceCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
     this.integrationBridgeScriptPath = vscode.Uri.joinPath(
       context.extensionUri,
@@ -527,13 +522,11 @@ export class Orchestrator {
             ? { outcome: { outcome: "cancelled" as const } }
             : { outcome: { outcome: "selected" as const, optionId: auto.optionId } };
         }
-        const subject =
-          params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
         const result = await this.broker.resolveAgentPermissionRequest(
           params.sessionId,
           title,
           params.toolCall.kind ?? "other",
-          subject,
+          params.toolCall.locations?.map((l) => l.path) ?? [],
           options,
         );
         // A rejected request marks its tool-call block denied — "blocked by
@@ -790,7 +783,7 @@ export class Orchestrator {
         onAuditWritten: () => void this.refreshAuditTail(),
         openLink: (href) => void openInBrowser(href),
       },
-      () => this.workspaceRoot,
+      (sessionId) => this.sessionManager.grantedRoots(sessionId),
       undefined, // default NodeTerminalRunner
       this.machinePermissionRules,
     );

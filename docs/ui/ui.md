@@ -303,7 +303,8 @@ tightening or loosening) and *this machine* (the fallback floor for every worksp
 — consulted only where the workspace layer stays silent; no rule anywhere means
 ask). File-write scope radios (workspace only / + temp / always ask) with the note
 that writes surface as diffs regardless — file-write scope has no machine layer,
-it's defined relative to the current workspace root. The placement statement in
+it's defined relative to the session's granted roots (every workspace folder plus
+the roots added to the session), judged by where a write lands. The placement statement in
 green: **workspace rules and machine rules live in developer-owned storage, never
 in the repo either way; a cloned repository cannot arrive pre-authorized.** Decision
 audit: recent entries, mono, append-only. Last card: **Disconnect & erase all

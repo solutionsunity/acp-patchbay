@@ -1,5 +1,5 @@
 // P6 gate: automated broker tests — rule precedence, audit trail.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,9 +11,14 @@ import type { AgentViewEvent } from "../src/shared/protocol";
 
 let dir: string;
 let workspaceRoot: string;
+/** The roots the session under test was granted — the workspace alone
+ * unless a test hands it more. */
+let granted: string[];
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "patchbay-broker-"));
   workspaceRoot = join(dir, "workspace");
+  await mkdir(workspaceRoot);
+  granted = [workspaceRoot];
 });
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
@@ -32,7 +37,7 @@ function harness() {
       onAuditWritten: () => auditRefreshes++,
       openLink: (href) => opened.push(href),
     },
-    () => workspaceRoot,
+    () => granted,
     undefined,
     machineRules,
   );
@@ -105,27 +110,112 @@ describe("PermissionBroker.evaluateCommand", () => {
   });
 });
 
-describe("PermissionBroker.evaluateFileWrite", () => {
-  it("allows paths under the workspace root", () => {
+describe("PermissionBroker.evaluateFileWrites", () => {
+  it("allows paths under the workspace root", async () => {
     const { broker } = harness();
-    expect(broker.evaluateFileWrite(join(workspaceRoot, "src", "a.ts"))).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "src", "a.ts")])).toBe("allow");
   });
 
-  it("asks for paths outside the workspace by default", () => {
+  it("asks for paths outside the workspace by default", async () => {
     const { broker } = harness();
-    expect(broker.evaluateFileWrite("/etc/passwd")).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1", ["/etc/passwd"])).toBe("ask");
   });
 
   it("workspace+temp also allows the system temp dir", async () => {
     const { broker, rules } = harness();
     await rules.set({ commandRules: [], fileWriteScope: "workspace+temp" });
-    expect(broker.evaluateFileWrite(join(tmpdir(), "scratch.txt"))).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1", [join(tmpdir(), "scratch.txt")])).toBe("allow");
   });
 
   it("always-ask overrides everything, even inside the workspace", async () => {
     const { broker, rules } = harness();
     await rules.set({ commandRules: [], fileWriteScope: "always-ask" });
-    expect(broker.evaluateFileWrite(join(workspaceRoot, "a.ts"))).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts")])).toBe("ask");
+  });
+
+  // Judged where the write lands, never by the text the agent sent
+  // (issue #56).
+  it("a `..` that climbs out of the workspace asks — through existing folders and ones the write would create", async () => {
+    const { broker } = harness();
+    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/../escaped.txt`])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/new/../../escaped.txt`])).toBe("ask");
+    // a `..` that stays inside is still inside
+    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/new/../a.ts`])).toBe("allow");
+  });
+
+  it("a symlink inside the workspace that points outside asks — and so does a link to nowhere", async () => {
+    const { broker } = harness();
+    await mkdir(join(dir, "elsewhere"));
+    await symlink(join(dir, "elsewhere"), join(workspaceRoot, "link"));
+    await symlink(join(dir, "nowhere.txt"), join(workspaceRoot, "dangling"));
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "link", "x.txt")])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "dangling")])).toBe("ask");
+  });
+
+  it("a workspace opened through a symlink is its real folder, whichever spelling the agent uses", async () => {
+    const { broker } = harness();
+    await symlink(workspaceRoot, join(dir, "ws-link"));
+    granted = [join(dir, "ws-link")];
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1", [join(dir, "ws-link", "a.ts")])).toBe("allow");
+  });
+
+  it("a relative path names no location — it asks", async () => {
+    const { broker } = harness();
+    expect(await broker.evaluateFileWrites("s1", ["a.ts"])).toBe("ask");
+  });
+
+  it("every path must land inside: one outside, or none named, asks", async () => {
+    const { broker } = harness();
+    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts"), "/etc/passwd"])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1", [])).toBe("ask");
+  });
+
+  it("every root the session was granted counts — not only the first", async () => {
+    const { broker } = harness();
+    const second = join(dir, "second");
+    await mkdir(second);
+    granted = [workspaceRoot, second];
+    expect(await broker.evaluateFileWrites("s1", [join(second, "b.ts")])).toBe("allow");
+  });
+});
+
+describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged by every location it names", () => {
+  const options = [
+    { optionId: "y", label: "Allow", kind: "allow_once" as const },
+    { optionId: "n", label: "Reject", kind: "reject_once" as const },
+  ];
+
+  it("auto-allows only when every location lands inside", async () => {
+    const { broker, events } = harness();
+    const inside = [join(workspaceRoot, "a.ts"), join(workspaceRoot, "b.ts")];
+    await expect(broker.resolveAgentPermissionRequest("s1", "Edit", "edit", inside, options)).resolves.toEqual({
+      optionId: "y",
+    });
+    expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
+  });
+
+  it("only an edit is judged by its locations — any other kind asks, even when every one is inside", async () => {
+    const { broker, events } = harness();
+    const pending = broker.resolveAgentPermissionRequest("s1", "Delete", "delete", [join(workspaceRoot, "a.ts")], options);
+    await new Promise((r) => setTimeout(r, 20));
+    const asked = events.find((e) => e.kind === "permissionRequested");
+    if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
+    expect(asked.detail).toBe("Delete");
+    broker.resolve(asked.blockId, "n");
+    await expect(pending).resolves.toEqual({ optionId: "n" });
+  });
+
+  it("a first location inside never carries a later one outside — it asks, naming both", async () => {
+    const { broker, events } = harness();
+    const mixed = [join(workspaceRoot, "a.ts"), `${workspaceRoot}/../escaped.txt`];
+    const pending = broker.resolveAgentPermissionRequest("s1", "Edit", "edit", mixed, options);
+    await new Promise((r) => setTimeout(r, 20));
+    const asked = events.find((e) => e.kind === "permissionRequested");
+    if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
+    expect(asked.detail).toBe(mixed.join(", "));
+    broker.resolve(asked.blockId, "n");
+    await expect(pending).resolves.toEqual({ optionId: "n" });
   });
 });
 
@@ -185,12 +275,16 @@ describe("PermissionBroker audit trail", () => {
     const { broker, events, audit } = harness();
     // an agent permission request and a command gate, both pending on s1;
     // an unrelated session's request must survive the sweep
-    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit file", "edit", null, [
+    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit file", "edit", [], [
       { optionId: "y", label: "Allow", kind: "allow_once" },
       { optionId: "n", label: "Reject", kind: "reject_once" },
     ]);
     const commandGate = broker.gateCommand("s1", "curl example.com");
     const otherSession = broker.gateCommand("s2", "npm run lint");
+    // the agent's request is judged before its card shows
+    for (let i = 0; i < 50 && events.filter((e) => e.kind === "permissionRequested").length < 3; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
 
     broker.cancelPending("s1");
     await expect(agentReq).resolves.toEqual({ cancelled: true });
@@ -210,6 +304,19 @@ describe("PermissionBroker audit trail", () => {
     if (s2Req?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(s2Req.blockId, "allow_once");
     await expect(otherSession).resolves.toBe("accepted");
+  });
+
+  it("a turn stopped while a request is still being judged answers it cancelled — no card, never a dangling request", async () => {
+    const { broker, events, audit } = harness();
+    const options = [{ optionId: "y", label: "Allow", kind: "allow_once" as const }];
+    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit", "edit", [join(workspaceRoot, "a.ts")], options);
+    const write = broker.gateFileWrite("s1", join(workspaceRoot, "b.ts"), "x");
+    broker.cancelPending("s1"); // before either judge has read the disk
+    await expect(agentReq).resolves.toEqual({ cancelled: true });
+    await expect(write).resolves.toBe("cancelled");
+    expect(events).toEqual([]);
+    const tail = await audit.tail(10);
+    expect(tail.filter((e) => e.kind === "turn-cancelled")).toHaveLength(2);
   });
 
   it("allow_always persists a new rule so the next call auto-allows", async () => {

@@ -54,7 +54,7 @@ export type TurnStep =
   | { type: "writeFile"; path: string; content: string }
   | { type: "readFile"; path: string }
   | { type: "runCommand"; command: string; args?: string[] }
-  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string }
+  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string | string[] }
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
   | { type: "echoRoots" }
@@ -370,19 +370,20 @@ async function runTurn(
         break;
       }
       case "askPermission": {
-        // "edit" carries its path via the standard `locations` field — the
+        // "edit" carries its paths via the standard `locations` field — the
         // one subject shape ACP actually guarantees. "execute" has no
         // equivalent standard field for the command string, so a real
         // agent's own permission ask can't be rule-matched reliably; the
         // honest broker behavior is to always ask for those (enforcement
         // happens for real at patchbay's own terminal/create gate instead).
+        const locations: acp.ToolCallLocation[] = [step.subject].flat().map((path) => ({ path }));
         const response = await cx.request(acp.methods.client.session.requestPermission, {
           sessionId,
           toolCall: {
             toolCallId: `ask-${sessionId}`,
             title: step.title,
             kind: step.kind,
-            locations: step.kind === "edit" ? [{ path: step.subject }] : undefined,
+            locations: step.kind === "edit" ? locations : undefined,
           },
           options: [
             { optionId: "allow_once", name: "Allow once", kind: "allow_once" },

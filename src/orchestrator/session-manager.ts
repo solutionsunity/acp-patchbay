@@ -1629,6 +1629,15 @@ export class SessionManager {
     return [cwd, ...this.rootsFor(sessionId, cwd).filter((p) => this.onDisk(p))];
   }
 
+  /** The roots the session was given: its root list, minus a cwd no
+   * workspace folder backs — with no folder open the session still runs
+   * somewhere, but nobody handed the agent that place. What "inside the
+   * workspace" means to the write scope. */
+  grantedRoots(sessionId: string): string[] {
+    const roots = this.rootsOf(sessionId);
+    return (this.hooks.workspaceRoots?.() ?? []).includes(this.cwd()) ? roots : roots.slice(1);
+  }
+
   /** A workspace folder was added or removed: every live session's wire
    * list is re-applied, the same rung a user-added root takes. Without
    * this the chip would update from reality while the agent kept the old

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Security:** a write the agent sent to a path that only looked like it was
+  inside the workspace no longer skips the prompt. The scope compared path
+  text, so `/ws/../etc/x` and a symlink in the workspace that points outside
+  it were auto-accepted, and an agent's own edit request was judged by its
+  first file alone. Writes are now judged by where they actually land, and
+  an edit request by every file it names. "Workspace" now also covers every
+  folder of a multi-root workspace and the roots added to the session, which
+  used to ask. (#56)
+
 ## 0.84.0 — 2026-09-26
 
 13 enhancements, 17 fixes, one removal, plus a documentation refresh and

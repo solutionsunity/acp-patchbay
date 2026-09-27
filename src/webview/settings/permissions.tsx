@@ -138,8 +138,9 @@ export function PermissionsSection(props: {
           ))}
         </RadioGroup>
         <div className="note">
-          writes surface as diffs either way — auto-accept only changes who clicks, not what is
-          visible
+          workspace means every workspace folder and every root added to the session, judged by
+          where a write lands — links and <code>..</code> followed. Writes surface as diffs either
+          way — auto-accept only changes who clicks, not what is visible
         </div>
       </div>
 

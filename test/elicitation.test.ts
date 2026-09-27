@@ -274,7 +274,7 @@ function wireHarness() {
     new PermissionRulesStore(new MemoryKV()),
     new DecisionAuditStore(dir),
     { emit: (...evs) => events.push(...evs), onAuditWritten: () => {}, openLink: (href) => opened.push(href) },
-    () => dir,
+    () => [dir],
   );
   let sessionManager!: SessionManager;
   const pool = new AgentPool({

@@ -1500,6 +1500,23 @@ describe("SessionManager", () => {
     await h.pool.stop("sm28n");
   });
 
+  // The write scope's "inside the workspace" (issue #56): the session's own
+  // root list, minus a cwd no folder backs.
+  it("granted roots: every workspace folder and the session's own roots — a cwd no folder backs is not one", async () => {
+    const h = harness({ workspaceRoots: [cwd, "/repo/second"] });
+    await h.pool.connect(spec({ declare: ROOTS_CAPS }, "sm56"));
+    const sessionId = await h.sessionManager.createSession("sm56", "Fake Agent", cwd);
+    await h.sessionManager.addRoot(sessionId, "/repo/backend");
+    const current = h.state().activeSessionId!;
+    expect(h.sessionManager.grantedRoots(current)).toEqual([cwd, "/repo/second", "/repo/backend"]);
+
+    // no folder open: the session still runs somewhere, but nobody handed
+    // the agent that place
+    h.workspaceRoots.splice(0);
+    expect(h.sessionManager.grantedRoots(current)).toEqual(["/repo/backend"]);
+    await h.pool.stop("sm56");
+  });
+
   // Saved roots (issue #32): a preference that shapes a session's birth and
   // nothing after — the session owns its list from then on.
   it("saved roots seed a new session: sent at session/new, then the session's own list — each once, never what it already has (issue #32)", async () => {

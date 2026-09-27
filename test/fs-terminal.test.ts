@@ -63,7 +63,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     rules,
     audit,
     { emit: (...evs) => events.push(...evs), onAuditWritten: () => {} },
-    () => workspaceRoot,
+    (sessionId) => sessionManager.grantedRoots(sessionId),
   );
 
   let sessionManager!: SessionManager;
@@ -74,13 +74,11 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     onCapabilityEvidence: (_agentId, row, ev) => evidence.push(`${row}:${ev}`),
     ...clientRequestHooks(() => host),
     onPermissionRequest: async (_agentId, params) => {
-      const subject =
-        params.toolCall.kind === "edit" ? (params.toolCall.locations?.[0]?.path ?? null) : null;
       const result = await broker.resolveAgentPermissionRequest(
         params.sessionId,
         params.toolCall.title ?? "Permission request",
         params.toolCall.kind ?? "other",
-        subject,
+        params.toolCall.locations?.map((l) => l.path) ?? [],
         optionViewsFromAcp(params.options),
       );
       return "cancelled" in result
@@ -91,7 +89,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
 
   sessionManager = new SessionManager(
     pool,
-    { emit: (...evs) => events.push(...evs) },
+    { emit: (...evs) => events.push(...evs), workspaceRoots: () => [workspaceRoot] },
     () => workspaceRoot,
   );
   // The extension's own handlers; only the live-buffer read/write differ
@@ -173,6 +171,22 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       auto: false,
     });
     await h.pool.stop("w2");
+  });
+
+  it("a write whose path climbs out of the workspace with `..` asks — judged where it lands (issue #56)", async () => {
+    const h = harness();
+    const escaping = `${workspaceRoot}/../escaped.txt`;
+    await h.pool.connect(spec({ turn: [{ type: "writeFile", path: escaping, content: "x\n" }] }, "w2e"));
+    const sessionId = await h.sessionManager.createSession("w2e", "Fake Agent", workspaceRoot);
+
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
+    const diffBlock = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
+    expect(diffBlock.kind === "diff" && diffBlock.resolution).toBeNull(); // waiting on the user, not auto-accepted
+    h.broker.resolve(diffBlock.id, "reject");
+    await turn;
+    await expect(readFile(join(dir, "escaped.txt"), "utf8")).rejects.toThrow();
+    await h.pool.stop("w2e");
   });
 
   it("a write whose turn stops before the user decides is answered cancelled, not rejected", async () => {
@@ -301,6 +315,22 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     // auto-resolved — no card should have been shown
     expect(h.state().transcripts[sessionId]!.some((b) => b.kind === "permission")).toBe(false);
     await h.pool.stop("p1");
+  });
+
+  it("the agent's own edit request asks when any location lands outside — not only the first is judged (issue #56)", async () => {
+    const h = harness();
+    const locations = [join(workspaceRoot, "cfg.json"), join(dir, "outside.txt")];
+    await h.pool.connect(
+      spec({ turn: [{ type: "askPermission", title: "Edit two", kind: "edit", subject: locations }] }, "p1m"),
+    );
+    const sessionId = await h.sessionManager.createSession("p1m", "Fake Agent", workspaceRoot);
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
+    const card = h.state().transcripts[sessionId]!.find((b) => b.kind === "permission")!;
+    h.broker.resolve(card.id, "reject_once");
+    await turn;
+    expect(textOf(sessionId, h.events)).toContain("permission: reject_once");
+    await h.pool.stop("p1m");
   });
 
   it("the agent's own session/request_permission for execute always asks (no reliable subject)", async () => {

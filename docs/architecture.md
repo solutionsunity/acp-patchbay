@@ -798,7 +798,14 @@ The differentiator (the PRD's current-release scope), shipped complete:
   capability, so `fs/read_text_file` serves live unsaved buffers and
   `fs/write_text_file` lands as a native diff the user accepts or rejects before
   disk is touched. Permission rules (file-write scope) can auto-accept; the diff
-  remains visible either way. Every "no" on the client side — a rejected write
+  remains visible either way. The scope is judged by where a write lands — the
+  deepest existing ancestor resolved through symlinks and `..`, the rest
+  appended; a relative path or a link to nowhere names no place and asks —
+  against every root the session was given (workspace folders plus added
+  roots; a fallback cwd with no folder open is not one). An agent's own edit
+  request is judged by every location it names; one outside asks. The gate
+  holds its pending slot before it reads the disk, so a turn stopped mid-judge
+  still answers the request. Every "no" on the client side — a rejected write
   or command, a turn stopped under an open card, a missing file — is answered
   from one place (`client-replies.ts`) with the code that says what happened;
   a refusal still proves the capability used, since the path fired.
@@ -956,7 +963,11 @@ supplies each agent in its own standard — and ACP carries no channel for it
   tool calls, and terminal execution all route through the same broker evaluating
   the same command allowlists and file-write scopes from `workspaceState`.
   A second, differently-scrutinized approval surface is exactly what a malicious
-  prompt would target.
+  prompt would target. An agent's own `session/request_permission` is judged only
+  when it is an edit — by the file-write scope over every location it names;
+  ACP gives an execute request no command field a rule could match, so it always
+  asks, and command rules apply where the command actually runs
+  (`terminal/create`).
 - **Rules never ride the repo.** Agent and integration configs are global,
   developer-owned stores — nothing config-shaped lives in the repo at all, so
   no repo-authored launch command exists to adopt.
