@@ -1,7 +1,7 @@
 // Issue #41: a tool call's location opens in the real editor at the line the
 // agent named — cursor on that line's first non-blank character — clamped
 // into the file, and a directory location never opens as a folder.
-import { waitFor } from "./wait-for";
+import { focusNote, waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +23,9 @@ async function internal(): Promise<Internal> {
  * [line, character]. `vscode.open` makes the editor active before it
  * applies the selection, so the first sight of the file can still carry
  * the cursor at the top — the wait is for the position asserted, and a
- * timeout names the last one seen. */
+ * timeout names the last one seen. A file that never becomes the active
+ * editor is the window lacking focus (VS Code moves the active editor only
+ * in a focused window), and the failure says so. */
 async function assertCursor(path: string, line: number, character: number): Promise<void> {
   let seen: [number, number] | null = null;
   await waitFor(() => {
@@ -31,7 +33,12 @@ async function assertCursor(path: string, line: number, character: number): Prom
     if (editor?.document.uri.fsPath !== path) return undefined;
     seen = [editor.selection.active.line, editor.selection.active.character];
     return seen[0] === line && seen[1] === character ? true : undefined;
-  }).catch(() => assert.deepStrictEqual(seen, [line, character], `cursor in ${path}`));
+  }).catch(() => {
+    if (seen === null) {
+      assert.fail(`${path} never became the active editor${focusNote()}`);
+    }
+    assert.deepStrictEqual(seen, [line, character], `cursor in ${path}`);
+  });
 }
 
 suite("open a tool-call location (issue #41)", () => {
