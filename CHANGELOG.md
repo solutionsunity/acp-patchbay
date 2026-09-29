@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.84.1 — 2026-09-29
+
+Two security fixes and two bug fixes.
 
 - **Security:** a write the agent sent to a path that only looked like it was
   inside the workspace no longer skips the prompt. The scope compared path
@@ -10,6 +12,22 @@
   an edit request by every file it names. "Workspace" now also covers every
   folder of a multi-root workspace and the roots added to the session, which
   used to ask. (#56)
+- **Security:** downloads are now checked against their published SHA-256
+  before anything is installed or run. An agent downloaded from the ACP
+  registry is checked against the digest its registry entry publishes (10
+  of the registry's 19 binary agents publish one today), and the Node.js or
+  uv that patchbay downloads when the system has none is checked against
+  the digest its publisher lists. A download that doesn't match is retried
+  once, then the connect fails naming both digests. The download prompt
+  now says whether the download will be checked, and when it can't be,
+  why: nothing published, or the registry couldn't be reached. It used to
+  say the registry publishes no checksum at all. (#54)
+- The agent registry is now read when it matters — at startup, a new
+  session, opening Settings, and right before a download — instead of on a
+  12-hour timer, and costs almost nothing when unchanged. A registry read
+  that fails is logged with its reason instead of silently leaving an
+  outdated list in place; a failed OAuth discovery request now fails the
+  connect with its reason instead of quietly trying a fallback server. (#54)
 - A command's approval card now shows everything that will run: the
   directory and each environment variable the agent sets, and arguments
   keep their boundaries (`rm "a b"` no longer reads as `rm a b`). A value
@@ -24,22 +42,6 @@
   session's directory — the one the agent was told it works in — instead
   of the editor's own process directory. A relative directory, which the
   protocol rules out, is refused. (#64)
-- **Security:** downloads are now checked against their published SHA-256
-  before anything is installed or run. An agent downloaded from the ACP
-  registry is checked against the digest its registry entry publishes (10
-  of the registry's 19 binary agents publish one today), and the Node.js or
-  uv that patchbay downloads when the system has none is checked against
-  the digest its publisher lists. A download that doesn't match is retried
-  once, then the connect fails naming both digests. The download prompt
-  now says whether the download will be checked, and when it can't be,
-  why: nothing published, or the registry couldn't be reached. It used to
-  say the registry publishes no checksum at all.
-- The agent registry is now read when it matters — at startup, a new
-  session, opening Settings, and right before a download — instead of on a
-  12-hour timer, and costs almost nothing when unchanged. A registry read
-  that fails is logged with its reason instead of silently leaving an
-  outdated list in place; a failed OAuth discovery request now fails the
-  connect with its reason instead of quietly trying a fallback server. (#54)
 
 ## 0.84.0 — 2026-09-26
 
