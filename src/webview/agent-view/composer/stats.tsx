@@ -9,7 +9,8 @@
 // all.
 import type { PlanUsageInfo, PreferencesView, UsageInfo } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
-import { count, type SessionTotals } from "../chat/view-model";
+import { count } from "../../../shared/count";
+import type { SessionTotals } from "../chat/view-model";
 
 /** Known plan-window tags → short labels; an unknown tag renders raw
  * (labels are UX-only, never gating). Unqualified windows are

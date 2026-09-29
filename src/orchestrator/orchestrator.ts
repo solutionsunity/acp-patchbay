@@ -44,6 +44,7 @@ import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
+import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
@@ -63,8 +64,8 @@ import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
 import { listDoneSounds, playDoneSound } from "./sound";
 import {
-  type AcpRegistryData,
   AcpRegistryStore,
+  binaryDigestFor,
   type RegistryAgent,
   registryAgentView,
   resolveDistribution,
@@ -74,7 +75,7 @@ import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
 import { resolvedBinaryPath } from "./stores/binary-installer";
-import { resolveLaunch, runtimeName, type DownloadAsk } from "./runtime-resolver";
+import { resolveLaunch, runtimeName, type DownloadAsk, type DownloadCheck } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { FileKV } from "./stores/file-kv";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
@@ -100,6 +101,14 @@ import { editorLineOf } from "./tool-locations";
  * every id unique for the process's lifetime, which is exactly a chip's. */
 let chipSeq = 0;
 const chipId = () => `chip-${Date.now()}-${chipSeq++}`;
+
+/** What the download prompt says of the check — only what is known: held
+ * to a published digest, nothing published, or the registry unreadable. */
+const DOWNLOAD_CHECK_TEXT: Record<DownloadCheck, string> = {
+  sha256: "The download is checked against its published SHA-256.",
+  "none-published": "No SHA-256 is published for it, so the download can't be checked.",
+  "registry-unreachable": "The ACP registry couldn't be reached for its SHA-256, so the download can't be checked.",
+};
 
 /** A web page in the system browser — outside the editor, so neither
  * patchbay nor an agent's model sees the page or what the user types. The
@@ -144,9 +153,6 @@ export class Orchestrator {
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
   readonly sessionContinuity: SessionContinuityStore;
-  /** The current ACP registry snapshot (agents + icons) — replaced whenever
-   * the registry refreshes; every agent lookup elsewhere reads this. */
-  private registryData: AcpRegistryData = { fetchedAt: "", agents: [], icons: {} };
   /** The update fact as last published, and the updates already announced
    * this window ("agentId@version") — each newer version is told once. */
   private updates: Readonly<Record<string, AgentUpdate>> = {};
@@ -351,10 +357,11 @@ export class Orchestrator {
       join(context.globalStorageUri.fsPath, "registry"),
       // A fetch that landed is the registry's fresh word — the moment a
       // newer version becomes news (the cached copy at start is not).
-      (data) => {
-        this.applyRegistryData(data);
+      () => {
+        this.publishRegistry();
         void this.announceUpdates();
       },
+      log,
     );
 
     // Wire log: sink is lazy (no empty Output channel for a feature never
@@ -559,6 +566,9 @@ export class Orchestrator {
           log: this.log,
           onPhase,
           confirmDownload: (ask) => this.confirmDownload(ask),
+          digestFor: (agentId, version, pinned) =>
+            binaryDigestFor(this.acpRegistry.current().agents, agentId, version, pinned),
+          refreshRegistry: async () => (await this.acpRegistry.refresh("download")).ok,
         }),
     });
     this.editorStateHost = new EditorStateHost(String(process.pid), {
@@ -773,7 +783,8 @@ export class Orchestrator {
     // The editor's sessions exist only to serve the open panel — they end
     // with it.
     this.settings.onAttachment((attached) => {
-      if (!attached) void this.defaultsEditor.closeAll();
+      if (attached) void this.acpRegistry.refresh("settings");
+      else void this.defaultsEditor.closeAll();
     });
     this.broker = new PermissionBroker(
       this.permissionRules,
@@ -809,7 +820,10 @@ export class Orchestrator {
     void this.refreshAuditTail();
     this.loadAgentConfigs();
     void this.integrations.refresh();
-    void this.acpRegistry.start().then((cached) => this.applyRegistryData(cached));
+    void this.acpRegistry.load().then(() => {
+      this.publishRegistry();
+      void this.acpRegistry.refresh("startup");
+    });
 
     // Projections of canonical Agent View state via ChannelHost.onChange —
     // the status bar (native surface, no webview in the path) and the
@@ -1099,7 +1113,7 @@ export class Orchestrator {
    * same `connectFromSource` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
-      ...this.registryData.agents
+      ...this.acpRegistry.current().agents
         .filter((a) => !("error" in resolveDistribution(a)))
         .map((a) => ({ label: a.name, registryId: a.id as string | undefined })),
       { label: "Custom command…", registryId: undefined as string | undefined },
@@ -1800,7 +1814,6 @@ export class Orchestrator {
    * every request, never cached (reality is the source of truth). Counts
    * only — never values. */
   private async publishDataInventory(): Promise<void> {
-    const n = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
     const agentConfigs = this.agentConfigs.list();
     const agentEnvCount = (await Promise.all(agentConfigs.map((c) => this.agentEnv.get(c.id)))).reduce(
       (sum, env) => sum + Object.keys(env).length,
@@ -1817,11 +1830,11 @@ export class Orchestrator {
     const rules = this.permissionRules.get();
     const machineRules = this.machinePermissionRules.get();
     const rows: DataInventoryRow[] = [
-      { id: "agent-configs", label: "Agent configs", placement: "globalStorage file", detail: n(agentConfigs.length, "agent") },
-      { id: "integration-configs", label: "MCP server configs", placement: "globalStorage file", detail: n(integrations.length, "server") },
-      { id: "used-capabilities", label: "Used-capability cache", placement: "globalStorage file", detail: n(this.usedCapabilities.list().length, "agent record") },
-      { id: "machine-rules", label: "Command rules — this machine", placement: "globalStorage file", detail: n(machineRules.commandRules.length, "rule") },
-      { id: "spawn-registry", label: "Spawn registry", placement: "globalStorage file", detail: n(this.spawnRegistry.list().length, "process record") },
+      { id: "agent-configs", label: "Agent configs", placement: "globalStorage file", detail: count(agentConfigs.length, "agent") },
+      { id: "integration-configs", label: "MCP server configs", placement: "globalStorage file", detail: count(integrations.length, "server") },
+      { id: "used-capabilities", label: "Used-capability cache", placement: "globalStorage file", detail: count(this.usedCapabilities.list().length, "agent record") },
+      { id: "machine-rules", label: "Command rules — this machine", placement: "globalStorage file", detail: count(machineRules.commandRules.length, "rule") },
+      { id: "spawn-registry", label: "Spawn registry", placement: "globalStorage file", detail: count(this.spawnRegistry.list().length, "process record") },
       {
         id: "preferences",
         label: "Preferences",
@@ -1833,22 +1846,22 @@ export class Orchestrator {
           return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${stats}/4 shown`;
         })(),
       },
-      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalStorage file", detail: n(this.composerKnobs.count(), "agent record") },
+      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalStorage file", detail: count(this.composerKnobs.count(), "agent record") },
       {
         id: "secrets",
         label: "Credentials & env values",
         placement: "SecretStorage",
-        detail: `${n(agentEnvCount + integrationEnvCount, "env value")} · ${n(tokenCount, "OAuth token")}`,
+        detail: `${count(agentEnvCount + integrationEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`,
       },
       {
         id: "workspace-rules",
         label: "Command rules & file-write scope — this workspace",
         placement: "workspaceState",
-        detail: `${n(rules.commandRules.length, "rule")} · scope: ${rules.fileWriteScope}`,
+        detail: `${count(rules.commandRules.length, "rule")} · scope: ${rules.fileWriteScope}`,
       },
-      { id: "machine-saved-roots", label: "Saved roots — every workspace", placement: "globalStorage file", detail: n(this.machineSavedRoots.list().length, "folder") },
-      { id: "workspace-saved-roots", label: "Saved roots — this workspace", placement: "workspaceState", detail: n(this.workspaceSavedRoots.list().length, "folder") },
-      { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: n(await this.decisionAudit.count(), "entry") },
+      { id: "machine-saved-roots", label: "Saved roots — every workspace", placement: "globalStorage file", detail: count(this.machineSavedRoots.list().length, "folder") },
+      { id: "workspace-saved-roots", label: "Saved roots — this workspace", placement: "workspaceState", detail: count(this.workspaceSavedRoots.list().length, "folder") },
+      { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: count(await this.decisionAudit.count(), "entry") },
     ];
     this.settings.emit({ kind: "dataInventoryChanged", rows });
   }
@@ -1888,8 +1901,10 @@ export class Orchestrator {
     await this.refreshAgentConfigs();
   }
 
-  private applyRegistryData(data: AcpRegistryData): void {
-    this.registryData = data;
+  /** Tells both views what the registry holds now — the store is the one
+   * holder; nothing here keeps a copy. */
+  private publishRegistry(): void {
+    const data = this.acpRegistry.current();
     const event = {
       kind: "registryChanged",
       agents: data.agents.map((a) => registryAgentView(a, data.icons)),
@@ -1904,7 +1919,7 @@ export class Orchestrator {
    * configs (pin + last seen version) — and publishes it to both channels
    * when it changed. Called wherever either input moves. */
   private publishUpdates(): void {
-    const updates = agentUpdates(this.registryData.agents, this.agentConfigs.list());
+    const updates = agentUpdates(this.acpRegistry.current().agents, this.agentConfigs.list());
     if (JSON.stringify(updates) === JSON.stringify(this.updates)) return;
     this.updates = updates;
     const event = { kind: "agentUpdatesChanged", updates } as const;
@@ -1996,15 +2011,16 @@ export class Orchestrator {
   }
 
   /** The one explicit, visible gate on any download the launch phase needs
-   * — a managed runtime or a registry agent's own binary (the registry
-   * publishes no checksum, so nothing is ever fetched and run silently).
-   * Modal on purpose: the connect is already waiting on this decision, and
-   * declining fails it honestly on the card. */
+   * — a managed runtime or a registry agent's own binary; nothing is ever
+   * fetched and run silently, and the ask says whether the bytes will be
+   * checked against a published SHA-256. Modal on purpose: the connect is
+   * already waiting on this decision, and declining fails it honestly on
+   * the card. */
   private async confirmDownload(ask: DownloadAsk): Promise<boolean> {
     const message =
       ask.kind === "runtime"
-        ? `This agent is launched with ${ask.runtime === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? Nothing is installed system-wide, and removing the extension removes it.`
-        : `${ask.name} ${ask.version} is distributed as a binary. Download it from ${new URL(ask.archiveUrl).host} into the extension's own storage and run it? The ACP registry publishes no checksum for it. Once per version; nothing is installed system-wide, and removing the extension removes it.`;
+        ? `This agent is launched with ${ask.runtime === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? ${DOWNLOAD_CHECK_TEXT[ask.check]} Nothing is installed system-wide, and removing the extension removes it.`
+        : `${ask.name} ${ask.version} is distributed as a binary. Download it from ${new URL(ask.archiveUrl).host} into the extension's own storage and run it? ${DOWNLOAD_CHECK_TEXT[ask.check]} Once per version; nothing is installed system-wide, and removing the extension removes it.`;
     const choice = await vscode.window.showWarningMessage(message, { modal: true }, "Download");
     return choice === "Download";
   }
@@ -2045,7 +2061,8 @@ export class Orchestrator {
           spec: { agentId: agent.id, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
           registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
         };
-      case "binary":
+      case "binary": {
+        const pinnedDigest = launch.sha256 === null ? {} : { sha256: launch.sha256 };
         return {
           spec: {
             agentId: agent.id,
@@ -2054,15 +2071,16 @@ export class Orchestrator {
             args: [...launch.args],
             env: { ...launch.env },
             cwd,
-            binary: { archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd },
+            binary: { archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd, ...pinnedDigest },
           },
           registrySource: {
             registryId: agent.id,
             distributionKind: "binary",
             pinnedVersion: agent.version,
-            binary: { archiveUrl: launch.archiveUrl, cmd: launch.cmd },
+            binary: { archiveUrl: launch.archiveUrl, cmd: launch.cmd, ...pinnedDigest },
           },
         };
+      }
     }
   }
 
@@ -2272,7 +2290,7 @@ export class Orchestrator {
         void this.upgradeAgent(action.agentId);
         break;
       case "refreshRegistry":
-        void this.acpRegistry.refresh();
+        void this.acpRegistry.refresh("manual");
         break;
       case "addCommandRule": {
         if (action.layer === "machine") {
@@ -2741,6 +2759,7 @@ export class Orchestrator {
    * specific reason and a Retry — never a silent bounce to the empty
    * state. */
   private async startChat(agentId: string): Promise<void> {
+    void this.acpRegistry.refresh("new-session");
     const agentName = this.agentNames.get(agentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the
@@ -2808,7 +2827,7 @@ export class Orchestrator {
     let registrySource: AgentConfig["registrySource"] = null;
     let shouldPersist = true;
     if ("registryId" in source) {
-      const agent = this.registryData.agents.find((a) => a.id === source.registryId);
+      const agent = this.acpRegistry.current().agents.find((a) => a.id === source.registryId);
       if (agent === undefined) return;
       const resolved = this.registryLaunch(agent);
       if (resolved === null) return; // can't run on this platform
@@ -3032,7 +3051,6 @@ export class Orchestrator {
     this.sessionManager.dispose();
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
-    this.acpRegistry.dispose();
     void this.pool.disposeAll();
     this.agentView.flushNow();
     this.settings.flushNow();

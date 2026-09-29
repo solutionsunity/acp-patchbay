@@ -24,7 +24,9 @@ deliverable.
 - Adding an agent is one form in Settings › Agents — registry search or any
   command line that speaks ACP — with a command-palette shortcut for the quick
   case; a binary agent's download is a phase of its connect, shown on its card
-  and confirmed by one modal — never a silent fetch-and-run. The view's picker
+  and confirmed by one modal — never a silent fetch-and-run — and never
+  installed unless it matches the checksum its vendor publishes, when there
+  is one. The view's picker
   and empty state route to Settings.
 - A newer version of a registry agent reaches the user without a visit to
   Settings: a notification when patchbay learns of it, with Upgrade one click

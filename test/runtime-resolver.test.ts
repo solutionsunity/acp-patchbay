@@ -12,7 +12,7 @@ import { delimiter, join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { nullLogger } from "../src/orchestrator/logger";
 import type { LaunchSpec } from "../src/orchestrator/pool";
-import type { InstalledBinary } from "../src/orchestrator/stores/binary-installer";
+import { ChecksumMismatch, type BinaryInstallSpec, type InstalledBinary } from "../src/orchestrator/stores/binary-installer";
 import {
   gateRuntime,
   nodeMajor,
@@ -95,6 +95,17 @@ describe("runtimeInstallSpec", () => {
     expect(runtimeInstallSpec("node", "linux", "ia32")).toBeNull();
     expect(runtimeInstallSpec("node", "freebsd", "x64")).toBeNull();
     expect(runtimeInstallSpec("uv", "aix", "x64")).toBeNull();
+  });
+
+  it("every archive the catalog can name carries its publisher's digest — a version bump without them fails here", () => {
+    for (const kind of ["node", "uv"] as const) {
+      for (const platform of ["linux", "darwin", "win32"] as const) {
+        for (const arch of ["x64", "arm64"]) {
+          const entry = runtimeInstallSpec(kind, platform, arch)!;
+          expect(entry.sha256, `${kind} ${platform}-${arch}: ${entry.archiveUrl}`).toMatch(/^[0-9a-f]{64}$/);
+        }
+      }
+    }
   });
 
   it("pseudo agentIds keep runtimes distinct in the shared bin-cache", () => {
@@ -226,6 +237,25 @@ describe("resolveRuntime", () => {
       expect(confirms).toHaveLength(1); // download was gated, exactly once
     },
   );
+
+  it.skipIf(!onPosix)("a runtime download is checked against its publisher's digest — a second mismatch fails, nothing installed (issue #54)", async () => {
+    const asks: DownloadAsk[] = [];
+    const held: (string | null)[] = [];
+    await expect(
+      resolveRuntime(spec("npx"), {
+        ...deps,
+        probes: { interpreter: "pb-none-node", launcher: "pb-none-npx" },
+        confirmDownload: async (ask) => (asks.push(ask), true),
+        install: async (_root, cat) => {
+          held.push(cat.sha256);
+          throw new ChecksumMismatch(cat.sha256!, "f".repeat(64));
+        },
+      }),
+    ).rejects.toThrow(/Node\.js 22\.14\.0: the download from nodejs\.org doesn't match the SHA-256 its publisher lists .* — nothing was installed\. Install Node\.js manually and reconnect\./);
+    expect(asks).toEqual([expect.objectContaining({ kind: "runtime", check: "sha256" })]);
+    expect(held).toHaveLength(2); // one retry, same pinned digest
+    expect(held[0]).toBe(held[1]);
+  });
 
   it.skipIf(!onPosix)("a declined download fails the connect honestly", async () => {
     await expect(
@@ -376,7 +406,7 @@ describe("resolveBinaryLaunch", () => {
       },
       onPhase: (label) => phases.push(label),
     });
-    expect(asks).toEqual([{ kind: "agent", name: "Bin Agent", version: "1.2.3", archiveUrl: ARCHIVE }]);
+    expect(asks).toEqual([{ kind: "agent", name: "Bin Agent", version: "1.2.3", archiveUrl: ARCHIVE, check: "none-published" }]);
     expect(phases).toEqual(["downloading Bin Agent 1.2.3…"]);
     expect(calls.count).toBe(1);
     expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
@@ -440,6 +470,171 @@ describe("resolveBinaryLaunch", () => {
     expect(a.command).toBe(b.command);
     expect(asks).toBe(1);
     expect(calls.count).toBe(1);
+  });
+
+  // Every outcome of holding the download to its published SHA-256 (issue #54).
+  describe("the published digest", () => {
+    const A = "a".repeat(64);
+    const B = "b".repeat(64);
+    const pinnedSpec = (root: string, sha256?: string): LaunchSpec => {
+      const s = binarySpec(root);
+      return { ...s, binary: { ...s.binary!, ...(sha256 !== undefined ? { sha256 } : {}) } };
+    };
+    /** An install that fails each listed call with a mismatch against the
+     * digest it was given, recording every digest it was asked to hold to. */
+    const checkingInstall = (seen: (string | null)[], mismatchOn: number[]) => {
+      const materialize = fakeInstall({ count: 0 });
+      return async (root: string, cat: BinaryInstallSpec): Promise<InstalledBinary> => {
+        seen.push(cat.sha256);
+        if (mismatchOn.includes(seen.length)) throw new ChecksumMismatch(cat.sha256 ?? "", "f".repeat(64));
+        return materialize(root, cat);
+      };
+    };
+
+    it("the ask says the download is checked when a digest exists, and the install holds to it", async () => {
+      const root = join(tmp, "digest-checked");
+      const asks: DownloadAsk[] = [];
+      const seen: (string | null)[] = [];
+      await resolveBinaryLaunch(pinnedSpec(root, A.toUpperCase()), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: checkingInstall(seen, []),
+        confirmDownload: async (ask) => (asks.push(ask), true),
+      });
+      expect(asks[0]).toMatchObject({ kind: "agent", check: "sha256" });
+      expect(seen).toEqual([A]); // normalized to lowercase before the check
+    });
+
+    it("the registry's current word wins over the pinned copy while it lists that version", async () => {
+      const root = join(tmp, "digest-current");
+      const seen: (string | null)[] = [];
+      await resolveBinaryLaunch(pinnedSpec(root, A), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: checkingInstall(seen, []),
+        digestFor: () => B,
+      });
+      expect(seen).toEqual([B]);
+    });
+
+    it("the registry is read right before the download — the digest is today's, not a cache's", async () => {
+      const root = join(tmp, "digest-read-first");
+      const order: string[] = [];
+      let current: string | null = null; // the cached copy knew no digest
+      await resolveBinaryLaunch(pinnedSpec(root), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: checkingInstall([], []),
+        digestFor: () => current,
+        refreshRegistry: async () => {
+          order.push("read");
+          current = A; // the live registry publishes one
+          return true;
+        },
+        confirmDownload: async (ask) => (order.push(`ask:${ask.check}`), true),
+      });
+      expect(order).toEqual(["read", "ask:sha256"]);
+    });
+
+    it("an unreadable registry says so — and a digest pinned with the version still checks", async () => {
+      const asks: DownloadAsk[] = [];
+      const seen: (string | null)[] = [];
+      const lines: string[] = [];
+      const log = { ...nullLogger, info: (m: string) => lines.push(`info ${m}`), warn: (m: string) => lines.push(`warn ${m}`) };
+      const deps = (root: string) => ({
+        cacheRoot: root,
+        log,
+        install: checkingInstall(seen, []),
+        refreshRegistry: async () => false,
+        confirmDownload: async (ask: DownloadAsk) => (asks.push(ask), true),
+      });
+      await resolveBinaryLaunch(pinnedSpec(join(tmp, "digest-unreachable")), deps(join(tmp, "digest-unreachable")));
+      await resolveBinaryLaunch(pinnedSpec(join(tmp, "digest-unreachable-pinned"), A), deps(join(tmp, "digest-unreachable-pinned")));
+      expect(asks.map((a) => a.check)).toEqual(["registry-unreachable", "sha256"]);
+      expect(seen).toEqual([null, A]);
+      // the Patchbay log says which download went unchecked, and why
+      expect(lines).toContain("warn bin-agent 1.2.3: installed unchecked — the ACP registry couldn't be read for its SHA-256");
+      expect(lines).toContain("info bin-agent 1.2.3: download matched its SHA-256");
+    });
+
+    it("a malformed digest refuses before anything is asked or downloaded", async () => {
+      const root = join(tmp, "digest-malformed");
+      let asked = false;
+      const seen: (string | null)[] = [];
+      await expect(
+        resolveBinaryLaunch(pinnedSpec(root, "not-a-digest"), {
+          cacheRoot: root,
+          log: nullLogger,
+          install: checkingInstall(seen, []),
+          confirmDownload: async () => (asked = true),
+        }),
+      ).rejects.toThrow(/Bin Agent 1\.2\.3: its registry entry's SHA-256 isn't one \("not-a-digest"\) — nothing was downloaded/);
+      expect(asked).toBe(false);
+      expect(seen).toEqual([]);
+    });
+
+    it("a cached binary is never blocked by what its source says now", async () => {
+      const root = join(tmp, "digest-cached");
+      await fakeInstall({ count: 0 })(root, { agentId: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
+      const resolved = await resolveBinaryLaunch(pinnedSpec(root), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: fakeInstall({ count: 0 }),
+        digestFor: () => "not-a-digest",
+      });
+      expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
+    });
+
+    it("a mismatch re-reads the registry and downloads once more — a match then installs", async () => {
+      const root = join(tmp, "digest-retry");
+      const seen: (string | null)[] = [];
+      let refreshed = 0;
+      let current = A;
+      const resolved = await resolveBinaryLaunch(pinnedSpec(root, A), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: checkingInstall(seen, [1]),
+        digestFor: () => current,
+        refreshRegistry: async () => {
+          refreshed++;
+          if (refreshed === 2) current = B; // re-read after the mismatch: the vendor re-published
+          return true;
+        },
+      });
+      expect(refreshed).toBe(2); // before the download, and again after the mismatch
+      expect(seen).toEqual([A, B]);
+      expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
+    });
+
+    it("a second mismatch fails naming host and both digests — nothing installed, no run-anyway", async () => {
+      const root = join(tmp, "digest-fail");
+      const seen: (string | null)[] = [];
+      await expect(
+        resolveBinaryLaunch(pinnedSpec(root, A), { cacheRoot: root, log: nullLogger, install: checkingInstall(seen, [1, 2]) }),
+      ).rejects.toThrow(
+        new RegExp(
+          `Bin Agent 1\\.2\\.3: the download from github\\.com doesn't match the SHA-256 its registry entry publishes \\(expected ${A}, got ${"f".repeat(64)}\\) — nothing was installed`,
+        ),
+      );
+      expect(seen).toEqual([A, A]);
+    });
+
+    it("a consented check is never dropped: a source that stops publishing keeps the first digest", async () => {
+      const root = join(tmp, "digest-kept");
+      const seen: (string | null)[] = [];
+      let current: string | null = A;
+      await resolveBinaryLaunch(pinnedSpec(root), {
+        cacheRoot: root,
+        log: nullLogger,
+        install: checkingInstall(seen, [1]),
+        digestFor: () => current,
+        refreshRegistry: async () => {
+          if (current === A && seen.length > 0) current = null;
+          return true;
+        },
+      });
+      expect(seen).toEqual([A, A]);
+    });
   });
 
   it("resolveLaunch runs the binary phase, then the runtime phase — a resolved binary needs no runtime", async () => {

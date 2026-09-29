@@ -17,7 +17,7 @@ interface Internal {
       upsert(config: Record<string, unknown>): Promise<void>;
       remove(id: string): Promise<void>;
     };
-    acpRegistry: { current(): RegistryData; onUpdated(data: RegistryData): void };
+    acpRegistry: { current(): RegistryData; refresh(moment: "manual"): Promise<{ ok: boolean }> };
     agentView: { current: { updates: Record<string, { from: string; to: string }> } };
   };
 }
@@ -54,7 +54,9 @@ const config = (id: string, pinnedVersion: string) => ({
 suite("update notice", () => {
   test("a fetched newer version is announced once, with Upgrade; several share one notice", async () => {
     const { orchestrator } = await internal();
+    await orchestrator.acpRegistry.refresh("manual"); // settle the startup read before serving our own
     const original = orchestrator.acpRegistry.current();
+    const realFetch = globalThis.fetch;
     const window = vscode.window as { showInformationMessage: (...args: unknown[]) => Thenable<unknown> };
     const show = window.showInformationMessage;
     const shown: unknown[][] = [];
@@ -62,29 +64,36 @@ suite("update notice", () => {
       shown.push(args);
       return Promise.resolve(undefined); // the user lets it go
     };
-    const land = (...agents: unknown[]) =>
-      orchestrator.acpRegistry.onUpdated({ fetchedAt: new Date().toISOString(), agents, icons: {} });
+    // A registry fetch landing, through the store's real read: the CDN
+    // serves these agents, the store takes them, the views and the notice
+    // hear it — the store is the one holder, so nothing is pushed around it.
+    const land = async (...agents: unknown[]) => {
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ version: "1.0.0", agents }), { headers: { "content-type": "application/json" } });
+      assert.strictEqual((await orchestrator.acpRegistry.refresh("manual")).ok, true);
+    };
 
     try {
       await orchestrator.agentConfigs.upsert(config("upd-a", "1.0.0"));
       await orchestrator.agentConfigs.upsert(config("upd-b", "2.0.0"));
       await orchestrator.agentConfigs.upsert(config("upd-c", "3.0.0"));
 
-      land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
+      await land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
       assert.deepStrictEqual(orchestrator.agentView.current.updates["upd-a"], { from: "1.0.0", to: "1.1.0" });
       assert.deepStrictEqual(shown, [["Agent upd-a 1.1.0 is available — you run 1.0.0.", "Upgrade"]]);
 
       // the next fetch with nothing newer says nothing again
-      land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
+      await land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
       assert.strictEqual(shown.length, 1);
 
       // two newer at once: one notice, the pick behind it
-      land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.1.0"), registryAgent("upd-c", "3.1.0"));
+      await land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.1.0"), registryAgent("upd-c", "3.1.0"));
       assert.deepStrictEqual(shown[1], ["Updates are available for 2 agents.", "Upgrade…"]);
     } finally {
       window.showInformationMessage = show;
       for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.agentConfigs.remove(id);
-      orchestrator.acpRegistry.onUpdated(original);
+      await land(...original.agents);
+      globalThis.fetch = realFetch;
     }
   });
 });

@@ -24,8 +24,9 @@
 // Registry `binary` distributions: the archive provides the command itself.
 // The spec carries the archive facts; the phase resolves `command` to the
 // cached absolute path, downloading first when this exact version isn't
-// cached yet. The registry publishes no checksum, so that first download is
-// always confirmed, never a silent fetch-and-run.
+// cached yet — checked against the SHA-256 its registry entry publishes
+// when there is one, and always confirmed first, never a silent
+// fetch-and-run.
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
@@ -35,8 +36,10 @@ import type { LaunchSpec } from "./pool";
 import { resolveSpawn } from "./spawn-resolve";
 import { killTree, treeSpawnOptions } from "./process-tree";
 import {
+  ChecksumMismatch,
   installBinary,
   isBinaryInstalled,
+  parseSha256,
   type BinaryInstallSpec,
   type InstalledBinary,
 } from "./stores/binary-installer";
@@ -180,11 +183,40 @@ export async function gateRuntime(
 
 // Curated pins, bumped deliberately like any registry entry — never
 // "latest", which would re-decide the runtime on every download. node.org
-// and the uv release CDN are first-party sources over HTTPS; the archives
-// carry npx/uvx alongside the interpreter, so PATH-prepending the one
-// directory equips the whole launch.
+// and the uv release CDN are first-party sources over HTTPS, and each
+// archive is held to the digest its publisher lists, pinned below; the
+// archives carry npx/uvx alongside the interpreter, so PATH-prepending the
+// one directory equips the whole launch.
 const NODE_VERSION = "22.14.0";
 const UV_VERSION = "0.7.3";
+
+/** Every pinned runtime archive's SHA-256, as its publisher lists it —
+ * nodejs.org's SHASUMS256.txt, uv's per-archive `.sha256` — keyed by the
+ * archive's file name. The name carries the version, so bumping a pin
+ * without its digests leaves an archive with none, which the catalog's
+ * test refuses. A released archive never changes, so a digest checked in
+ * here is not a copy that can drift. */
+const RUNTIME_SHA256: Readonly<Record<string, string>> = {
+  "node-v22.14.0-darwin-arm64.tar.gz": "e9404633bc02a5162c5c573b1e2490f5fb44648345d64a958b17e325729a5e42",
+  "node-v22.14.0-darwin-x64.tar.gz": "6698587713ab565a94a360e091df9f6d91c8fadda6d00f0cf6526e9b40bed250",
+  "node-v22.14.0-linux-arm64.tar.gz": "8cf30ff7250f9463b53c18f89c6c606dfda70378215b2c905d0a9a8b08bd45e0",
+  "node-v22.14.0-linux-x64.tar.gz": "9d942932535988091034dc94cc5f42b6dc8784d6366df3a36c4c9ccb3996f0c2",
+  "node-v22.14.0-win-arm64.zip": "2d71f5f9b2fffa33baa108c07d74b0d24e0c3dd8f441d567772ae0e3dd4b1a22",
+  "node-v22.14.0-win-x64.zip": "55b639295920b219bb2acbcfa00f90393a2789095b7323f79475c9f34795f217",
+  "uv-aarch64-apple-darwin.tar.gz": "162b328fc63e0075d4267688201de91356e1c1b81db50419fa4466cfe2dfdebc",
+  "uv-aarch64-pc-windows-msvc.zip": "542b318c98b0295dd3d620fbcd63388757f382e14c69c569cb3ce793aa75c975",
+  "uv-aarch64-unknown-linux-gnu.tar.gz": "2c2be8bbb83e9bc722f2013de8bb7506cfe6521d0e30b4ad046849d036b3eea6",
+  "uv-x86_64-apple-darwin.tar.gz": "d676940b51bdd5606b218bc2965fed67731f94ad07926045716acbf78626e09b",
+  "uv-x86_64-pc-windows-msvc.zip": "20d3a420abbf2af9699cd9a02225d9325344046af8deb15563cc451e3c4fd059",
+  "uv-x86_64-unknown-linux-gnu.tar.gz": "17fc118ba4d7e9303f84fcabdc0a593fc3480ba76eb6980668fdbbb96fe88562",
+};
+
+/** A pinned runtime archive as an install spec, its digest looked up by
+ * the archive's file name. */
+function runtimeEntry(agentId: string, version: string, archiveUrl: string, cmd: string): BinaryInstallSpec {
+  const file = archiveUrl.slice(archiveUrl.lastIndexOf("/") + 1);
+  return { agentId, version, archiveUrl, cmd, args: [], env: {}, sha256: RUNTIME_SHA256[file] ?? null };
+}
 
 /** The download that backs a failed gate, as a binary-installer spec —
  * pseudo agentIds keep runtimes in the same cache with the same
@@ -210,38 +242,32 @@ export function runtimeInstallSpec(
         ? `node-v${NODE_VERSION}-win-${arch}`
         : `node-v${NODE_VERSION}-${platform}-${arch}`;
     const ext = platform === "win32" ? "zip" : "tar.gz";
-    return {
-      agentId: ".runtime-node",
-      version: NODE_VERSION,
-      archiveUrl: `https://nodejs.org/dist/v${NODE_VERSION}/${slug}.${ext}`,
+    return runtimeEntry(
+      ".runtime-node",
+      NODE_VERSION,
+      `https://nodejs.org/dist/v${NODE_VERSION}/${slug}.${ext}`,
       // win zips put node.exe + npx.cmd at the package root; tars under bin/.
-      cmd: platform === "win32" ? `${slug}/node.exe` : `${slug}/bin/node`,
-      args: [],
-      env: {},
-    };
+      platform === "win32" ? `${slug}/node.exe` : `${slug}/bin/node`,
+    );
   }
   const rustArch = arch === "x64" ? "x86_64" : "aarch64";
   if (platform === "win32") {
-    return {
-      agentId: ".runtime-uv",
-      version: UV_VERSION,
-      archiveUrl: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${rustArch}-pc-windows-msvc.zip`,
-      cmd: "uvx.exe", // windows zips are flat: uv.exe + uvx.exe at the root
-      args: [],
-      env: {},
-    };
+    return runtimeEntry(
+      ".runtime-uv",
+      UV_VERSION,
+      `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${rustArch}-pc-windows-msvc.zip`,
+      "uvx.exe", // windows zips are flat: uv.exe + uvx.exe at the root
+    );
   }
   if (platform !== "darwin" && platform !== "linux") return null;
   const target =
     platform === "darwin" ? `uv-${rustArch}-apple-darwin` : `uv-${rustArch}-unknown-linux-gnu`;
-  return {
-    agentId: ".runtime-uv",
-    version: UV_VERSION,
-    archiveUrl: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${target}.tar.gz`,
-    cmd: `${target}/uvx`,
-    args: [],
-    env: {},
-  };
+  return runtimeEntry(
+    ".runtime-uv",
+    UV_VERSION,
+    `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${target}.tar.gz`,
+    `${target}/uvx`,
+  );
 }
 
 /** PATH-prepend into the spec's env map. The spawn env is
@@ -264,11 +290,25 @@ export function prependPath(
   return { ...env, [key]: existing === "" ? dir : `${dir}${delimiter}${existing}` };
 }
 
+/** Whether a download will be held to a published SHA-256 — and when not,
+ * which of the two reasons it is: nothing was published, or the registry
+ * that would say couldn't be read. */
+export type DownloadCheck = "sha256" | "none-published" | "registry-unreachable";
+
 /** What the user is asked to consent to before a download — a pinned
  * runtime the launcher needs, or a registry agent's own binary archive. */
 export type DownloadAsk =
-  | { kind: "runtime"; runtime: RuntimeKind; version: string }
-  | { kind: "agent"; name: string; version: string; archiveUrl: string };
+  | { kind: "runtime"; runtime: RuntimeKind; version: string; check: DownloadCheck }
+  | { kind: "agent"; name: string; version: string; archiveUrl: string; check: DownloadCheck };
+
+/** A second mismatch, as the connect failure the card shows — `whose`
+ * names where the digest came from. Nothing was installed. */
+function mismatchFailure(label: string, archiveUrl: string, whose: string, err: ChecksumMismatch, next: string): Error {
+  return new Error(
+    `${label}: the download from ${new URL(archiveUrl).host} doesn't match the SHA-256 ${whose} ` +
+      `(expected ${err.expected}, got ${err.actual}) — nothing was installed. ${next}`,
+  );
+}
 
 export interface LaunchResolveDeps {
   /** binary-installer cache root (bin-cache under globalStorage). */
@@ -281,6 +321,14 @@ export interface LaunchResolveDeps {
   confirmDownload?: (ask: DownloadAsk) => Promise<boolean>;
   /** Connect-status label seam, live only while genuinely downloading. */
   onPhase?: (label: string) => void;
+  /** The digest a registry binary's download is checked against (raw, as
+   * published), given the one pinned with its version — the registry's
+   * current word while it still lists that version. Absent → the pinned
+   * one (tests). */
+  digestFor?: (agentId: string, version: string, pinned: string | null) => string | null;
+  /** Reads the registry now — before a download and again after a
+   * mismatch — answering whether it could be read. */
+  refreshRegistry?: () => Promise<boolean>;
   /** Test seams. `probes.launcher` replaces spec.command in the gate;
    * `probes.interpreter` replaces bare `node`. */
   probes?: { launcher?: string; interpreter?: string };
@@ -295,25 +343,60 @@ export interface LaunchResolveDeps {
  * entry clears on settle so a failed install retries fresh next connect. */
 const inflightInstalls = new Map<string, Promise<InstalledBinary>>();
 
-/** The one download molecule: cached → hand it back; not cached → ask,
- * label the phase, install. `declined` is the thrown message when the user
- * says no — the connect failure it is. */
+/** The digest a download is held to, and what the prompt may say of it. */
+interface Digest {
+  sha256: string | null;
+  check: DownloadCheck;
+}
+
+/** The one download molecule: cached → hand it back; not cached → read
+ * the digest, ask, label the phase, install. `declined` is the thrown
+ * message when the user says no — the connect failure it is. `digest` is
+ * read only when a download is about to happen (a cached copy is never
+ * blocked by what a source says now), and read again after a mismatch;
+ * absent, the catalog's own digest stands. A mismatch earns one more
+ * download against the digest as its source reads then — a host still
+ * serving an older file, or a vendor mid-way through re-publishing, clears
+ * there; a second mismatch is thrown as the answer. A consented check is
+ * never dropped: a source that stops publishing its digest mid-install
+ * keeps the first one. */
 function installOnce(
   deps: LaunchResolveDeps,
   catalog: BinaryInstallSpec,
-  gate: { ask: DownloadAsk; phase: string; declined: string },
+  gate: {
+    ask: (check: DownloadCheck) => DownloadAsk;
+    phase: string;
+    declined: string;
+    digest?: () => Promise<Digest>;
+  },
 ): Promise<InstalledBinary> {
   const flightKey = `${catalog.agentId}@${catalog.version}@${deps.cacheRoot}`;
   let flight = inflightInstalls.get(flightKey);
   if (flight === undefined) {
     flight = (async () => {
-      const cached = await isBinaryInstalled(deps.cacheRoot, catalog.agentId, catalog.version, catalog.cmd);
-      if (!cached) {
-        const allowed = (await deps.confirmDownload?.(gate.ask)) ?? true;
-        if (!allowed) throw new Error(gate.declined);
-        deps.onPhase?.(gate.phase);
+      const install = deps.install ?? installBinary;
+      if (await isBinaryInstalled(deps.cacheRoot, catalog.agentId, catalog.version, catalog.cmd)) {
+        return install(deps.cacheRoot, catalog, deps.log);
       }
-      return (deps.install ?? installBinary)(deps.cacheRoot, catalog);
+      const own: Digest = { sha256: catalog.sha256, check: catalog.sha256 === null ? "none-published" : "sha256" };
+      const { sha256, check } = gate.digest === undefined ? own : await gate.digest();
+      const allowed = (await deps.confirmDownload?.(gate.ask(check))) ?? true;
+      if (!allowed) throw new Error(gate.declined);
+      deps.onPhase?.(gate.phase);
+      let installed: InstalledBinary;
+      try {
+        installed = await install(deps.cacheRoot, { ...catalog, sha256 }, deps.log);
+      } catch (err) {
+        if (!(err instanceof ChecksumMismatch)) throw err;
+        deps.log.info(`${catalog.agentId} ${catalog.version}: ${err.message} — reading the digest again, downloading once more`);
+        const again = (gate.digest === undefined ? null : (await gate.digest()).sha256) ?? sha256;
+        installed = await install(deps.cacheRoot, { ...catalog, sha256: again }, deps.log);
+      }
+      if (sha256 !== null) deps.log.info(`${catalog.agentId} ${catalog.version}: download matched its SHA-256`);
+      else if (check === "registry-unreachable") {
+        deps.log.warn(`${catalog.agentId} ${catalog.version}: installed unchecked — the ACP registry couldn't be read for its SHA-256`);
+      } else deps.log.info(`${catalog.agentId} ${catalog.version}: installed unchecked — no SHA-256 is published for it`);
+      return installed;
     })();
     inflightInstalls.set(flightKey, flight);
     const clear = () => inflightInstalls.delete(flightKey);
@@ -355,10 +438,14 @@ export async function resolveRuntime(
     `${spec.agentId}: system runtime unusable (${system.detail}) — using managed ${runtimeName(kind)} ${catalog.version}`,
   );
 
+  const label = `${runtimeName(kind)} ${catalog.version}`;
   const installed = await installOnce(deps, catalog, {
-    ask: { kind: "runtime", runtime: kind, version: catalog.version },
-    phase: `downloading ${runtimeName(kind)} ${catalog.version}…`,
+    ask: (check) => ({ kind: "runtime", runtime: kind, version: catalog.version, check }),
+    phase: `downloading ${label}…`,
     declined: `${runtimeName(kind)} download declined (${system.detail}) — install ${runtimeName(kind)} manually and reconnect`,
+  }).catch((err: unknown) => {
+    if (!(err instanceof ChecksumMismatch)) throw err;
+    throw mismatchFailure(label, catalog.archiveUrl, "its publisher lists", err, `Install ${runtimeName(kind)} manually and reconnect.`);
   });
   const env = prependPath(spec.env, dirname(installed.command));
 
@@ -396,23 +483,55 @@ export async function resolveRuntime(
  * cwd, where the archive's siblings live), downloading first when this
  * exact version isn't cached — one confirmation, one install, however many
  * connects race for it. Specs without archive facts pass through untouched.
- * Throws when the user declines: the connect fails on the card, and the
- * next Connect asks again. */
+ * The download is held to its published SHA-256 when there is one. Throws
+ * — the connect failing on the card — when the user declines (the next
+ * Connect asks again), when the published digest isn't one (nothing is
+ * downloaded), and when the download still doesn't match it after the one
+ * retry (nothing is installed, and there is no run-anyway: a user who
+ * wants those bytes regardless adds them as a custom command, owning them
+ * outright). */
 export async function resolveBinaryLaunch(
   spec: LaunchSpec,
   deps: LaunchResolveDeps,
 ): Promise<LaunchSpec> {
   if (spec.binary === undefined) return spec;
   const { archiveUrl, version, cmd } = spec.binary;
-  const installed = await installOnce(
-    deps,
-    { agentId: spec.agentId, version, archiveUrl, cmd, args: spec.args, env: spec.env },
-    {
-      ask: { kind: "agent", name: spec.name, version, archiveUrl },
-      phase: `downloading ${spec.name} ${version}…`,
-      declined: `${spec.name} ${version} download declined — Connect again to be asked again`,
-    },
-  );
+  const pinned = spec.binary.sha256 ?? null;
+  const label = `${spec.name} ${version}`;
+  // Read the registry at the moment it matters — right before the bytes
+  // arrive — so the digest is today's, never a stale cache's silence.
+  const digest = async (): Promise<Digest> => {
+    const reachable = (await deps.refreshRegistry?.()) ?? true;
+    const raw = deps.digestFor === undefined ? pinned : deps.digestFor(spec.agentId, version, pinned);
+    if (raw === null) return { sha256: null, check: reachable ? "none-published" : "registry-unreachable" };
+    const sha256 = parseSha256(raw);
+    if (sha256 === null) {
+      throw new Error(`${label}: its registry entry's SHA-256 isn't one ("${raw}") — nothing was downloaded`);
+    }
+    return { sha256, check: "sha256" };
+  };
+  let installed: InstalledBinary;
+  try {
+    installed = await installOnce(
+      deps,
+      { agentId: spec.agentId, version, archiveUrl, cmd, args: spec.args, env: spec.env, sha256: pinned },
+      {
+        ask: (check) => ({ kind: "agent", name: spec.name, version, archiveUrl, check }),
+        phase: `downloading ${label}…`,
+        declined: `${label} download declined — Connect again to be asked again`,
+        digest,
+      },
+    );
+  } catch (err) {
+    if (!(err instanceof ChecksumMismatch)) throw err;
+    throw mismatchFailure(
+      label,
+      archiveUrl,
+      "its registry entry publishes",
+      err,
+      "Connect again later, or add it as a custom command to run it regardless.",
+    );
+  }
   deps.log.info(`${spec.agentId}: binary ${version} ready (${installed.command})`);
   return { ...spec, command: installed.command, cwd: installed.cwd };
 }

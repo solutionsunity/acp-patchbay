@@ -35,8 +35,14 @@ export const agentRegistrySourceSchema = z.object({
   /** `binary` kind: the archive the pinned version is downloaded from and
    * the executable's path inside it — what a connect needs to (re)acquire
    * the binary as a launch phase. Absent on records written before this
-   * field existed: those spawn their recorded absolute `command` as is. */
-  binary: z.object({ archiveUrl: z.string().min(1), cmd: z.string().min(1) }).optional(),
+   * field existed: those spawn their recorded absolute `command` as is.
+   * `sha256`: the archive's digest as the registry published it for this
+   * version — kept because the registry lists only the latest version, so
+   * once it moves on this copy is the only one left to check a
+   * re-download against. Replaced whole with the rest at Upgrade. */
+  binary: z
+    .object({ archiveUrl: z.string().min(1), cmd: z.string().min(1), sha256: z.string().optional() })
+    .optional(),
 });
 export type AgentRegistrySource = z.infer<typeof agentRegistrySourceSchema>;
 

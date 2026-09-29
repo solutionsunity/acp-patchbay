@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Installs a registry `binary` distribution: download the archive (or raw
-// executable — the spec allows both, FORMAT.md), extract, chmod, resolve to
-// an absolute launch path. Cached per (agentId, version) under
-// globalStorageUri so re-adding/reconnecting never re-downloads.
+// Installs a downloaded executable: fetch the archive (or a raw executable
+// — the registry format allows both), check it against its published
+// SHA-256 when one exists, extract, chmod, resolve to an absolute launch
+// path. Cached per (agentId, version) under globalStorageUri so
+// re-adding/reconnecting never re-downloads.
 //
-// No checksum/signature field exists anywhere in the registry spec (checked
-// against FORMAT.md directly) — integrity here is HTTPS + the CDN's own
-// authenticity, the same trust boundary a manual browser download would
-// have. Callers must gate the first install of each (agentId, version)
-// behind an explicit, visible user confirmation — never silent — to
-// compensate for the spec's own gap (the "never silently trusted" ethos,
-// extended to installs).
+// The digest is checked on the downloaded bytes before anything touches
+// disk, so a mismatch leaves nothing behind; what lands in the cache has
+// passed the check (or had none to pass). Without a digest, integrity is
+// HTTPS + the host's own authenticity — the trust a manual browser
+// download has. Either way callers gate the first install of each
+// (agentId, version) behind an explicit, visible user confirmation, and
+// tell the user which of the two it is.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type Logger, nullLogger } from "../logger";
+import { describeNetFailure, readBytes } from "../net";
 
 const ARCHIVE_EXTENSIONS = [".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".zip"];
 
@@ -33,6 +37,27 @@ export interface BinaryInstallSpec {
   cmd: string;
   args: readonly string[];
   env: Readonly<Record<string, string>>;
+  /** The archive's published SHA-256, lowercase hex (`parseSha256`) — the
+   * downloaded bytes must match it before anything is written. Null: none
+   * published, the bytes are taken as served. */
+  sha256: string | null;
+}
+
+/** A published SHA-256 as the installer compares it: 64 hex characters in
+ * either case, lowercased — null when the text is not one. */
+export function parseSha256(raw: string): string | null {
+  return /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : null;
+}
+
+/** The download is not the file its digest describes. Carries both digests
+ * so the failure can name them. */
+export class ChecksumMismatch extends Error {
+  constructor(
+    readonly expected: string,
+    readonly actual: string,
+  ) {
+    super(`checksum mismatch: expected ${expected}, got ${actual}`);
+  }
 }
 
 export interface InstalledBinary {
@@ -72,12 +97,6 @@ export function isBinaryInstalled(
   return pathExists(resolvedBinaryPath(cacheRoot, agentId, version, cmd));
 }
 
-async function downloadToBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`download failed: ${res.status} ${res.statusText}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
 /** Shells out to the system `tar` — GNU tar (Linux) / bsdtar (macOS, and
  * Windows 10 1803+ ships tar.exe as bsdtar too, which also reads .zip) —
  * rather than adding a zip/tar dependency for a format set every platform
@@ -100,6 +119,7 @@ function extractArchive(archivePath: string, destDir: string): Promise<void> {
 export async function installBinary(
   cacheRoot: string,
   spec: BinaryInstallSpec,
+  log: Logger = nullLogger,
 ): Promise<InstalledBinary> {
   const destDir = join(cacheRoot, spec.agentId, spec.version);
   const resolvedCmd = resolvedBinaryPath(cacheRoot, spec.agentId, spec.version, spec.cmd);
@@ -111,15 +131,21 @@ export async function installBinary(
     // poison the npx cache suffers from, launcher-health.ts; here we own
     // the disk, so it's prevented rather than repaired). Same parent dir on
     // purpose: rename stays atomic on one filesystem.
+    const download = await readBytes(spec.archiveUrl, { log, what: `download of ${spec.agentId} ${spec.version}` });
+    if (!download.ok) throw new Error(`download failed: ${describeNetFailure(download.failure)}`);
+    const { bytes } = download.value;
+    if (spec.sha256 !== null) {
+      const actual = createHash("sha256").update(bytes).digest("hex");
+      if (actual !== spec.sha256) throw new ChecksumMismatch(spec.sha256, actual);
+    }
     const staging = join(cacheRoot, spec.agentId, `.staging-${spec.version}`);
     await rm(staging, { recursive: true, force: true }); // a prior interrupted attempt
     await mkdir(staging, { recursive: true });
     const stagedCmd = join(staging, spec.cmd);
-    const bytes = await downloadToBuffer(spec.archiveUrl);
     const ext = archiveExtension(spec.archiveUrl);
     if (ext === null) {
-      // A raw binary (FORMAT.md: "or raw binaries") — `cmd` names the
-      // downloaded file directly, nothing to extract.
+      // A raw binary — `cmd` names the downloaded file directly, nothing
+      // to extract.
       await writeFile(stagedCmd, bytes);
     } else {
       const archivePath = join(staging, `download${ext}`);

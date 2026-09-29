@@ -12,6 +12,8 @@
 // against a fake OAuth provider, same fixture philosophy as the fake agent.
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
+import { nullLogger } from "./logger";
+import { describeNetFailure, readJson } from "./net";
 
 /** DCR rejected: some vendors allowlist client registration
  * (Figma 403s unknown client_name with no explanation). This must surface
@@ -87,20 +89,16 @@ const tokenResponseSchema = z.object({
 
 // ── discovery (RFC 9728 → RFC 8414, order matters) ───────────────────────────
 
+/** A well-known metadata document. Any status is the server's answer —
+ * "not published here", try the next candidate (null). A connection that
+ * fails, or a body that isn't JSON, is not an answer: it throws with its
+ * reason, never passing for "no metadata" (which would send the flow to a
+ * fallback server on the strength of a dropped packet). */
 async function fetchJson(url: string, fetchFn: typeof fetch): Promise<unknown | null> {
-  try {
-    const response = await fetchFn(url, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      return null;
-    }
-    return (await response.json()) as unknown;
-  } catch {
-    return null;
-  }
+  const read = await readJson(url, { log: nullLogger, what: "OAuth discovery", fetchFn });
+  if (read.ok) return read.value === "unchanged" ? null : read.value.json;
+  if (read.failure.kind === "status") return null;
+  throw new OAuthDiscoveryError(`couldn't read ${new URL(url).host}'s OAuth metadata — ${describeNetFailure(read.failure)}`);
 }
 
 /** Path-aware well-known URLs, most specific first, per each RFC's
@@ -175,7 +173,6 @@ export async function registerClient(
       response_types: ["code"],
       token_endpoint_auth_method: "none", // public client — PKCE carries the proof
     }),
-    signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -204,7 +201,6 @@ async function postForm(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body: new URLSearchParams(params).toString(),
-    signal: AbortSignal.timeout(10_000),
   });
   const body = (await response.json()) as Record<string, unknown>;
   if (typeof body.error === "string") {

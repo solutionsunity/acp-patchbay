@@ -13,7 +13,7 @@ import type { OpenEditorView } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { splitPath } from "../shared/path";
-import { count } from "./chat/view-model";
+import { count } from "../../shared/count";
 import { ReadoutPanel } from "./readout-panel";
 
 export function FilesChip({

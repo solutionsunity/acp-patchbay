@@ -209,12 +209,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   };
 }
 
-/** "1 tool call" / "3 tool calls" — the one pluralizer for count read-outs
- * (turn line, composer stats). Naive s-suffix, which every counted noun
- * here satisfies. */
-export function count(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
 
 /** "1m 29s" (or "12s", "1h 02m") — duration between two ISO timestamps. */
 export function formatDuration(startedAt: string, endedAt: string): string {

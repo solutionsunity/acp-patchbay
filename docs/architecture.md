@@ -244,8 +244,20 @@ flowchart TD
   confirmation, never as part of adding it). A registry `binary` agent's
   archive is the first prerequisite: the config persists at the click with
   the archive facts, and the connect resolves `command` to the cached path,
-  downloading when this version isn't cached (the registry publishes no
-  checksum, so that download is always confirmed). Then **runtime
+  downloading when this version isn't cached — always confirmed first, and
+  held to the archive's SHA-256 when its registry entry publishes one
+  (optional per target in the registry format). The digest is pinned with
+  the version at Add and replaced whole at Upgrade, because the registry
+  lists only each agent's latest version. The registry is read right before
+  the download; its word wins while it still lists that version, the pinned
+  copy after it moves on — and the prompt says only what is known: checked,
+  none published, or the registry couldn't be read. It is checked on the downloaded bytes before anything
+  touches disk. A malformed digest refuses before the prompt; a mismatch
+  re-reads the registry and downloads once more; a second mismatch fails
+  the connect naming both digests — no run-anyway (a user who wants those
+  bytes regardless adds them as a custom command). No digest: the prompt
+  says the download can't be checked. A cached binary is never re-judged:
+  what the cache holds passed the check on its way in. Then **runtime
   resolution**: an `npx` agent needs Node.js, a
   `uvx` agent needs uv (which provisions its own Python) — neither is
   guaranteed on the machine, and Windows is where the gap bites.
@@ -258,7 +270,10 @@ flowchart TD
   every connect, never persisted. Only a failed gate downloads a
   pin-versioned runtime (curated catalog: nodejs.org / uv release CDN) into
   the same bin-cache as binary agents — same staging+rename integrity, same
-  explicit-confirmation-before-download ethos, then re-gated itself before
+  explicit-confirmation-before-download ethos, and held to its publisher's
+  SHA-256, pinned in the catalog beside the version (keyed by archive name,
+  so a version bump without new digests fails the catalog's test; the same
+  check and one retry as agent binaries, no run-anyway), then re-gated itself before
   use (a glibc build on musl fails the connect with a real reason). The
   applied decision is PATH-prepending into that one agent's spawn env —
   the command is never rewritten, so every downstream spelling (warmup,
@@ -274,9 +289,8 @@ flowchart TD
   pin). Recomputed wherever an input moves — a registry read, any config
   write — and published whole to both channels; the Settings card, the
   Agent View's agent chip and the notice all read it, none derives it. A
-  registry *fetch* landing (activation, the 12 h refresh, a manual refresh
-  — never the cached copy read at start) announces each newer version once
-  per window. Upgrade is always the user's click, through the one upgrade
+  registry read landing (never the cached copy loaded at start) announces
+  each newer version once per window. Upgrade is always the user's click, through the one upgrade
   path: it re-resolves the registry version like a first add, and asks
   before a stop that would disconnect open conversations.
 
@@ -910,7 +924,20 @@ mechanism — MCP servers routed to agents:
   demonstrably needs — nothing speculative. Adding a curated server is a data
   change, not code; the files are the record, no doc restates them.
 - **The agent list is NOT shipped data**: the official ACP registry is the one
-  agent source (identity, launch, icon, live-fetched + disk-cached), and
+  agent source (identity, launch, icon, live-fetched + disk-cached), and the
+  registry store is its one holder — nothing else keeps a copy. It is read
+  at the moments it matters (startup, a new session, Settings opening, a
+  download; never on a clock), one read at a time, conditionally by its
+  ETag (an unchanged registry costs a bodiless 304). The disk cache holds
+  the registry *as served*, never patchbay's parse of it: a build that
+  reads more of the format sees everything, where a parsed copy would keep
+  what an older build dropped. A failed read is logged with its reason and
+  the store keeps its copy — it never passes a failure off as current.
+  Every network read goes through one module (`net.ts`): one outcome
+  vocabulary (body, unchanged, or a failure that says whether it was a
+  status, the network, or the body), one log line per failure, and no
+  timeout of patchbay's own — a slow link is not a broken one, and a dead
+  connection is failed by the network stack itself. And
   patchbay's own per-agent curation lives in code tables where every other house
   knowledge does — `META_EXTENSIONS` (meta.ts), knob quirks (knobs.ts). The
   custom-command escape hatch covers anything the registry omits.

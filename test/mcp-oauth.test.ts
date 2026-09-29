@@ -100,6 +100,23 @@ describe("discovery", () => {
   });
 });
 
+describe("discovery — a dead connection is not an absence (issue #54)", () => {
+  it("a connection that fails throws with its reason — never falls back to the origin on a dropped packet", async () => {
+    const dead: typeof fetch = async () => Promise.reject(new TypeError("fetch failed"));
+    await expect(discoverAuthorizationServer("https://mcp.example.test/mcp", dead)).rejects.toThrow(OAuthDiscoveryError);
+    await expect(discoverAuthorizationServer("https://mcp.example.test/mcp", dead)).rejects.toThrow(
+      /couldn't read mcp\.example\.test's OAuth metadata — network error/,
+    );
+  });
+
+  it("a status is the server's answer — not published there, so the next candidate and then the origin", async () => {
+    const notFound: typeof fetch = async () => new Response("", { status: 404 });
+    expect((await discoverAuthorizationServer("https://mcp.example.test/mcp", notFound)).origin).toBe(
+      "https://mcp.example.test",
+    );
+  });
+});
+
 describe("refreshMcpOAuth", () => {
   it("exchanges a refresh token using the captured endpoint + client id", async () => {
     const tokens = await connectMcpOAuth(provider.mcpUrl, CLIENT_INFO, fakeUserAgent());

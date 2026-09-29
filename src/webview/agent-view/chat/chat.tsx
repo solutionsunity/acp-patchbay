@@ -16,7 +16,8 @@ import {
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
-import { count, formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
+import { count } from "../../../shared/count";
+import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
 import { Disclosure } from "../../shared/disclosure";
 import { ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
