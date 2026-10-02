@@ -1,10 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-  <circle cx="5" cy="5" r="1.7"/>
-  <circle cx="12" cy="5" r="1.7"/>
-  <circle cx="19" cy="5" r="1.7"/>
-  <circle cx="5" cy="19" r="1.7"/>
-  <circle cx="12" cy="19" r="1.7"/>
-  <circle cx="19" cy="19" r="1.7"/>
-  <path d="M5 6.8 V11 a2.5 2.5 0 0 0 2.5 2.5 h2 A2.5 2.5 0 0 1 12 16 v1.2"/>
-  <path d="M19 6.8 V17.2"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="26 18 85 85"><clipPath id="silhouette"><path d="M85.81 44.17A32 32 0 1 0 34.92 82.16L26 100L46.37 89.81A32 32 0 0 0 85.81 75.83A17 17 0 0 1 85.81 44.17Z"/></clipPath><path d="M85.81 44.17A32 32 0 1 0 34.92 82.16L26 100L46.37 89.81A32 32 0 0 0 85.81 75.83A17 17 0 0 1 85.81 44.17Z" fill="none" stroke="currentColor" stroke-width="10" clip-path="url(#silhouette)"/><path fill="currentColor" d="M42.65 60A3.8 3.8 0 0 1 35.05 60A3.8 3.8 0 0 1 42.65 60ZM54.3 60A3.8 3.8 0 0 1 46.7 60A3.8 3.8 0 0 1 54.3 60ZM65.95 60A3.8 3.8 0 0 1 58.35 60A3.8 3.8 0 0 1 65.95 60ZM92 47C93.3 56.1 95.9 58.7 105 60C95.9 61.3 93.3 63.9 92 73C90.7 63.9 88.1 61.3 79 60C88.1 58.7 90.7 56.1 92 47ZM104 21C104.7 25.9 106.1 27.3 111 28C106.1 28.7 104.7 30.1 104 35C103.3 30.1 101.9 28.7 97 28C101.9 27.3 103.3 25.9 104 21Z"/></svg>

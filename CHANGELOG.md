@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- New logo: a chat bubble with the AI spark plugged into a socket in its
+  rim. The Marketplace icon is the full mark on a purple-to-blue tile, now
+  at 256px for sharp display on high-density screens. The activity-bar and
+  view icon is the same mark drawn in outline, the way VS Code's own icons
+  are, with the dots and sparks filled.
+
 ## 0.84.1 — 2026-09-29
 
 Two security fixes and two bug fixes.
