@@ -4,6 +4,7 @@
 // out of it asks; the process cwd standing in for an absent folder is never a
 // root — this suite runs with no folder open, so that state is live here.
 import { waitFor } from "./wait-for";
+import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,20 +23,12 @@ interface Internal {
       resolve(requestId: string, optionId: string): void;
       evaluateFileWrites(sessionId: string, paths: readonly string[]): Promise<string>;
     };
-    connectAgent(spec: {
-      agentId: string;
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      cwd: string;
-    }): Promise<void>;
+    agents: AgentsDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       addRoot(sessionId: string, path: string): Promise<void>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
-    pool: { stop(agentId: string): Promise<void> };
   };
 }
 
@@ -51,22 +44,16 @@ suite("write scope (issue #56)", () => {
     const inside = join(root, "inside.txt");
     const escaped = join(dir, "escaped.txt");
     try {
-      await orchestrator.connectAgent({
-        agentId: "write-scope-e2e",
-        name: "Write Scope Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: {
-          FAKE_AGENT_SCRIPT: JSON.stringify({
-            declare: { promptCapabilities: {} },
-            turn: [
-              { type: "writeFile", path: inside, content: "in\n" },
-              { type: "writeFile", path: `${root}/../escaped.txt`, content: "out\n" },
-            ],
-          }),
-        },
-        cwd: root,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig("write-scope-e2e", "Write Scope Fake", fakeAgentPath, {
+          declare: { promptCapabilities: {} },
+          turn: [
+            { type: "writeFile", path: inside, content: "in\n" },
+            { type: "writeFile", path: `${root}/../escaped.txt`, content: "out\n" },
+          ],
+        }),
+      );
+      await orchestrator.agents.connect("write-scope-e2e");
       const born = await orchestrator.sessionManager.createSession("write-scope-e2e", "Write Scope Fake", root);
       await orchestrator.sessionManager.addRoot(born, root);
       // a never-prompted session is re-minted to carry its new root
@@ -89,7 +76,7 @@ suite("write scope (issue #56)", () => {
       assert.strictEqual(await readFile(inside, "utf8"), "in\n");
       await assert.rejects(readFile(escaped, "utf8"), "the rejected write never landed");
     } finally {
-      await orchestrator.pool.stop("write-scope-e2e");
+      await orchestrator.agents.remove("write-scope-e2e");
       await rm(dir, { recursive: true, force: true });
     }
   });

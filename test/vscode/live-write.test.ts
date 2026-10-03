@@ -5,6 +5,7 @@
 // the user's next save. The no-editor disk path stays covered by
 // verification.test.ts.
 import { waitFor } from "./wait-for";
+import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,19 +18,11 @@ interface Internal {
       current: { transcripts: Record<string, Array<{ id: string; kind: string; text?: string }>> };
     };
     broker: { resolve(requestId: string, optionId: string): void };
-    connectAgent(spec: {
-      agentId: string;
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      cwd: string;
-    }): Promise<void>;
+    agents: AgentsDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
-    pool: { stop(agentId: string): Promise<void> };
   };
 }
 
@@ -59,19 +52,13 @@ suite("live-buffer write (W1)", () => {
     assert.strictEqual(doc.isDirty, true);
 
     try {
-      await orchestrator.connectAgent({
-        agentId: "live-write-e2e",
-        name: "Live Write Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: {
-          FAKE_AGENT_SCRIPT: JSON.stringify({
-            declare: { promptCapabilities: {} },
-            turn: [{ type: "writeFile", path: target, content: "from agent\n" }],
-          }),
-        },
-        cwd,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig("live-write-e2e", "Live Write Fake", fakeAgentPath, {
+          declare: { promptCapabilities: {} },
+          turn: [{ type: "writeFile", path: target, content: "from agent\n" }],
+        }),
+      );
+      await orchestrator.agents.connect("live-write-e2e");
       const sessionId = await orchestrator.sessionManager.createSession(
         "live-write-e2e",
         "Live Write Fake",
@@ -89,7 +76,7 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
     } finally {
-      await orchestrator.pool.stop("live-write-e2e");
+      await orchestrator.agents.remove("live-write-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -104,19 +91,13 @@ suite("live-buffer write (W1)", () => {
     const cwd = await mkdtemp(join(tmpdir(), "patchbay-live-read-"));
     const missing = join(cwd, "missing.txt");
     try {
-      await orchestrator.connectAgent({
-        agentId: "live-read-e2e",
-        name: "Live Read Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: {
-          FAKE_AGENT_SCRIPT: JSON.stringify({
-            declare: { promptCapabilities: {} },
-            turn: [{ type: "readFile", path: missing }],
-          }),
-        },
-        cwd,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig("live-read-e2e", "Live Read Fake", fakeAgentPath, {
+          declare: { promptCapabilities: {} },
+          turn: [{ type: "readFile", path: missing }],
+        }),
+      );
+      await orchestrator.agents.connect("live-read-e2e");
       const sessionId = await orchestrator.sessionManager.createSession("live-read-e2e", "Live Read Fake", cwd);
       await orchestrator.sessionManager.sendPrompt(sessionId, "go");
       const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
@@ -125,7 +106,7 @@ suite("live-buffer write (W1)", () => {
         .join("");
       assert.strictEqual(text, `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
-      await orchestrator.pool.stop("live-read-e2e");
+      await orchestrator.agents.remove("live-read-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

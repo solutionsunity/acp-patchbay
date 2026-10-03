@@ -1,23 +1,13 @@
 // P5 gate: fake agent scripted to lie shows declared-but-not-used; branch
 // affordance lights only after the fork is used; reconnect drops used.
-import { methods } from "@agentclientprotocol/sdk";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyAuthEvidence, type AuthLock } from "../src/orchestrator/auth-evidence";
-import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
-import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
-import {
-  capabilityState,
-  initialAgentViewState,
-  reduceAgentView,
-  type AgentViewEvent,
-} from "../src/shared/protocol";
+import type { LaunchSpec } from "../src/orchestrator/pool";
+import { capabilityState } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
-import { stubFsTerminalHooks } from "./support/stub-hooks";
+import { agentsHarness } from "./support/agents-harness";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -38,84 +28,7 @@ function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
   };
 }
 
-function harness(kv = new MemoryKV()): {
-  pool: AgentPool;
-  tracker: CapabilityTracker;
-  usedCache: UsedCapabilityStore;
-  state(): ReturnType<typeof reduceAgentView>;
-  /** Every onProbeSession announcement, in order — the probe's raw
-   * session/new response (spec-pure-core: raw, tests reach into it). */
-  probes: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[];
-  /** `agentAuthRequired`/`agentAuthResolved` only patch an existing
-   * AgentSummary (same shape as the real orchestrator, which always
-   * upserts before connecting) — tests touching `needsAuth` seed one first. */
-  seedAgent(agentId: string): void;
-} {
-  const events: AgentViewEvent[] = [];
-  const probes: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[] = [];
-  const locks = new Map<string, AuthLock>();
-  let tracker!: CapabilityTracker;
-  const state = () => events.reduce(reduceAgentView, initialAgentViewState);
-  const usedCache = new UsedCapabilityStore(kv);
-  const pool = new AgentPool({
-    onStatusChanged: () => {},
-    onDeclaredCaptured: (agentId, declared, raw) =>
-      tracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
-    onSessionUpdate: () => {},
-    onCapabilityEvidence: (agentId, row, evidence) =>
-      evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),
-    // Mirrors the orchestrator's noteAuthEvidence: the wire fact runs
-    // through the real authority table (auth-evidence.ts), only a
-    // transition emits, and only an affirmative auth action's clear marks
-    // the auth row — the same transitions the extension host runs.
-    onAuthWireFact: (agentId, method, settled, startedAt, reason) => {
-      const result = applyAuthEvidence(
-        locks.get(agentId) ?? null,
-        settled === "ok"
-          ? { kind: "rpcOk", method, startedAt }
-          : { kind: "authRequired", method, reason: reason ?? null },
-        new Date().toISOString(),
-      );
-      if (!result.changed) return;
-      if (result.lock === null) {
-        locks.delete(agentId);
-        events.push({ kind: "agentAuthResolved", agentId });
-        // Restricted marking, as in the host: only an affirmative auth
-        // action proves the row — a prompt or same-method heal honestly
-        // ends the lock without having exercised patchbay's auth path.
-        if (settled === "ok" && method === methods.agent.authenticate) tracker.markUsed(agentId, "auth");
-      } else {
-        locks.set(agentId, result.lock);
-        events.push({ kind: "agentAuthRequired", agentId, reason: result.lock.reason });
-      }
-    },
-    ...stubFsTerminalHooks(),
-  });
-  tracker = new CapabilityTracker(pool, usedCache, {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => state().capabilities[agentId],
-    onProbeSession: (agentId, response) =>
-      probes.push({
-        agentId,
-        sessionId: response.sessionId,
-        modes: response.modes,
-        configOptions: response.configOptions,
-      }),
-    // Standing probe workspace, orchestrator-style: per agent, created
-    // idempotently, never removed mid-connection.
-    probeRoot: async (agentId) => {
-      const dir = join(cwd, "probe", agentId);
-      await mkdir(dir, { recursive: true });
-      return dir;
-    },
-  });
-  const seedAgent = (agentId: string) =>
-    events.push({
-      kind: "agentUpserted",
-      agent: { id: agentId, name: agentId, status: "reconnecting", needsAuth: false },
-    });
-  return { pool, tracker, usedCache, state, probes, seedAgent };
-}
+const harness = () => agentsHarness(cwd);
 
 async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {
   const start = Date.now();

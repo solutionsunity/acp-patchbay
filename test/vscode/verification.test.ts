@@ -5,6 +5,7 @@
 // used on those rows — the matrix's honest data-plane record (the fidelity
 // aggregate that once hung off these rows is removed, 2026-07-12).
 import { waitFor } from "./wait-for";
+import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,19 +31,11 @@ interface Internal {
       set(rules: { commandRules: unknown[]; fileWriteScope: string }): Promise<void>;
     };
     usedCapabilities: { remove(id: string): Promise<void> };
-    connectAgent(spec: {
-      agentId: string;
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      cwd: string;
-    }): Promise<void>;
+    agents: AgentsDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
-    pool: { stop(agentId: string): Promise<void> };
   };
 }
 
@@ -82,23 +75,17 @@ suite("opportunistic fs/terminal verification", () => {
     await orchestrator.usedCapabilities.remove("verify-e2e");
 
     try {
-      await orchestrator.connectAgent({
-        agentId: "verify-e2e",
-        name: "Verify E2E Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: {
-          FAKE_AGENT_SCRIPT: JSON.stringify({
-            declare: { promptCapabilities: {} },
-            turn: [
-              { type: "readFile", path: readTarget },
-              { type: "writeFile", path: writeTarget, content: "from agent" },
-              { type: "runCommand", command: "node", args: ["-e", "ok"] },
-            ],
-          }),
-        },
-        cwd,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig("verify-e2e", "Verify E2E Fake", fakeAgentPath, {
+          declare: { promptCapabilities: {} },
+          turn: [
+            { type: "readFile", path: readTarget },
+            { type: "writeFile", path: writeTarget, content: "from agent" },
+            { type: "runCommand", command: "node", args: ["-e", "ok"] },
+          ],
+        }),
+      );
+      await orchestrator.agents.connect("verify-e2e");
 
       const matrix = () => orchestrator.agentView.current.capabilities["verify-e2e"];
       assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, used: false });
@@ -124,7 +111,7 @@ suite("opportunistic fs/terminal verification", () => {
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await orchestrator.pool.stop("verify-e2e");
+      await orchestrator.agents.remove("verify-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

@@ -2,6 +2,7 @@
 // unasked (issue #47): with a prompted session attached, Upgrade asks first,
 // and declining leaves the agent running.
 import { waitFor } from "./wait-for";
+import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,26 +14,12 @@ const AGENT_ID = "upgrade-guard";
 interface Internal {
   orchestrator: {
     handleAction(action: { kind: "upgradeAgent"; agentId: string }): void;
-    agentConfigs: {
-      upsert(config: Record<string, unknown>): Promise<void>;
-      remove(id: string): Promise<void>;
-    };
-    connectAgent(spec: {
-      agentId: string;
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      cwd: string;
-    }): Promise<void>;
+    agents: AgentsDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
-    pool: {
-      get(agentId: string): { status: string } | undefined;
-      stop(agentId: string): Promise<void>;
-    };
+    pool: { get(agentId: string): { status: string } | undefined };
   };
 }
 
@@ -59,24 +46,16 @@ suite("upgrade guard", () => {
     };
 
     try {
-      await orchestrator.agentConfigs.upsert({
-        id: AGENT_ID,
-        name: "Upgrade Guard Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        autoConnect: false,
-        defaults: {},
-        registrySource: { registryId: AGENT_ID, distributionKind: "npx", pinnedVersion: "1.0.0" },
-        lastSeenVersion: null,
-      });
-      await orchestrator.connectAgent({
-        agentId: AGENT_ID,
-        name: "Upgrade Guard Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: { FAKE_AGENT_SCRIPT: JSON.stringify({ turn: [{ type: "chunk", text: "ok" }] }) },
-        cwd,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig(
+          AGENT_ID,
+          "Upgrade Guard Fake",
+          fakeAgentPath,
+          { turn: [{ type: "chunk", text: "ok" }] },
+          { registryId: AGENT_ID, distributionKind: "npx", pinnedVersion: "1.0.0" },
+        ),
+      );
+      await orchestrator.agents.connect(AGENT_ID);
       const sessionId = await orchestrator.sessionManager.createSession(AGENT_ID, "Upgrade Guard Fake", cwd);
       await orchestrator.sessionManager.sendPrompt(sessionId, "go");
 
@@ -89,8 +68,7 @@ suite("upgrade guard", () => {
       assert.strictEqual(orchestrator.pool.get(AGENT_ID)?.status, "running");
     } finally {
       window.showWarningMessage = original;
-      await orchestrator.pool.stop(AGENT_ID);
-      await orchestrator.agentConfigs.remove(AGENT_ID);
+      await orchestrator.agents.remove(AGENT_ID);
       await rm(cwd, { recursive: true, force: true });
     }
   });

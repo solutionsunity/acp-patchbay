@@ -1,0 +1,123 @@
+// The agents store wired the way the orchestrator wires it — the pool's
+// reports go to the store, the capability tracker under it, every saved fact
+// in memory — minus vscode. One wiring for every suite that drives agents
+// over the real fake agent, so none of them carries its own copy of a
+// writer.
+import { join } from "node:path";
+import type * as acp from "@agentclientprotocol/sdk";
+import { AgentsStore, type AgentsStoreDeps } from "../../src/orchestrator/agents-store";
+import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
+import { AgentPool } from "../../src/orchestrator/pool";
+import { AcpRegistryStore } from "../../src/orchestrator/stores/acp-registry";
+import { AgentConfigStore } from "../../src/orchestrator/stores/agent-configs";
+import { AuthLockStore } from "../../src/orchestrator/stores/auth-locks";
+import { ComposerKnobsStore } from "../../src/orchestrator/stores/composer-knobs";
+import { MemorySecrets } from "../../src/orchestrator/stores/integration-tokens";
+import { MemoryKV } from "../../src/orchestrator/stores/kv";
+import { LastConnectedStore } from "../../src/orchestrator/stores/last-connected";
+import { SecretEnvStore } from "../../src/orchestrator/stores/secret-env";
+import { UsedCapabilityStore } from "../../src/orchestrator/stores/used-capabilities";
+import {
+  initialAgentViewState,
+  reduceAgentView,
+  type AgentViewEvent,
+  type AgentViewState,
+} from "../../src/shared/protocol";
+import { stubFsTerminalHooks } from "./stub-hooks";
+
+export interface AgentsHarness {
+  pool: AgentPool;
+  tracker: CapabilityTracker;
+  agents: AgentsStore;
+  deps: AgentsStoreDeps;
+  events: AgentViewEvent[];
+  state(): AgentViewState;
+  /** Agents the store reported removed — the sessions side's cue. */
+  removed: string[];
+  /** Every onProbeSession announcement, in order — the probe's raw
+   * session/new response (spec-pure-core: raw, tests reach into it). */
+  probes: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[];
+  /** A saved config and a row in the views for an agent a suite connects
+   * through the pool directly: the store's writers act only on agents that
+   * exist (auth evidence for an unknown one is dropped), and the views'
+   * auth events patch an existing row — the real host upserts before
+   * connecting. */
+  seedAgent(agentId: string): void;
+}
+
+/** `dir` holds the probe workspaces and the registry cache; `kv` is the
+ * machine file — pass one to share saved facts with a second harness. */
+export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): AgentsHarness {
+  const events: AgentViewEvent[] = [];
+  const removed: string[] = [];
+  const probes: AgentsHarness["probes"] = [];
+  const state = () => events.reduce(reduceAgentView, initialAgentViewState);
+  let agents!: AgentsStore;
+  const pool = new AgentPool({
+    onStatusChanged: (agentId, status, detail, stderr) => agents.noteStatus(agentId, status, detail, stderr),
+    onDeclaredCaptured: (agentId, declared, raw) => agents.noteDeclared(agentId, declared, raw),
+    onSessionUpdate: () => {},
+    onCapabilityEvidence: (agentId, row, evidence) => agents.noteEvidence(agentId, row, evidence),
+    onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
+      agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
+    ...stubFsTerminalHooks(),
+  });
+  const usedCapabilities = new UsedCapabilityStore(kv);
+  const tracker = new CapabilityTracker(pool, usedCapabilities, {
+    emit: (...evs) => events.push(...evs),
+    currentMatrix: (agentId) => state().capabilities[agentId],
+    onProbeSession: (agentId, response: acp.NewSessionResponse) =>
+      probes.push({
+        agentId,
+        sessionId: response.sessionId,
+        modes: response.modes,
+        configOptions: response.configOptions,
+      }),
+    probeRoot: (agentId) => agents.probeRoot(agentId),
+  });
+  const deps: AgentsStoreDeps = {
+    pool,
+    configs: new AgentConfigStore(kv),
+    env: new SecretEnvStore(new MemorySecrets(), "acpPatchbay.agent"),
+    authLocks: new AuthLockStore(kv),
+    usedCapabilities,
+    composerKnobs: new ComposerKnobsStore(kv),
+    lastConnected: new LastConnectedStore(new MemoryKV()),
+    registry: new AcpRegistryStore(join(dir, "registry"), () => {}),
+    tracker,
+    workspaceCwd: dir,
+    binaryCacheDir: join(dir, "bin-cache"),
+    probeRootBase: join(dir, "probe"),
+  };
+  agents = new AgentsStore(deps, {
+    emit: (...evs) => events.push(...evs),
+    emitSettings: () => {},
+    currentMatrix: (agentId) => state().capabilities[agentId],
+    openWork: () => ({ conversations: 0, turns: 0 }),
+    confirm: async () => true,
+    warn: () => {},
+    runLoginTask: async () => 0,
+    removed: (agentId) => removed.push(agentId),
+    authCleared: () => {},
+    defaultsChanged: () => {},
+  });
+  const seedAgent = (agentId: string) => {
+    // MemoryKV writes land before the promise resolves — the record is
+    // there by the time this returns.
+    void deps.configs.upsert({
+      id: agentId,
+      name: agentId,
+      command: process.execPath,
+      args: [],
+      autoConnect: false,
+      defaults: {},
+      registrySource: null,
+      lastSeenVersion: null,
+    });
+    events.push({
+      kind: "agentUpserted",
+      agent: { id: agentId, name: agentId, status: "reconnecting", needsAuth: false },
+    });
+  };
+  return { pool, tracker, agents, deps, events, state, removed, probes, seedAgent };
+}

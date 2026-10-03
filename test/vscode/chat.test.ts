@@ -4,6 +4,7 @@
 // this gate is a manual smoke test outside this harness — no live agent
 // credentials are available in this sandboxed run.)
 import { waitFor } from "./wait-for";
+import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,14 +28,7 @@ interface Internal {
         sessions: Array<{ id: string; live: boolean }>;
       };
     };
-    connectAgent(spec: {
-      agentId: string;
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      cwd: string;
-    }): Promise<void>;
+    agents: AgentsDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -65,23 +59,17 @@ suite("chat vertical slice", () => {
     const cwd = await mkdtemp(join(tmpdir(), "patchbay-chat-e2e-"));
 
     try {
-      await orchestrator.connectAgent({
-        agentId: "chat-e2e",
-        name: "Chat E2E Fake",
-        command: process.execPath,
-        args: [fakeAgentPath],
-        env: {
-          FAKE_AGENT_SCRIPT: JSON.stringify({
-            turn: [
-              { type: "chunk", text: "part one " },
-              { type: "chunk", text: "part two " },
-              { type: "chunk", text: "part three" },
-            ],
-            stepDelayMs: 250,
-          }),
-        },
-        cwd,
-      });
+      await orchestrator.agents.save(
+        fakeAgentConfig("chat-e2e", "Chat E2E Fake", fakeAgentPath, {
+          turn: [
+            { type: "chunk", text: "part one " },
+            { type: "chunk", text: "part two " },
+            { type: "chunk", text: "part three" },
+          ],
+          stepDelayMs: 250,
+        }),
+      );
+      await orchestrator.agents.connect("chat-e2e");
 
       const sessionId = await orchestrator.sessionManager.createSession(
         "chat-e2e",
@@ -132,6 +120,7 @@ suite("chat vertical slice", () => {
       // and the final state reached the webview too
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
     } finally {
+      await orchestrator.agents.remove("chat-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

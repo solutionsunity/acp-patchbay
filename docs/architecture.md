@@ -417,9 +417,9 @@ Synthetic behavior probes run in an **ephemeral session scoped to a temp directo
 would-be writers where the wire offers no query to re-read the truth. The
 answer is the same shape — an authority table (`auth-evidence.ts`, the auth
 sibling of `CAPABILITY_PROOFS`) that alone decides which evidence may move
-the locked/unlocked state, consulted by one writer
-(`orchestrator.noteAuthEvidence`); no call site anywhere decides what a wire
-fact means for auth.
+the locked/unlocked state, consulted by one writer (the agents store's
+`noteAuthEvidence`, agents-store.ts); no call site anywhere decides what a
+wire fact means for auth.
 
 - **Locks** carry their provenance: a wire `auth_required` records the method
   that raised it; a successful `logout` round-trip is itself the strongest
@@ -1070,7 +1070,7 @@ Atoms first; each directory is one responsibility:
 ```
 src/
   extension.ts    activation entry
-  orchestrator/   session manager, client pool, broker, stores, extensions
+  orchestrator/   agents store, session manager, client pool, broker, stores, extensions
   mcp/            local MCP server + its client-capability adapters
   integrations/   the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only

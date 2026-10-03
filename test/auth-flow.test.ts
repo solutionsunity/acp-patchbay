@@ -1,31 +1,19 @@
 // Live auth flows over a real fake-agent subprocess: the wire facts the
 // connect probe / authenticate / prompt actually produce, run through the
-// real authority table (auth-evidence.ts) exactly as the extension host
-// does. The pure transition-table tests prove the table; these prove which
+// agents store's own auth writer and its authority table (auth-evidence.ts)
+// — the extension host's path. The pure transition-table tests prove the table; these prove which
 // evidence the wire actually delivers to it — and that a persisted lock is
 // never laundered by facts that don't contradict it.
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  applyAuthEvidence,
-  LOGGED_OUT_REASON,
-  type AuthLock,
-} from "../src/orchestrator/auth-evidence";
-import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
-import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
-import {
-  capabilityState,
-  initialAgentViewState,
-  reduceAgentView,
-  type AgentViewEvent,
-} from "../src/shared/protocol";
+import { LOGGED_OUT_REASON, type AuthLock } from "../src/orchestrator/auth-evidence";
+import type { LaunchSpec } from "../src/orchestrator/pool";
+import { capabilityState } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
-import { stubFsTerminalHooks } from "./support/stub-hooks";
+import { agentsHarness } from "./support/agents-harness";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -60,71 +48,19 @@ const LAZY: FakeAgentScript = {
   authMethods: [{ id: "default", name: "Default" }],
 };
 
-function harness(): {
-  pool: AgentPool;
-  tracker: CapabilityTracker;
-  /** The persisted-lock mirror (AuthLockStore in the real host): tests may
-   * pre-seed it, exactly as the store restores a lock across a reload. */
-  locks: Map<string, AuthLock>;
-  events: AgentViewEvent[];
-  state(): ReturnType<typeof reduceAgentView>;
-  seedAgent(agentId: string): void;
-  authEvents(kind: "agentAuthRequired" | "agentAuthResolved", agentId: string): AgentViewEvent[];
-} {
-  const events: AgentViewEvent[] = [];
-  const locks = new Map<string, AuthLock>();
-  let tracker!: CapabilityTracker;
-  const state = () => events.reduce(reduceAgentView, initialAgentViewState);
-  const pool = new AgentPool({
-    onStatusChanged: () => {},
-    onDeclaredCaptured: (agentId, declared, raw) =>
-      tracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
-    onSessionUpdate: () => {},
-    onCapabilityEvidence: (agentId, row, evidence) =>
-      evidence === "used" ? tracker.markUsed(agentId, row) : tracker.markSuspect(agentId, row),
-    // Mirrors orchestrator.noteAuthEvidence exactly: one writer, the
-    // authority table decides, only a transition emits, and only an
-    // affirmative auth action's clear marks the auth row used.
-    onAuthWireFact: (agentId, method, settled, startedAt, reason) => {
-      const result = applyAuthEvidence(
-        locks.get(agentId) ?? null,
-        settled === "ok"
-          ? { kind: "rpcOk", method, startedAt }
-          : { kind: "authRequired", method, reason: reason ?? null },
-        new Date().toISOString(),
-      );
-      if (!result.changed) return;
-      if (result.lock === null) {
-        locks.delete(agentId);
-        events.push({ kind: "agentAuthResolved", agentId });
-        // Restricted marking, as in the host: only an affirmative auth
-        // action proves the row — a prompt or same-method heal honestly
-        // ends the lock without having exercised patchbay's auth path.
-        if (settled === "ok" && method === "authenticate") tracker.markUsed(agentId, "auth");
-      } else {
-        locks.set(agentId, result.lock);
-        events.push({ kind: "agentAuthRequired", agentId, reason: result.lock.reason });
-      }
-    },
-    ...stubFsTerminalHooks(),
-  });
-  tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => state().capabilities[agentId],
-    probeRoot: async (agentId) => {
-      const dir = join(cwd, "probe", agentId);
-      await mkdir(dir, { recursive: true });
-      return dir;
-    },
-  });
-  const seedAgent = (agentId: string) =>
-    events.push({
-      kind: "agentUpserted",
-      agent: { id: agentId, name: agentId, status: "reconnecting", needsAuth: false },
-    });
+/** The shared agents harness, plus what these flows read: the persisted
+ * lock as the store holds it — tests may pre-seed one, exactly as the store
+ * restores a lock across a reload — and the auth events the views got. */
+function harness() {
+  const h = agentsHarness(cwd);
+  const locks = {
+    get: (agentId: string): AuthLock | undefined => h.deps.authLocks.lockFor(agentId) ?? undefined,
+    // MemoryKV writes land before the promise resolves.
+    set: (agentId: string, lock: AuthLock): void => void h.deps.authLocks.upsert({ id: agentId, lock }),
+  };
   const authEvents = (kind: "agentAuthRequired" | "agentAuthResolved", agentId: string) =>
-    events.filter((e) => e.kind === kind && e.agentId === agentId);
-  return { pool, tracker, locks, events, state, seedAgent, authEvents };
+    h.events.filter((e) => e.kind === kind && e.agentId === agentId);
+  return { ...h, locks, authEvents };
 }
 
 async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {

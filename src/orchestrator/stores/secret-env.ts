@@ -8,7 +8,7 @@
 // `acpPatchbay.agent.<id>.env`, integrations:
 // `acpPatchbay.integration.<id>.env` — the same key family the token store
 // uses). Values are read at the moment reality needs them — agent spawn
-// (orchestrator.connectAgent), MCP-server attach (integrations.mcpServersFor)
+// (agents-store.ts connect), MCP-server attach (integrations.mcpServersFor)
 // — and shown back to their owner in the Settings forms.
 import type { SecretsLike } from "./integration-tokens";
 

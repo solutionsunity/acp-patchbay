@@ -315,9 +315,10 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   // deliberately NOT a proof: lazy-auth agents pass it while logged out,
   // so it would mark a path that never fired. The row's second proof
   // source is off-table by necessity: the auth authority clearing a lock
-  // (orchestrator's noteAuthEvidence — terminal login exit 0, or a
-  // success contradicting the lock) is auth demonstrably working, and the
-  // orchestrator marks the row there.
+  // through an affirmative auth action (the agents store's
+  // noteAuthEvidence — an authenticate round-trip, or a terminal login
+  // exiting 0) is auth demonstrably working, and the store marks the row
+  // there.
   auth: [
     {
       via: "agentRequest",

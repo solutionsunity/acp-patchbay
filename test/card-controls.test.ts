@@ -129,7 +129,7 @@ describe("agentCardControls", () => {
     expect(c.stop.show).toBe(true);
   });
 
-  // Logout disconnects the agent's processes (orchestrator.logoutAgent),
+  // Logout disconnects the agent's process (the agents store's logout),
   // leaving a stopped card with needsAuth still set — it must offer
   // Connect, never a dead Log in: authenticate is an RPC on the live
   // connection, and the fresh connect re-derives auth state anyway.

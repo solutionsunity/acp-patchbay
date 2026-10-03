@@ -309,8 +309,8 @@ export class CapabilityTracker {
    * strongest lock there is — cleared only by an affirmative login or a
    * completed prompt, never by a reconnect's probe.
    *
-   * The orchestrator disconnects the agent's processes right after this
-   * returns (logoutAgent): a process that has held credentials is never
+   * The agents store disconnects the agent's process right after this
+   * returns (its logout): a process that has held credentials is never
    * trusted to shed them — auth state read at spawn and never re-read is
    * live agent behavior (auggie dossier, 2026-07-14), and its logout-side
    * mirror (a process that keeps working after revocation) is a security

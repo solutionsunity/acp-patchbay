@@ -147,7 +147,7 @@ support@augmentcode.com / Discord.
     fresh spawn of the same version is authenticated immediately. UX bug:
     any client offering a terminal-recipe login must restart the process
     after a successful login or the login appears to do nothing. Patchbay:
-    `loginViaTerminal` (orchestrator.ts) probes after exit 0 and, on a
+    `loginViaTerminal` (agents-store.ts) probes after exit 0 and, on a
     still-`auth_required` answer, restarts the process — shape-gated
     (out-of-band login + still-locked probe), not vendor-gated.
   - **Logout side (the security half), now observed:** process spawned
@@ -167,8 +167,8 @@ support@augmentcode.com / Discord.
     retry/timeout budget, not a decision. Candidate addition to the
     TKT-66153 thread.
   - Patchbay defense (policy, all agents, not auggie-gated): patchbay's
-    own logout disconnects every process for the agent
-    (orchestrator.logoutAgent) — a process that has held credentials is
+    own logout disconnects the agent's process (the agents store's
+    `logout`, agents-store.ts) — a process that has held credentials is
     never trusted to shed them. Moot for auggie specifically (no
     `auth.logout` to offer, so the control never shows) — the exposure
     here is out-of-band logout, which only a process restart clears.

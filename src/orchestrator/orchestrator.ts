@@ -8,7 +8,7 @@ import { statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { methods, RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
   coalesceAgentViewEvent,
@@ -19,13 +19,8 @@ import {
   reduceAgentView,
   reduceSettings,
   type Action,
-  type AgentConfigView,
-  type AgentUpdate,
   type AgentViewEvent,
-  type AuthMethodView,
   type AgentViewState,
-  type CapabilityRowId,
-  type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
   type PermissionOptionView,
@@ -35,30 +30,25 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { openAsks, type OpenAsk } from "../shared/attention";
-import { agentUpdates } from "./agent-updates";
+import { AgentsStore } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
-import { CapabilityTracker, type ProbeOutcome } from "./capability-tracker";
+import { CapabilityTracker } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
-import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
 import { IntegrationsManager } from "./integrations";
 import { OAuthCallbackRegistry } from "./oauth-callback";
-import { foldSeed, normalizeKnobs } from "./knobs";
-import { terminalAuthOf, type TerminalAuth } from "./capabilities";
+import { normalizeKnobs } from "./knobs";
 import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
 import { sessionKnobExtras } from "./extensions";
-import { checkPathDivergence } from "./launcher-health";
 import { runLoginTask } from "./login-task";
-import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
-import { AgentPool, authRequiredReasonOf, type LaunchSpec } from "./pool";
+import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
-import { resolveExecutableWin32 } from "./spawn-resolve";
 import { normalizeRootPath, SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
@@ -66,15 +56,13 @@ import { listDoneSounds, playDoneSound } from "./sound";
 import {
   AcpRegistryStore,
   binaryDigestFor,
-  type RegistryAgent,
   registryAgentView,
   resolveDistribution,
 } from "./stores/acp-registry";
-import { type AgentConfig, AgentConfigStore } from "./stores/agent-configs";
+import { AgentConfigStore } from "./stores/agent-configs";
 import { ComposerKnobsStore } from "./stores/composer-knobs";
 import { PreferencesStore } from "./stores/preferences";
 import { SecretEnvStore } from "./stores/secret-env";
-import { resolvedBinaryPath } from "./stores/binary-installer";
 import { resolveLaunch, runtimeName, type DownloadAsk, type DownloadCheck } from "./runtime-resolver";
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { FileKV } from "./stores/file-kv";
@@ -87,7 +75,6 @@ import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rul
 import { SavedRootsStore } from "./stores/saved-roots";
 import { loadCatalog } from "./stores/mcp-catalog";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
-import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { AuthLockStore } from "./stores/auth-locks";
 import { SessionContinuityStore } from "./stores/session-continuity";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
@@ -118,6 +105,11 @@ function openInBrowser(href: string): Thenable<boolean> {
   return vscode.env.openExternal(vscode.Uri.parse(href));
 }
 
+/** A modal question with one affirmative choice — true when it was chosen. */
+async function askModal(message: string, choice: string): Promise<boolean> {
+  return (await vscode.window.showWarningMessage(message, { modal: true }, choice)) === choice;
+}
+
 function optionViewsFromAcp(
   options: readonly { optionId: string; name: string; kind: string }[],
 ): PermissionOptionView[] {
@@ -139,8 +131,8 @@ export class Orchestrator {
   readonly integrationConfigs: IntegrationConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
   /** Standing auth locks (auth-evidence.ts) — persisted so reload and
-   * reconnect cannot launder a witnessed logout. Written only by
-   * noteAuthEvidence, the one auth-state writer. */
+   * reconnect cannot launder a witnessed logout. Written only by the agents
+   * store's noteAuthEvidence, the one auth-state writer. */
   readonly authLocks: AuthLockStore;
   readonly spawnRegistry: SpawnRegistryStore;
   readonly agentEnv: SecretEnvStore;
@@ -153,11 +145,11 @@ export class Orchestrator {
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
   readonly sessionContinuity: SessionContinuityStore;
-  /** The update fact as last published, and the updates already announced
-   * this window ("agentId@version") — each newer version is told once. */
-  private updates: Readonly<Record<string, AgentUpdate>> = {};
+  /** The updates already announced this window ("agentId@version") — each
+   * newer version is told once. */
   private readonly announcedUpdates = new Set<string>();
   readonly pool: AgentPool;
+  readonly agents: AgentsStore;
   readonly sessionManager: SessionManager;
   readonly capabilityTracker: CapabilityTracker;
   private readonly defaultsEditor: DefaultsEditor;
@@ -176,32 +168,7 @@ export class Orchestrator {
    * constant; every consumer reads this field, none re-derives it. */
   private readonly workspaceCwd: string;
   private readonly binaryCacheDir: string;
-  /** Standing probe workspaces, one per agent (`probe/<agentId>`) — created
-   * idempotently at each probe, deleted only with the agent's config. Never
-   * mid-connection: a probe session may hold its root agent-side for the
-   * connection's life (capability-tracker.ts hooks.probeRoot). */
-  private readonly probeRootBase: string;
-  private readonly agentNames = new Map<string, string>();
-  /** agentId:pathVersion:bundledVersion triples already warned about —
-   * warnOnPathDivergence fires once per exact pair, never per reconnect. */
-  private readonly divergenceWarned = new Set<string>();
-  /** Agents (global — never repo-committed), resolved to a spawnable
-   * LaunchSpec; visible-in-this-workspace subset of agentConfigs.list(). */
-  private readonly configuredAgentSpecs = new Map<string, LaunchSpec>();
   private readonly clientHost: ClientHost;
-  /** agentId → methodId → terminal-auth login recipe (meta.ts), captured
-   * fresh at every connect from the raw initialize response — never
-   * persisted, never sent to a webview. */
-  private readonly authRecipes = new Map<string, ReadonlyMap<string, TerminalAuthRecipe>>();
-  /** agentId → methodId → the spec's terminal auth method, captured
-   * alongside authRecipes — wire args/env only; the command is the
-   * agent's own spawn spec, composed at click time, never stored. */
-  private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TerminalAuth>>();
-  /** agentId → methodId → what patchbay may do with it (capabilities.ts's
-   * one classification, as captured). The writer's own copy: a webview
-   * hiding a button is a courtesy, and `authenticate` is the agent type's
-   * call alone (spec MUST NOT), so the refusal lives here. */
-  private readonly authMethodKinds = new Map<string, ReadonlyMap<string, AuthMethodView["kind"]>>();
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
@@ -240,7 +207,6 @@ export class Orchestrator {
       "integration-bridge.js",
     ).fsPath;
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
-    this.probeRootBase = join(context.globalStorageUri.fsPath, "probe");
 
     // Machine scope lives in a file this extension owns (file-kv.ts), not
     // in globalState: state.vscdb is editor-owned, shared by every
@@ -379,12 +345,7 @@ export class Orchestrator {
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
       onStatusChanged: (agentId, status, detail, stderr) => {
-        const event = { kind: "agentStatusChanged", agentId, status, detail, stderr } as const;
-        this.agentView.emit(event);
-        this.settings.emit(event);
-        const suffix = detail !== undefined ? ` — ${detail}` : "";
-        if (status === "crashed") this.log.error(`${agentId}: crashed${suffix}`);
-        else this.log.info(`${agentId}: ${status}${suffix}`);
+        this.agents.noteStatus(agentId, status, detail, stderr);
         if (status !== "running") this.settleAsksOn(agentId);
         
         // A dead or reconnecting connection invalidates every sessionId that
@@ -420,30 +381,7 @@ export class Orchestrator {
         // copy off this same event; the defaults editor forgot its session
         // above, and an expanded card reopens one once running.
       },
-      onDeclaredCaptured: (agentId, declared, raw) => {
-        const version = raw.agentInfo?.version ?? null;
-        this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
-        if (version !== null) void this.recordSeenVersion(agentId, version);
-        // terminal-auth recipes (meta.ts) and the spec's terminal auth
-        // methods, fresh per connect — command paths are machine-absolute
-        // and never persisted; the webview only ever sees the method's
-        // kind, both captures stay host-side. A recipe wins over the
-        // wire's type, the same precedence the kind is classified by.
-        const recipes = new Map<string, TerminalAuthRecipe>();
-        const typed = new Map<string, TerminalAuth>();
-        for (const m of raw.authMethods ?? []) {
-          const recipe = terminalAuthRecipeOf(m._meta);
-          if (recipe !== null) {
-            recipes.set(m.id, recipe);
-            continue;
-          }
-          const terminal = terminalAuthOf(m);
-          if (terminal !== null) typed.set(m.id, terminal);
-        }
-        this.authRecipes.set(agentId, recipes);
-        this.typedTerminalAuth.set(agentId, typed);
-        this.authMethodKinds.set(agentId, new Map(declared.authMethods.map((m) => [m.id, m.kind])));
-      },
+      onDeclaredCaptured: (agentId, declared, raw) => this.agents.noteDeclared(agentId, declared, raw),
       onSessionUpdate: (agentId, notification) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
@@ -454,14 +392,9 @@ export class Orchestrator {
         }
         this.sessionManager.handleUpdate(agentId, notification);
       },
-      onCapabilityEvidence: (agentId, row, evidence) => this.noteEvidence(agentId, row, evidence),
+      onCapabilityEvidence: (agentId, row, evidence) => this.agents.noteEvidence(agentId, row, evidence),
       onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
-        this.noteAuthEvidence(
-          agentId,
-          settled === "ok"
-            ? { kind: "rpcOk", method, startedAt }
-            : { kind: "authRequired", method, reason: reason ?? null },
-        ),
+        this.agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
       wireLogActive: () => this.wireLog.active,
       onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
       // Spawn registry: records persist machine-scoped so an abnormal
@@ -628,20 +561,14 @@ export class Orchestrator {
         // still carrying it is retired).
         onRealSessionAttached: (agentId, sessionId) =>
           this.capabilityTracker.noteRealSessionOpened(agentId, sessionId),
-        // From the store-backed spec map, never the pool entry's spec: that
+        // From the agent's saved config, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect. The
-        // knobSource preference is read just as fresh: last-session takes
-        // the composer's per-agent combination, falling back to the
-        // configured defaults (an agent whose knobs were never touched has
-        // no composer record). Defaults themselves are written only by the
-        // Settings save path — read-only to everything here.
-        seedFor: (agentId) => {
-          const defaults = this.configuredAgentSpecs.get(agentId)?.defaults;
-          if (this.preferences.get().knobSource !== "last-session") return defaults;
-          return this.composerKnobs.get(agentId) ?? defaults;
-        },
-        onKnobsConfirmed: (agentId, seed) => void this.composerKnobs.record(agentId, seed),
+        // knobSource preference is read just as fresh. Defaults themselves
+        // are written only by the Settings save path — read-only to
+        // everything here.
+        seedFor: (agentId) => this.agents.knobSeed(agentId, this.preferences.get().knobSource),
+        onKnobsConfirmed: (agentId, seed) => this.agents.recordKnobs(agentId, seed),
         continuityFor: (sessionId, agentId) => this.sessionContinuity.read(sessionId, agentId),
         onContinuity: (sessionId, agentId, sessionCwd, patch) => {
           void (patch === null
@@ -688,7 +615,7 @@ export class Orchestrator {
         connectForSession: (sessionId) => void this.connectForSession(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
-        authLocked: (agentId) => this.authLocks.lockFor(agentId) !== null,
+        authLocked: (agentId) => this.agents.authLocked(agentId),
       },
       () => this.workspaceCwd,
       async (contextToken, agentId) => {
@@ -750,21 +677,56 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
-        probeRoot: (agentId) => this.probeRoot(agentId),
+        probeRoot: (agentId) => this.agents.probeRoot(agentId),
       },
       log,
     );
     this.defaultsEditor = new DefaultsEditor(
       this.pool,
       {
-        probeRoot: (agentId) => this.probeRoot(agentId),
-        defaultsFor: (agentId) => this.configuredAgentSpecs.get(agentId)?.defaults ?? {},
+        probeRoot: (agentId) => this.agents.probeRoot(agentId),
+        defaultsFor: (agentId) => this.agents.spec(agentId)?.defaults ?? {},
         normalize: (response) =>
           normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
             this.log.info(m),
           ),
         mayOpen: (agentId) => !this.capabilityTracker.isProbeDeferred(agentId),
         emit: (...events) => this.settings.emit(...events),
+      },
+      log,
+    );
+    this.agents = new AgentsStore(
+      {
+        pool: this.pool,
+        configs: this.agentConfigs,
+        env: this.agentEnv,
+        authLocks: this.authLocks,
+        usedCapabilities: this.usedCapabilities,
+        composerKnobs: this.composerKnobs,
+        lastConnected: this.lastConnected,
+        registry: this.acpRegistry,
+        tracker: this.capabilityTracker,
+        workspaceCwd: this.workspaceCwd,
+        binaryCacheDir: this.binaryCacheDir,
+        probeRootBase: join(context.globalStorageUri.fsPath, "probe"),
+      },
+      {
+        emit: (...events) => {
+          this.agentView.emit(...events);
+          this.settings.emit(...events);
+        },
+        emitSettings: (...events) => this.settings.emit(...events),
+        currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
+        openWork: (agentId) => this.sessionManager.openWork(agentId),
+        confirm: askModal,
+        warn: (message) => void vscode.window.showWarningMessage(message),
+        runLoginTask: (name, recipe) => runLoginTask(name, recipe),
+        removed: (agentId) => {
+          this.sessionManager.invalidateAgent(agentId);
+          this.sessionManager.forgetAgentSessions(agentId);
+        },
+        authCleared: (agentId) => this.sessionManager.drainHeldQueues(agentId),
+        defaultsChanged: (agentId) => void this.defaultsEditor.defaultsChanged(agentId),
       },
       log,
     );
@@ -806,7 +768,7 @@ export class Orchestrator {
     });
 
     void this.refreshAuditTail();
-    this.loadAgentConfigs();
+    this.agents.publishAll();
     void this.integrations.refresh();
     void this.acpRegistry.load().then(() => {
       this.publishRegistry();
@@ -865,12 +827,9 @@ export class Orchestrator {
     this.log.info("erase all data: stopping every process");
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     this.clientHost.clear();
-    await this.pool.disposeAll();
+    await this.agents.stopAll();
     this.sessionManager.reset();
     this.contextTokenToSession.clear();
-    this.authRecipes.clear();
-    this.typedTerminalAuth.clear();
-    this.authMethodKinds.clear();
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
@@ -899,19 +858,11 @@ export class Orchestrator {
       },
     });
 
-    this.configuredAgentSpecs.clear();
-    this.agentNames.clear();
-
     for (const session of this.agentView.current.sessions) {
       this.agentView.emit({ kind: "sessionClosed", sessionId: session.id });
     }
-    for (const agent of this.agentView.current.agents) {
-      const removed = { kind: "agentRemoved", agentId: agent.id } as const;
-      this.agentView.emit(removed);
-      this.settings.emit(removed);
-    }
+    await this.agents.erased(this.agentView.current.agents.map((a) => a.id));
     this.agentView.emit({ kind: "chatConnectResolved" });
-    await this.refreshAgentConfigs();
     await this.integrations.refresh();
     this.publishRules();
     this.publishSavedRoots();
@@ -937,56 +888,21 @@ export class Orchestrator {
     // set as it stood when the window went down is what the next activate
     // restores (if it comes soon enough to be a reload; last-connected.ts).
     // A Memento write is milliseconds; it must land inside the budget.
-    await this.lastConnected.write(
-      this.pool.list().filter((v) => v.status === "running").map((v) => v.spec.agentId),
-    );
+    await this.agents.stampRunning();
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     await Promise.race([
-      this.pool.disposeAll(),
+      this.agents.stopAll(),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
     ]);
   }
 
-  /** Startup connections: the union of every config flagged auto-connect
-   * and the reload-continuation stamp (stores/last-connected.ts — what was
-   * still running at the last shutdown, honored only while fresh). The
-   * union's two halves answer different questions — "always there" vs.
-   * "was there when the window reloaded" — so neither subsumes the other:
-   * a flagged agent the user manually stopped before reload stays in the
-   * flagged half (autoConnect means every window open); a manually
-   * connected, unflagged agent rides only the stamp and therefore survives
-   * reload but not quit-and-reopen-later. Always the user's own configured
-   * choices, never patchbay picking an agent for them (the routing
-   * scope decision is about choosing among agents for a task, not this). */
+  /** Startup: the agents store connects what this window should open with,
+   * then the last open session is restored. The raw `acpPatchbay.defaultAgent`
+   * value stays readable after the contribution's removal — unregistered
+   * keys still surface — and the store folds it into the per-agent flag. */
   private async connectStartupAgents(): Promise<void> {
-    // Legacy `acpPatchbay.defaultAgent` (superseded by the per-agent flag):
-    // folded into the config once, so the old setting keeps working without
-    // two mechanisms living on. The raw value stays readable after the
-    // contribution's removal — unregistered keys still surface.
     const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
-    if (legacy !== "") {
-      const existing = this.agentConfigs.get(legacy);
-      if (existing !== undefined && !existing.autoConnect) {
-        await this.agentConfigs.upsert({ ...existing, autoConnect: true });
-        await this.refreshAgentConfigs();
-        this.log.info(`migrated acpPatchbay.defaultAgent ("${legacy}") to the per-agent auto-connect flag`);
-      }
-    }
-    const stamped = await this.lastConnected.consume();
-    const flagged = this.agentConfigs.list().filter((c) => c.autoConnect).map((c) => c.id);
-    const ids = new Set([...flagged, ...stamped]);
-    if (legacy !== "") ids.add(legacy); // config may not exist yet — resolved below
-    await Promise.allSettled(
-      [...ids].map((id) => {
-        if (this.configuredAgentSpecs.has(id)) return this.connectFromSource({ configuredId: id });
-        // Only the legacy setting can name an agent with no config on this
-        // machine (a stamp or flag implies one was persisted) — the registry
-        // path covers it, and persists the config it was missing.
-        if (id === legacy) return this.connectFromSource({ registryId: id });
-        this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
-        return Promise.resolve();
-      }),
-    );
+    await this.agents.startup(legacy);
     await this.restoreLastActiveSession();
   }
 
@@ -1066,7 +982,7 @@ export class Orchestrator {
     const items = (): Item[] =>
       this.agentView.current.sessions.map((s) => ({
         label: s.title,
-        description: this.agentNames.get(s.agentId) ?? s.agentId,
+        description: this.agents.name(s.agentId) ?? s.agentId,
         sessionId: s.id,
       }));
     const pick = vscode.window.createQuickPick<Item>();
@@ -1098,7 +1014,7 @@ export class Orchestrator {
 
   /** "Connect agent" — the palette shortcut into the one add path (the
    * Settings Agents persist-connect-verify flow): registry or custom command,
-   * same `connectFromSource` either way. */
+   * same `agents.connectFrom` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
       ...this.acpRegistry.current().agents
@@ -1111,9 +1027,9 @@ export class Orchestrator {
     if (picked.registryId === undefined) {
       const command = await vscode.window.showInputBox({ placeHolder: "command that speaks ACP…" });
       if (command === undefined || command.trim() === "") return;
-      await this.connectFromSource({ command });
+      await this.agents.connectFrom({ command });
     } else {
-      await this.connectFromSource({ registryId: picked.registryId });
+      await this.agents.connectFrom({ registryId: picked.registryId });
     }
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
@@ -1157,68 +1073,6 @@ export class Orchestrator {
     return this.broker.askElicitation(sessionId, { message: params.message, ask: { mode: "form", fields } });
   }
 
-  /** The single sink for pool.ts's proof-table hits (capabilities.ts
-   * CAPABILITY_PROOFS): marks a row used the first time its path is
-   * genuinely exercised on the wire, or suspect the first time it rides a
-   * failed request. Guarded on current state so a chatty agent (many reads
-   * per turn, a usage_update per turn) doesn't flood the patch stream with
-   * idempotent events — and so suspicion never speaks over proof. */
-  private noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
-    const cell = this.agentView.current.capabilities[agentId]?.[row];
-    if (cell?.used) return;
-    if (evidence === "used") this.capabilityTracker.markUsed(agentId, row);
-    else if (cell?.suspect !== true) this.capabilityTracker.markSuspect(agentId, row);
-  }
-
-  /** The one writer for agent auth state. Every caller — pool's wire
-   * chokepoint, the terminal login flows — reports what it *witnessed*;
-   * the authority table (auth-evidence.ts) decides what that does to the
-   * lock, the lock persists machine-scoped, and only a real transition
-   * emits. No other code may emit agentAuthRequired/agentAuthResolved. */
-  private noteAuthEvidence(agentId: string, evidence: AuthEvidence): void {
-    // Evidence for an agent that no longer exists writes nothing: a
-    // terminal login left open across a Remove would otherwise re-create
-    // a lock entry for a deleted id and poison a future re-add.
-    if (!this.agentNames.has(agentId)) {
-      this.log.debug(`auth evidence for unknown agent ${agentId} dropped (${evidence.kind})`);
-      return;
-    }
-    const result = applyAuthEvidence(this.authLocks.lockFor(agentId), evidence, new Date().toISOString());
-    if (!result.changed) return;
-    if (result.lock === null) {
-      this.authLocks.remove(agentId).catch((err: Error) => {
-        this.log.error(`${agentId}: auth-lock remove failed — ${err.message}`);
-      });
-      const event = { kind: "agentAuthResolved", agentId } as const;
-      this.agentView.emit(event);
-      this.settings.emit(event);
-      // The auth row's off-table proof source (recorded at
-      // CAPABILITY_PROOFS.auth) — deliberately only the affirmative auth
-      // actions: an authenticate round-trip or a terminal login exiting 0.
-      // Other clears (a completed prompt, a same-method contradiction)
-      // honestly end the lock but never exercised patchbay's auth path —
-      // a transient -32000 healing itself must not mark the row used.
-      if (
-        evidence.kind === "loginOk" ||
-        (evidence.kind === "rpcOk" && evidence.method === methods.agent.authenticate)
-      ) {
-        this.noteEvidence(agentId, "auth", "used");
-      }
-      // Words held at the turn-start door were waiting for exactly this:
-      // an idle session has no coming turn end to drain them. The lock is
-      // already cleared in memory (FileKV swaps synchronously), so the
-      // drain reads the new truth.
-      this.sessionManager.drainHeldQueues(agentId);
-    } else {
-      this.authLocks.upsert({ id: agentId, lock: result.lock }).catch((err: Error) => {
-        this.log.error(`${agentId}: auth-lock write failed — ${err.message}`);
-      });
-      const event = { kind: "agentAuthRequired", agentId, reason: result.lock.reason } as const;
-      this.agentView.emit(event);
-      this.settings.emit(event);
-    }
-  }
-
   /** A closed session's context tokens leave the map with it: the token
    * names a session-scoped identity, and an entry outliving its session
    * would route a late MCP subprocess call into whatever transcript owns
@@ -1231,17 +1085,6 @@ export class Orchestrator {
         if (sessionId === event.sessionId) this.contextTokenToSession.delete(token);
       }
     }
-  }
-
-  /** An agent's standing throwaway workspace (`probe/<agentId>`) — the
-   * capability probe's and the defaults editor's sessions both open here,
-   * never in a user workspace root. Created idempotently, deleted only with
-   * the agent's config (removeAgentConfig): a workspace-aware agent may
-   * hold it agent-side past session/new. */
-  private async probeRoot(agentId: string): Promise<string> {
-    const dir = join(this.probeRootBase, agentId);
-    await mkdir(dir, { recursive: true });
-    return dir;
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).
@@ -1551,139 +1394,6 @@ export class Orchestrator {
     this.settings.emit({ kind: "auditTailChanged", entries });
   }
 
-  /** Loads globally-stored agent configs — replaces the old workspace-file
-   * bootstrap (and the one-time-adoption gate that existed only because
-   * that file could be repo-authored by someone else; a global,
-   * developer-owned record needs no such gate). Every config is upserted
-   * into both channels' agent lists right here: the Agent View knows
-   * every configured agent from the first frame, with an honest status —
-   * `untested` (never initialized successfully at any version) or `stopped`
-   * (has connected before; `lastSeenVersion` is the durable marker) —
-   * instead of agents existing only once connected in-window. */
-  private loadAgentConfigs(): void {
-    for (const agent of this.agentConfigs.list()) {
-      this.configuredAgentSpecs.set(agent.id, this.specFromConfig(agent));
-      this.agentNames.set(agent.id, agent.name);
-      // needsAuth seeds from the persisted lock (auth-evidence.ts), never
-      // a literal: a logout witnessed before this reload is still the
-      // truth — the wire has nothing to re-read it from.
-      const lock = this.authLocks.lockFor(agent.id);
-      const upsert = {
-        kind: "agentUpserted",
-        agent: {
-          id: agent.id,
-          name: agent.name,
-          status: agent.lastSeenVersion === null ? ("untested" as const) : ("stopped" as const),
-          command: formatCommandLine(agent.command, agent.args),
-          needsAuth: lock !== null,
-          authReason: lock?.reason ?? undefined,
-        },
-      } as const;
-      this.agentView.emit(upsert);
-      this.settings.emit(upsert);
-    }
-    void this.refreshAgentConfigs();
-  }
-
-  /** The spawnable spec a stored config stands for — the one reading of a
-   * record, whether loaded at startup or just saved. env deliberately
-   * empty: values live in SecretStorage and are joined onto the spec at
-   * spawn time (connectAgent), read fresh per connect — never cached here.
-   * Stored {mode, options} folds to the knob-id-keyed seed (the one door
-   * legacy defaults re-enter memory through). A binary agent's archive
-   * facts ride along so a connect after a cache wipe re-acquires it as a
-   * launch phase instead of dying on a missing file. */
-  private specFromConfig(agent: AgentConfig): LaunchSpec {
-    const source = agent.registrySource;
-    return {
-      agentId: agent.id,
-      name: agent.name,
-      command: agent.command,
-      args: agent.args,
-      env: {},
-      cwd: this.workspaceCwd,
-      defaults: foldSeed(agent.defaults),
-      ...(source?.distributionKind === "binary" && source.binary !== undefined
-        ? { binary: { ...source.binary, version: source.pinnedVersion } }
-        : {}),
-    };
-  }
-
-  /** The Settings Agents page (add, edit, and remove agents,
-   * including launch configuration per agent) — persists globally. The
-   * Edit form sends the launch line raw (parsing is
-   * logic), so an empty args array means "parse `command` here" — the same
-   * quote-aware house parser custom Add uses, never a naive split.
-   * `config.env` is the form's full desired set — what is in the box is
-   * what gets stored, to SecretStorage only (stores/secret-env.ts). */
-  private async addOrUpdateAgentConfig(config: AgentConfigView): Promise<void> {
-    let { command, args } = { command: config.command, args: [...config.args] };
-    if (args.length === 0) {
-      const parsed = parseCommandLine(command);
-      if (parsed === null) {
-        this.log.error(`agent config ${config.id}: command line has an unterminated quote`);
-        return;
-      }
-      ({ command } = parsed);
-      args = parsed.args;
-    }
-    await this.agentEnv.set(config.id, { ...config.env });
-    // Identity/wire facts never round-trip through the form: the webview's
-    // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
-    // the moment a connect or an Upgrade lands mid-edit — the store's own
-    // values are the truth the form has no business carrying back.
-    const prior = this.agentConfigs.get(config.id);
-    await this.agentConfigs.upsert({
-      id: config.id,
-      name: config.name,
-      command,
-      args,
-      autoConnect: config.autoConnect,
-      // The view's folded seed is stored under `options` alone — the legacy
-      // `mode` field is read (foldSeed) but never written again.
-      defaults: { options: { ...config.defaults } },
-      registrySource: prior?.registrySource ?? config.registrySource,
-      lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
-    });
-    // The spec is read back from the store it was just written to — the
-    // same reading the startup load makes, never a second construction.
-    const stored = this.agentConfigs.get(config.id);
-    if (stored !== undefined) this.configuredAgentSpecs.set(config.id, this.specFromConfig(stored));
-    this.agentNames.set(config.id, config.name);
-    await this.refreshAgentConfigs();
-    // The store moved; an open editor re-reads the surface for the new
-    // defaults from the agent (a no-op when no editor is open).
-    void this.defaultsEditor.defaultsChanged(config.id);
-  }
-
-  /** Remove is stop + forget ("add, edit, and remove agents") —
-   * the process goes down, the agent leaves
-   * both channel states via the `agentRemoved` event, its per-agent facts
-   * (used capabilities, observed knobs) are purged so a future re-add
-   * starts honest, and its session rows leave the drawer. Nothing to ask
-   * the user: patchbay holds no session history — the sessions live on in
-   * the agent's own store and reappear via session/list on a re-add. */
-  private async removeAgentConfig(agentId: string): Promise<void> {
-    await this.pool.stop(agentId);
-    this.sessionManager.invalidateAgent(agentId);
-    this.sessionManager.forgetAgentSessions(agentId);
-    await this.agentConfigs.remove(agentId);
-    await this.usedCapabilities.remove(agentId);
-    await this.composerKnobs.remove(agentId);
-    await this.agentEnv.remove(agentId);
-    this.authRecipes.delete(agentId);
-    this.typedTerminalAuth.delete(agentId);
-    this.authMethodKinds.delete(agentId);
-    await this.authLocks.remove(agentId);
-    await rm(join(this.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
-    this.configuredAgentSpecs.delete(agentId);
-    this.agentNames.delete(agentId);
-    const removed = { kind: "agentRemoved", agentId } as const;
-    this.agentView.emit(removed);
-    this.settings.emit(removed);
-    await this.refreshAgentConfigs();
-  }
-
   /** Enable goes through the disclosure prompt — every entry point (Audit
    * page toggle, status pill, palette command) shares this one consent
    * gate; the confirming state event fires only after the user says yes. */
@@ -1823,40 +1533,6 @@ export class Orchestrator {
     this.settings.emit({ kind: "dataInventoryChanged", rows });
   }
 
-  private async refreshAgentConfigs(): Promise<void> {
-    // Env values ride the Settings channel to their owner — the form shows
-    // what is stored; SecretStorage stays the only place they rest.
-    const configs: AgentConfigView[] = await Promise.all(
-      this.agentConfigs.list().map(async (c) => ({
-        id: c.id,
-        name: c.name,
-        command: c.command,
-        args: c.args,
-        env: await this.agentEnv.get(c.id),
-        autoConnect: c.autoConnect,
-        defaults: foldSeed(c.defaults),
-        registrySource: c.registrySource,
-        lastSeenVersion: c.lastSeenVersion,
-      })),
-    );
-    this.settings.emit({ kind: "agentConfigsChanged", configs });
-    this.publishUpdates();
-  }
-
-  /** `agentInfo.version` is reality ("reality is the source of
-   * truth") — recorded on the config so the registry's live version
-   * can be compared against what actually answered, driving "update
-   * available" without ever trusting the pinned ask over the wire's fact. */
-  private async recordSeenVersion(agentId: string, version: string): Promise<void> {
-    const existing = this.agentConfigs.get(agentId);
-    if (existing === undefined || existing.lastSeenVersion === version) return;
-    // Knob offerings need no reset here: they're connection-scoped, and a
-    // version can only change on a fresh connect, which already dropped
-    // them with the old connection.
-    await this.agentConfigs.upsert({ ...existing, lastSeenVersion: version });
-    await this.refreshAgentConfigs();
-  }
-
   /** Tells both views what the registry holds now — the store is the one
    * holder; nothing here keeps a copy. */
   private publishRegistry(): void {
@@ -1868,19 +1544,7 @@ export class Orchestrator {
     } as const;
     this.agentView.emit(event);
     this.settings.emit(event);
-    this.publishUpdates();
-  }
-
-  /** Recomputes the update fact from its two inputs — the registry and the
-   * configs (pin + last seen version) — and publishes it to both channels
-   * when it changed. Called wherever either input moves. */
-  private publishUpdates(): void {
-    const updates = agentUpdates(this.acpRegistry.current().agents, this.agentConfigs.list());
-    if (JSON.stringify(updates) === JSON.stringify(this.updates)) return;
-    this.updates = updates;
-    const event = { kind: "agentUpdatesChanged", updates } as const;
-    this.agentView.emit(event);
-    this.settings.emit(event);
+    this.agents.registryChanged();
   }
 
   /** Tells the user about each newer agent version once per window, with
@@ -1890,17 +1554,17 @@ export class Orchestrator {
    * and only while the update is still the fact: a notification answered
    * after the agent was upgraded elsewhere restarts nothing. */
   private async announceUpdates(): Promise<void> {
-    const fresh = Object.entries(this.updates).filter(([id, u]) => !this.announcedUpdates.has(`${id}@${u.to}`));
+    const fresh = Object.entries(this.agents.updates()).filter(([id, u]) => !this.announcedUpdates.has(`${id}@${u.to}`));
     if (fresh.length === 0) return;
     for (const [id, u] of fresh) this.announcedUpdates.add(`${id}@${u.to}`);
-    const nameOf = (id: string) => this.agentConfigs.get(id)?.name ?? id;
+    const nameOf = (id: string) => this.agents.name(id) ?? id;
     if (fresh.length === 1) {
       const [id, u] = fresh[0]!;
       const picked = await vscode.window.showInformationMessage(
         `${nameOf(id)} ${u.to} is available — you run ${u.from}.`,
         "Upgrade",
       );
-      if (picked === "Upgrade" && this.updates[id] !== undefined) await this.upgradeAgent(id);
+      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) await this.agents.upgrade(id);
       return;
     }
     const picked = await vscode.window.showInformationMessage(
@@ -1913,56 +1577,7 @@ export class Orchestrator {
       { canPickMany: true, placeHolder: "Upgrade which agents?" },
     );
     for (const item of chosen ?? []) {
-      if (this.updates[item.id] !== undefined) await this.upgradeAgent(item.id);
-    }
-  }
-
-  /** Connect an agent from config or registry; upserts it into both channel
-   * states. The single env-injection point: values are read fresh from
-   * SecretStorage per connect (stores/secret-env.ts) — the spec maps and the
-   * config store never carry them. */
-  async connectAgent(spec: LaunchSpec): Promise<void> {
-    this.agentNames.set(spec.agentId, spec.name);
-    // A connect bears nothing on auth — needsAuth carries the standing
-    // lock (auth-evidence.ts) through the upsert instead of a literal
-    // false, or every reconnect would erase a witnessed logout.
-    const lock = this.authLocks.lockFor(spec.agentId);
-    const upsert = {
-      kind: "agentUpserted",
-      agent: {
-        id: spec.agentId,
-        name: spec.name,
-        status: "reconnecting" as const,
-        command: formatCommandLine(spec.command, spec.args),
-        needsAuth: lock !== null,
-        authReason: lock?.reason ?? undefined,
-      },
-    } as const;
-    this.agentView.emit(upsert);
-    this.settings.emit(upsert);
-    const env = await this.agentEnv.get(spec.agentId);
-    const merged = { ...spec, env: { ...spec.env, ...env } };
-    await this.pool.connect(merged);
-    void this.warnOnPathDivergence(merged);
-  }
-
-  /** Two installs, one memory: a PATH-installed sibling CLI shares the
-   * agent's per-user state store with the copy patchbay runs — by design,
-   * but a wide version gap means two writers of different vintages on one
-   * store (launcher-health.ts PATH_SIBLINGS). Warning only, never a gate;
-   * once per exact version pair so reconnects don't nag. */
-  private async warnOnPathDivergence(spec: LaunchSpec): Promise<void> {
-    try {
-      const d = await checkPathDivergence(spec);
-      if (d === null) return;
-      const key = `${spec.agentId}:${d.pathVersion}:${d.bundledVersion}`;
-      if (this.divergenceWarned.has(key)) return;
-      this.divergenceWarned.add(key);
-      void vscode.window.showWarningMessage(
-        `${spec.name}: the \`${d.bin}\` on your PATH is v${d.pathVersion}, but patchbay runs v${d.bundledVersion}. Both share the same ${d.bin} state (sessions, auth, config) — a wide version gap between the two writers can bite. Consider updating the PATH install.`,
-      );
-    } catch {
-      // A diagnostic nicety must never affect a connect.
+      if (this.agents.updates()[item.id] !== undefined) await this.agents.upgrade(item.id);
     }
   }
 
@@ -1977,101 +1592,7 @@ export class Orchestrator {
       ask.kind === "runtime"
         ? `This agent is launched with ${ask.runtime === "node" ? "npx, which needs Node.js" : "uvx, which needs uv"} — and no usable install was found on this system. Download ${runtimeName(ask.runtime)} ${ask.version} into the extension's own storage? ${DOWNLOAD_CHECK_TEXT[ask.check]} Nothing is installed system-wide, and removing the extension removes it.`
         : `${ask.name} ${ask.version} is distributed as a binary. Download it from ${new URL(ask.archiveUrl).host} into the extension's own storage and run it? ${DOWNLOAD_CHECK_TEXT[ask.check]} Once per version; nothing is installed system-wide, and removing the extension removes it.`;
-    const choice = await vscode.window.showWarningMessage(message, { modal: true }, "Download");
-    return choice === "Download";
-  }
-
-  /** Restart is a spawn, so it reads reality like any connect: the current
-   * config spec and fresh SecretStorage env — never the pool entry's
-   * connect-time snapshot (a command edit or key rotation in Settings must
-   * reach the very next spawn). No config behind the connection: the
-   * snapshot is all there is, and pool.restart falls back to it. */
-  private async restartAgent(agentId: string): Promise<void> {
-    const spec = this.configuredAgentSpecs.get(agentId);
-    if (spec === undefined) {
-      await this.pool.restart(agentId);
-      return;
-    }
-    const env = await this.agentEnv.get(agentId);
-    await this.pool.restart(agentId, { ...spec, env: { ...spec.env, ...env } });
-  }
-
-  /** Resolves a registry agent's declared distribution into a spawnable
-   * spec — no I/O: npx/uvx are ecosystem-managed installs (spawning them
-   * *is* installing), and a `binary` distribution rides the spec as archive
-   * facts for the connect's launch phase to acquire, on the card, behind
-   * the download confirmation. `command` for a binary is the cached path
-   * the phase will resolve to — deterministic, so the config is honest
-   * before anything is downloaded. Null when the agent can't run on this
-   * platform (the reason is already on the picker row). */
-  private registryLaunch(
-    agent: RegistryAgent,
-  ): { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null {
-    const launch = resolveDistribution(agent);
-    const cwd = this.workspaceCwd;
-    if ("error" in launch) return null;
-    switch (launch.kind) {
-      case "npx":
-      case "uvx":
-        return {
-          spec: { agentId: agent.id, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
-          registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
-        };
-      case "binary": {
-        const pinnedDigest = launch.sha256 === null ? {} : { sha256: launch.sha256 };
-        return {
-          spec: {
-            agentId: agent.id,
-            name: agent.name,
-            command: resolvedBinaryPath(this.binaryCacheDir, agent.id, agent.version, launch.cmd),
-            args: [...launch.args],
-            env: { ...launch.env },
-            cwd,
-            binary: { archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd, ...pinnedDigest },
-          },
-          registrySource: {
-            registryId: agent.id,
-            distributionKind: "binary",
-            pinnedVersion: agent.version,
-            binary: { archiveUrl: launch.archiveUrl, cmd: launch.cmd, ...pinnedDigest },
-          },
-        };
-      }
-    }
-  }
-
-  /** Persists the launch as a global agent config — "add" and "connect" are
-   * one action now (adding an agent means it's activated —
-   * checked spawnable, ready to start conversations on), not two decoupled
-   * steps a user could leave half-done. Preserves any hand-edited
-   * defaults an existing config already carries. */
-  private async persistAgentConfig(
-    spec: LaunchSpec,
-    registrySource: AgentConfig["registrySource"],
-  ): Promise<void> {
-    const existing = this.agentConfigs.get(spec.agentId);
-    // Registry-declared launch env (part of the distribution recipe) goes to
-    // the same SecretStorage record user-entered env lives in — one source
-    // at spawn time. Registry values win for their own keys; the user's
-    // other keys survive a re-add/Upgrade.
-    if (Object.keys(spec.env).length > 0) {
-      const stored = await this.agentEnv.get(spec.agentId);
-      await this.agentEnv.set(spec.agentId, { ...stored, ...spec.env });
-    }
-    await this.agentConfigs.upsert({
-      id: spec.agentId,
-      name: spec.name,
-      command: spec.command,
-      args: [...spec.args],
-      autoConnect: existing?.autoConnect ?? false,
-      defaults: existing?.defaults ?? (spec.defaults !== undefined ? { options: spec.defaults } : {}),
-      registrySource: registrySource ?? existing?.registrySource ?? null,
-      lastSeenVersion: existing?.lastSeenVersion ?? null,
-    });
-    // Read back from the store, like every other spec — the one reading.
-    const stored = this.agentConfigs.get(spec.agentId);
-    if (stored !== undefined) this.configuredAgentSpecs.set(spec.agentId, this.specFromConfig(stored));
-    await this.refreshAgentConfigs();
+    return askModal(message, "Download");
   }
 
   private handleAction(action: Action): void {
@@ -2091,14 +1612,14 @@ export class Orchestrator {
         this.settings.emit({ kind: "sectionChanged", section: action.section });
         break;
       case "connectAgent":
-        void this.connectFromSource(action.source, action.verifyAfterConnect ?? false);
+        void this.agents.connectFrom(action.source, action.verifyAfterConnect ?? false);
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.restartAgent(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
+        void this.agents.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
         break;
       case "stopAgent":
-        void this.pool.stop(action.agentId);
+        void this.agents.stop(action.agentId);
         break;
       case "startChat":
         void this.startChat(action.agentId);
@@ -2188,7 +1709,7 @@ export class Orchestrator {
         this.broker.cancelPending(action.sessionId);
         break;
       case "verifyAgent":
-        void this.runVerify(action.agentId);
+        void this.agents.verify(action.agentId);
         break;
       case "editAgentDefaults":
         void (action.open ? this.defaultsEditor.open(action.agentId) : this.defaultsEditor.close(action.agentId));
@@ -2199,50 +1720,17 @@ export class Orchestrator {
       case "resolveDiff":
         this.broker.resolve(action.requestId, action.accept ? "accept" : "reject");
         break;
-      case "authenticateAgent": {
+      case "authenticateAgent":
         // failure leaves needsAuth set — the honest signal, no separate reply channel
-        if (this.authMethodKinds.get(action.agentId)?.get(action.methodId) === "unsupported") {
-          // A method patchbay cannot drive never reaches a wire call: the
-          // card shows no button for it, and this is the writer holding the
-          // same line — `authenticate` belongs to the agent type alone.
-          this.log.warn(
-            `${action.agentId}: ignored a login on "${action.methodId}" — patchbay can't run this method's type`,
-          );
-          break;
-        }
-        const recipe = this.authRecipes.get(action.agentId)?.get(action.methodId);
-        const typed = this.typedTerminalAuth.get(action.agentId)?.get(action.methodId);
-        if (recipe !== undefined) {
-          // terminal-recipe method: the login runs in a visible terminal,
-          // `authenticate` is never called on it (meta.ts).
-          void this.loginViaTerminal(action.agentId, recipe).catch(
-            this.logCatch(`terminal login ${action.agentId}`),
-          );
-        } else if (typed !== undefined) {
-          // the spec's terminal auth method: same executor,
-          // recipe composed from the agent's own spawn spec at click time —
-          // `authenticate` is never called on it either, so a login's
-          // success is always terminal-ran-plus-reprobe, never the RPC's
-          // word for it.
-          void this.typedLoginViaTerminal(action.agentId, typed).catch(
-            this.logCatch(`typed terminal login ${action.agentId}`),
-          );
-        } else {
-          // Bracketed like verify/logout: the card's controls dim for the
-          // authenticate round-trip's span too.
-          void this.withVerifySignal(action.agentId, "authenticate", () =>
-            this.capabilityTracker.authenticate(action.agentId, action.methodId),
-          ).catch(this.logCatch(`authenticate ${action.agentId}`));
-        }
+        void this.agents.login(action.agentId, action.methodId).catch(this.logCatch(`login ${action.agentId}`));
         break;
-      }
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
-        void this.logoutAgent(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
+        void this.agents.logout(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
         break;
       case "upgradeAgent":
-        void this.upgradeAgent(action.agentId);
+        void this.agents.upgrade(action.agentId);
         break;
       case "refreshRegistry":
         void this.acpRegistry.refresh("manual");
@@ -2406,16 +1894,13 @@ export class Orchestrator {
         void this.openFileAt(action.path, action.line).catch(this.logCatch(`openFile ${action.path}`));
         break;
       case "addOrUpdateAgentConfig":
-        void this.addOrUpdateAgentConfig(action.config);
+        void this.agents.save(action.config);
         break;
       case "removeAgentConfig":
-        void this.removeAgentConfig(action.agentId);
+        void this.agents.remove(action.agentId);
         break;
       case "reorderAgentConfigs":
-        void this.agentConfigs
-          .reorder(action.ids)
-          .then(() => this.refreshAgentConfigs())
-          .catch(this.logCatch("reorderAgentConfigs"));
+        void this.agents.reorder(action.ids).catch(this.logCatch("reorderAgentConfigs"));
         break;
       case "reorderIntegrations":
         void this.integrations.reorder(action.ids);
@@ -2673,40 +2158,6 @@ export class Orchestrator {
     });
   }
 
-  /** Re-resolves the registry's current (possibly newer) pinned version and
-   * reconnects — the same path a first Add takes, so the version-keyed
-   * used-capability cache and the launch phase's download confirmation
-   * both apply exactly as they would for a brand-new agent. Never silent: a
-   * still-uncached binary version re-gates on the confirmation, and a stop
-   * that would disconnect open conversations asks first — here, not at any one
-   * button, so every surface that offers Upgrade gets the same question. */
-  private async upgradeAgent(agentId: string): Promise<void> {
-    const config = this.agentConfigs.get(agentId);
-    if (config === undefined || config.registrySource === null) return;
-    if (this.pool.get(agentId)?.status === "running") {
-      if (!(await this.confirmUpgrade(config.name, this.sessionManager.openWork(agentId)))) return;
-      await this.pool.stop(agentId);
-    }
-    await this.connectFromSource({ registryId: config.registrySource.registryId });
-  }
-
-  /** Modal, and only when the stop costs something: conversations attached
-   * to the connection are disconnected, and a running turn is cut off. */
-  private async confirmUpgrade(
-    agentName: string,
-    work: { conversations: number; turns: number },
-  ): Promise<boolean> {
-    if (work.conversations === 0) return true;
-    const plural = work.conversations === 1 ? "" : "s";
-    const turns = work.turns === 0 ? "" : ` — ${work.turns} still running and will be cut off`;
-    const choice = await vscode.window.showWarningMessage(
-      `Upgrade ${agentName}? It restarts the agent, disconnecting ${work.conversations} open conversation${plural}${turns}.`,
-      { modal: true },
-      "Upgrade",
-    );
-    return choice === "Upgrade";
-  }
-
   /** One intent, one click: connect if needed, then create and
    * activate the session — all inside the chat pane. Uses the saved config
    * path (env injected from SecretStorage at spawn), never a bare
@@ -2715,7 +2166,7 @@ export class Orchestrator {
    * state. */
   private async startChat(agentId: string): Promise<void> {
     void this.acpRegistry.refresh("new-session");
-    const agentName = this.agentNames.get(agentId);
+    const agentName = this.agents.name(agentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the
     // new session — focus it instead of minting a sibling blank shell.
@@ -2730,11 +2181,7 @@ export class Orchestrator {
     if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId });
     try {
-      if (this.pool.get(agentId)?.status !== "running") {
-        const spec = this.configuredAgentSpecs.get(agentId);
-        if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
-        await this.connectAgent(spec);
-      }
+      if (this.pool.get(agentId)?.status !== "running") await this.agents.connect(agentId);
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event; the re-mint emits the same event.
       if (draft !== undefined) await this.sessionManager.reviveNew(draft);
@@ -2758,12 +2205,11 @@ export class Orchestrator {
     const agentId = this.sessionManager.agentFor(sessionId);
     if (agentId === undefined) return;
     if (this.pool.get(agentId)?.status === "running") return;
-    const spec = this.configuredAgentSpecs.get(agentId);
-    if (spec === undefined) return;
+    if (this.agents.config(agentId) === undefined) return;
     if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId, forSessionId: sessionId });
     try {
-      await this.connectAgent(spec);
+      await this.agents.connect(agentId);
       this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -2774,61 +2220,6 @@ export class Orchestrator {
         forSessionId: sessionId,
       });
       this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
-    }
-  }
-
-  private async connectFromSource(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
-    let spec: LaunchSpec | null = null;
-    let registrySource: AgentConfig["registrySource"] = null;
-    let shouldPersist = true;
-    if ("registryId" in source) {
-      const agent = this.acpRegistry.current().agents.find((a) => a.id === source.registryId);
-      if (agent === undefined) return;
-      const resolved = this.registryLaunch(agent);
-      if (resolved === null) return; // can't run on this platform
-      spec = resolved.spec;
-      registrySource = resolved.registrySource;
-    } else if ("configuredId" in source) {
-      spec = this.configuredAgentSpecs.get(source.configuredId) ?? null;
-      shouldPersist = false; // already persisted — this is a reconnect of an existing config
-    } else {
-      const parsed = parseCommandLine(source.command);
-      if (parsed) {
-        const id = `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}`;
-        spec = {
-          agentId: id,
-          name: parsed.command,
-          command: parsed.command,
-          args: parsed.args,
-          env: {},
-          cwd: this.workspaceCwd,
-        };
-      }
-    }
-    if (spec === null) return;
-    // Persist FIRST — the card exists from the click, and every download
-    // the launch needs then happens on it as a connect phase. An Upgrade
-    // clicked while the agent happens to be connecting must still land its
-    // new pin — only the connect itself is skipped. "reconnecting" gates
-    // alongside "running": a second
-    // Connect during an in-flight connect would re-emit the wholesale
-    // upsert (stomping the card mid-connect) just to have pool.connect
-    // refuse a moment later.
-    if (shouldPersist) await this.persistAgentConfig(spec, registrySource);
-    const status = this.pool.get(spec.agentId)?.status;
-    if (status === "running" || status === "reconnecting") {
-      this.log.info(`${spec.agentId}: connect skipped — already ${status}`);
-      return;
-    }
-    // Spawn what the store says (specFromConfig) — the same reading a
-    // restart makes, so a re-added agent keeps its stored defaults from the
-    // first connect; the registry's env already went to SecretStorage.
-    const launch = this.configuredAgentSpecs.get(spec.agentId) ?? spec;
-    try {
-      await this.connectAgent(launch);
-      if (verifyAfterConnect) void this.runVerify(spec.agentId);
-    } catch {
-      // pool already emitted the crashed status with detail
     }
   }
 
@@ -2856,156 +2247,11 @@ export class Orchestrator {
     return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  /** terminal-auth login (meta.ts): runs the method's recipe as a VS Code
-   * task (login-task.ts) — front and center in the agent's own flow, the
-   * executable and args handed over as an array so no shell command line is
-   * ever composed here.
-   *
-   * The command's *result* is listened to, never guessed: the task's
-   * process-end exit code is real evidence. Zero → the affirmative fact the
-   * authority table clears on (noteAuthEvidence loginOk), then a re-probe
-   * as corroboration and offering re-read (same span as Verify, so the
-   * card reads "Verifying…") — and if the probe *still* says auth_required,
-   * restart the process: the recipe wrote credentials outside it, and a CLI
-   * that reads auth at spawn never re-reads them. Non-zero → loginFailed
-   * evidence, locking with the exit code as the card's reason. An unknown
-   * exit (task never started, terminated, terminal closed mid-run) is not
-   * affirmative: no evidence noted, the fallback probe runs, and the lock
-   * heals later through a same-method success or a completed prompt. */
-  private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
-    const name = recipe.label ?? `${this.agentNames.get(agentId) ?? agentId} login`;
-    const exitCode = await runLoginTask(name, recipe);
-    this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
-    if (exitCode !== undefined && exitCode !== 0) {
-      this.noteAuthEvidence(agentId, {
-        kind: "loginFailed",
-        reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
-      });
-      return;
-    }
-    // Exit 0 is the affirmative evidence — it clears the lock (the
-    // authority table's call); the probe below is corroboration and the
-    // offering re-read, not the clearer: on a lazy-auth agent its
-    // session/new success bears nothing either way. An *unknown* exit
-    // (task never started, terminated, terminal closed mid-run) is not
-    // affirmative — no evidence is noted, and the lock heals later through
-    // a same-method success or a completed prompt.
-    if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });
-    const outcome = await this.runVerify(agentId);
-    // "skipped" = the probe is latch-deferred (first-session-mcp-latch) —
-    // no corroboration is possible without spending the latch slot, and
-    // the latched vendor is also the spawn-time-credential-read vendor:
-    // restart unconditionally, same reasoning as the auth_required arm.
-    if (exitCode === 0 && outcome === "skipped") {
-      this.log.info(
-        `${agentId}: login succeeded but the probe is latch-deferred — restarting so the process reads the fresh credentials`,
-      );
-      await this.restartAgent(agentId);
-      return;
-    }
-    if (outcome === "auth_required") {
-      // The recipe wrote credentials *outside* the running process, and the
-      // process still answers auth_required: a CLI that reads auth state at
-      // spawn never re-reads it (observed: auggie 0.32.0, dossier). The only
-      // honest re-check is the one the user would do by hand — a fresh
-      // spawn. One restart per login attempt, no loop: if the new process
-      // still needs auth, the wire chokepoint re-raises it and the card
-      // shows Log in again.
-      this.log.info(
-        `${agentId}: login succeeded but the running process still reports auth_required — restarting it to pick up the fresh credentials`,
-      );
-      await this.restartAgent(agentId);
-    }
-  }
-
-  /** The spec's terminal auth method: the wire pins the
-   * command to the agent's own spawn — spec read fresh from the store (a
-   * Settings edit applies here exactly as it would to the next spawn) with
-   * SecretStorage env merged at the last moment, the method's args APPENDED
-   * to the spawn args and its env layered over the spawn env. On Windows
-   * the command is absolutized the same way a spawn would be — a bare
-   * name would otherwise be resolved by the task engine's own PATH walk,
-   * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
-   * guards, and it must not win here any more than it can at spawn;
-   * not-found falls back to the bare name and lets the task report it. */
-  private async typedLoginViaTerminal(agentId: string, typed: TerminalAuth): Promise<void> {
-    const spec = this.configuredAgentSpecs.get(agentId);
-    if (spec === undefined) {
-      this.log.warn(`typed terminal login: no configured spec for ${agentId}`);
-      return;
-    }
-    const secretEnv = await this.agentEnv.get(agentId);
-    const env = { ...spec.env, ...secretEnv, ...typed.env };
-    const command =
-      process.platform === "win32"
-        ? (resolveExecutableWin32(spec.command, { ...process.env, ...env }) ?? spec.command)
-        : spec.command;
-    await this.loginViaTerminal(agentId, {
-      command,
-      args: [...spec.args, ...typed.args],
-      env,
-    });
-  }
-
-  /** THE in-flight bracket for every tracker round-trip the settings card
-   * reflects (verify, authenticate, logout): emits
-   * agentVerifyStarted/Finished around the work so the card's controls dim
-   * for exactly its span — one writer for the signal, so the flows can
-   * never drift apart. Refcounted: overlapping brackets (a user Verify
-   * racing verify-after-connect) must not un-dim mid-RPC when the first
-   * one finishes — Finished fires only when the LAST bracket closes. */
-  private readonly verifySignalDepth = new Map<string, number>();
-
-  private async withVerifySignal<T>(agentId: string, label: string, work: () => Promise<T>): Promise<T> {
-    const depth = this.verifySignalDepth.get(agentId) ?? 0;
-    this.verifySignalDepth.set(agentId, depth + 1);
-    if (depth === 0) this.settings.emit({ kind: "agentVerifyStarted", agentId });
-    this.log.debug(`${agentId}: ${label} started`);
-    try {
-      return await work();
-    } finally {
-      const remaining = (this.verifySignalDepth.get(agentId) ?? 1) - 1;
-      if (remaining <= 0) {
-        this.verifySignalDepth.delete(agentId);
-        this.settings.emit({ kind: "agentVerifyFinished", agentId });
-      } else {
-        this.verifySignalDepth.set(agentId, remaining);
-      }
-      this.log.debug(`${agentId}: ${label} finished`);
-    }
-  }
-
-  /** Logout round-trip under the shared in-flight signal — the card's
-   * controls dim for the RPC's span, needsAuth is raised by the tracker
-   * itself (a successful logout IS the auth state; no probe) — then the
-   * agent's process is disconnected. Policy, not a quirk workaround:
-   * a process that has held credentials is never trusted to shed them
-   * (spawn-time-only auth reads are live behavior — auggie dossier), so
-   * killing it is the only clear-out that needs no agent cooperation.
-   * The card lands on stopped + the logout reason, and the
-   * lock persists (auth-evidence.ts) — a reconnect carries it until real
-   * login evidence clears it. */
-  private async logoutAgent(agentId: string): Promise<void> {
-    await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
-    await this.pool.stop(agentId);
-  }
-
-  /** Brackets a Verify round-trip (manual click or "Verify after add") with
-   * the settings-only in-flight signal — the card's Verify control dims and
-   * reads "Verifying…" for exactly the span of the free protocol check.
-   * Returns what the probe observed so the terminal-login flow can react
-   * to a still-locked agent. */
-  private async runVerify(agentId: string): Promise<ProbeOutcome> {
-    return await this.withVerifySignal(agentId, "verify", () =>
-      this.capabilityTracker.verify(agentId),
-    );
-  }
-
   dispose(): void {
     this.sessionManager.dispose();
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
-    void this.pool.disposeAll();
+    void this.agents.stopAll();
     this.agentView.flushNow();
     this.settings.flushNow();
     this.statusBarItem.dispose();

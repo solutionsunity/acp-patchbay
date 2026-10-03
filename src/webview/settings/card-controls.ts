@@ -82,8 +82,8 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
 
   return {
     // Running-gated: authenticate is an RPC on the live connection, so a
-    // stopped-but-logged-out card (logout disconnects the process —
-    // orchestrator.logoutAgent) offers Connect; the lock rides through the
+    // stopped-but-logged-out card (logout disconnects the process — the
+    // agents store's logout) offers Connect; the lock rides through the
     // reconnect and the card comes back still logged out. Disabled while a
     // verify/authenticate/logout round-trip is in flight — one bracket,
     // refcounted, dims them together.
