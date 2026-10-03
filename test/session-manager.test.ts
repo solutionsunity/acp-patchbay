@@ -110,11 +110,6 @@ function harness(opts?: {
         sessionManager.invalidateAgent(agentId);
       }
     },
-    onIsolatedStatusChanged: (poolKey, _agentId, status) => {
-      if (status === "crashed" || status === "reconnecting") {
-        sessionManager.invalidatePoolKey(poolKey);
-      }
-    },
     onDeclaredCaptured: (agentId, declared, raw) =>
       capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
@@ -2422,11 +2417,14 @@ describe("session history (list / resume / delete)", () => {
     h.sessionManager.invalidateAgent("sh9");
 
     h.sessionManager.activate(sessionId); // a click
+    // The open's own end, not isLive: a rung claims the session before its
+    // wire call, so isLive turns true while the resume is still in flight.
     const start = Date.now();
-    while (!h.sessionManager.isLive(sessionId)) {
+    while (h.state().hydrating[sessionId] === true) {
       if (Date.now() - start > 3000) throw new Error("open never resumed");
       await new Promise((r) => setTimeout(r, 20));
     }
+    expect(h.sessionManager.isLive(sessionId)).toBe(true);
     const blocks = h.state().transcripts[sessionId]!;
     const notice = blocks.find((b) => b.kind === "notice");
     expect(notice?.kind === "notice" && notice.text).toContain("doesn't support replaying history");

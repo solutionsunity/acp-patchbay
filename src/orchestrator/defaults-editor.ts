@@ -205,9 +205,7 @@ export class DefaultsEditor {
     }
   }
 
-  /** The wire one routed set needs, bound to this agent's connection (the
-   * editor's sessions live on the agent's own pool key, never an isolated
-   * clone). */
+  /** The wire one routed set needs, bound to this agent's connection. */
   private knobWire(agentId: string): KnobWire {
     return {
       setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),

@@ -161,12 +161,22 @@ as an opt-in; the extension point is visible, deliberately unfilled.
 ## ACP client pool & process model
 
 - Registry: `agentId → { process, declared, used, sessions[] }`.
-- Different agents are always separate subprocesses. Sessions with the *same* agent
-  multiplex over one connection by default — that is the protocol's own model
-  (`session/new`/`load`/`close` are session-ID-scoped on one connection).
-- **Per-agent process policy** (Settings): `auto` (default — share if concurrent
-  behavior is *used*, isolate otherwise), `shared` (force, user accepts risk),
-  `isolated` (one process per top-level session).
+- Different agents are always separate subprocesses. An agent has **one
+  process per window**, and every session opened with it rides that one
+  connection — the protocol's own model (`session/new`/`load`/`close` are
+  session-ID-scoped on one connection; a session's `cwd` applies wherever the
+  process was spawned). Workspaces are separate already: each window runs its
+  own pool. Accepted trade: an agent crash ends all of its sessions in the
+  window; restart plus the attach ladder below brings them back. The
+  `concurrentSessions` row is information only — the user's own second session
+  (or a fork) proves it, a failed second `session/new` marks it suspect. An
+  agent ever reproduced failing to hold two sessions gets a curated
+  wire-extension entry; the default does not turn pessimistic again.
+  *(Supersedes 2026-10-03 the per-agent process policy — `auto`, isolating a
+  new session until concurrent use was proven; `shared`; `isolated`, a process
+  per top-level session. It drew a per-session process boundary ACP never
+  defines, and `auto`'s proof could only arrive through a side door. Stored
+  configs lose the field in a one-time migration; #62.)*
 - Crash → visible immediately; restart is one action. After reconnect: the
   attach ladder — a never-prompted session is minted again from its row
   (nothing agent-side to open; the fresh id carries what the user staged) >
@@ -524,7 +534,7 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   condition** in its header. Retirement is mechanical: delete the module
   and its one compose line.
 - **Core exposes declared doors, not interception points:**
-  `pool.unstableRequest(poolKey, method, params)` — the one untracked
+  `pool.unstableRequest(agentId, method, params)` — the one untracked
   escape hatch (extension-owned methods bear on no capability row);
   `normalizeKnobs(..., extras?)` where an extra is `{ knob, execute }` —
   knobs.ts applies one generic rule (extras append unless a spec-surface

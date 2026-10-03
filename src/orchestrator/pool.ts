@@ -60,9 +60,6 @@ export interface LaunchSpec {
   args: string[];
   env: Record<string, string>;
   cwd: string;
-  /** Per-agent process policy. Absent →
-   * "auto", same as an unset config-file field. */
-  processPolicy?: "auto" | "shared" | "isolated";
   /** Per-agent knob defaults, applied post-create — the folded,
    * knob-id-keyed seed (knobs.ts; category is UX-only per ACP). */
   defaults?: KnobSeed;
@@ -141,15 +138,6 @@ export interface PoolHooks {
   /** One complete ndjson frame, already line-assembled. Redaction is the
    * receiver's job (wire-log.ts) — pool.ts hands over the raw line. */
   onWireFrame?(agentId: string, direction: "→" | "←", line: string): void;
-  /** Status of a process-policy "isolated" instance — kept off
-   * `onStatusChanged` on purpose: an isolated subprocess dying must not flip
-   * the shared agent's own status, since the agent itself is unaffected. */
-  onIsolatedStatusChanged?(
-    poolKey: string,
-    agentId: string,
-    status: AgentStatus,
-    detail?: string,
-  ): void;
   /** Spawn-registry taps — `onProcessSpawned` fires with the command
    * line read back from the OS shortly after spawn (skipped when the process
    * is already gone by then: a record that would only be stale), and
@@ -186,17 +174,6 @@ export interface PoolHooks {
 
 interface Entry {
   spec: LaunchSpec;
-  /** The `entries` map key — same as `spec.agentId` for a primary connection,
-   * a synthetic instance id for a process-policy "isolated" one. */
-  poolKey: string;
-  /** The real configured agentId, for hook attribution — equals `poolKey` unless
-   * `isolated`. */
-  reportAs: string;
-  /** A process-policy "isolated" instance: invisible to `list()`, doesn't
-   * recapture/reset the shared agent's declared capabilities, and its status
-   * changes route through `onIsolatedStatusChanged` instead of the normal
-   * agent-wide status hook. */
-  isolated: boolean;
   process: ChildProcess | null;
   connection: acp.ClientConnection | null;
   declared: DeclaredCapabilities | null;
@@ -211,10 +188,6 @@ interface Entry {
   sessions: Map<string, string>;
   stopping: boolean;
   stderrTail: string[];
-  /** Isolated entries only: the shared connection's `agentInfo.version`
-   * when this instance spawned — the evidence gate's fallback reference
-   * while a shared reconnect's own initialize is still in flight. */
-  sharedVersionAtSpawn?: string;
 }
 
 export interface PooledAgentView {
@@ -347,8 +320,8 @@ export class AgentPool {
     this.launchResolver = opts?.resolveLaunch;
   }
 
-  get(poolKey: string): PooledAgentView | undefined {
-    const e = this.entries.get(poolKey);
+  get(agentId: string): PooledAgentView | undefined {
+    const e = this.entries.get(agentId);
     if (!e) return undefined;
     return {
       spec: e.spec,
@@ -360,45 +333,29 @@ export class AgentPool {
     };
   }
 
-  /** Real agents only — process-policy "isolated" instances are an
-   * implementation detail, never a separate row in the Agents list. */
   list(): PooledAgentView[] {
-    return [...this.entries.entries()].filter(([, e]) => !e.isolated).map(([id]) => this.get(id)!);
+    return [...this.entries.keys()].map((agentId) => this.get(agentId)!);
   }
 
-  /** Spawn + initialize. Declared table is captured fresh on every connect.
-   * `opts` backs process-policy "isolated" instances: a distinct
-   * `poolKey` from `spec.agentId` so a dedicated subprocess can coexist with
-   * the shared one, while `reportAs` keeps every hook call attributed to the
-   * real configured agent. Declared capabilities are still recorded locally
-   * (`entry.declared`, e.g. for `reopen`'s `loadSession` check) but never
-   * re-broadcast via `onDeclaredCaptured` for an isolated instance — the
-   * shared agent's own matrix must not reset just because a sibling process
-   * connected. */
+  /** Spawn + initialize — the agent's one process in this window, carrying
+   * every session opened with it. Declared table is captured fresh on every
+   * connect. */
   async connect(
     spec: LaunchSpec,
     opts?: {
-      poolKey?: string;
-      reportAs?: string;
-      isolated?: boolean;
       /** Internal: set on the one retry after a launcher-cache repair, so a
        * repair that didn't actually fix things can never loop. */
       repairAttempted?: boolean;
     },
   ): Promise<DeclaredCapabilities> {
-    const poolKey = opts?.poolKey ?? spec.agentId;
-    const reportAs = opts?.reportAs ?? spec.agentId;
-    const isolated = opts?.isolated ?? false;
-    const existing = this.entries.get(poolKey);
+    const agentId = spec.agentId;
+    const existing = this.entries.get(agentId);
     if (existing && (existing.status === "running" || existing.status === "reconnecting")) {
-      throw new Error(`agent ${poolKey} is already connected`);
+      throw new Error(`agent ${agentId} is already connected`);
     }
 
     const entry: Entry = {
       spec,
-      poolKey,
-      reportAs,
-      isolated,
       process: null,
       connection: null,
       declared: null,
@@ -407,11 +364,8 @@ export class AgentPool {
       sessions: new Map(),
       stopping: false,
       stderrTail: [],
-      ...(isolated
-        ? { sharedVersionAtSpawn: this.entries.get(reportAs)?.initializeRaw?.agentInfo?.version }
-        : {}),
     };
-    this.entries.set(poolKey, entry);
+    this.entries.set(agentId, entry);
     this.setStatus(entry, "reconnecting");
 
     // Launch phase, ahead of everything that spawns: the resolver hands
@@ -442,9 +396,7 @@ export class AgentPool {
     const warm = warmupSpawn(spec);
     if (warm !== null) await this.warmLauncherCache(entry, warm, spec);
 
-    this.log.info(
-      `${poolKey}: spawning ${spec.command} (${spec.args.length} args${isolated ? ", isolated" : ""})`,
-    );
+    this.log.info(`${agentId}: spawning ${spec.command} (${spec.args.length} args)`);
     const launch = resolveSpawn(spec.command, spec.args, spawnEnv(spec));
     if (launch.error !== undefined) {
       this.markDead(entry, launch.error);
@@ -461,7 +413,7 @@ export class AgentPool {
         if (entry.stderrTail.length > STDERR_TAIL_LINES) entry.stderrTail.shift();
         // The agent's own stderr, otherwise invisible until a crash —
         // debug level so the Output panel's level switch controls the noise.
-        this.log.debug(`${poolKey} stderr: ${line}`);
+        this.log.debug(`${agentId} stderr: ${line}`);
       }
     });
 
@@ -489,10 +441,10 @@ export class AgentPool {
     // redaction (wire-log.ts) needs whole frames, and chunks split anywhere.
     const toAgent = new PassThrough();
     toAgent.pipe(child.stdin!);
-    this.tapLines(reportAs, "→", toAgent);
+    this.tapLines(agentId, "→", toAgent);
     const fromAgent = new PassThrough();
     child.stdout!.pipe(fromAgent);
-    this.tapLines(reportAs, "←", child.stdout!);
+    this.tapLines(agentId, "←", child.stdout!);
     const stream = acp.ndJsonStream(
       Writable.toWeb(toAgent),
       Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
@@ -509,14 +461,7 @@ export class AgentPool {
       method: M,
       handler: acp.ClientRequestHandlersByMethod[M],
     ): [M, acp.ClientRequestHandlersByMethod[M]] => {
-      // Same version gate as the outgoing chokepoint: a mismatched
-      // isolated build's facts must not persist against the shared
-      // version on any of the three chokepoints.
-      const prove = () => {
-        if (this.capabilityEvidenceBearing(entry)) {
-          this.markProven(reportAs, { via: "clientRequest", method });
-        }
-      };
+      const prove = () => this.markProven(agentId, { via: "clientRequest", method });
       return [
         method,
         (async (ctx: never) => {
@@ -536,7 +481,7 @@ export class AgentPool {
       .onRequest(
         ...proven(acp.methods.client.session.requestPermission, (ctx) => {
           const handler = this.hooks.onPermissionRequest;
-          if (handler) return handler(reportAs, ctx.params);
+          if (handler) return handler(agentId, ctx.params);
           return Promise.resolve<acp.RequestPermissionResponse>({
             outcome: { outcome: "cancelled" },
           });
@@ -545,12 +490,12 @@ export class AgentPool {
       .onRequest(
         ...proven(acp.methods.client.elicitation.create, (ctx) => {
           const handler = this.hooks.onElicitation;
-          if (handler) return handler(reportAs, ctx.params, ctx.signal);
+          if (handler) return handler(agentId, ctx.params, ctx.signal);
           return Promise.resolve<acp.CreateElicitationResponse>({ action: "cancel" });
         }),
       )
       .onNotification(acp.methods.client.elicitation.complete, (ctx) => {
-        this.hooks.onElicitationComplete?.(reportAs, ctx.params.elicitationId);
+        this.hooks.onElicitationComplete?.(agentId, ctx.params.elicitationId);
       })
       .onNotification(acp.methods.client.session.update, (ctx) => {
         // Chokepoint: the kind tag is the wire fact (e.g. usage_update has
@@ -563,52 +508,47 @@ export class AgentPool {
         // per message upstream, and the raw line is in the wire log when
         // the tap is on.
         try {
-          if (this.capabilityEvidenceBearing(entry)) {
-            this.markProven(reportAs, {
-              via: "sessionUpdate",
-              updateKind: ctx.params.update.sessionUpdate,
-            });
-          }
-          this.hooks.onSessionUpdate(reportAs, ctx.params);
+          this.markProven(agentId, { via: "sessionUpdate", updateKind: ctx.params.update.sessionUpdate });
+          this.hooks.onSessionUpdate(agentId, ctx.params);
         } catch (err) {
           this.log.info(
-            `${reportAs}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${(err as Error).message}`,
+            `${agentId}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${(err as Error).message}`,
           );
         }
       })
       .onRequest(
         ...proven(acp.methods.client.fs.readTextFile, (ctx) =>
-          this.hooks.onReadTextFile(reportAs, ctx.params),
+          this.hooks.onReadTextFile(agentId, ctx.params),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.fs.writeTextFile, (ctx) =>
-          this.hooks.onWriteTextFile(reportAs, ctx.params),
+          this.hooks.onWriteTextFile(agentId, ctx.params),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.create, (ctx) =>
-          this.hooks.onCreateTerminal(reportAs, ctx.params, entry.sessions.get(ctx.params.sessionId) ?? null),
+          this.hooks.onCreateTerminal(agentId, ctx.params, entry.sessions.get(ctx.params.sessionId) ?? null),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.output, (ctx) =>
-          this.hooks.onTerminalOutput(reportAs, ctx.params),
+          this.hooks.onTerminalOutput(agentId, ctx.params),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.waitForExit, (ctx) =>
-          this.hooks.onWaitForTerminalExit(reportAs, ctx.params),
+          this.hooks.onWaitForTerminalExit(agentId, ctx.params),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.kill, (ctx) =>
-          this.hooks.onKillTerminal(reportAs, ctx.params),
+          this.hooks.onKillTerminal(agentId, ctx.params),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.release, (ctx) =>
-          this.hooks.onReleaseTerminal(reportAs, ctx.params),
+          this.hooks.onReleaseTerminal(agentId, ctx.params),
         ),
       )
       .connect(stream);
@@ -656,8 +596,8 @@ export class AgentPool {
         isMissingBinSignature(await exitCodeWithin(child, 2_500), entry.stderrTail) &&
         (await this.repairLauncherCache(spec))
       ) {
-        this.log.info(`${poolKey}: launcher cache repaired — retrying connect`);
-        return this.connect(spec, { ...opts, repairAttempted: true });
+        this.log.info(`${agentId}: launcher cache repaired — retrying connect`);
+        return this.connect(spec, { repairAttempted: true });
       }
       throw err;
     }
@@ -681,11 +621,11 @@ export class AgentPool {
     entry.initializeRaw = init;
     entry.declared = declaredFromInitialize(init);
     this.log.info(
-      `${poolKey}: initialized — ${init.agentInfo?.name ?? "unnamed"}` +
+      `${agentId}: initialized — ${init.agentInfo?.name ?? "unnamed"}` +
         `${init.agentInfo?.version !== undefined ? ` v${init.agentInfo.version}` : ""}` +
         `, protocol ${init.protocolVersion}`,
     );
-    if (!isolated) this.hooks.onDeclaredCaptured(reportAs, entry.declared, init);
+    this.hooks.onDeclaredCaptured(agentId, entry.declared, init);
     this.setStatus(entry, "running");
     return entry.declared;
   }
@@ -696,8 +636,8 @@ export class AgentPool {
    * SIGTERM the tree, grace, SIGKILL the tree — then a final group sweep,
    * because a leader that exited cleanly can still leave grandchildren
    * behind. */
-  async stop(poolKey: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
-    const entry = this.entries.get(poolKey);
+  async stop(agentId: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
+    const entry = this.entries.get(agentId);
     // Pre-spawn (runtime resolve / warmup) there is nothing to stop and
     // nothing safe to mutate: the in-flight connect() closure owns this
     // entry, and flipping its status to "stopped" here would unlock the
@@ -742,13 +682,12 @@ export class AgentPool {
    * `spec`, when given, replaces the entry's connect-time snapshot — the
    * caller read current config and secrets; a restart is a spawn and must
    * not resurrect stale command/args/env. */
-  async restart(poolKey: string, spec?: LaunchSpec): Promise<DeclaredCapabilities> {
-    const entry = this.entries.get(poolKey);
-    if (!entry) throw new Error(`unknown agent ${poolKey}`);
-    const { reportAs, isolated } = entry;
-    await this.stop(poolKey);
+  async restart(agentId: string, spec?: LaunchSpec): Promise<DeclaredCapabilities> {
+    const entry = this.entries.get(agentId);
+    if (!entry) throw new Error(`unknown agent ${agentId}`);
+    await this.stop(agentId);
     entry.stopping = false;
-    return this.connect(spec ?? entry.spec, { poolKey, reportAs, isolated });
+    return this.connect(spec ?? entry.spec);
   }
 
   /** `additionalDirectories` crosses the wire only when the agent advertises
@@ -763,19 +702,19 @@ export class AgentPool {
   }
 
   async newSession(
-    poolKey: string,
+    agentId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
   ): Promise<acp.NewSessionResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     const response = await this.request(entry, acp.methods.agent.session.new, {
       cwd,
       mcpServers,
       ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
     entry.sessions.set(response.sessionId, cwd);
-    this.log.debug(`${poolKey}: session/new -> ${response.sessionId}`);
+    this.log.debug(`${agentId}: session/new -> ${response.sessionId}`);
     return response;
   }
 
@@ -784,32 +723,30 @@ export class AgentPool {
    * needs (browser, device code, ...) — patchbay only picks the methodId
    * and awaits the round trip. Callers retry whatever hit `auth_required`
    * once this resolves. */
-  async authenticate(poolKey: string, methodId: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async authenticate(agentId: string, methodId: string): Promise<void> {
+    const entry = this.running(agentId);
     await this.request(entry, acp.methods.agent.authenticate, { methodId });
   }
 
   /** Stable `logout` — callers gate on the declared `auth.logout`
    * capability (spec: "Clients MUST NOT call it" when undeclared); pool.ts
    * itself just makes the round trip. */
-  async logout(poolKey: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async logout(agentId: string): Promise<void> {
+    const entry = this.running(agentId);
     await this.request(entry, acp.methods.agent.logout, {});
   }
 
   /** Also used for the automatic, ephemeral fork-verification round-trip
    * and for real user-triggered branching — `session/fork` is
-   * addressed to the connection holding the parent's context (no
-   * cross-process handoff exists), so a branch always
-   * rides whatever poolKey its parent lives on, never a fresh decision. */
+   * addressed to the connection holding the parent's context. */
   async fork(
-    poolKey: string,
+    agentId: string,
     sessionId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
   ): Promise<acp.ForkSessionResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     const response = await this.request(entry, acp.methods.agent.session.fork, {
       sessionId,
       cwd,
@@ -817,21 +754,21 @@ export class AgentPool {
       ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
     });
     entry.sessions.set(response.sessionId, cwd);
-    this.log.debug(`${poolKey}: session/fork ${sessionId} -> ${response.sessionId}`);
+    this.log.debug(`${agentId}: session/fork ${sessionId} -> ${response.sessionId}`);
     return response;
   }
 
   async prompt(
-    poolKey: string,
+    agentId: string,
     sessionId: string,
     prompt: acp.ContentBlock[],
   ): Promise<acp.PromptResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     return this.request(entry, acp.methods.agent.session.prompt, { sessionId, prompt });
   }
 
-  async cancel(poolKey: string, sessionId: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async cancel(agentId: string, sessionId: string): Promise<void> {
+    const entry = this.running(agentId);
     await entry.connection!.agent.notify(acp.methods.agent.session.cancel, {
       sessionId,
     });
@@ -844,13 +781,13 @@ export class AgentPool {
    * ids the agent may legally no longer hold — an unknown-session error
    * bears nothing on whether the capability works. */
   async loadSession(
-    poolKey: string,
+    agentId: string,
     sessionId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
   ): Promise<acp.LoadSessionResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     const response = await this.request(
       entry,
       acp.methods.agent.session.load,
@@ -863,7 +800,7 @@ export class AgentPool {
       { failureIsRoutine: true },
     );
     entry.sessions.set(sessionId, cwd);
-    this.log.debug(`${poolKey}: session/load ${sessionId} replayed`);
+    this.log.debug(`${agentId}: session/load ${sessionId} replayed`);
     return response;
   }
 
@@ -872,31 +809,31 @@ export class AgentPool {
    * true — callers check first. A free read: no LLM turn, no session
    * mutation, so it doubles as the capability's own connectivity proof. */
   async listSessions(
-    poolKey: string,
+    agentId: string,
     params: acp.ListSessionsRequest = {},
   ): Promise<acp.ListSessionsResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     return this.request(entry, acp.methods.agent.session.list, params);
   }
 
   /** Deletes a session from the agent's own history (`session/delete`).
    * Spec: idempotent — deleting an unknown/already-deleted session SHOULD
    * succeed silently. Only meaningful when declared.sessionDelete is true. */
-  async deleteSession(poolKey: string, sessionId: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async deleteSession(agentId: string, sessionId: string): Promise<void> {
+    const entry = this.running(agentId);
     await this.request(entry, acp.methods.agent.session.delete, { sessionId });
     entry.sessions.delete(sessionId);
-    this.log.debug(`${poolKey}: session/delete ${sessionId}`);
+    this.log.debug(`${agentId}: session/delete ${sessionId}`);
   }
 
   /** Frees a session's agent-side resources (`session/close`): cancels any
    * in-flight work and detaches — history stays intact (`delete` is the
    * destructive sibling). Only meaningful when declared.sessionClose. */
-  async closeSession(poolKey: string, sessionId: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async closeSession(agentId: string, sessionId: string): Promise<void> {
+    const entry = this.running(agentId);
     await this.request(entry, acp.methods.agent.session.close, { sessionId });
     entry.sessions.delete(sessionId);
-    this.log.debug(`${poolKey}: session/close ${sessionId}`);
+    this.log.debug(`${agentId}: session/close ${sessionId}`);
   }
 
   /** Re-attaches to a session *without* replay (`session/resume`): the agent
@@ -907,13 +844,13 @@ export class AgentPool {
    * (suspect-exempt), same as loadSession: stale ids are the ladder's
    * normal weather. */
   async resumeSession(
-    poolKey: string,
+    agentId: string,
     sessionId: string,
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
   ): Promise<acp.ResumeSessionResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     const response = await this.request(
       entry,
       acp.methods.agent.session.resume,
@@ -926,7 +863,7 @@ export class AgentPool {
       { failureIsRoutine: true },
     );
     entry.sessions.set(sessionId, cwd);
-    this.log.debug(`${poolKey}: session/resume ${sessionId}`);
+    this.log.debug(`${agentId}: session/resume ${sessionId}`);
     return response;
   }
 
@@ -934,8 +871,8 @@ export class AgentPool {
    * agent's own `current_mode_update` notification, never this call's
    * response (bridges have reported success for rejected changes), so the
    * response is discarded. */
-  async setSessionMode(poolKey: string, sessionId: string, modeId: string): Promise<void> {
-    const entry = this.running(poolKey);
+  async setSessionMode(agentId: string, sessionId: string, modeId: string): Promise<void> {
+    const entry = this.running(agentId);
     await this.request(entry, acp.methods.agent.session.setMode, { sessionId, modeId });
   }
 
@@ -946,12 +883,12 @@ export class AgentPool {
    * that initiated the change (claude-agent-acp doesn't). The response is
    * agent-authored state, not an echo of the request, so callers consume it. */
   async setSessionConfigOption(
-    poolKey: string,
+    agentId: string,
     sessionId: string,
     configId: string,
     value: string | boolean,
   ): Promise<acp.SetSessionConfigOptionResponse> {
-    const entry = this.running(poolKey);
+    const entry = this.running(agentId);
     const params: acp.SetSessionConfigOptionRequest =
       typeof value === "boolean" ? { sessionId, configId, type: "boolean", value } : { sessionId, configId, value };
     return this.request(entry, acp.methods.agent.session.setConfigOption, params);
@@ -962,12 +899,12 @@ export class AgentPool {
    * overload, deliberately outside the capability-tracked `request()` —
    * extension methods bear on no matrix row, and pool.ts never learns
    * their names (they arrive from orchestrator/extensions/ modules). */
-  async unstableRequest(poolKey: string, method: string, params: unknown): Promise<unknown> {
-    const entry = this.running(poolKey);
+  async unstableRequest(agentId: string, method: string, params: unknown): Promise<unknown> {
+    const entry = this.running(agentId);
     const startedAt = new Date().toISOString();
     try {
       const result = await entry.connection!.agent.request<unknown>(method, params);
-      this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok", startedAt);
+      this.hooks.onAuthWireFact?.(agentId, method, "ok", startedAt);
       return result;
     } catch (err) {
       // Untracked for capabilities by design — but auth is orthogonal: an
@@ -975,7 +912,7 @@ export class AgentPool {
       // swallowing it would leave the card claiming otherwise.
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {
-        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", startedAt, auth.reason);
+        this.hooks.onAuthWireFact?.(agentId, method, "auth_required", startedAt, auth.reason);
       }
       throw err;
     }
@@ -1025,22 +962,12 @@ export class AgentPool {
     });
   }
 
-  /** Local-only bookkeeping once a session is no longer in use — lets an
-   * isolated instance's session count reach zero so its subprocess can be
-   * freed (see SessionManager.close). */
-  forgetSession(poolKey: string, sessionId: string): void {
-    this.entries.get(poolKey)?.sessions.delete(sessionId);
-  }
-
-  /** Stops the primary connection *and* every process-policy "isolated"
-   * instance reporting as this agent — Remove's semantics (a removed agent
-   * must not keep running anywhere), where `stop(poolKey)` is one
-   * connection. */
-  async stopAllFor(agentId: string): Promise<void> {
-    const keys = [...this.entries.entries()]
-      .filter(([, entry]) => entry.reportAs === agentId)
-      .map(([key]) => key);
-    await Promise.allSettled(keys.map((key) => this.stop(key)));
+  /** Local-only bookkeeping for a session patchbay is done with but did not
+   * end agent-side (a throwaway, a retired shell): it stops counting as a
+   * session this connection serves — the count the concurrent-sessions
+   * proof reads. */
+  forgetSession(agentId: string, sessionId: string): void {
+    this.entries.get(agentId)?.sessions.delete(sessionId);
   }
 
   /** The deactivate path: every connection down on the tight budget, in
@@ -1071,6 +998,7 @@ export class AgentPool {
       failureIsRoutine?: boolean;
     },
   ): Promise<acp.AgentRequestResponsesByMethod[M]> {
+    const agentId = entry.spec.agentId;
     const priorSessionCount = entry.sessions.size;
     const fact: WireFact = {
       via: "agentRequest",
@@ -1086,56 +1014,37 @@ export class AgentPool {
       // degraded before "used" is marked or any caller reads it. A guard
       // throw is a structurally unusable response — it rides the same catch
       // as any RPC failure, so the rows go suspect, not used.
-      const guarded = guardResponse(method, result, (m) => this.log.info(`${entry.reportAs}: ${m}`));
-      if (this.capabilityEvidenceBearing(entry)) this.markProven(entry.reportAs, fact);
+      const guarded = guardResponse(method, result, (m) => this.log.info(`${agentId}: ${m}`));
+      this.markProven(agentId, fact);
       // A cancelled prompt is auth-non-bearing: a bridge may short-circuit
       // cancellation before its backend ever touches credentials, so the
       // resolved RPC proves nothing a lock should clear on.
       const cancelled =
         method === acp.methods.agent.session.prompt &&
         (guarded as { stopReason?: string }).stopReason === "cancelled";
-      if (!cancelled) this.hooks.onAuthWireFact?.(entry.reportAs, method, "ok", startedAt);
+      if (!cancelled) this.hooks.onAuthWireFact?.(agentId, method, "ok", startedAt);
       return guarded;
     } catch (err) {
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {
-        this.hooks.onAuthWireFact?.(entry.reportAs, method, "auth_required", startedAt, auth.reason);
-      } else if (opts?.failureIsRoutine !== true && this.capabilityEvidenceBearing(entry)) {
+        this.hooks.onAuthWireFact?.(agentId, method, "auth_required", startedAt, auth.reason);
+      } else if (opts?.failureIsRoutine !== true) {
         for (const row of rowsProvenBy(fact)) {
-          this.hooks.onCapabilityEvidence?.(entry.reportAs, row, "suspect");
+          this.hooks.onCapabilityEvidence?.(agentId, row, "suspect");
         }
       }
       throw err;
     }
   }
 
-  /** Isolated instances report as the shared agent, and used/suspect
-   * persists version-keyed against the shared connection's version — but an
-   * npx-launched isolated spawn re-resolves the package and may be a
-   * different build. Facts from a version-mismatched (or shared-less)
-   * isolated entry are dropped rather than persisted against a version
-   * they weren't earned on — the honest direction. Auth wire facts are
-   * exempt: credentials are account-level, not build-level. */
-  private capabilityEvidenceBearing(entry: Entry): boolean {
-    if (!entry.isolated) return true;
-    // Reference version: the shared connection's current initialize when
-    // it has one, else the value captured when this isolated instance
-    // spawned — so a shared reconnect's initialize window (initializeRaw
-    // still null) doesn't black out evidence from a healthy isolated
-    // session that matched when it started.
-    const sharedNow = this.entries.get(entry.reportAs)?.initializeRaw?.agentInfo?.version;
-    const reference = sharedNow ?? entry.sharedVersionAtSpawn;
-    return reference === entry.initializeRaw?.agentInfo?.version;
+  private markProven(agentId: string, fact: WireFact): void {
+    for (const row of rowsProvenBy(fact)) this.hooks.onCapabilityEvidence?.(agentId, row, "used");
   }
 
-  private markProven(reportAs: string, fact: WireFact): void {
-    for (const row of rowsProvenBy(fact)) this.hooks.onCapabilityEvidence?.(reportAs, row, "used");
-  }
-
-  private running(poolKey: string): Entry {
-    const entry = this.entries.get(poolKey);
+  private running(agentId: string): Entry {
+    const entry = this.entries.get(agentId);
     if (!entry || entry.status !== "running" || entry.connection === null) {
-      throw new Error(`agent ${poolKey} is not running`);
+      throw new Error(`agent ${agentId} is not running`);
     }
     return entry;
   }
@@ -1153,7 +1062,7 @@ export class AgentPool {
   ): Promise<void> {
     const launch = resolveSpawn(warm.command, warm.args, spawnEnv(spec));
     if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
-    this.log.info(`${entry.poolKey}: warming launcher cache (${formatCommandLine(warm.command, warm.args)})`);
+    this.log.info(`${spec.agentId}: warming launcher cache (${formatCommandLine(warm.command, warm.args)})`);
     return new Promise<void>((resolve) => {
       const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "ignore"));
       const label = setTimeout(
@@ -1169,7 +1078,7 @@ export class AgentPool {
         clearTimeout(label);
         clearTimeout(cap);
         this.clearPhaseLabel(entry);
-        this.log.debug(`${entry.poolKey}: launcher warmup ${outcome}`);
+        this.log.debug(`${spec.agentId}: launcher warmup ${outcome}`);
         resolve();
       };
       child.on("error", (err) => settle(`spawn failed — ${err.message}`));
@@ -1220,8 +1129,7 @@ export class AgentPool {
     // clears them — stale stderr on a running agent would be a lie.
     const stderr =
       status === "crashed" && entry.stderrTail.length > 0 ? [...entry.stderrTail] : undefined;
-    if (entry.isolated) this.hooks.onIsolatedStatusChanged?.(entry.poolKey, entry.reportAs, status, detail);
-    else this.hooks.onStatusChanged(entry.reportAs, status, detail, stderr);
+    this.hooks.onStatusChanged(entry.spec.agentId, status, detail, stderr);
   }
 
   private markDead(entry: Entry, detail: string): void {

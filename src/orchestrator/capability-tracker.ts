@@ -262,9 +262,9 @@ export class CapabilityTracker {
       return "failed";
     } finally {
       // Probe sessions must not linger in the connection's session set:
-      // process-policy "auto" reads that set as real concurrent sessions
-      // (hasExisting) and would needlessly isolate the user's first
-      // top-level session whenever the fork half of the probe failed.
+      // the concurrent-sessions proof counts that set, and the user's own
+      // first session/new would then read as a second session — proven by
+      // patchbay's throwaway, not by real use.
       // The probe root itself is NOT cleaned here — its lifetime is the
       // agent's config, not this call (see hooks.probeRoot).
       for (const id of probeSessionIds) this.pool.forgetSession(agentId, id);

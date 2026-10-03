@@ -208,7 +208,6 @@ export class Orchestrator {
   /** In-flight session/list syncs per agent — awaited by the startup
    * restore so "found or not" is judged against a settled list. */
   private readonly pendingSyncs = new Map<string, Promise<void>>();
-  private isolationCounter = 0;
   private readonly editorSubscriptions: vscode.Disposable[] = [];
   /** Visible agent-view surfaces → the session each pins (null = follows
    * the active-session pointer). Hidden or disposed surfaces are absent;
@@ -421,16 +420,6 @@ export class Orchestrator {
         // copy off this same event; the defaults editor forgot its session
         // above, and an expanded card reopens one once running.
       },
-      onIsolatedStatusChanged: (poolKey, _agentId, status) => {
-        // Not surfaced in the Agents list (isolated instances are an
-        // implementation detail) — only the sessions riding this specific
-        // poolKey need to know their process is gone.
-        if (status !== "running") this.settleAsksOn(poolKey);
-        
-        if (status === "crashed" || status === "reconnecting") {
-          this.sessionManager.invalidatePoolKey(poolKey);
-        }
-      },
       onDeclaredCaptured: (agentId, declared, raw) => {
         const version = raw.agentInfo?.version ?? null;
         this.capabilityTracker.onDeclared(agentId, declared, version, raw.protocolVersion);
@@ -633,7 +622,6 @@ export class Orchestrator {
         },
         resyncView: () => this.agentView.resync(),
         mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
-        resolveProcessFor: (agentId) => this.resolveProcessFor(agentId),
         // The deferred-probe trigger for latched agents
         // (extensions/first-session-mcp-latch) — and, for everyone, the
         // signal that a real session now owns this id (any probe entry
@@ -1169,35 +1157,6 @@ export class Orchestrator {
     return this.broker.askElicitation(sessionId, { message: params.message, ask: { mode: "form", fields } });
   }
 
-  /** Process-policy decision for a new top-level session: `isolated`
-   * always isolates; `shared` always shares;
-   * `auto` (default) shares only once concurrent-session behavior has been
-   * *used* on the primary connection, isolating every session before
-   * that — a fork always rides its parent's poolKey regardless (SessionManager
-   * never calls this for a fork), so the signal bootstraps organically the
-   * first time a branch shares a connection with an existing session. */
-  private async resolveProcessFor(agentId: string): Promise<string> {
-    const primary = this.pool.get(agentId);
-    if (primary === undefined) return agentId;
-    // The policy is a config decision about placing *new* sessions — read
-    // from the store-backed spec map so a Settings edit applies to the next
-    // session, not the next reconnect; the pool snapshot is only the
-    // fallback for a connection with no config write behind it.
-    const policy =
-      this.configuredAgentSpecs.get(agentId)?.processPolicy ?? primary.spec.processPolicy ?? "auto";
-    const hasExisting = primary.sessions.length > 0;
-    const used = this.agentView.current.capabilities[agentId]?.concurrentSessions?.used ?? false;
-    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !used);
-    if (!isolate) return agentId;
-    const poolKey = `${agentId}::iso::${++this.isolationCounter}`;
-    // Deliberately the pool entry's spec, snapshot and all: an isolated
-    // instance is a sibling of the *running* process (same binary, same
-    // env), not a fresh config connect — every live session of one agent
-    // must ride the same process reality until an actual (re)connect.
-    await this.pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
-    return poolKey;
-  }
-
   /** The single sink for pool.ts's proof-table hits (capabilities.ts
    * CAPABILITY_PROOFS): marks a row used the first time its path is
    * genuinely exercised on the wire, or suspect the first time it rides a
@@ -1529,8 +1488,8 @@ export class Orchestrator {
    * open on it settles as cancelled — the same answer a stopped turn gives —
    * so no card, and no "waiting" mark, outlives the process it was asked
    * on. Read before the sessions are invalidated. */
-  private settleAsksOn(poolKey: string): void {
-    for (const sessionId of this.sessionManager.sessionsOn(poolKey)) this.broker.cancelPending(sessionId);
+  private settleAsksOn(agentId: string): void {
+    for (const sessionId of this.sessionManager.sessionsOn(agentId)) this.broker.cancelPending(sessionId);
   }
 
   /** The native notification is a projection of the waiting fact, not a
@@ -1643,7 +1602,6 @@ export class Orchestrator {
       args: agent.args,
       env: {},
       cwd: this.workspaceCwd,
-      processPolicy: agent.processPolicy,
       defaults: foldSeed(agent.defaults),
       ...(source?.distributionKind === "binary" && source.binary !== undefined
         ? { binary: { ...source.binary, version: source.pinnedVersion } }
@@ -1680,7 +1638,6 @@ export class Orchestrator {
       name: config.name,
       command,
       args,
-      processPolicy: config.processPolicy,
       autoConnect: config.autoConnect,
       // The view's folded seed is stored under `options` alone — the legacy
       // `mode` field is read (foldSeed) but never written again.
@@ -1700,14 +1657,14 @@ export class Orchestrator {
   }
 
   /** Remove is stop + forget ("add, edit, and remove agents") —
-   * the process goes down (isolated instances included), the agent leaves
+   * the process goes down, the agent leaves
    * both channel states via the `agentRemoved` event, its per-agent facts
    * (used capabilities, observed knobs) are purged so a future re-add
    * starts honest, and its session rows leave the drawer. Nothing to ask
    * the user: patchbay holds no session history — the sessions live on in
    * the agent's own store and reappear via session/list on a re-add. */
   private async removeAgentConfig(agentId: string): Promise<void> {
-    await this.pool.stopAllFor(agentId);
+    await this.pool.stop(agentId);
     this.sessionManager.invalidateAgent(agentId);
     this.sessionManager.forgetAgentSessions(agentId);
     await this.agentConfigs.remove(agentId);
@@ -1876,7 +1833,6 @@ export class Orchestrator {
         command: c.command,
         args: c.args,
         env: await this.agentEnv.get(c.id),
-        processPolicy: c.processPolicy,
         autoConnect: c.autoConnect,
         defaults: foldSeed(c.defaults),
         registrySource: c.registrySource,
@@ -2088,7 +2044,7 @@ export class Orchestrator {
    * one action now (adding an agent means it's activated —
    * checked spawnable, ready to start conversations on), not two decoupled
    * steps a user could leave half-done. Preserves any hand-edited
-   * process-policy/defaults an existing config already carries. */
+   * defaults an existing config already carries. */
   private async persistAgentConfig(
     spec: LaunchSpec,
     registrySource: AgentConfig["registrySource"],
@@ -2107,7 +2063,6 @@ export class Orchestrator {
       name: spec.name,
       command: spec.command,
       args: [...spec.args],
-      processPolicy: existing?.processPolicy ?? spec.processPolicy ?? "auto",
       autoConnect: existing?.autoConnect ?? false,
       defaults: existing?.defaults ?? (spec.defaults !== undefined ? { options: spec.defaults } : {}),
       registrySource: registrySource ?? existing?.registrySource ?? null,
@@ -2754,8 +2709,8 @@ export class Orchestrator {
 
   /** One intent, one click: connect if needed, then create and
    * activate the session — all inside the chat pane. Uses the saved config
-   * path (env injected from SecretStorage at spawn, process policy
-   * respected), never a bare pool.connect. Failure lands inline with the
+   * path (env injected from SecretStorage at spawn), never a bare
+   * pool.connect. Failure lands inline with the
    * specific reason and a Retry — never a silent bounce to the empty
    * state. */
   private async startChat(agentId: string): Promise<void> {
@@ -3022,18 +2977,17 @@ export class Orchestrator {
 
   /** Logout round-trip under the shared in-flight signal — the card's
    * controls dim for the RPC's span, needsAuth is raised by the tracker
-   * itself (a successful logout IS the auth state; no probe) — then every
-   * process for the agent is disconnected. Policy, not a quirk workaround:
+   * itself (a successful logout IS the auth state; no probe) — then the
+   * agent's process is disconnected. Policy, not a quirk workaround:
    * a process that has held credentials is never trusted to shed them
    * (spawn-time-only auth reads are live behavior — auggie dossier), so
    * killing it is the only clear-out that needs no agent cooperation.
-   * `stopAllFor`, not `stop`: isolated-spawn clones share the same
-   * credentials. The card lands on stopped + the logout reason, and the
+   * The card lands on stopped + the logout reason, and the
    * lock persists (auth-evidence.ts) — a reconnect carries it until real
    * login evidence clears it. */
   private async logoutAgent(agentId: string): Promise<void> {
     await this.withVerifySignal(agentId, "logout", () => this.capabilityTracker.logout(agentId));
-    await this.pool.stopAllFor(agentId);
+    await this.pool.stop(agentId);
   }
 
   /** Brackets a Verify round-trip (manual click or "Verify after add") with

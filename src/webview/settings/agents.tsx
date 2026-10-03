@@ -36,14 +36,13 @@ const EMPTY_AGENT_CONFIG: AgentConfigView = {
   command: "",
   args: [],
   env: {},
-  processPolicy: "auto",
   autoConnect: false,
   defaults: {},
   registrySource: null,
   lastSeenVersion: null,
 };
 
-/** ✎ Edit: launch line, process policy, env. Parsing the line is the
+/** ✎ Edit: launch line, env. Parsing the line is the
  * orchestrator's job — it's sent raw, args empty. Env shows what is
  * stored and saves what is in the box. Default model/mode/effort
  * deliberately do NOT appear here: the card's knob selects own them,
@@ -57,7 +56,6 @@ function AgentConfigForm(props: {
   const [id, setId] = useState(props.initial.id);
   const [name, setName] = useState(props.initial.name);
   const [command, setCommand] = useState(props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args));
-  const [processPolicy, setProcessPolicy] = useState(props.initial.processPolicy);
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
 
@@ -69,7 +67,6 @@ function AgentConfigForm(props: {
       command: command.trim(),
       args: [],
       env: parseEnvLines(envText),
-      processPolicy,
       autoConnect,
       defaults: props.initial.defaults,
       registrySource: props.initial.registrySource,
@@ -92,16 +89,6 @@ function AgentConfigForm(props: {
           value={command}
           onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
         />
-      </Field>
-      <Field label="process policy">
-        <Select value={processPolicy} onValueChange={(v) => setProcessPolicy(v as AgentConfigView["processPolicy"])}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">auto</SelectItem>
-            <SelectItem value="shared">shared</SelectItem>
-            <SelectItem value="isolated">isolated</SelectItem>
-          </SelectContent>
-        </Select>
       </Field>
       <Field label="auto-connect" hint="connect this agent when the window opens">
         <Toggle icon="zap" label="connect on window open" checked={autoConnect} onChange={setAutoConnect} />
@@ -128,7 +115,7 @@ function AgentConfigForm(props: {
 }
 
 /** Existing config for this agent, or one synthesized from its live launch
- * command — editing process-policy/defaults on an agent connected without a
+ * command — editing defaults on an agent connected without a
  * config yet (transient — Add always persists one) creates its record on
  * first save. */
 function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
@@ -142,7 +129,6 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
     command: (agent.command ?? "").trim(),
     args: [],
     env: {},
-    processPolicy: "auto",
     autoConnect: false,
     defaults: {},
     registrySource: null,
@@ -628,7 +614,6 @@ export function AgentsSection(props: {
             (r) => r.id === (config?.registrySource?.registryId ?? id),
           );
           const knobs = state.agentKnobs[id];
-          const concurrencyUsed = matrix?.concurrentSessions?.used ?? false;
           // No summary at all = the orchestrator never saw this config — the
           // honest unknown is "untested", never a claimed "stopped".
           const status = a?.status ?? "untested";
@@ -803,27 +788,9 @@ export function AgentsSection(props: {
                       onCancel={() => setEditing(null)}
                     />
                   ) : (
-                    // one knob per line — process policy, then mode/model/effort/…
+                    // one knob per line — auto-connect, then mode/model/effort/…
                     // (whatever the agent actually offered), never a wrap soup
                     <div className="mt-2 flex flex-col items-start gap-2">
-                      <label className="knob-default">
-                        process
-                        <Select
-                          value={effectiveConfig.processPolicy}
-                          onValueChange={(v) =>
-                            saveConfig({ processPolicy: v as AgentConfigView["processPolicy"] })
-                          }
-                        >
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="auto">
-                              auto — {concurrencyUsed ? "shared, concurrency used ✓" : "isolated, not yet used"}
-                            </SelectItem>
-                            <SelectItem value="shared">shared</SelectItem>
-                            <SelectItem value="isolated">isolated</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </label>
                       <Toggle
                         icon="zap"
                         label="auto-connect"

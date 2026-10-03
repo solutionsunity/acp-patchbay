@@ -68,12 +68,6 @@ export interface SessionManagerHooks {
    * built — session/new hasn't returned). Lets the orchestrator's IPC host
    * translate that token back to the real session once it's known. */
   mapContextToken?(token: string, sessionId: string): void;
-  /** Process-policy decision for a *new top-level* session: returns the
-   * poolKey to create it on — the agentId
-   * itself when sharing, or a fresh isolated poolKey (having already
-   * connected a dedicated subprocess for it) when isolating. Absent → always
-   * share (the pre-policy default — fine for tests that don't exercise policy). */
-  resolveProcessFor?(agentId: string): Promise<string>;
   /** The knob seed a session starts from on *entry* — a fresh session, or a
    * history session attached with no live combination in hand (folded,
    * knob-id-keyed — knobs.ts foldSeed). Which seed that is — the agent
@@ -342,11 +336,9 @@ interface KnownSession {
 }
 
 interface LiveSession {
+  /** Also the connection its requests ride: an agent has one process per
+   * window, holding every session opened with it. */
   agentId: string;
-  /** Which pool connection this session's requests ride — the agentId
-   * itself when sharing, a synthetic instance id when process-policy
-   * isolated it. */
-  poolKey: string;
   /** The at-most-one open prose run — every chunk arm continues or replaces
    * it through `runBlockFor` (the one place the continuation rule lives);
    * everything that interrupts prose (a tool call, a placeholder, a prompt
@@ -402,10 +394,9 @@ interface LiveSession {
  * prefix each family's blocks carry. */
 type RunChannel = "user" | "text" | "thought";
 
-function liveSession(agentId: string, poolKey: string): LiveSession {
+function liveSession(agentId: string): LiveSession {
   return {
     agentId,
-    poolKey,
     openRun: null,
     pendingContext: [],
     knobs: NO_KNOBS,
@@ -445,7 +436,7 @@ export class SessionManager {
    * would both pass the gates and fire two concurrent turns. */
   private turnStarting = new Set<string>();
   /** Pending context chips carried across an involuntary LiveSession drop
-   * (connection death, isolated-instance death, idle release, reload) —
+   * (connection death, idle release, reload) —
    * the view keeps rendering them, so the truth they mirror must survive
    * too, or the next prompt would silently go out without them. The
    * voluntary path (recreateEmpty) already carries them by hand; restored
@@ -537,20 +528,20 @@ export class SessionManager {
     return undefined;
   }
 
-  /** The sessions attached to a connection. */
-  sessionsOn(poolKey: string): readonly string[] {
-    return [...this.sessions].filter(([, session]) => session.poolKey === poolKey).map(([sessionId]) => sessionId);
+  /** The sessions attached to an agent's connection. */
+  sessionsOn(agentId: string): readonly string[] {
+    return [...this.sessions].filter(([, session]) => session.agentId === agentId).map(([sessionId]) => sessionId);
   }
 
-  /** What stopping this connection would disconnect: the conversations on
-   * it, and the turns among them still running (those are cut off). A
-   * never-prompted session doesn't count — it has nothing to lose and is
-   * minted again from its row on next use. */
-  openWork(poolKey: string): { conversations: number; turns: number } {
+  /** What stopping this agent's connection would disconnect: the
+   * conversations on it, and the turns among them still running (those are
+   * cut off). A never-prompted session doesn't count — it has nothing to
+   * lose and is minted again from its row on next use. */
+  openWork(agentId: string): { conversations: number; turns: number } {
     let conversations = 0;
     let turns = 0;
     for (const [sessionId, session] of this.sessions) {
-      if (session.poolKey !== poolKey) continue;
+      if (session.agentId !== agentId) continue;
       if (session.inFlight) turns++;
       if (session.inFlight || this.hasTurns(sessionId)) conversations++;
     }
@@ -573,7 +564,7 @@ export class SessionManager {
   async release(sessionId: string, reason: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined || session.inFlight) return;
-    const agent = this.pool.get(session.poolKey);
+    const agent = this.pool.get(session.agentId);
     if (agent?.status !== "running") return; // nothing attached to free
     const declared = agent.declared;
     if (declared?.sessionClose !== true) return;
@@ -586,18 +577,12 @@ export class SessionManager {
     }
     this.sessions.delete(sessionId);
     try {
-      await this.pool.closeSession(session.poolKey, sessionId);
+      await this.pool.closeSession(session.agentId, sessionId);
       this.log.info(`session ${sessionId}: released (${reason})`);
     } catch (err) {
       // Failure means the agent still holds it — the next open re-attaches
       // either way; the suspect mark already landed at the chokepoint.
       this.log.info(`session ${sessionId}: release failed — ${(err as Error).message}`);
-    }
-    // An isolated instance whose last session was just released has nothing
-    // left to host — same rule as close().
-    if (session.poolKey === session.agentId) return;
-    if ((this.pool.get(session.poolKey)?.sessions.length ?? 0) === 0) {
-      await this.pool.stop(session.poolKey);
     }
   }
 
@@ -643,7 +628,6 @@ export class SessionManager {
    * (event order is theirs, not this method's). */
   private async attachSession(
     target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
-    poolKey: string,
     agentId: string,
     opts: { cwd?: string; roots?: readonly string[] } = {},
   ): Promise<{ sessionId: string; knobs: NormalizedKnobs; missing: string[] }> {
@@ -660,7 +644,7 @@ export class SessionManager {
     const roots = composed.filter((p) => !missing.includes(p));
     if (missing.length > 0) this.hooks.rootsMissing?.(missing);
     if (target.via === "new") {
-      const r = await this.pool.newSession(poolKey, cwd, mcpServers, roots);
+      const r = await this.pool.newSession(agentId, cwd, mcpServers, roots);
       this.hooks.mapContextToken?.(contextToken, r.sessionId);
       this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
       // the session isn't in the view yet — its caller says what was skipped
@@ -673,8 +657,8 @@ export class SessionManager {
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
     const r =
       target.via === "load"
-        ? await this.pool.loadSession(poolKey, target.sessionId, cwd, mcpServers, roots)
-        : await this.pool.resumeSession(poolKey, target.sessionId, cwd, mcpServers, roots);
+        ? await this.pool.loadSession(agentId, target.sessionId, cwd, mcpServers, roots)
+        : await this.pool.resumeSession(agentId, target.sessionId, cwd, mcpServers, roots);
     this.hooks.onRealSessionAttached?.(agentId, target.sessionId);
     this.noticeMissingRoots(target.sessionId, missing);
     return {
@@ -710,12 +694,12 @@ export class SessionManager {
    * blank flash, no patch flood) until the closing resync swaps the webview
    * wholesale. The window closes on failure too: canonical was reset, and
    * the webview must not keep showing blocks canonical no longer holds. */
-  private async loadSilently(sessionId: string, poolKey: string, agentId: string): Promise<NormalizedKnobs> {
+  private async loadSilently(sessionId: string, agentId: string): Promise<NormalizedKnobs> {
     this.replaying.add(sessionId);
     try {
       this.emitterFor(sessionId)({ kind: "transcriptReset", sessionId });
       this.dropToolDiffs(sessionId);
-      const { knobs } = await this.attachSession({ via: "load", sessionId }, poolKey, agentId);
+      const { knobs } = await this.attachSession({ via: "load", sessionId }, agentId);
       // A finished replay is the same quiet point as a turn end: nothing is
       // in flight, so history that stops on a still-open call is stranded —
       // without this, a replayed cancelled turn would spin forever (live
@@ -778,14 +762,13 @@ export class SessionManager {
     agentName: string,
     cwd: string,
   ): Promise<string> {
-    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     const saved = this.savedRootsFor(cwd);
-    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, poolKey, agentId, {
+    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
       cwd,
       roots: [...this.rootsFor(null, cwd), ...saved],
     });
     const seeded = saved.filter((p) => !missing.includes(p));
-    this.sessions.set(sessionId, liveSession(agentId, poolKey));
+    this.sessions.set(sessionId, liveSession(agentId));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
     this.known.set(sessionId, { agentId, titled: false, everPrompted: false });
@@ -805,7 +788,7 @@ export class SessionManager {
     }
     this.noticeMissingRoots(sessionId, missing);
     this.hooks.rootsChanged?.(sessionId);
-    this.log.info(`session ${sessionId} created with ${agentId} (poolKey ${poolKey})`);
+    this.log.info(`session ${sessionId} created with ${agentId}`);
     this.publishKnobs(sessionId, knobs);
     await this.applySeedFor(agentId, sessionId);
     return sessionId;
@@ -925,13 +908,6 @@ export class SessionManager {
         this.log.info(`session ${sessionId}: agent-side delete failed — ${err.message}`);
       });
     }
-    if (session === undefined || session.poolKey === session.agentId) return;
-    // An isolated instance's dedicated subprocess is only worth keeping
-    // alive while it still hosts a session (its own, or a fork of it).
-    this.pool.forgetSession(session.poolKey, sessionId);
-    if ((this.pool.get(session.poolKey)?.sessions.length ?? 0) === 0) {
-      await this.pool.stop(session.poolKey);
-    }
   }
 
   /** "Disconnect & erase all data": every session's bookkeeping goes
@@ -972,16 +948,6 @@ export class SessionManager {
   invalidateAgent(agentId: string): void {
     for (const [sessionId, session] of this.sessions) {
       if (session.agentId !== agentId) continue;
-      this.dropLiveSession(sessionId, session);
-    }
-  }
-
-  /** Same as `invalidateAgent`, scoped to one process-policy isolated
-   * instance — its subprocess dying must not touch any other session
-   * of the same agent living elsewhere. */
-  invalidatePoolKey(poolKey: string): void {
-    for (const [sessionId, session] of this.sessions) {
-      if (session.poolKey !== poolKey) continue;
       this.dropLiveSession(sessionId, session);
     }
   }
@@ -1284,11 +1250,10 @@ export class SessionManager {
         `session ${sessionId} is no longer live and ${agentId} does not support session/load`,
       );
     }
-    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    this.sessions.set(sessionId, liveSession(agentId, poolKey));
+    this.sessions.set(sessionId, liveSession(agentId));
     let knobs: NormalizedKnobs;
     try {
-      knobs = await this.loadSilently(sessionId, poolKey, agentId);
+      knobs = await this.loadSilently(sessionId, agentId);
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
@@ -1406,9 +1371,8 @@ export class SessionManager {
    * where it ends and the agent's unreplayed memory continues. Never merged
    * with replay — there is none. */
   private async resumeReattach(sessionId: string, agentId: string): Promise<void> {
-    const poolKey = (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
-    this.sessions.set(sessionId, liveSession(agentId, poolKey));
-    const { knobs } = await this.attachSession({ via: "resume", sessionId }, poolKey, agentId);
+    this.sessions.set(sessionId, liveSession(agentId));
+    const { knobs } = await this.attachSession({ via: "resume", sessionId }, agentId);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
       kind: "notice",
@@ -1438,7 +1402,7 @@ export class SessionManager {
     if (route.via === "setMode") session.userModeSetPending = true;
     let next: NormalizedKnobs | null;
     try {
-      next = await performKnobSet(this.knobWire(session.poolKey), sessionId, () => session.knobs, route, value, this.knobDropLog);
+      next = await performKnobSet(this.knobWire(session.agentId), sessionId, () => session.knobs, route, value, this.knobDropLog);
     } catch (err) {
       if (route.via === "setMode") session.userModeSetPending = false;
       throw err;
@@ -1454,12 +1418,12 @@ export class SessionManager {
   /** The wire one routed set needs, bound to this session's connection.
    * The surface a set advances from travels alongside at set time, not
    * route time — it must be the state as it stands then. */
-  private knobWire(poolKey: string): KnobWire {
+  private knobWire(agentId: string): KnobWire {
     return {
-      setMode: (sessionId, modeId) => this.pool.setSessionMode(poolKey, sessionId, modeId),
+      setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),
       setConfigOption: (sessionId, configId, value) =>
-        this.pool.setSessionConfigOption(poolKey, sessionId, configId, value),
-      send: (method, params) => this.pool.unstableRequest(poolKey, method, params),
+        this.pool.setSessionConfigOption(agentId, sessionId, configId, value),
+      send: (method, params) => this.pool.unstableRequest(agentId, method, params),
     };
   }
 
@@ -1533,7 +1497,7 @@ export class SessionManager {
         const session = this.sessions.get(sessionId);
         if (!session) return;
         try {
-          const next = await performKnobSet(this.knobWire(session.poolKey), sessionId, () => session.knobs, route, value, this.knobDropLog);
+          const next = await performKnobSet(this.knobWire(session.agentId), sessionId, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(sessionId, next);
         } catch {
           // rejected seed entry — the agent's state stands, nothing to repair
@@ -1683,7 +1647,7 @@ export class SessionManager {
     // The session's MCP servers hear it now, whatever the agent's rung:
     // telling them is patchbay's own act, no lifecycle request involved.
     this.hooks.rootsChanged?.(sessionId);
-    const declared = this.pool.get(session.poolKey)?.declared;
+    const declared = this.pool.get(session.agentId)?.declared;
     // An agent that never advertised the field gets no field on any
     // request — a re-attach would carry nothing, so none is made.
     if (declared?.sessionAdditionalDirectories !== true) return;
@@ -1709,7 +1673,7 @@ export class SessionManager {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.poolKey, session.agentId);
+      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.agentId);
       this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed);
       this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
@@ -1740,11 +1704,10 @@ export class SessionManager {
     const row = this.known.get(oldId);
     if (row === undefined) throw new Error(`unknown session ${oldId}`);
     const agentId = row.agentId;
-    const poolKey = old?.poolKey ?? (await this.hooks.resolveProcessFor?.(agentId)) ?? agentId;
     // `roots` = the user-added list, which is what the durable row carries;
     // the wire gets the full composition (workspace folders included).
     const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
-    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, poolKey, agentId, {
+    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
       roots: this.rootsFor(oldId, this.cwd()),
     });
     // Sidebar-pointer semantics, NOT isActiveSession (which also counts
@@ -1754,7 +1717,7 @@ export class SessionManager {
     // The row's knob snapshot is what every publish wrote — the same fact a
     // live attachment holds, from its one durable home.
     const seed = row.knobs ?? {};
-    const fresh = liveSession(agentId, poolKey);
+    const fresh = liveSession(agentId);
     fresh.pendingContext = old?.pendingContext ?? this.contextStash.get(oldId) ?? [];
     this.contextStash.delete(oldId);
     this.sessions.set(sessionId, fresh);
@@ -1824,10 +1787,10 @@ export class SessionManager {
     // way — only while its process still exists; a dead connection took
     // it along.
     if (old !== undefined) {
-      if (this.pool.get(old.poolKey)?.declared?.sessionClose === true) {
-        void this.pool.closeSession(old.poolKey, oldId).catch(() => {});
+      if (this.pool.get(agentId)?.declared?.sessionClose === true) {
+        void this.pool.closeSession(agentId, oldId).catch(() => {});
       } else {
-        this.pool.forgetSession(old.poolKey, oldId);
+        this.pool.forgetSession(agentId, oldId);
       }
     }
     this.publishKnobs(sessionId, knobs);
@@ -1995,7 +1958,7 @@ export class SessionManager {
     // every agent MUST accept. mimeTypes come with the chip or not at all —
     // the ingress that produced the bytes was the last honest source, so
     // nothing here ever defaults one.
-    const declared = this.pool.get(session.poolKey)?.declared;
+    const declared = this.pool.get(session.agentId)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
     const prompt: ContentBlock[] = [];
@@ -2069,7 +2032,7 @@ export class SessionManager {
       });
     };
     try {
-      const response = await this.pool.prompt(session.poolKey, sessionId, prompt);
+      const response = await this.pool.prompt(session.agentId, sessionId, prompt);
       // end_turn is the unremarkable outcome; anything else is worth a line.
       if (response.stopReason === "end_turn") {
         this.log.debug(`session ${sessionId}: turn ended`);
@@ -2169,8 +2132,7 @@ export class SessionManager {
    * so a stopped agent's detached session still writes honestly. */
   private noteContinuity(sessionId: string, agentId: string, patch: SessionContinuity | null): void {
     if (patch !== null) {
-      const poolKey = this.sessions.get(sessionId)?.poolKey ?? agentId;
-      if (!continuityReachable(this.pool.get(poolKey)?.declared)) return;
+      if (!continuityReachable(this.pool.get(agentId)?.declared)) return;
     }
     this.hooks.onContinuity?.(sessionId, agentId, this.cwd(), patch);
   }
@@ -2269,7 +2231,7 @@ export class SessionManager {
     // A reload's cancel is plumbing, not the user ending the work: it keeps
     // its held words (keepHeldWords) and re-drains after the re-attach.
     if (opts?.keepHeldWords !== true) this.clearPromptQueue(sessionId);
-    await this.pool.cancel(session.poolKey, sessionId);
+    await this.pool.cancel(session.agentId, sessionId);
   }
 
   /** Drops one still-queued prompt (composer row × button). */

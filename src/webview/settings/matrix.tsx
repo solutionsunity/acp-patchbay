@@ -76,7 +76,7 @@ const ROW_CONSEQUENCE: Partial<Record<CapabilityRowId, string>> = {
   "fs.writeTextFile": "brokered write path — routed writes arrive as native diffs",
   terminal: "brokered command execution — terminal runs stream through patchbay",
   usage: "without it, no usage gauge is shown — absence over fake",
-  concurrentSessions: "process policy `auto` isolates new sessions until this is proven",
+  concurrentSessions: "information only — an agent's sessions always share its one process; proven once a second session opens on it",
   auth: "a working session/new — proven by the free check at add/Verify, or by the first real session",
   "auth.logout":
     "without it, there is no Log out control — the spec forbids calling logout on an agent that didn't declare it",

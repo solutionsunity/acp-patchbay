@@ -174,8 +174,7 @@ mode, `Add from list` in custom mode) · `Verify after add` checkbox.
 Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
 registry has a newer version than the pin — the same chip as the Agent View's,
 indicator and action in one · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
-· process policy select — `auto` states its reason (`shared, concurrency used ✓`
-vs `isolated, not yet used`) · default knobs render **exactly what the agent
+· default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config
 option, keyed by the option's own id — category is UX-only in ACP, so it only
 decorates with an icon when reported; boolean options render a tri-state default

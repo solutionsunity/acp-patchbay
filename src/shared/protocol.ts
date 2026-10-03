@@ -338,7 +338,6 @@ export interface AgentConfigView {
    * Settings channel only — the owner typed them and reads them back; the
    * form shows what is stored and saves what is in the box. */
   env: Readonly<Record<string, string>>;
-  processPolicy: "auto" | "shared" | "isolated";
   /** Connect this agent when the window opens. Per-agent and opt-in —
    * superseded the native `acpPatchbay.defaultAgent` setting. */
   autoConnect: boolean;

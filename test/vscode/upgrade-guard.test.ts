@@ -64,7 +64,6 @@ suite("upgrade guard", () => {
         name: "Upgrade Guard Fake",
         command: process.execPath,
         args: [fakeAgentPath],
-        processPolicy: "shared",
         autoConnect: false,
         defaults: {},
         registrySource: { registryId: AGENT_ID, distributionKind: "npx", pinnedVersion: "1.0.0" },

@@ -168,8 +168,6 @@
         </div>
         <div class="mono" style="margin-top:9px">npx @agentclientprotocol/claude-agent-acp@latest</div>
         <div class="grid">
-          <div><label class="k">process policy</label>
-            <select><option>auto — shared (concurrency verified ✓)</option><option>shared</option><option>isolated</option></select></div>
           <div><label class="k">default model</label>
             <select><option>Sonnet 5</option><option>Opus 4.8</option></select></div>
           <div><label class="k">default mode</label>
@@ -190,8 +188,6 @@
         </div>
         <div class="mono" style="margin-top:9px">npx @google/gemini-cli@latest --experimental-acp</div>
         <div class="grid">
-          <div><label class="k">process policy</label>
-            <select><option>auto — isolated (concurrency unverified)</option><option>shared</option><option>isolated</option></select></div>
           <div><label class="k">default model</label>
             <select><option>Gemini 3 Pro</option><option>Gemini 3 Flash</option></select></div>
           <div><label class="k">default mode</label>
@@ -244,7 +240,7 @@
         <tr><td class="cap">session.load</td><td><span class="st-v">●</span></td><td><span class="st-v">●</span></td><td><span class="st-n" title="cannot replay — patchbay keeps a labeled last-known view">—</span></td></tr>
         <tr><td class="cap">mcp.http / sse</td><td><span class="st-v">●</span> / <span class="st-d">◌</span></td><td><span class="st-v">●</span> / <span class="st-n">—</span></td><td><span class="st-d">◌</span> / <span class="st-n">—</span></td></tr>
         <tr><td class="cap">usage reporting</td><td><span class="st-v" title="usage_update received — gauge renders live">●</span></td><td><span class="st-n" title="never reported — the gauge is absent, not faked">—</span></td><td><span class="st-n">—</span></td></tr>
-        <tr><td class="cap">concurrent sessions</td><td><span class="st-v">●</span></td><td><span class="st-d" title="auto policy isolates until this verifies">◌</span></td><td><span class="st-d">◌</span></td></tr>
+        <tr><td class="cap">concurrent sessions</td><td><span class="st-v">●</span></td><td><span class="st-d" title="information only — proven once a second session opens on the agent's one process">◌</span></td><td><span class="st-d">◌</span></td></tr>
       </table>
       <div class="note">Behavior-level rows verify opportunistically during real use — free. Synthetic probes only via
         Diagnostics, cost disclosed, in an ephemeral temp-dir session. Never on a schedule.</div>

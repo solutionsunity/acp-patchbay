@@ -60,7 +60,7 @@ describe("eraseAllData", () => {
     const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
     // A lived-in install.
-    await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], processPolicy: "auto", autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
+    await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
     await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
     await integrationEnv.set("github", { GITHUB_PAT: "ghp-secret" });

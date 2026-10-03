@@ -54,7 +54,6 @@ export const agentConfigSchema = z.object({
   // No env here on purpose: env values are how agents commonly take API
   // keys, so they live in SecretStorage (stores/secret-env.ts), joined onto
   // the LaunchSpec at spawn time — never in the machine store.
-  processPolicy: z.enum(["auto", "shared", "isolated"]).default("auto"),
   /** Connect this agent when a window opens (orchestrator's
    * connectStartupAgents). Per-agent and opt-in — superseded the native
    * `acpPatchbay.defaultAgent` setting, whose only semantic this generalizes. */
@@ -75,5 +74,22 @@ const KEY = "acpPatchbay.agents";
 export class AgentConfigStore extends GlobalRecordStore<AgentConfig> {
   constructor(kv: KV) {
     super(kv, KEY, agentConfigSchema);
+    // Once, at construction: records from when each agent carried a process
+    // policy lose that field — an agent now has one process per window,
+    // holding all its sessions, so nothing reads it. Only that key goes;
+    // every other part of every record stays exactly as stored.
+    const stored = kv.get<unknown>(KEY);
+    const hasPolicy = (r: unknown): r is Record<string, unknown> =>
+      typeof r === "object" && r !== null && "processPolicy" in r;
+    if (Array.isArray(stored) && stored.some(hasPolicy)) {
+      void kv.update(
+        KEY,
+        stored.map((r: unknown) => {
+          if (!hasPolicy(r)) return r;
+          const { processPolicy: _retired, ...rest } = r;
+          return rest;
+        }),
+      );
+    }
   }
 }

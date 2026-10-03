@@ -44,7 +44,6 @@ const config = (id: string, pinnedVersion: string) => ({
   name: `Agent ${id}`,
   command: "npx",
   args: [],
-  processPolicy: "auto",
   autoConnect: false,
   defaults: {},
   registrySource: { registryId: id, distributionKind: "npx", pinnedVersion },

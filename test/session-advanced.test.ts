@@ -1,5 +1,5 @@
-// P8 gate: process policy (`isolated`/`shared`/`auto`), one-click reload,
-// and the session knob surfaces — minus vscode, over the real fake agent.
+// P8 gate: one process per agent, one-click reload, and the session knob
+// surfaces — minus vscode, over the real fake agent.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,11 +26,7 @@ beforeEach(async () => {
 });
 afterEach(() => rm(cwd, { recursive: true, force: true }));
 
-function spec(
-  script: FakeAgentScript,
-  agentId: string,
-  processPolicy?: "auto" | "shared" | "isolated",
-): LaunchSpec {
+function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
   return {
     agentId,
     name: "Fake Agent",
@@ -38,7 +34,6 @@ function spec(
     args: [FAKE_AGENT],
     env: { FAKE_AGENT_SCRIPT: JSON.stringify(script) },
     cwd,
-    processPolicy,
   };
 }
 
@@ -53,8 +48,7 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
 }
 
 /** Wires pool + verifier + session manager the way Orchestrator does, minus
- * vscode — including a real `resolveProcessFor` (architecture.md § process
- * model) instead of a stub, since that's exactly what this file tests. */
+ * vscode. */
 function harness(extraHooks: {
   seedFor?(agentId: string): Record<string, string | boolean> | undefined;
   onKnobsConfirmed?(agentId: string, seed: Record<string, string | boolean>): void;
@@ -62,20 +56,15 @@ function harness(extraHooks: {
   pool: AgentPool;
   sessionManager: SessionManager;
   state(): AgentViewState;
-  isolationKeys: () => string[];
 } {
   const events: AgentViewEvent[] = [];
   let sessionManager!: SessionManager;
   let capabilityTracker!: CapabilityTracker;
-  let isolationCounter = 0;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
 
   const pool = new AgentPool({
     onStatusChanged: (agentId, status) => {
       if (status === "crashed" || status === "reconnecting") sessionManager.invalidateAgent(agentId);
-    },
-    onIsolatedStatusChanged: (poolKey, _agentId, status) => {
-      if (status === "crashed" || status === "reconnecting") sessionManager.invalidatePoolKey(poolKey);
     },
     onDeclaredCaptured: (agentId, declared, raw) =>
       capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
@@ -89,31 +78,15 @@ function harness(extraHooks: {
     currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
-  const isolationKeys: string[] = [];
-  async function resolveProcessFor(agentId: string): Promise<string> {
-    const primary = pool.get(agentId);
-    if (primary === undefined) return agentId;
-    const policy = primary.spec.processPolicy ?? "auto";
-    const hasExisting = primary.sessions.length > 0;
-    const used = state().capabilities[agentId]?.concurrentSessions?.used ?? false;
-    const isolate = policy === "isolated" || (policy === "auto" && hasExisting && !used);
-    if (!isolate) return agentId;
-    const poolKey = `${agentId}::iso::${++isolationCounter}`;
-    isolationKeys.push(poolKey);
-    await pool.connect(primary.spec, { poolKey, reportAs: agentId, isolated: true });
-    return poolKey;
-  }
-
   sessionManager = new SessionManager(
     pool,
     {
       emit: (...evs) => events.push(...evs),
-      resolveProcessFor,
       ...extraHooks,
     },
     () => cwd,
   );
-  return { pool, sessionManager, state, isolationKeys: () => isolationKeys };
+  return { pool, sessionManager, state };
 }
 
 /** The fake agent's session ids are `fake-<pid>-<n>` (or `<parent-id>-fork-<n>`
@@ -125,60 +98,40 @@ function pidOf(sessionId: string): string {
   return match[1]!;
 }
 
-describe("Process policy (P8)", () => {
-  it("isolated isolates session/new: two top-level sessions run on distinct subprocesses", async () => {
+describe("One process per agent", () => {
+  // Declaring session/close lets the connect-time probe end its throwaway
+  // session agent-side; waiting for that proof means the probe is done and
+  // the connection serves nothing yet when the user's sessions open.
+  const probeDone = (h: ReturnType<typeof harness>, agentId: string) =>
+    waitFor(() => (h.state().capabilities[agentId]?.["session.close"]?.used ? true : undefined));
+
+  it("every session rides the agent's one process — the user's own second session proves concurrent sessions", async () => {
     const h = harness();
-    await h.pool.connect(spec({}, "iso", "isolated"));
-    const a = await h.sessionManager.createSession("iso", "Fake Agent", cwd);
-    const b = await h.sessionManager.createSession("iso", "Fake Agent", cwd);
-
-    expect(pidOf(a)).not.toBe(pidOf(b));
-    expect(h.isolationKeys().length).toBe(2);
-    // the shared/primary entry itself never hosts either session
-    expect(h.pool.get("iso")?.sessions.length ?? 0).toBe(0);
-
-    await h.pool.stop("iso");
-    for (const key of h.isolationKeys()) await h.pool.stop(key);
-  });
-
-  it("shared always shares, even across many top-level sessions", async () => {
-    const h = harness();
-    await h.pool.connect(spec({}, "shared", "shared"));
-    const a = await h.sessionManager.createSession("shared", "Fake Agent", cwd);
-    const b = await h.sessionManager.createSession("shared", "Fake Agent", cwd);
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "one"));
+    await probeDone(h, "one");
+    const a = await h.sessionManager.createSession("one", "Fake Agent", cwd);
+    expect(h.state().capabilities.one!.concurrentSessions.used).toBe(false);
+    const b = await h.sessionManager.createSession("one", "Fake Agent", cwd);
 
     expect(pidOf(a)).toBe(pidOf(b));
-    expect(h.isolationKeys().length).toBe(0);
+    expect(h.state().capabilities.one!.concurrentSessions.used).toBe(true);
 
-    await h.pool.stop("shared");
+    await h.pool.stop("one");
   });
 
-  it("auto isolates a second top-level session until something marks concurrent-session behavior used", async () => {
+  it("an agent refusing a second session fails that session and marks concurrent sessions suspect — no second process", async () => {
     const h = harness();
-    await h.pool.connect(spec({}, "auto")); // declares nothing — no automatic check possible
-    const a = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
-    const b = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
-    // not-yet-used concurrent-session behavior: the second top-level session
-    // isolates rather than risk sharing an unproven connection
-    expect(pidOf(a)).not.toBe(pidOf(b));
+    await h.pool.connect(
+      spec({ declare: { sessionCapabilities: { close: {} } }, concurrent: "fail" }, "single"),
+    );
+    await probeDone(h, "single");
+    const a = await h.sessionManager.createSession("single", "Fake Agent", cwd);
+    await expect(h.sessionManager.createSession("single", "Fake Agent", cwd)).rejects.toThrow();
 
-    await h.pool.stop("auto");
-    for (const key of h.isolationKeys()) await h.pool.stop(key);
-  });
+    expect(h.state().capabilities.single!.concurrentSessions).toMatchObject({ used: false, suspect: true });
+    expect(h.pool.get("single")?.sessions).toEqual([a]);
 
-  it("auto shares once the automatic fork round-trip also proves concurrent-session behavior", async () => {
-    const h = harness();
-    // P5's automatic, ephemeral fork-check round-trip forks a temp-dir
-    // session on this very connection — structurally the same proof
-    // concurrentSessions itself looks for, so both get marked used together.
-    await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "auto"));
-    await waitFor(() => (h.state().capabilities.auto!.concurrentSessions.used ? true : undefined));
-
-    const a = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
-    const b = await h.sessionManager.createSession("auto", "Fake Agent", cwd);
-    expect(pidOf(a)).toBe(pidOf(b));
-
-    await h.pool.stop("auto");
+    await h.pool.stop("single");
   });
 });
 

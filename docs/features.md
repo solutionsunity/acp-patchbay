@@ -52,9 +52,10 @@ deliverable.
 - User can create a session with any configured agent — connection is the
   flow's job, not a prerequisite the user manages.
 - Multiple sessions run concurrently — same agent or different agents, side by side.
-- Sessions are cheap to create and never a process-management chore: whether
-  concurrent sessions share one agent process or get isolated ones is per-agent
-  policy (Settings), decided by used concurrent-session behavior in `auto` mode.
+- Sessions are cheap to create and never a process-management chore: all of an
+  agent's sessions share its one process in the window, as ACP intends.
+  *(Supersedes 2026-10-03 the per-agent process policy — auto / shared /
+  isolated; #62.)*
 - A brand-new session knows it is new: clicking "new session" for an agent that
   already has a never-prompted session focuses that one instead of minting a
   sibling — after a crash too: the row is still the new session, and its next
@@ -162,7 +163,6 @@ deliverable.
   automatically.
 - User can run explicit diagnostics against an agent; the cost (real agent turns)
   is disclosed before running.
-- User can set per-agent process policy: auto / shared / isolated.
 - User can mark an agent auto-connect: it connects on every window open.
   Independently of the flag, a window reload restores whatever agents were
   still running when the window went down — a manually connected agent

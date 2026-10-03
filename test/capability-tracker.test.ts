@@ -145,8 +145,9 @@ describe("CapabilityTracker", () => {
     const { pool, state } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "tidy"));
     await waitFor(() => (state().capabilities.tidy?.["session.fork"]?.used ? true : undefined));
-    // Lingering probe sessions would read as real concurrent sessions to
-    // process-policy "auto" (hasExisting) — the set must be empty again.
+    // Lingering probe sessions would count toward the concurrent-sessions
+    // proof — the user's first real session would read as a second one —
+    // so the set must be empty again.
     expect(pool.get("tidy")!.sessions).toEqual([]);
     await pool.stop("tidy");
   });

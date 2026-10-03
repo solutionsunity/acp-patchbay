@@ -14,6 +14,14 @@
   preferences) from what it read when it opened, so a save could drop the
   other window's newer entries or bring back ones it had removed. Saves now
   start from what the file holds at that moment. (#71)
+- An agent now runs as one process per window, shared by all of its
+  sessions — the way ACP is designed. The per-agent process setting (auto,
+  shared, isolated) is gone. Under `auto`, a second chat with an agent
+  started an extra copy of it until patchbay had seen the agent handle two
+  chats at once — more memory, another sign-in prompt at times, and two
+  copies writing to one profile for agents that keep their state per
+  profile. If you had set an agent to `isolated`, its chats now share its
+  one process. (#62)
 
 ## 0.84.1 — 2026-09-29
 
