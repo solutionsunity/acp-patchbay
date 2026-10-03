@@ -1,27 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The agents store: the one home of agents. Saved facts are read from their
-// files when asked (config, env, auth lock, last knob choices), live facts
-// come from the pool, and every operation on an agent is here — connect,
-// stop, restart, upgrade, remove, save, reorder, log in, log out, verify.
+// The agents store: the one home of agents. A row per agent, read when
+// asked — saved facts from their files (config, env, auth lock, last knob
+// choices), live facts from the pool and the capability tracker, and what
+// follows from them worked out on the spot — and every operation on an
+// agent: connect, stop, restart, upgrade, remove, save, reorder, log in,
+// log out, verify.
 // Every door (Settings, the Agent View, the palette, notifications, startup)
 // calls these methods, and nothing else starts or stops an agent's process.
+// The views get each row whole, re-sent whenever any of its facts moves.
 // vscode-free: the questions a user answers, the login task, the sessions
 // riding a connection and the views are hooks.
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { methods, type InitializeResponse } from "@agentclientprotocol/sdk";
+import { methods } from "@agentclientprotocol/sdk";
 import type {
   AgentConfigView,
   AgentStatus,
+  AgentSummary,
   AgentUpdate,
   AgentViewEvent,
-  AuthMethodView,
   CapabilityMatrix,
   CapabilityRowId,
   ConnectAgentSource,
-  DeclaredCapabilities,
   KnobSeed,
   PreferencesView,
   SettingsEvent,
@@ -74,9 +76,6 @@ export interface AgentsStoreHooks {
   /** Settings-only facts: the config list (env values included) and the
    * verify bracket. */
   emitSettings(...events: SettingsEvent[]): void;
-  /** The capability matrix as the views hold it — the evidence sink reads
-   * it to skip what is already marked. */
-  currentMatrix(agentId: string): CapabilityMatrix | undefined;
   /** What stopping this agent's connection would cut off, read from the
    * sessions riding it. */
   openWork(agentId: string): { conversations: number; turns: number };
@@ -97,20 +96,8 @@ export interface AgentsStoreHooks {
 }
 
 export class AgentsStore {
-  private updatesNow: Readonly<Record<string, AgentUpdate>> = {};
   /** PATH divergence already warned, per agent and exact version pair. */
   private readonly divergenceWarned = new Set<string>();
-  /** terminal-auth recipes (meta.ts) per agent, keyed by method id —
-   * captured at every connect; command paths are machine-absolute and
-   * never persisted, and the webview only ever sees the method's kind. */
-  private readonly authRecipes = new Map<string, ReadonlyMap<string, TerminalAuthRecipe>>();
-  /** The spec's typed `terminal` auth methods per agent, keyed by method id
-   * — same capture, same host-side-only rule: wire args and env only; the
-   * command is the agent's own spawn spec, composed at click time. */
-  private readonly typedTerminalAuth = new Map<string, ReadonlyMap<string, TerminalAuth>>();
-  /** Each declared auth method's kind per agent — what `login` checks before
-   * any wire call. */
-  private readonly authMethodKinds = new Map<string, ReadonlyMap<string, AuthMethodView["kind"]>>();
   /** THE in-flight bracket for every tracker round-trip the settings card
    * reflects (verify, authenticate, logout): emits
    * agentVerifyStarted/Finished around the work so the card's controls dim
@@ -144,9 +131,26 @@ export class AgentsStore {
     return this.config(agentId)?.name;
   }
 
-  /** The update fact — registry version against each config's pin. */
+  /** The agent as the views show it, every fact read now — undefined once it
+   * has no saved config. */
+  row(agentId: string): AgentSummary | undefined {
+    const config = this.config(agentId);
+    return config === undefined ? undefined : this.rowOf(config);
+  }
+
+  rows(): AgentSummary[] {
+    return this.deps.configs.list().map((config) => this.rowOf(config));
+  }
+
+  /** The agent's capability matrix, read now (capability-tracker.ts). */
+  matrix(agentId: string): CapabilityMatrix | undefined {
+    return this.deps.tracker.matrix(agentId);
+  }
+
+  /** The update fact, worked out now — the registry's version against each
+   * config's pin and the version that last answered (agent-updates.ts). */
   updates(): Readonly<Record<string, AgentUpdate>> {
-    return this.updatesNow;
+    return agentUpdates(this.deps.registry.current().agents, this.deps.configs.list());
   }
 
   authLocked(agentId: string): boolean {
@@ -182,37 +186,21 @@ export class AgentsStore {
 
   // ── publishing to the views ───────────────────────────────────────────────
 
-  /** Every configured agent is upserted into both channels' agent lists:
-   * the Agent View knows every configured agent from the first frame, with
-   * an honest status — `untested` (never initialized successfully at any
-   * version) or `stopped` (has connected before; `lastSeenVersion` is the
-   * durable marker) — instead of agents existing only once connected
-   * in-window. */
-  publishAll(): void {
-    for (const agent of this.deps.configs.list()) {
-      // needsAuth seeds from the persisted lock (auth-evidence.ts), never
-      // a literal: a logout witnessed before this reload is still the
-      // truth — the wire has nothing to re-read it from.
-      const lock = this.deps.authLocks.lockFor(agent.id);
-      this.hooks.emit({
-        kind: "agentUpserted",
-        agent: {
-          id: agent.id,
-          name: agent.name,
-          status: agent.lastSeenVersion === null ? "untested" : "stopped",
-          command: formatCommandLine(agent.command, agent.args),
-          needsAuth: lock !== null,
-          authReason: lock?.reason ?? undefined,
-        },
-      });
-    }
-    void this.publishConfigs();
+  /** Sends the agent's row to both views as it reads now — or its removal,
+   * once it has no saved config. */
+  publish(agentId: string): void {
+    const row = this.row(agentId);
+    this.hooks.emit(row !== undefined ? { kind: "agentUpserted", agent: row } : { kind: "agentRemoved", agentId });
   }
 
-  /** The config list for the Settings forms — env values ride the Settings
-   * channel to their owner: the form shows what is stored; SecretStorage
-   * stays the only place they rest. */
-  private async publishConfigs(): Promise<void> {
+  /** Every row — a config change can move any row's name, command or
+   * update — then the config list for the Settings forms: env values ride
+   * the Settings channel to their owner; the form shows what is stored, and
+   * SecretStorage stays the only place they rest. The rows go out before
+   * any env read, so at startup every configured agent is in both views
+   * from the first frame, with an honest status before any connect. */
+  async publishAll(): Promise<void> {
+    this.publishRows();
     const configs: AgentConfigView[] = await Promise.all(
       this.deps.configs.list().map(async (c) => ({
         id: c.id,
@@ -227,72 +215,40 @@ export class AgentsStore {
       })),
     );
     this.hooks.emitSettings({ kind: "agentConfigsChanged", configs });
-    this.publishUpdates();
   }
 
-  /** The registry moved — the update fact is recomputed from it. */
+  /** The registry moved — every row's update fact is read again. */
   registryChanged(): void {
-    this.publishUpdates();
+    this.publishRows();
   }
 
-  /** Recomputes the update fact from its two inputs — the registry and the
-   * configs (pin + last seen version) — and publishes it to both channels
-   * when it changed. Called wherever either input moves. */
-  private publishUpdates(): void {
-    const updates = agentUpdates(this.deps.registry.current().agents, this.deps.configs.list());
-    if (JSON.stringify(updates) === JSON.stringify(this.updatesNow)) return;
-    this.updatesNow = updates;
-    this.hooks.emit({ kind: "agentUpdatesChanged", updates });
+  private publishRows(): void {
+    for (const row of this.rows()) this.hooks.emit({ kind: "agentUpserted", agent: row });
   }
 
   // ── what the pool reports ─────────────────────────────────────────────────
 
   /** The process's status, as the pool saw it change. */
-  noteStatus(agentId: string, status: AgentStatus, detail?: string, stderr?: readonly string[]): void {
-    this.hooks.emit({ kind: "agentStatusChanged", agentId, status, detail, stderr });
+  noteStatus(agentId: string, status: AgentStatus, detail?: string): void {
+    this.publish(agentId);
     const suffix = detail !== undefined ? ` — ${detail}` : "";
     if (status === "crashed") this.log.error(`${agentId}: crashed${suffix}`);
     else this.log.info(`${agentId}: ${status}${suffix}`);
   }
 
-  /** A fresh connection's `initialize` answer: the capability claims, the
-   * version that actually answered, and the auth methods on offer. */
-  noteDeclared(agentId: string, declared: DeclaredCapabilities, raw: InitializeResponse): void {
-    const version = raw.agentInfo?.version ?? null;
-    this.deps.tracker.onDeclared(agentId, declared, version, raw.protocolVersion);
-    if (version !== null) void this.recordSeenVersion(agentId, version);
-    // terminal-auth recipes (meta.ts) and the spec's terminal auth
-    // methods, fresh per connect — command paths are machine-absolute
-    // and never persisted; the webview only ever sees the method's
-    // kind, both captures stay host-side. A recipe wins over the
-    // wire's type, the same precedence the kind is classified by.
-    const recipes = new Map<string, TerminalAuthRecipe>();
-    const typed = new Map<string, TerminalAuth>();
-    for (const m of raw.authMethods ?? []) {
-      const recipe = terminalAuthRecipeOf(m._meta);
-      if (recipe !== null) {
-        recipes.set(m.id, recipe);
-        continue;
-      }
-      const terminal = terminalAuthOf(m);
-      if (terminal !== null) typed.set(m.id, terminal);
-    }
-    this.authRecipes.set(agentId, recipes);
-    this.typedTerminalAuth.set(agentId, typed);
-    this.authMethodKinds.set(agentId, new Map(declared.authMethods.map((m) => [m.id, m.kind])));
+  /** A fresh connection's `initialize` answer is in the pool: its claims
+   * reach the matrix, and the version that actually answered is recorded. */
+  noteDeclared(agentId: string): void {
+    this.deps.tracker.onDeclared(agentId);
+    const version = this.deps.pool.get(agentId)?.initialize?.agentInfo?.version;
+    if (version !== undefined) void this.recordSeenVersion(agentId, version);
   }
 
   /** The single sink for pool.ts's proof-table hits (capabilities.ts
-   * CAPABILITY_PROOFS): marks a row used the first time its path is
-   * genuinely exercised on the wire, or suspect the first time it rides a
-   * failed request. Guarded on current state so a chatty agent (many reads
-   * per turn, a usage_update per turn) doesn't flood the patch stream with
-   * idempotent events — and so suspicion never speaks over proof. */
+   * CAPABILITY_PROOFS) — the tracker marks the row, and the matrix it
+   * reads moves. */
   noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
-    const cell = this.hooks.currentMatrix(agentId)?.[row];
-    if (cell?.used) return;
-    if (evidence === "used") this.deps.tracker.markUsed(agentId, row);
-    else if (cell?.suspect !== true) this.deps.tracker.markSuspect(agentId, row);
+    this.deps.tracker.noteEvidence(agentId, row, evidence);
   }
 
   /** One agent RPC's auth bearing, as the pool's wire chokepoint reports
@@ -316,7 +272,7 @@ export class AgentsStore {
    * chokepoint, the terminal login flows — reports what it *witnessed*;
    * the authority table (auth-evidence.ts) decides what that does to the
    * lock, the lock persists machine-scoped, and only a real transition
-   * emits. No other code may emit agentAuthRequired/agentAuthResolved. */
+   * re-sends the row. Nothing else writes the lock. */
   private noteAuthEvidence(agentId: string, evidence: AuthEvidence): void {
     // Evidence for an agent that no longer exists writes nothing: a
     // terminal login left open across a Remove would otherwise re-create
@@ -331,7 +287,7 @@ export class AgentsStore {
       this.deps.authLocks.remove(agentId).catch((err: Error) => {
         this.log.error(`${agentId}: auth-lock remove failed — ${err.message}`);
       });
-      this.hooks.emit({ kind: "agentAuthResolved", agentId });
+      this.publish(agentId);
       // The auth row's off-table proof source (recorded at
       // CAPABILITY_PROOFS.auth) — deliberately only the affirmative auth
       // actions: an authenticate round-trip or a terminal login exiting 0.
@@ -353,7 +309,7 @@ export class AgentsStore {
       this.deps.authLocks.upsert({ id: agentId, lock: result.lock }).catch((err: Error) => {
         this.log.error(`${agentId}: auth-lock write failed — ${err.message}`);
       });
-      this.hooks.emit({ kind: "agentAuthRequired", agentId, reason: result.lock.reason });
+      this.publish(agentId);
     }
   }
 
@@ -368,34 +324,19 @@ export class AgentsStore {
     // version can only change on a fresh connect, which already dropped
     // them with the old connection.
     await this.deps.configs.upsert({ ...existing, lastSeenVersion: version });
-    await this.publishConfigs();
+    await this.publishAll();
   }
 
   // ── operations ────────────────────────────────────────────────────────────
 
-  /** Connects a saved agent; upserts it into both channel states. The
-   * single env-injection point: values are read fresh from SecretStorage
-   * per connect (stores/secret-env.ts) — the spec and the config store never
-   * carry them. Throws when the agent has no saved config, or when the
-   * connect fails (the pool already reported the crash and its reason). */
+  /** Connects a saved agent. The single env-injection point: values are
+   * read fresh from SecretStorage per connect (stores/secret-env.ts) — the
+   * spec and the config store never carry them. Throws when the agent has
+   * no saved config, or when the connect fails (the pool already reported
+   * the crash and its reason). */
   async connect(agentId: string): Promise<void> {
     const spec = this.spec(agentId);
     if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
-    // A connect bears nothing on auth — needsAuth carries the standing
-    // lock (auth-evidence.ts) through the upsert instead of a literal
-    // false, or every reconnect would erase a witnessed logout.
-    const lock = this.deps.authLocks.lockFor(agentId);
-    this.hooks.emit({
-      kind: "agentUpserted",
-      agent: {
-        id: agentId,
-        name: spec.name,
-        status: "reconnecting",
-        command: formatCommandLine(spec.command, spec.args),
-        needsAuth: lock !== null,
-        authReason: lock?.reason ?? undefined,
-      },
-    });
     const env = await this.deps.env.get(agentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
     await this.deps.pool.connect(merged);
@@ -530,13 +471,10 @@ export class AgentsStore {
     await this.deps.usedCapabilities.remove(agentId);
     await this.deps.composerKnobs.remove(agentId);
     await this.deps.env.remove(agentId);
-    this.authRecipes.delete(agentId);
-    this.typedTerminalAuth.delete(agentId);
-    this.authMethodKinds.delete(agentId);
     await this.deps.authLocks.remove(agentId);
     await rm(join(this.deps.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
-    this.hooks.emit({ kind: "agentRemoved", agentId });
-    await this.publishConfigs();
+    this.publish(agentId);
+    await this.publishAll();
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
@@ -575,7 +513,7 @@ export class AgentsStore {
       registrySource: prior?.registrySource ?? config.registrySource,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     });
-    await this.publishConfigs();
+    await this.publishAll();
     // The store moved; an open editor re-reads the surface for the new
     // defaults from the agent (a no-op when no editor is open).
     this.hooks.defaultsChanged(config.id);
@@ -584,7 +522,7 @@ export class AgentsStore {
   /** The Settings list order — a view's picture of it at drop time. */
   async reorder(ids: readonly string[]): Promise<void> {
     await this.deps.configs.reorder(ids);
-    await this.publishConfigs();
+    await this.publishAll();
   }
 
   /** Log in with one of the agent's declared methods. A method patchbay
@@ -593,19 +531,28 @@ export class AgentsStore {
    * belongs to the agent type alone. Failure leaves needsAuth set — the
    * honest signal, no separate reply channel. */
   async login(agentId: string, methodId: string): Promise<void> {
-    if (this.authMethodKinds.get(agentId)?.get(methodId) === "unsupported") {
+    // The method as the connection's own `initialize` declared it — its
+    // kind (capabilities.ts's one classification), and the raw entry a
+    // terminal recipe or typed terminal method is read from. Command paths
+    // are machine-absolute and stay host-side; the webview only ever sees
+    // the kind.
+    const live = this.deps.pool.get(agentId);
+    if (live?.declared?.authMethods.find((m) => m.id === methodId)?.kind === "unsupported") {
       this.log.warn(`${agentId}: ignored a login on "${methodId}" — patchbay can't run this method's type`);
       return;
     }
-    const recipe = this.authRecipes.get(agentId)?.get(methodId);
-    if (recipe !== undefined) {
+    const method = live?.initialize?.authMethods?.find((m) => m.id === methodId);
+    // A recipe wins over the wire's type, the same precedence the kind is
+    // classified by.
+    const recipe = method === undefined ? null : terminalAuthRecipeOf(method._meta);
+    if (recipe !== null) {
       // terminal-recipe method: the login runs in a visible terminal,
       // `authenticate` is never called on it (meta.ts).
       await this.loginViaTerminal(agentId, recipe);
       return;
     }
-    const typed = this.typedTerminalAuth.get(agentId)?.get(methodId);
-    if (typed !== undefined) {
+    const typed = method === undefined ? null : terminalAuthOf(method);
+    if (typed !== null) {
       // the spec's terminal auth method: same executor,
       // recipe composed from the agent's own spawn spec at click time —
       // `authenticate` is never called on it either, so a login's
@@ -666,7 +613,7 @@ export class AgentsStore {
       const existing = this.config(legacyDefault);
       if (existing !== undefined && !existing.autoConnect) {
         await this.deps.configs.upsert({ ...existing, autoConnect: true });
-        await this.publishConfigs();
+        await this.publishAll();
         this.log.info(`migrated acpPatchbay.defaultAgent ("${legacyDefault}") to the per-agent auto-connect flag`);
       }
     }
@@ -697,18 +644,45 @@ export class AgentsStore {
     );
   }
 
-  /** "Disconnect & erase all data" wiped the files: what this store holds
-   * in memory goes too, every agent the views show leaves them, and the
-   * config list republishes empty. */
+  /** "Disconnect & erase all data" wiped the files: every agent the views
+   * show leaves them, and the config list republishes empty. */
   async erased(shownAgentIds: readonly string[]): Promise<void> {
-    this.authRecipes.clear();
-    this.typedTerminalAuth.clear();
-    this.authMethodKinds.clear();
     for (const agentId of shownAgentIds) this.hooks.emit({ kind: "agentRemoved", agentId });
-    await this.publishConfigs();
+    await this.publishAll();
   }
 
   // ── internals ─────────────────────────────────────────────────────────────
+
+  private rowOf(config: AgentConfig): AgentSummary {
+    const live = this.deps.pool.get(config.id);
+    // needsAuth reads the persisted lock (auth-evidence.ts), never a
+    // literal: a logout witnessed before a reload or a reconnect is still
+    // the truth — the wire has nothing to re-read it from.
+    const lock = this.deps.authLocks.lockFor(config.id);
+    // A process running or starting answers for what it was spawned with;
+    // otherwise the config is what the next Connect runs.
+    const launch = live?.status === "running" || live?.status === "reconnecting" ? live.spec : config;
+    return {
+      id: config.id,
+      name: config.name,
+      // No process this window: `untested` until it has ever answered
+      // `initialize` (`lastSeenVersion` is the durable marker), `stopped`
+      // after.
+      status: live?.status ?? (config.lastSeenVersion === null ? "untested" : "stopped"),
+      detail: live?.detail,
+      // A crash carries the process's own last words; every other status
+      // drops them — stale stderr on a running agent would be a lie.
+      stderr: live?.status === "crashed" && live.stderrTail.length > 0 ? live.stderrTail : undefined,
+      command: formatCommandLine(launch.command, launch.args),
+      needsAuth: lock !== null,
+      authReason: lock?.reason ?? undefined,
+      capabilities: this.deps.tracker.matrix(config.id),
+      capabilitiesResetAt: live?.initializedAt ?? undefined,
+      protocolVersion: live?.initialize?.protocolVersion,
+      authMethods: live?.declared?.authMethods ?? [],
+      update: agentUpdates(this.deps.registry.current().agents, [config])[config.id],
+    };
+  }
 
   /** The spawnable spec a stored config stands for — the one reading of a
    * record. env deliberately
@@ -806,7 +780,7 @@ export class AgentsStore {
       registrySource: registrySource ?? existing?.registrySource ?? null,
       lastSeenVersion: existing?.lastSeenVersion ?? null,
     });
-    await this.publishConfigs();
+    await this.publishAll();
   }
 
   /** Two installs, one memory: a PATH-installed sibling CLI shares the

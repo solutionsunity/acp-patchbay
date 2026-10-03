@@ -42,11 +42,11 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
 
 describe("CapabilityTracker", () => {
   it("an honest agent's declared fork gets used automatically on connect — the branch affordance's gate", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "honest"));
 
     const cell = await waitFor(() => {
-      const c = state().capabilities.honest?.["session.fork"];
+      const c = tracker.matrix("honest")?.["session.fork"];
       return c?.used ? c : undefined;
     });
     expect(capabilityState(cell)).toBe("used");
@@ -55,9 +55,9 @@ describe("CapabilityTracker", () => {
   });
 
   it("the fork probe's throwaway sessions never linger in the connection's session set", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "tidy"));
-    await waitFor(() => (state().capabilities.tidy?.["session.fork"]?.used ? true : undefined));
+    await waitFor(() => (tracker.matrix("tidy")?.["session.fork"]?.used ? true : undefined));
     // Lingering probe sessions would count toward the concurrent-sessions
     // proof — the user's first real session would read as a second one —
     // so the set must be empty again.
@@ -66,12 +66,12 @@ describe("CapabilityTracker", () => {
   });
 
   it("a failed fork probe also cleans up its throwaway parent session", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(
       spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "tidy2"),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(state().capabilities.tidy2!["session.fork"].used).toBe(false);
+    expect(tracker.matrix("tidy2")!["session.fork"].used).toBe(false);
     expect(pool.get("tidy2")!.sessions).toEqual([]);
     await pool.stop("tidy2");
   });
@@ -113,16 +113,16 @@ describe("CapabilityTracker", () => {
     // session/new reply; the old mkdtemp/rm-in-finally deleted the root out
     // from under it (CLI-fatal agent-side). Lifetime = agent config, not
     // the probe call.
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({}, "rooted"));
-    await waitFor(() => (state().capabilities.rooted !== undefined ? true : undefined));
+    await waitFor(() => (tracker.matrix("rooted") !== undefined ? true : undefined));
     await new Promise((r) => setTimeout(r, 100)); // let the probe's finally run
     expect((await stat(join(cwd, "probe", "rooted"))).isDirectory()).toBe(true);
     await pool.stop("rooted");
   });
 
   it("a lying agent (declares fork, breaks it) reads suspect — indicted, never used", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(
       spec(
         { declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } },
@@ -132,7 +132,7 @@ describe("CapabilityTracker", () => {
 
     // give the automatic round trip a chance to run and fail
     await new Promise((r) => setTimeout(r, 300));
-    const cell = state().capabilities.liar!["session.fork"];
+    const cell = tracker.matrix("liar")!["session.fork"];
     // The probe's failed fork is exactly a fact-that-would-have-proven riding
     // a failed request: declared, not used, flagged — suspicion, not error.
     expect(capabilityState(cell)).toBe("suspect");
@@ -142,25 +142,25 @@ describe("CapabilityTracker", () => {
   });
 
   it("an agent that never declares fork never shows declared, let alone used", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({}, "nofork"));
     await new Promise((r) => setTimeout(r, 100));
-    expect(capabilityState(state().capabilities.nofork!["session.fork"])).toBe("not-declared");
+    expect(capabilityState(tracker.matrix("nofork")!["session.fork"])).toBe("not-declared");
     await pool.stop("nofork");
   });
 
   it("reconnect at the same version seeds used from the persisted cache immediately", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "reconn"));
-    await waitFor(() => (state().capabilities.reconn!["session.fork"].used ? true : undefined));
+    await waitFor(() => (tracker.matrix("reconn")!["session.fork"].used ? true : undefined));
 
-    const resetAt1 = state().capabilitiesResetAt.reconn;
+    const resetAt1 = pool.get("reconn")?.initializedAt;
     await pool.restart("reconn");
 
     // same agentInfo.version (the fake agent's fixed "0.0.0") — seeded from
     // the persisted cache the instant the new matrix is declared, not reset.
-    expect(state().capabilities.reconn!["session.fork"].used).toBe(true);
-    expect(state().capabilitiesResetAt.reconn).not.toBe(resetAt1);
+    expect(tracker.matrix("reconn")!["session.fork"].used).toBe(true);
+    expect(pool.get("reconn")?.initializedAt).not.toBe(resetAt1);
 
     await pool.stop("reconn");
   });
@@ -187,38 +187,38 @@ describe("CapabilityTracker", () => {
   });
 
   it("a version change resets used — an honestly fresh matrix, not carried over", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "verbump"));
-    await waitFor(() => (state().capabilities.verbump!["session.fork"].used ? true : undefined));
+    await waitFor(() => (tracker.matrix("verbump")!["session.fork"].used ? true : undefined));
     await pool.stop("verbump");
 
     await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } }, version: "0.0.1" }, "verbump"));
     // immediately after the version-bumped connect, before the round trip re-runs
-    expect(state().capabilities.verbump!["session.fork"].used).toBe(false);
-    expect(capabilityState(state().capabilities.verbump!["session.fork"])).toBe("declared");
+    expect(tracker.matrix("verbump")!["session.fork"].used).toBe(false);
+    expect(capabilityState(tracker.matrix("verbump")!["session.fork"])).toBe("declared");
 
     // and it earns used on its own, same as any fresh connect
-    await waitFor(() => (state().capabilities.verbump!["session.fork"].used ? true : undefined));
+    await waitFor(() => (tracker.matrix("verbump")!["session.fork"].used ? true : undefined));
     await pool.stop("verbump");
   });
 
   it("verify() re-runs the free fork check on demand", async () => {
-    const { pool, tracker, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(
       spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "diag"),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(state().capabilities.diag!["session.fork"].used).toBe(false);
+    expect(tracker.matrix("diag")!["session.fork"].used).toBe(false);
 
     // still broken — Verify doesn't fake success, it just re-checks honestly
     await tracker.verify("diag");
-    expect(state().capabilities.diag!["session.fork"].used).toBe(false);
+    expect(tracker.matrix("diag")!["session.fork"].used).toBe(false);
 
     await pool.stop("diag");
   });
 
-  it("auth_required surfaces as agentAuthRequired, not a check failure", async () => {
-    const { pool, state, seedAgent } = harness();
+  it("auth_required surfaces as needsAuth on the row, not a check failure", async () => {
+    const { pool, tracker, state, seedAgent } = harness();
     seedAgent("needsauth");
     await pool.connect(
       spec(
@@ -233,7 +233,7 @@ describe("CapabilityTracker", () => {
     await new Promise((r) => setTimeout(r, 300));
     const agent = state().agents.find((a) => a.id === "needsauth");
     expect(agent?.needsAuth).toBe(true);
-    expect(capabilityState(state().capabilities.needsauth!.auth)).toBe("declared");
+    expect(capabilityState(tracker.matrix("needsauth")!.auth)).toBe("declared");
 
     await pool.stop("needsauth");
   });
@@ -256,21 +256,21 @@ describe("CapabilityTracker", () => {
 
     await tracker.authenticate("login", "default");
     expect(state().agents.find((a) => a.id === "login")?.needsAuth).toBe(false);
-    expect(capabilityState(state().capabilities.login!.auth)).toBe("used");
+    expect(capabilityState(tracker.matrix("login")!.auth)).toBe("used");
 
     await pool.stop("login");
   });
 
   it("concurrent sessions get marked used the moment a second session succeeds on one connection", async () => {
-    const { pool, state } = harness();
+    const { pool, tracker } = harness();
     await pool.connect(spec({}, "multi"));
-    expect(capabilityState(state().capabilities.multi!.concurrentSessions)).toBe("not-declared");
+    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("not-declared");
 
     await pool.newSession("multi", cwd);
-    expect(capabilityState(state().capabilities.multi!.concurrentSessions)).toBe("not-declared");
+    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("not-declared");
 
     await pool.newSession("multi", cwd);
-    expect(capabilityState(state().capabilities.multi!.concurrentSessions)).toBe("used");
+    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("used");
 
     await pool.stop("multi");
   });

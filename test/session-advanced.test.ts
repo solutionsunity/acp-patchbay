@@ -55,6 +55,7 @@ function harness(extraHooks: {
 } = {}): {
   pool: AgentPool;
   sessionManager: SessionManager;
+  capabilityTracker: CapabilityTracker;
   state(): AgentViewState;
 } {
   const events: AgentViewEvent[] = [];
@@ -66,16 +67,13 @@ function harness(extraHooks: {
     onStatusChanged: (agentId, status) => {
       if (status === "crashed" || status === "reconnecting") sessionManager.invalidateAgent(agentId);
     },
-    onDeclaredCaptured: (agentId, declared, raw) =>
-      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
+    onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onCapabilityEvidence: (agentId, row, evidence) =>
-      evidence === "used" ? capabilityTracker.markUsed(agentId, row) : capabilityTracker.markSuspect(agentId, row),
+    onCapabilityEvidence: (agentId, row, evidence) => capabilityTracker.noteEvidence(agentId, row, evidence),
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
   sessionManager = new SessionManager(
@@ -86,7 +84,7 @@ function harness(extraHooks: {
     },
     () => cwd,
   );
-  return { pool, sessionManager, state };
+  return { pool, sessionManager, capabilityTracker, state };
 }
 
 /** The fake agent's session ids are `fake-<pid>-<n>` (or `<parent-id>-fork-<n>`
@@ -103,18 +101,18 @@ describe("One process per agent", () => {
   // session agent-side; waiting for that proof means the probe is done and
   // the connection serves nothing yet when the user's sessions open.
   const probeDone = (h: ReturnType<typeof harness>, agentId: string) =>
-    waitFor(() => (h.state().capabilities[agentId]?.["session.close"]?.used ? true : undefined));
+    waitFor(() => (h.capabilityTracker.matrix(agentId)?.["session.close"]?.used ? true : undefined));
 
   it("every session rides the agent's one process — the user's own second session proves concurrent sessions", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "one"));
     await probeDone(h, "one");
     const a = await h.sessionManager.createSession("one", "Fake Agent", cwd);
-    expect(h.state().capabilities.one!.concurrentSessions.used).toBe(false);
+    expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(false);
     const b = await h.sessionManager.createSession("one", "Fake Agent", cwd);
 
     expect(pidOf(a)).toBe(pidOf(b));
-    expect(h.state().capabilities.one!.concurrentSessions.used).toBe(true);
+    expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(true);
 
     await h.pool.stop("one");
   });
@@ -128,7 +126,7 @@ describe("One process per agent", () => {
     const a = await h.sessionManager.createSession("single", "Fake Agent", cwd);
     await expect(h.sessionManager.createSession("single", "Fake Agent", cwd)).rejects.toThrow();
 
-    expect(h.state().capabilities.single!.concurrentSessions).toMatchObject({ used: false, suspect: true });
+    expect(h.capabilityTracker.matrix("single")!.concurrentSessions).toMatchObject({ used: false, suspect: true });
     expect(h.pool.get("single")?.sessions).toEqual([a]);
 
     await h.pool.stop("single");
@@ -313,14 +311,12 @@ describe("Session model/mode/effort knobs (P8)", () => {
     let capabilityTracker!: CapabilityTracker;
     const pool = new AgentPool({
       onStatusChanged: () => {},
-      onDeclaredCaptured: (agentId, declared, raw) =>
-      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
+      onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
       onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
       ...stubFsTerminalHooks(),
     });
     capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
     sessionManager = new SessionManager(

@@ -14,24 +14,20 @@
 // is still declared-but-unused. (Knob offerings are not read here: the
 // settings defaults editor reads them from its own session, for the
 // defaults being edited.)
-// Marking a row *used* doesn't happen here, though — pool.ts's wire
+// Which wire fact proves which row isn't decided here — pool.ts's wire
 // chokepoints (agent RPC resolved, incoming request handled, session/update
 // kind tag arrived) consult the one proof table (capabilities.ts
-// CAPABILITY_PROOFS) and fire the one `onCapabilityEvidence` hook; no call
-// site anywhere names a row. This file only decides *when* to run the
-// synthetic probe below and persists whatever pool.ts reports.
+// CAPABILITY_PROOFS) and report through the one `onCapabilityEvidence`
+// hook; no call site anywhere names a row. This file records what is
+// reported and decides *when* to run the synthetic probe below.
 //
-// Used to reset on every reconnect (a side effect of always rebuilding the
-// matrix fresh); it's now version-keyed — a reconnect at the *same* `agentInfo.version` restores what was
-// already proven, and only an actual version change earns a fresh,
-// honestly-unused matrix.
+// The matrix is read, never held: what the agent's connection declared,
+// with the marks earned against its `agentInfo.version` read from the used
+// cache — so a reconnect at the *same* version restores what was already
+// proven, and only an actual version change earns a fresh, honestly-unused
+// matrix.
 import type { NewSessionResponse } from "@agentclientprotocol/sdk";
-import {
-  type AgentViewEvent,
-  type CapabilityMatrix,
-  type CapabilityRowId,
-  type DeclaredCapabilities,
-} from "../shared/protocol";
+import type { CapabilityCell, CapabilityMatrix, CapabilityRowId } from "../shared/protocol";
 import { matrixFromDeclared } from "./capabilities";
 import { probeDeferredFor } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
@@ -49,11 +45,9 @@ import type { UsedCapabilityStore } from "./stores/used-capabilities";
 export type ProbeOutcome = "ok" | "auth_required" | "failed" | "skipped";
 
 export interface CapabilityTrackerHooks {
-  emit(...events: AgentViewEvent[]): void;
-  /** Reads the matrix as it stands *after* an emit already applied — lets
-   * the tracker persist the whole row set wholesale without holding its
-   * own copy of state that could drift from the canonical one. */
-  currentMatrix(agentId: string): CapabilityMatrix | undefined;
+  /** The agent's matrix moved — a fresh connection declared, or a row was
+   * marked. */
+  changed(agentId: string): void;
   /** Announces each throwaway probe session as its session/new lands —
    * the raw response, so an observer (a test, a diagnostic) learns the
    * id the agent minted and what it answered. The tracker itself routes
@@ -71,9 +65,11 @@ export interface CapabilityTrackerHooks {
 }
 
 export class CapabilityTracker {
-  /** agentId → the `agentInfo.version` its current connection reported —
-   * what persisted used state gets saved and seeded against. */
-  private versions = new Map<string, string>();
+  /** Marks earned on the current connection of an agent that reports no
+   * `agentInfo.version` — nothing to key them by in the used cache, so they
+   * last as long as the connection. A versioned agent's marks are written
+   * to the cache and read back from it. */
+  private unversionedMarks = new Map<string, Partial<Record<CapabilityRowId, CapabilityCell>>>();
   /** Agents whose connect-time probe is parked until the first real
    * session (extensions/first-session-mcp-latch) — armed per connect,
    * spent by noteRealSessionOpened. */
@@ -93,31 +89,55 @@ export class CapabilityTracker {
     private readonly log: Logger = nullLogger,
   ) {}
 
-  /** Call on every connect (including reconnects). `version` is the fresh
-   * connection's `agentInfo.version` (null when the agent didn't report
-   * one — everything still works, it just never seeds from/saves to the
-   * persisted cache, same as before this existed). */
-  onDeclared(
-    agentId: string,
-    declared: DeclaredCapabilities,
-    version: string | null,
-    protocolVersion: number,
-  ): void {
-    const fresh = matrixFromDeclared(declared);
-    const seeded = version !== null ? this.usedCache.seed(agentId, version, fresh) : fresh;
-    if (version !== null) this.versions.set(agentId, version);
-    else this.versions.delete(agentId);
-    this.hooks.emit({
-      kind: "capabilitiesDeclared",
-      agentId,
-      matrix: seeded,
-      authMethods: declared.authMethods,
-      protocolVersion,
-      at: new Date().toISOString(),
-    });
-    if (version !== null && seeded !== fresh) {
-      this.log.debug(`${agentId}: used-state seeded from cache for v${version}`);
-    }
+  /** The agent's matrix, read now: what its connection in this window
+   * declared, with the marks earned against that connection's version —
+   * from the used cache, or, for an agent that reports no version, from
+   * this connection. Undefined until it has connected in this window. */
+  matrix(agentId: string): CapabilityMatrix | undefined {
+    const live = this.pool.get(agentId);
+    if (live?.declared === undefined || live.declared === null) return undefined;
+    const fresh = matrixFromDeclared(live.declared);
+    const version = live.initialize?.agentInfo?.version;
+    if (version !== undefined) return this.usedCache.seed(agentId, version, fresh);
+    return { ...fresh, ...this.unversionedMarks.get(agentId) };
+  }
+
+  /** A wire fact bore on a row (pool.ts's proof-table chokepoints): marks it
+   * used the first time its path is genuinely exercised, or suspect the
+   * first time it rides a failed request. A row already used takes no
+   * mark — suspicion never speaks over proof — and a repeat of a standing
+   * mark writes nothing. */
+  noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
+    const cell = this.matrix(agentId)?.[row];
+    if (cell === undefined || cell.used) return;
+    // Used always implies declared — which is what lets rows with no
+    // initialize-time claim (usage, concurrentSessions) go straight from
+    // not-declared to used — and the whole cell is written, so a success
+    // drops any suspect flag: success acquits. Suspicion implies declared
+    // too: the attempt is itself the claim.
+    if (evidence === "used") this.mark(agentId, row, { declared: true, used: true });
+    else if (cell.suspect !== true) this.mark(agentId, row, { declared: true, used: false, suspect: true });
+  }
+
+  /** Writes one mark where the matrix reads it back from: the used cache,
+   * keyed by the connection's version — persisted so a broken bridge can't
+   * look clean after a restart either — or this connection's own marks. */
+  private mark(agentId: string, row: CapabilityRowId, cell: CapabilityCell): void {
+    const matrix = this.matrix(agentId);
+    if (matrix === undefined) return;
+    const version = this.pool.get(agentId)?.initialize?.agentInfo?.version;
+    if (version !== undefined) void this.usedCache.save(agentId, version, { ...matrix, [row]: cell });
+    else this.unversionedMarks.set(agentId, { ...this.unversionedMarks.get(agentId), [row]: cell });
+    this.hooks.changed(agentId);
+  }
+
+  /** Call on every connect (including reconnects), once the fresh
+   * connection's `initialize` answer is in the pool. An agent reporting no
+   * `agentInfo.version` never seeds from or saves to the used cache —
+   * everything still works, its marks just last as long as the connection. */
+  onDeclared(agentId: string): void {
+    this.unversionedMarks.delete(agentId);
+    this.hooks.changed(agentId);
     // Every connect probes: the session/new is the concurrency/close/
     // delete/fork proof opportunity — deliberately NOT an auth proof; its
     // success is non-bearing evidence (auth-evidence.ts). Only the fork
@@ -167,27 +187,6 @@ export class CapabilityTracker {
     return this.deferredProbes.has(agentId);
   }
 
-  markUsed(agentId: string, row: CapabilityRowId): void {
-    this.hooks.emit({ kind: "capabilityUsed", agentId, row });
-    this.persist(agentId);
-  }
-
-  /** Suspicion, not conviction: the row rode a failed request. Persisted
-   * version-keyed exactly like used — a broken bridge must not look clean
-   * after a restart — and cleared the moment a success proves the row
-   * (used wins; the reducer drops the flag). */
-  markSuspect(agentId: string, row: CapabilityRowId): void {
-    this.hooks.emit({ kind: "capabilitySuspect", agentId, row });
-    this.persist(agentId);
-  }
-
-  private persist(agentId: string): void {
-    const version = this.versions.get(agentId);
-    const matrix = this.hooks.currentMatrix(agentId);
-    if (version === undefined || matrix === undefined) return;
-    void this.usedCache.save(agentId, version, matrix);
-  }
-
   /** Free RPC round-trip: session/new (+ session/fork, while still
    * declared-but-unused) in a throwaway session rooted at the agent's
    * standing probe dir (hooks.probeRoot), never the workspace, never
@@ -218,7 +217,7 @@ export class CapabilityTracker {
       // (auth-evidence.ts, fed by pool's wire chokepoint) — a probe can
       // clear only a lock its own method raised, never a witnessed logout.
       const forkStillUnproven =
-        declared.sessionFork && !(this.hooks.currentMatrix(agentId)?.["session.fork"].used ?? false);
+        declared.sessionFork && !(this.matrix(agentId)?.["session.fork"].used ?? false);
       if (forkStillUnproven) {
         const forked = await this.pool.fork(agentId, response.sessionId, dir);
         probeSessionIds.push(forked.sessionId);
@@ -291,7 +290,7 @@ export class CapabilityTracker {
   /** Stable `authenticate` round trip, then retries the probe so a
    * successful login is reflected immediately rather than waiting for the
    * next real session attempt. Failure (rejected, cancelled, agent-side
-   * error) surfaces plainly — `agentAuthRequired` stays set, never silently
+   * error) surfaces plainly — the auth lock stays set, never silently
    * cleared on a failed attempt. The trailing probe honors the same latch
    * deferral as verify; auth state doesn't need it (the authenticate
    * success itself is the authority's clearing evidence). */

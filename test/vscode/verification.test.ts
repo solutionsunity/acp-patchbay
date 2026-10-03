@@ -21,7 +21,7 @@ interface Internal {
   orchestrator: {
     agentView: {
       current: {
-        capabilities: Record<string, Record<string, CapabilityCell>>;
+        agents: Array<{ id: string; capabilities?: Record<string, CapabilityCell> }>;
         transcripts: Record<string, Array<{ id: string; kind: string }>>;
       };
     };
@@ -87,7 +87,8 @@ suite("opportunistic fs/terminal verification", () => {
       );
       await orchestrator.agents.connect("verify-e2e");
 
-      const matrix = () => orchestrator.agentView.current.capabilities["verify-e2e"];
+      const matrix = () =>
+        orchestrator.agentView.current.agents.find((a) => a.id === "verify-e2e")!.capabilities!;
       assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["terminal"], { declared: true, used: false });

@@ -22,6 +22,9 @@
   copies writing to one profile for agents that keep their state per
   profile. If you had set an agent to `isolated`, its chats now share its
   one process. (#62)
+- A renamed agent shows its new name everywhere right away, and a stopped
+  agent's card shows the launch command it will run next, instead of
+  keeping the old ones until the next connect.
 
 ## 0.84.1 — 2026-09-29
 

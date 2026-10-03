@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import type { AgentStatus, DeclaredCapabilities } from "../src/shared/protocol";
+import type { AgentStatus } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 
@@ -20,7 +20,8 @@ afterAll(() => rm(cwd, { recursive: true, force: true }));
 
 interface Recorded {
   statuses: Array<{ status: AgentStatus; detail?: string }>;
-  declared: DeclaredCapabilities[];
+  /** One entry per fresh `initialize` answer captured. */
+  declared: string[];
   updates: SessionNotification[];
 }
 
@@ -28,7 +29,7 @@ function makePool(): { pool: AgentPool; rec: Recorded } {
   const rec: Recorded = { statuses: [], declared: [], updates: [] };
   const pool = new AgentPool({
     onStatusChanged: (_id, status, detail) => rec.statuses.push({ status, detail }),
-    onDeclaredCaptured: (_id, declared) => rec.declared.push(declared),
+    onDeclaredCaptured: (id) => rec.declared.push(id),
     onSessionUpdate: (_id, n) => rec.updates.push(n),
     ...stubFsTerminalHooks(),
   });
@@ -216,12 +217,12 @@ describe("AgentPool", () => {
     await pool.stop("cancelly");
   });
 
-  // P16: a failure's reason is readable inline — the crashed status carries
-  // the process's own last words (stderr tail), and only crash carries them.
-  it("crash carries the stderr tail on the status hook", async () => {
-    const recorded: Array<{ status: AgentStatus; stderr?: readonly string[] }> = [];
+  // P16: a failure's reason is readable inline — the crashed entry keeps the
+  // process's own last words (stderr tail) for the row to show.
+  it("a crash keeps the stderr tail on the entry", async () => {
+    const recorded: AgentStatus[] = [];
     const pool = new AgentPool({
-      onStatusChanged: (_id, status, _detail, stderr) => recorded.push({ status, stderr }),
+      onStatusChanged: (_id, status) => recorded.push(status),
       onDeclaredCaptured: () => {},
       onSessionUpdate: () => {},
       ...stubFsTerminalHooks(),
@@ -238,8 +239,8 @@ describe("AgentPool", () => {
         cwd,
       }),
     ).rejects.toThrow();
-    const crashed = recorded.find((r) => r.status === "crashed");
-    expect(crashed?.stderr?.join("\n")).toContain("boom: config missing");
+    expect(recorded).toContain("crashed");
+    expect(pool.get("doomed")?.stderrTail.join("\n")).toContain("boom: config missing");
   });
 
   // P16: the classic silent hang — a CLI doing first-run setup against a

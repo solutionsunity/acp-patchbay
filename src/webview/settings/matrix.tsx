@@ -104,8 +104,8 @@ export function MatrixSection({ state }: { state: SettingsState }) {
         <>
           {/* reading order: the claim and its absence first, then the two
               evidence states. "used" needs no "declared," prefix — used
-              implies declared by construction (the reducer writes both in
-              one path). */}
+              implies declared by construction (the capability tracker
+              writes both in one mark). */}
           <div className="legend">
             <span>
               <span className="st-d"><Icon name="circle" /></span> declared, not used
@@ -129,8 +129,8 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                 <TableRow>
                   <TableHead>capability</TableHead>
                   {agents.map((a) => {
-                    const resetAt = state.capabilitiesResetAt[a.id];
-                    const protocol = state.agentProtocol[a.id];
+                    const resetAt = a.capabilitiesResetAt;
+                    const protocol = a.protocolVersion;
                     return (
                       <TableHead key={a.id} className="text-center">
                         {a.name}
@@ -154,7 +154,7 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                   <TableRow key={row.id}>
                     <TableCell className="cap">{row.label}</TableCell>
                     {agents.map((a) => {
-                      const cell = state.capabilities[a.id]?.[row.id];
+                      const cell = a.capabilities?.[row.id];
                       const st = capabilityState(cell);
                       const icon = STATE_ICON[st];
                       const consequence = ROW_CONSEQUENCE[row.id];

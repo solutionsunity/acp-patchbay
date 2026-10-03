@@ -23,18 +23,22 @@ const DECLARED: DeclaredCapabilities = {
   authLogout: false,
 };
 
-function agent(id: string, status: AgentSummary["status"] = "running"): AgentSummary {
-  return { id, name: id, status, needsAuth: false };
+function agent(
+  id: string,
+  status: AgentSummary["status"],
+  capabilities?: AgentSummary["capabilities"],
+): AgentSummary {
+  return { id, name: id, status, needsAuth: false, authMethods: [], capabilities };
 }
 
 describe("sessions drawer — agents whose history cannot be shown", () => {
   it("names each agent with a handshake on record that declared no session/list; a never-connected agent is unknown, not unlisted", () => {
-    const capabilities = {
-      lists: matrixFromDeclared({ ...DECLARED, sessionList: true }),
-      silent: matrixFromDeclared(DECLARED),
-      stopped: matrixFromDeclared(DECLARED),
-    };
-    const agents = [agent("lists"), agent("silent"), agent("stopped", "stopped"), agent("fresh", "untested")];
-    expect(unlistedAgents(agents, capabilities).map((a) => a.id)).toEqual(["silent", "stopped"]);
+    const agents = [
+      agent("lists", "running", matrixFromDeclared({ ...DECLARED, sessionList: true })),
+      agent("silent", "running", matrixFromDeclared(DECLARED)),
+      agent("stopped", "stopped", matrixFromDeclared(DECLARED)),
+      agent("fresh", "untested"),
+    ];
+    expect(unlistedAgents(agents).map((a) => a.id)).toEqual(["silent", "stopped"]);
   });
 });

@@ -110,16 +110,13 @@ function harness(opts?: {
         sessionManager.invalidateAgent(agentId);
       }
     },
-    onDeclaredCaptured: (agentId, declared, raw) =>
-      capabilityTracker.onDeclared(agentId, declared, raw.agentInfo?.version ?? null, raw.protocolVersion),
+    onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
-    onCapabilityEvidence: (agentId, row, evidence) =>
-      evidence === "used" ? capabilityTracker.markUsed(agentId, row) : capabilityTracker.markSuspect(agentId, row),
+    onCapabilityEvidence: (agentId, row, evidence) => capabilityTracker.noteEvidence(agentId, row, evidence),
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId],
+    changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
   sessionManager = new SessionManager(
@@ -144,9 +141,7 @@ function harness(opts?: {
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
       titleOf: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).sessions.find((s) => s.id === sessionId)?.title,
-      isDeleteUsed: (agentId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).capabilities[agentId]?.["session.delete"]
-          ?.used ?? false,
+      isDeleteUsed: (agentId) => capabilityTracker.matrix(agentId)?.["session.delete"]?.used ?? false,
       isActiveSession: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId ||
         (opts?.pinned?.has(sessionId) ?? false),
@@ -1193,13 +1188,13 @@ describe("SessionManager", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "usage", used: 42, size: 200 }, { type: "chunk", text: "hi" }] }, "sm7"),
     );
-    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: false, used: false });
+    expect(h.capabilityTracker.matrix("sm7")!.usage).toEqual({ declared: false, used: false });
 
     const sessionId = await h.sessionManager.createSession("sm7", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "go");
 
     expect(h.state().sessionUsage[sessionId]).toEqual({ used: 42, size: 200, cost: undefined });
-    expect(h.state().capabilities.sm7!.usage).toEqual({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sm7")!.usage).toEqual({ declared: true, used: true });
 
     await h.pool.stop("sm7");
   });
@@ -1211,12 +1206,12 @@ describe("SessionManager", () => {
     );
     const sessionId = await h.sessionManager.createSession("sm8", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "first");
-    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, used: false });
+    expect(h.capabilityTracker.matrix("sm8")!["session.load"]).toEqual({ declared: true, used: false });
 
     await h.pool.restart("sm8");
     await h.sessionManager.sendPrompt(sessionId, "second");
 
-    expect(h.state().capabilities.sm8!["session.load"]).toEqual({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sm8")!["session.load"]).toEqual({ declared: true, used: true });
     await h.pool.stop("sm8");
   });
 
@@ -2224,7 +2219,7 @@ describe("session history (list / resume / delete)", () => {
     expect(state.activeSessionId).toBe(mine);
     expect(h.sessionManager.knows("ext-1")).toBe(true);
     // the wire round-trip proved the row
-    expect(state.capabilities.sh1?.["session.list"]).toMatchObject({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sh1")?.["session.list"]).toMatchObject({ declared: true, used: true });
 
     await h.pool.stop("sh1");
   });
@@ -2352,7 +2347,7 @@ describe("session history (list / resume / delete)", () => {
       "first",
       "second",
     ]);
-    expect(state.capabilities.sh5?.["session.resume"]).toMatchObject({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sh5")?.["session.resume"]).toMatchObject({ declared: true, used: true });
 
     await h.pool.stop("sh5");
   });
@@ -2448,7 +2443,7 @@ describe("session history (list / resume / delete)", () => {
 
     await h.sessionManager.release(sessionId, "idle");
     expect(h.sessionManager.isLive(sessionId)).toBe(false);
-    expect(h.state().capabilities.sh10?.["session.close"]).toMatchObject({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sh10")?.["session.close"]).toMatchObject({ declared: true, used: true });
     // the row survives — release frees resources, it never closes the chat
     expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
 
@@ -2593,7 +2588,7 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh6"));
     // the probe's own delete round-trip proves the row (connect-time hygiene)
     await h.capabilityTracker.verify("sh6");
-    expect(h.state().capabilities.sh6?.["session.delete"]).toMatchObject({ declared: true, used: true });
+    expect(h.capabilityTracker.matrix("sh6")?.["session.delete"]).toMatchObject({ declared: true, used: true });
 
     const sessionId = await h.sessionManager.createSession("sh6", "Fake Agent", cwd);
     await h.sessionManager.sendPrompt(sessionId, "leave a durable record");

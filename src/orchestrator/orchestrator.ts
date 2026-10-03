@@ -344,8 +344,8 @@ export class Orchestrator {
     // capabilityTracker / broker here — before they're assigned below — is
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
-      onStatusChanged: (agentId, status, detail, stderr) => {
-        this.agents.noteStatus(agentId, status, detail, stderr);
+      onStatusChanged: (agentId, status, detail) => {
+        this.agents.noteStatus(agentId, status, detail);
         if (status !== "running") this.settleAsksOn(agentId);
         
         // A dead or reconnecting connection invalidates every sessionId that
@@ -378,10 +378,10 @@ export class Orchestrator {
           this.pendingSyncs.set(agentId, sync);
         }
         // Offerings are connection state — the settings reducer drops its
-        // copy off this same event; the defaults editor forgot its session
+        // copy off the row's status; the defaults editor forgot its session
         // above, and an expanded card reopens one once running.
       },
-      onDeclaredCaptured: (agentId, declared, raw) => this.agents.noteDeclared(agentId, declared, raw),
+      onDeclaredCaptured: (agentId) => this.agents.noteDeclared(agentId),
       onSessionUpdate: (agentId, notification) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
@@ -606,8 +606,7 @@ export class Orchestrator {
         rootsMissing: () => this.publishSavedRoots(),
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
         titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
-        isDeleteUsed: (agentId) =>
-          this.agentView.current.capabilities[agentId]?.["session.delete"]?.used ?? false,
+        isDeleteUsed: (agentId) => this.agents.matrix(agentId)?.["session.delete"]?.used ?? false,
         isActiveSession: (sessionId) =>
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
@@ -632,11 +631,10 @@ export class Orchestrator {
             { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
           ],
         };
-        const matrix = this.agentView.current.capabilities[agentId];
         // Declared, not used, and that's correct here (prompt.image
         // mechanics): passthrough is how the mcp.http claim gets exercised
         // at all — a used-gate would deadlock the row forever.
-        const declaresHttp = matrix?.["mcp.http"]?.declared === true;
+        const declaresHttp = this.agents.matrix(agentId)?.["mcp.http"]?.declared === true;
         const integrationServers = await this.integrations.mcpServersFor(
           agentId,
           this.integrationBridgeScriptPath,
@@ -672,11 +670,7 @@ export class Orchestrator {
       this.pool,
       this.usedCapabilities,
       {
-        emit: (...events) => {
-          this.agentView.emit(...events);
-          this.settings.emit(...events);
-        },
-        currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
+        changed: (agentId) => this.agents.publish(agentId),
         probeRoot: (agentId) => this.agents.probeRoot(agentId),
       },
       log,
@@ -716,7 +710,6 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         emitSettings: (...events) => this.settings.emit(...events),
-        currentMatrix: (agentId) => this.agentView.current.capabilities[agentId],
         openWork: (agentId) => this.sessionManager.openWork(agentId),
         confirm: askModal,
         warn: (message) => void vscode.window.showWarningMessage(message),
@@ -768,7 +761,7 @@ export class Orchestrator {
     });
 
     void this.refreshAuditTail();
-    this.agents.publishAll();
+    void this.agents.publishAll();
     void this.integrations.refresh();
     void this.acpRegistry.load().then(() => {
       this.publishRegistry();
@@ -949,7 +942,7 @@ export class Orchestrator {
    * not-running choice connects on demand (the same startChat path as
    * the view's "+"). */
   async newSessionCommand(): Promise<void> {
-    const agents = this.agentView.current.agents;
+    const agents = this.agents.rows();
     if (agents.length === 0) {
       void vscode.window.showInformationMessage("Add an agent first — Patchbay Settings › Agents.");
       this.handleAction({ kind: "openSettings", section: "agents" });
@@ -2181,7 +2174,7 @@ export class Orchestrator {
     if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId });
     try {
-      if (this.pool.get(agentId)?.status !== "running") await this.agents.connect(agentId);
+      if (this.agents.row(agentId)?.status !== "running") await this.agents.connect(agentId);
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event; the re-mint emits the same event.
       if (draft !== undefined) await this.sessionManager.reviveNew(draft);
@@ -2204,8 +2197,8 @@ export class Orchestrator {
   private async connectForSession(sessionId: string): Promise<void> {
     const agentId = this.sessionManager.agentFor(sessionId);
     if (agentId === undefined) return;
-    if (this.pool.get(agentId)?.status === "running") return;
-    if (this.agents.config(agentId) === undefined) return;
+    const row = this.agents.row(agentId);
+    if (row === undefined || row.status === "running") return;
     if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId, forSessionId: sessionId });
     try {
@@ -2236,7 +2229,7 @@ export class Orchestrator {
         ? auth.reason
         : "needs login first — use Log in on this agent in Settings › Agents";
     }
-    return this.pool.get(agentId)?.detail ?? raw;
+    return this.agents.row(agentId)?.detail ?? raw;
   }
 
   /** Formats a swallowed action failure for the Output channel — these

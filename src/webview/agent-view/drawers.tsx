@@ -6,7 +6,7 @@
 // `onDone(toast?)` closes the drawer — drawer visibility and toasts are the
 // shell's local UI state.
 import { useState } from "react";
-import type { AgentViewState, AgentSummary, SessionSummary } from "../../shared/protocol";
+import type { AgentSummary, SessionSummary } from "../../shared/protocol";
 import type { SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { capabilityOneLiner } from "../shared/capability-format";
@@ -39,7 +39,6 @@ function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
  * banner's Restart. */
 export function AgentsDrawer(props: {
   agents: readonly AgentSummary[];
-  capabilities: AgentViewState["capabilities"];
   onDone(toast?: string): void;
 }) {
   const send = useActions();
@@ -52,7 +51,7 @@ export function AgentsDrawer(props: {
         </div>
       )}
       {props.agents.map((a) => {
-        const matrix = props.capabilities[a.id];
+        const matrix = a.capabilities;
         return (
           <div
             className="a-row"
@@ -95,7 +94,6 @@ export function AgentsDrawer(props: {
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
-  capabilities: AgentViewState["capabilities"];
   activeSessionId: string | null;
   markOf(session: SessionSummary): SessionMark | null;
   /** detachWindows preference — off hides "Open in new window". */
@@ -164,7 +162,7 @@ export function SessionsDrawer(props: {
       {/* The list is the agents' own session/list — an agent without one
           has no history here, and the drawer says so rather than leaving
           an unexplained gap. */}
-      {unlistedAgents(props.agents, props.capabilities).map((a) => (
+      {unlistedAgents(props.agents).map((a) => (
         <div className="s-row cursor-default unlisted" key={a.id}>
           <span className="sub">
             {a.name} doesn&apos;t report its sessions — only the ones open in this window are listed.

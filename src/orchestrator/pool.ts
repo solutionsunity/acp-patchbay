@@ -73,14 +73,11 @@ export interface LaunchSpec {
 }
 
 export interface PoolHooks {
-  /** `stderr` rides crash statuses only — the process's own last words,
-   * so a failure's reason is readable without the Output panel. */
-  onStatusChanged(agentId: string, status: AgentStatus, detail?: string, stderr?: readonly string[]): void;
-  onDeclaredCaptured(
-    agentId: string,
-    declared: DeclaredCapabilities,
-    raw: acp.InitializeResponse,
-  ): void;
+  /** The process's own last words stay readable on the entry
+   * (`stderrTail`), so a failure's reason needs no Output panel. */
+  onStatusChanged(agentId: string, status: AgentStatus, detail?: string): void;
+  /** A fresh connection's `initialize` answer is in — readable from `get`. */
+  onDeclaredCaptured(agentId: string): void;
   onSessionUpdate(agentId: string, notification: acp.SessionNotification): void;
   /** The permission broker replaces this; absent → reject-by-cancel. */
   onPermissionRequest?(
@@ -178,6 +175,9 @@ interface Entry {
   connection: acp.ClientConnection | null;
   declared: DeclaredCapabilities | null;
   initializeRaw: acp.InitializeResponse | null;
+  /** When `initialize` answered — the start of what this connection
+   * declared. */
+  initializedAt: string | null;
   status: AgentStatus;
   detail?: string;
   /** The sessions this connection opened, each with the cwd it was opened
@@ -195,6 +195,11 @@ export interface PooledAgentView {
   status: AgentStatus;
   detail?: string;
   declared: DeclaredCapabilities | null;
+  /** The connection's `initialize` answer (guarded at the trust boundary)
+   * — its version, protocol version and raw auth methods — and when it
+   * came. Kept past a stop, like `declared`. */
+  initialize: acp.InitializeResponse | null;
+  initializedAt: string | null;
   sessions: readonly string[];
   stderrTail: readonly string[];
 }
@@ -328,6 +333,8 @@ export class AgentPool {
       status: e.status,
       detail: e.detail,
       declared: e.declared,
+      initialize: e.initializeRaw,
+      initializedAt: e.initializedAt,
       sessions: [...e.sessions.keys()],
       stderrTail: [...e.stderrTail],
     };
@@ -360,6 +367,7 @@ export class AgentPool {
       connection: null,
       declared: null,
       initializeRaw: null,
+      initializedAt: null,
       status: "reconnecting",
       sessions: new Map(),
       stopping: false,
@@ -619,13 +627,14 @@ export class AgentPool {
     }
 
     entry.initializeRaw = init;
+    entry.initializedAt = new Date().toISOString();
     entry.declared = declaredFromInitialize(init);
     this.log.info(
       `${agentId}: initialized — ${init.agentInfo?.name ?? "unnamed"}` +
         `${init.agentInfo?.version !== undefined ? ` v${init.agentInfo.version}` : ""}` +
         `, protocol ${init.protocolVersion}`,
     );
-    this.hooks.onDeclaredCaptured(agentId, entry.declared, init);
+    this.hooks.onDeclaredCaptured(agentId);
     this.setStatus(entry, "running");
     return entry.declared;
   }
@@ -1125,11 +1134,7 @@ export class AgentPool {
   private setStatus(entry: Entry, status: AgentStatus, detail?: string): void {
     entry.status = status;
     entry.detail = detail;
-    // Crash carries the process's own last words; every other status
-    // clears them — stale stderr on a running agent would be a lie.
-    const stderr =
-      status === "crashed" && entry.stderrTail.length > 0 ? [...entry.stderrTail] : undefined;
-    this.hooks.onStatusChanged(entry.spec.agentId, status, detail, stderr);
+    this.hooks.onStatusChanged(entry.spec.agentId, status, detail);
   }
 
   private markDead(entry: Entry, detail: string): void {

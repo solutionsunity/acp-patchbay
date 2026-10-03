@@ -6,6 +6,7 @@ import { agentCardControls, type AgentCardInputs } from "../src/webview/settings
 import type {
   AgentConfigView,
   AgentSummary,
+  AgentUpdate,
   AuthMethodView,
   CapabilityMatrix,
   CapabilityRowId,
@@ -31,20 +32,35 @@ const undrivable: AuthMethodView = { id: "key", name: "API key", description: nu
 const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
-  return { id: "a1", name: "Agent", status: "running", needsAuth: false, ...over };
+  return { id: "a1", name: "Agent", status: "running", needsAuth: false, authMethods: [], ...over };
 }
 
 const config = { id: "a1", registrySource: null } as unknown as AgentConfigView;
 
-function inputs(over: Partial<AgentCardInputs> = {}): AgentCardInputs {
+/** The card's inputs — the row's matrix, auth methods and update fact
+ * given flat, for brevity, and folded into the row. */
+function inputs(
+  over: Partial<AgentCardInputs> & {
+    matrix?: CapabilityMatrix;
+    authMethods?: readonly AuthMethodView[];
+    update?: AgentUpdate;
+  } = {},
+): AgentCardInputs {
+  const { matrix, authMethods, update, ...rest } = over;
+  const agent = "agent" in rest ? rest.agent : summary();
   return {
-    agent: summary(),
     config,
-    matrix: matrixOf(),
-    authMethods: [],
-    update: undefined,
     verifying: false,
-    ...over,
+    ...rest,
+    agent:
+      agent === undefined
+        ? undefined
+        : {
+            ...agent,
+            capabilities: matrix ?? agent.capabilities ?? matrixOf(),
+            authMethods: authMethods ?? agent.authMethods,
+            update: update ?? agent.update,
+          },
   };
 }
 

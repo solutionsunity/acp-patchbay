@@ -123,7 +123,7 @@ import. No diffing library, no CRDT, no partial hydration:
 - **Snapshot** (orchestrator → webview): the complete view model for that webview,
   tagged with a monotonic revision. Sent on mount and whenever the webview asks.
 - **Patch** (orchestrator → webview): `{ rev, events[] }` — semantically named events
-  (`sessionUpdated`, `agentStatusChanged`, `permissionRequested`, …) applied by pure
+  (`sessionUpdated`, `agentUpserted`, `permissionRequested`, …) applied by pure
   reducers in the webview. A webview that sees a revision gap discards its state and
   requests a fresh snapshot. Recovery is always "resnapshot," never "repair."
 - **Coalescing**: the orchestrator buffers high-frequency `session/update` streaming
@@ -293,12 +293,13 @@ flowchart TD
   managed runtime changes which interpreter runs, never where the agent
   keeps sessions, auth, or config, so terminal and patchbay copies stay
   one history.
-- **Agent updates** — one orchestrator fact (agent-updates.ts): a registry
-  config whose pinned version trails the registry's, unless the running
-  agent already reported the registry's version (the wire outranks the
-  pin). Recomputed wherever an input moves — a registry read, any config
-  write — and published whole to both channels; the Settings card, the
-  Agent View's agent chip and the notice all read it, none derives it. A
+- **Agent updates** — one fact, worked out where it is read
+  (agent-updates.ts): a registry config whose pinned version trails the
+  registry's, unless the running agent already reported the registry's
+  version (the wire outranks the pin). Never stored: it rides each agent's
+  row, re-sent whenever a registry read or a config write moves it; the
+  Settings card, the Agent View's agent chip and the notice all read it,
+  none derives it. A
   registry read landing (never the cached copy loaded at start) announces
   each newer version once per window. Upgrade is always the user's click, through the one upgrade
   path: it re-resolves the registry version like a first add, and asks

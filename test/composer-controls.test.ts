@@ -19,6 +19,7 @@ const agent = (over: Partial<AgentSummary>): AgentSummary => ({
   name: "Claude",
   status: "running",
   needsAuth: false,
+  authMethods: [],
   ...over,
 });
 

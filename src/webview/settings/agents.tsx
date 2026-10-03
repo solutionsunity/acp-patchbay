@@ -606,7 +606,6 @@ export function AgentsSection(props: {
           const a = state.agents.find((x) => x.id === id);
           const config = state.agentConfigs.find((c) => c.id === id);
           const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
-          const matrix = state.capabilities[id];
           // Registry row for this config: the config's own registrySource is
           // the link (a config id may predate the registry naming); plain id
           // covers agents added straight from the registry.
@@ -626,9 +625,6 @@ export function AgentsSection(props: {
           const controls = agentCardControls({
             agent: a,
             config,
-            matrix,
-            authMethods: state.authMethods[id] ?? [],
-            update: state.updates[id],
             verifying: state.verifyingAgents[id] === true,
           });
           const saveConfig = (patch: Partial<AgentConfigView>) =>
@@ -677,7 +673,7 @@ export function AgentsSection(props: {
                     )}
                     <span className="flex-1" />
                     {controls.login.show && (
-                      <LoginControl agentId={id} methods={state.authMethods[id] ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
+                      <LoginControl agentId={id} methods={a?.authMethods ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
                     )}
                     {/* Log out is *disabled* — never unmounted — while in flight,
                         so the open AlertDialog is never yanked from the tree. */}
@@ -773,9 +769,9 @@ export function AgentsSection(props: {
                       {command}
                     </div>
                   )}
-                  {detailsOpen && matrix !== undefined && (
+                  {detailsOpen && a?.capabilities !== undefined && (
                     <div className="note mt-1.5">
-                      {capabilityOneLiner(matrix)}
+                      {capabilityOneLiner(a.capabilities)}
                     </div>
                   )}
                   {!detailsOpen ? null : editing === id ? (

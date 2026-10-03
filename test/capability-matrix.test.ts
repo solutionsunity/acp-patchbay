@@ -1,5 +1,5 @@
-// Pure-function coverage: capabilityState, matrixFromDeclared,
-// and the reducer's capability handling — the parts of P5 that don't need a
+// Pure-function coverage: capabilityState, matrixFromDeclared, and the
+// tracker's marks over a stand-in pool — the parts of P5 that don't need a
 // live agent at all.
 import { describe, expect, it } from "vitest";
 import {
@@ -8,12 +8,15 @@ import {
   rowsProvenBy,
   terminalAuthOf,
 } from "../src/orchestrator/capabilities";
+import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
+import type { AgentPool } from "../src/orchestrator/pool";
+import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   capabilityState,
   hasUnusedProbe,
   initialAgentViewState,
   reduceAgentView,
-  type AgentViewEvent,
   type AuthMethodView,
   type DeclaredCapabilities,
 } from "../src/shared/protocol";
@@ -231,77 +234,107 @@ describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => 
   });
 });
 
-describe("reducer: capabilitiesDeclared / capabilityUsed", () => {
-  const declared: AgentViewEvent = {
-    kind: "capabilitiesDeclared",
-    protocolVersion: 1,
-    agentId: "a1",
-    matrix: matrixFromDeclared({ ...noDeclared, sessionFork: true }),
-    authMethods: [],
-    at: "2026-01-01T00:00:00.000Z",
+/** The tracker over a pool that only answers `get` — one connection whose
+ * declaration and version the test moves; the probe a reconnect starts
+ * finds no wire and ends quietly. */
+function trackerOver(declared: DeclaredCapabilities, version: string | undefined) {
+  let live = { declared, initialize: { protocolVersion: 1, agentInfo: version === undefined ? undefined : { name: "a", version } } };
+  const pool = {
+    get: () => live,
+    newSession: () => Promise.reject(new Error("no wire here")),
+    forgetSession: () => {},
+  } as unknown as AgentPool;
+  const changed: string[] = [];
+  const tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    changed: (agentId) => changed.push(agentId),
+    probeRoot: async () => "/nowhere",
+  });
+  /** A fresh connection — the same agent, at `nextVersion`. */
+  const reconnect = (nextVersion: string | undefined) => {
+    live = { declared, initialize: { protocolVersion: 1, agentInfo: nextVersion === undefined ? undefined : { name: "a", version: nextVersion } } };
+    tracker.onDeclared("a1");
   };
+  return { tracker, changed, reconnect };
+}
 
-  it("stores the fresh matrix and reset timestamp", () => {
-    const state = reduceAgentView(initialAgentViewState, declared);
-    expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: false });
-    expect(state.capabilitiesResetAt.a1).toBe("2026-01-01T00:00:00.000Z");
+describe("tracker marks — the matrix as it is read", () => {
+  const declared = { ...noDeclared, sessionFork: true };
+
+  it("reads the connection's declaration, unmarked", () => {
+    const { tracker } = trackerOver(declared, "1.0.0");
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
   });
 
-  it("capabilityUsed flips a declared row to used", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "session.fork" });
-    expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: true });
+  it("a used mark flips a declared row to used", () => {
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
   it("used implies declared even for rows with no initialize-time claim", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "usage" });
-    expect(state.capabilities.a1!.usage).toEqual({ declared: true, used: true });
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "usage", "used");
+    expect(tracker.matrix("a1")!.usage).toEqual({ declared: true, used: true });
   });
 
-  it("reconnect (a second capabilitiesDeclared) drops used — replaces, never merges", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "session.fork" });
-    expect(state.capabilities.a1!["session.fork"].used).toBe(true);
-
-    state = reduceAgentView(state, {
-      kind: "capabilitiesDeclared",
-    protocolVersion: 1,
-      agentId: "a1",
-      matrix: matrixFromDeclared({ ...noDeclared, sessionFork: true }),
-      authMethods: [],
-      at: "2026-01-01T01:00:00.000Z",
-    });
-    expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: false });
-    expect(state.capabilitiesResetAt.a1).toBe("2026-01-01T01:00:00.000Z");
+  it("a reconnect at the same version keeps what was proven; a version change starts fresh", () => {
+    const { tracker, reconnect } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    reconnect("1.0.0");
+    expect(tracker.matrix("a1")!["session.fork"].used).toBe(true);
+    reconnect("1.1.0");
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
   });
 
-  it("capabilitySuspect flags a declared row — suspicion implies declared, like used does", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "prompt.image" });
-    expect(state.capabilities.a1!["prompt.image"]).toEqual({
-      declared: true,
-      used: false,
-      suspect: true,
-    });
-    expect(capabilityState(state.capabilities.a1!["prompt.image"])).toBe("suspect");
+  it("an agent reporting no version keeps its marks for the connection only", () => {
+    const { tracker, reconnect } = trackerOver(declared, undefined);
+    tracker.noteEvidence("a1", "session.fork", "used");
+    expect(tracker.matrix("a1")!["session.fork"].used).toBe(true);
+    reconnect(undefined);
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
+  });
+
+  it("suspect flags a declared row — suspicion implies declared, like used does", () => {
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "prompt.image", "suspect");
+    expect(tracker.matrix("a1")!["prompt.image"]).toEqual({ declared: true, used: false, suspect: true });
+    expect(capabilityState(tracker.matrix("a1")!["prompt.image"])).toBe("suspect");
   });
 
   it("suspicion never speaks over proof — suspect on a used row is a no-op", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "session.fork" });
-    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "session.fork" });
-    expect(state.capabilities.a1!["session.fork"]).toEqual({ declared: true, used: true });
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    tracker.noteEvidence("a1", "session.fork", "suspect");
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
-  it("first success acquits — capabilityUsed drops the suspect flag", () => {
-    let state = reduceAgentView(initialAgentViewState, declared);
-    state = reduceAgentView(state, { kind: "capabilitySuspect", agentId: "a1", row: "prompt.image" });
-    state = reduceAgentView(state, { kind: "capabilityUsed", agentId: "a1", row: "prompt.image" });
-    expect(state.capabilities.a1!["prompt.image"]).toEqual({ declared: true, used: true });
-    expect(capabilityState(state.capabilities.a1!["prompt.image"])).toBe("used");
+  it("first success acquits — a used mark drops the suspect flag", () => {
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "session.fork", "suspect");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
+  // Features gate on used: a mark on a row the connection no longer claims
+  // (and whose proof can't outrun a claim) lights nothing — the rule a
+  // restart already applied, now the only one.
+  it("a used mark on a row the connection doesn't declare stays dark", () => {
+    const { tracker } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "prompt.image", "used");
+    expect(capabilityState(tracker.matrix("a1")!["prompt.image"])).toBe("not-declared");
+  });
+
+  it("a repeat of a standing mark writes nothing and moves nothing", () => {
+    const { tracker, changed } = trackerOver(declared, "1.0.0");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    tracker.noteEvidence("a1", "session.fork", "used");
+    tracker.noteEvidence("a1", "prompt.image", "suspect");
+    tracker.noteEvidence("a1", "prompt.image", "suspect");
+    expect(changed).toEqual(["a1", "a1"]);
+  });
+});
+
+describe("reducer: usage", () => {
   it("usageReported populates sessionUsage", () => {
     const state = reduceAgentView(initialAgentViewState, {
       kind: "usageReported",

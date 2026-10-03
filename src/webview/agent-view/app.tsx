@@ -52,6 +52,8 @@ export function App({
       null);
   const activeAgentId = active?.agentId ?? (incoming ? state.chatConnect?.agentId : undefined);
   const activeAgent = state.agents.find((a) => a.id === activeAgentId) ?? null;
+  // The open session's agent — what its roots chip is judged against.
+  const activeMatrix = active !== null ? activeAgent?.capabilities : undefined;
 
   // The one transcript derivation (view-model.ts), hoisted here because two
   // siblings consume it: Chat renders the items/rollups, the composer's
@@ -107,7 +109,7 @@ export function App({
       {!pinned && (
         <Header
           agent={activeAgent}
-          update={activeAgent !== null ? (state.updates[activeAgent.id] ?? null) : null}
+          update={activeAgent?.update ?? null}
           onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", agentId: activeAgent.id })}
           onSessions={openSessions}
           onNew={newChat}
@@ -175,13 +177,9 @@ export function App({
         workspaceRoots={state.workspaceRoots}
         savedRoots={state.savedRoots}
         rootsControls={rootsControls({
-          advertised:
-            active !== null &&
-            state.capabilities[active.agentId]?.["session.additionalDirectories"]?.declared === true,
-          resumeDeclared:
-            active !== null && state.capabilities[active.agentId]?.["session.resume"]?.declared === true,
-          loadDeclared:
-            active !== null && state.capabilities[active.agentId]?.["session.load"]?.declared === true,
+          advertised: activeMatrix?.["session.additionalDirectories"]?.declared === true,
+          resumeDeclared: activeMatrix?.["session.resume"]?.declared === true,
+          loadDeclared: activeMatrix?.["session.load"]?.declared === true,
           hasTurns: active !== null && (state.transcripts[active.id]?.length ?? 0) > 0,
         })}
         liveSelection={state.liveSelection}
@@ -196,17 +194,12 @@ export function App({
       />
       {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (
-        <AgentsDrawer
-          agents={state.agents}
-          capabilities={state.capabilities}
-          onDone={closeDrawer}
-        />
+        <AgentsDrawer agents={state.agents} onDone={closeDrawer} />
       )}
       {drawer === "sessions" && (
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
-          capabilities={state.capabilities}
           activeSessionId={state.activeSessionId}
           markOf={(s) => sessionMark(state, s)}
           detach={detach}

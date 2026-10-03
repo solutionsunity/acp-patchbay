@@ -65,6 +65,45 @@ describe("agents store", () => {
     await h.agents.stop("v");
   });
 
+  it("a crashed row carries the process's last words; a running one carries none", async () => {
+    const h = agentsHarness(dir);
+    // write-callback → exit: the last words are flushed before death
+    const dying = ["-e", 'process.stderr.write("boom: config missing\\n", () => process.exit(1));'];
+    await h.agents.save(fakeConfig("doomed", {}, { args: dying }));
+    await expect(h.agents.connect("doomed")).rejects.toThrow();
+    expect(h.row("doomed")?.status).toBe("crashed");
+    expect(h.row("doomed")?.stderr?.join("\n")).toContain("boom: config missing");
+
+    await h.agents.save(fakeConfig("doomed", {}));
+    await h.agents.connect("doomed");
+    expect(h.row("doomed")?.status).toBe("running");
+    expect(h.row("doomed")?.stderr).toBeUndefined();
+    await h.agents.stop("doomed");
+  });
+
+  it("the row's command is what runs while a process runs, and what Connect would run otherwise", async () => {
+    const h = agentsHarness(dir);
+    await h.agents.save(fakeConfig("cmd", {}));
+    await h.agents.connect("cmd");
+    const spawned = h.row("cmd")!.command;
+    await h.agents.save(fakeConfig("cmd", {}, { args: [FAKE_AGENT, "--edited"] }));
+    expect(h.row("cmd")!.command).toBe(spawned);
+    await h.agents.stop("cmd");
+    expect(h.row("cmd")!.command).toContain("--edited");
+  });
+
+  it("publishing sends every row before the config list waits on any env read — the first frame has every agent", async () => {
+    const h = agentsHarness(dir);
+    await h.agents.save(fakeConfig("first", {}));
+    await h.agents.save(fakeConfig("second", {}));
+    h.events.length = 0;
+    const settled = h.agents.publishAll();
+    // synchronously, before the env reads behind the config list resolve
+    expect(h.state().agents.map((a) => a.id)).toEqual(["first", "second"]);
+    expect(h.row("second")?.status).toBe("untested");
+    await settled;
+  });
+
   it("refuses to connect an agent with no saved config", async () => {
     const h = agentsHarness(dir);
     await expect(h.agents.connect("ghost")).rejects.toThrow("no saved launch configuration");
@@ -98,7 +137,7 @@ describe("agents store", () => {
     const h = agentsHarness(dir);
     h.agents.noteAuthWireFact("ghost", "session/new", "auth_required", new Date().toISOString(), "log in");
     expect(h.agents.authLocked("ghost")).toBe(false);
-    expect(h.events.some((e) => e.kind === "agentAuthRequired")).toBe(false);
+    expect(h.events.some((e) => e.kind === "agentUpserted" && e.agent.id === "ghost")).toBe(false);
   });
 
   it("startup connects the agents flagged auto-connect, and nothing else", async () => {

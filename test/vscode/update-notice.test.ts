@@ -13,12 +13,12 @@ interface RegistryData {
 
 interface Internal {
   orchestrator: {
-    agentConfigs: {
-      upsert(config: Record<string, unknown>): Promise<void>;
+    agents: {
+      save(config: SavedConfig): Promise<void>;
       remove(id: string): Promise<void>;
     };
     acpRegistry: { current(): RegistryData; refresh(moment: "manual"): Promise<{ ok: boolean }> };
-    agentView: { current: { updates: Record<string, { from: string; to: string }> } };
+    agentView: { current: { agents: Array<{ id: string; update?: { from: string; to: string } }> } };
   };
 }
 
@@ -39,11 +39,25 @@ const registryAgent = (id: string, version: string) => ({
   distribution: { npx: { package: `${id}@${version}`, args: [], env: {} } },
 });
 
-const config = (id: string, pinnedVersion: string) => ({
+/** The record a Settings save writes — the agents store's own path in. */
+interface SavedConfig {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  autoConnect: boolean;
+  defaults: Record<string, never>;
+  registrySource: { registryId: string; distributionKind: "npx"; pinnedVersion: string };
+  lastSeenVersion: null;
+}
+
+const config = (id: string, pinnedVersion: string): SavedConfig => ({
   id,
   name: `Agent ${id}`,
   command: "npx",
   args: [],
+  env: {},
   autoConnect: false,
   defaults: {},
   registrySource: { registryId: id, distributionKind: "npx", pinnedVersion },
@@ -73,12 +87,15 @@ suite("update notice", () => {
     };
 
     try {
-      await orchestrator.agentConfigs.upsert(config("upd-a", "1.0.0"));
-      await orchestrator.agentConfigs.upsert(config("upd-b", "2.0.0"));
-      await orchestrator.agentConfigs.upsert(config("upd-c", "3.0.0"));
+      await orchestrator.agents.save(config("upd-a", "1.0.0"));
+      await orchestrator.agents.save(config("upd-b", "2.0.0"));
+      await orchestrator.agents.save(config("upd-c", "3.0.0"));
 
       await land(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
-      assert.deepStrictEqual(orchestrator.agentView.current.updates["upd-a"], { from: "1.0.0", to: "1.1.0" });
+      assert.deepStrictEqual(
+        orchestrator.agentView.current.agents.find((a) => a.id === "upd-a")?.update,
+        { from: "1.0.0", to: "1.1.0" },
+      );
       assert.deepStrictEqual(shown, [["Agent upd-a 1.1.0 is available — you run 1.0.0.", "Upgrade"]]);
 
       // the next fetch with nothing newer says nothing again
@@ -90,7 +107,7 @@ suite("update notice", () => {
       assert.deepStrictEqual(shown[1], ["Updates are available for 2 agents.", "Upgrade…"]);
     } finally {
       window.showInformationMessage = show;
-      for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.agentConfigs.remove(id);
+      for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.agents.remove(id);
       await land(...original.agents);
       globalThis.fetch = realFetch;
     }

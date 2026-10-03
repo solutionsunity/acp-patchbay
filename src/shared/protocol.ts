@@ -534,7 +534,8 @@ export interface AgentSummary {
   /** The process's own last words (stderr tail), present on crash — the
    * reason readable inline, no Output panel required. */
   stderr?: readonly string[];
-  /** Launch command line as spawned (shown mono). */
+  /** The launch command line (shown mono): as spawned while a process runs
+   * or starts, as configured otherwise — what the next Connect runs. */
   command?: string;
   /** True while a standing auth lock exists for this agent — raised by a
    * wire `auth_required` or a witnessed logout, cleared only by evidence
@@ -549,6 +550,21 @@ export interface AgentSummary {
    * declares no actionable auth method (Auggie logged out: "run `auggie
    * login` from your terminal"). Cleared with needsAuth. */
   authReason?: string;
+  /** Declared/used per capability row: what the agent's connection in this
+   * window declared, with the marks earned against its version. Absent
+   * until it has connected in this window. */
+  capabilities?: CapabilityMatrix;
+  /** When that connection's `initialize` answered — the matrix's "reset
+   * <time>" chip. */
+  capabilitiesResetAt?: string;
+  /** The `initialize` response's negotiated protocol version. */
+  protocolVersion?: number;
+  /** Declared auth methods — the Log-in button's source (the runnable kinds
+   * are AuthMethodView's docstring); empty until it has connected. */
+  authMethods: readonly AuthMethodView[];
+  /** A newer registry version than the agent's pin — the upgrade chip,
+   * never applied on its own; absent when there is none. */
+  update?: AgentUpdate;
 }
 
 /** The live-selection indicator's data (the ghost chip):
@@ -1249,9 +1265,6 @@ export interface AgentViewState {
   restoring: boolean;
   /** The ACP registry's agents (acp-registry.ts) for the pickers. */
   registryAgents: readonly RegistryAgentView[];
-  /** Agents with a newer registry version than they run — the upgrade
-   * chip's source. */
-  updates: Readonly<Record<string, AgentUpdate>>;
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
   transcripts: Readonly<Record<string, readonly ChatBlock[]>>;
   /** The pinned plan widget's source — the most recent plan snapshot, or
@@ -1267,13 +1280,6 @@ export interface AgentViewState {
    * rendering area's per-session loading page signal. */
   hydrating: Readonly<Record<string, true>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
-  /** Declared/used per agent — replaced wholesale on every (re)connect. */
-  capabilities: Readonly<Record<string, CapabilityMatrix>>;
-  /** ISO time of the last capabilitiesDeclared — powers the "reset <time>" chip. */
-  capabilitiesResetAt: Readonly<Record<string, string>>;
-  /** Declared auth methods per agent — the Log-in button's source (the
-   * runnable kinds are AuthMethodView's docstring). */
-  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Present only once `usage` is used — absence over fake. */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
   /** Explicitly attached context, pending inclusion in the next prompt. */
@@ -1418,15 +1424,11 @@ export const initialAgentViewState: AgentViewState = {
   chatConnect: null,
   restoring: false,
   registryAgents: [],
-  updates: {},
   transcripts: {},
   activePlan: {},
   activeTurn: {},
   hydrating: {},
   commandsBySession: {},
-  capabilities: {},
-  capabilitiesResetAt: {},
-  authMethods: {},
   sessionUsage: {},
   contextChips: {},
   promptQueue: {},
@@ -1443,16 +1445,11 @@ export const initialAgentViewState: AgentViewState = {
 };
 
 export type AgentViewEvent =
+  /** The agent's whole row, read now — any change to any of its facts
+   * re-sends it, and it replaces what the view held. One event, both
+   * channels. */
   | { kind: "agentUpserted"; agent: AgentSummary }
   | { kind: "agentRemoved"; agentId: string }
-  | {
-      kind: "agentStatusChanged";
-      agentId: string;
-      status: AgentStatus;
-      detail?: string;
-      /** stderr tail, riding crash statuses only. */
-      stderr?: readonly string[];
-    }
   | { kind: "chatConnectStarted"; agentId: string; forSessionId?: string }
   | { kind: "chatConnectFailed"; agentId: string; reason: string; forSessionId?: string }
   | { kind: "chatConnectResolved" }
@@ -1603,20 +1600,6 @@ export type AgentViewEvent =
     }
   /** Full replace — the answer to one queryWorkspaceFiles, echoing its query. */
   | { kind: "workspaceFilesListed"; query: string; files: readonly string[]; dirs: readonly string[] }
-  /** Fired on every connect — replaces the agent's whole matrix (used
-   * seeded from the persisted cache when the version matches, honestly
-   * reset otherwise) and its declared auth methods. */
-  | {
-      kind: "capabilitiesDeclared";
-      agentId: string;
-      matrix: CapabilityMatrix;
-      authMethods: readonly AuthMethodView[];
-      /** The initialize response's negotiated protocol version. */
-      protocolVersion: number;
-      at: string;
-    }
-  | { kind: "capabilityUsed"; agentId: string; row: CapabilityRowId }
-  | { kind: "capabilitySuspect"; agentId: string; row: CapabilityRowId }
   | {
       kind: "usageReported";
       sessionId: string;
@@ -1626,18 +1609,9 @@ export type AgentViewEvent =
       /** Present only on the updates that carry a fresh plan reading. */
       plan?: PlanUsageInfo;
     }
-  /** A standing auth lock was raised by the one writer (the evidence
-   * authority): a wire `auth_required`, a witnessed logout (the strongest
-   * lock), or a failed terminal login. `reason` is the lock's reason — an
-   * agent-authored instruction where the wire carried one, null
-   * otherwise. */
-  | { kind: "agentAuthRequired"; agentId: string; reason: string | null }
-  | { kind: "agentAuthResolved"; agentId: string }
   /** Full replace — the registry × overlay merge changed (refresh, or a new
    * version landed upstream). */
   | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string }
-  /** The complete update fact (never a patch) — one event, both channels. */
-  | { kind: "agentUpdatesChanged"; updates: Readonly<Record<string, AgentUpdate>> }
   /** The complete stored preferences (never a patch) — one event, both
    * channels: the Preferences page renders it, the agent view gates its
    * composer stats on it. */
@@ -1658,80 +1632,9 @@ function reduceAgents(
     }
     case "agentRemoved":
       return agents.filter((a) => a.id !== event.agentId);
-    case "agentStatusChanged":
-      // stderr is overwritten, never merged — a recovery clears stale last words.
-      return agents.map((a) =>
-        a.id === event.agentId
-          ? { ...a, status: event.status, detail: event.detail, stderr: event.stderr }
-          : a,
-      );
-    case "agentAuthRequired":
-      return agents.map((a) =>
-        a.id === event.agentId
-          ? { ...a, needsAuth: true, authReason: event.reason ?? undefined }
-          : a,
-      );
-    case "agentAuthResolved":
-      return agents.map((a) =>
-        a.id === event.agentId ? { ...a, needsAuth: false, authReason: undefined } : a,
-      );
     default:
       return agents;
   }
-}
-
-function reduceCapabilities(
-  capabilities: Readonly<Record<string, CapabilityMatrix>>,
-  event: AgentViewEvent,
-): Readonly<Record<string, CapabilityMatrix>> {
-  switch (event.kind) {
-    case "capabilitiesDeclared":
-      return { ...capabilities, [event.agentId]: event.matrix };
-    case "capabilityUsed": {
-      // Used always implies declared — the single write path for both,
-      // which is what lets rows with no initialize-time claim (usage,
-      // concurrentSessions) go straight from not-declared to used. Writing
-      // the whole cell also drops any suspect flag: success acquits.
-      const matrix = capabilities[event.agentId];
-      if (matrix === undefined) return capabilities;
-      return {
-        ...capabilities,
-        [event.agentId]: { ...matrix, [event.row]: { declared: true, used: true } },
-      };
-    }
-    case "capabilitySuspect": {
-      // Suspicion implies declared too — the attempt is itself the claim
-      // (a failed second session/new indicts concurrentSessions even though
-      // no initialize-time claim exists). Never touches a used row: proof
-      // already won, and pool.ts doesn't emit suspect over used anyway.
-      const matrix = capabilities[event.agentId];
-      if (matrix === undefined || matrix[event.row].used) return capabilities;
-      return {
-        ...capabilities,
-        [event.agentId]: { ...matrix, [event.row]: { declared: true, used: false, suspect: true } },
-      };
-    }
-    default:
-      return capabilities;
-  }
-}
-
-function reduceCapabilitiesResetAt(
-  resetAt: Readonly<Record<string, string>>,
-  event: AgentViewEvent,
-): Readonly<Record<string, string>> {
-  return event.kind === "capabilitiesDeclared"
-    ? { ...resetAt, [event.agentId]: event.at }
-    : resetAt;
-}
-
-function reduceAuthMethods(
-  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>,
-  event: AgentViewEvent,
-): Readonly<Record<string, readonly AuthMethodView[]>> {
-  return event.kind === "capabilitiesDeclared"
-    ? { ...authMethods, [event.agentId]: event.authMethods }
-    : authMethods;
 }
 
 function withTranscript(
@@ -1890,25 +1793,12 @@ export function reduceAgentView(
 ): AgentViewState {
   switch (event.kind) {
     case "agentUpserted":
-    case "agentStatusChanged":
-    case "agentAuthRequired":
-    case "agentAuthResolved":
-      return { ...state, agents: reduceAgents(state.agents, event) };
     case "agentRemoved":
-      // Per-agent facts leave with their agent — no ghost entries.
-      return {
-        ...state,
-        agents: reduceAgents(state.agents, event),
-        capabilities: dropKey(state.capabilities, event.agentId),
-        capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
-        authMethods: dropKey(state.authMethods, event.agentId),
-      };
+      return { ...state, agents: reduceAgents(state.agents, event) };
     case "registryChanged":
       // The agent view needs only the list; the settings channel also keeps
       // the snapshot's fetchedAt for the Add Agent card's freshness line.
       return { ...state, registryAgents: event.agents };
-    case "agentUpdatesChanged":
-      return { ...state, updates: event.updates };
     case "chatConnectStarted":
       return { ...state, chatConnect: { agentId: event.agentId, status: "connecting", forSessionId: event.forSessionId } };
     case "chatConnectFailed":
@@ -2133,16 +2023,6 @@ export function reduceAgentView(
         ...state,
         commandsBySession: { ...state.commandsBySession, [event.sessionId]: event.commands },
       };
-    case "capabilitiesDeclared":
-      return {
-        ...state,
-        capabilities: reduceCapabilities(state.capabilities, event),
-        capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
-        authMethods: reduceAuthMethods(state.authMethods, event),
-      };
-    case "capabilityUsed":
-    case "capabilitySuspect":
-      return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "usageReported": {
       // A fresh reading lands under its own window key; every other
       // window's standing reading survives (parallel axes), and a plain
@@ -2448,15 +2328,6 @@ export interface SettingsState {
   section: SettingsSectionId;
   agents: readonly AgentSummary[];
   registryAgents: readonly RegistryAgentView[];
-  /** Agents with a newer registry version than they run — the card's
-   * upgrade chip. */
-  updates: Readonly<Record<string, AgentUpdate>>;
-  capabilities: Readonly<Record<string, CapabilityMatrix>>;
-  capabilitiesResetAt: Readonly<Record<string, string>>;
-  /** Negotiated ACP protocol version per agent (initialize response) —
-   * connection-level truth, refreshed per connect like the matrix. */
-  agentProtocol: Readonly<Record<string, number>>;
-  authMethods: Readonly<Record<string, readonly AuthMethodView[]>>;
   /** Workspace layer — evaluated first (permission-rules.ts). */
   commandRules: readonly CommandRuleView[];
   /** Machine layer — the fallback floor for every workspace on this machine. */
@@ -2519,11 +2390,6 @@ export const initialSettingsState: SettingsState = {
   section: "agents",
   agents: [],
   registryAgents: [],
-  updates: {},
-  capabilities: {},
-  capabilitiesResetAt: {},
-  agentProtocol: {},
-  authMethods: {},
   commandRules: [],
   machineCommandRules: [],
   fileWriteScope: "workspace",
@@ -2577,48 +2443,27 @@ export function reduceSettings(
   event: SettingsEvent,
 ): SettingsState {
   switch (event.kind) {
-    case "agentStatusChanged":
+    case "agentUpserted":
       return {
         ...state,
         agents: reduceAgents(state.agents, event),
         // Offerings are connection state — the defaults editor's session
         // rode the connection, so its surface leaves with it; an expanded
         // card reopens one when the agent is back.
-        ...(event.status !== "running"
-          ? { agentKnobs: dropKey(state.agentKnobs, event.agentId) }
+        ...(event.agent.status !== "running"
+          ? { agentKnobs: dropKey(state.agentKnobs, event.agent.id) }
           : {}),
       };
-    case "agentUpserted":
-    case "agentAuthRequired":
-    case "agentAuthResolved":
-      return { ...state, agents: reduceAgents(state.agents, event) };
     case "agentRemoved":
       // Per-agent facts leave with their agent — no ghost entries.
       return {
         ...state,
         agents: reduceAgents(state.agents, event),
-        capabilities: dropKey(state.capabilities, event.agentId),
-        capabilitiesResetAt: dropKey(state.capabilitiesResetAt, event.agentId),
-        agentProtocol: dropKey(state.agentProtocol, event.agentId),
-        authMethods: dropKey(state.authMethods, event.agentId),
         agentKnobs: dropKey(state.agentKnobs, event.agentId),
         verifyingAgents: dropKey(state.verifyingAgents, event.agentId),
       };
     case "registryChanged":
       return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
-    case "agentUpdatesChanged":
-      return { ...state, updates: event.updates };
-    case "capabilitiesDeclared":
-      return {
-        ...state,
-        capabilities: reduceCapabilities(state.capabilities, event),
-        capabilitiesResetAt: reduceCapabilitiesResetAt(state.capabilitiesResetAt, event),
-        agentProtocol: { ...state.agentProtocol, [event.agentId]: event.protocolVersion },
-        authMethods: reduceAuthMethods(state.authMethods, event),
-      };
-    case "capabilityUsed":
-    case "capabilitySuspect":
-      return { ...state, capabilities: reduceCapabilities(state.capabilities, event) };
     case "permissionRulesChanged":
       return {
         ...state,

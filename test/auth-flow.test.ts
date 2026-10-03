@@ -50,17 +50,31 @@ const LAZY: FakeAgentScript = {
 
 /** The shared agents harness, plus what these flows read: the persisted
  * lock as the store holds it — tests may pre-seed one, exactly as the store
- * restores a lock across a reload — and the auth events the views got. */
+ * restores a lock across a reload, and the views get the row it reads — and
+ * how often the views saw needsAuth go up and come down. */
 function harness() {
   const h = agentsHarness(cwd);
   const locks = {
     get: (agentId: string): AuthLock | undefined => h.deps.authLocks.lockFor(agentId) ?? undefined,
-    // MemoryKV writes land before the promise resolves.
-    set: (agentId: string, lock: AuthLock): void => void h.deps.authLocks.upsert({ id: agentId, lock }),
+    set: (agentId: string, lock: AuthLock): void => {
+      // MemoryKV writes land before the promise resolves.
+      void h.deps.authLocks.upsert({ id: agentId, lock });
+      h.agents.publish(agentId);
+    },
   };
-  const authEvents = (kind: "agentAuthRequired" | "agentAuthResolved", agentId: string) =>
-    h.events.filter((e) => e.kind === kind && e.agentId === agentId);
-  return { ...h, locks, authEvents };
+  const authFlips = (agentId: string) => {
+    let raised = 0;
+    let resolved = 0;
+    let locked = false;
+    for (const e of h.events) {
+      if (e.kind !== "agentUpserted" || e.agent.id !== agentId) continue;
+      if (e.agent.needsAuth && !locked) raised++;
+      if (!e.agent.needsAuth && locked) resolved++;
+      locked = e.agent.needsAuth;
+    }
+    return { raised, resolved };
+  };
+  return { ...h, locks, authFlips };
 }
 
 async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {
@@ -81,15 +95,15 @@ describe("auth flows on the wire", () => {
 
     const lock = await waitFor(() => h.locks.get("strict"));
     expect(lock).toMatchObject({ kind: "authRequired", method: methods.agent.session.new });
-    expect(h.authEvents("agentAuthRequired", "strict").length).toBeGreaterThanOrEqual(1);
-    expect(h.authEvents("agentAuthResolved", "strict")).toHaveLength(0);
+    expect(h.authFlips("strict").raised).toBeGreaterThanOrEqual(1);
+    expect(h.authFlips("strict").resolved).toBe(0);
     expect(h.state().agents.find((a) => a.id === "strict")?.needsAuth).toBe(true);
 
     await h.tracker.authenticate("strict", "default");
     expect(h.locks.get("strict")).toBeUndefined();
-    expect(h.authEvents("agentAuthResolved", "strict")).toHaveLength(1);
+    expect(h.authFlips("strict").resolved).toBe(1);
     expect(h.state().agents.find((a) => a.id === "strict")?.needsAuth).toBe(false);
-    expect(capabilityState(h.state().capabilities.strict!.auth)).toBe("used");
+    expect(capabilityState(h.row("strict")!.capabilities!.auth)).toBe("used");
 
     await h.pool.stop("strict");
   });
@@ -106,8 +120,8 @@ describe("auth flows on the wire", () => {
     // non-transition, so no event spam and certainly no resolve.
     await h.pool.connect(spec(STRICT, "relock"));
     await new Promise((r) => setTimeout(r, 300)); // let the reconnect probe settle
-    expect(h.authEvents("agentAuthRequired", "relock")).toHaveLength(1);
-    expect(h.authEvents("agentAuthResolved", "relock")).toHaveLength(0);
+    expect(h.authFlips("relock").raised).toBe(1);
+    expect(h.authFlips("relock").resolved).toBe(0);
     expect(h.locks.get("relock")).toMatchObject({
       kind: "authRequired",
       method: methods.agent.session.new,
@@ -129,20 +143,20 @@ describe("auth flows on the wire", () => {
     });
 
     await h.pool.connect(spec(LAZY, "lazy"));
-    await waitFor(() => (h.state().capabilities.lazy?.["session.fork"]?.used ? true : undefined));
+    await waitFor(() => (h.row("lazy")?.capabilities?.["session.fork"]?.used ? true : undefined));
     // initialize, session/new, session/fork all succeeded — none of them
     // contradicts a logout, so the lock must stand untouched.
-    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(0);
+    expect(h.authFlips("lazy").resolved).toBe(0);
     expect(h.locks.get("lazy")).toMatchObject({ kind: "loggedOut" });
-    expect(h.state().agents.find((a) => a.id === "lazy")?.needsAuth).toBe(false); // seeded row untouched — the real host seeds needsAuth from the store
+    expect(h.row("lazy")?.needsAuth).toBe(true); // the row reads the standing lock
 
     const { sessionId } = await h.pool.newSession("lazy", cwd);
     await h.pool.prompt("lazy", sessionId, [{ type: "text", text: "hi" }]);
     expect(h.locks.get("lazy")).toBeUndefined();
-    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(1);
+    expect(h.authFlips("lazy").resolved).toBe(1);
     // The prompt honestly ended the lock — but patchbay's auth path never
     // fired, so the row stays declared: clearing ≠ proving.
-    expect(capabilityState(h.state().capabilities.lazy!.auth)).toBe("declared");
+    expect(capabilityState(h.row("lazy")!.capabilities!.auth)).toBe("declared");
 
     await h.pool.stop("lazy");
   });
@@ -163,11 +177,11 @@ describe("auth flows on the wire", () => {
     h.locks.set("lazy", { kind: "loggedOut", reason: LOGGED_OUT_REASON, at: new Date().toISOString() });
     await inFlight;
     expect(h.locks.get("lazy")).toMatchObject({ kind: "loggedOut" });
-    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(0);
+    expect(h.authFlips("lazy").resolved).toBe(0);
 
     await h.pool.prompt("lazy", sessionId, [{ type: "text", text: "started under the lock" }]);
     expect(h.locks.get("lazy")).toBeUndefined();
-    expect(h.authEvents("agentAuthResolved", "lazy")).toHaveLength(1);
+    expect(h.authFlips("lazy").resolved).toBe(1);
 
     await h.pool.stop("lazy");
   });
@@ -186,9 +200,9 @@ describe("auth flows on the wire", () => {
     // locks, which session/new can never launder.
     await h.pool.connect(spec({ ...STRICT, lies: {} }, "healed"));
     await waitFor(() => (h.locks.get("healed") === undefined ? true : undefined));
-    expect(h.authEvents("agentAuthResolved", "healed")).toHaveLength(1);
+    expect(h.authFlips("healed").resolved).toBe(1);
     // Same-method contradiction clears the lock but proves no auth path.
-    expect(capabilityState(h.state().capabilities.healed!.auth)).toBe("declared");
+    expect(capabilityState(h.row("healed")!.capabilities!.auth)).toBe("declared");
 
     await h.pool.stop("healed");
   });
@@ -213,7 +227,7 @@ describe("auth flows on the wire", () => {
         "expired",
       ),
     );
-    await waitFor(() => (h.state().capabilities.expired?.["session.fork"]?.used ? true : undefined));
+    await waitFor(() => (h.row("expired")?.capabilities?.["session.fork"]?.used ? true : undefined));
     expect(h.locks.get("expired")).toBeUndefined();
 
     const { sessionId } = await h.pool.newSession("expired", cwd);
@@ -228,7 +242,7 @@ describe("auth flows on the wire", () => {
       method: methods.agent.session.prompt,
       reason: EXPIRED,
     });
-    expect(h.authEvents("agentAuthRequired", "expired")).toHaveLength(1);
+    expect(h.authFlips("expired").raised).toBe(1);
     expect(h.state().agents.find((a) => a.id === "expired")?.needsAuth).toBe(true);
 
     await h.pool.stop("expired");

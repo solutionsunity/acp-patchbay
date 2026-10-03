@@ -14,13 +14,13 @@ import {
   type SettingsEvent,
 } from "../src/shared/protocol";
 
-const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false };
-const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false };
+const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false, authMethods: [] };
+const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [] };
 
 const events: AgentViewEvent[] = [
   { kind: "agentUpserted", agent: claude },
   { kind: "agentUpserted", agent: gemini },
-  { kind: "agentStatusChanged", agentId: "gemini", status: "running" },
+  { kind: "agentUpserted", agent: { ...gemini, status: "running" } },
   { kind: "agentRemoved", agentId: "claude" },
 ];
 
@@ -46,32 +46,19 @@ describe("reducers", () => {
     expect(initialAgentViewState).toEqual(before);
   });
 
-  it("agentAuthRequired carries the agent's own instruction; resolve clears it with needsAuth", () => {
-    const s1 = replay(stateWith([claude]), [
+  // The row is read whole at the host and replaces what the view held — a
+  // cleared lock's instruction and a recovered crash's last words can't
+  // linger from an earlier row.
+  it("an upserted row replaces the agent whole — nothing of the old row lingers", () => {
+    const locked = replay(stateWith([claude]), [
       {
-        kind: "agentAuthRequired",
-        agentId: "claude",
-        reason: "run `auggie login` from your terminal",
+        kind: "agentUpserted",
+        agent: { ...claude, status: "crashed", stderr: ["boom"], needsAuth: true, authReason: "run `auggie login`" },
       },
     ]);
-    expect(s1.agents[0]).toMatchObject({
-      needsAuth: true,
-      authReason: "run `auggie login` from your terminal",
-    });
-    const s2 = replay(s1, [{ kind: "agentAuthResolved", agentId: "claude" }]);
-    expect(s2.agents[0]?.needsAuth).toBe(false);
-    expect(s2.agents[0]?.authReason).toBeUndefined();
-  });
-
-  it("a reason-less auth_required leaves no stale instruction behind", () => {
-    const withReason = replay(stateWith([claude]), [
-      { kind: "agentAuthRequired", agentId: "claude", reason: "old instruction" },
-    ]);
-    const s = replay(withReason, [
-      { kind: "agentAuthRequired", agentId: "claude", reason: null },
-    ]);
-    expect(s.agents[0]?.needsAuth).toBe(true);
-    expect(s.agents[0]?.authReason).toBeUndefined();
+    expect(locked.agents[0]).toMatchObject({ needsAuth: true, authReason: "run `auggie login`", stderr: ["boom"] });
+    const recovered = replay(locked, [{ kind: "agentUpserted", agent: claude }]);
+    expect(recovered.agents[0]).toEqual(claude);
   });
 
   it("upsert replaces in place, keeping order", () => {
@@ -85,36 +72,36 @@ describe("reducers", () => {
   });
 
   // QC (post-P18): per-agent facts leave with their agent — a snapshot must
-  // not carry capability/auth/knob entries for an agent that no longer
-  // exists (invisible to renderers, which key off the agents list, but a
-  // ghost all the same — and erase-to-factory-state made it matter).
+  // not carry entries for an agent that no longer exists (invisible to
+  // renderers, which key off the agents list, but a ghost all the same — and
+  // erase-to-factory-state made it matter). The row carries its own facts;
+  // Settings' side maps go with it.
   it("agentRemoved takes the agent's per-agent facts with it", () => {
-    const declared = {
-      kind: "capabilitiesDeclared",
-    protocolVersion: 1,
-      agentId: "claude",
-      matrix: {} as never,
-      authMethods: [],
-      at: "2026-01-01T00:00:00Z",
-    } as const;
-
-    const view = replay(stateWith([claude]), [declared, { kind: "agentRemoved", agentId: "claude" }]);
+    const view = replay(stateWith([claude]), [{ kind: "agentRemoved", agentId: "claude" }]);
     expect(view.agents).toEqual([]);
-    expect(view.capabilities).toEqual({});
-    expect(view.authMethods).toEqual({});
 
     const settings = [
       { kind: "agentUpserted", agent: claude } as const,
-      declared,
       { kind: "agentVerifyStarted", agentId: "claude" } as const,
       { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
       { kind: "agentRemoved", agentId: "claude" } as const,
     ].reduce(reduceSettings, initialSettingsState);
     expect(settings.agents).toEqual([]);
-    expect(settings.capabilities).toEqual({});
-    expect(settings.authMethods).toEqual({});
     expect(settings.agentKnobs).toEqual({});
     expect(settings.verifyingAgents).toEqual({});
+  });
+
+  // Offerings are connection state: the defaults editor's session rode the
+  // connection, so its surface leaves with a row that isn't running.
+  it("a row that isn't running drops the agent's knob offerings in Settings", () => {
+    const observed = [
+      { kind: "agentUpserted", agent: claude } as const,
+      { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
+    ].reduce(reduceSettings, initialSettingsState);
+    expect(reduceSettings(observed, { kind: "agentUpserted", agent: claude }).agentKnobs.claude).toBeDefined();
+    expect(
+      reduceSettings(observed, { kind: "agentUpserted", agent: { ...claude, status: "stopped" } }).agentKnobs,
+    ).toEqual({});
   });
 
   // P17: the in-pane connect lifecycle — started → connecting pane,
@@ -188,20 +175,6 @@ describe("reducers", () => {
     expect(replay(initialAgentViewState, [{ kind: "startupSettled" }]).restoring).toBe(false);
   });
 
-  // P16: crash carries the process's last words; recovery clears them —
-  // stale stderr on a running agent would be a lie.
-  it("status change carries stderr on crash and clears it on recovery", () => {
-    const crashed = replay(stateWith([claude]), [
-      { kind: "agentStatusChanged", agentId: "claude", status: "crashed", detail: "exited 1", stderr: ["boom"] },
-    ]);
-    expect(crashed.agents[0]?.stderr).toEqual(["boom"]);
-
-    const recovered = replay(crashed, [
-      { kind: "agentStatusChanged", agentId: "claude", status: "running" },
-    ]);
-    expect(recovered.agents[0]?.stderr).toBeUndefined();
-    expect(recovered.agents[0]?.detail).toBeUndefined();
-  });
 });
 
 describe("live editor context (ui.md — ghost chip / @ mention sources)", () => {

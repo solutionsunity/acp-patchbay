@@ -23,8 +23,8 @@ const log = {
 
 const pool = new AgentPool(
   {
-    onStatusChanged: (id, status, detail, stderr) =>
-      console.log(`[status] ${id}: ${status}${detail ? ` — ${detail}` : ""}${stderr ? ` | stderr: ${stderr.join(" / ")}` : ""}`),
+    onStatusChanged: (id, status, detail) =>
+      console.log(`[status] ${id}: ${status}${detail ? ` — ${detail}` : ""}`),
     onDeclaredCaptured: () => {},
     onSessionUpdate: () => {},
     ...stubFsTerminalHooks(),

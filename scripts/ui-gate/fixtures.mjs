@@ -119,7 +119,7 @@ export const chatPlan = [
 ];
 
 /** A full capability matrix for an agent that declared session/load but no
- * session/list — every row present, as the reducer always carries it. */
+ * session/list — every row present, as the tracker always reads it. */
 const unlistedMatrix = Object.fromEntries(
   [
     "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation", "resources.subscribe",
@@ -142,9 +142,10 @@ export const preferences = {
 export function agentViewState({ live }) {
   return {
     // `silent` declared no session/list — the sessions drawer must say so
+    // fake's agent has a newer version — the agent chip's upgrade chip (#37)
     agents: [
-      { id: "fake", name: "Claude Code", status: "running", needsAuth: false },
-      { id: "silent", name: "Augment", status: "stopped", needsAuth: false },
+      { id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], update: { from: "1.0.0", to: "1.2.0" } },
+      { id: "silent", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], capabilities: unlistedMatrix },
     ],
     // s2: newer activity + unseen — must sort above the active s1 and show
     // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
@@ -158,9 +159,6 @@ export function agentViewState({ live }) {
     activeSessionId: "s1",
     chatConnect: null,
     registryAgents: [],
-    // the active session's agent has a newer version — the agent chip's
-    // upgrade chip (#37)
-    updates: { fake: { from: "1.0.0", to: "1.2.0" } },
     transcripts: {
       s1: chatTranscript,
       s3: [{ kind: "elicitation", id: "q-s3", message: "Which database?", mode: "form", fields: [], resolution: null }],
@@ -168,7 +166,7 @@ export function agentViewState({ live }) {
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
     commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
-    capabilities: { silent: unlistedMatrix }, capabilitiesResetAt: {}, authMethods: {}, sessionUsage: {},
+    sessionUsage: {},
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
@@ -207,29 +205,29 @@ export function settingsState() {
     // regression: it timed out on `.section h1` when this field landed).
     section: "agents",
     agents: [
-      { id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false },
-      { id: "aug", name: "Augment", status: "stopped", needsAuth: false },
+      {
+        id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false,
+        authMethods: [], protocolVersion: 1,
+        // the card's upgrade chip (#37)
+        update: { from: "0.9.0", to: "1.0.0" },
+        capabilities: {
+          "fs.readTextFile": { declared: true, used: true },
+          "fs.writeTextFile": { declared: true, used: false },
+          terminal: { declared: true, used: true },
+          "session.fork": { declared: true, used: false },
+          "session.load": { declared: true, used: true },
+          "prompt.image": { declared: true, used: false },
+          usage: { declared: true, used: true },
+          auth: { declared: true, used: true },
+        },
+      },
+      { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [] },
     ],
-    // the card's upgrade chip (#37)
-    updates: { claude: { from: "0.9.0", to: "1.0.0" } },
     registryAgents: [
       { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null },
       { id: "gemini", name: "Gemini CLI", description: "Google", icon: null, version: "0.9.0", unavailableReason: null },
       { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login" },
     ],
-    capabilities: {
-      claude: {
-        "fs.readTextFile": { declared: true, used: true },
-        "fs.writeTextFile": { declared: true, used: false },
-        terminal: { declared: true, used: true },
-        "session.fork": { declared: true, used: false },
-        "session.load": { declared: true, used: true },
-        "prompt.image": { declared: true, used: false },
-        usage: { declared: true, used: true },
-        auth: { declared: true, used: true },
-      },
-    },
-    capabilitiesResetAt: {}, agentProtocol: { claude: 1 }, authMethods: {},
     commandRules: [], machineCommandRules: [], fileWriteScope: "workspace",
     auditTail: [], integrationRegistry: catalogEntries, integrations: [], connectFlow: {},
     agentConfigs: [{

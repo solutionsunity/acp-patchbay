@@ -37,9 +37,9 @@ async function internal(): Promise<Internal> {
   return api.internal;
 }
 
-const upsert = (id: string) => ({
+const upsert = (id: string, over: Record<string, unknown> = {}) => ({
   kind: "agentUpserted",
-  agent: { id, name: id, status: "running" },
+  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], ...over },
 });
 
 suite("snapshot/patch round-trip through real webviews", () => {
@@ -82,7 +82,7 @@ suite("snapshot/patch round-trip through real webviews", () => {
     // this exercises the real bundled AgentsSection/AddAgentRow JS, not just
     // the pure reducer, catching anything a plain reducer test can't (a
     // render-time throw in the new combobox/verify-button code).
-    ch.emit(upsert("dummy-verify"), { kind: "agentAuthRequired", agentId: "dummy-verify" });
+    ch.emit(upsert("dummy-verify", { needsAuth: true }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 

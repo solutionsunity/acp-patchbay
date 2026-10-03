@@ -20,6 +20,7 @@ import { UsedCapabilityStore } from "../../src/orchestrator/stores/used-capabili
 import {
   initialAgentViewState,
   reduceAgentView,
+  type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
 } from "../../src/shared/protocol";
@@ -32,16 +33,16 @@ export interface AgentsHarness {
   deps: AgentsStoreDeps;
   events: AgentViewEvent[];
   state(): AgentViewState;
+  /** The agent's row as the views hold it. */
+  row(agentId: string): AgentSummary | undefined;
   /** Agents the store reported removed — the sessions side's cue. */
   removed: string[];
   /** Every onProbeSession announcement, in order — the probe's raw
    * session/new response (spec-pure-core: raw, tests reach into it). */
   probes: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[];
-  /** A saved config and a row in the views for an agent a suite connects
-   * through the pool directly: the store's writers act only on agents that
-   * exist (auth evidence for an unknown one is dropped), and the views'
-   * auth events patch an existing row — the real host upserts before
-   * connecting. */
+  /** A saved config — and so a row in the views — for an agent a suite
+   * connects through the pool directly: the store acts only on agents that
+   * exist (auth evidence for an unknown one is dropped). */
   seedAgent(agentId: string): void;
 }
 
@@ -54,8 +55,8 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
   let agents!: AgentsStore;
   const pool = new AgentPool({
-    onStatusChanged: (agentId, status, detail, stderr) => agents.noteStatus(agentId, status, detail, stderr),
-    onDeclaredCaptured: (agentId, declared, raw) => agents.noteDeclared(agentId, declared, raw),
+    onStatusChanged: (agentId, status, detail) => agents.noteStatus(agentId, status, detail),
+    onDeclaredCaptured: (agentId) => agents.noteDeclared(agentId),
     onSessionUpdate: () => {},
     onCapabilityEvidence: (agentId, row, evidence) => agents.noteEvidence(agentId, row, evidence),
     onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
@@ -64,8 +65,7 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
   });
   const usedCapabilities = new UsedCapabilityStore(kv);
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
-    emit: (...evs) => events.push(...evs),
-    currentMatrix: (agentId) => state().capabilities[agentId],
+    changed: (agentId) => agents.publish(agentId),
     onProbeSession: (agentId, response: acp.NewSessionResponse) =>
       probes.push({
         agentId,
@@ -92,7 +92,6 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
   agents = new AgentsStore(deps, {
     emit: (...evs) => events.push(...evs),
     emitSettings: () => {},
-    currentMatrix: (agentId) => state().capabilities[agentId],
     openWork: () => ({ conversations: 0, turns: 0 }),
     confirm: async () => true,
     warn: () => {},
@@ -114,10 +113,8 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
       registrySource: null,
       lastSeenVersion: null,
     });
-    events.push({
-      kind: "agentUpserted",
-      agent: { id: agentId, name: agentId, status: "reconnecting", needsAuth: false },
-    });
+    agents.publish(agentId);
   };
-  return { pool, tracker, agents, deps, events, state, removed, probes, seedAgent };
+  const row = (agentId: string) => state().agents.find((a) => a.id === agentId);
+  return { pool, tracker, agents, deps, events, state, row, removed, probes, seedAgent };
 }

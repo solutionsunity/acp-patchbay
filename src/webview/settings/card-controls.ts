@@ -7,24 +7,15 @@
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout/verify regressions happened.
-import type {
-  AgentConfigView,
-  AgentSummary,
-  AgentUpdate,
-  AuthMethodView,
-  CapabilityMatrix,
-} from "../../shared/protocol";
+import type { AgentConfigView, AgentSummary, AgentUpdate, AuthMethodView } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 
 export interface AgentCardInputs {
-  /** Orchestrator summary — undefined for a configured-but-never-seen agent. */
+  /** The orchestrator's row — its matrix, auth methods and update fact ride
+   * on it; undefined for a configured-but-never-seen agent. */
   agent: AgentSummary | undefined;
   /** Persisted config — undefined for a transient (connected, not saved) agent. */
   config: AgentConfigView | undefined;
-  matrix: CapabilityMatrix | undefined;
-  authMethods: readonly AuthMethodView[];
-  /** The orchestrator's update fact for this agent, if any. */
-  update: AgentUpdate | undefined;
   /** The shared in-progress signal (verifyingAgents[id]) — a verify or
    * logout round-trip is in flight. */
   verifying: boolean;
@@ -59,7 +50,9 @@ export function runnableLoginMethods(methods: readonly AuthMethodView[]): readon
 }
 
 export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
-  const { agent, config, matrix, authMethods, update, verifying } = inputs;
+  const { agent, config, verifying } = inputs;
+  const matrix = agent?.capabilities;
+  const authMethods = agent?.authMethods ?? [];
   // No summary at all = the orchestrator never saw this config — the honest
   // unknown is "untested", never a claimed "stopped".
   const status = agent?.status ?? "untested";
@@ -102,7 +95,7 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     stop: { show: running },
     verify: { show: running && needsVerify, disabled: verifying, busy: verifying },
     connect: { show: !running && config !== undefined },
-    upgrade: update ?? null,
+    upgrade: agent?.update ?? null,
     edit: { show: true },
     remove: { show: config !== undefined },
   };
