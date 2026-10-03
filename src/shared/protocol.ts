@@ -117,8 +117,8 @@ export type Action =
    * when present, is the same content with inline file mentions kept
    * positional — the orchestrator turns each `fileRef` into a
    * `resource_link` content block *at its place in the prompt* instead of
-   * a chip riding ahead of the prose. Absent for plain text prompts. */
-  /** `draft` is the composer's serialized editor state for these words —
+   * a chip riding ahead of the prose. Absent for plain text prompts.
+   * `draft` is the composer's serialized editor state for these words —
    * kept only if the prompt is held (QueuedPrompt.draft), dropped on a
    * direct send. */
   | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[]; draft?: string }
@@ -220,8 +220,8 @@ export type Action =
    * Code's native diff editor; a no-op once the proposal has resolved. */
   | { kind: "openProposedDiff"; blockId: string }
   /** Open a file in the editor by absolute path — the read-out strip's
-   * files-panel rows (the view never touches fs). */
-  /** `line` is the location's 1-based line — absent opens at the top. */
+   * files-panel rows (the view never touches fs). `line` is the location's
+   * 1-based line — absent opens at the top. */
   | { kind: "openFile"; path: string; line?: number }
   /** Open a rendered mermaid SVG as an editor-area panel — the in-chat
    * fullscreen maxes out at the sidebar column; the files area is where a
@@ -2484,7 +2484,6 @@ export interface SettingsState {
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
-  /** At most one at a time — the Add Agent flow blocks on it. */
   /** Present while a Verify round-trip (manual click or "Verify after add")
    * is in flight for this agent — the card's Verify control dims and reads
    * "Verifying…" until it clears. */

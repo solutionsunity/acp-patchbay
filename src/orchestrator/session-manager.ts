@@ -2409,34 +2409,6 @@ export class SessionManager {
     return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
   }
 
-  /** The one prose-run gate: every chunk arm asks it where its text lands.
-   * Returns the block id to append to, or null for a whitespace-only chunk
-   * with no run to continue — dropped, deliberately without touching the
-   * open run (a no-op chunk never severs neighboring prose, and never OPENS
-   * a run either: replayed thinking arrives as empty chunks — a blank
-   * Thought accordion otherwise; an already-open run still takes it,
-   * mid-stream spacing is real content).
-   *
-   * A chunk continues the open run iff the channel matches and message
-   * identity continues (ACP ContentChunk.messageId: chunks of one message
-   * share it, a change means a new message — wire-verified 2026-07-12).
-   * Two non-null ids decide alone: equal continues, different splits — a
-   * fused boundary corrupts markdown (message N ending ``` glued to message
-   * N+1's heading un-closes the fence). With an id missing on either side
-   * the channels honestly differ:
-   * - user: never continues. Every user chunk that reaches its arm is a
-   *   whole message — live sends render via sendPrompt, live echoes die at
-   *   the inFlight guard, and id-less replay is whole-message-per-chunk
-   *   (auggie, wire-verified: merging fused adjacent cancelled prompts).
-   * - text/thought: always continues. An id-less agent wire carries no
-   *   boundary at all, and both of its realities demand merging: live
-   *   chunks are stream deltas of the in-flight turn, and an id-less
-   *   replay may lawfully be the recorded chunk log played back (our own
-   *   fake agent does exactly that) — splitting on a guess shreds prose
-   *   mid-fence, strictly worse than fusing. The cost is honest and open:
-   *   an id-less agent's real message boundaries stay invisible until a
-   *   wire capture proves its replay granularity (auggie's agent-chunk
-   *   side is uncaptured — dossier note when it lands). */
   /** Replay counterpart of sendPrompt's part building: one wire content
    * block of a replayed user message → its part, through the one content
    * mapping every chat surface shares. */
@@ -2474,6 +2446,34 @@ export class SessionManager {
     };
   }
 
+  /** The one prose-run gate: every chunk arm asks it where its text lands.
+   * Returns the block id to append to, or null for a whitespace-only chunk
+   * with no run to continue — dropped, deliberately without touching the
+   * open run (a no-op chunk never severs neighboring prose, and never OPENS
+   * a run either: replayed thinking arrives as empty chunks — a blank
+   * Thought accordion otherwise; an already-open run still takes it,
+   * mid-stream spacing is real content).
+   *
+   * A chunk continues the open run iff the channel matches and message
+   * identity continues (ACP ContentChunk.messageId: chunks of one message
+   * share it, a change means a new message — wire-verified 2026-07-12).
+   * Two non-null ids decide alone: equal continues, different splits — a
+   * fused boundary corrupts markdown (message N ending ``` glued to message
+   * N+1's heading un-closes the fence). With an id missing on either side
+   * the channels honestly differ:
+   * - user: never continues. Every user chunk that reaches its arm is a
+   *   whole message — live sends render via sendPrompt, live echoes die at
+   *   the inFlight guard, and id-less replay is whole-message-per-chunk
+   *   (auggie, wire-verified: merging fused adjacent cancelled prompts).
+   * - text/thought: always continues. An id-less agent wire carries no
+   *   boundary at all, and both of its realities demand merging: live
+   *   chunks are stream deltas of the in-flight turn, and an id-less
+   *   replay may lawfully be the recorded chunk log played back (our own
+   *   fake agent does exactly that) — splitting on a guess shreds prose
+   *   mid-fence, strictly worse than fusing. The cost is honest and open:
+   *   an id-less agent's real message boundaries stay invisible until a
+   *   wire capture proves its replay granularity (auggie's agent-chunk
+   *   side is uncaptured — dossier note when it lands). */
   private runBlockFor(
     sessionId: string,
     session: LiveSession,

@@ -1021,8 +1021,6 @@ export class Orchestrator {
     this.sessionManager.activate(sessionId);
   }
 
-  /** Active session · agent health · usage when reported —
-   * click jumps to the Agent View, which already shows that same session. */
   /** Mirrors the detachWindows preference into a when-clause context key —
    * package.json gates the view-title button and the palette command on it
    * (native surfaces can't read the store; this is their one bridge). */
@@ -1034,6 +1032,8 @@ export class Orchestrator {
     );
   }
 
+  /** Active session · agent health · usage when reported —
+   * click jumps to the Agent View, which already shows that same session. */
   private refreshStatusBar(): void {
     const { text, tooltip } = statusBarContent(this.agentView.current);
     this.statusBarItem.text = text;

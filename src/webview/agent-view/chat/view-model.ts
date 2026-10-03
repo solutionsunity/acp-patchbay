@@ -70,9 +70,6 @@ export const EMPTY_TRANSCRIPT: TranscriptView = {
   liveBlockId: null,
 };
 
-/** "Several" starts at 3 — two cards aren't the wall the grouping exists to
- * prevent, and hiding a pair costs more clicks than it saves reading.
- * Deliberate threshold, not a tunable. */
 /** One file a tool call touched, as its details list it: every line the
  * agent reported in it (first = where opening lands), and the lines the
  * call's diff adds and removes when it carried one. One row per file — its
@@ -118,6 +115,9 @@ function embeddedTerminalIds(blocks: readonly ChatBlock[]): ReadonlySet<string> 
   return ids;
 }
 
+/** "Several" starts at 3 — two cards aren't the wall the grouping exists to
+ * prevent, and hiding a pair costs more clicks than it saves reading.
+ * Deliberate threshold, not a tunable. */
 export const TOOL_RUN_MIN = 3;
 
 const FILE_TOUCHING: ReadonlySet<ToolCallKind> = new Set(["edit", "delete", "move"]);

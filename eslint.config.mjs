@@ -1,8 +1,37 @@
-// Scoped to the failure classes the test-code audit actually found (plan.md
-// P14h) — this is a correctness guard, not a style linter. Adding a rule
-// here requires a demonstrated failure class, same bar as any toolchain.
+// Scoped to failure classes audits actually found (first the test-code audit,
+// plan.md P14h) — this is a correctness guard, not a style linter. Adding a
+// rule here requires a demonstrated failure class, same bar as any toolchain.
 import vitest from "@vitest/eslint-plugin";
 import tseslint from "typescript-eslint";
+
+// A doc comment stacked directly on another (only whitespace between) has no
+// code of its own: a move left it behind, code was inserted between it and
+// what it describes, or one comment got split in two. The 2026-09-29 source
+// audit found six by hand.
+const stackedDocComment = {
+  meta: {
+    type: "problem",
+    messages: {
+      stacked:
+        "doc comment with no code of its own — another sits directly below it; move it to its code, merge the two, or delete it if its code is gone",
+    },
+  },
+  create(context) {
+    const { sourceCode } = context;
+    const isDoc = (c) => c.type === "Block" && c.value.startsWith("*");
+    return {
+      Program() {
+        const comments = sourceCode.getAllComments();
+        for (let i = 1; i < comments.length; i++) {
+          const [above, below] = [comments[i - 1], comments[i]];
+          if (isDoc(above) && isDoc(below) && sourceCode.text.slice(above.range[1], below.range[0]).trim() === "") {
+            context.report({ loc: above.loc, messageId: "stacked" });
+          }
+        }
+      },
+    };
+  },
+};
 
 export default tseslint.config(
   // build outputs and the downloaded VS Code test host are not ours to lint
@@ -33,5 +62,12 @@ export default tseslint.config(
       "vitest/no-conditional-expect": "error",
       "vitest/no-conditional-tests": "error",
     },
+  },
+  {
+    // every file the gate lints
+    files: ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "scripts/**/*.mjs"],
+    ignores: ["test/vscode/**"],
+    plugins: { local: { rules: { "stacked-doc-comment": stackedDocComment } } },
+    rules: { "local/stacked-doc-comment": "error" },
   },
 );
