@@ -1,26 +1,35 @@
-// Generates the brand mark from one geometry: media/icon.png (256×256
-// Marketplace tile, the mark filled white on a gradient) and media/patchbay.svg
-// (activity-bar and view glyph, the mark in outline as codicons are drawn; VS
-// Code uses it as a mask, so only its shape counts). Zero image dependencies:
-// the PNG is the same contours flattened and supersampled, then PNG chunks by
-// hand. Run: node scripts/gen-icon.mjs
+// Generates the brand mark: media/icon.png (256×256 Marketplace tile, the mark
+// filled white on a gradient) and media/patchbay.svg (activity-bar and view
+// glyph). Zero image dependencies: the PNG is the contours flattened and
+// supersampled, then PNG chunks by hand. Run: node scripts/gen-icon.mjs
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
 
-// 128-unit grid. A chat bubble with a socket bitten out of its right rim and
-// the AI spark plugged into it; the tail is a triangle merged into the bubble.
-const BUBBLE = { cx: 58, cy: 60, r: 32 };
-const SOCKET = { cx: 92, cy: 60, r: 17 };
-const TAIL = [[36, 80], [26, 100], [50, 88]];
+// The mark on a 128-unit grid. A chat bubble with a socket bitten out of its
+// right rim and the AI spark plugged into it; the tail is a triangle merged
+// into the bubble.
+const MARK = {
+  bubble: { cx: 58, cy: 60, r: 32 },
+  socket: { cx: 92, cy: 60, r: 17 },
+  tail: [[36, 80], [26, 100], [50, 88]],
+  spark: [92, 60, 13],
+};
 const DOTS = [[40, 60], [52, 60], [64, 60]];
 const DOT_R = 4.5;
-const SPARK = [92, 60, 13];
 const SMALL_SPARK = [104, 28, 7];
 const TILE = { x: 8, y: 8, size: 112, rx: 28, from: [0xa3, 0x44, 0x93], to: [0x1c, 0x82, 0xec] };
-// The glyph's outline is drawn inside the silhouette, so its outer shape is the
-// tile's; its dots shrink and respace to stay clear of that stroke at 24px.
-const STROKE = 5;
-const GLYPH_DOT_R = 3.8;
+
+// The glyph is the mark redrawn for 16–24px on the codicon grid: 24 units, a
+// 1.5 stroke on these centerlines, the bubble's outer edge on whole pixels.
+// Only the bubble and the plugged-in spark: the dots and the small spark turn
+// to noise at that size. VS Code uses it as a mask, so only its shape counts.
+const GLYPH = {
+  bubble: { cx: 10, cy: 11, r: 8.25 },
+  socket: { cx: 18.5, cy: 11, r: 5.75 },
+  tail: [[5, 16], [1.75, 22.25], [9, 19]],
+  spark: [18.5, 11, 4.25],
+  stroke: 1.5,
+};
 
 // A contour is a start point plus segments: ["L", x, y], ["C", x1, y1, x2, y2,
 // x, y], or ["A", cx, cy, r, a0, a1] (arc from angle a0 to a1). Filled nonzero:
@@ -43,24 +52,24 @@ function crossing([ax, ay], [bx, by], { cx, cy, r }) {
 
 // Bubble and tail as one outline: around the bubble from the socket's top edge,
 // out along the tail, back onto the bubble, then in along the socket.
-function silhouette() {
-  const { cx, cy, r } = BUBBLE;
-  const d = SOCKET.cx - cx;
-  const a = (d * d + r * r - SOCKET.r * SOCKET.r) / (2 * d);
+function silhouette({ bubble, socket, tail }) {
+  const { cx, cy, r } = bubble;
+  const d = socket.cx - cx;
+  const a = (d * d + r * r - socket.r * socket.r) / (2 * d);
   const h = Math.sqrt(r * r - a * a);
   const top = Math.atan2(-h, a);
   const rim = Math.atan2(h, a - d);
-  const out = crossing(TAIL[0], TAIL[1], BUBBLE);
-  const back = crossing(TAIL[1], TAIL[2], BUBBLE);
+  const out = crossing(tail[0], tail[1], bubble);
+  const back = crossing(tail[1], tail[2], bubble);
   const angle = ([x, y]) => Math.atan2(y - cy, x - cx) - 2 * Math.PI;
   return {
     start: at(cx, cy, r, top),
     segs: [
       ["A", cx, cy, r, top, angle(out)],
-      ["L", ...TAIL[1]],
+      ["L", ...tail[1]],
       ["L", ...back],
       ["A", cx, cy, r, angle(back), -top - 2 * Math.PI],
-      ["A", SOCKET.cx, SOCKET.cy, SOCKET.r, rim, 2 * Math.PI - rim],
+      ["A", socket.cx, socket.cy, socket.r, rim, 2 * Math.PI - rim],
     ],
   };
 }
@@ -84,18 +93,7 @@ function spark([cx, cy, r]) {
   };
 }
 
-const SILHOUETTE = silhouette();
-const SPARKS = [spark(SPARK), spark(SMALL_SPARK)];
-const TILE_MARK = [SILHOUETTE, ...DOTS.map((c) => dot(c, DOT_R)), ...SPARKS];
-
-// Three dots evenly spaced across the bubble's inside, between the stroke on
-// its left rim and the stroke on the socket.
-function glyphDots() {
-  const left = BUBBLE.cx - BUBBLE.r + STROKE;
-  const right = SOCKET.cx - SOCKET.r - STROKE;
-  const gap = (right - left - 6 * GLYPH_DOT_R) / 4;
-  return [0, 1, 2].map((i) => dot([left + gap + GLYPH_DOT_R + i * (2 * GLYPH_DOT_R + gap), BUBBLE.cy], GLYPH_DOT_R));
-}
+const TILE_MARK = [silhouette(MARK), ...DOTS.map((c) => dot(c, DOT_R)), spark(MARK.spark), spark(SMALL_SPARK)];
 
 const n = (v) => +v.toFixed(2);
 
@@ -141,14 +139,13 @@ function flatten({ start, segs }) {
   return pts;
 }
 
-function bounds(pts) {
+// Packed coordinates plus a bounding box, so a sample outside it costs nothing.
+function edges(pts) {
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  return { xy: Float64Array.from(pts.flat()), box };
 }
-
-// Packed coordinates plus a bounding box, so a sample outside it costs nothing.
-const edges = (pts) => ({ xy: Float64Array.from(pts.flat()), box: bounds(pts) });
 
 function winding(x, y, { xy, box }) {
   if (x < box[0] || y < box[1] || x > box[2] || y > box[3]) return 0;
@@ -208,19 +205,11 @@ function renderTile(size, ss = 4) {
   return px;
 }
 
-// Edge to edge on the longer side, as codicons are; centered on the shorter.
-// The stroke is doubled and clipped to the silhouette, which draws it inside.
 function glyphSVG() {
-  const [x0, y0, x1, y1] = bounds([SILHOUETTE, ...SPARKS].flatMap(flatten));
-  const side = Math.max(x1 - x0, y1 - y0);
-  const x = (x0 + x1 - side) / 2;
-  const y = (y0 + y1 - side) / 2;
-  const outline = toPath([SILHOUETTE]);
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${n(x)} ${n(y)} ${n(side)} ${n(side)}">` +
-    `<clipPath id="silhouette"><path d="${outline}"/></clipPath>` +
-    `<path d="${outline}" fill="none" stroke="currentColor" stroke-width="${2 * STROKE}" clip-path="url(#silhouette)"/>` +
-    `<path fill="currentColor" d="${toPath([...glyphDots(), ...SPARKS])}"/></svg>\n`
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+    `<path d="${toPath([silhouette(GLYPH)])}" fill="none" stroke="currentColor" stroke-width="${GLYPH.stroke}" stroke-linejoin="round"/>` +
+    `<path fill="currentColor" d="${toPath([spark(GLYPH.spark)])}"/></svg>\n`
   );
 }
 
