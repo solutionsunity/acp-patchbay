@@ -8,6 +8,12 @@
   view icon is the mark redrawn for small sizes in the style of VS Code's
   own icons: the bubble in outline at their line weight, with the spark
   plugged into it.
+- With patchbay open in two windows, a save in one window no longer erases
+  what the other saved. Each window rebuilt its saved lists (agents, MCP
+  servers, a session's held prompts, chips and draft, sign-in locks,
+  preferences) from what it read when it opened, so a save could drop the
+  other window's newer entries or bring back ones it had removed. Saves now
+  start from what the file holds at that moment. (#71)
 
 ## 0.84.1 — 2026-09-29
 

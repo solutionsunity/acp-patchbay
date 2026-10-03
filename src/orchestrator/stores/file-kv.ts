@@ -8,17 +8,19 @@
 // of our own, written atomically (temp + rename), can never be half-written
 // by us and can be lost only with its whole directory.
 //
-// Semantics match Memento where it matters: get() is synchronous from an
-// in-memory map loaded once at construction; update() is read-modify-write
-// at key granularity, so two windows (two extension hosts, one file) merge
-// per key — last write per key wins, the same contract Memento gives.
-// There is no cross-process lock; a simultaneous same-key write from two
-// windows is last-rename-wins, accepted for config-sized, human-paced data.
+// Semantics match Memento where it matters: get() is synchronous and
+// update() merges over the freshest disk truth at key granularity. Two
+// windows (two extension hosts) share this one file, so get() reads the
+// file, not a copy loaded at open: a store that keeps all its rows under
+// one key builds each write from what the file holds now, and one window's
+// save can no longer erase rows another window saved, or bring back rows
+// it removed. There is no cross-process lock; two writes to one key landing
+// at the same instant are last-rename-wins.
 //
 // First load (no file yet) drains the old Memento home into the file and
 // deletes the keys there — one truth; a stale shadow left in state.vscdb
 // would resurrect on downgrade and diverge forever after.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { KV } from "./kv";
 
@@ -30,15 +32,20 @@ export interface EnumerableKV extends KV {
 
 export class FileKV implements KV {
   private map: Record<string, unknown>;
+  /** The file `map` was parsed from (fileStamp) — null when there was no
+   * file, undefined when unknown, so the next read goes to disk. */
+  private parsedFrom: string | null | undefined;
 
   constructor(
     private readonly filePath: string,
     migrateFrom?: EnumerableKV,
     private readonly log: (message: string) => void = () => {},
   ) {
+    const stamp = this.fileStamp();
     const loaded = this.readDisk();
     if (loaded !== null) {
       this.map = loaded;
+      this.parsedFrom = stamp;
       return;
     }
     this.map = {};
@@ -61,6 +68,7 @@ export class FileKV implements KV {
   }
 
   get<T>(key: string): T | undefined {
+    this.readIfChanged();
     return this.map[key] as T | undefined;
   }
 
@@ -73,6 +81,9 @@ export class FileKV implements KV {
     if (value === undefined) delete next[key];
     else next[key] = value;
     this.map = next;
+    // Whatever lands on disk — this write, a failed one, or another
+    // window's right after — the next read goes to the file.
+    this.parsedFrom = undefined;
     try {
       this.writeDisk(next);
     } catch (error) {
@@ -80,6 +91,30 @@ export class FileKV implements KV {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     return Promise.resolve();
+  }
+
+  /** Re-parses the file whenever it is no longer the one `map` came from.
+   * Every write renames a new file into place, so another window's save
+   * changes the stamp. The stamp is taken before the read: a write landing
+   * in between leaves an older stamp, and the next read goes to disk again.
+   * A missing or unreadable file keeps the last good map, as update() does. */
+  private readIfChanged(): void {
+    const stamp = this.fileStamp();
+    if (stamp === this.parsedFrom) return;
+    const disk = this.readDisk();
+    if (disk !== null) this.map = disk;
+    this.parsedFrom = stamp;
+  }
+
+  /** Identity of the file now on disk — inode, size, modification time —
+   * or null when there is none. */
+  private fileStamp(): string | null {
+    try {
+      const s = statSync(this.filePath, { bigint: true });
+      return `${s.ino}:${s.size}:${s.mtimeNs}`;
+    } catch {
+      return null;
+    }
   }
 
   /** null = nothing usable on disk (absent, or quarantined as corrupt). */
