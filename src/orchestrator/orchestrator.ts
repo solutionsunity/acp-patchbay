@@ -354,12 +354,10 @@ export class Orchestrator {
       onStatusChanged: (agentId, status, detail) => {
         this.agents.noteStatus(agentId, status, detail);
         if (status !== "running") this.settleAsksOn(agentId);
-        
-        // A dead or reconnecting connection invalidates every sessionId that
-        // rode it — they must reopen (possibly via session/load) before reuse.
-        if (status === "crashed" || status === "reconnecting") {
-          this.sessionManager.invalidateAgent(agentId);
-        }
+        // Every way a connection ends detaches the sessions that rode it —
+        // they reopen (session/load or resume) before reuse, keeping what
+        // they hold.
+        this.sessionManager.agentStatusChanged(agentId, status);
         // The editor's session rode the connection that just ended, and so
         // did any completion notice still waiting for its question.
         if (status !== "running") {
@@ -698,8 +696,9 @@ export class Orchestrator {
     );
     // The management side's tools for agents: the queue keeps each agent's
     // turns, and the gates — the one way any door reaches an operation on
-    // an agent's connection — decide how each operation meets it. What the
-    // queue holds is the agent's busy state, so every move re-sends its row.
+    // an agent's connection — decide how each operation meets it, and put
+    // the one question before a connection ends. What the queue holds is
+    // the agent's busy state, so every move re-sends its row.
     const queue = new Queue<AgentOperation>((agentId) => this.agents.publish(agentId));
     const agents = new AgentsStore(
       {
@@ -723,13 +722,15 @@ export class Orchestrator {
           this.settings.emit(...events);
         },
         emitSettings: (...events) => this.settings.emit(...events),
-        openWork: (agentId) => this.sessionManager.openWork(agentId),
-        confirm: askModal,
         warn: (message) => void vscode.window.showWarningMessage(message),
         runLoginTask: (name, recipe) => runLoginTask(name, recipe),
         removed: (agentId) => {
-          this.sessionManager.invalidateAgent(agentId);
           this.sessionManager.forgetAgentSessions(agentId);
+          // A chat pane on the agent — still starting, or failed with a
+          // Retry — has nothing left to wait for or retry.
+          if (this.agentView.current.chatConnect?.agentId === agentId) {
+            this.agentView.emit({ kind: "chatConnectResolved" });
+          }
         },
         authCleared: (agentId) => this.sessionManager.drainHeldQueues(agentId),
         defaultsChanged: (agentId) => void this.defaultsEditor.defaultsChanged(agentId),
@@ -737,7 +738,11 @@ export class Orchestrator {
       log,
     );
     this.agents = agents;
-    this.gates = new AgentGates(agents, queue);
+    this.gates = new AgentGates(agents, queue, {
+      name: (agentId) => agents.name(agentId),
+      openWork: (agentId) => this.sessionManager.openWork(agentId),
+      confirm: askModal,
+    });
     // The editor's sessions exist only to serve the open panel — they end
     // with it.
     this.settings.onAttachment((attached) => {

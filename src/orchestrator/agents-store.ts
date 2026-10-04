@@ -12,8 +12,8 @@
 // the orchestrator's call — every door reaches those through its gates;
 // saves never wait. The views get each row whole, re-sent whenever any of
 // its facts moves.
-// vscode-free: the questions a user answers, the login task, the sessions
-// riding a connection and the views are hooks.
+// vscode-free: the login task, warnings, the sessions side and the views
+// are hooks; the questions before a connection ends are the caller's.
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
@@ -82,11 +82,6 @@ export interface AgentsStoreHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Settings-only facts: the config list, env values included. */
   emitSettings(...events: SettingsEvent[]): void;
-  /** What stopping this agent's connection would cut off, read from the
-   * sessions riding it. */
-  openWork(agentId: string): { conversations: number; turns: number };
-  /** A modal question with one affirmative choice; true = it was chosen. */
-  confirm(message: string, choice: string): Promise<boolean>;
   /** A warning the user sees once, never a gate. */
   warn(message: string): void;
   /** Runs a login recipe as a visible task — its exit code, or undefined
@@ -108,7 +103,7 @@ export interface AgentsStoreHooks {
 export interface ConnectionOperations {
   connect(agentId: string, signal?: AbortSignal): Promise<void>;
   restart(agentId: string, signal?: AbortSignal): Promise<void>;
-  upgrade(agentId: string, signal?: AbortSignal): Promise<void>;
+  upgrade(agentId: string, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
   login(agentId: string, methodId: string, signal?: AbortSignal): Promise<void>;
   logout(agentId: string): Promise<void>;
   verify(agentId: string): Promise<ProbeOutcome>;
@@ -393,13 +388,11 @@ export class AgentsStore implements ConnectionOperations {
    * used-capability cache and the launch phase's download confirmation
    * both apply exactly as they would for a brand-new agent. Resolved before
    * anything stops: a registry that no longer lists the agent, or lists
-   * nothing this platform can run, leaves it as it is. Never silent: a
-   * still-uncached binary version re-gates on the confirmation, and a stop
-   * that would disconnect open conversations asks first — here, not at any
-   * one button, so every surface that offers Upgrade gets the same
-   * question. Stopped before the new pin is saved, the agent keeps its
-   * version. */
-  async upgrade(agentId: string, signal?: AbortSignal): Promise<void> {
+   * nothing this platform can run, leaves it as it is. A running agent is
+   * stopped only on `consent`, asked at that moment — the caller's
+   * question, so it is never asked for an upgrade that can't happen.
+   * Stopped before the new pin is saved, the agent keeps its version. */
+  async upgrade(agentId: string, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
     const config = this.config(agentId);
     const registryId = config?.registrySource?.registryId;
     if (config === undefined || registryId === undefined) return;
@@ -407,7 +400,7 @@ export class AgentsStore implements ConnectionOperations {
     const launch = listed === undefined ? null : this.registryLaunch(listed);
     if (launch === null) return;
     if (this.deps.pool.get(agentId)?.status === "running") {
-      if (!(await this.confirmUpgrade(config.name, this.hooks.openWork(agentId)))) return;
+      if (consent !== undefined && !(await consent())) return;
       await this.deps.pool.stop(agentId);
     }
     signal?.throwIfAborted();
@@ -422,28 +415,14 @@ export class AgentsStore implements ConnectionOperations {
     }
   }
 
-  /** Asks only when the stop costs something: conversations attached
-   * to the connection are disconnected, and a running turn is cut off. */
-  private async confirmUpgrade(
-    agentName: string,
-    work: { conversations: number; turns: number },
-  ): Promise<boolean> {
-    if (work.conversations === 0) return true;
-    const plural = work.conversations === 1 ? "" : "s";
-    const turns = work.turns === 0 ? "" : ` — ${work.turns} still running and will be cut off`;
-    return this.hooks.confirm(
-      `Upgrade ${agentName}? It restarts the agent, disconnecting ${work.conversations} open conversation${plural}${turns}.`,
-      "Upgrade",
-    );
-  }
-
   /** Remove is stop + forget ("add, edit, and remove agents") —
    * the process goes down, the agent leaves
    * both channel states via the `agentRemoved` event, its per-agent facts
    * (used capabilities, observed knobs) are purged so a future re-add
-   * starts honest, and its session rows leave the drawer. Nothing to ask
-   * the user: patchbay holds no session history — the sessions live on in
-   * the agent's own store and reappear via session/list on a re-add. */
+   * starts honest, its live state goes with them — the pool's entry, the
+   * tracker's marks — and its session rows leave the drawer. Patchbay
+   * holds no session history — the sessions live on in the agent's own
+   * store and reappear via session/list on a re-add. */
   async remove(agentId: string): Promise<void> {
     await this.deps.pool.stop(agentId);
     this.hooks.removed(agentId);
@@ -453,6 +432,8 @@ export class AgentsStore implements ConnectionOperations {
     await this.deps.env.remove(agentId);
     await this.deps.authLocks.remove(agentId);
     await rm(join(this.deps.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
+    this.deps.pool.forget(agentId);
+    this.deps.tracker.forget(agentId);
     this.publish(agentId);
     await this.publishAll();
   }

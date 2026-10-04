@@ -5,7 +5,7 @@
 // them carries its own copy of a writer.
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
-import { AgentGates, type AgentOperation } from "../../src/orchestrator/agent-gates";
+import { AgentGates, type AgentOperation, type GateAsks } from "../../src/orchestrator/agent-gates";
 import { AgentsStore, type AgentsStoreDeps, type AgentsStoreHooks } from "../../src/orchestrator/agents-store";
 import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchResolver } from "../../src/orchestrator/pool";
@@ -58,9 +58,11 @@ export function agentsHarness(
     /** The machine file — pass one to share saved facts with a second
      * harness. */
     kv?: MemoryKV;
-    /** Replaces the store's defaults: no open work, every question
-     * answered yes. */
+    /** Replaces the store's default hooks. */
     hooks?: Partial<AgentsStoreHooks>;
+    /** Replaces the gates' defaults: no open work, every question answered
+     * yes. */
+    asks?: Partial<GateAsks>;
     /** The pool's launch phase — absent, specs spawn as given. */
     resolveLaunch?: LaunchResolver;
   } = {},
@@ -111,8 +113,6 @@ export function agentsHarness(
   agents = new AgentsStore(deps, {
     emit: (...evs) => events.push(...evs),
     emitSettings: () => {},
-    openWork: () => ({ conversations: 0, turns: 0 }),
-    confirm: async () => true,
     warn: () => {},
     runLoginTask: async () => 0,
     removed: (agentId) => removed.push(agentId),
@@ -136,5 +136,11 @@ export function agentsHarness(
     agents.publish(agentId);
   };
   const row = (agentId: string) => state().agents.find((a) => a.id === agentId);
-  return { pool, tracker, agents, gates: new AgentGates(agents, queue), deps, events, state, row, removed, probes, seedAgent };
+  const gates = new AgentGates(agents, queue, {
+    name: (agentId) => agents.name(agentId),
+    openWork: () => ({ conversations: 0, turns: 0 }),
+    confirm: async () => true,
+    ...opts.asks,
+  });
+  return { pool, tracker, agents, gates, deps, events, state, row, removed, probes, seedAgent };
 }

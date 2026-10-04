@@ -9,6 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 const AGENT_ID = "upgrade-guard";
 
@@ -90,7 +91,7 @@ suite("upgrade guard", () => {
       assert.strictEqual(orchestrator.pool.get(AGENT_ID)?.status, "running");
     } finally {
       window.showWarningMessage = original;
-      await orchestrator.gates.remove(AGENT_ID);
+      await answeringYes(() => orchestrator.gates.remove(AGENT_ID));
       await land(...registryBefore.agents);
       globalThis.fetch = realFetch;
       await rm(cwd, { recursive: true, force: true });

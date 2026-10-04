@@ -64,9 +64,7 @@ function harness(extraHooks: {
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
 
   const pool = new AgentPool({
-    onStatusChanged: (agentId, status) => {
-      if (status === "crashed" || status === "reconnecting") sessionManager.invalidateAgent(agentId);
-    },
+    onStatusChanged: (agentId, status) => sessionManager.agentStatusChanged(agentId, status),
     onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onCapabilityEvidence: (agentId, row, evidence) => capabilityTracker.noteEvidence(agentId, row, evidence),

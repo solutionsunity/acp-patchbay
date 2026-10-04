@@ -1,11 +1,12 @@
 // The agents' gates (agent-gates.ts) over a stub store: connection work
 // takes its turn in the queue and a repeat joins it; Stop and Remove cut in
 // — the process down at once, what runs told to stop and what waits
-// dropped, the cut-in's own run once what it cut has unwound; and a login
-// is one operation per method. The store's own operations stay plain, so
-// every one of these rules is the gates'.
+// dropped, the cut-in's own run once what it cut has unwound; a login is
+// one operation per method; and an operation that ends the connection asks
+// the one question first. The store's own operations stay plain, so every
+// one of these rules is the gates'.
 import { describe, expect, it } from "vitest";
-import { AgentGates, type AgentOperation } from "../src/orchestrator/agent-gates";
+import { AgentGates, endQuestion, type AgentOperation, type GateAsks } from "../src/orchestrator/agent-gates";
 import type { ConnectionOperations } from "../src/orchestrator/agents-store";
 import { Cancelled, Queue } from "../src/orchestrator/queue";
 
@@ -14,6 +15,9 @@ import { Cancelled, Queue } from "../src/orchestrator/queue";
 function stubStore() {
   const ran: string[] = [];
   const signals = new Map<string, AbortSignal>();
+  /** The go-ahead each upgrade was handed — the store asks it when it
+   * would stop a running agent. */
+  const consents: Array<() => Promise<boolean>> = [];
   const pending: Array<{ name: string; finish: () => void }> = [];
   const op = (name: string, signal?: AbortSignal) => {
     ran.push(name);
@@ -23,7 +27,10 @@ function stubStore() {
   const store: ConnectionOperations = {
     connect: (_agentId, signal) => op("connect", signal),
     restart: (_agentId, signal) => op("restart", signal),
-    upgrade: (_agentId, signal) => op("upgrade", signal),
+    upgrade: (_agentId, signal, consent) => {
+      if (consent !== undefined) consents.push(consent);
+      return op("upgrade", signal);
+    },
     login: (_agentId, methodId, signal) => op(`login:${methodId}`, signal),
     logout: () => op("logout"),
     verify: () => op("verify").then(() => "ok" as const),
@@ -39,15 +46,39 @@ function stubStore() {
       p.finish();
     }
   };
-  return { store, ran, signals, finish };
+  return { store, ran, signals, consents, finish };
 }
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-function gated() {
-  const { store, ran, signals, finish } = stubStore();
+/** Asks with nothing in hand by default — every question answered yes. */
+function gated(asks: Partial<GateAsks> = {}) {
+  const { store, ran, signals, consents, finish } = stubStore();
   const queue = new Queue<AgentOperation>(() => {});
-  return { gates: new AgentGates(store, queue), queue, ran, signals, finish };
+  const gates = new AgentGates(store, queue, {
+    name: (agentId) => `Agent ${agentId}`,
+    openWork: () => ({ conversations: 0, turns: 0 }),
+    confirm: async () => true,
+    ...asks,
+  });
+  return { gates, queue, ran, signals, consents, finish };
+}
+
+/** Work in hand, and a question the test answers. */
+function asking(work = { conversations: 2, turns: 1 }) {
+  const asked: string[] = [];
+  let answer: ((yes: boolean) => void) | undefined;
+  return {
+    asked,
+    answer: (yes: boolean) => answer?.(yes),
+    asks: {
+      openWork: () => work,
+      confirm: (message: string) => {
+        asked.push(message);
+        return new Promise<boolean>((resolve) => (answer = resolve));
+      },
+    } satisfies Partial<GateAsks>,
+  };
 }
 
 describe("AgentGates", () => {
@@ -122,9 +153,10 @@ describe("AgentGates", () => {
   it("a cut-in is never cut: a Remove asked for during a Stop runs once the Stop is done", async () => {
     const { gates, queue, ran, finish } = gated();
     const stop = gates.stop("a");
+    // Remove always asks first; answered, it takes its place behind the Stop.
     const remove = gates.remove("a");
-    expect(queue.held("a")).toEqual(["stop", "remove"]);
     await tick();
+    expect(queue.held("a")).toEqual(["stop", "remove"]);
     expect(ran).not.toContain("remove");
     finish("stop");
     await stop;
@@ -194,5 +226,108 @@ describe("AgentGates", () => {
     expect(ran).toEqual(["connect", "connect"]);
     finish("connect");
     await Promise.all(work);
+  });
+});
+
+describe("the one question before a connection ends", () => {
+  it("nothing in hand: Stop, Upgrade and Log out just run — Remove still asks, since it also forgets", () => {
+    const none = { conversations: 0, turns: 0 };
+    expect(endQuestion("stop", "Claude", none)).toBeNull();
+    expect(endQuestion("upgrade", "Claude", none)).toBeNull();
+    expect(endQuestion("logout", "Claude", none)).toBeNull();
+    expect(endQuestion("remove", "Claude", none)).toEqual({
+      message: "Remove Claude? Patchbay forgets the agent: its config, env and capability cache.",
+      choice: "Remove",
+    });
+  });
+
+  it("work in hand: one question with the counts, saying what each one does", () => {
+    const work = { conversations: 2, turns: 1 };
+    const cut = "2 open conversations — 1 still running and will be cut off";
+    expect(endQuestion("stop", "Claude", work)).toEqual({ message: `Stop Claude? It disconnects ${cut}.`, choice: "Stop" });
+    expect(endQuestion("upgrade", "Claude", work)?.message).toBe(`Upgrade Claude? It restarts the agent, disconnecting ${cut}.`);
+    expect(endQuestion("logout", "Claude", work)).toEqual({
+      message: `Log out of Claude? It signs the agent out and stops it, disconnecting ${cut}.`,
+      choice: "Log out",
+    });
+    expect(endQuestion("remove", "Claude", work)?.message).toBe(
+      `Remove Claude? It disconnects ${cut}. Patchbay forgets the agent: its config, env and capability cache.`,
+    );
+    expect(endQuestion("stop", "Claude", { conversations: 1, turns: 0 })?.message).toBe(
+      "Stop Claude? It disconnects 1 open conversation.",
+    );
+  });
+
+  it("Stop asks before it cuts in — declined, nothing is cut and the agent's work runs on", async () => {
+    const user = asking();
+    const { gates, queue, ran, signals, finish } = gated(user.asks);
+    const connect = gates.connect("a");
+    await tick();
+    const stop = gates.stop("a");
+    await tick();
+    expect(user.asked).toEqual(["Stop Agent a? It disconnects 2 open conversations — 1 still running and will be cut off."]);
+    expect(ran).toEqual(["connect"]);
+    user.answer(false);
+    await stop;
+    expect(signals.get("connect")?.aborted).toBe(false);
+    expect(queue.held("a")).toEqual(["connect"]);
+    finish("connect");
+    await connect;
+  });
+
+  it("Stop answered yes cuts in at once", async () => {
+    const user = asking();
+    const { gates, ran, finish } = gated(user.asks);
+    const stop = gates.stop("a");
+    await tick();
+    user.answer(true);
+    await tick();
+    expect(ran).toEqual(["stop", "stop"]);
+    finish("stop");
+    await stop;
+  });
+
+  it("Remove asks with nothing in hand too — declined, the agent stays", async () => {
+    const user = asking({ conversations: 0, turns: 0 });
+    const { gates, ran } = gated(user.asks);
+    const remove = gates.remove("a");
+    await tick();
+    expect(user.asked).toEqual(["Remove Agent a? Patchbay forgets the agent: its config, env and capability cache."]);
+    user.answer(false);
+    await remove;
+    expect(ran).toEqual([]);
+  });
+
+  it("Log out asks when its turn comes — the counts it would cut off, then", async () => {
+    const user = asking();
+    const { gates, ran, finish } = gated(user.asks);
+    const verify = gates.verify("a");
+    const logout = gates.logout("a");
+    await tick();
+    expect(user.asked).toEqual([]);
+    finish("verify");
+    await verify;
+    await tick();
+    expect(user.asked).toHaveLength(1);
+    user.answer(true);
+    await tick();
+    expect(ran).toEqual(["verify", "logout"]);
+    finish("logout");
+    await logout;
+  });
+
+  it("Upgrade hands the store its go-ahead: the question is asked only if the store would stop a running agent", async () => {
+    const user = asking();
+    const { gates, consents, finish } = gated(user.asks);
+    const upgrade = gates.upgrade("a");
+    await tick();
+    expect(user.asked).toEqual([]);
+    const agreed = consents[0]!();
+    await tick();
+    expect(user.asked[0]).toMatch(/^Upgrade Agent a\? It restarts the agent/);
+    user.answer(true);
+    expect(await agreed).toBe(true);
+    finish("upgrade");
+    await upgrade;
   });
 });

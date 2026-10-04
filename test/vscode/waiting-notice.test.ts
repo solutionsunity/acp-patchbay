@@ -9,6 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 const AGENT_ID = "waiting-notice";
 
@@ -101,7 +102,7 @@ suite("waiting-on-user notice", () => {
       assert.strictEqual(noticeFor("Which branch?"), undefined);
     } finally {
       window.showWarningMessage = original;
-      await orchestrator.gates.remove(AGENT_ID);
+      await answeringYes(() => orchestrator.gates.remove(AGENT_ID));
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -124,10 +125,10 @@ suite("waiting-on-user notice", () => {
       const card = () => orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "permission");
       await waitFor(() => (card()?.resolution === null ? true : undefined));
 
-      await orchestrator.gates.stop(AGENT_ID);
+      await answeringYes(() => orchestrator.gates.stop(AGENT_ID));
       await waitFor(() => (card()?.resolution != null ? true : undefined));
     } finally {
-      await orchestrator.gates.remove(AGENT_ID);
+      await answeringYes(() => orchestrator.gates.remove(AGENT_ID));
       await rm(cwd, { recursive: true, force: true });
     }
   });

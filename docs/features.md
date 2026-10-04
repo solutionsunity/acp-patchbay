@@ -48,7 +48,11 @@ deliverable.
   process is never the user's chore: it starts when a session needs it and
   stays warm for the next one. Stop and Remove end whatever the agent is
   doing, a launch still downloading included, and nothing asked of it
-  meanwhile runs after them.
+  meanwhile runs after them. Before Stop, Upgrade, Remove or Log out cuts
+  off open conversations, one question says how many, and how many turns
+  are still running; Remove always asks first. A conversation its agent's
+  stop disconnected reopens where it was — its knobs, roots and held
+  prompts intact.
 - After reconnect, a session continues natively where the agent supports it:
   `session/load` (full replay) or `session/resume` (context back, no visible
   history — said so with an inline notice). Where it supports neither, the

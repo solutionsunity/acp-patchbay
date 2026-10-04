@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 interface ChatBlockLike {
   id: string;
@@ -121,7 +122,7 @@ suite("chat vertical slice", () => {
       // and the final state reached the webview too
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
     } finally {
-      await orchestrator.gates.remove("chat-e2e");
+      await answeringYes(() => orchestrator.gates.remove("chat-e2e"));
       await rm(cwd, { recursive: true, force: true });
     }
   });

@@ -89,9 +89,8 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     login: { show: running && needsAuth, disabled: working },
     // Offered only on a declared auth.logout — the spec's "Clients MUST
     // NOT call it" otherwise. Hidden while needsAuth (nothing to log out
-    // of — and never both login and logout); *disabled*, never unmounted,
-    // while in flight, so the open AlertDialog is never yanked from the
-    // tree (Radix rule).
+    // of — and never both login and logout); dimmed while the queue holds
+    // work it would only wait behind.
     logout: {
       show: running && !needsAuth && matrix?.["auth.logout"]?.declared === true,
       disabled: working,

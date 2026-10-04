@@ -11,7 +11,7 @@ import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { UpgradeChip } from "../shared/upgrade-chip";
-import { ConfirmButton, Field, Toggle } from "./controls";
+import { Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
 import { Button } from "@/components/ui/button";
@@ -671,16 +671,19 @@ export function AgentsSection(props: {
                     {controls.login.show && (
                       <LoginControl agentId={id} methods={a?.authMethods ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
                     )}
-                    {/* Log out is *disabled* — never unmounted — while in flight,
-                        so the open AlertDialog is never yanked from the tree. */}
+                    {/* Log out and Remove ask nothing here: the host puts the
+                        one question before a connection ends, with what it
+                        would cut off, whichever door the operation came by. */}
                     {controls.logout.show && (
-                      <ConfirmButton
-                        label="Log out"
-                        icon="sign-out"
-                        title="Active sessions may start failing with auth errors until you log in again."
+                      <Button
+                        variant="outline" size="icon" className="size-8"
+                        title="Log out — signs the agent out and stops it"
+                        aria-label="Log out"
                         disabled={controls.logout.disabled}
-                        onConfirm={() => props.onLogout(id)}
-                      />
+                        onClick={() => props.onLogout(id)}
+                      >
+                        <Icon name="sign-out" />
+                      </Button>
                     )}
                     {controls.stop.show && (
                       <Button
@@ -714,13 +717,15 @@ export function AgentsSection(props: {
                       </Button>
                     )}
                     {controls.remove.show && (
-                      <ConfirmButton
-                        label="Remove"
-                        icon="trash"
-                        title="stops the agent and forgets it — config, env, and capability cache"
-                        busy={controls.remove.busy}
-                        onConfirm={() => props.onRemove(id)}
-                      />
+                      <Button
+                        variant="outline" size="icon" className="size-8"
+                        title={controls.remove.busy ? "Removing…" : "Remove — stops the agent and forgets it"}
+                        aria-label="Remove"
+                        disabled={controls.remove.busy}
+                        onClick={() => props.onRemove(id)}
+                      >
+                        <Icon name={controls.remove.busy ? "loading" : "trash"} spin={controls.remove.busy} />
+                      </Button>
                     )}
                     <Button
                       variant="outline" size="icon" className="size-8"

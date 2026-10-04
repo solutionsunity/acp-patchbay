@@ -571,10 +571,11 @@ for (const theme of Object.keys(THEMES)) {
   // download-confirm dialog's URL box and every .mono rely on inheriting it
   check(`[${theme}] settings inherits the wrapping policy`, (await p.evaluate(() => getComputedStyle(document.body).overflowWrap)) === "anywhere");
 
+  // Remove asks nothing in the view: the host puts the one question
+  // before a connection ends, whichever door the operation came by.
   await p.click('button[aria-label="Remove"]');
-  check(`[${theme}] destructive AlertDialog opens`, (await p.waitForSelector("text=Confirm remove?", { timeout: 3000 })) !== null);
-  await p.screenshot({ path: `${OUT}/settings-dialog-${theme}.png` });
-  await p.keyboard.press("Escape");
+  const removal = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] Remove goes to the host, opening no dialog of its own`, removal?.kind === "removeAgentConfig" && (await p.$('[role="alertdialog"]')) === null);
 
   await p.click('button[aria-expanded]'); // add-agent tile
   await p.click('button[role="combobox"]');
@@ -602,6 +603,13 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] empty filter offers a clear`, (await p.waitForSelector("text=Clear filter", { timeout: 3000 })) !== null);
   await p.click("text=Clear filter");
   check(`[${theme}] clear restores every entry`, (await rowsShown()) === 3);
+
+  // ── settings: the destructive dialog (Data › Erase all data) ──
+  await p.click('.nav .it:has-text("Data")');
+  await p.click('button:has-text("Erase all data")');
+  check(`[${theme}] destructive AlertDialog opens`, (await p.waitForSelector("text=Erase everything patchbay stored?", { timeout: 3000 })) !== null);
+  await p.screenshot({ path: `${OUT}/settings-dialog-${theme}.png` });
+  await p.keyboard.press("Escape");
 
   // ── settings: composer stats, one switch per read-out ──
   await p.click('.nav .it:has-text("Preferences")');

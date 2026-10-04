@@ -11,6 +11,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 interface CapabilityCell {
   declared: boolean;
@@ -113,7 +114,7 @@ suite("opportunistic fs/terminal verification", () => {
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await orchestrator.gates.remove("verify-e2e");
+      await answeringYes(() => orchestrator.gates.remove("verify-e2e"));
       await rm(cwd, { recursive: true, force: true });
     }
   });

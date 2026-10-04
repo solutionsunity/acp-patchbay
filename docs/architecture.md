@@ -334,7 +334,20 @@ flowchart TD
   use or close, and its return code, the login's only word, still counts
   by the same rules when it comes; only the probe and restart that follow
   a login, which need the process the stop ended, don't run. The window's end and erase cut every agent's
-  work at once, the same way (`stopAll`). Saves never meet the gates. Add and startup are the
+  work at once, the same way (`stopAll`). The operations that end the
+  connection — Stop, Upgrade, Remove, Log out — follow one rule, the
+  gates': nothing in hand, it runs; work in hand — open conversations,
+  running turns, counted at that moment — one question with the counts,
+  asked at the operation so every door gets the same one. Remove always
+  asks, since it also forgets the agent. Stop and Remove ask before they
+  cut in (nothing is cut while the question is open), Log out when its
+  turn comes, Upgrade when it would stop a running agent — once the
+  registry has shown it can upgrade at all. Every way a connection ends
+  detaches the sessions that rode it, as a crash does: they reopen (load,
+  then resume) keeping what they hold — knobs, roots, held prompts, chips
+  (the session manager's `agentStatusChanged`, the one rule). Remove also
+  lets go of the agent's live state: the pool's entry, the tracker's
+  marks, a chat pane on it. Saves never meet the gates. Add and startup are the
   orchestrator's features: the store saves (or reads what to open), the
   connect and the free check pass the gates. Gates decide policy only; the
   store keeps its facts valid at its one writer whatever the gates admit.

@@ -52,6 +52,19 @@
   runs, its button spins.
 - Stopping an agent mid-reply no longer marks what that reply carried (an
   image, say) as suspect in the capability matrix.
+- Stop, Upgrade, Remove and Log out now ask one question, the same from
+  every button and notification, and only when something would be cut off:
+  how many open conversations they disconnect, and how many replies still
+  running. Stop never asked before; Log out asked every time, saying that
+  sessions "may start failing" when it actually stops the agent at once,
+  and now asks only with conversations open. Remove still always asks,
+  now with the counts when there are any.
+- Stopping an agent now disconnects its conversations at once, as a crash
+  does: they show as disconnected, a running reply is closed off, and each
+  reopens later with its knobs, roots and held prompts. Before, they
+  looked connected until the agent's next start.
+- Removing an agent also lets go of everything patchbay held for it in
+  this window, including a chat pane still waiting on it.
 
 ## 0.84.1 — 2026-09-29
 

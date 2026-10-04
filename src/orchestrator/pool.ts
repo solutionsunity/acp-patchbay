@@ -710,6 +710,15 @@ export class AgentPool {
     this.setStatus(entry, "stopped");
   }
 
+  /** A removed agent's entry goes — kept past a stop so far, for what the
+   * views show of its last connection. Only once its process is down: a
+   * live process is never let go of. */
+  forget(agentId: string): void {
+    const status = this.entries.get(agentId)?.status;
+    if (status === "running" || status === "reconnecting") return;
+    this.entries.delete(agentId);
+  }
+
   /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets.
    * `spec`, when given, replaces the entry's connect-time snapshot — the
    * caller read current config and secrets; a restart is a spawn and must

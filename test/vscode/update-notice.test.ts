@@ -4,6 +4,7 @@
 // and one notification for several agents.
 import * as assert from "node:assert";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 interface RegistryData {
   fetchedAt: string;
@@ -105,7 +106,7 @@ suite("update notice", () => {
       assert.deepStrictEqual(shown[1], ["Updates are available for 2 agents.", "Upgrade…"]);
     } finally {
       window.showInformationMessage = show;
-      for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.gates.remove(id);
+      for (const id of ["upd-a", "upd-b", "upd-c"]) await answeringYes(() => orchestrator.gates.remove(id));
       await land(...original.agents);
       globalThis.fetch = realFetch;
     }

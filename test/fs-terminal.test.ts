@@ -70,9 +70,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   const pool = new AgentPool({
     // A restart must reach the session manager, or it would prompt a
     // session the new process never opened (the extension wires the same).
-    onStatusChanged: (agentId, status) => {
-      if (status === "crashed" || status === "reconnecting") sessionManager.invalidateAgent(agentId);
-    },
+    onStatusChanged: (agentId, status) => sessionManager.agentStatusChanged(agentId, status),
     onDeclaredCaptured: () => {},
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onCapabilityEvidence: (_agentId, row, ev) => evidence.push(`${row}:${ev}`),

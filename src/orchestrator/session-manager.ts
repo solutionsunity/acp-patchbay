@@ -16,6 +16,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import {
   isToolCallOpen,
+  type AgentStatus,
   type AgentViewEvent,
   type ChatBlock,
   type ContextChip,
@@ -410,6 +411,13 @@ function liveSession(agentId: string): LiveSession {
   };
 }
 
+/** The work riding an agent's connection: its conversations, and the
+ * turns among them still running. */
+export interface OpenWork {
+  conversations: number;
+  turns: number;
+}
+
 export class SessionManager {
   private sessions = new Map<string, LiveSession>();
   /** Every session known to exist right now (see KnownSession). */
@@ -539,7 +547,7 @@ export class SessionManager {
    * conversations on it, and the turns among them still running (those are
    * cut off). A never-prompted session doesn't count — it has nothing to
    * lose and is minted again from its row on next use. */
-  openWork(agentId: string): { conversations: number; turns: number } {
+  openWork(agentId: string): OpenWork {
     let conversations = 0;
     let turns = 0;
     for (const [sessionId, session] of this.sessions) {
@@ -952,6 +960,13 @@ export class SessionManager {
     // removed agent's rows have no walk left to reconcile them. By agent,
     // not by index: rows of other workspaces were never indexed here.
     this.hooks.forgetAgentContinuity?.(agentId);
+  }
+
+  /** Sessions ride their agent's connection: any status but running — a
+   * Stop, a crash, a fresh connection starting — means the one they rode
+   * has ended, and they detach. */
+  agentStatusChanged(agentId: string, status: AgentStatus): void {
+    if (status !== "running") this.invalidateAgent(agentId);
   }
 
   /** Drops bookkeeping for sessions whose connection just died — a stale

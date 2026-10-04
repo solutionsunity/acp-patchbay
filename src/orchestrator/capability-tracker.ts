@@ -155,6 +155,16 @@ export class CapabilityTracker {
     void this.probe(agentId);
   }
 
+  /** A removed agent's live marks leave with it: its connection's own
+   * marks, a parked probe, its probe sessions. */
+  forget(agentId: string): void {
+    this.unversionedMarks.delete(agentId);
+    this.deferredProbes.delete(agentId);
+    for (const [sessionId, owner] of this.probeSessions) {
+      if (owner === agentId) this.probeSessions.delete(sessionId);
+    }
+  }
+
   /** A real session opened on this agent's connection (session-manager's
    * attach ceremony fires this via the orchestrator). Two duties: real
    * adoption supersedes probe identity — the agent just minted this id

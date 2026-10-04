@@ -105,11 +105,7 @@ function harness(opts?: {
   let sessionManager!: SessionManager;
   let capabilityTracker!: CapabilityTracker;
   const pool = new AgentPool({
-    onStatusChanged: (agentId, status) => {
-      if (status === "crashed" || status === "reconnecting") {
-        sessionManager.invalidateAgent(agentId);
-      }
-    },
+    onStatusChanged: (agentId, status) => sessionManager.agentStatusChanged(agentId, status),
     onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
     onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
     onCapabilityEvidence: (agentId, row, evidence) => capabilityTracker.noteEvidence(agentId, row, evidence),
@@ -756,6 +752,64 @@ describe("SessionManager", () => {
     }
     expect(users.slice(-2)).toEqual(["held words", "after reconnect"]);
     await h.pool.stop("smc1");
+  }, 15000);
+
+  // A Stop ends the agent's connection as a crash does, and the session
+  // keeps what it holds as it does after a crash: detached, its held words
+  // and roots still there, and on reconnect its own knob combination
+  // re-seeded over the agent's load-time reset while the words fire.
+  it("a Stop detaches a session like a crash — held words, roots and knobs come back after reconnect", async () => {
+    const h = harness();
+    const script: FakeAgentScript = {
+      declare: { loadSession: true },
+      turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }],
+      stepDelayMs: 200,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "sonnet", name: "Sonnet" },
+          ],
+        },
+      ],
+    };
+    await h.pool.connect(spec(script, "sms1"));
+    const sessionId = await h.sessionManager.createSession("sms1", "Fake Agent", cwd);
+    await h.sessionManager.setKnob(sessionId, "model", "sonnet");
+    await h.sessionManager.addRoot(sessionId, "/repo/extra");
+    const promptDone = h.sessionManager.sendPrompt(sessionId, "first").catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+    await h.sessionManager.sendPrompt(sessionId, "held words"); // queued mid-turn
+    await h.pool.stop("sms1"); // the agent's Stop, under the live turn
+    await promptDone;
+
+    expect(h.sessionManager.isLive(sessionId)).toBe(false);
+    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+
+    await h.pool.connect(spec({ ...script, stepDelayMs: 0 }, "sms1"));
+    await h.sessionManager.sendPrompt(sessionId, "after reconnect");
+    const start = Date.now();
+    let users: string[] = [];
+    for (;;) {
+      users = (h.state().transcripts[sessionId] ?? [])
+        .filter((b) => b.kind === "user")
+        .map((b) => (b.kind === "user" ? userPartsText(b.parts) : ""));
+      if ((h.state().promptQueue[sessionId]?.length ?? 0) === 0 && users.length >= 3) break;
+      if (Date.now() - start > 3500) {
+        throw new Error(`held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[sessionId])}`);
+      }
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(users.slice(-2)).toEqual(["held words", "after reconnect"]);
+    expect(h.state().sessionKnobs[sessionId]?.find((k) => k.id === "model")?.currentValue).toBe("sonnet");
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+    await h.pool.stop("sms1");
   }, 15000);
 
   it("rebuilds the render cache wholesale from session/load replay after a crash", async () => {

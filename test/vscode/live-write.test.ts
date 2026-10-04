@@ -11,6 +11,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 interface Internal {
   orchestrator: {
@@ -77,7 +78,7 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
     } finally {
-      await orchestrator.gates.remove("live-write-e2e");
+      await answeringYes(() => orchestrator.gates.remove("live-write-e2e"));
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -107,7 +108,7 @@ suite("live-buffer write (W1)", () => {
         .join("");
       assert.strictEqual(text, `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
-      await orchestrator.gates.remove("live-read-e2e");
+      await answeringYes(() => orchestrator.gates.remove("live-read-e2e"));
       await rm(cwd, { recursive: true, force: true });
     }
   });

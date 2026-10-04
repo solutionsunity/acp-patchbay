@@ -64,18 +64,24 @@ async function upgradable(h: AgentsHarness, listed = [{ id: "reg", version: "2.0
   await h.agents.connect("reg");
 }
 
-/** Hooks with open work on the connection and a question the test answers. */
+/** The gates' asks with open work on the connection, and questions the
+ * test answers — each by how it starts. */
 function asking() {
   const asked: string[] = [];
-  let answer: ((yes: boolean) => void) | undefined;
+  const open = new Map<string, (yes: boolean) => void>();
   return {
     asked,
-    answer: (yes: boolean) => answer?.(yes),
-    hooks: {
+    answer: (start: string, yes: boolean) => {
+      const message = [...open.keys()].find((m) => m.startsWith(start));
+      if (message === undefined) throw new Error(`no open question starting "${start}"`);
+      open.get(message)!(yes);
+      open.delete(message);
+    },
+    asks: {
       openWork: () => ({ conversations: 1, turns: 0 }),
       confirm: (message: string) => {
         asked.push(message);
-        return new Promise<boolean>((resolve) => (answer = resolve));
+        return new Promise<boolean>((resolve) => open.set(message, resolve));
       },
     },
   };
@@ -153,7 +159,7 @@ describe("agents store", () => {
     await expect(h.agents.connect("ghost")).rejects.toThrow("no saved launch configuration");
   });
 
-  it("Remove stops the process, tells the sessions side, purges every saved fact and leaves the views", async () => {
+  it("Remove stops the process, tells the sessions side, purges every saved fact, lets go of its live state and leaves the views", async () => {
     const h = agentsHarness(dir);
     await h.agents.save(fakeConfig("gone", {}));
     await h.agents.connect("gone");
@@ -166,7 +172,9 @@ describe("agents store", () => {
 
     await h.agents.remove("gone");
 
-    expect(h.pool.get("gone")?.status).toBe("stopped");
+    // The pool lets go only of a process that is down.
+    expect(h.pool.get("gone")).toBeUndefined();
+    expect(h.tracker.matrix("gone")).toBeUndefined();
     expect(h.removed).toEqual(["gone"]);
     expect(h.agents.config("gone")).toBeUndefined();
     expect(await h.deps.env.get("gone")).toEqual({});
@@ -206,7 +214,7 @@ describe("agents store", () => {
 
   it("an Upgrade the registry can't serve asks nothing and leaves the agent as it is", async () => {
     const user = asking();
-    const h = agentsHarness(dir, { hooks: user.hooks });
+    const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h, [{ id: "other", version: "2.0.0" }]); // the registry no longer lists it
 
     await h.agents.upgrade("reg");
@@ -258,7 +266,7 @@ describe("the gates", () => {
   // and restarted the agent a second time.
   it("a second Upgrade while one is held joins it — one question, one outcome (#68)", async () => {
     const user = asking();
-    const h = agentsHarness(dir, { hooks: user.hooks });
+    const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h);
 
     const first = h.gates.upgrade("reg");
@@ -270,7 +278,7 @@ describe("the gates", () => {
     const chat = h.gates.connect("reg");
     expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "connect" }]);
 
-    user.answer(false);
+    user.answer("Upgrade", false);
     await Promise.all([first, second, chat]);
     expect(user.asked).toHaveLength(1);
     // Declined: the agent runs as it was, and the chat's connect found it up.
@@ -280,20 +288,24 @@ describe("the gates", () => {
 
   it("Stop never waits its turn, and an upgrade it stopped goes no further — the agent keeps its version", async () => {
     const user = asking();
-    const h = agentsHarness(dir, { hooks: user.hooks });
+    const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h);
 
     const upgrade = h.gates.upgrade("reg");
     await vi.waitFor(() => expect(user.asked).toHaveLength(1));
     const cut = expect(upgrade).rejects.toBeInstanceOf(Cancelled);
     const stop = h.gates.stop("reg");
+    // A conversation is open, so the Stop puts the one question too.
+    await vi.waitFor(() => expect(user.asked).toHaveLength(2));
+    expect(user.asked[1]).toBe("Stop Fake reg? It disconnects 1 open conversation.");
+    user.answer("Stop", true);
     // The escape hatch reaches the agent whatever its queue holds.
     await vi.waitFor(() => expect(h.row("reg")?.status).toBe("stopped"));
     await cut;
     expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "stop" }]);
-    // The question still open is answered yes: the upgrade, told to stop,
-    // saves no new pin and starts nothing.
-    user.answer(true);
+    // The upgrade's own question, still open, is answered yes: told to
+    // stop, it saves no new pin and starts nothing.
+    user.answer("Upgrade", true);
     await stop;
     expect(h.agents.config("reg")?.registrySource?.pinnedVersion).toBe("1.0.0");
     expect(h.row("reg")).toMatchObject({ status: "stopped", busy: [] });
@@ -315,7 +327,7 @@ describe("the gates", () => {
     // The download lands after all — and launches nothing.
     release();
     await new Promise((r) => setTimeout(r, 300));
-    expect(h.pool.get("doomed")?.status).toBe("stopped");
+    expect(h.pool.get("doomed")).toBeUndefined();
     expect(h.agents.config("doomed")).toBeUndefined();
     expect(h.row("doomed")).toBeUndefined();
     expect(h.removed).toEqual(["doomed"]);

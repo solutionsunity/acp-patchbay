@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
+import { answeringYes } from "./modal";
 
 interface Internal {
   orchestrator: {
@@ -77,7 +78,7 @@ suite("write scope (issue #56)", () => {
       assert.strictEqual(await readFile(inside, "utf8"), "in\n");
       await assert.rejects(readFile(escaped, "utf8"), "the rejected write never landed");
     } finally {
-      await orchestrator.gates.remove("write-scope-e2e");
+      await answeringYes(() => orchestrator.gates.remove("write-scope-e2e"));
       await rm(dir, { recursive: true, force: true });
     }
   });

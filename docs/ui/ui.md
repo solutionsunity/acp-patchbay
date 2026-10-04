@@ -181,7 +181,11 @@ Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
 registry has a newer version than the pin — the same chip as the Agent View's,
 indicator and action in one; while an upgrade runs it reads `upgrading to
 {version}…` with a spinner and takes no click · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
-(spins and takes no click while the agent is being removed) · default knobs render **exactly what the agent
+(spins and takes no click while the agent is being removed) — no dialog of
+its own: Stop, Upgrade, Remove and Log out put the host's one question, a
+modal with the open conversations and running turns they would cut off,
+and only when there are any; Remove always asks, since it also forgets the
+agent · default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config
 option, keyed by the option's own id — category is UX-only in ACP, so it only
 decorates with an icon when reported; boolean options render a tri-state default
