@@ -135,24 +135,18 @@ function harness(opts?: {
       rootsChanged: (sessionId) => rootsChanged.push(sessionId),
       currentTranscript: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
-      titleOf: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).sessions.find((s) => s.id === sessionId)?.title,
       isDeleteUsed: (agentId) => capabilityTracker.matrix(agentId)?.["session.delete"]?.used ?? false,
       isActiveSession: (sessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId ||
         (opts?.pinned?.has(sessionId) ?? false),
-      // Sidebar-pointer semantics (orchestrator mirrors this shape: pinned
-      // panels excluded).
-      isPointerActive: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId,
       connectForSession: (sessionId) => opts?.onConnectForSession?.(sessionId),
       isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
       authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
-      continuityFor: (sessionId, agentId) => continuity.read(sessionId, agentId),
-      onContinuity: (sessionId, agentId, sessionCwd, patch) => {
+      continuityFor: (agentSessionId, agentId) => continuity.read(agentSessionId, agentId),
+      onContinuity: (agentSessionId, agentId, sessionCwd, patch) => {
         void (patch === null
-          ? continuity.forget(sessionId, agentId)
-          : continuity.patch(sessionId, agentId, sessionCwd, patch));
+          ? continuity.forget(agentSessionId, agentId)
+          : continuity.patch(agentSessionId, agentId, sessionCwd, patch));
       },
       reconcileContinuity: (agentId, sessionCwd, keep) => {
         void continuity.reconcile(agentId, sessionCwd, keep);
@@ -160,7 +154,6 @@ function harness(opts?: {
       forgetAgentContinuity: (agentId) => {
         void continuity.forgetAgent(agentId);
       },
-      draftOf: (sessionId) => events.reduce(reduceAgentView, initialAgentViewState).drafts[sessionId],
     },
     () => cwd,
     undefined,
@@ -526,7 +519,7 @@ describe("SessionsStore", () => {
     await h.sessions.close(sessionId);
     expect(h.state().sessions).toHaveLength(0);
     expect(h.state().transcripts[sessionId]).toBeUndefined();
-    expect(h.sessions.knows(sessionId)).toBe(false);
+    expect(h.sessions.handleOf(sessionId)).toBeUndefined();
 
     await h.pool.stop("sm4");
   });
@@ -1451,23 +1444,25 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm10");
   });
 
-  it("context roots on a zero-turn session: recreated with the new list — path normalized", async () => {
+  it("context roots on a zero-turn session: minted again with the new list — the same session, path normalized", async () => {
     const h = harness();
     // Deliberately no load/resume declared: the zero-turn rung is session/new.
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm11"));
-    const oldId = await h.sessions.createSession("sm11", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("sm11", "Fake Agent", cwd);
+    const before = h.sessions.handleOf(sessionId);
 
-    await h.sessions.addRoot(oldId, "/repo/backend/"); // trailing slash normalized away
-    const newId = h.state().activeSessionId!;
-    expect(newId).not.toBe(oldId);
-    expect(h.state().sessions.some((s) => s.id === oldId)).toBe(false);
-    expect(h.state().contextRoots[newId]).toEqual(["/repo/backend"]);
-    // each birth tells its own servers once the session exists: the old
-    // shell's at creation and on the add, the fresh one's at its re-mint
-    expect(h.rootsChanged).toEqual([oldId, oldId, newId]);
+    await h.sessions.addRoot(sessionId, "/repo/backend/"); // trailing slash normalized away
+    // a fresh id on the agent's side; on patchbay's, the same session
+    expect(h.sessions.handleOf(sessionId)).not.toBe(before);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
+    expect(h.state().activeSessionId).toBe(sessionId);
+    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    // each birth tells its servers once the session exists: at creation,
+    // on the add, and at the re-mint
+    expect(h.rootsChanged).toEqual([sessionId, sessionId, sessionId]);
 
-    await h.sessions.sendPrompt(newId, "roots?");
-    const echoed = h.state().transcripts[newId]!.filter((b) => b.kind === "text").at(-1);
+    await h.sessions.sendPrompt(sessionId, "roots?");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
 
     await h.pool.stop("sm11");
@@ -1601,7 +1596,7 @@ describe("SessionsStore", () => {
     const sessionId = await h.sessions.createSession("sm32", "Fake Agent", cwd);
 
     expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo", "/src/lib"]);
-    expect(store.read(sessionId, "sm32")?.roots).toEqual(["/src/odoo", "/src/lib"]);
+    expect(store.read(h.sessions.handleOf(sessionId)!, "sm32")?.roots).toEqual(["/src/odoo", "/src/lib"]);
     // servers spawned during session/new could only ask before the id was
     // known — they are told once the session and its list exist
     expect(h.rootsChanged).toEqual([sessionId]);
@@ -1707,7 +1702,8 @@ describe("SessionsStore", () => {
       const sessionId = await h1.sessions.createSession("c33", "Fake Agent", cwd);
       await h1.sessions.sendPrompt(sessionId, "first turn");
       await h1.sessions.addRoot(sessionId, "/repo/extra");
-      expect(store.read(sessionId, "c33")?.roots).toEqual(["/repo/extra"]);
+      const handle = h1.sessions.handleOf(sessionId)!;
+      expect(store.read(handle, "c33")?.roots).toEqual(["/repo/extra"]);
       await h1.pool.stop("c33");
 
       // another client set the roots while no window was open: first sight
@@ -1715,19 +1711,20 @@ describe("SessionsStore", () => {
       const h2 = harness({ continuityStore: store });
       await h2.pool.connect(spec(script, "c33"));
       await h2.sessions.syncAgentSessions("c33");
-      expect(h2.state().contextRoots[sessionId]).toEqual(["/other/root"]);
-      expect(store.read(sessionId, "c33")?.roots).toEqual(["/other/root"]);
+      const listed = h2.sessions.rowFor("c33", handle)!;
+      expect(h2.state().contextRoots[listed]).toEqual(["/other/root"]);
+      expect(store.read(handle, "c33")?.roots).toEqual(["/other/root"]);
 
       // a known session, still not open here: the next walk's report wins again
       await report(["/other/root", "/third"]);
       await h2.sessions.syncAgentSessions("c33");
-      expect(h2.state().contextRoots[sessionId]).toEqual(["/other/root", "/third"]);
+      expect(h2.state().contextRoots[listed]).toEqual(["/other/root", "/third"]);
 
       // an empty report is a report
       await report([]);
       await h2.sessions.syncAgentSessions("c33");
-      expect(h2.state().contextRoots[sessionId]).toEqual([]);
-      expect(store.read(sessionId, "c33")?.roots).toBeUndefined(); // the row carries no empty list
+      expect(h2.state().contextRoots[listed]).toEqual([]);
+      expect(store.read(handle, "c33")?.roots).toBeUndefined(); // the row carries no empty list
       await h2.pool.stop("c33");
     });
 
@@ -1759,16 +1756,18 @@ describe("SessionsStore", () => {
       await h1.pool.connect(spec(script, "c33w"));
       const sessionId = await h1.sessions.createSession("c33w", "Fake Agent", cwd);
       await h1.sessions.sendPrompt(sessionId, "first turn");
+      const handle = h1.sessions.handleOf(sessionId)!;
       await h1.pool.stop("c33w");
 
       await report(["/repo/second", "/repo/extra"]);
       const h2 = harness({ continuityStore: store, workspaceRoots: [cwd, "/repo/second"] });
       await h2.pool.connect(spec(script, "c33w"));
       await h2.sessions.syncAgentSessions("c33w");
-      expect(h2.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
-      expect(store.read(sessionId, "c33w")?.roots).toEqual(["/repo/extra"]);
-      await h2.sessions.sendPrompt(sessionId, "roots?");
-      const echoed = h2.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+      const listed = h2.sessions.rowFor("c33w", handle)!;
+      expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
+      expect(store.read(handle, "c33w")?.roots).toEqual(["/repo/extra"]);
+      await h2.sessions.sendPrompt(listed, "roots?");
+      const echoed = h2.state().transcripts[listed]!.filter((b) => b.kind === "text").at(-1);
       expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/repo/extra"]);
       await h2.pool.stop("c33w");
     });
@@ -1864,23 +1863,27 @@ describe("SessionsStore", () => {
     const sessionId = await h1.sessions.createSession("smk1", "Fake Agent", cwd);
     await h1.sessions.setKnob(sessionId, "model", "sonnet");
     await h1.sessions.sendPrompt(sessionId, "first turn");
-    expect(store.read(sessionId, "smk1")?.knobs).toMatchObject({ model: "sonnet" });
+    // the durable row keys on the agent's own id — what names the session
+    // again after a reload
+    const handle = h1.sessions.handleOf(sessionId)!;
+    expect(store.read(handle, "smk1")?.knobs).toMatchObject({ model: "sonnet" });
     await h1.pool.stop("smk1");
 
     // window 2: fresh processes, fresh memory — only the durable copy survives
     const h2 = harness({ continuityStore: store });
     await h2.pool.connect(spec(script, "smk1"));
     await h2.sessions.syncAgentSessions("smk1");
-    expect(h2.sessions.knows(sessionId)).toBe(true);
-    h2.sessions.activate(sessionId);
+    const restored = h2.sessions.rowFor("smk1", handle)!;
+    expect(restored).toBeDefined();
+    h2.sessions.activate(restored);
     // session/load hands back the script default; the involuntary-arm
     // reseed must restore the session's own confirmed value
     const start = Date.now();
     for (;;) {
-      const model = h2.state().sessionKnobs[sessionId]?.find((k) => k.id === "model");
+      const model = h2.state().sessionKnobs[restored]?.find((k) => k.id === "model");
       if (model?.currentValue === "sonnet") break;
       if (Date.now() - start > 4000) {
-        throw new Error(`knob never restored — surface: ${JSON.stringify(h2.state().sessionKnobs[sessionId])}`);
+        throw new Error(`knob never restored — surface: ${JSON.stringify(h2.state().sessionKnobs[restored])}`);
       }
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -1912,36 +1915,38 @@ describe("SessionsStore", () => {
     locked = true; // logout witnessed
     await h1.sessions.sendPrompt(sessionId, "held words"); // → held row
     h1.sessions.persistDraft(sessionId, "half-typed thought"); // the orchestrator's debounced save
+    const handle = h1.sessions.handleOf(sessionId)!;
     await h1.pool.stop("smq6");
 
     // window 2: fresh memory, lock still standing — the row restores everything
     const h2 = harness({ continuityStore: store, authLocked: () => locked });
     await h2.pool.connect(spec(script, "smq6"));
     await h2.sessions.syncAgentSessions("smq6");
-    expect(h2.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
-    expect(h2.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
-    expect(h2.state().drafts[sessionId]).toBe("half-typed thought");
+    const listed = h2.sessions.rowFor("smq6", handle)!;
+    expect(h2.state().promptQueue[listed]).toMatchObject([{ text: "held words" }]);
+    expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
+    expect(h2.state().drafts[listed]).toBe("half-typed thought");
     {
       // chips decode async (stash read) — give the tick a moment
       const start = Date.now();
-      while ((h2.state().contextChips[sessionId]?.length ?? 0) === 0) {
+      while ((h2.state().contextChips[listed]?.length ?? 0) === 0) {
         if (Date.now() - start > 2000) throw new Error("chip never rehydrated");
         await new Promise((r) => setTimeout(r, 20));
       }
     }
-    expect(h2.state().contextChips[sessionId]).toMatchObject([{ id: "chip-1", label: "main.ts:1-3" }]);
+    expect(h2.state().contextChips[listed]).toMatchObject([{ id: "chip-1", label: "main.ts:1-3" }]);
 
     // login clears the lock: the held words fire, chips riding along
     locked = false;
     h2.sessions.drainHeldQueues("smq6");
     const start = Date.now();
     for (;;) {
-      const users = h2.state().transcripts[sessionId]?.filter((b) => b.kind === "user") ?? [];
+      const users = h2.state().transcripts[listed]?.filter((b) => b.kind === "user") ?? [];
       if (users.length >= 2) break;
       if (Date.now() - start > 4000) throw new Error("held words never fired after unlock");
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(h2.state().promptQueue[sessionId] ?? []).toEqual([]);
+    expect(h2.state().promptQueue[listed] ?? []).toEqual([]);
     await h2.pool.stop("smq6");
   });
 
@@ -2000,7 +2005,7 @@ describe("SessionsStore", () => {
       await h.pool.connect(spec(script(true), "c29-list"));
       const listed = await stage("c29-list");
       expect(store.list().map((r) => r.agentId)).toEqual(["c29-list"]);
-      expect(store.read(listed, "c29-list")).toMatchObject({
+      expect(store.read(h.sessions.handleOf(listed)!, "c29-list")).toMatchObject({
         knobs: { model: "sonnet" },
         roots: ["/repo/extra"],
         chips: [{ id: "c29-list-chip" }],
@@ -2042,6 +2047,7 @@ describe("SessionsStore", () => {
       await h1.pool.connect(spec(script, "c29-walk"));
       const sessionId = await h1.sessions.createSession("c29-walk", "Fake Agent", cwd);
       await h1.sessions.sendPrompt(sessionId, "persisted agent-side");
+      const handle = h1.sessions.handleOf(sessionId)!;
       await h1.pool.stop("c29-walk");
 
       // while patchbay was closed: one session deleted in the agent's own
@@ -2050,7 +2056,7 @@ describe("SessionsStore", () => {
       await store.patch("other-ws", "c29-walk", "/elsewhere", { draft: "stays" });
       await kv.update(CONTINUITY_KEY, [
         ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
-        { id: `c29-walk\u0000${sessionId}`, agentId: "c29-walk", draft: "legacy draft" },
+        { id: `c29-walk\u0000${handle}`, agentId: "c29-walk", draft: "legacy draft" },
       ]);
 
       const h2 = harness({ continuityStore: store });
@@ -2058,9 +2064,9 @@ describe("SessionsStore", () => {
       await h2.sessions.syncAgentSessions("c29-walk");
       expect(store.read("deleted-while-closed", "c29-walk")).toBeUndefined();
       expect(store.read("other-ws", "c29-walk")).toEqual({ draft: "stays" });
-      expect(store.read(sessionId, "c29-walk")).toEqual({ draft: "legacy draft" });
-      expect(store.list().find((r) => r.id === `c29-walk\u0000${sessionId}`)?.cwd).toBe(cwd);
-      expect(h2.state().drafts[sessionId]).toBe("legacy draft");
+      expect(store.read(handle, "c29-walk")).toEqual({ draft: "legacy draft" });
+      expect(store.list().find((r) => r.id === `c29-walk\u0000${handle}`)?.cwd).toBe(cwd);
+      expect(h2.state().drafts[h2.sessions.rowFor("c29-walk", handle)!]).toBe("legacy draft");
       await h2.pool.stop("c29-walk");
     });
 
@@ -2072,9 +2078,10 @@ describe("SessionsStore", () => {
       );
       const sessionId = await h.sessions.createSession("c29-live", "Fake Agent", cwd);
       await h.sessions.setKnob(sessionId, "model", "sonnet");
-      expect(store.read(sessionId, "c29-live")?.knobs).toEqual({ model: "sonnet" });
+      const handle = h.sessions.handleOf(sessionId)!;
+      expect(store.read(handle, "c29-live")?.knobs).toEqual({ model: "sonnet" });
       await h.sessions.syncRunningAgents(); // the agent persists nothing until the first turn
-      expect(store.read(sessionId, "c29-live")?.knobs).toEqual({ model: "sonnet" });
+      expect(store.read(handle, "c29-live")?.knobs).toEqual({ model: "sonnet" });
       await h.pool.stop("c29-live");
     });
 
@@ -2087,17 +2094,18 @@ describe("SessionsStore", () => {
       expect(store.list().map((r) => r.agentId)).toEqual(["c29-keep"]);
     });
 
-    it("a zero-turn recreate carries the composer draft from the view — an agent that writes no row still keeps the words", async () => {
+    it("a zero-turn re-mint keeps the composer draft — an agent that writes no row still keeps the words, on the same session", async () => {
       const h = harness();
       await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "c29-draft"));
-      const oldId = await h.sessions.createSession("c29-draft", "Fake Agent", cwd);
+      const sessionId = await h.sessions.createSession("c29-draft", "Fake Agent", cwd);
+      const before = h.sessions.handleOf(sessionId);
       // the orchestrator's draft path: durable write (refused here) + view mirror
-      h.sessions.persistDraft(oldId, "typed before any turn");
-      h.events.push({ kind: "sessionDraftChanged", sessionId: oldId, draft: "typed before any turn" });
-      await h.sessions.addRoot(oldId, "/repo/backend");
-      const newId = h.state().activeSessionId!;
-      expect(newId).not.toBe(oldId);
-      expect(h.state().drafts[newId]).toBe("typed before any turn");
+      h.sessions.persistDraft(sessionId, "typed before any turn");
+      h.events.push({ kind: "sessionDraftChanged", sessionId, draft: "typed before any turn" });
+      await h.sessions.addRoot(sessionId, "/repo/backend");
+      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
+      expect(h.state().activeSessionId).toBe(sessionId);
+      expect(h.state().drafts[sessionId]).toBe("typed before any turn");
       await h.pool.stop("c29-draft");
     });
   });
@@ -2183,52 +2191,66 @@ describe("SessionsStore", () => {
       }
     }
 
-    it("new-session focus still finds the row, and the first prompt re-mints it carrying the draft — no sibling", async () => {
+    it("new-session focus still finds the row, and the first prompt mints it again — the same session, its draft in place, no sibling", async () => {
       const h = harness();
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30a"));
-      const oldId = await h.sessions.createSession("c30a", "Fake Agent", cwd);
-      h.events.push({ kind: "sessionDraftChanged", sessionId: oldId, draft: "typed before the crash" });
+      const sessionId = await h.sessions.createSession("c30a", "Fake Agent", cwd);
+      const before = h.sessions.handleOf(sessionId);
+      h.events.push({ kind: "sessionDraftChanged", sessionId, draft: "typed before the crash" });
       await untilStatus(h, "c30a", "crashed");
-      expect(h.sessions.isLive(oldId)).toBe(false);
-      expect(h.sessions.findNeverPrompted("c30a")).toBe(oldId);
+      expect(h.sessions.isLive(sessionId)).toBe(false);
+      expect(h.sessions.findNeverPrompted("c30a")).toBe(sessionId);
 
       await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "c30a"));
-      await h.sessions.sendPrompt(oldId, "first words");
+      await h.sessions.sendPrompt(sessionId, "first words");
       const rows = h.state().sessions.filter((s) => s.agentId === "c30a");
-      expect(rows).toHaveLength(1);
-      const newId = rows[0]!.id;
-      expect(newId).not.toBe(oldId);
-      expect(h.state().transcripts[newId]?.some((b) => b.kind === "user")).toBe(true);
-      expect(textOf(h.state().transcripts[newId]?.at(-2))).toBe("ok");
-      expect(h.state().drafts[newId]).toBe("typed before the crash");
-      // the first prompt ended newness on the fresh id, and named it
+      expect(rows.map((s) => s.id)).toEqual([sessionId]);
+      // minted again on the agent's side only
+      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
+      expect(h.state().transcripts[sessionId]?.some((b) => b.kind === "user")).toBe(true);
+      expect(textOf(h.state().transcripts[sessionId]?.at(-2))).toBe("ok");
+      expect(h.state().drafts[sessionId]).toBe("typed before the crash");
+      // the first prompt ended newness, and named it
       expect(h.sessions.findNeverPrompted("c30a")).toBeUndefined();
       expect(rows[0]!.title).toBe("first words");
       await h.pool.stop("c30a");
     });
 
-    it("opening the dead row re-mints it — one live session, focused, chips carried", async () => {
+    it("opening the dead row mints it again — one live session, the same one, focused, chips in place", async () => {
       const h = harness();
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30b"));
-      const oldId = await h.sessions.createSession("c30b", "Fake Agent", cwd);
-      h.sessions.addContext(oldId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
+      const sessionId = await h.sessions.createSession("c30b", "Fake Agent", cwd);
+      const before = h.sessions.handleOf(sessionId);
+      h.sessions.addContext(sessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
       await untilStatus(h, "c30b", "crashed");
 
       await h.pool.connect(spec({}, "c30b"));
-      h.sessions.activate(oldId);
-      const start = Date.now();
-      let newId: string | undefined;
-      for (;;) {
-        const rows = h.state().sessions.filter((s) => s.agentId === "c30b");
-        newId = rows.find((s) => s.id !== oldId && h.sessions.isLive(s.id))?.id;
-        if (newId !== undefined) break;
-        if (Date.now() - start > 3000) throw new Error("the dead row was never re-minted");
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      expect(h.state().sessions.filter((s) => s.agentId === "c30b")).toHaveLength(1);
-      expect(h.state().activeSessionId).toBe(newId);
-      expect(h.state().contextChips[newId]).toMatchObject([{ id: "c30-chip" }]);
+      h.sessions.activate(sessionId);
+      await vi.waitFor(() => expect(h.sessions.isLive(sessionId)).toBe(true), { timeout: 3000 });
+      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
+      expect(h.state().sessions.filter((s) => s.agentId === "c30b").map((s) => s.id)).toEqual([sessionId]);
+      expect(h.state().activeSessionId).toBe(sessionId);
+      expect(h.state().contextChips[sessionId]).toMatchObject([{ id: "c30-chip" }]);
       await h.pool.stop("c30b");
+    });
+
+    it("a Close while the dead row is minted again leaves it closed — the fresh session is freed, nothing comes back", async () => {
+      const h = harness();
+      await h.pool.connect(spec({ exitAfterMs: 150 }, "c30c"));
+      const sessionId = await h.sessions.createSession("c30c", "Fake Agent", cwd);
+      await untilStatus(h, "c30c", "crashed");
+
+      // the agent answers a creation late, so the Close lands mid-mint
+      await h.pool.connect(spec({ newSessionReplyDelayMs: 200 }, "c30c"));
+      const prompt = h.sessions.sendPrompt(sessionId, "first words");
+      await h.sessions.close(sessionId);
+      await expect(prompt).rejects.toThrow();
+
+      expect(h.state().sessions).toEqual([]);
+      expect(h.state().promptQueue[sessionId]).toBeUndefined();
+      // the session the agent minted for it is let go
+      expect(h.pool.get("c30c")?.sessions).toEqual([]);
+      await h.pool.stop("c30c");
     });
   });
 
@@ -2282,12 +2304,13 @@ describe("session history (list / resume / delete)", () => {
     await h.sessions.syncAgentSessions("sh1");
 
     const state = h.state();
-    expect(state.sessions.map((s) => s.id)).toContain("ext-1");
+    const ext = h.sessions.rowFor("sh1", "ext-1");
+    expect(ext).toBeDefined();
+    expect(state.sessions.map((s) => s.id)).toContain(ext);
     expect(state.sessions.map((s) => s.id)).toContain(mine);
-    expect(state.sessions.find((s) => s.id === "ext-1")).toMatchObject({ live: false });
+    expect(state.sessions.find((s) => s.id === ext)).toMatchObject({ live: false });
     // the sync never activates anything — the user's focus is theirs
     expect(state.activeSessionId).toBe(mine);
-    expect(h.sessions.knows("ext-1")).toBe(true);
     // the wire round-trip proved the row
     expect(h.capabilityTracker.matrix("sh1")?.["session.list"]).toMatchObject({ declared: true, used: true });
 
@@ -2306,7 +2329,7 @@ describe("session history (list / resume / delete)", () => {
     await h.sessions.syncAgentSessions("shm");
 
     const state = h.state();
-    const row = state.sessions.find((s) => s.id === "ext-bad");
+    const row = state.sessions.find((s) => s.id === h.sessions.rowFor("shm", "ext-bad"));
     // The row survives with its bad sort key degraded to a real ISO string…
     expect(row).toBeDefined();
     expect(typeof row!.updatedAt).toBe("string");
@@ -2325,14 +2348,15 @@ describe("session history (list / resume / delete)", () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh2"));
     await h.sessions.syncAgentSessions("sh2");
-    expect(h.sessions.knows("gone-1")).toBe(true);
+    const gone = h.sessions.rowFor("sh2", "gone-1");
+    expect(gone).toBeDefined();
 
     // deleted externally (CLI, another editor) — the next sync drops it
     await rmFile(join(cwd, ".fake-agent-sessions", "gone-1.jsonl"));
     await h.sessions.syncAgentSessions("sh2");
 
-    expect(h.sessions.knows("gone-1")).toBe(false);
-    expect(h.events.some((e) => e.kind === "sessionClosed" && e.sessionId === "gone-1")).toBe(true);
+    expect(h.sessions.rowFor("sh2", "gone-1")).toBeUndefined();
+    expect(h.events.some((e) => e.kind === "sessionClosed" && e.sessionId === gone)).toBe(true);
 
     await h.pool.stop("sh2");
   });
@@ -2353,7 +2377,7 @@ describe("session history (list / resume / delete)", () => {
     await h.sessions.syncAgentSessions("sh2c");
     const before = h.state().sessions.map((s) => s.id);
 
-    await expect(h.sessions.sendPrompt("lost-1", "continue please")).rejects.toThrow();
+    await expect(h.sessions.sendPrompt(h.sessions.rowFor("sh2c", "lost-1")!, "continue please")).rejects.toThrow();
 
     // no sibling appeared, nothing activated itself
     expect(h.state().sessions.map((s) => s.id)).toEqual(before);
@@ -2375,12 +2399,13 @@ describe("session history (list / resume / delete)", () => {
     );
     await h.sessions.syncAgentSessions("sh2d");
 
-    await expect(h.sessions.sendPrompt("lost-2", "continue please", undefined, "{editor}")).rejects.toThrow();
+    const lost = h.sessions.rowFor("sh2d", "lost-2")!;
+    await expect(h.sessions.sendPrompt(lost, "continue please", undefined, "{editor}")).rejects.toThrow();
 
-    expect(h.state().promptQueue["lost-2"]).toMatchObject([{ text: "continue please", draft: "{editor}" }]);
+    expect(h.state().promptQueue[lost]).toMatchObject([{ text: "continue please", draft: "{editor}" }]);
     expect(continuityStore.read("lost-2", "sh2d")?.queue).toMatchObject([{ text: "continue please" }]);
     // nothing reached the transcript — no user message for a turn that never was
-    expect(h.state().transcripts["lost-2"]).toEqual([]);
+    expect(h.state().transcripts[lost]).toEqual([]);
 
     await h.pool.stop("sh2d");
   });
@@ -2399,12 +2424,13 @@ describe("session history (list / resume / delete)", () => {
     await h.sessions.syncAgentSessions("sh2e");
 
     // a prompt behind held words releases the front — whose load then fails
-    await h.sessions.sendPrompt("lost-3", "second");
+    const lost = h.sessions.rowFor("sh2e", "lost-3")!;
+    await h.sessions.sendPrompt(lost, "second");
     await vi.waitFor(() =>
-      expect(h.events.filter((e) => e.kind === "promptQueueCleared" && e.sessionId === "lost-3")).toHaveLength(1),
+      expect(h.events.filter((e) => e.kind === "promptQueueCleared" && e.sessionId === lost)).toHaveLength(1),
     );
 
-    expect(h.state().promptQueue["lost-3"]?.map((q) => q.text)).toEqual(["first", "second"]);
+    expect(h.state().promptQueue[lost]?.map((q) => q.text)).toEqual(["first", "second"]);
     expect(continuityStore.read("lost-3", "sh2e")?.queue?.map((q) => q.text)).toEqual(["first", "second"]);
 
     await h.pool.stop("sh2e");
@@ -2418,7 +2444,8 @@ describe("session history (list / resume / delete)", () => {
     expect(h.state().sessions[0]?.title).toBe("derive me a title");
 
     await h.sessions.syncAgentSessions("sh3");
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe(`fake:${sessionId}`);
+    // the fake agent titles a row after its own id for the session
+    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe(`fake:${h.sessions.handleOf(sessionId)}`);
 
     await h.pool.stop("sh3");
   });
@@ -2506,16 +2533,17 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh8")); // list only — no load, no resume
     await h.sessions.syncAgentSessions("sh8");
 
-    h.sessions.activate("dead-1");
+    const dead = h.sessions.rowFor("sh8", "dead-1")!;
+    h.sessions.activate(dead);
     const start = Date.now();
-    while (!h.events.some((e) => e.kind === "transcriptSeeded" && e.sessionId === "dead-1")) {
+    while (!h.events.some((e) => e.kind === "transcriptSeeded" && e.sessionId === dead)) {
       if (Date.now() - start > 3000) throw new Error("notice never seeded");
       await new Promise((r) => setTimeout(r, 20));
     }
-    const blocks = h.state().transcripts["dead-1"]!;
+    const blocks = h.state().transcripts[dead]!;
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.kind === "notice" && blocks[0].text).toContain("can't be reopened");
-    expect(h.sessions.isLive("dead-1")).toBe(false);
+    expect(h.sessions.isLive(dead)).toBe(false);
 
     await h.pool.stop("sh8");
   });
@@ -2743,19 +2771,20 @@ describe("session activity stamp — one home", () => {
       ),
     );
     await h.sessions.syncAgentSessions("st1");
-    const before = h.state().sessions.find((s) => s.id === "old-1");
+    const old = h.sessions.rowFor("st1", "old-1")!;
+    const before = h.state().sessions.find((s) => s.id === old);
     expect(before?.updatedAt).toBe(yesterday);
     expect(sessionsActiveToday(h.state().sessions)).toBe(0);
 
-    await h.sessions.sendPrompt("old-1", "wake up"); // attaches on demand, then prompts
-    const prompted = h.state().sessions.find((s) => s.id === "old-1")!;
+    await h.sessions.sendPrompt(old, "wake up"); // attaches on demand, then prompts
+    const prompted = h.state().sessions.find((s) => s.id === old)!;
     expect(prompted.updatedAt > yesterday).toBe(true);
     // creation-day counting would still say 0 here — the row was born yesterday
     expect(sessionsActiveToday(h.state().sessions)).toBe(1);
 
     // the wire still says yesterday; newest wins, in the one place it is judged
     await h.sessions.syncAgentSessions("st1");
-    expect(h.state().sessions.find((s) => s.id === "old-1")!.updatedAt).toBe(prompted.updatedAt);
+    expect(h.state().sessions.find((s) => s.id === old)!.updatedAt).toBe(prompted.updatedAt);
 
     await h.pool.stop("st1");
   });
@@ -2823,21 +2852,23 @@ describe("session activity stamp — one home", () => {
     await h.pool.stop("st4");
   });
 
-  it("a zero-turn recreate inherits the title from the view's row — the store keeps no copy", async () => {
+  it("a zero-turn re-mint keeps the session's title — the row stays, the store keeps no copy", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "st5"));
-    const oldId = await h.sessions.createSession("st5", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("st5", "Fake Agent", cwd);
+    const before = h.sessions.handleOf(sessionId);
     // an agent-pushed title lands on the row only (session_info_update path)
-    await h.sessions.handleUpdate("st5", {
-      sessionId: oldId,
+    h.sessions.handleUpdate("st5", {
+      sessionId: before!,
       update: { sessionUpdate: "session_info_update", title: "agent named me" },
     });
-    expect(h.state().sessions.find((s) => s.id === oldId)?.title).toBe("agent named me");
+    await vi.waitFor(() =>
+      expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("agent named me"),
+    );
 
-    await h.sessions.addRoot(oldId, "/repo/backend");
-    const newId = h.state().activeSessionId!;
-    expect(newId).not.toBe(oldId);
-    expect(h.state().sessions.find((s) => s.id === newId)?.title).toBe("agent named me");
+    await h.sessions.addRoot(sessionId, "/repo/backend");
+    expect(h.sessions.handleOf(sessionId)).not.toBe(before);
+    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("agent named me");
 
     await h.pool.stop("st5");
   });
@@ -2848,17 +2879,64 @@ describe("session activity stamp — one home", () => {
     await h.pool.connect(spec({ declare: LIST_CAPS }, "st3"));
     await h.pool.connect(spec({}, "st3-nolist")); // no session/list: skipped, not an error
     await h.sessions.syncAgentSessions("st3");
-    expect(h.sessions.knows("other-window-1")).toBe(false);
+    expect(h.sessions.rowFor("st3", "other-window-1")).toBeUndefined();
 
     // "another window" writes into the agent's own store after our connect
     await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
     await writeFile(join(cwd, ".fake-agent-sessions", "other-window-1.jsonl"), "", "utf8");
     await h.sessions.syncRunningAgents();
-    expect(h.sessions.knows("other-window-1")).toBe(true);
-    expect(h.state().sessions.some((s) => s.id === "other-window-1")).toBe(true);
+    const other = h.sessions.rowFor("st3", "other-window-1");
+    expect(other).toBeDefined();
+    expect(h.state().sessions.some((s) => s.id === other)).toBe(true);
 
     await h.pool.stop("st3");
     await h.pool.stop("st3-nolist");
+  });
+
+  it("a list page naming a new session before its creation lands is that session — one row, the created one", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "st-cross"));
+    // An agent that persists at creation can name the session in a list
+    // page that overtakes the creation's own reply — replayed here at the
+    // pool, between the reply's arrival and the store reading it.
+    let listedFirst: string | undefined;
+    const createOnWire = h.pool.newSession.bind(h.pool);
+    vi.spyOn(h.pool, "newSession").mockImplementation(async (...args) => {
+      const reply = await createOnWire(...args);
+      vi.spyOn(h.pool, "listSessions").mockResolvedValueOnce({ sessions: [{ sessionId: reply.sessionId, cwd }] });
+      await h.sessions.syncAgentSessions("st-cross");
+      listedFirst = h.state().sessions[0]?.id;
+      return reply;
+    });
+    const sessionId = await h.sessions.createSession("st-cross", "Fake Agent", cwd);
+
+    expect(listedFirst).toBeDefined();
+    expect(sessionId).not.toBe(listedFirst);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
+    expect(h.sessions.rowFor("st-cross", h.sessions.handleOf(sessionId)!)).toBe(sessionId);
+    expect(h.state().activeSessionId).toBe(sessionId);
+    await h.pool.stop("st-cross");
+  });
+
+  it("two agents naming their sessions by one id are two rows — an id is only unique per agent", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "same-1.jsonl"), "", "utf8");
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "twin-a"));
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "twin-b"));
+    await h.sessions.syncAgentSessions("twin-a");
+    await h.sessions.syncAgentSessions("twin-b");
+
+    const a = h.sessions.rowFor("twin-a", "same-1");
+    const b = h.sessions.rowFor("twin-b", "same-1");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+    expect(h.state().sessions.find((s) => s.id === a)?.agentId).toBe("twin-a");
+    expect(h.state().sessions.find((s) => s.id === b)?.agentId).toBe("twin-b");
+    await h.pool.stop("twin-a");
+    await h.pool.stop("twin-b");
   });
 });
 
@@ -2941,22 +3019,24 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     const h = harness();
     await h.pool.connect(spec({ declare: {}, turn: [] }, agentId));
     const sessionId = await h.sessions.createSession(agentId, "Fake Agent", cwd);
+    // the agent names its session its own way on the wire
+    const handle = h.sessions.handleOf(sessionId)!;
     const push = (update: Record<string, unknown>) =>
       h.sessions.handleUpdate(agentId, {
-        sessionId,
+        sessionId: handle,
         update,
       } as Parameters<typeof h.sessions.handleUpdate>[1]);
-    return { h, sessionId, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
+    return { h, sessionId, handle, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
   }
 
   it("an update from a different agent under the same session id is dropped — ids are only unique per connection", async () => {
-    const { h, sessionId, push, blocks } = await chunkHarness("ch-owner");
+    const { h, handle, push, blocks } = await chunkHarness("ch-owner");
     push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "mine" } });
     expect(blocks()).toHaveLength(1);
-    // Same sessionId string, different agent: spec-legal collision — must
+    // Same agent id string, different agent: spec-legal collision — must
     // never write into this transcript.
     h.sessions.handleUpdate("intruder", {
-      sessionId,
+      sessionId: handle,
       update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not mine" } },
     } as Parameters<typeof h.sessions.handleUpdate>[1]);
     expect(blocks()).toHaveLength(1);

@@ -85,12 +85,13 @@ function harness(extraHooks: {
   return { pool, sessions, capabilityTracker, state };
 }
 
-/** The fake agent's session ids are `fake-<pid>-<n>` (or `<parent-id>-fork-<n>`
- * for a fork) — pid-qualified expressly so tests can tell which physical
- * process produced a session without any extra plumbing. */
-function pidOf(sessionId: string): string {
-  const match = /^fake-(\d+)-/.exec(sessionId);
-  if (!match) throw new Error(`unexpected fake session id shape: ${sessionId}`);
+/** The fake agent's own ids for its sessions are `fake-<pid>-<n>` (or
+ * `<parent-id>-fork-<n>` for a fork) — pid-qualified expressly so tests can
+ * tell which physical process produced a session without any extra
+ * plumbing. */
+function pidOf(agentSessionId: string): string {
+  const match = /^fake-(\d+)-/.exec(agentSessionId);
+  if (!match) throw new Error(`unexpected fake session id shape: ${agentSessionId}`);
   return match[1]!;
 }
 
@@ -109,7 +110,7 @@ describe("One process per agent", () => {
     expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(false);
     const b = await h.sessions.createSession("one", "Fake Agent", cwd);
 
-    expect(pidOf(a)).toBe(pidOf(b));
+    expect(pidOf(h.sessions.handleOf(a)!)).toBe(pidOf(h.sessions.handleOf(b)!));
     expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(true);
 
     await h.pool.stop("one");
@@ -125,7 +126,7 @@ describe("One process per agent", () => {
     await expect(h.sessions.createSession("single", "Fake Agent", cwd)).rejects.toThrow();
 
     expect(h.capabilityTracker.matrix("single")!.concurrentSessions).toMatchObject({ used: false, suspect: true });
-    expect(h.pool.get("single")?.sessions).toEqual([a]);
+    expect(h.pool.get("single")?.sessions).toEqual([h.sessions.handleOf(a)]);
 
     await h.pool.stop("single");
   });
@@ -144,7 +145,7 @@ describe("One-click reload (P8)", () => {
     // replay always wins — the exact same recorded updates come back, not a
     // merge with whatever was already there
     expect(h.state().transcripts[sessionId]!.length).toBeGreaterThan(0);
-    expect(h.pool.get("rl")?.sessions).toContain(sessionId);
+    expect(h.pool.get("rl")?.sessions).toContain(h.sessions.handleOf(sessionId));
 
     await h.pool.stop("rl");
   });
@@ -449,6 +450,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
     );
     const sessionId = await w1.sessions.createSession("entry", "Fake Agent", cwd);
     await w1.sessions.sendPrompt(sessionId, "hello");
+    const handle = w1.sessions.handleOf(sessionId)!;
     await w1.pool.stop("entry");
 
     // Window two: known only via session/list — no combination in hand, so
@@ -461,8 +463,9 @@ describe("Knob two-fold rule (composer vs session)", () => {
       ),
     );
     await w2.sessions.syncAgentSessions("entry");
-    await w2.sessions.hydrate(sessionId);
-    expect(w2.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
+    const listed = w2.sessions.rowFor("entry", handle)!;
+    await w2.sessions.hydrate(listed);
+    expect(w2.state().sessionKnobs[listed]![0]).toMatchObject({ currentValue: "opus" });
 
     await w2.pool.stop("entry");
   });

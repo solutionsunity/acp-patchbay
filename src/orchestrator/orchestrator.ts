@@ -179,6 +179,9 @@ export class Orchestrator {
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
   private readonly contextTokenToSession = new Map<string, string>();
+  /** The session the last-open pointer names, by this window's id for it —
+   * null until one is activated here. */
+  private pointerRow: string | null = null;
   /** In-flight session/list syncs per agent — awaited by the startup
    * restore so "found or not" is judged against a settled list. */
   private readonly pendingSyncs = new Map<string, Promise<void>>();
@@ -413,15 +416,21 @@ export class Orchestrator {
           this.log.info(`${agentId}: declined an elicitation — ${reading.why}`);
           return { action: "decline" };
         }
-        const { sessionId, message, ask, elicitationId } = reading;
+        const { message, ask, elicitationId } = reading;
         // A throwaway session — the probe's or the defaults editor's — is
         // invisible by construction; the user never saw the question, which
         // is exactly what `cancel` means (same rule as permission asks).
         if (
-          this.capabilityTracker.isProbeSession(agentId, sessionId) ||
-          this.defaultsEditor.owns(agentId, sessionId)
+          this.capabilityTracker.isProbeSession(agentId, reading.sessionId) ||
+          this.defaultsEditor.owns(agentId, reading.sessionId)
         ) {
           this.log.info(`${agentId}: cancelled an elicitation on a throwaway session`);
+          return { action: "cancel" };
+        }
+        // So is a session patchbay doesn't hold: no transcript to ask in.
+        const sessionId = this.sessions.rowFor(agentId, reading.sessionId);
+        if (sessionId === undefined) {
+          this.log.info(`${agentId}: cancelled an elicitation on session ${reading.sessionId}, which patchbay doesn't hold`);
           return { action: "cancel" };
         }
         const answer = await this.broker.askElicitation(
@@ -456,8 +465,15 @@ export class Orchestrator {
             ? { outcome: { outcome: "cancelled" as const } }
             : { outcome: { outcome: "selected" as const, optionId: auto.optionId } };
         }
+        // A session patchbay doesn't hold has no card to show — the request
+        // is still owed an answer, and nobody saw it: cancelled.
+        const sessionId = this.sessions.rowFor(agentId, params.sessionId);
+        if (sessionId === undefined) {
+          this.log.info(`${agentId}: cancelled "${title}" on session ${params.sessionId}, which patchbay doesn't hold`);
+          return { outcome: { outcome: "cancelled" } };
+        }
         const result = await this.broker.resolveAgentPermissionRequest(
-          params.sessionId,
+          sessionId,
           title,
           params.toolCall.kind ?? "other",
           params.toolCall.locations?.map((l) => l.path) ?? [],
@@ -470,17 +486,16 @@ export class Orchestrator {
         // own permission/diff cards inline.
         const chosen = "cancelled" in result ? undefined : options.find((o) => o.optionId === result.optionId);
         if (chosen !== undefined && chosen.kind.startsWith("reject")) {
-          this.agentView.emit({
-            kind: "toolCallDenied",
-            sessionId: params.sessionId,
-            blockId: params.toolCall.toolCallId,
-          });
+          this.agentView.emit({ kind: "toolCallDenied", sessionId, blockId: params.toolCall.toolCallId });
         }
         return "cancelled" in result
           ? { outcome: { outcome: "cancelled" } }
           : { outcome: { outcome: "selected", optionId: result.optionId } };
       },
-      ...clientRequestHooks(() => this.clientHost),
+      ...clientRequestHooks(
+        () => this.clientHost,
+        (agentId, agentSessionId) => this.sessions.rowFor(agentId, agentSessionId),
+      ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
       // connect on the agent's card: a registry binary agent's own archive,
@@ -591,7 +606,6 @@ export class Orchestrator {
             .forgetAgent(agentId)
             .catch((err: Error) => this.log.error(`session continuity drop ${agentId} — ${err.message}`));
         },
-        draftOf: (sessionId) => this.agentView.current.drafts[sessionId],
         contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         rootsChanged: (sessionId) => {
           // Every subprocess of the session was spawned with one of its
@@ -610,17 +624,19 @@ export class Orchestrator {
         // page's next unrelated refresh
         rootsMissing: () => this.publishSavedRoots(),
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
-        titleOf: (sessionId) => this.agentView.current.sessions.find((s) => s.id === sessionId)?.title,
         isDeleteUsed: (agentId) => this.agents.matrix(agentId)?.["session.delete"]?.used ?? false,
         isActiveSession: (sessionId) =>
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
-        isPointerActive: (sessionId) => this.agentView.current.activeSessionId === sessionId,
         connectForSession: (sessionId) => void this.connectForSession(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
         cancelAsks: (sessionId) => this.broker.cancelPending(sessionId),
         authLocked: (agentId) => this.agents.authLocked(agentId),
+        // the pointer names the session the agent's way, which a re-mint moves
+        handleChanged: (sessionId) => {
+          if (this.pointerRow === sessionId) this.recordPointer(sessionId);
+        },
       },
       () => this.workspaceCwd,
       async (contextToken, agentId) => {
@@ -926,8 +942,9 @@ export class Orchestrator {
 
   /** Reload continuity's third rung (flag → list → pointer): return to the
    * session that was open when the window went down. One rule, found or
-   * not: the pointer (a bare sessionId) is looked up in what the startup
-   * connects' own session/list syncs brought back — found activates
+   * not: the pointer (an agent and its id for the session) is looked up in
+   * what the startup connects' own session/list syncs brought back — found
+   * activates
    * (load/resume via the same open path as a drawer click), not found
    * lands on the default screen, regardless of why (agent removed, session
    * deleted externally, agent that can't list). The pointer itself is left
@@ -935,11 +952,12 @@ export class Orchestrator {
    * not erase where a later window could still return. Never spawns a
    * process the startup rules didn't start. */
   private async restoreLastActiveSession(): Promise<void> {
-    const sessionId = this.lastActiveSession.get();
-    if (sessionId === undefined) return;
+    const pointer = this.lastActiveSession.get();
+    if (pointer === undefined) return;
     await Promise.allSettled([...this.pendingSyncs.values()]);
     if (this.agentView.current.activeSessionId !== null) return;
-    if (!this.sessions.knows(sessionId)) return;
+    const sessionId = this.sessions.rowFor(pointer.agentId, pointer.sessionId);
+    if (sessionId === undefined) return;
     this.sessions.activate(sessionId);
   }
 
@@ -1078,9 +1096,7 @@ export class Orchestrator {
   ): Promise<ElicitationAnswer> {
     // Unknown token = the session it named is gone (tokens are minted at
     // attach and retired at close). There is no transcript to ask in, so
-    // the user never saw the question — a cancel, never a guessed session
-    // id, which could be a *different* live session by now (ids are
-    // agent-minted and legally recycled).
+    // the user never saw the question — a cancel, never a guessed session.
     const sessionId = this.contextTokenToSession.get(contextToken);
     if (sessionId === undefined) return Promise.resolve({ action: "cancel" });
     // Same parser as the agent's own elicitation request. A field it cannot
@@ -1092,10 +1108,9 @@ export class Orchestrator {
   }
 
   /** A closed session's context tokens leave the map with it: the token
-   * names a session-scoped identity, and an entry outliving its session
-   * would route a late MCP subprocess call into whatever transcript owns
-   * that session id next (agents may legally re-mint ids). Also the
-   * map's only bound — one token is minted per attach. */
+   * names a session-scoped identity, so a late MCP subprocess call after
+   * the close finds no session to land in. Also the map's only bound —
+   * one token is minted per attach. */
   private dropContextTokens(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind !== "sessionClosed") continue;
@@ -1107,13 +1122,26 @@ export class Orchestrator {
 
   /** The "last open session" pointer (stores/last-active-session.ts).
    * Every activation flows through the sessions-store emit hook, so this
-   * one chokepoint keeps the pointer honest; close (user click or prune)
+   * one chokepoint keeps the pointer honest; a close (user click or prune)
    * clears it only while it still points there. */
   private recordLastActive(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
-      if (event.kind === "sessionActivated") void this.lastActiveSession.set(event.sessionId);
-      else if (event.kind === "sessionClosed") void this.lastActiveSession.clearIf(event.sessionId);
+      if (event.kind === "sessionActivated") this.recordPointer(event.sessionId);
+      else if (event.kind === "sessionClosed" && event.sessionId === this.pointerRow) {
+        this.pointerRow = null;
+        void this.lastActiveSession.wipe();
+      }
     }
+  }
+
+  /** The pointer names the session the way the next window can find it:
+   * its agent, and the agent's own id for it. */
+  private recordPointer(sessionId: string): void {
+    const agentId = this.sessions.agentFor(sessionId);
+    const handle = this.sessions.handleOf(sessionId);
+    if (agentId === undefined || handle === undefined) return;
+    this.pointerRow = sessionId;
+    void this.lastActiveSession.set({ agentId, sessionId: handle });
   }
 
   /** Done-sound (Preferences): the system chime as a turn resolves —
@@ -1670,6 +1698,11 @@ export class Orchestrator {
       case "closeSession":
         void this.sessions.close(action.sessionId).catch(this.logCatch(`close ${action.sessionId}`));
         break;
+      case "copySessionId": {
+        const handle = this.sessions.handleOf(action.sessionId);
+        if (handle !== undefined) void vscode.env.clipboard.writeText(handle);
+        break;
+      }
       case "reloadSession":
         void this.sessions.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
         break;

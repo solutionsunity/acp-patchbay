@@ -15,13 +15,22 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
 - **Known sessions** — the sessions store's routing index of the agent's
-  own `session/list` (session id → owning agent, plus the knob seed the
-  wire cannot re-report), repopulated every connect. Patchbay persists no
+  own `session/list` (session id → owning agent, the agent's own id for
+  the session, plus the knob seed the wire cannot re-report), repopulated
+  every connect. The session id is patchbay's, minted when the session
+  enters and kept for the window's life — the id the views, actions,
+  events, the broker and the context tokens use. The agent's own id is the
+  handle every wire call carries and the one inbound traffic (updates,
+  permission asks, elicitations, file writes, terminals) names the session
+  by; with its agent it finds the one row it means, since an agent's ids
+  are only unique per agent — traffic naming a session patchbay doesn't
+  hold is answered cancelled or refused, never shown. A zero-turn re-mint
+  gives the session a new agent id and nothing else. Patchbay persists no
   session index: the durable continuity row is per-session state keyed by
-  the agent's own id, never a list source. Nothing the view shows lives
-  here — title, activity stamp, liveness, the unseen mark have one home,
-  the Agent View's canonical row; the store reads such a fact through a
-  hook when it needs one, never a copy.
+  its agent and the agent's own id, never a list source. Nothing the view
+  shows lives here — title, activity stamp, liveness, the unseen mark have
+  one home, the Agent View's canonical row; the store reads such a fact
+  through a hook when it needs one, never a copy.
 - **Decision audit** — append-only record of events that happened *in patchbay*:
   permissions granted, tools approved, routing chosen.
 - **Render cache** — disposable render state, rebuilt wholesale from `session/load`
@@ -140,9 +149,9 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): id → agent, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
+| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): patchbay's id → agent, the agent's own id, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
-| Last-active pointer | The one session id the Agent View returns to on the next activate | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
+| Last-active pointer | The one session the Agent View returns to on the next activate — its agent and the agent's own id for it, what the next window can find it by (patchbay's ids live with a window) | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
 | Agent + integration configs | Agents (launch config, defaults), integrations, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
@@ -178,8 +187,9 @@ as an opt-in; the extension point is visible, deliberately unfilled.
   defines, and `auto`'s proof could only arrive through a side door. Stored
   configs lose the field in a one-time migration; #62.)*
 - Crash → visible immediately; restart is one action. After reconnect: the
-  attach ladder — a never-prompted session is minted again from its row
-  (nothing agent-side to open; the fresh id carries what the user staged) >
+  attach ladder — a never-prompted session is minted again on the agent's
+  side (nothing agent-side to open; the agent hands it a fresh id, and the
+  session stays itself, with what the user staged) >
   `session/load` (replay = truth) > `session/resume` (context back, seam
   notice: no visible history) > honestly not reopenable. Patchbay never
   mints a session and calls it a continuation — the zero-turn rung continues
@@ -188,7 +198,7 @@ as an opt-in; the extension point is visible, deliberately unfilled.
 ```mermaid
 flowchart TD
     R(["Reconnect / reopen a session"]) --> Q0{"ever prompted?"}
-    Q0 -- no --> Z["session/new again from the row<br/><small>title, chips, held words, draft, knobs carried; old id retired</small>"]
+    Q0 -- no --> Z["session/new again for the same session<br/><small>a fresh agent id; title, chips, held words, draft, knobs stay; the old shell retired</small>"]
     Q0 -- yes --> Q1{"declared session/load?"}
     Q1 -- yes --> L["session/load — full replay<br/><small>replay is truth</small>"]
     Q1 -- no --> Q2{"declared session/resume?"}
@@ -777,8 +787,8 @@ against what the walk reported (live sessions exempt), which also reclaims a
 session deleted while no window was open. A row without a cwd on record was
 written before the field existed — the first walk that names it stamps it,
 one that does not drops it. Rows leave with their session: close,
-walk-reconcile, agent removal (every workspace), zero-turn recreate,
-erase-all. Held words rehydrated behind a standing auth lock stay held;
+walk-reconcile, agent removal (every workspace), erase-all; a zero-turn
+re-mint moves the row to the session's new agent id. Held words rehydrated behind a standing auth lock stay held;
 opening the session (or the lock clearing) is their release, and a new
 prompt sent while held words wait joins the queue *behind* them — order is
 part of the contract. Held words also survive an involuntary drop (crash,

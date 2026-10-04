@@ -60,9 +60,9 @@ export function SessionActions({
         >
           {reloading ? "Reloading…" : "Reload from agent"}
         </DropdownMenuItem>
-        {/* Bare clipboard write, not useCopy: the menu closes on select, so
-            there's no surface for the check-mark feedback to live on. */}
-        <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(session.id)}>
+        {/* The agent's own id for the session — the host holds it and
+            writes it; the view knows the session only by patchbay's id. */}
+        <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", sessionId: session.id })}>
           Copy session ID
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => send({ kind: "closeSession", sessionId: session.id })}>

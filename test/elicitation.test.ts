@@ -290,7 +290,10 @@ function wireHarness() {
     onElicitation: async (agentId, params, signal) => {
       const reading = readElicitationRequest(params);
       if (reading.kind !== "ask") return { action: "decline" };
-      const { sessionId, message, ask, elicitationId } = reading;
+      const { message, ask, elicitationId } = reading;
+      // the session the agent names its own way, as patchbay holds it
+      const sessionId = sessions.rowFor(agentId, reading.sessionId);
+      if (sessionId === undefined) return { action: "cancel" };
       const answer = await broker.askElicitation(
         sessionId,
         { message, ask, ...(elicitationId !== undefined ? { completion: { agentId, elicitationId } } : {}) },

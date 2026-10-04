@@ -83,25 +83,27 @@ describe("LastConnectedStore — reload-continuation stamp", () => {
 });
 
 describe("LastActiveSessionStore — the last-open-session pointer", () => {
-  it("holds the latest activation; close clears only while it still points there", async () => {
+  it("holds the latest activation, by agent and the agent's own id; wipe clears it", async () => {
     const store = new LastActiveSessionStore(new MemoryKV());
     expect(store.get()).toBeUndefined();
-    await store.set("s1");
-    await store.set("s2");
-    expect(store.get()).toBe("s2");
-    // Closing a session the user already switched away from must not
-    // erase the newer pointer.
-    await store.clearIf("s1");
-    expect(store.get()).toBe("s2");
-    await store.clearIf("s2");
+    await store.set({ agentId: "a", sessionId: "s1" });
+    await store.set({ agentId: "b", sessionId: "s1" });
+    expect(store.get()).toEqual({ agentId: "b", sessionId: "s1" });
+    await store.wipe();
     expect(store.get()).toBeUndefined();
   });
 
   it("survives what a reload survives — no freshness bound, unlike the stamp", async () => {
     const kv = new MemoryKV();
-    await new LastActiveSessionStore(kv).set("s1");
+    await new LastActiveSessionStore(kv).set({ agentId: "a", sessionId: "s1" });
     // A fresh store over the same KV (the next activate) still reads it.
-    expect(new LastActiveSessionStore(kv).get()).toBe("s1");
+    expect(new LastActiveSessionStore(kv).get()).toEqual({ agentId: "a", sessionId: "s1" });
+  });
+
+  it("a value of another shape — the bare id an older version stored — is no pointer", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.lastActiveSession", "s1");
+    expect(new LastActiveSessionStore(kv).get()).toBeUndefined();
   });
 });
 

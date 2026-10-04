@@ -113,6 +113,9 @@ export type Action =
    * the shared active-session pointer. */
   | { kind: "detachSession"; sessionId: string }
   | { kind: "closeSession"; sessionId: string }
+  /** Copy the agent's own id for the session — the one its own tools know
+   * it by. The host holds that id; the view never does. */
+  | { kind: "copySessionId"; sessionId: string }
   /** `text` is the readable form (transcript + title derivation). `parts`,
    * when present, is the same content with inline file mentions kept
    * positional — the orchestrator turns each `fileRef` into a
@@ -1485,14 +1488,9 @@ export type AgentViewEvent =
    * (stale pointer, failed connects); either way `restoring` clears and the
    * rendering area stops holding the loading page. */
   | { kind: "startupSettled" }
-  | {
-      kind: "sessionCreated";
-      session: SessionSummary;
-      /** false = create the row without stealing the active pointer or an
-       * in-flight chatConnect (recreateEmpty's zero-turn root change on a
-       * possibly-background session); absent/true = a user-facing create. */
-      activate?: boolean;
-    }
+  /** A session the user just started — it takes the active pointer and ends
+   * the chat pane's connect. */
+  | { kind: "sessionCreated"; session: SessionSummary }
   /** A session first surfaced by the agent's own `session/list` — adds the
    * row *without* activating it or touching the connect pane, unlike
    * sessionCreated: a connect-time sync of N history rows must not steal
@@ -1835,41 +1833,22 @@ export function reduceAgentView(
       return { ...state, chatConnect: null };
     case "startupSettled":
       return { ...state, restoring: false };
-    case "sessionCreated": {
-      // An agent may legally re-mint a closed session's id — replace the
-      // row, never duplicate it (sessionListed already dedupes; the
-      // asymmetry was the hazard). The per-session maps reset either way:
-      // a re-minted id is a new session, not the old one's heir.
-      const exists = state.sessions.some((s) => s.id === event.session.id);
-      const { [event.session.id]: _d, ...drafts } = state.drafts;
-      const { [event.session.id]: _q, ...promptQueue } = state.promptQueue;
-      const { [event.session.id]: _u, ...sessionUsage } = state.sessionUsage;
+    case "sessionCreated":
+      // Patchbay mints every session's id, so a created session is always a
+      // row of its own, its maps starting empty.
       return {
         ...state,
-        sessions: exists
-          ? state.sessions.map((s) => (s.id === event.session.id ? event.session : s))
-          : [...state.sessions, event.session],
+        sessions: [...state.sessions, event.session],
         transcripts: { ...state.transcripts, [event.session.id]: [] },
         commandsBySession: { ...state.commandsBySession, [event.session.id]: [] },
         contextChips: { ...state.contextChips, [event.session.id]: [] },
         sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
-        drafts,
-        promptQueue,
-        sessionUsage,
-        // Activation is the event's call, not a side effect: a background
-        // recreate must not steal the pointer or wipe another pane's
-        // in-flight connect.
-        ...(event.activate === false
-          ? {}
-          : {
-              activeSessionId: event.session.id,
-              // A session arriving ends any in-pane connect, success or
-              // stale failure alike — cleared here so it can't desync.
-              chatConnect: null,
-            }),
+        activeSessionId: event.session.id,
+        // A session arriving ends any in-pane connect, success or stale
+        // failure alike — cleared here so it can't desync.
+        chatConnect: null,
       };
-    }
     case "sessionRefreshed":
       // Metadata only — `live` is a liveness fact the sync knows nothing
       // about. The stamp: newest wins — the wire's may trail a local prompt.
@@ -1888,17 +1867,9 @@ export function reduceAgentView(
             : s,
         ),
       };
-    case "sessionListed": {
-      // A row the state already holds is a refresh, whatever the emitter
-      // believed — the wire's page and a local create can cross.
-      if (state.sessions.some((s) => s.id === event.session.id)) {
-        return reduceAgentView(state, {
-          kind: "sessionRefreshed",
-          sessionId: event.session.id,
-          title: event.session.title,
-          updatedAt: event.session.updatedAt,
-        });
-      }
+    case "sessionListed":
+      // A row of its own, like a created one — patchbay minted its id when
+      // the list first named it.
       return {
         ...state,
         sessions: [...state.sessions, event.session],
@@ -1908,7 +1879,6 @@ export function reduceAgentView(
         sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
       };
-    }
     case "sessionActivated":
       return state.sessions.some((s) => s.id === event.sessionId)
         ? markSeen({ ...state, activeSessionId: event.sessionId })

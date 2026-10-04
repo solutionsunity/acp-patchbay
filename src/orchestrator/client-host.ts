@@ -43,21 +43,28 @@ export class ClientHost {
     return { content: sliceTextFileRead(content, params.line, params.limit) };
   }
 
-  async writeTextFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
-    const outcome = await this.deps.broker.gateFileWrite(params.sessionId, params.path, params.content);
+  /** `sessionId` is patchbay's id for the session the agent named —
+   * undefined when patchbay holds no such session, which asks no one. */
+  async writeTextFile(
+    sessionId: string | undefined,
+    params: acp.WriteTextFileRequest,
+  ): Promise<acp.WriteTextFileResponse> {
+    if (sessionId === undefined) throw unknownSession(params.sessionId);
+    const outcome = await this.deps.broker.gateFileWrite(sessionId, params.path, params.content);
     if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${params.path}`);
     await this.deps.writeLive(params.path, params.content);
     return {};
   }
 
-  /** `sessionCwd` is the cwd the session was opened with — where a command
-   * that names no cwd runs, since that is the directory the agent was told
-   * it works in. */
+  /** `session` is the session the agent named, as patchbay holds it — its
+   * id, and the cwd it was opened with: where a command that names no cwd
+   * runs, since that is the directory the agent was told it works in. Null
+   * when the connection never opened it. */
   async createTerminal(
     params: acp.CreateTerminalRequest,
-    sessionCwd: string | null,
+    session: { id: string; cwd: string } | null,
   ): Promise<acp.CreateTerminalResponse> {
-    if (sessionCwd === null) throw unknownSession(params.sessionId);
+    if (session === null) throw unknownSession(params.sessionId);
     if (params.cwd != null && !isAbsolute(params.cwd)) throw relativeCwd(params.cwd);
     // One description of the run: the gate judges and shows exactly what
     // the runner then spawns.
@@ -65,11 +72,11 @@ export class ClientHost {
       command: params.command,
       args: params.args ?? [],
       env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
-      cwd: params.cwd ?? sessionCwd,
+      cwd: params.cwd ?? session.cwd,
       outputByteLimit: params.outputByteLimit ?? null,
     };
     const command = formatCommandLine(run.command, run.args);
-    const outcome = await this.deps.broker.gateCommand(params.sessionId, run);
+    const outcome = await this.deps.broker.gateCommand(session.id, run);
     if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
 
     const handle = this.deps.broker.runner.create(run);
@@ -77,7 +84,7 @@ export class ClientHost {
     this.terminals.set(terminalId, handle);
     this.deps.trackProcess(handle);
     const blockId = terminalBlockId(terminalId);
-    const { sessionId } = params;
+    const sessionId = session.id;
     this.deps.emit({ kind: "terminalStarted", sessionId, blockId, command });
     handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", sessionId, blockId, chunk }));
     handle.onExit((status) =>
@@ -136,9 +143,11 @@ export class ClientHost {
 
 /** The pool's fs/terminal hooks, bound to a host. A getter because the host
  * is built after the pool it serves (its gate needs the sessions store,
- * which needs the pool). */
+ * which needs the pool). `sessionFor` is how a request that names a
+ * session the agent's way finds patchbay's. */
 export function clientRequestHooks(
   host: () => ClientHost,
+  sessionFor: (agentId: string, agentSessionId: string) => string | undefined,
 ): Pick<
   PoolHooks,
   | "onReadTextFile"
@@ -151,8 +160,11 @@ export function clientRequestHooks(
 > {
   return {
     onReadTextFile: (_agentId, params) => host().readTextFile(params),
-    onWriteTextFile: (_agentId, params) => host().writeTextFile(params),
-    onCreateTerminal: (_agentId, params, sessionCwd) => host().createTerminal(params, sessionCwd),
+    onWriteTextFile: (agentId, params) => host().writeTextFile(sessionFor(agentId, params.sessionId), params),
+    onCreateTerminal: (agentId, params, sessionCwd) => {
+      const id = sessionFor(agentId, params.sessionId);
+      return host().createTerminal(params, id === undefined || sessionCwd === null ? null : { id, cwd: sessionCwd });
+    },
     onTerminalOutput: (_agentId, params) => host().terminalOutput(params),
     onWaitForTerminalExit: (_agentId, params) => host().waitForTerminalExit(params),
     onKillTerminal: (_agentId, params) => host().killTerminal(params),

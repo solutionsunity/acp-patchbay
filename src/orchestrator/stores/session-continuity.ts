@@ -67,7 +67,7 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
 ]);
 
 const sessionContinuityEntrySchema = z.object({
-  id: z.string().min(1), // sessionId — the same identity the known map keys by
+  id: z.string().min(1), // rowId: the agent, and the agent's own id for the session
   agentId: z.string().min(1),
   // The workspace the session belongs to: session/list is read per cwd, so
   // a reconcile can only judge the rows of the workspace it walked. Absent

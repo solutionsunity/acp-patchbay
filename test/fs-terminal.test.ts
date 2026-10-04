@@ -74,10 +74,16 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     onDeclaredCaptured: () => {},
     onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
     onCapabilityEvidence: (_agentId, row, ev) => evidence.push(`${row}:${ev}`),
-    ...clientRequestHooks(() => host),
-    onPermissionRequest: async (_agentId, params) => {
+    ...clientRequestHooks(
+      () => host,
+      (agentId, agentSessionId) => sessions.rowFor(agentId, agentSessionId),
+    ),
+    onPermissionRequest: async (agentId, params) => {
+      // the session the agent names its own way, as patchbay holds it
+      const sessionId = sessions.rowFor(agentId, params.sessionId);
+      if (sessionId === undefined) return { outcome: { outcome: "cancelled" } };
       const result = await broker.resolveAgentPermissionRequest(
-        params.sessionId,
+        sessionId,
         params.toolCall.title ?? "Permission request",
         params.toolCall.kind ?? "other",
         params.toolCall.locations?.map((l) => l.path) ?? [],
@@ -343,7 +349,8 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       expect(h.pool.get(agentId)?.sessions).toEqual([]);
       await h.sessions.sendPrompt(sessionId, "second turn");
 
-      expect(h.pool.get(agentId)?.sessions).toEqual([sessionId]);
+      // the connection names it the agent's way
+      expect(h.pool.get(agentId)?.sessions).toEqual([h.sessions.handleOf(sessionId)]);
       const texts = textOf(sessionId, h.events);
       expect(texts.some((t) => t.includes("-32602"))).toBe(false); // never refused as unknown
       // load replays the first turn's output before the second runs; resume restores without replay
@@ -498,7 +505,7 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
   it("a relative cwd is the agent's bad params — the spec requires an absolute path", async () => {
     const { host, events } = harness();
     await expect(
-      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, workspaceRoot),
+      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, { id: "s", cwd: workspaceRoot }),
     ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("sub/dir") });
     expect(events).toEqual([]);
   });

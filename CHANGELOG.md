@@ -73,6 +73,16 @@
   agent no longer has it, say) no longer disappears with the cleared box:
   it waits with the held prompts above the composer, to send again or take
   back.
+- Sessions now carry an id of patchbay's own, with the agent's id for the
+  session kept beside it (Copy session ID still copies the agent's). A new
+  session the agent must create again — its agent stopped before the first
+  message — stays the same session: a window it was open in stays open,
+  and closing it while it is being created again no longer brings it
+  back. Two agents that use the same id for their sessions no longer show
+  as one. A question, file write or command an agent sends for a session
+  patchbay doesn't hold is answered at once instead of waiting with no
+  card to answer it on. The first window reload after updating opens on
+  the home screen instead of the last open session.
 
 ## 0.84.1 — 2026-09-29
 

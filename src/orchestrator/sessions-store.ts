@@ -6,6 +6,7 @@
 // cache itself lives in AgentViewState, updated only through the shared
 // reducer (render cache is disposable, replay
 // always wins, never merged).
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -55,6 +56,8 @@ import { continuityReachable } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 
+/** A `sessionId` is patchbay's own id for a session — the row's — wherever
+ * it isn't named the agent's. */
 export interface SessionsStoreHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Advance canonical render state without a webview patch — the
@@ -65,9 +68,9 @@ export interface SessionsStoreHooks {
    * state — the replay lands as a single swap, never a patch flood. */
   resyncView?(): void;
   /** The local MCP server is spawned with `contextToken` as its correlation
-   * id (the real ACP sessionId doesn't exist yet when mcpServers must be
-   * built — session/new hasn't returned). Lets the orchestrator's IPC host
-   * translate that token back to the real session once it's known. */
+   * id (the agent's id doesn't exist yet when mcpServers must be built —
+   * session/new hasn't returned). Lets the orchestrator's IPC host
+   * translate that token back to its session once it's known. */
   mapContextToken?(token: string, sessionId: string): void;
   /** The knob seed a session starts from on *entry* — a fresh session, or a
    * history session attached with no live combination in hand (folded,
@@ -84,33 +87,34 @@ export interface SessionsStoreHooks {
   /** The session's durable continuity row (stores/session-continuity.ts):
    * knobs, roots, held queue, prepared chips, composer draft — everything
    * a window reload would otherwise lose and the wire cannot re-report.
-   * Read once, when a listed session enters with nothing in memory; for
-   * knobs this is what keeps a restored session in the involuntary arm of
-   * the reattach rule instead of misfiling as a deliberate fresh entry. */
-  continuityFor?(sessionId: string, agentId: string): SessionContinuity | undefined;
+   * Keyed by the agent's id for the session, with its agent: that is what
+   * names the session again after a reload. Read once, when a listed
+   * session enters with nothing in memory; for knobs this is what keeps a
+   * restored session in the involuntary arm of the reattach rule instead
+   * of misfiling as a deliberate fresh entry. */
+  continuityFor?(agentSessionId: string, agentId: string): SessionContinuity | undefined;
   /** Write-through for the same row: a patch merges the named fields
    * (empty array/string deletes a field); `null` forgets the whole row —
-   * fired when the session leaves for good (closed, zero-turn recreate).
-   * `cwd` is the session's workspace: rows are reconciled per workspace.
-   * Only ever called through `noteContinuity`, which refuses a patch for
-   * an agent whose rows could never be read back. */
-  onContinuity?(sessionId: string, agentId: string, cwd: string, patch: SessionContinuity | null): void;
+   * fired when the session leaves for good (closed) or its agent's id
+   * moves (zero-turn re-mint). `cwd` is the session's workspace: rows are
+   * reconciled per workspace. Only ever called through `noteContinuity`,
+   * which refuses a patch for an agent whose rows could never be read
+   * back. */
+  onContinuity?(agentSessionId: string, agentId: string, cwd: string, patch: SessionContinuity | null): void;
   /** After a complete `session/list` walk: the agent's rows for this
    * workspace against what the walk reported — `keep` false, the row
    * leaves. */
-  reconcileContinuity?(agentId: string, cwd: string, keep: (sessionId: string) => boolean): void;
+  reconcileContinuity?(agentId: string, cwd: string, keep: (agentSessionId: string) => boolean): void;
   /** Every row of the agent, every workspace: the agent was removed, or
    * its handshake cannot bring a session back (no list, or no rung). */
   forgetAgentContinuity?(agentId: string): void;
-  /** The composer draft as the view holds it — the in-window truth a
-   * zero-turn recreate carries to the fresh id. */
-  draftOf?(sessionId: string): string | undefined;
   /** Fires when a real session attaches on an agent (new/load/resume, at
    * the one attach ceremony) — the deferred-probe trigger for latched
    * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
    * extensions/first-session-mcp-latch). Probe sessions never pass through
-   * here, which is exactly what makes this the honest "real session" fact. */
-  onRealSessionAttached?(agentId: string, sessionId: string): void;
+   * here, which is exactly what makes this the honest "real session" fact.
+   * The id is the agent's: probe sessions are known by it. */
+  onRealSessionAttached?(agentId: string, agentSessionId: string): void;
   /** Canonical (AgentViewState-held) external context roots for a session —
    * read back on reopen/branch: ACP sets `additionalDirectories` only on
    * the lifecycle requests (new/load/resume/fork), so the list must be
@@ -143,10 +147,6 @@ export interface SessionsStoreHooks {
    * resume rung shows it behind the seam notice: it's the only history
    * there is (patchbay persists no transcripts). */
   currentTranscript?(sessionId: string): readonly ChatBlock[];
-  /** Canonical (AgentViewState-held) title of a session — read at recreate,
-   * where the fresh id inherits the retired row's title. The store keeps
-   * no title of its own. */
-  titleOf?(sessionId: string): string | undefined;
   /** Whether `session.delete` is declared *and used* — gates the agent-side
    * delete on close (features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
@@ -156,10 +156,6 @@ export interface SessionsStoreHooks {
    * a close, only exists for a viewed session), and hydrateViewed reopens
    * it when its agent comes up — one on-view set, both readers. */
   isActiveSession?(sessionId: string): boolean;
-  /** Narrower than isActiveSession: true only when this session owns the
-   * sidebar's active pointer (pinned panels excluded) — recreateEmpty's
-   * re-activation predicate. */
-  isPointerActive?(sessionId: string): boolean;
   /** The blue mark: a turn completed while the session wasn't open in the
    * view and the user hasn't looked yet — the reaper must not close under
    * an unseen result (reducer-derived `unseen` on the session summary). */
@@ -181,6 +177,10 @@ export interface SessionsStoreHooks {
    * it a no-op. When the agent comes up, hydrateViewed runs the ladder for
    * whatever is on view. */
   connectForSession?(sessionId: string): void;
+  /** A zero-turn re-mint gave the session a new id on the agent's side —
+   * what keys on that id outside this store (the last-open pointer)
+   * follows it. */
+  handleChanged?(sessionId: string): void;
 }
 
 /** session/list pagination guard: 50 pages of history for one workspace is
@@ -247,13 +247,9 @@ function deriveTitle(promptText: string): string {
  * the session vanished under it): nothing was rendered and nothing reached
  * the wire, so the words go back to the held ones. Past that point a
  * failure means the words were spent — a rendered user message with an
- * honest error turn. `sessionId` is where the turn would have run: the
- * zero-turn rung may have minted a fresh id before the failure. */
+ * honest error turn. */
 class TurnNotStartedError extends Error {
-  constructor(
-    readonly reason: Error,
-    readonly sessionId: string,
-  ) {
+  constructor(readonly reason: Error) {
     super(reason.message);
   }
 }
@@ -306,19 +302,25 @@ function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
 }
 
 /** One session patchbay currently knows to exist — created here this
- * window, or reported by the agent's own `session/list`. This is the
- * store's routing index, not a mirror of the row the user sees: a field
- * lives here only if a store code path branches on it — the owning
- * agent (every wire call routes by it) and the knob seed (re-applied on an
- * involuntary re-attach). What the view shows — title, activity stamp,
- * liveness, the unseen mark — has one home, the view's canonical row; the
- * store reports the evidence that moves it and, when it needs such a
- * fact, reads it through a hook (titleOf, isActiveSession, …) rather than
- * keeping a copy. In-memory, deliberately: the agent is the source of
- * truth for sessions, repopulated every connect (patchbay stores no
- * transcripts, no index). */
+ * window, or reported by the agent's own `session/list` — under patchbay's
+ * own id for it, minted when it enters and kept for the window's life.
+ * This is the store's routing index, not a mirror of the row the user
+ * sees: a field lives here only if a store code path branches on it — the
+ * owning agent and the agent's id for the session (every wire call routes
+ * by them) and the knob seed (re-applied on an involuntary re-attach).
+ * What the view shows — title, activity stamp, liveness, the unseen mark —
+ * has one home, the view's canonical row; the store reports the evidence
+ * that moves it and, when it needs such a fact, reads it through a hook
+ * (isActiveSession, …) rather than keeping a copy. In-memory,
+ * deliberately: the agent is the source of truth for sessions,
+ * repopulated every connect (patchbay stores no transcripts, no index). */
 interface KnownSession {
   agentId: string;
+  /** The agent's own id for the session — what every wire call carries,
+   * and what inbound traffic names it by. Ids are only unique per agent,
+   * so the pair names the row. The zero-turn re-mint replaces it; the
+   * row, and every holder keyed by the row's id, stays. */
+  handle: string;
   /** The session's last agent-confirmed knob combination — written at every
    * publishKnobs, so it outlives the LiveSession (detach on connection
    * death, idle release) and re-seeds any *involuntary* re-attach: the
@@ -420,6 +422,14 @@ function liveSession(agentId: string): LiveSession {
   };
 }
 
+/** An agent's id for a session, with its agent — ids are only unique per
+ * agent, so this is what names one row. (The continuity store keys its
+ * rows the same way on disk; that key is a storage format, this one an
+ * index in memory — each may change without the other.) */
+function handleKey(agentId: string, handle: string): string {
+  return `${agentId}\u0000${handle}`;
+}
+
 /** The work riding an agent's connection: its conversations, and the
  * turns among them still running. */
 export interface OpenWork {
@@ -429,8 +439,12 @@ export interface OpenWork {
 
 export class SessionsStore {
   private sessions = new Map<string, LiveSession>();
-  /** Every session known to exist right now (see KnownSession). */
+  /** Every session known to exist right now (see KnownSession), by
+   * patchbay's id for it. */
   private known = new Map<string, KnownSession>();
+  /** The same rows by their agent's id for them (handleKey) — how inbound
+   * traffic, which names a session the agent's way, finds its row. */
+  private byHandle = new Map<string, string>();
   /** Agent-reported diff content per tool call (ToolCallContent "diff") —
    * the texts stay here, never in webview state (they can be whole files);
    * the block carries only each path's line counts, and openToolCallDiff
@@ -459,9 +473,9 @@ export class SessionsStore {
    * voluntary path (recreateEmpty) already carries them by hand; restored
    * at the next attach, dropped with the session at close. */
   private contextStash = new Map<string, ContextChip[]>();
-  /** Per agent: session ids closed while a session/list walk may be in
-   * flight — a page fetched before the close would otherwise resurrect
-   * the row with an empty transcript. Each new walk clears its agent's
+  /** Per agent: the agent's ids of sessions that left (closed, or re-minted
+   * away from) while a session/list walk may be in flight — a page fetched
+   * before that would otherwise resurrect the row with an empty transcript. Each new walk clears its agent's
    * set first: that walk's pages are post-close truth (a failed agent-side
    * delete resurrecting the row then is honest, not stale). */
   private closedDuringSync = new Map<string, Set<string>>();
@@ -469,8 +483,8 @@ export class SessionsStore {
    * joins the one in flight. Two interleaved walks would each clear the
    * other's close tombstones (closedDuringSync) and race the prune. */
   private walks = new Map<string, Promise<void>>();
-  /** In-flight zero-turn re-mints by retired id (see recreateFromRow). */
-  private recreating = new Map<string, Promise<string>>();
+  /** In-flight zero-turn re-mints by session (see recreateFromRow). */
+  private recreating = new Map<string, Promise<void>>();
   /** In-flight new sessions by agent (see createSession). */
   private creating = new Map<string, Promise<string>>();
   /** Rapid re-clicks must not stack replays — one hydration per session. */
@@ -522,16 +536,43 @@ export class SessionsStore {
     return this.sessions.has(sessionId);
   }
 
-  /** Whether this session exists as far as patchbay can tell — created this
-   * window, or present in the agent's own list. The last-active-session
-   * restore is exactly "found or not": found activates, not-found lands on
-   * the default screen, regardless of why. */
-  knows(sessionId: string): boolean {
-    return this.known.has(sessionId);
-  }
-
   agentFor(sessionId: string): string | undefined {
     return this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
+  }
+
+  /** The session an agent means by its own id for it — what every request
+   * and notification from the agent names. */
+  rowFor(agentId: string, agentSessionId: string): string | undefined {
+    return this.byHandle.get(handleKey(agentId, agentSessionId));
+  }
+
+  /** The agent's own id for a session — what it answers to on the wire, and
+   * what the user copies to find it in the agent's own tools. */
+  handleOf(sessionId: string): string | undefined {
+    return this.known.get(sessionId)?.handle;
+  }
+
+  /** Files a row under its id and its agent's. A page of the agent's own
+   * list that crossed this session's creation may have named it first, as
+   * a row of its own — that row is this session, and leaves. */
+  private bind(sessionId: string, row: KnownSession): void {
+    const key = handleKey(row.agentId, row.handle);
+    const crossed = this.byHandle.get(key);
+    if (crossed !== undefined && crossed !== sessionId) {
+      this.known.delete(crossed);
+      this.hooks.emit({ kind: "sessionClosed", sessionId: crossed });
+    }
+    this.known.set(sessionId, row);
+    this.byHandle.set(key, sessionId);
+  }
+
+  /** The row leaves both indexes. */
+  private unbind(sessionId: string): void {
+    const row = this.known.get(sessionId);
+    if (row === undefined) return;
+    this.known.delete(sessionId);
+    const key = handleKey(row.agentId, row.handle);
+    if (this.byHandle.get(key) === sessionId) this.byHandle.delete(key);
   }
 
   /** The still-new (never-prompted) session for an agent, if one exists —
@@ -594,9 +635,11 @@ export class SessionsStore {
     if (session.pendingContext.length > 0) {
       this.contextStash.set(sessionId, session.pendingContext);
     }
+    const handle = this.known.get(sessionId)?.handle;
     this.sessions.delete(sessionId);
+    if (handle === undefined) return;
     try {
-      await this.pool.closeSession(session.agentId, sessionId);
+      await this.pool.closeSession(session.agentId, handle);
       this.log.info(`session ${sessionId}: released (${reason})`);
     } catch (err) {
       // Failure means the agent still holds it — the next open re-attaches
@@ -644,12 +687,14 @@ export class SessionsStore {
    * MCP server list, canonical roots, knob normalization — exists exactly
    * once. Callers own *policy*: which rung, LiveSession bookkeeping, what
    * the transcript shows, and where the returned knob state is published
-   * (event order is theirs, not this method's). */
+   * (event order is theirs, not this method's). A `session/new` has no row
+   * to map its token to yet: its caller files the agent's id it returns,
+   * then maps the token. */
   private async attachSession(
     target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
     agentId: string,
     opts: { cwd?: string; roots?: readonly string[] } = {},
-  ): Promise<{ sessionId: string; knobs: NormalizedKnobs; missing: string[] }> {
+  ): Promise<{ handle: string; contextToken: string; knobs: NormalizedKnobs; missing: string[] }> {
     const contextToken = `ctx-${++this.contextTokenCounter}`;
     const mcpServers = await this.mcpServersFor(contextToken, agentId);
     const cwd = opts.cwd ?? this.cwd();
@@ -664,24 +709,27 @@ export class SessionsStore {
     if (missing.length > 0) this.hooks.rootsMissing?.(missing);
     if (target.via === "new") {
       const r = await this.pool.newSession(agentId, cwd, mcpServers, roots);
-      this.hooks.mapContextToken?.(contextToken, r.sessionId);
       this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
       // the session isn't in the view yet — its caller says what was skipped
       return {
-        sessionId: r.sessionId,
+        handle: r.sessionId,
+        contextToken,
         knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
         missing,
       };
     }
+    const handle = this.known.get(target.sessionId)?.handle;
+    if (handle === undefined) throw new Error(`unknown session ${target.sessionId}`);
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
     const r =
       target.via === "load"
-        ? await this.pool.loadSession(agentId, target.sessionId, cwd, mcpServers, roots)
-        : await this.pool.resumeSession(agentId, target.sessionId, cwd, mcpServers, roots);
-    this.hooks.onRealSessionAttached?.(agentId, target.sessionId);
+        ? await this.pool.loadSession(agentId, handle, cwd, mcpServers, roots)
+        : await this.pool.resumeSession(agentId, handle, cwd, mcpServers, roots);
+    this.hooks.onRealSessionAttached?.(agentId, handle);
     this.noticeMissingRoots(target.sessionId, missing);
     return {
-      sessionId: target.sessionId,
+      handle,
+      contextToken,
       knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
       missing,
     };
@@ -791,15 +839,17 @@ export class SessionsStore {
 
   private async mintSession(agentId: string, agentName: string, cwd: string): Promise<string> {
     const saved = this.savedRootsFor(cwd);
-    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
+    const { handle, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
       cwd,
       roots: [...this.rootsFor(null, cwd), ...saved],
     });
+    const sessionId = randomUUID();
+    this.bind(sessionId, { agentId, handle, titled: false, everPrompted: false });
+    this.hooks.mapContextToken?.(contextToken, sessionId);
     const seeded = saved.filter((p) => !missing.includes(p));
     this.sessions.set(sessionId, liveSession(agentId));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
-    this.known.set(sessionId, { agentId, titled: false, everPrompted: false });
     const summary: SessionSummary = {
       id: sessionId,
       agentId,
@@ -883,9 +933,7 @@ export class SessionsStore {
       if (outcome.attached) {
         // Held words whose firing trigger died with the old window:
         // opening the session is their release (locks still hold them).
-        // The zero-turn rung may have minted a fresh id — the words moved
-        // with it.
-        this.drainQueue(outcome.sessionId);
+        this.drainQueue(sessionId);
         return;
       }
       if (outcome.reason === "failed") return;
@@ -913,31 +961,34 @@ export class SessionsStore {
     await this.interruptTurn(sessionId);
     // Whatever the session still asks, it asks no one now.
     this.hooks.cancelAsks?.(sessionId);
-    const session = this.sessions.get(sessionId);
-    const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
+    const row = this.known.get(sessionId);
     this.sessions.delete(sessionId);
     this.toolDiffs.delete(sessionId);
-    this.known.delete(sessionId);
+    this.unbind(sessionId);
     this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
     this.contextStash.delete(sessionId);
-    if (agentId !== undefined) {
-      this.noteContinuity(sessionId, agentId, null);
-      // Shield against a session/list walk already in flight: its earlier
-      // pages predate this close and must not resurrect the row.
-      let tombs = this.closedDuringSync.get(agentId);
-      if (tombs === undefined) this.closedDuringSync.set(agentId, (tombs = new Set()));
-      tombs.add(sessionId);
+    if (row !== undefined) {
+      this.noteContinuity(row, null);
+      this.entomb(row);
     }
     this.hooks.emit({ kind: "sessionClosed", sessionId });
     // Honest close: forgetting a session locally while a delete-capable
     // agent keeps it would just resurrect it on the next session/list sync.
     // Gated on used, not declared; spec makes delete idempotent, and a
     // failure only means the agent still has it — the sync stays truthful.
-    if (agentId !== undefined && (this.hooks.isDeleteUsed?.(agentId) ?? false)) {
-      await this.pool.deleteSession(agentId, sessionId).catch((err: Error) => {
+    if (row !== undefined && (this.hooks.isDeleteUsed?.(row.agentId) ?? false)) {
+      await this.pool.deleteSession(row.agentId, row.handle).catch((err: Error) => {
         this.log.info(`session ${sessionId}: agent-side delete failed — ${err.message}`);
       });
     }
+  }
+
+  /** Shield against a session/list walk already in flight: its earlier
+   * pages predate this session's leaving and must not bring it back. */
+  private entomb(row: { agentId: string; handle: string }): void {
+    let tombs = this.closedDuringSync.get(row.agentId);
+    if (tombs === undefined) this.closedDuringSync.set(row.agentId, (tombs = new Set()));
+    tombs.add(row.handle);
   }
 
   /** "Disconnect & erase all data": every session's bookkeeping goes
@@ -946,6 +997,7 @@ export class SessionsStore {
   reset(): void {
     this.sessions.clear();
     this.known.clear();
+    this.byHandle.clear();
     this.toolDiffs.clear();
     this.promptQueues.clear();
     this.contextStash.clear();
@@ -961,7 +1013,7 @@ export class SessionsStore {
       if (entry.agentId !== agentId) continue;
       this.sessions.delete(sessionId);
       this.toolDiffs.delete(sessionId);
-      this.known.delete(sessionId);
+      this.unbind(sessionId);
       this.promptQueues.delete(sessionId);
       this.contextStash.delete(sessionId);
       this.hooks.emit({ kind: "sessionClosed", sessionId });
@@ -1119,12 +1171,12 @@ export class SessionsStore {
       return;
     }
     for (const [sessionId, entry] of [...this.known]) {
-      if (entry.agentId !== agentId || seen.has(sessionId) || this.sessions.has(sessionId)) continue;
+      if (entry.agentId !== agentId || seen.has(entry.handle) || this.sessions.has(sessionId)) continue;
       // The wire is the truth for who exists — a session the agent no
       // longer reports (deleted externally, or a zero-turn shell it never
       // persisted) is gone; live sessions are exempt (a just-created id may
       // trail the agent's own list).
-      this.known.delete(sessionId);
+      this.unbind(sessionId);
       this.toolDiffs.delete(sessionId);
       // The stash too — a pruned id can never re-attach, and an image
       // chip's payload must not sit orphaned until erase-all.
@@ -1136,7 +1188,10 @@ export class SessionsStore {
     // The durable rows by the same truth, index or not: a session deleted
     // while no window was open never entered `known`, and its row would
     // otherwise outlive it. Same live exemption as above.
-    this.hooks.reconcileContinuity?.(agentId, cwd, (id) => seen.has(id) || this.sessions.has(id));
+    const attached = new Set(
+      this.sessionsOn(agentId).flatMap((sessionId) => this.known.get(sessionId)?.handle ?? []),
+    );
+    this.hooks.reconcileContinuity?.(agentId, cwd, (handle) => seen.has(handle) || attached.has(handle));
   }
 
   /** One listed session into the view. Title rule: the agent's title wins
@@ -1145,7 +1200,7 @@ export class SessionsStore {
    * and session_info_update). */
   private noteListedSession(agentId: string, info: SessionInfo): void {
     if (this.closedDuringSync.get(agentId)?.has(info.sessionId) === true) return;
-    const existing = this.known.get(info.sessionId);
+    const existing = this.rowFor(agentId, info.sessionId);
     const now = new Date().toISOString();
     if (existing === undefined) {
       // A session patchbay never saw — created externally (CLI, another
@@ -1160,37 +1215,39 @@ export class SessionsStore {
       // chips decode async (image bytes come back from the stash) and land
       // via rehydrateChips.
       const cont = this.hooks.continuityFor?.(info.sessionId, agentId);
-      this.known.set(info.sessionId, {
+      const sessionId = randomUUID();
+      this.bind(sessionId, {
         agentId,
+        handle: info.sessionId,
         titled: true,
         everPrompted: true, // listed = persisted agent-side = prior turns
         ...(cont?.knobs !== undefined ? { knobs: cont.knobs } : {}),
       });
       this.hooks.emit({
         kind: "sessionListed",
-        session: { id: info.sessionId, agentId, title, live: false, updatedAt: at },
+        session: { id: sessionId, agentId, title, live: false, updatedAt: at },
       });
       if (info.additionalDirectories !== undefined) {
         // the view has no list for this session yet; the row may
-        this.adoptReportedRoots(info.sessionId, info.additionalDirectories, [], cont?.roots ?? []);
+        this.adoptReportedRoots(sessionId, info.additionalDirectories, [], cont?.roots ?? []);
       } else if (cont?.roots !== undefined && cont.roots.length > 0) {
-        this.hooks.emit({ kind: "contextRootsChanged", sessionId: info.sessionId, roots: cont.roots });
+        this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: cont.roots });
       }
       if (cont?.queue !== undefined && cont.queue.length > 0) {
         // Re-minted ids: the persisted ones came from the old window's
         // counter, which restarts here — a collision with a fresh
         // newBlockId("queued") would make a row's × remove the wrong words.
         const rehydrated = cont.queue.map((q) => ({ ...q, id: newBlockId("queued") }));
-        this.promptQueues.set(info.sessionId, rehydrated);
+        this.promptQueues.set(sessionId, rehydrated);
         for (const prompt of rehydrated) {
-          this.hooks.emit({ kind: "promptQueued", sessionId: info.sessionId, prompt });
+          this.hooks.emit({ kind: "promptQueued", sessionId, prompt });
         }
       }
       if (cont?.draft !== undefined && cont.draft !== "") {
-        this.hooks.emit({ kind: "sessionDraftChanged", sessionId: info.sessionId, draft: cont.draft });
+        this.hooks.emit({ kind: "sessionDraftChanged", sessionId, draft: cont.draft });
       }
       if (cont?.chips !== undefined && cont.chips.length > 0) {
-        void this.rehydrateChips(info.sessionId, cont.chips);
+        void this.rehydrateChips(sessionId, cont.chips);
       }
       return;
     }
@@ -1198,17 +1255,17 @@ export class SessionsStore {
     // roots, and the report is that list. Open here, patchbay is the last
     // writer and the report can only echo or trail a re-apply in flight —
     // adopting it would revert the chip to a list already replaced.
-    if (info.additionalDirectories !== undefined && !this.sessions.has(info.sessionId)) {
+    if (info.additionalDirectories !== undefined && !this.sessions.has(existing)) {
       // view and row hold the same list here — every change writes both
-      const held = this.hooks.contextRootsFor?.(info.sessionId) ?? [];
-      this.adoptReportedRoots(info.sessionId, info.additionalDirectories, held, held);
+      const held = this.hooks.contextRootsFor?.(existing) ?? [];
+      this.adoptReportedRoots(existing, info.additionalDirectories, held, held);
     }
     // Only what the wire carried rides — the row's own is the truth
     // otherwise (silence is no event at all), and the reducer's newest-wins
     // keeps a local prompt ahead of a trailing wire read.
     const meta = wireMeta(info);
     if (meta.title === undefined && meta.updatedAt === undefined) return;
-    this.hooks.emit({ kind: "sessionRefreshed", sessionId: info.sessionId, ...meta });
+    this.hooks.emit({ kind: "sessionRefreshed", sessionId: existing, ...meta });
   }
 
   /** The agent's own report of a session's roots, from its `session/list`
@@ -1265,9 +1322,9 @@ export class SessionsStore {
       this.sessions.delete(sessionId);
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
-      const liveId = await this.ensureAttached(sessionId, agentId);
+      await this.ensureAttached(sessionId, agentId);
       // Held words kept across the reload re-drain once hydrating clears.
-      setImmediate(() => this.drainQueue(liveId));
+      setImmediate(() => this.drainQueue(sessionId));
     } finally {
       this.hydrating.delete(sessionId);
       this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
@@ -1306,10 +1363,10 @@ export class SessionsStore {
 
   /** THE attach ladder — the rung order exists here and nowhere else.
    * First the zero-turn rung: a never-prompted session has nothing
-   * agent-side to load or resume, so it is minted again from its row,
-   * everything the user staged carried over, and the fresh id returned —
-   * the one case where the id changes, and not a continuation faked (there
-   * was nothing to continue: a new session knows it is new). Then
+   * agent-side to load or resume, so it is minted again from its row —
+   * the agent gives it a fresh id, the session stays itself, everything
+   * the user staged still on it — and not a continuation faked (there was
+   * nothing to continue: a new session knows it is new). Then
    * `session/load` wherever declared (the only path where what the user
    * sees and what the agent remembers are provably the same), else
    * `session/resume` (the agent's real memory behind an honest seam
@@ -1322,13 +1379,14 @@ export class SessionsStore {
     sessionId: string,
     agentId: string,
   ): Promise<
-    | { attached: true; sessionId: string }
+    | { attached: true }
     | { attached: false; reason: "failed"; error: Error }
     | { attached: false; reason: "no-rung" }
   > {
-    if (this.sessions.has(sessionId)) return { attached: true, sessionId };
+    if (this.sessions.has(sessionId)) return { attached: true };
     if (!this.hasTurns(sessionId)) {
-      return { attached: true, sessionId: await this.recreateFromRow(sessionId) };
+      await this.recreateFromRow(sessionId);
+      return { attached: true };
     }
     const declared = this.pool.get(agentId)?.declared;
     // Read before any rung publishes: the attach's own publishKnobs
@@ -1340,7 +1398,7 @@ export class SessionsStore {
         await this.reopen(sessionId, agentId);
         this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
-        return { attached: true, sessionId };
+        return { attached: true };
       } catch (err) {
         // The agent may no longer hold this session — descend to resume
         // rather than erroring forever.
@@ -1353,7 +1411,7 @@ export class SessionsStore {
         await this.resumeReattach(sessionId, agentId);
         this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
-        return { attached: true, sessionId };
+        return { attached: true };
       } catch (err) {
         this.sessions.delete(sessionId);
         error = err as Error;
@@ -1364,39 +1422,36 @@ export class SessionsStore {
     return { attached: false, reason: "no-rung" };
   }
 
-  /** The zero-turn rung, coalesced per id: the open path and a prompt can
-   * both reach a dead never-prompted row in the same tick, and one row
+  /** The zero-turn rung, coalesced per session: the open path and a prompt
+   * can both reach a dead never-prompted row in the same tick, and one row
    * must become one session, not two. */
-  private recreateFromRow(oldId: string): Promise<string> {
-    const inFlight = this.recreating.get(oldId);
+  private recreateFromRow(sessionId: string): Promise<void> {
+    const inFlight = this.recreating.get(sessionId);
     if (inFlight !== undefined) return inFlight;
-    const run = this.recreateEmpty(oldId, undefined).finally(() => {
-      if (this.recreating.get(oldId) === run) this.recreating.delete(oldId);
+    const run = this.recreateEmpty(sessionId, undefined).finally(() => {
+      if (this.recreating.get(sessionId) === run) this.recreating.delete(sessionId);
     });
-    this.recreating.set(oldId, run);
+    this.recreating.set(sessionId, run);
     return run;
   }
 
   /** "New session" for an agent whose never-prompted session lost its
    * connection: the row is still the new session — run the ladder on it
    * (the zero-turn rung mints it again, carrying what the user staged) and
-   * point the view at the result. Throws like createSession does, so the
-   * caller's connect pane can say why. */
-  async reviveNew(sessionId: string): Promise<string> {
+   * point the view at it. Throws like createSession does, so the caller's
+   * connect pane can say why. */
+  async reviveNew(sessionId: string): Promise<void> {
     const agentId = this.known.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-    const liveId = await this.ensureAttached(sessionId, agentId);
-    this.activate(liveId);
-    return liveId;
+    await this.ensureAttached(sessionId, agentId);
+    this.activate(sessionId);
   }
 
   /** The prompt/reload exhaustion policy: attach or throw — a prompt with
-   * no session behind it must fail loudly on the caller's error channel.
-   * Returns the id to continue on: the caller's own, or the fresh one the
-   * zero-turn rung minted. */
-  private async ensureAttached(sessionId: string, agentId: string): Promise<string> {
+   * no session behind it must fail loudly on the caller's error channel. */
+  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
     const outcome = await this.attach(sessionId, agentId);
-    if (outcome.attached) return outcome.sessionId;
+    if (outcome.attached) return;
     throw outcome.reason === "failed"
       ? outcome.error
       : new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
@@ -1429,7 +1484,8 @@ export class SessionsStore {
    * never invents a knob. A throw propagates: the caller shows the error. */
   async setKnob(sessionId: string, knobId: string, value: string | boolean): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (!session) return;
+    const handle = this.known.get(sessionId)?.handle;
+    if (!session || handle === undefined) return;
     const route = routeKnobSet(session.knobs, knobId, value);
     if (route === null) return;
     // Composer recording for a mode set waits for the agent's
@@ -1439,7 +1495,7 @@ export class SessionsStore {
     if (route.via === "setMode") session.userModeSetPending = true;
     let next: NormalizedKnobs | null;
     try {
-      next = await performKnobSet(this.knobWire(session.agentId), sessionId, () => session.knobs, route, value, this.knobDropLog);
+      next = await performKnobSet(this.knobWire(session.agentId), handle, () => session.knobs, route, value, this.knobDropLog);
     } catch (err) {
       if (route.via === "setMode") session.userModeSetPending = false;
       throw err;
@@ -1452,9 +1508,10 @@ export class SessionsStore {
     this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
   }
 
-  /** The wire one routed set needs, bound to this session's connection.
-   * The surface a set advances from travels alongside at set time, not
-   * route time — it must be the state as it stands then. */
+  /** The wire one routed set needs, bound to this session's connection —
+   * its calls name the session the agent's way. The surface a set advances
+   * from travels alongside at set time, not route time — it must be the
+   * state as it stands then. */
   private knobWire(agentId: string): KnobWire {
     return {
       setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),
@@ -1477,7 +1534,7 @@ export class SessionsStore {
       const entry = this.known.get(sessionId);
       if (entry !== undefined) {
         entry.knobs = confirmedFromKnobs(knobs);
-        this.noteContinuity(sessionId, entry.agentId, { knobs: entry.knobs });
+        this.noteContinuity(entry, { knobs: entry.knobs });
       }
     }
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
@@ -1532,9 +1589,10 @@ export class SessionsStore {
       () => this.sessions.get(sessionId)?.knobs ?? NO_KNOBS,
       async (route, _knobId, value) => {
         const session = this.sessions.get(sessionId);
-        if (!session) return;
+        const handle = this.known.get(sessionId)?.handle;
+        if (!session || handle === undefined) return;
         try {
-          const next = await performKnobSet(this.knobWire(session.agentId), sessionId, () => session.knobs, route, value, this.knobDropLog);
+          const next = await performKnobSet(this.knobWire(session.agentId), handle, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(sessionId, next);
         } catch {
           // rejected seed entry — the agent's state stands, nothing to repair
@@ -1650,9 +1708,9 @@ export class SessionsStore {
   }
 
   private persistRoots(sessionId: string, roots: readonly string[]): void {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return;
-    this.noteContinuity(sessionId, agentId, { roots: [...roots] });
+    const row = this.known.get(sessionId);
+    if (row === undefined) return;
+    this.noteContinuity(row, { roots: [...roots] });
   }
 
   /** Pushes the canonical root list to a *live* attachment: the session's
@@ -1730,110 +1788,65 @@ export class SessionsStore {
 
   /** The zero-turn rung — of reapplyRoots (a root added to a never-prompted
    * session) and of the attach ladder (a never-prompted session whose
-   * connection died): the agent persisted nothing for it, so mint the
-   * session again and retire the empty shell. Everything the user has
-   * already invested carries over — title/index row, pending context chips
-   * (live, or stashed by the drop), held words, draft, user-steered knob
-   * values (re-seeded via applySeed, silently skipped where the fresh
-   * session doesn't offer them). `old` is the live attachment when there
-   * still is one. Returns the fresh id. */
-  private async recreateEmpty(oldId: string, old: LiveSession | undefined): Promise<string> {
-    const row = this.known.get(oldId);
-    if (row === undefined) throw new Error(`unknown session ${oldId}`);
-    const agentId = row.agentId;
-    // `roots` = the user-added list, which is what the durable row carries;
-    // the wire gets the full composition (workspace folders included).
-    const roots = this.hooks.contextRootsFor?.(oldId) ?? [];
-    const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
-      roots: this.rootsFor(oldId, this.cwd()),
+   * connection died): the agent persisted nothing for it, so the session is
+   * minted again on the agent's side and the empty shell retired. The
+   * session stays itself — its row, its view row and everything the user
+   * staged on them (chips, held words, draft, roots) — under a fresh agent
+   * id; its continuity row follows that id, and the user-steered knob
+   * values are re-seeded (silently skipped where the fresh session doesn't
+   * offer them). `old` is the live attachment when there still is one. */
+  private async recreateEmpty(sessionId: string, old: LiveSession | undefined): Promise<void> {
+    const row = this.known.get(sessionId);
+    if (row === undefined) throw new Error(`unknown session ${sessionId}`);
+    const { agentId, handle: was } = row;
+    const { handle, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
+      roots: this.rootsFor(sessionId, this.cwd()),
     });
-    // Sidebar-pointer semantics, NOT isActiveSession (which also counts
-    // pinned panels): re-activating because a detached panel showed the
-    // old id would hijack the sidebar from whatever it is actually on.
-    const wasActive = this.hooks.isPointerActive?.(oldId) ?? false;
+    // Closed while the agent minted it: the fresh session serves no one,
+    // and is freed like the shell it would have replaced.
+    if (this.known.get(sessionId) !== row) {
+      this.retire(agentId, handle);
+      throw new Error(`session ${sessionId} was closed while it was minted again`);
+    }
     // The row's knob snapshot is what every publish wrote — the same fact a
     // live attachment holds, from its one durable home.
     const seed = row.knobs ?? {};
-    const fresh = liveSession(agentId);
-    fresh.pendingContext = old?.pendingContext ?? this.contextStash.get(oldId) ?? [];
-    this.contextStash.delete(oldId);
-    this.sessions.set(sessionId, fresh);
-    this.sessions.delete(oldId);
-    const now = new Date().toISOString();
-    // The fresh id inherits the retired row's title — read from the one
-    // place it lives, the view's row.
-    const title = this.hooks.titleOf?.(oldId) ?? "Untitled session";
-    this.known.set(sessionId, { agentId, titled: row.titled, everPrompted: false });
-    this.known.delete(oldId);
-    // Everything the user invested migrates to the fresh id — held words
-    // and draft included (they'd otherwise vanish with sessionClosed).
-    // The retired shell's durable row goes with it; knobs re-write at the
-    // reseed's confirmed publishes below.
-    const heldWords = this.promptQueues.get(oldId);
-    this.promptQueues.delete(oldId);
-    if (heldWords !== undefined && heldWords.length > 0) {
-      this.promptQueues.set(sessionId, heldWords);
-    }
-    const carriedDraft = this.hooks.draftOf?.(oldId);
-    this.noteContinuity(oldId, agentId, null);
-    this.noteContinuity(sessionId, agentId, {
-      roots: [...roots],
-      chips: fresh.pendingContext.map(persistChip),
-      ...(heldWords !== undefined && heldWords.length > 0 ? { queue: [...heldWords] } : {}),
-      ...(carriedDraft !== undefined && carriedDraft !== "" ? { draft: carriedDraft } : {}),
-    });
+    const carried = this.hooks.continuityFor?.(was, agentId);
+    this.unbind(sessionId);
+    row.handle = handle;
+    this.bind(sessionId, row);
+    this.hooks.mapContextToken?.(contextToken, sessionId);
+    // The continuity row follows the session to its new id.
+    this.noteContinuity({ agentId, handle: was }, null);
+    if (carried !== undefined) this.noteContinuity(row, carried);
     // Same shield as close(): an in-flight session/list walk's stale page
     // must not resurrect the retired shell.
-    {
-      let tombs = this.closedDuringSync.get(agentId);
-      if (tombs === undefined) this.closedDuringSync.set(agentId, (tombs = new Set()));
-      tombs.add(oldId);
-    }
-    this.hooks.emit(
-      { kind: "sessionClosed", sessionId: oldId },
-      {
-        kind: "sessionCreated",
-        session: {
-          id: sessionId,
-          agentId,
-          title,
-          live: false,
-          updatedAt: now,
-        },
-        // A zero-turn recreate may target a session pinned in a detached
-        // panel — activation is decided below by wasActive, never implied.
-        activate: false,
-      },
-      ...(roots.length > 0
-        ? [{ kind: "contextRootsChanged", sessionId, roots } as const]
-        : []),
-      ...fresh.pendingContext.map(
-        (chip) => ({ kind: "contextChipAdded", sessionId, chip }) as const,
-      ),
-      ...(heldWords ?? []).map((prompt) => ({ kind: "promptQueued", sessionId, prompt }) as const),
-      ...(carriedDraft !== undefined && carriedDraft !== ""
-        ? [{ kind: "sessionDraftChanged", sessionId, draft: carriedDraft } as const]
-        : []),
-    );
-    if (wasActive) this.hooks.emit({ kind: "sessionActivated", sessionId });
+    this.entomb({ agentId, handle: was });
+    const fresh = liveSession(agentId);
+    fresh.pendingContext = old?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
+    this.contextStash.delete(sessionId);
+    this.sessions.set(sessionId, fresh);
+    this.hooks.handleChanged?.(sessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
     this.noticeMissingRoots(sessionId, missing);
     this.hooks.rootsChanged?.(sessionId);
-    // the empty shell: freed agent-side where possible, forgotten either
-    // way — only while its process still exists; a dead connection took
-    // it along.
-    if (old !== undefined) {
-      if (this.pool.get(agentId)?.declared?.sessionClose === true) {
-        void this.pool.closeSession(agentId, oldId).catch(() => {});
-      } else {
-        this.pool.forgetSession(agentId, oldId);
-      }
-    }
+    // The empty shell, only while its process still exists — a dead
+    // connection took it along.
+    if (old !== undefined) this.retire(agentId, was);
     this.publishKnobs(sessionId, knobs);
     await this.applySeed(sessionId, seed);
-    this.log.info(`session ${oldId}: zero-turn — recreated as ${sessionId}`);
-    return sessionId;
+    this.log.info(`session ${sessionId}: zero-turn — minted again (agent id ${was} → ${handle})`);
+  }
+
+  /** A session the agent holds that no row uses: freed agent-side where the
+   * agent can close it, forgotten by the connection either way. */
+  private retire(agentId: string, handle: string): void {
+    if (this.pool.get(agentId)?.declared?.sessionClose === true) {
+      void this.pool.closeSession(agentId, handle).catch(() => {});
+    } else {
+      this.pool.forgetSession(agentId, handle);
+    }
   }
 
   async sendPrompt(
@@ -1882,7 +1895,7 @@ export class SessionsStore {
       // never started: they wait among the held ones, where the next open,
       // reload or prompt sends them — only the user discards words.
       if (err instanceof TurnNotStartedError) {
-        this.reHold(err.sessionId, {
+        this.reHold(sessionId, {
           id: newBlockId("queued"),
           text,
           ...(parts !== undefined ? { parts } : {}),
@@ -1905,23 +1918,21 @@ export class SessionsStore {
   ): Promise<void> {
     this.turnStarting.add(sessionId);
     let session: LiveSession;
+    let handle: string;
     try {
-      const liveId = await this.ensureAttached(sessionId, agentId);
-      if (liveId !== sessionId) {
-        // The zero-turn rung minted a fresh id: the turn continues there,
-        // the door's mark included.
-        this.turnStarting.delete(sessionId);
-        this.turnStarting.add(liveId);
-        sessionId = liveId;
-      }
+      await this.ensureAttached(sessionId, agentId);
       const attached = this.sessions.get(sessionId);
-      if (attached === undefined) throw new Error(`session ${sessionId} vanished during attach`);
+      const row = this.known.get(sessionId);
+      if (attached === undefined || row === undefined) throw new Error(`session ${sessionId} vanished during attach`);
       session = attached;
+      // Read after the attach: the zero-turn rung gives the session a
+      // fresh agent id.
+      handle = row.handle;
     } catch (err) {
       // The turn never started: nothing rendered, nothing on the wire —
       // the caller may safely re-hold the words.
       this.turnStarting.delete(sessionId);
-      throw new TurnNotStartedError(err as Error, sessionId);
+      throw new TurnNotStartedError(err as Error);
     }
     // A mode-set confirmation that hasn't arrived by the next prompt is
     // not coming — the flag attributes the *immediate* notification to the
@@ -2082,7 +2093,7 @@ export class SessionsStore {
       });
     };
     try {
-      const response = await this.pool.prompt(session.agentId, sessionId, prompt);
+      const response = await this.pool.prompt(session.agentId, handle, prompt);
       // end_turn is the unremarkable outcome; anything else is worth a line.
       if (response.stopReason === "end_turn") {
         this.log.debug(`session ${sessionId}: turn ended`);
@@ -2157,7 +2168,7 @@ export class SessionsStore {
         // Nothing rendered, nothing sent — the words go back (only the user
         // discards). The next open/prompt/unlock retries.
         this.log.info(`session ${sessionId}: held words re-held — ${err.message}`);
-        this.reHold(err.sessionId, next);
+        this.reHold(sessionId, next);
         return;
       }
       // The wire settled: the words were spent — rendered as a user
@@ -2170,8 +2181,10 @@ export class SessionsStore {
 
   /** Words whose turn never started go back to the front of the held ones
    * — anything held meanwhile came after them. The view's rows resync
-   * wholesale, so their order stays the firing order. */
+   * wholesale, so their order stays the firing order. A session closed
+   * meanwhile took its held words with it, these included. */
   private reHold(sessionId: string, words: QueuedPrompt): void {
+    if (!this.known.has(sessionId)) return;
     const queue = this.promptQueues.get(sessionId) ?? [];
     queue.unshift(words);
     this.promptQueues.set(sessionId, queue);
@@ -2186,39 +2199,36 @@ export class SessionsStore {
    * that cannot come; forgetting (`null`) always passes. The predicate
    * reads the handshake the pool holds for the agent (kept past a stop),
    * so a stopped agent's detached session still writes honestly. */
-  private noteContinuity(sessionId: string, agentId: string, patch: SessionContinuity | null): void {
+  private noteContinuity(row: { agentId: string; handle: string }, patch: SessionContinuity | null): void {
     if (patch !== null) {
-      if (!continuityReachable(this.pool.get(agentId)?.declared)) return;
+      if (!continuityReachable(this.pool.get(row.agentId)?.declared)) return;
     }
-    this.hooks.onContinuity?.(sessionId, agentId, this.cwd(), patch);
+    this.hooks.onContinuity?.(row.handle, row.agentId, this.cwd(), patch);
   }
 
   /** Durable copies of the queue, the chip row, and the composer draft —
    * written through at every mutation so a window reload finds the truth.
-   * Resolution through sessions-or-known: both live and merely-listed
-   * sessions persist; an unknown id writes nothing. */
+   * Both live and merely-listed sessions persist; an unknown id writes
+   * nothing. */
   private persistQueue(sessionId: string): void {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return;
-    this.noteContinuity(sessionId, agentId, {
-      queue: [...(this.promptQueues.get(sessionId) ?? [])],
-    });
+    const row = this.known.get(sessionId);
+    if (row === undefined) return;
+    this.noteContinuity(row, { queue: [...(this.promptQueues.get(sessionId) ?? [])] });
   }
 
   private persistChips(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return;
-    const chips = session?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
-    this.noteContinuity(sessionId, agentId, { chips: chips.map(persistChip) });
+    const row = this.known.get(sessionId);
+    if (row === undefined) return;
+    const chips = this.sessions.get(sessionId)?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
+    this.noteContinuity(row, { chips: chips.map(persistChip) });
   }
 
   /** The draft is opaque here (serialized editor state); the view mirror
    * is the orchestrator's, this is only its durable copy. */
   persistDraft(sessionId: string, draft: string): void {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return;
-    this.noteContinuity(sessionId, agentId, { draft });
+    const row = this.known.get(sessionId);
+    if (row === undefined) return;
+    this.noteContinuity(row, { draft });
   }
 
   /** Decodes persisted chips back into the view (image bytes read from the
@@ -2281,7 +2291,8 @@ export class SessionsStore {
 
   async stopTurn(sessionId: string, opts?: { keepHeldWords?: boolean }): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (!session) return;
+    const handle = this.known.get(sessionId)?.handle;
+    if (!session || handle === undefined) return;
     // Stop means stop: queued prompts go with the cancelled turn — draining
     // them after a deliberate stop would restart what the user just ended.
     // A reload's cancel is plumbing, not the user ending the work: it keeps
@@ -2289,7 +2300,7 @@ export class SessionsStore {
     if (opts?.keepHeldWords !== true) this.clearPromptQueue(sessionId);
     // The cancel goes out first, then the asks it leaves are answered — the
     // agent hears the turn is ending before it hears why its ask was.
-    const cancelled = this.pool.cancel(session.agentId, sessionId);
+    const cancelled = this.pool.cancel(session.agentId, handle);
     this.hooks.cancelAsks?.(sessionId);
     await cancelled;
   }
@@ -2566,20 +2577,12 @@ export class SessionsStore {
   /** Routed from AgentPool's onSessionUpdate hook — handles both live
    * streaming and session/load replay identically (same notification shape). */
   handleUpdate(agentId: string, notification: SessionNotification): void {
-    const { sessionId, update } = notification;
-    // The one identity guard, at the one door every inbound update rides
-    // through: session ids are only unique per agent connection, so two
-    // agents can legally mint the same string. An update whose sender
-    // isn't the session's owner would write one agent's traffic into
-    // another's transcript — drop it here, loudly, and nothing deeper
-    // ever re-checks.
-    const owner = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (owner !== undefined && owner !== agentId) {
-      this.log.info(
-        `session ${sessionId}: update from ${agentId} dropped — session belongs to ${owner}`,
-      );
-      return;
-    }
+    const { update } = notification;
+    // The one door every inbound update rides through names the session the
+    // agent's way; with its agent, that id finds the one row it means — two
+    // agents minting one id are two rows, and nothing deeper re-checks.
+    const sessionId = this.rowFor(agentId, notification.sessionId);
+    if (sessionId === undefined) return; // a session patchbay isn't tracking
     // Session metadata, not transcript — handled before the live guard: the
     // agent may retitle any session it knows, live in patchbay or not.
     if (update.sessionUpdate === "session_info_update") {
@@ -2587,7 +2590,7 @@ export class SessionsStore {
       return;
     }
     const session = this.sessions.get(sessionId);
-    if (!session) return; // update for a session patchbay isn't tracking
+    if (!session) return; // known, but not attached here
     session.lastActivityAt = Date.now(); // any update is activity — the reaper's basis
     // Replay window (loadSilently): canonical state advances, the webview
     // waits for the closing wholesale resync instead of a patch flood.

@@ -84,6 +84,10 @@ export interface FakeAgentScript {
   /** Steps streamed per prompt turn (default: two text chunks). */
   turn?: TurnStep[];
   stepDelayMs?: number;
+  /** session/new holds its reply this long after the session exists — its
+   * own list names it meanwhile, as an agent that persists at creation
+   * does while the reply is still on the way. */
+  newSessionReplyDelayMs?: number;
   /** "fail" → second live session/new is rejected (concurrency knob). */
   concurrent?: "ok" | "fail";
   /** Lying mode: session/load 404s *and drops the live session* — observed
@@ -625,7 +629,7 @@ const app = acp
     authenticated = true;
     return {};
   })
-  .onRequest("session/new", (ctx): acp.NewSessionResponse => {
+  .onRequest("session/new", async (ctx): Promise<acp.NewSessionResponse> => {
     if (script.lies?.authRequired && !authenticated) {
       throw acp.RequestError.authRequired();
     }
@@ -649,6 +653,9 @@ const app = acp
     const response: acp.NewSessionResponse = { sessionId: id };
     if (script.modes) response.modes = script.modes;
     if (script.configOptions) response.configOptions = sessions.get(id)!.configOptions;
+    if (script.newSessionReplyDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, script.newSessionReplyDelayMs));
+    }
     return response;
   })
   .onRequest("session/load", async (ctx): Promise<acp.LoadSessionResponse> => {

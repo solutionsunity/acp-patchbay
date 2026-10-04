@@ -427,19 +427,6 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
       updatedAt: "2026-07-09T11:00:00Z",
     });
   });
-
-  it("sessionListed on a row the state already holds is a refresh, never a duplicate", () => {
-    const s = replay(initialAgentViewState, [
-      mk("a"),
-      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
-      {
-        kind: "sessionListed",
-        session: { id: "a", agentId: "claude", title: "a", live: false, updatedAt: "2026-07-09T09:00:00Z" },
-      },
-    ]);
-    expect(s.sessions.filter((x) => x.id === "a")).toHaveLength(1);
-    expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
-  });
 });
 
 
@@ -487,23 +474,6 @@ describe("state-truth regressions — weak evidence never overwrites strong", ()
       plan: { status: "ok", window: "weekly", utilization: 0.2, resetsAt: undefined },
     };
     expect(coalesceAgentViewEvent(withPlan, otherWindow)).toBeNull();
-  });
-
-  it("sessionCreated: a re-minted id replaces the row — never a duplicate — and resets its maps", () => {
-    let state = replay(initialAgentViewState, [session("s1")]);
-    state = reduceAgentView(state, {
-      kind: "contextChipAdded", sessionId: "s1",
-      chip: { id: "c1", kind: "selection", label: "L", content: "x" },
-    });
-    state = replay(state, [session("s1")]);
-    expect(state.sessions.filter((s) => s.id === "s1")).toHaveLength(1);
-    expect(state.contextChips.s1).toEqual([]);
-  });
-
-  it("sessionCreated activate:false leaves the pointer and an in-flight chatConnect alone", () => {
-    let state = replay(initialAgentViewState, [session("s1"), { kind: "sessionActivated", sessionId: "s1" }]);
-    state = reduceAgentView(state, { ...session("s2"), activate: false });
-    expect(state.activeSessionId).toBe("s1");
   });
 
   it("sessionClosed drops a hung hydration's ghost key", () => {
