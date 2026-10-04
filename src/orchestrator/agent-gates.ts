@@ -12,7 +12,7 @@ import { count } from "../shared/count";
 import type { ConnectionOperations } from "./agents-store";
 import type { ProbeOutcome } from "./capability-tracker";
 import type { Queue } from "./queue";
-import type { OpenWork } from "./session-manager";
+import type { OpenWork } from "./sessions-store";
 
 /** An operation on one agent's connection — and so what the agent's row
  * can hold, its busy vocabulary. */

@@ -1,5 +1,5 @@
 // The write scope through the real extension (issue #56): the broker asks the
-// session manager which roots the session was given, and judges each write by
+// sessions store which roots the session was given, and judges each write by
 // where it lands. A root added to the session auto-accepts; a `..` that climbs
 // out of it asks; the process cwd standing in for an absent folder is never a
 // root — this suite runs with no folder open, so that state is live here.
@@ -26,7 +26,7 @@ interface Internal {
     };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessionManager: {
+    sessions: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       addRoot(sessionId: string, path: string): Promise<void>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -56,8 +56,8 @@ suite("write scope (issue #56)", () => {
         }),
       );
       await orchestrator.gates.connect("write-scope-e2e");
-      const born = await orchestrator.sessionManager.createSession("write-scope-e2e", "Write Scope Fake", root);
-      await orchestrator.sessionManager.addRoot(born, root);
+      const born = await orchestrator.sessions.createSession("write-scope-e2e", "Write Scope Fake", root);
+      await orchestrator.sessions.addRoot(born, root);
       // a never-prompted session is re-minted to carry its new root
       const sessionId = orchestrator.agentView.current.activeSessionId!;
 
@@ -67,7 +67,7 @@ suite("write scope (issue #56)", () => {
         "no folder open: the process cwd was never handed to the agent",
       );
 
-      const turnDone = orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
       const diffs = () => orchestrator.agentView.current.transcripts[sessionId]?.filter((b) => b.kind === "diff") ?? [];
       const asking = await waitFor(() => diffs()[1]);
       assert.deepStrictEqual(diffs()[0]!.resolution, { accepted: true, auto: true }, "inside the root: no card to click");

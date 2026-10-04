@@ -31,7 +31,7 @@ interface Internal {
     };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessionManager: {
+    sessions: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
@@ -73,7 +73,7 @@ suite("chat vertical slice", () => {
       );
       await orchestrator.gates.connect("chat-e2e");
 
-      const sessionId = await orchestrator.sessionManager.createSession(
+      const sessionId = await orchestrator.sessions.createSession(
         "chat-e2e",
         "Chat E2E Fake",
         cwd,
@@ -84,7 +84,7 @@ suite("chat vertical slice", () => {
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
 
       // fire the turn without awaiting completion — we want to interrupt mid-stream
-      const turnDone = orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
 
       // wait for the first chunk to land, then kill the webview mid-turn
       await waitFor(() => {

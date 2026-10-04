@@ -21,7 +21,7 @@ interface Internal {
     broker: { resolve(requestId: string, optionId: string): void };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessionManager: {
+    sessions: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
@@ -61,12 +61,12 @@ suite("live-buffer write (W1)", () => {
         }),
       );
       await orchestrator.gates.connect("live-write-e2e");
-      const sessionId = await orchestrator.sessionManager.createSession(
+      const sessionId = await orchestrator.sessions.createSession(
         "live-write-e2e",
         "Live Write Fake",
         cwd,
       );
-      const turnDone = orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
       const diffBlock = await waitFor(() =>
         orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "diff"),
       );
@@ -100,8 +100,8 @@ suite("live-buffer write (W1)", () => {
         }),
       );
       await orchestrator.gates.connect("live-read-e2e");
-      const sessionId = await orchestrator.sessionManager.createSession("live-read-e2e", "Live Read Fake", cwd);
-      await orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const sessionId = await orchestrator.sessions.createSession("live-read-e2e", "Live Read Fake", cwd);
+      await orchestrator.sessions.sendPrompt(sessionId, "go");
       const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
         .filter((b) => b.kind === "text")
         .map((b) => b.text ?? "")

@@ -5,7 +5,7 @@
 // This is what the composer's knob pills show on *entry* (a fresh session,
 // or a history session attached with no live combination in hand) under the
 // "knobs start from: last used" preference (stores/preferences.ts). Written
-// only from the user-set path (session-manager setKnob, after the agent
+// only from the user-set path (sessions-store setKnob, after the agent
 // confirms) — never at attach time, so loads/reloads that reset agent-side
 // state can't pollute it. Machine store: knob ids and offered values only —
 // non-sensitive, machine-scoped like the agent configs they belong to.

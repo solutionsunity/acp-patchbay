@@ -6,7 +6,7 @@
 // the connect lifecycle (static key in a configurable header, or MCP-spec
 // OAuth 2.1), routing decisions, and the
 // mcpServers entries a session actually gets. vscode-free (like
-// SessionManager/CapabilityTracker): the OAuth browser/redirect step is an
+// SessionsStore/CapabilityTracker): the OAuth browser/redirect step is an
 // injected OAuthUserAgent, so everything is unit-testable against a fake
 // OAuth provider and a fake remote MCP endpoint — the same fixture
 // philosophy as the fake ACP agent.

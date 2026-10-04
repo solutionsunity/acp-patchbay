@@ -14,13 +14,13 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Orchestrator** — the Node process in the extension host. Single source of truth
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
-- **Known sessions** — the session-manager's routing index of the agent's
+- **Known sessions** — the sessions store's routing index of the agent's
   own `session/list` (session id → owning agent, plus the knob seed the
   wire cannot re-report), repopulated every connect. Patchbay persists no
   session index: the durable continuity row is per-session state keyed by
   the agent's own id, never a list source. Nothing the view shows lives
   here — title, activity stamp, liveness, the unseen mark have one home,
-  the Agent View's canonical row; the manager reads such a fact through a
+  the Agent View's canonical row; the store reads such a fact through a
   hook when it needs one, never a copy.
 - **Decision audit** — append-only record of events that happened *in patchbay*:
   permissions granted, tools approved, routing chosen.
@@ -196,14 +196,14 @@ flowchart TD
     Q2 -- no --> N["Honestly not reopenable<br/><small>never mint a session and call it a continuation</small>"]
 ```
 - **Session lifecycle**: opening a session — drawer click, palette pick, or
-  "Open in new window" — is one ceremony (`SessionManager.open`): the
+  "Open in new window" — is one ceremony (`SessionsStore.open`): the
   pointer moves unless the session is pinned to its own window, the ladder
   above runs, and an off agent is spawned (connect-on-demand); when an agent
   comes up, every session on view (active or pinned — the reaper's same
   exemption set) re-runs the ladder. The drawer's order is last activity,
   one fact with one home: the reducer's row stamp (`updatedAt`), moved by
   prompt send, turn end, and the wire's own stamp — newest wins, judged
-  there and nowhere else; the session-manager reports the evidence and
+  there and nowhere else; the sessions-store reports the evidence and
   keeps no copy. Cross-window freshness is a read, not a push: opening the
   drawer (or the palette's session pick) re-runs `session/list` on every
   running agent (`syncRunningAgents`), so another window's activity lands
@@ -345,7 +345,7 @@ flowchart TD
   registry has shown it can upgrade at all. Every way a connection ends
   detaches the sessions that rode it, as a crash does: they reopen (load,
   then resume) keeping what they hold — knobs, roots, held prompts, chips
-  (the session manager's `agentStatusChanged`, the one rule). Remove also
+  (the sessions store's `agentStatusChanged`, the one rule). Remove also
   lets go of the agent's live state: the pool's entry, the tracker's
   marks, a chat pane on it. Saves never meet the gates. Add and startup are the
   orchestrator's features: the store saves (or reads what to open), the
@@ -412,7 +412,7 @@ Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
 carries every hit, called synchronously and never awaited so it can't block
 the RPC it's reporting on. `capability-tracker.ts` only decides *when* to run
 the synthetic probe below and persists whatever pool.ts reports — it does not
-mark anything itself. session-manager.ts, which decodes `session/update` payloads for
+mark anything itself. sessions-store.ts, which decodes `session/update` payloads for
 rendering, marks nothing either; the wire-level fact and the render-level
 interpretation are two different concerns living at two different layers.
 
@@ -506,7 +506,7 @@ wire fact means for auth.
 - One thing the writer refuses on its own: evidence for an agent whose
   config no longer exists (a terminal login left open across a Remove).
 - **A standing lock is a turn-start precondition** — the consumer side of
-  the authority. The one adjudication every prompt passes (session-manager's
+  the authority. The one adjudication every prompt passes (the sessions store's
   `sendPrompt` top, ahead of any transcript write or wire call; the queue
   drain re-checks the same conditions before shifting) treats a lock as `inFlight`'s peer: the words queue as
   visible held rows — never a fabricated user message fired into a wire
@@ -581,7 +581,7 @@ The spec-pure-core rule, generalizing meta.ts's discipline from the `_meta`
 site to every out-of-spec adoption (extra response fields, undeclared
 methods, removed-draft surfaces, behavioral quirk workarounds):
 
-- **Core stays spec-pure.** No core file (pool, session-manager, knobs,
+- **Core stays spec-pure.** No core file (pool, sessions-store, knobs,
   capability-tracker, orchestrator) may contain a deviation's shape, wire
   method name, or display policy — and never a vendor name; adoption is
   always shape-gated, like everything else in patchbay.
@@ -926,7 +926,7 @@ a remote server, the bridge declares the `roots` capability on top of the
 agent's `initialize`, answers `roots/list` from the orchestrator with `file://`
 URIs (the spec's MUST), and sends `list_changed` when the list moves — the
 agent never sees the exchange. Both read one composition
-(`session-manager.ts:rootsOf`: cwd first, then the wire list) and hear of
+(`sessions-store.ts:rootsOf`: cwd first, then the wire list) and hear of
 changes over the IPC socket (`watchRoots`, then a `rootsChanged` push per
 change; the subscriber re-reads, never holds a copy). Servers the agent
 connects to itself (`type: "http"` passthrough, custom stdio) learn roots only
@@ -1127,7 +1127,7 @@ Atoms first; each directory is one responsibility:
 ```
 src/
   extension.ts    activation entry
-  orchestrator/   agents store, queue, gates, session manager, client pool, broker, stores, extensions
+  orchestrator/   agents store, queue, gates, sessions store, client pool, broker, stores, extensions
   mcp/            local MCP server + its client-capability adapters
   integrations/   the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only

@@ -19,7 +19,7 @@ interface Internal {
     agents: AgentsDoor;
     gates: GatesDoor;
     acpRegistry: { current(): { agents: unknown[] }; refresh(moment: "manual"): Promise<{ ok: boolean }> };
-    sessionManager: {
+    sessions: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
     };
@@ -79,8 +79,8 @@ suite("upgrade guard", () => {
         ),
       );
       await orchestrator.gates.connect(AGENT_ID);
-      const sessionId = await orchestrator.sessionManager.createSession(AGENT_ID, "Upgrade Guard Fake", cwd);
-      await orchestrator.sessionManager.sendPrompt(sessionId, "go");
+      const sessionId = await orchestrator.sessions.createSession(AGENT_ID, "Upgrade Guard Fake", cwd);
+      await orchestrator.sessions.sendPrompt(sessionId, "go");
 
       orchestrator.handleAction({ kind: "upgradeAgent", agentId: AGENT_ID });
       const [message, options] = await waitFor(() => asked[0]);

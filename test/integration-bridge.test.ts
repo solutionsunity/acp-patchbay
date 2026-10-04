@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IpcClient } from "../src/mcp/ipc-client";
 import { encodeLine, parseLines, type IpcRequest, type IpcResponse } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { SessionManager } from "../src/orchestrator/session-manager";
+import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -279,16 +279,16 @@ function harness(mcpServers: McpServer[]) {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
     ...stubFsTerminalHooks(),
   });
-  const sessionManager = new SessionManager(
+  const sessions = new SessionsStore(
     pool,
     { emit: (...evs) => events.push(...evs) },
     () => dir,
     async () => mcpServers,
   );
-  return { pool, sessionManager, state: () => events.reduce(reduceAgentView, initialAgentViewState) };
+  return { pool, sessions, state: () => events.reduce(reduceAgentView, initialAgentViewState) };
 }
 
 describe("integration bridge — real agent, real bridge subprocess, fake remote MCP server", () => {
@@ -312,8 +312,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e1"));
-    const sessionId = await h.sessionManager.createSession("e1", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "any open issues?");
+    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "any open issues?");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && text.text).toBe("issue #1: fix the thing");
@@ -344,8 +344,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e2"));
-    const sessionId = await h.sessionManager.createSession("e2", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "any open issues?");
+    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "any open issues?");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && text.text).toBe("issue #1: fix the thing");
@@ -385,8 +385,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_roots" }] }, "e3"));
-    const sessionId = await h.sessionManager.createSession("e3", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "what can you see?");
+    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "what can you see?");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({

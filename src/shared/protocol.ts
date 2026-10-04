@@ -901,7 +901,7 @@ export interface UserBlock {
    * echoes). A real
    * transcript fact, but not something the human typed: rendered as a dim
    * collapsed line, never a prompt bubble, and never counted as a prompt.
-   * Classified orchestrator-side (session-manager harnessEnvelopeTag) —
+   * Classified orchestrator-side (sessions-store harnessEnvelopeTag) —
    * the webview only reads the flag. */
   injected?: boolean;
 }
@@ -1241,7 +1241,7 @@ export interface PreferencesView {
    * defaults, or the last agent-confirmed combination on that agent
    * (stores/composer-knobs.ts, falling back to the defaults when none). */
   knobSource: "agent-default" | "last-session";
-  /** Idle-release timer (session-manager reapIdle, condition 5) in
+  /** Idle-release timer (sessions-store reapIdle, condition 5) in
    * minutes; 0 disables the reaper entirely. */
   idleCloseMinutes: number;
   /** The composer's session-stats strip, one switch per read-out — pure
@@ -1511,7 +1511,7 @@ export type AgentViewEvent =
   | { kind: "sessionClosed"; sessionId: string }
   | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
   /** A session/load hydration is in flight for this session (open of a cold
-   * session — session-manager.hydrate). The rendering area holds a loading
+   * session — sessions-store.hydrate). The rendering area holds a loading
    * page while it has nothing else to show; a warm reload keeps its
    * standing content instead (the replay window swaps it wholesale). */
   | { kind: "sessionHydrating"; sessionId: string; hydrating: boolean }
@@ -1547,7 +1547,7 @@ export type AgentViewEvent =
   /** The broker rejected this tool call's session/request_permission. */
   | { kind: "toolCallDenied"; sessionId: string; blockId: string }
   /** The owning turn ended (non-end_turn stop reason, or error) while this
-   * call was still open — session-manager's turn-end sweep, the tool-call
+   * call was still open — the sessions store's turn-end sweep, the tool-call
    * analogue of broker.cancelPending for permission requests. */
   | { kind: "toolCallInterrupted"; sessionId: string; blockId: string }
   /** Replaces the session's pinned plan snapshot — never a transcript block. */

@@ -31,7 +31,7 @@ const LATCHED_AGENTS: ReadonlySet<string> = new Set([
 
 /** True when this agent's connect-time capability probe must wait for the
  * first real session (capability-tracker consults this at its probe
- * chokepoint; session-manager's attach fires the trigger). */
+ * chokepoint; the sessions store's attach fires the trigger). */
 export function probeDeferredFor(agentId: string): boolean {
   return LATCHED_AGENTS.has(agentId);
 }

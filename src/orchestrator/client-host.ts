@@ -135,7 +135,7 @@ export class ClientHost {
 }
 
 /** The pool's fs/terminal hooks, bound to a host. A getter because the host
- * is built after the pool it serves (its gate needs the session manager,
+ * is built after the pool it serves (its gate needs the sessions store,
  * which needs the pool). */
 export function clientRequestHooks(
   host: () => ClientHost,

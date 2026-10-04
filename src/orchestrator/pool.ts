@@ -527,7 +527,7 @@ export class AgentPool {
       .onNotification(acp.methods.client.session.update, (ctx) => {
         // Chokepoint: the kind tag is the wire fact (e.g. usage_update has
         // no initialize-time claim — its arrival is the only signal), so it
-        // goes through the table before session-manager decodes the payload.
+        // goes through the table before sessions-store decodes the payload.
         // Tolerance law: one update's handling failure drops that update
         // (logged), never the stream — a throw here would bubble into the
         // SDK's dispatch and read as the whole turn dying. Frames the SDK's

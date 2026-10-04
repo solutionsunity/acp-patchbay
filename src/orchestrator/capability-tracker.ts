@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Owns capability-matrix bookkeeping and the free connectivity probe.
-// vscode-free (like session-manager.ts) so it's unit-testable against the
+// vscode-free (like sessions-store.ts) so it's unit-testable against the
 // fake agent without a real extension host.
 //
 // The verification-cost distinction draws the line precisely:
@@ -165,7 +165,7 @@ export class CapabilityTracker {
     }
   }
 
-  /** A real session opened on this agent's connection (session-manager's
+  /** A real session opened on this agent's connection (the sessions store's
    * attach ceremony fires this via the orchestrator). Two duties: real
    * adoption supersedes probe identity — the agent just minted this id
    * for a real session, so any probe entry still carrying it names a

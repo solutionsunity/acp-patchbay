@@ -277,7 +277,7 @@ function ToolCallStatusTag({ block }: { block: ToolCallBlock }) {
       </span>
     );
   }
-  // Set once by the orchestrator's turn-end sweep (session-manager.ts),
+  // Set once by the orchestrator's turn-end sweep (sessions-store.ts),
   // never re-derived from "is some turn active right now" — a later turn
   // in the same session must not resurrect an old turn's stalled call.
   if (block.interrupted) {

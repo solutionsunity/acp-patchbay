@@ -3,7 +3,7 @@
 // three declared facts and the session's turn count, named. Adding is
 // never gated (the session's MCP servers take a root regardless); what the
 // gate states is whether and when the *agent* gets it, from the same facts
-// the session manager's re-apply reads. This pins that the chip tells the
+// the sessions store's re-apply reads. This pins that the chip tells the
 // same truth the writer holds.
 import { describe, expect, it } from "vitest";
 import { rootHolders, rootSaving, rootsControls } from "../src/webview/agent-view/composer/roots-controls";

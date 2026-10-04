@@ -28,7 +28,7 @@ interface Internal {
     };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessionManager: {
+    sessions: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
       open(sessionId: string): void;
@@ -78,27 +78,27 @@ suite("waiting-on-user notice", () => {
       // 1. The Agent View is hidden.
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
       await waitFor(() => (orchestrator.agentView.current.screen.pointer ? undefined : true));
-      const hiddenSession = await orchestrator.sessionManager.createSession(AGENT_ID, "Waiting Fake", cwd);
-      const hiddenTurn = orchestrator.sessionManager.sendPrompt(hiddenSession, "go");
+      const hiddenSession = await orchestrator.sessions.createSession(AGENT_ID, "Waiting Fake", cwd);
+      const hiddenTurn = orchestrator.sessions.sendPrompt(hiddenSession, "go");
       const hiddenNotice = await waitFor(() => noticeFor("Which branch?"));
       assert.ok(hiddenNotice.includes("Open"), "a question's notice offers Open");
       await answer(hiddenSession, hiddenTurn);
 
       // 2. The Agent View is open, on a different session.
       shown.length = 0;
-      const asking = await orchestrator.sessionManager.createSession(AGENT_ID, "Waiting Fake", cwd);
-      const reading = await orchestrator.sessionManager.createSession(AGENT_ID, "Waiting Fake", cwd);
-      orchestrator.sessionManager.open(reading);
+      const asking = await orchestrator.sessions.createSession(AGENT_ID, "Waiting Fake", cwd);
+      const reading = await orchestrator.sessions.createSession(AGENT_ID, "Waiting Fake", cwd);
+      orchestrator.sessions.open(reading);
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
       await waitFor(() => (orchestrator.agentView.current.screen.pointer ? true : undefined));
-      const askingTurn = orchestrator.sessionManager.sendPrompt(asking, "go");
+      const askingTurn = orchestrator.sessions.sendPrompt(asking, "go");
       await waitFor(() => noticeFor("Which branch?"));
       await answer(asking, askingTurn);
 
       // 3. The session on screen asks: its card is in front of the user —
       // no notice. The card being in state means the notice was judged.
       shown.length = 0;
-      await answer(reading, orchestrator.sessionManager.sendPrompt(reading, "go"));
+      await answer(reading, orchestrator.sessions.sendPrompt(reading, "go"));
       assert.strictEqual(noticeFor("Which branch?"), undefined);
     } finally {
       window.showWarningMessage = original;
@@ -120,8 +120,8 @@ suite("waiting-on-user notice", () => {
         }),
       );
       await orchestrator.gates.connect(AGENT_ID);
-      const sessionId = await orchestrator.sessionManager.createSession(AGENT_ID, "Waiting Fake", cwd);
-      void orchestrator.sessionManager.sendPrompt(sessionId, "go").catch(() => {});
+      const sessionId = await orchestrator.sessions.createSession(AGENT_ID, "Waiting Fake", cwd);
+      void orchestrator.sessions.sendPrompt(sessionId, "go").catch(() => {});
       const card = () => orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "permission");
       await waitFor(() => (card()?.resolution === null ? true : undefined));
 

@@ -24,7 +24,7 @@ import {
   type IpcResponse,
 } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { SessionManager } from "../src/orchestrator/session-manager";
+import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -126,16 +126,16 @@ async function mcpServersFor(contextToken: string): Promise<McpServer[]> {
 
 function harness() {
   const events: AgentViewEvent[] = [];
-  // Real production wiring: SessionManager mints a contextToken (the real
+  // Real production wiring: SessionsStore mints a contextToken (the real
   // sessionId doesn't exist until session/new returns), and the caller
   // (Orchestrator, here the test's fake host) maps it back once it does.
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
     ...stubFsTerminalHooks(),
   });
-  const sessionManager = new SessionManager(
+  const sessions = new SessionsStore(
     pool,
     {
       emit: (...evs) => events.push(...evs),
@@ -144,15 +144,15 @@ function harness() {
     () => dir,
     mcpServersFor,
   );
-  return { pool, sessionManager, state: () => events.reduce(reduceAgentView, initialAgentViewState) };
+  return { pool, sessions, state: () => events.reduce(reduceAgentView, initialAgentViewState) };
 }
 
 describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads the live selection via the local MCP server", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1"));
-    const sessionId = await h.sessionManager.createSession("e1", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "what's selected?");
+    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "what's selected?");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({
@@ -167,8 +167,8 @@ describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads diagnostics via the local MCP server — opportunistically verifiable data", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2"));
-    const sessionId = await h.sessionManager.createSession("e2", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "any problems?");
+    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "any problems?");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual([
@@ -182,8 +182,8 @@ describe("local MCP server, end to end through a real agent process", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3"),
     );
-    const sessionId = await h.sessionManager.createSession("e3", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "go");
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({ resolvedFor: sessionId });
@@ -200,12 +200,12 @@ describe("local MCP server, end to end through a real agent process", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e4"),
     );
-    const s1 = await h.sessionManager.createSession("e4", "Fake Agent", dir);
-    const s2 = await h.sessionManager.createSession("e4", "Fake Agent", dir);
+    const s1 = await h.sessions.createSession("e4", "Fake Agent", dir);
+    const s2 = await h.sessions.createSession("e4", "Fake Agent", dir);
     expect(s1).not.toBe(s2);
 
-    await h.sessionManager.sendPrompt(s1, "go");
-    await h.sessionManager.sendPrompt(s2, "go");
+    await h.sessions.sendPrompt(s1, "go");
+    await h.sessions.sendPrompt(s2, "go");
 
     const resolvedFor = (sid: string) => {
       const text = h.state().transcripts[sid]!.find((b) => b.kind === "text");

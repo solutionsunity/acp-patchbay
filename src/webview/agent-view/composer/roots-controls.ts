@@ -8,7 +8,7 @@
 // patchbay attaches always have it, live — telling them is patchbay's own
 // act. The agent has it only through the protocol, and only on a lifecycle
 // request, so whether and when the agent gets a root is what varies; this
-// derives that from the same declared facts the session manager's
+// derives that from the same declared facts the sessions store's
 // re-apply reads, so the chip tells the truth the writer holds. Adding is
 // never gated: a root reaches the servers regardless.
 import type { SavedRootsView } from "../../../shared/protocol";

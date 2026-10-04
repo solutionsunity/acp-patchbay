@@ -7,7 +7,7 @@
 // render expression nobody can sweep. Born of a caught miss: when
 // running-but-logged-out became a designed, durable state, the inline gate
 // still encoded running≈usable and let a prompt fire into a locked agent.
-// A UX courtesy, not the invariant — the session-manager's turn-start door
+// A UX courtesy, not the invariant — the sessions store's turn-start door
 // holds the guarantee (a locked agent's prompts queue instead of firing).
 import type { AgentSummary, ChatConnectView, SessionSummary } from "../../../shared/protocol";
 

@@ -38,7 +38,7 @@ support@augmentcode.com / Discord.
 - **Patchbay workaround:** implemented 2026-07-13 —
   `extensions/first-session-mcp-latch.ts` (id-keyed curated entry; the
   capability probe defers until the first real session attaches, which then
-  triggers it via session-manager's attach ceremony). Giving the probe
+  triggers it via the sessions store's attach ceremony). Giving the probe
   session real servers was rejected as worse: the process-wide latch would
   bind all later sessions to the probe's stale editor-server session token.
   Cost while latched: matrix/offerings stay declared-only until first real

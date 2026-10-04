@@ -29,7 +29,7 @@ export interface ProseRewriter {
   flush(): string;
 }
 
-/** The rewriter an agent prose run's deltas pass through (session-manager's
+/** The rewriter an agent prose run's deltas pass through (the sessions store's
  * agent_message_chunk arm — the one wire site where agent prose becomes
  * render text). Each module's rewrite is shape-gated: text that isn't its
  * deviation passes through byte-identical, so this is safe on any agent's

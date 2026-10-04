@@ -20,7 +20,7 @@
 // stateful rewriter, not a regex — it holds back the one suffix that could
 // still become a tag and releases it the moment it disambiguates (or at
 // HOLD_CAP: real tags plus a fence line are far smaller, so an unresolved
-// hold that long is not our shape). The holder (session-manager's open
+// hold that long is not our shape). The holder (the sessions store's open
 // prose run) must call `flush()` when the run closes, so a stream dying
 // mid-tag still lands its tail — raw, honestly.
 //

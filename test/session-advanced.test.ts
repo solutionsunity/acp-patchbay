@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { SessionManager } from "../src/orchestrator/session-manager";
+import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
@@ -47,26 +47,26 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
   }
 }
 
-/** Wires pool + verifier + session manager the way Orchestrator does, minus
+/** Wires pool + verifier + sessions store the way Orchestrator does, minus
  * vscode. */
 function harness(extraHooks: {
   seedFor?(agentId: string): Record<string, string | boolean> | undefined;
   onKnobsConfirmed?(agentId: string, seed: Record<string, string | boolean>): void;
 } = {}): {
   pool: AgentPool;
-  sessionManager: SessionManager;
+  sessions: SessionsStore;
   capabilityTracker: CapabilityTracker;
   state(): AgentViewState;
 } {
   const events: AgentViewEvent[] = [];
-  let sessionManager!: SessionManager;
+  let sessions!: SessionsStore;
   let capabilityTracker!: CapabilityTracker;
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
 
   const pool = new AgentPool({
-    onStatusChanged: (agentId, status) => sessionManager.agentStatusChanged(agentId, status),
+    onStatusChanged: (agentId, status) => sessions.agentStatusChanged(agentId, status),
     onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
-    onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
     onCapabilityEvidence: (agentId, row, evidence) => capabilityTracker.noteEvidence(agentId, row, evidence),
     ...stubFsTerminalHooks(),
   });
@@ -74,7 +74,7 @@ function harness(extraHooks: {
     changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
-  sessionManager = new SessionManager(
+  sessions = new SessionsStore(
     pool,
     {
       emit: (...evs) => events.push(...evs),
@@ -82,7 +82,7 @@ function harness(extraHooks: {
     },
     () => cwd,
   );
-  return { pool, sessionManager, capabilityTracker, state };
+  return { pool, sessions, capabilityTracker, state };
 }
 
 /** The fake agent's session ids are `fake-<pid>-<n>` (or `<parent-id>-fork-<n>`
@@ -105,9 +105,9 @@ describe("One process per agent", () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "one"));
     await probeDone(h, "one");
-    const a = await h.sessionManager.createSession("one", "Fake Agent", cwd);
+    const a = await h.sessions.createSession("one", "Fake Agent", cwd);
     expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(false);
-    const b = await h.sessionManager.createSession("one", "Fake Agent", cwd);
+    const b = await h.sessions.createSession("one", "Fake Agent", cwd);
 
     expect(pidOf(a)).toBe(pidOf(b));
     expect(h.capabilityTracker.matrix("one")!.concurrentSessions.used).toBe(true);
@@ -121,8 +121,8 @@ describe("One process per agent", () => {
       spec({ declare: { sessionCapabilities: { close: {} } }, concurrent: "fail" }, "single"),
     );
     await probeDone(h, "single");
-    const a = await h.sessionManager.createSession("single", "Fake Agent", cwd);
-    await expect(h.sessionManager.createSession("single", "Fake Agent", cwd)).rejects.toThrow();
+    const a = await h.sessions.createSession("single", "Fake Agent", cwd);
+    await expect(h.sessions.createSession("single", "Fake Agent", cwd)).rejects.toThrow();
 
     expect(h.capabilityTracker.matrix("single")!.concurrentSessions).toMatchObject({ used: false, suspect: true });
     expect(h.pool.get("single")?.sessions).toEqual([a]);
@@ -135,11 +135,11 @@ describe("One-click reload (P8)", () => {
   it("re-loads a session on demand, discarding and rebuilding the transcript, even while still live", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "rl"));
-    const sessionId = await h.sessionManager.createSession("rl", "Fake Agent", cwd);
-    await h.sessionManager.sendPrompt(sessionId, "hello");
+    const sessionId = await h.sessions.createSession("rl", "Fake Agent", cwd);
+    await h.sessions.sendPrompt(sessionId, "hello");
     expect(h.state().transcripts[sessionId]!.length).toBeGreaterThan(0);
 
-    await h.sessionManager.reload(sessionId);
+    await h.sessions.reload(sessionId);
 
     // replay always wins — the exact same recorded updates come back, not a
     // merge with whatever was already there
@@ -167,7 +167,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "modes",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("modes", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("modes", "Fake Agent", cwd);
     // The modes fallback surface synthesizes one uniform knob (knobs.ts).
     expect(h.state().sessionKnobs[sessionId]).toEqual([
       {
@@ -183,7 +183,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       },
     ]);
 
-    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    await h.sessions.setKnob(sessionId, "mode", "code");
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "code" });
 
     await h.pool.stop("modes");
@@ -200,8 +200,8 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "liarmode",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("liarmode", "Fake Agent", cwd);
-    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    const sessionId = await h.sessions.createSession("liarmode", "Fake Agent", cwd);
+    await h.sessions.setKnob(sessionId, "mode", "code");
     // the request "succeeded" but emitted no current_mode_update — display stays put
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "ask" });
 
@@ -230,11 +230,11 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "cfg",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("cfg", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("cfg", "Fake Agent", cwd);
     expect(h.state().sessionKnobs[sessionId]).toHaveLength(1);
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ id: "model-opt", currentValue: "sonnet" });
 
-    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    await h.sessions.setKnob(sessionId, "model-opt", "opus");
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await h.pool.stop("cfg");
@@ -263,8 +263,8 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "cfg-reply",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("cfg-reply", "Fake Agent", cwd);
-    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    const sessionId = await h.sessions.createSession("cfg-reply", "Fake Agent", cwd);
+    await h.sessions.setKnob(sessionId, "model-opt", "opus");
     // no config_option_update arrived — the display truth rode the response
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
@@ -292,12 +292,12 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "both",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("both", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("both", "Fake Agent", cwd);
     // One knob, not two — the dup-pill class of bug is unrepresentable.
     expect(h.state().sessionKnobs[sessionId]).toHaveLength(1);
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ id: "permission-style" });
     // The ignored surface is not settable: "mode" names no offered knob.
-    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    await h.sessions.setKnob(sessionId, "mode", "code");
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "ask" });
 
     await h.pool.stop("both");
@@ -305,19 +305,19 @@ describe("Session model/mode/effort knobs (P8)", () => {
 
   it("per-agent defaults are applied post-create by option id — no category needed (ACP: category is UX-only)", async () => {
     const events: AgentViewEvent[] = [];
-    let sessionManager!: SessionManager;
+    let sessions!: SessionsStore;
     let capabilityTracker!: CapabilityTracker;
     const pool = new AgentPool({
       onStatusChanged: () => {},
       onDeclaredCaptured: (agentId) => capabilityTracker.onDeclared(agentId),
-      onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+      onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
       ...stubFsTerminalHooks(),
     });
     capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
-    sessionManager = new SessionManager(
+    sessions = new SessionsStore(
       pool,
       {
         emit: (...evs) => events.push(...evs),
@@ -353,7 +353,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ),
     );
     const state = () => events.reduce(reduceAgentView, initialAgentViewState);
-    const sessionId = await sessionManager.createSession("defaulted", "Fake Agent", cwd);
+    const sessionId = await sessions.createSession("defaulted", "Fake Agent", cwd);
 
     expect(state().sessionKnobs[sessionId]!.find((k) => k.id === "mode")).toMatchObject({ currentValue: "code" });
     expect(state().sessionKnobs[sessionId]!.find((k) => k.id === "model-opt")).toMatchObject({ currentValue: "opus" });
@@ -385,14 +385,14 @@ describe("Knob two-fold rule (composer vs session)", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "rec"),
     );
-    const sessionId = await h.sessionManager.createSession("rec", "Fake Agent", cwd);
+    const sessionId = await h.sessions.createSession("rec", "Fake Agent", cwd);
     expect(records).toEqual([]); // the attach publish carries agent state, not a use
 
-    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
+    await h.sessions.setKnob(sessionId, "model-opt", "opus");
     expect(records).toEqual([{ "model-opt": "opus" }]);
 
-    await h.sessionManager.sendPrompt(sessionId, "hello");
-    await h.sessionManager.reload(sessionId);
+    await h.sessions.sendPrompt(sessionId, "hello");
+    await h.sessions.reload(sessionId);
     expect(records).toHaveLength(1); // reload re-published and re-seeded — still not a use
 
     await h.pool.stop("rec");
@@ -403,16 +403,16 @@ describe("Knob two-fold rule (composer vs session)", () => {
     const modes = { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] };
     const h = harness({ onKnobsConfirmed: (_agentId, seed) => records.push(seed) });
     await h.pool.connect(spec({ modes }, "modes-rec"));
-    const sessionId = await h.sessionManager.createSession("modes-rec", "Fake Agent", cwd);
-    await h.sessionManager.setKnob(sessionId, "mode", "code");
+    const sessionId = await h.sessions.createSession("modes-rec", "Fake Agent", cwd);
+    await h.sessions.setKnob(sessionId, "mode", "code");
     await waitFor(() => (records.length > 0 ? true : undefined));
     expect(records).toEqual([{ mode: "code" }]);
     await h.pool.stop("modes-rec");
 
     const liar = harness({ onKnobsConfirmed: (_agentId, seed) => records.push(seed) });
     await liar.pool.connect(spec({ modes, lies: { modeChangeNoop: true } }, "modes-liar"));
-    const liarSession = await liar.sessionManager.createSession("modes-liar", "Fake Agent", cwd);
-    await liar.sessionManager.setKnob(liarSession, "mode", "code");
+    const liarSession = await liar.sessions.createSession("modes-liar", "Fake Agent", cwd);
+    await liar.sessions.setKnob(liarSession, "mode", "code");
     await new Promise((r) => setTimeout(r, 100)); // no confirmation will come
     expect(records).toHaveLength(1); // the lying success response recorded nothing
     await liar.pool.stop("modes-liar");
@@ -423,15 +423,15 @@ describe("Knob two-fold rule (composer vs session)", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "reseed"),
     );
-    const sessionId = await h.sessionManager.createSession("reseed", "Fake Agent", cwd);
-    await h.sessionManager.setKnob(sessionId, "model-opt", "opus");
-    await h.sessionManager.sendPrompt(sessionId, "hello");
+    const sessionId = await h.sessions.createSession("reseed", "Fake Agent", cwd);
+    await h.sessions.setKnob(sessionId, "model-opt", "opus");
+    await h.sessions.sendPrompt(sessionId, "hello");
 
-    await h.sessionManager.reload(sessionId); // agent resets to sonnet on load
+    await h.sessions.reload(sessionId); // agent resets to sonnet on load
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
-    h.sessionManager.invalidateAgent("reseed"); // connection death
-    await h.sessionManager.sendPrompt(sessionId, "again"); // prompt path re-attaches
+    h.sessions.invalidateAgent("reseed"); // connection death
+    await h.sessions.sendPrompt(sessionId, "again"); // prompt path re-attaches
     expect(h.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await h.pool.stop("reseed");
@@ -447,8 +447,8 @@ describe("Knob two-fold rule (composer vs session)", () => {
         "entry",
       ),
     );
-    const sessionId = await w1.sessionManager.createSession("entry", "Fake Agent", cwd);
-    await w1.sessionManager.sendPrompt(sessionId, "hello");
+    const sessionId = await w1.sessions.createSession("entry", "Fake Agent", cwd);
+    await w1.sessions.sendPrompt(sessionId, "hello");
     await w1.pool.stop("entry");
 
     // Window two: known only via session/list — no combination in hand, so
@@ -460,8 +460,8 @@ describe("Knob two-fold rule (composer vs session)", () => {
         "entry",
       ),
     );
-    await w2.sessionManager.syncAgentSessions("entry");
-    await w2.sessionManager.hydrate(sessionId);
+    await w2.sessions.syncAgentSessions("entry");
+    await w2.sessions.hydrate(sessionId);
     expect(w2.state().sessionKnobs[sessionId]![0]).toMatchObject({ currentValue: "opus" });
 
     await w2.pool.stop("entry");

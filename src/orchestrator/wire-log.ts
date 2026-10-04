@@ -16,7 +16,7 @@
 // Never persisted, by design: debugging is a session act, not configuration.
 // A window reload always starts clean, and the TTL (default 30 min) turns it
 // off even within a session — staying on requires a deliberate re-arm.
-// vscode-free (like session-manager.ts) so redaction and lifetime are
+// vscode-free (like sessions-store.ts) so redaction and lifetime are
 // unit-testable; the orchestrator supplies the real OutputChannel as sink.
 
 export interface WireLogSink {

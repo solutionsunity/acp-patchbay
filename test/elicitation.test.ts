@@ -16,7 +16,7 @@ import {
   readElicitationRequest,
 } from "../src/orchestrator/elicitation";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
-import { SessionManager } from "../src/orchestrator/session-manager";
+import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
@@ -281,11 +281,11 @@ function wireHarness() {
     },
     () => [dir],
   );
-  let sessionManager!: SessionManager;
+  let sessions!: SessionsStore;
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessionManager.handleUpdate(agentId, notification),
+    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
     ...stubFsTerminalHooks(),
     onElicitation: async (agentId, params, signal) => {
       const reading = readElicitationRequest(params);
@@ -300,11 +300,11 @@ function wireHarness() {
     },
     onElicitationComplete: (agentId, elicitationId) => broker.completeLink(agentId, elicitationId),
   });
-  sessionManager = new SessionManager(pool, { emit: (...evs) => events.push(...evs) }, () => dir);
+  sessions = new SessionsStore(pool, { emit: (...evs) => events.push(...evs) }, () => dir);
   return {
     pool,
     broker,
-    sessionManager,
+    sessions,
     events,
     opened,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
@@ -338,8 +338,8 @@ describe("elicitation on the wire", () => {
         "e1",
       ),
     );
-    const sessionId = await h.sessionManager.createSession("e1", "Fake Agent", dir);
-    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    const turn = h.sessions.sendPrompt(sessionId, "go");
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
@@ -360,8 +360,8 @@ describe("elicitation on the wire", () => {
   it("a declined question reaches the agent as a decline, not as silence", async () => {
     const h = wireHarness();
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2"));
-    const sessionId = await h.sessionManager.createSession("e2", "Fake Agent", dir);
-    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    const turn = h.sessions.sendPrompt(sessionId, "go");
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "decline" });
     await turn;
@@ -375,8 +375,8 @@ describe("elicitation on the wire", () => {
     // The fake agent refuses to ask when the client declared nothing — the
     // spec's own rule. Its answer here proves the declaration went out.
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3"));
-    const sessionId = await h.sessionManager.createSession("e3", "Fake Agent", dir);
-    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    const turn = h.sessions.sendPrompt(sessionId, "go");
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "cancel" });
     await turn;
@@ -400,8 +400,8 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1"),
     );
-    const sessionId = await h.sessionManager.createSession("u1", "Fake Agent", dir);
-    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("u1", "Fake Agent", dir);
+    const turn = h.sessions.sendPrompt(sessionId, "go");
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
@@ -428,8 +428,8 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2"),
     );
-    const sessionId = await h.sessionManager.createSession("u2", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("u2", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "go");
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
     expect(card.kind === "elicitation" && card.linkState).toBe("completed");
@@ -443,8 +443,8 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3"),
     );
-    const sessionId = await h.sessionManager.createSession("u3", "Fake Agent", dir);
-    await h.sessionManager.sendPrompt(sessionId, "go");
+    const sessionId = await h.sessions.createSession("u3", "Fake Agent", dir);
+    await h.sessions.sendPrompt(sessionId, "go");
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
     expect(card.resolution).toEqual({ outcome: "withdrawn" });

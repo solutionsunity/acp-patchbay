@@ -55,7 +55,7 @@ import { continuityReachable } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 
-export interface SessionManagerHooks {
+export interface SessionsStoreHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Advance canonical render state without a webview patch — the
    * session/load replay window. Absent → falls back to `emit` (tests,
@@ -115,7 +115,7 @@ export interface SessionManagerHooks {
    * read back on reopen/branch: ACP sets `additionalDirectories` only on
    * the lifecycle requests (new/load/resume/fork), so the list must be
    * re-sent whole each time; a fresh `LiveSession` needs the durable copy,
-   * not a SessionManager-local one that would vanish with it. */
+   * not a SessionsStore-local one that would vanish with it. */
   contextRootsFor?(sessionId: string): readonly string[];
   /** The session's root list moved (a root added or removed, a workspace
    * folder came or went) — the orchestrator tells the session's MCP
@@ -144,7 +144,7 @@ export interface SessionManagerHooks {
    * there is (patchbay persists no transcripts). */
   currentTranscript?(sessionId: string): readonly ChatBlock[];
   /** Canonical (AgentViewState-held) title of a session — read at recreate,
-   * where the fresh id inherits the retired row's title. The manager keeps
+   * where the fresh id inherits the retired row's title. The store keeps
    * no title of its own. */
   titleOf?(sessionId: string): string | undefined;
   /** Whether `session.delete` is declared *and used* — gates the agent-side
@@ -307,12 +307,12 @@ function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
 
 /** One session patchbay currently knows to exist — created here this
  * window, or reported by the agent's own `session/list`. This is the
- * manager's routing index, not a mirror of the row the user sees: a field
- * lives here only if a manager code path branches on it — the owning
+ * store's routing index, not a mirror of the row the user sees: a field
+ * lives here only if a store code path branches on it — the owning
  * agent (every wire call routes by it) and the knob seed (re-applied on an
  * involuntary re-attach). What the view shows — title, activity stamp,
  * liveness, the unseen mark — has one home, the view's canonical row; the
- * manager reports the evidence that moves it and, when it needs such a
+ * store reports the evidence that moves it and, when it needs such a
  * fact, reads it through a hook (titleOf, isActiveSession, …) rather than
  * keeping a copy. In-memory, deliberately: the agent is the source of
  * truth for sessions, repopulated every connect (patchbay stores no
@@ -427,7 +427,7 @@ export interface OpenWork {
   turns: number;
 }
 
-export class SessionManager {
+export class SessionsStore {
   private sessions = new Map<string, LiveSession>();
   /** Every session known to exist right now (see KnownSession). */
   private known = new Map<string, KnownSession>();
@@ -482,7 +482,7 @@ export class SessionManager {
 
   constructor(
     private readonly pool: AgentPool,
-    private readonly hooks: SessionManagerHooks,
+    private readonly hooks: SessionsStoreHooks,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
     /** Builds the local MCP server's mcpServers entry for a fresh session,
@@ -567,7 +567,7 @@ export class SessionManager {
     return { conversations, turns };
   }
 
-  /** The "new session" fact, read from its one home. An id the manager does
+  /** The "new session" fact, read from its one home. An id the store does
    * not know is never new — nothing to re-mint from. */
   private hasTurns(sessionId: string): boolean {
     return this.known.get(sessionId)?.everPrompted ?? true;
