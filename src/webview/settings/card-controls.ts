@@ -7,18 +7,17 @@
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout/verify regressions happened.
-import type { AgentConfigView, AgentSummary, AgentUpdate, AuthMethodView } from "../../shared/protocol";
+import type { AgentConfigView, AgentSummary, AuthMethodView } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
+import { upgradeOffer, type UpgradeOffer } from "../shared/agent-work";
 
 export interface AgentCardInputs {
-  /** The orchestrator's row — its matrix, auth methods and update fact ride
-   * on it; undefined for a configured-but-never-seen agent. */
+  /** The orchestrator's row — its matrix, auth methods, update fact and
+   * busy state ride on it; undefined for a configured-but-never-seen
+   * agent. */
   agent: AgentSummary | undefined;
   /** Persisted config — undefined for a transient (connected, not saved) agent. */
   config: AgentConfigView | undefined;
-  /** The shared in-progress signal (verifyingAgents[id]) — a verify or
-   * logout round-trip is in flight. */
-  verifying: boolean;
 }
 
 export interface AgentCardControls {
@@ -29,10 +28,10 @@ export interface AgentCardControls {
   stop: { show: boolean };
   verify: { show: boolean; disabled: boolean; busy: boolean };
   connect: { show: boolean };
-  /** Non-null when the registry is ahead of the pinned version — drives
-   * the upgrade chip, which is both the indicator and the action. Never
-   * auto-applied. */
-  upgrade: AgentUpdate | null;
+  /** Non-null when the registry is ahead of the pinned version, or while an
+   * upgrade runs — drives the upgrade chip, which is both the indicator and
+   * the action. Never auto-applied. */
+  upgrade: UpgradeOffer | null;
   edit: { show: boolean };
   remove: { show: boolean };
 }
@@ -50,8 +49,13 @@ export function runnableLoginMethods(methods: readonly AuthMethodView[]): readon
 }
 
 export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
-  const { agent, config, verifying } = inputs;
+  const { agent, config } = inputs;
   const matrix = agent?.capabilities;
+  // Anything the agent's queue holds dims the controls that would only
+  // queue behind it; Verify spins while the check itself runs or waits.
+  const busy = agent?.busy ?? [];
+  const working = busy.length > 0;
+  const verifying = busy.some((w) => w.kind === "verify");
   const authMethods = agent?.authMethods ?? [];
   // No summary at all = the orchestrator never saw this config — the honest
   // unknown is "untested", never a claimed "stopped".
@@ -77,10 +81,8 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // Running-gated: authenticate is an RPC on the live connection, so a
     // stopped-but-logged-out card (logout disconnects the process — the
     // agents store's logout) offers Connect; the lock rides through the
-    // reconnect and the card comes back still logged out. Disabled while a
-    // verify/authenticate/logout round-trip is in flight — one bracket,
-    // refcounted, dims them together.
-    login: { show: running && needsAuth, disabled: verifying },
+    // reconnect and the card comes back still logged out.
+    login: { show: running && needsAuth, disabled: working },
     // Offered only on a declared auth.logout — the spec's "Clients MUST
     // NOT call it" otherwise. Hidden while needsAuth (nothing to log out
     // of — and never both login and logout); *disabled*, never unmounted,
@@ -88,14 +90,14 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // tree (Radix rule).
     logout: {
       show: running && !needsAuth && matrix?.["auth.logout"]?.declared === true,
-      disabled: verifying,
+      disabled: working,
     },
     // Never disabled — killing a hung process is the escape hatch and
-    // must stay reachable even mid-verify.
+    // must stay reachable whatever the queue holds.
     stop: { show: running },
-    verify: { show: running && needsVerify, disabled: verifying, busy: verifying },
+    verify: { show: running && needsVerify, disabled: working, busy: verifying },
     connect: { show: !running && config !== undefined },
-    upgrade: agent?.update ?? null,
+    upgrade: upgradeOffer(agent),
     edit: { show: true },
     remove: { show: config !== undefined },
   };

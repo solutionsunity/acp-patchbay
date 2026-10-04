@@ -109,7 +109,6 @@ export function App({
       {!pinned && (
         <Header
           agent={activeAgent}
-          update={activeAgent?.update ?? null}
           onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", agentId: activeAgent.id })}
           onSessions={openSessions}
           onNew={newChat}

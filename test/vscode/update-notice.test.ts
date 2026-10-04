@@ -13,10 +13,8 @@ interface RegistryData {
 
 interface Internal {
   orchestrator: {
-    agents: {
-      save(config: SavedConfig): Promise<void>;
-      remove(id: string): Promise<void>;
-    };
+    agents: { save(config: SavedConfig): Promise<void> };
+    gates: { remove(id: string): Promise<void> };
     acpRegistry: { current(): RegistryData; refresh(moment: "manual"): Promise<{ ok: boolean }> };
     agentView: { current: { agents: Array<{ id: string; update?: { from: string; to: string } }> } };
   };
@@ -107,7 +105,7 @@ suite("update notice", () => {
       assert.deepStrictEqual(shown[1], ["Updates are available for 2 agents.", "Upgrade…"]);
     } finally {
       window.showInformationMessage = show;
-      for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.agents.remove(id);
+      for (const id of ["upd-a", "upd-b", "upd-c"]) await orchestrator.gates.remove(id);
       await land(...original.agents);
       globalThis.fetch = realFetch;
     }

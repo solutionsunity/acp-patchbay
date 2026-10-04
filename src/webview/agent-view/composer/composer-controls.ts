@@ -27,9 +27,9 @@ export interface ComposerControls {
 
 /** A new chat is in flight: the connect pane is up for a *New chat*, not
  * for re-opening an existing session. While it holds, the view has no
- * active session — the pane says "Connecting…" and the box is locked with
- * the same word, so nothing typed can land in the session that was open
- * before the click. */
+ * active session — the pane says what the agent is busy with and the box
+ * is locked, saying the chat is starting, so nothing typed can land in the
+ * session that was open before the click. */
 export function newChatInFlight(connect: ChatConnectView | null | undefined): boolean {
   return connect !== null && connect !== undefined && connect.forSessionId === undefined;
 }

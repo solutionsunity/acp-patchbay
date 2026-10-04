@@ -420,16 +420,25 @@ for (const theme of Object.keys(THEMES)) {
   await p.screenshot({ path: `${OUT}/sessions-drawer-${theme}.png` });
   await p.close();
 
-  // ── new chat in flight (#6): while "Connecting…" is up the box is locked
-  // and names the starting agent, the previous session's row is gone, and
-  // keystrokes cannot land in that session's draft; the landed session
+  // ── new chat in flight (#6): while the pane is up the box is locked and
+  // names the starting agent, the previous session's row is gone, and
+  // keystrokes cannot land in that session's draft; the pane says what the
+  // agent is busy with, then that the chat is opening; the landed session
   // starts empty ──
   p = await page(browser, theme, { width: 420, height: 600 });
   await renderView(p, "agent-view", agentViewState({ live: false }));
   await p.waitForSelector(".chat .msg-user");
   await p.click(".prompt-editor");
   await p.keyboard.type("old words");
-  await p.evaluate(() => window.__patch([{ kind: "chatConnectStarted", agentId: "fake" }]));
+  // The row as the host sends it while the connect runs, then once it's done.
+  const fakeRow = (over) => ({
+    id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [],
+    update: { from: "1.0.0", to: "1.2.0" }, ...over,
+  });
+  await p.evaluate(
+    (row) => window.__patch([{ kind: "chatConnectStarted", agentId: "fake" }, { kind: "agentUpserted", agent: row }]),
+    fakeRow({ status: "reconnecting", busy: [{ kind: "connect" }] }),
+  );
   await p.waitForSelector("text=Connecting Claude Code");
   const inFlight = await p.$eval(".prompt-editor", (el) => ({
     text: el.textContent.trim(),
@@ -440,6 +449,8 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] in flight: no session row for the previous session`, (await p.$(".sess-row")) === null);
   await p.click(".prompt-editor");
   await p.keyboard.type("new words"); // must bounce off the locked box
+  await p.evaluate((row) => window.__patch([{ kind: "agentUpserted", agent: row }]), fakeRow());
+  await p.waitForSelector("text=Starting a chat with Claude Code");
   await p.evaluate(() =>
     window.__patch([
       {
@@ -526,6 +537,15 @@ for (const theme of Object.keys(THEMES)) {
     (await p.locator('button[aria-label="Upgrade Claude Code to 1.0.0"]').count()) === 1,
   );
   await p.screenshot({ path: `${OUT}/settings-${theme}.png` });
+  // While the agent's queue holds an upgrade the chip says so and takes no
+  // click (#68) — then the row goes back to idle for the steps below.
+  const claudeRow = settingsState().agents.find((a) => a.id === "claude");
+  const upsert = (row) => p.evaluate((r) => window.__patch([{ kind: "agentUpserted", agent: r }]), row);
+  await upsert({ ...claudeRow, busy: [{ kind: "upgrade", to: "1.0.0" }] });
+  const upgrading = p.locator('button[aria-label="Claude Code upgrading to 1.0.0…"]');
+  await upgrading.waitFor({ timeout: 3000 });
+  check(`[${theme}] an upgrade under way: the chip says so and takes no click`, await upgrading.isDisabled());
+  await upsert(claudeRow);
   const [btnColor, bodyColor] = await p.evaluate(() => {
     // Row actions are icon-only buttons (aria-label carries the semantics).
     const btn = document.querySelector('button[aria-label="Stop"]');

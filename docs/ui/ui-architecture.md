@@ -147,9 +147,10 @@ So the rule:
   the JSX has nowhere to put a second condition.
 - **Cross-control invariants live — and are unit-tested — in the derivation**,
   never implied by predicates that happen to agree: Log in and Log out are
-  mutually exclusive; every auth-adjacent control disables while the shared
-  in-flight signal is up; Stop stays enabled always (the escape hatch). Pure
-  function → vitest covers the state matrix without rendering.
+  mutually exclusive; every control that would only wait behind the agent's
+  queue disables while the row's `busy` holds anything; Stop stays enabled
+  always (the escape hatch). Pure function → vitest covers the state matrix
+  without rendering.
 - **Local ephemeral UI state stays local.** `useState` that is born and dies
   inside the component and observed by no other control's rules — an open
   accordion, a form draft, which row is editing — does not thread through the

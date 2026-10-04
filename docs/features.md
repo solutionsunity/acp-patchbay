@@ -21,6 +21,10 @@ deliverable.
   isn't running; with several, a picker lists every configured agent with its
   readiness inline. A connection failure surfaces in that same pane with the
   specific reason and a Retry — never a silent bounce to the empty state.
+  While the chat waits, the pane says what the agent is doing (connecting,
+  upgrading, …); a chat started while the agent is already connecting —
+  at window open, from Settings — waits for that connect instead of
+  failing.
 - Adding an agent is one form in Settings › Agents — registry search or any
   command line that speaks ACP — with a command-palette shortcut for the quick
   case; a binary agent's download is a phase of its connect, shown on its card
@@ -32,7 +36,9 @@ deliverable.
   Settings: a notification when patchbay learns of it, with Upgrade one click
   away (several at once: pick which), and an upgrade chip on the agent's name
   above the chat while one of its sessions is the one open. Nothing upgrades on its
-  own, and an upgrade that would interrupt open conversations asks first.
+  own, and an upgrade that would interrupt open conversations asks first —
+  once: Upgrade again while one runs and it is the same upgrade, shown on
+  the chip as `upgrading to x.y.z…`.
 - User can see each agent's live status: untested (configured, never
   connected), running, stopped, crashed, reconnecting — every configured
   agent is visible from the first frame, not only once connected.

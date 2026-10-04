@@ -13,8 +13,14 @@ export interface FakeAgentConfig {
   lastSeenVersion: null;
 }
 
+/** The agents store's save — a save never meets the gates. */
 export interface AgentsDoor {
   save(config: FakeAgentConfig): Promise<void>;
+}
+
+/** The gates — the way a door reaches an operation on an agent's
+ * connection. */
+export interface GatesDoor {
   connect(agentId: string): Promise<void>;
   stop(agentId: string): Promise<void>;
   remove(agentId: string): Promise<void>;

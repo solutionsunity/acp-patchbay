@@ -37,7 +37,7 @@ function makeHost() {
 
 const upsert = (id: string): AgentViewEvent => ({
   kind: "agentUpserted",
-  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [] },
+  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], busy: [] },
 });
 
 describe("ChannelHost", () => {
@@ -58,7 +58,7 @@ describe("ChannelHost", () => {
       rev: 1,
       state: {
         ...initialAgentViewState,
-        agents: [{ id: "claude", name: "claude", status: "running", needsAuth: false, authMethods: [] }],
+        agents: [{ id: "claude", name: "claude", status: "running", needsAuth: false, authMethods: [], busy: [] }],
       },
     });
   });

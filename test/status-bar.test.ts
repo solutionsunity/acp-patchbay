@@ -19,7 +19,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [] }],
+        agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) Fix the bug");
@@ -31,7 +31,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [] }],
+        agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [], busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) $(error) T");
@@ -41,7 +41,7 @@ describe("statusBarContent", () => {
     const base = state({
       sessions: [{ id: "s1", agentId: "a1", title: "T", live: false, updatedAt: "2026-07-09T00:00:00Z" }],
       activeSessionId: "s1",
-      agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [] }],
+      agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
     });
     expect(statusBarContent(base).text).toBe("$(plug) T");
 

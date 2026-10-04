@@ -7,6 +7,7 @@ import type {
   AgentConfigView,
   AgentSummary,
   AgentUpdate,
+  AgentWork,
   AuthMethodView,
   CapabilityMatrix,
   CapabilityRowId,
@@ -32,25 +33,25 @@ const undrivable: AuthMethodView = { id: "key", name: "API key", description: nu
 const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
-  return { id: "a1", name: "Agent", status: "running", needsAuth: false, authMethods: [], ...over };
+  return { id: "a1", name: "Agent", status: "running", needsAuth: false, authMethods: [], busy: [], ...over };
 }
 
 const config = { id: "a1", registrySource: null } as unknown as AgentConfigView;
 
-/** The card's inputs — the row's matrix, auth methods and update fact
- * given flat, for brevity, and folded into the row. */
+/** The card's inputs — the row's matrix, auth methods, update fact and
+ * busy state given flat, for brevity, and folded into the row. */
 function inputs(
   over: Partial<AgentCardInputs> & {
     matrix?: CapabilityMatrix;
     authMethods?: readonly AuthMethodView[];
     update?: AgentUpdate;
+    busy?: readonly AgentWork[];
   } = {},
 ): AgentCardInputs {
-  const { matrix, authMethods, update, ...rest } = over;
+  const { matrix, authMethods, update, busy, ...rest } = over;
   const agent = "agent" in rest ? rest.agent : summary();
   return {
     config,
-    verifying: false,
     ...rest,
     agent:
       agent === undefined
@@ -60,6 +61,7 @@ function inputs(
             capabilities: matrix ?? agent.capabilities ?? matrixOf(),
             authMethods: authMethods ?? agent.authMethods,
             update: update ?? agent.update,
+            busy: busy ?? agent.busy,
           },
   };
 }
@@ -136,13 +138,32 @@ describe("agentCardControls", () => {
       agent: summary({ needsAuth: true }),
       matrix: matrixOf({ auth: { declared: true, used: true } }),
       authMethods: [typedTerminal],
-      verifying: true,
+      busy: [{ kind: "verify" }],
     }));
     expect(c.login.disabled).toBe(true);
     expect(c.logout.disabled).toBe(true);
     expect(c.verify.disabled).toBe(true);
     expect(c.verify.busy).toBe(true);
     expect(c.stop.show).toBe(true);
+  });
+
+  // Whatever the queue holds dims the controls that would only wait behind
+  // it — but only the check itself spins Verify, and Stop never dims.
+  it("busy with other work: controls dim, Verify doesn't spin, stop still offered", () => {
+    for (const kind of ["connect", "restart", "login", "logout"] as const) {
+      const c = agentCardControls(inputs({
+        agent: summary({ needsAuth: true }),
+        authMethods: [typedTerminal],
+        busy: [{ kind }],
+      }));
+      expect(c.login.disabled).toBe(true);
+      expect(c.verify.disabled).toBe(true);
+      expect(c.verify.busy).toBe(false);
+      expect(c.stop.show).toBe(true);
+    }
+    const idle = agentCardControls(inputs({ agent: summary({ needsAuth: true }), authMethods: [typedTerminal] }));
+    expect(idle.login.disabled).toBe(false);
+    expect(idle.verify.disabled).toBe(false);
   });
 
   // Logout disconnects the agent's process (the agents store's logout),
@@ -181,8 +202,23 @@ describe("agentCardControls", () => {
   });
 
   it("upgrade: shows the orchestrator's update fact, and nothing without one", () => {
-    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" } })).upgrade).toEqual({ from: "1.0.0", to: "1.2.0" });
+    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" } })).upgrade).toEqual({
+      upgrading: false,
+      from: "1.0.0",
+      to: "1.2.0",
+    });
     expect(agentCardControls(inputs()).upgrade).toBeNull();
+  });
+
+  // Once the upgrade saves the new pin the update fact is gone — the chip
+  // keeps saying what is happening, from the queue.
+  it("upgrade: an upgrade the queue holds outranks the offer, and outlives it", () => {
+    const busy: AgentWork[] = [{ kind: "upgrade", to: "1.2.0" }];
+    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" }, busy })).upgrade).toEqual({
+      upgrading: true,
+      to: "1.2.0",
+    });
+    expect(agentCardControls(inputs({ busy })).upgrade).toEqual({ upgrading: true, to: "1.2.0" });
   });
 
   // The invariant no inline predicate ever enforced: across the whole

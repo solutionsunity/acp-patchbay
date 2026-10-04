@@ -20,6 +20,7 @@ const agent = (over: Partial<AgentSummary>): AgentSummary => ({
   status: "running",
   needsAuth: false,
   authMethods: [],
+  busy: [],
   ...over,
 });
 
@@ -98,9 +99,9 @@ describe("composerControls", () => {
 
 describe("newChatInFlight", () => {
   it("a New-chat connect (connecting or failed, not yet dismissed) is in flight; a session-click connect is not", () => {
-    expect(newChatInFlight({ agentId: "a1", status: "connecting" })).toBe(true);
-    expect(newChatInFlight({ agentId: "a1", status: "failed", reason: "boom" })).toBe(true);
-    expect(newChatInFlight({ agentId: "a1", status: "connecting", forSessionId: "s1" })).toBe(false);
+    expect(newChatInFlight({ agentId: "a1" })).toBe(true);
+    expect(newChatInFlight({ agentId: "a1", reason: "boom" })).toBe(true);
+    expect(newChatInFlight({ agentId: "a1", forSessionId: "s1" })).toBe(false);
     expect(newChatInFlight(null)).toBe(false);
     expect(newChatInFlight(undefined)).toBe(false); // snapshots minted before the field existed
   });

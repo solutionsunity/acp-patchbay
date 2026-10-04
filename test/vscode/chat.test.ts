@@ -4,7 +4,7 @@
 // this gate is a manual smoke test outside this harness — no live agent
 // credentials are available in this sandboxed run.)
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,6 +29,7 @@ interface Internal {
       };
     };
     agents: AgentsDoor;
+    gates: GatesDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -69,7 +70,7 @@ suite("chat vertical slice", () => {
           stepDelayMs: 250,
         }),
       );
-      await orchestrator.agents.connect("chat-e2e");
+      await orchestrator.gates.connect("chat-e2e");
 
       const sessionId = await orchestrator.sessionManager.createSession(
         "chat-e2e",
@@ -120,7 +121,7 @@ suite("chat vertical slice", () => {
       // and the final state reached the webview too
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
     } finally {
-      await orchestrator.agents.remove("chat-e2e");
+      await orchestrator.gates.remove("chat-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

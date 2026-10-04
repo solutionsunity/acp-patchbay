@@ -25,6 +25,21 @@
 - A renamed agent shows its new name everywhere right away, and a stopped
   agent's card shows the launch command it will run next, instead of
   keeping the old ones until the next connect.
+- Starting a chat, or opening one of its sessions, while the agent is still
+  connecting (at window open, or from Settings) now waits for that connect
+  instead of failing with "already connected". (#53)
+- A second Upgrade while one is still running — a double click, or the
+  notice's Upgrade after the chip's — is now the same upgrade: one question,
+  one restart. Before, it asked again and restarted the agent a second
+  time. While an upgrade runs, its chip reads "upgrading to x.y.z…". (#68)
+- Work on one agent now takes turns: an Upgrade, Restart, Log in or Verify
+  asked for while another runs waits for it, and the chat pane says what the
+  agent is busy with while a chat waits. A second chat started with another
+  agent while one is connecting is no longer ignored.
+- Upgrade checks the registry before stopping anything: an agent the
+  registry no longer lists keeps running instead of being left stopped. An
+  agent saved under an older id than the registry's is upgraded in place
+  instead of being added a second time.
 
 ## 0.84.1 — 2026-09-29
 

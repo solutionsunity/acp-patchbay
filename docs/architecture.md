@@ -223,7 +223,8 @@ flowchart TD
   sibling — a row fact (`everPrompted` on the known row, with `titled`), so
   it holds after an involuntary drop too: the dead row is still the new
   session, and its next use by any door (new-session focus, drawer click,
-  a prompt) re-mints it.
+  a prompt) re-mints it. A second ask while the first new session is still
+  on the wire gets that same session.
 - **Launcher health** (launcher-health.ts — one central module, consulted at
   the chokepoints, never inlined): npx/uvx stay the installers — a
   patchbay-owned install store was **considered and rejected** (it fixes
@@ -302,8 +303,33 @@ flowchart TD
   none derives it. A
   registry read landing (never the cached copy loaded at start) announces
   each newer version once per window. Upgrade is always the user's click, through the one upgrade
-  path: it re-resolves the registry version like a first add, and asks
-  before a stop that would disconnect open conversations.
+  path: it re-resolves the registry version like a first add — before
+  anything stops, so a registry that no longer lists the agent leaves it
+  running — and asks before a stop that would disconnect open
+  conversations.
+- **Agent operations take turns.** A store is a store only: the agents
+  store's operations are plain. When one runs is the orchestrator's call,
+  made with two tools it owns: the queue (queue.ts — what each row holds,
+  the running operation first) and the gates (agent-gates.ts — one table
+  over every operation on an agent's connection, the one way any door
+  reaches them). The orchestrator's handle on the store carries no
+  connection operations, so no door can go around the gates. Connect,
+  restart, upgrade, log in (per method), log out and verify wait their
+  turn: a request for one the row already holds, running or waiting, joins
+  it and gets its outcome — a chat started while the agent auto-connects
+  shares that connect, a second Upgrade shares the first's question and
+  restart; any other waits in arrival order, and agents never wait on each
+  other. A connect whose turn finds the agent running is already done.
+  Stop and Remove pass at once — the escape hatch is never queued behind a
+  hung launch — and saves never meet the gates. Add and startup are the
+  orchestrator's features: the store saves (or reads what to open), the
+  connect and the free check pass the gates. Gates decide policy only; the
+  store keeps its facts valid at its one writer whatever the gates admit.
+  What the queue holds is the row's `busy`, read by the store, never kept —
+  the views' one busy state: the Settings card dims the controls that
+  would only wait (never Stop), the upgrade chip reads `upgrading to
+  x.y.z…`, and the chat pane says what the agent is busy with while a chat
+  waits on it. Live only — it ends with the window.
 
 ## Agent capability matrix
 
@@ -1071,7 +1097,7 @@ Atoms first; each directory is one responsibility:
 ```
 src/
   extension.ts    activation entry
-  orchestrator/   agents store, session manager, client pool, broker, stores, extensions
+  orchestrator/   agents store, queue, gates, session manager, client pool, broker, stores, extensions
   mcp/            local MCP server + its client-capability adapters
   integrations/   the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only

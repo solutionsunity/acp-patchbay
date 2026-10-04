@@ -39,7 +39,7 @@ async function internal(): Promise<Internal> {
 
 const upsert = (id: string, over: Record<string, unknown> = {}) => ({
   kind: "agentUpserted",
-  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], ...over },
+  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], busy: [], ...over },
 });
 
 suite("snapshot/patch round-trip through real webviews", () => {
@@ -70,7 +70,7 @@ suite("snapshot/patch round-trip through real webviews", () => {
     assert.ok(acked >= targetRev, `webview acked ${acked}, wanted ${targetRev}`);
   });
 
-  test("verify-in-flight events round-trip to the real settings webview", async () => {
+  test("busy rows round-trip to the real settings webview", async () => {
     const { orchestrator } = await internal();
     const ch = orchestrator.settings;
 
@@ -78,19 +78,19 @@ suite("snapshot/patch round-trip through real webviews", () => {
     await ch.waitForApplied(ch.revision);
 
     // Needs-auth so the card's Verify control actually renders, then the
-    // in-flight bracket a real "Verify" click (or "Verify after add") sends —
-    // this exercises the real bundled AgentsSection/AddAgentRow JS, not just
-    // the pure reducer, catching anything a plain reducer test can't (a
-    // render-time throw in the new combobox/verify-button code).
+    // rows a real "Verify" click and an Upgrade send while the queue holds
+    // them — this exercises the real bundled AgentsSection JS, not just the
+    // pure reducer, catching anything a plain reducer test can't (a
+    // render-time throw in the verify button or the upgrade chip).
     ch.emit(upsert("dummy-verify", { needsAuth: true }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    ch.emit({ kind: "agentVerifyStarted", agentId: "dummy-verify" });
+    ch.emit(upsert("dummy-verify", { needsAuth: true, busy: [{ kind: "verify" }, { kind: "upgrade", to: "2.0.0" }] }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    ch.emit({ kind: "agentVerifyFinished", agentId: "dummy-verify" });
+    ch.emit(upsert("dummy-verify", { needsAuth: true }));
     ch.flushNow();
     const acked = await ch.waitForApplied(ch.revision);
     assert.ok(acked >= ch.revision, `webview acked ${acked}, wanted ${ch.revision}`);

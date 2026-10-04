@@ -622,11 +622,7 @@ export function AgentsSection(props: {
           // The action cluster's one derivation (card-controls.ts) — every
           // show/disabled rule lives there, unit-tested; the JSX below reads
           // `controls.x` and nothing else.
-          const controls = agentCardControls({
-            agent: a,
-            config,
-            verifying: state.verifyingAgents[id] === true,
-          });
+          const controls = agentCardControls({ agent: a, config });
           const saveConfig = (patch: Partial<AgentConfigView>) =>
             props.onSave({ ...effectiveConfig, ...patch });
           // One normalized knob list (the orchestrator's knobs.ts already
@@ -667,7 +663,7 @@ export function AgentsSection(props: {
                     {controls.upgrade !== null && (
                       <UpgradeChip
                         agentName={a?.name ?? effectiveConfig.name}
-                        update={controls.upgrade}
+                        offer={controls.upgrade}
                         onUpgrade={() => props.onUpgrade(id)}
                       />
                     )}

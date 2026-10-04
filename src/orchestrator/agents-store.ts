@@ -3,13 +3,15 @@
 
 // The agents store: the one home of agents. A row per agent, read when
 // asked — saved facts from their files (config, env, auth lock, last knob
-// choices), live facts from the pool and the capability tracker, and what
-// follows from them worked out on the spot — and every operation on an
-// agent: connect, stop, restart, upgrade, remove, save, reorder, log in,
-// log out, verify.
-// Every door (Settings, the Agent View, the palette, notifications, startup)
-// calls these methods, and nothing else starts or stops an agent's process.
-// The views get each row whole, re-sent whenever any of its facts moves.
+// choices), live facts from the pool and the capability tracker, what the
+// orchestrator's queue holds for it, and what follows from them worked out
+// on the spot — and every operation on an agent: connect, stop, restart,
+// upgrade, remove, save, reorder, log in, log out, verify.
+// A store only: its operations are plain, and nothing else starts or stops
+// an agent's process. When an operation on an agent's connection runs is
+// the orchestrator's call — every door reaches those through its gates;
+// saves never wait. The views get each row whole, re-sent whenever any of
+// its facts moves.
 // vscode-free: the questions a user answers, the login task, the sessions
 // riding a connection and the views are hooks.
 import { mkdir, rm } from "node:fs/promises";
@@ -21,6 +23,7 @@ import type {
   AgentSummary,
   AgentUpdate,
   AgentViewEvent,
+  AgentWork,
   CapabilityMatrix,
   CapabilityRowId,
   ConnectAgentSource,
@@ -62,6 +65,9 @@ export interface AgentsStoreDeps {
   lastConnected: LastConnectedStore;
   registry: AcpRegistryStore;
   tracker: CapabilityTracker;
+  /** What the orchestrator's queue holds for the agent, the running
+   * operation first — read for the row, never kept. */
+  busy: (agentId: string) => readonly AgentWork["kind"][];
   /** The cwd every spawn and new session starts in. */
   workspaceCwd: string;
   /** Downloaded binaries, by agent and version. */
@@ -73,8 +79,7 @@ export interface AgentsStoreDeps {
 export interface AgentsStoreHooks {
   /** Agent facts both views show — the same events to each. */
   emit(...events: AgentViewEvent[]): void;
-  /** Settings-only facts: the config list (env values included) and the
-   * verify bracket. */
+  /** Settings-only facts: the config list, env values included. */
   emitSettings(...events: SettingsEvent[]): void;
   /** What stopping this agent's connection would cut off, read from the
    * sessions riding it. */
@@ -95,17 +100,22 @@ export interface AgentsStoreHooks {
   defaultsChanged(agentId: string): void;
 }
 
-export class AgentsStore {
+/** The operations on an agent's connection — every door reaches them
+ * through the orchestrator's gates, which decide when each runs. */
+export interface ConnectionOperations {
+  connect(agentId: string): Promise<void>;
+  restart(agentId: string): Promise<void>;
+  upgrade(agentId: string): Promise<void>;
+  login(agentId: string, methodId: string): Promise<void>;
+  logout(agentId: string): Promise<void>;
+  verify(agentId: string): Promise<ProbeOutcome>;
+  stop(agentId: string): Promise<void>;
+  remove(agentId: string): Promise<void>;
+}
+
+export class AgentsStore implements ConnectionOperations {
   /** PATH divergence already warned, per agent and exact version pair. */
   private readonly divergenceWarned = new Set<string>();
-  /** THE in-flight bracket for every tracker round-trip the settings card
-   * reflects (verify, authenticate, logout): emits
-   * agentVerifyStarted/Finished around the work so the card's controls dim
-   * for exactly its span — one writer for the signal, so the flows can
-   * never drift apart. Refcounted: overlapping brackets (a user Verify
-   * racing verify-after-connect) must not un-dim mid-RPC when the first
-   * one finishes — Finished fires only when the LAST bracket closes. */
-  private readonly verifySignalDepth = new Map<string, number>();
 
   constructor(
     private readonly deps: AgentsStoreDeps,
@@ -328,76 +338,24 @@ export class AgentsStore {
   }
 
   // ── operations ────────────────────────────────────────────────────────────
+  // Plain: when one runs is the orchestrator's call, made at its gates. An
+  // operation that composes others calls them directly.
 
-  /** Connects a saved agent. The single env-injection point: values are
-   * read fresh from SecretStorage per connect (stores/secret-env.ts) — the
-   * spec and the config store never carry them. Throws when the agent has
-   * no saved config, or when the connect fails (the pool already reported
-   * the crash and its reason). */
+  /** Connects a saved agent — already done when it runs. The single
+   * env-injection point: values are read fresh from SecretStorage per
+   * connect (stores/secret-env.ts) — the spec and the config store never
+   * carry them. It spawns what the store says, the same reading a restart
+   * makes, so a re-added agent keeps its stored defaults from the first
+   * connect. Throws when the agent has no saved config, or when the connect
+   * fails (the pool already reported the crash and its reason). */
   async connect(agentId: string): Promise<void> {
+    if (this.deps.pool.get(agentId)?.status === "running") return;
     const spec = this.spec(agentId);
     if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
     const env = await this.deps.env.get(agentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
     await this.deps.pool.connect(merged);
     void this.warnOnPathDivergence(merged);
-  }
-
-  /** The one add-and-connect path: a registry agent or a custom command is
-   * saved first, a saved agent is connected as it stands — then the connect,
-   * unless one is running or under way, and the free check when asked. */
-  async connectFrom(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
-    let spec: LaunchSpec | null = null;
-    let registrySource: AgentConfig["registrySource"] = null;
-    let shouldPersist = true;
-    if ("registryId" in source) {
-      const agent = this.deps.registry.current().agents.find((a) => a.id === source.registryId);
-      if (agent === undefined) return;
-      const resolved = this.registryLaunch(agent);
-      if (resolved === null) return; // can't run on this platform
-      spec = resolved.spec;
-      registrySource = resolved.registrySource;
-    } else if ("configuredId" in source) {
-      spec = this.spec(source.configuredId) ?? null;
-      shouldPersist = false; // already persisted — this is a reconnect of an existing config
-    } else {
-      const parsed = parseCommandLine(source.command);
-      if (parsed) {
-        const id = `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}`;
-        spec = {
-          agentId: id,
-          name: parsed.command,
-          command: parsed.command,
-          args: parsed.args,
-          env: {},
-          cwd: this.deps.workspaceCwd,
-        };
-      }
-    }
-    if (spec === null) return;
-    // Persist FIRST — the card exists from the click, and every download
-    // the launch needs then happens on it as a connect phase. An Upgrade
-    // clicked while the agent happens to be connecting must still land its
-    // new pin — only the connect itself is skipped. "reconnecting" gates
-    // alongside "running": a second
-    // Connect during an in-flight connect would re-emit the wholesale
-    // upsert (stomping the card mid-connect) just to have pool.connect
-    // refuse a moment later.
-    if (shouldPersist) await this.persistAgentConfig(spec, registrySource);
-    const status = this.deps.pool.get(spec.agentId)?.status;
-    if (status === "running" || status === "reconnecting") {
-      this.log.info(`${spec.agentId}: connect skipped — already ${status}`);
-      return;
-    }
-    // Spawn what the store says (the saved config) — the same reading a
-    // restart makes, so a re-added agent keeps its stored defaults from the
-    // first connect; the registry's env already went to SecretStorage.
-    try {
-      await this.connect(spec.agentId);
-      if (verifyAfterConnect) void this.verify(spec.agentId);
-    } catch {
-      // pool already emitted the crashed status with detail
-    }
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
@@ -426,20 +384,34 @@ export class AgentsStore {
   }
 
   /** Re-resolves the registry's current (possibly newer) pinned version and
-   * reconnects — the same path a first Add takes, so the version-keyed
+   * reconnects — the same launch a first Add takes, so the version-keyed
    * used-capability cache and the launch phase's download confirmation
-   * both apply exactly as they would for a brand-new agent. Never silent: a
+   * both apply exactly as they would for a brand-new agent. Resolved before
+   * anything stops: a registry that no longer lists the agent, or lists
+   * nothing this platform can run, leaves it as it is. Never silent: a
    * still-uncached binary version re-gates on the confirmation, and a stop
-   * that would disconnect open conversations asks first — here, not at any one
-   * button, so every surface that offers Upgrade gets the same question. */
+   * that would disconnect open conversations asks first — here, not at any
+   * one button, so every surface that offers Upgrade gets the same
+   * question. */
   async upgrade(agentId: string): Promise<void> {
     const config = this.config(agentId);
-    if (config === undefined || config.registrySource === null) return;
+    const registryId = config?.registrySource?.registryId;
+    if (config === undefined || registryId === undefined) return;
+    const listed = this.deps.registry.current().agents.find((a) => a.id === registryId);
+    const launch = listed === undefined ? null : this.registryLaunch(listed);
+    if (launch === null) return;
     if (this.deps.pool.get(agentId)?.status === "running") {
       if (!(await this.confirmUpgrade(config.name, this.hooks.openWork(agentId)))) return;
       await this.deps.pool.stop(agentId);
     }
-    await this.connectFrom({ registryId: config.registrySource.registryId });
+    // Saved under the agent's own id: a config that predates the registry
+    // naming has an id the registry doesn't use.
+    await this.persistAgentConfig({ ...launch.spec, agentId }, launch.registrySource);
+    try {
+      await this.connect(agentId);
+    } catch {
+      // the pool already reported the crash, with its reason, on the row
+    }
   }
 
   /** Asks only when the stop costs something: conversations attached
@@ -475,6 +447,38 @@ export class AgentsStore {
     await rm(join(this.deps.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
     this.publish(agentId);
     await this.publishAll();
+  }
+
+  /** Add's save half: a registry agent or a custom command is saved as a
+   * config, a saved agent is taken as it stands. Returns the agent to
+   * connect — nothing when the source names nothing this machine can run.
+   * Like every save it never waits: the card exists from the click, and
+   * every download the launch needs then happens on it as a connect phase. */
+  async saveFrom(source: ConnectAgentSource): Promise<string | undefined> {
+    if ("configuredId" in source) return this.config(source.configuredId)?.id;
+    let spec: LaunchSpec | null = null;
+    let registrySource: AgentConfig["registrySource"] = null;
+    if ("registryId" in source) {
+      const agent = this.deps.registry.current().agents.find((a) => a.id === source.registryId);
+      if (agent === undefined) return undefined;
+      const resolved = this.registryLaunch(agent);
+      if (resolved === null) return undefined; // can't run on this platform
+      spec = resolved.spec;
+      registrySource = resolved.registrySource;
+    } else {
+      const parsed = parseCommandLine(source.command);
+      if (parsed === null) return undefined;
+      spec = {
+        agentId: `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}`,
+        name: parsed.command,
+        command: parsed.command,
+        args: parsed.args,
+        env: {},
+        cwd: this.deps.workspaceCwd,
+      };
+    }
+    await this.persistAgentConfig(spec, registrySource);
+    return spec.agentId;
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
@@ -561,40 +565,33 @@ export class AgentsStore {
       await this.typedLoginViaTerminal(agentId, typed);
       return;
     }
-    // Bracketed like verify/logout: the card's controls dim for the
-    // authenticate round-trip's span too.
-    await this.withVerifySignal(agentId, "authenticate", () =>
-      this.deps.tracker.authenticate(agentId, methodId),
-    );
+    await this.deps.tracker.authenticate(agentId, methodId);
   }
 
-  /** Logout round-trip under the shared in-flight signal — the card's
-   * controls dim for the RPC's span, needsAuth is raised by the tracker
-   * itself (a successful logout IS the auth state; no probe) — then the
-   * agent's process is disconnected. Policy, not a quirk workaround:
-   * a process that has held credentials is never trusted to shed them
-   * (spawn-time-only auth reads are live behavior — auggie dossier), so
-   * killing it is the only clear-out that needs no agent cooperation.
-   * The card lands on stopped + the logout reason, and the
-   * lock persists (auth-evidence.ts) — a reconnect carries it until real
-   * login evidence clears it. */
+  /** The logout round-trip — needsAuth is raised by the tracker itself (a
+   * successful logout IS the auth state; no probe) — then the agent's
+   * process is disconnected. Policy, not a quirk workaround: a process that
+   * has held credentials is never trusted to shed them (spawn-time-only
+   * auth reads are live behavior — auggie dossier), so killing it is the
+   * only clear-out that needs no agent cooperation. The card lands on
+   * stopped + the logout reason, and the lock persists (auth-evidence.ts) —
+   * a reconnect carries it until real login evidence clears it. */
   async logout(agentId: string): Promise<void> {
-    await this.withVerifySignal(agentId, "logout", () => this.deps.tracker.logout(agentId));
+    await this.deps.tracker.logout(agentId);
     await this.deps.pool.stop(agentId);
   }
 
-  /** Brackets a Verify round-trip (manual click or "Verify after add") with
-   * the settings-only in-flight signal — the card's Verify control dims and
-   * reads "Verifying…" for exactly the span of the free protocol check.
-   * Returns what the probe observed so the terminal-login flow can react
+  /** The free protocol check (Settings Verify, "Verify after add") —
+   * returns what the probe observed, so the terminal-login flow can react
    * to a still-locked agent. */
-  async verify(agentId: string): Promise<ProbeOutcome> {
-    return await this.withVerifySignal(agentId, "verify", () => this.deps.tracker.verify(agentId));
+  verify(agentId: string): Promise<ProbeOutcome> {
+    return this.deps.tracker.verify(agentId);
   }
 
   // ── window lifecycle ──────────────────────────────────────────────────────
 
-  /** Startup connections: the union of every config flagged auto-connect
+  /** What this window connects at startup, as the sources Add takes: the
+   * union of every config flagged auto-connect
    * and the reload-continuation stamp (stores/last-connected.ts — what was
    * still running at the last shutdown, honored only while fresh). The
    * union's two halves answer different questions — "always there" vs.
@@ -608,7 +605,7 @@ export class AgentsStore {
    * `legacyDefault` is the old `acpPatchbay.defaultAgent` setting
    * (superseded by the per-agent flag): folded into the config once, so the
    * old setting keeps working without two mechanisms living on. */
-  async startup(legacyDefault: string): Promise<void> {
+  async startupSources(legacyDefault: string): Promise<ConnectAgentSource[]> {
     if (legacyDefault !== "") {
       const existing = this.config(legacyDefault);
       if (existing !== undefined && !existing.autoConnect) {
@@ -621,17 +618,15 @@ export class AgentsStore {
     const flagged = this.deps.configs.list().filter((c) => c.autoConnect).map((c) => c.id);
     const ids = new Set([...flagged, ...stamped]);
     if (legacyDefault !== "") ids.add(legacyDefault); // config may not exist yet — resolved below
-    await Promise.allSettled(
-      [...ids].map((id) => {
-        if (this.config(id) !== undefined) return this.connectFrom({ configuredId: id });
-        // Only the legacy setting can name an agent with no config on this
-        // machine (a stamp or flag implies one was persisted) — the registry
-        // path covers it, and persists the config it was missing.
-        if (id === legacyDefault) return this.connectFrom({ registryId: id });
-        this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
-        return Promise.resolve();
-      }),
-    );
+    return [...ids].flatMap((id): ConnectAgentSource[] => {
+      if (this.config(id) !== undefined) return [{ configuredId: id }];
+      // Only the legacy setting can name an agent with no config on this
+      // machine (a stamp or flag implies one was persisted) — the registry
+      // path covers it, and persists the config it was missing.
+      if (id === legacyDefault) return [{ registryId: id }];
+      this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
+      return [];
+    });
   }
 
   /** Reload-continuation stamp, written before any killing at shutdown —
@@ -662,6 +657,7 @@ export class AgentsStore {
     // A process running or starting answers for what it was spawned with;
     // otherwise the config is what the next Connect runs.
     const launch = live?.status === "running" || live?.status === "reconnecting" ? live.spec : config;
+    const update = agentUpdates(this.deps.registry.current().agents, [config])[config.id];
     return {
       id: config.id,
       name: config.name,
@@ -680,7 +676,12 @@ export class AgentsStore {
       capabilitiesResetAt: live?.initializedAt ?? undefined,
       protocolVersion: live?.initialize?.protocolVersion,
       authMethods: live?.declared?.authMethods ?? [],
-      update: agentUpdates(this.deps.registry.current().agents, [config])[config.id],
+      update,
+      busy: this.deps
+        .busy(config.id)
+        .map((kind) =>
+          kind === "upgrade" ? { kind, to: update?.to ?? config.registrySource?.pinnedVersion } : { kind },
+        ),
     };
   }
 
@@ -892,24 +893,5 @@ export class AgentsStore {
       args: [...spec.args, ...typed.args],
       env,
     });
-  }
-
-  private async withVerifySignal<T>(agentId: string, label: string, work: () => Promise<T>): Promise<T> {
-    const depth = this.verifySignalDepth.get(agentId) ?? 0;
-    this.verifySignalDepth.set(agentId, depth + 1);
-    if (depth === 0) this.hooks.emitSettings({ kind: "agentVerifyStarted", agentId });
-    this.log.debug(`${agentId}: ${label} started`);
-    try {
-      return await work();
-    } finally {
-      const remaining = (this.verifySignalDepth.get(agentId) ?? 1) - 1;
-      if (remaining <= 0) {
-        this.verifySignalDepth.delete(agentId);
-        this.hooks.emitSettings({ kind: "agentVerifyFinished", agentId });
-      } else {
-        this.verifySignalDepth.set(agentId, remaining);
-      }
-      this.log.debug(`${agentId}: ${label} finished`);
-    }
   }
 }

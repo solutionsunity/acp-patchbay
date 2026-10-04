@@ -28,7 +28,7 @@ function agent(
   status: AgentSummary["status"],
   capabilities?: AgentSummary["capabilities"],
 ): AgentSummary {
-  return { id, name: id, status, needsAuth: false, authMethods: [], capabilities };
+  return { id, name: id, status, needsAuth: false, authMethods: [], busy: [], capabilities };
 }
 
 describe("sessions drawer — agents whose history cannot be shown", () => {

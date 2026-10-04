@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import {
+  chatPaneShows,
   coalesceAgentViewEvent,
   coalesceSettingsEvent,
   initialAgentViewState,
@@ -21,6 +22,7 @@ import {
   type Action,
   type AgentViewEvent,
   type AgentViewState,
+  type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
   type PermissionOptionView,
@@ -30,7 +32,8 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { openAsks, type OpenAsk } from "../shared/attention";
-import { AgentsStore } from "./agents-store";
+import { AgentGates, type AgentTurn } from "./agent-gates";
+import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
@@ -49,6 +52,7 @@ import { sessionKnobExtras } from "./extensions";
 import { runLoginTask } from "./login-task";
 import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
+import { Queue } from "./queue";
 import { normalizeRootPath, SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
@@ -149,7 +153,10 @@ export class Orchestrator {
    * newer version is told once. */
   private readonly announcedUpdates = new Set<string>();
   readonly pool: AgentPool;
-  readonly agents: AgentsStore;
+  /** The agents store without its connection operations — those are
+   * reached only through the gates. */
+  readonly agents: Omit<AgentsStore, keyof ConnectionOperations>;
+  readonly gates: AgentGates;
   readonly sessionManager: SessionManager;
   readonly capabilityTracker: CapabilityTracker;
   private readonly defaultsEditor: DefaultsEditor;
@@ -689,7 +696,12 @@ export class Orchestrator {
       },
       log,
     );
-    this.agents = new AgentsStore(
+    // The management side's tools for agents: the queue keeps each agent's
+    // turns, and the gates — the one way any door reaches an operation on
+    // an agent's connection — decide how each operation meets it. What the
+    // queue holds is the agent's busy state, so every move re-sends its row.
+    const queue = new Queue<AgentTurn>((agentId) => this.agents.publish(agentId));
+    const agents = new AgentsStore(
       {
         pool: this.pool,
         configs: this.agentConfigs,
@@ -700,6 +712,7 @@ export class Orchestrator {
         lastConnected: this.lastConnected,
         registry: this.acpRegistry,
         tracker: this.capabilityTracker,
+        busy: (agentId) => queue.held(agentId),
         workspaceCwd: this.workspaceCwd,
         binaryCacheDir: this.binaryCacheDir,
         probeRootBase: join(context.globalStorageUri.fsPath, "probe"),
@@ -723,6 +736,8 @@ export class Orchestrator {
       },
       log,
     );
+    this.agents = agents;
+    this.gates = new AgentGates(agents, queue);
     // The editor's sessions exist only to serve the open panel — they end
     // with it.
     this.settings.onAttachment((attached) => {
@@ -889,13 +904,15 @@ export class Orchestrator {
     ]);
   }
 
-  /** Startup: the agents store connects what this window should open with,
-   * then the last open session is restored. The raw `acpPatchbay.defaultAgent`
-   * value stays readable after the contribution's removal — unregistered
-   * keys still surface — and the store folds it into the per-agent flag. */
+  /** Startup: what the agents store says this window opens with is
+   * connected, then the last open session is restored. The raw
+   * `acpPatchbay.defaultAgent` value stays readable after the
+   * contribution's removal — unregistered keys still surface — and the
+   * store folds it into the per-agent flag. */
   private async connectStartupAgents(): Promise<void> {
     const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
-    await this.agents.startup(legacy);
+    const sources = await this.agents.startupSources(legacy);
+    await Promise.allSettled(sources.map((source) => this.connectFrom(source)));
     await this.restoreLastActiveSession();
   }
 
@@ -1006,8 +1023,8 @@ export class Orchestrator {
   }
 
   /** "Connect agent" — the palette shortcut into the one add path (the
-   * Settings Agents persist-connect-verify flow): registry or custom command,
-   * same `agents.connectFrom` either way. */
+   * Settings Agents save-connect-verify flow): registry or custom command,
+   * the same `connectFrom` either way. */
   async connectAgentCommand(): Promise<void> {
     const items = [
       ...this.acpRegistry.current().agents
@@ -1020,9 +1037,9 @@ export class Orchestrator {
     if (picked.registryId === undefined) {
       const command = await vscode.window.showInputBox({ placeHolder: "command that speaks ACP…" });
       if (command === undefined || command.trim() === "") return;
-      await this.agents.connectFrom({ command });
+      await this.connectFrom({ command });
     } else {
-      await this.agents.connectFrom({ registryId: picked.registryId });
+      await this.connectFrom({ registryId: picked.registryId });
     }
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
@@ -1557,7 +1574,7 @@ export class Orchestrator {
         `${nameOf(id)} ${u.to} is available — you run ${u.from}.`,
         "Upgrade",
       );
-      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) await this.agents.upgrade(id);
+      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) await this.gates.upgrade(id);
       return;
     }
     const picked = await vscode.window.showInformationMessage(
@@ -1570,7 +1587,7 @@ export class Orchestrator {
       { canPickMany: true, placeHolder: "Upgrade which agents?" },
     );
     for (const item of chosen ?? []) {
-      if (this.agents.updates()[item.id] !== undefined) await this.agents.upgrade(item.id);
+      if (this.agents.updates()[item.id] !== undefined) await this.gates.upgrade(item.id);
     }
   }
 
@@ -1605,14 +1622,14 @@ export class Orchestrator {
         this.settings.emit({ kind: "sectionChanged", section: action.section });
         break;
       case "connectAgent":
-        void this.agents.connectFrom(action.source, action.verifyAfterConnect ?? false);
+        void this.connectFrom(action.source, action.verifyAfterConnect ?? false);
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.agents.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
+        void this.gates.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
         break;
       case "stopAgent":
-        void this.agents.stop(action.agentId);
+        void this.gates.stop(action.agentId);
         break;
       case "startChat":
         void this.startChat(action.agentId);
@@ -1702,7 +1719,7 @@ export class Orchestrator {
         this.broker.cancelPending(action.sessionId);
         break;
       case "verifyAgent":
-        void this.agents.verify(action.agentId);
+        void this.gates.verify(action.agentId);
         break;
       case "editAgentDefaults":
         void (action.open ? this.defaultsEditor.open(action.agentId) : this.defaultsEditor.close(action.agentId));
@@ -1715,15 +1732,15 @@ export class Orchestrator {
         break;
       case "authenticateAgent":
         // failure leaves needsAuth set — the honest signal, no separate reply channel
-        void this.agents.login(action.agentId, action.methodId).catch(this.logCatch(`login ${action.agentId}`));
+        void this.gates.login(action.agentId, action.methodId).catch(this.logCatch(`login ${action.agentId}`));
         break;
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
-        void this.agents.logout(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
+        void this.gates.logout(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
         break;
       case "upgradeAgent":
-        void this.agents.upgrade(action.agentId);
+        void this.gates.upgrade(action.agentId);
         break;
       case "refreshRegistry":
         void this.acpRegistry.refresh("manual");
@@ -1890,7 +1907,7 @@ export class Orchestrator {
         void this.agents.save(action.config);
         break;
       case "removeAgentConfig":
-        void this.agents.remove(action.agentId);
+        void this.gates.remove(action.agentId);
         break;
       case "reorderAgentConfigs":
         void this.agents.reorder(action.ids).catch(this.logCatch("reorderAgentConfigs"));
@@ -2151,6 +2168,20 @@ export class Orchestrator {
     });
   }
 
+  /** Add — and every connect a door names by its source (Settings Connect,
+   * the palette, startup): the store saves what is new, then the connect
+   * and, when asked, the free check pass the gates. */
+  private async connectFrom(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
+    const agentId = await this.agents.saveFrom(source);
+    if (agentId === undefined) return;
+    try {
+      await this.gates.connect(agentId);
+      if (verifyAfterConnect) void this.gates.verify(agentId);
+    } catch {
+      // the pool already reported the crash, with its reason, on the row
+    }
+  }
+
   /** One intent, one click: connect if needed, then create and
    * activate the session — all inside the chat pane. Uses the saved config
    * path (env injected from SecretStorage at spawn), never a bare
@@ -2171,18 +2202,22 @@ export class Orchestrator {
       this.sessionManager.activate(draft);
       return;
     }
-    if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId });
     try {
-      if (this.agents.row(agentId)?.status !== "running") await this.agents.connect(agentId);
+      // A running agent serves the chat now — it never waits behind the
+      // agent's other work (a terminal login can take minutes). One that
+      // isn't takes the connect's turn, joining one already under way.
+      if (this.agents.row(agentId)?.status !== "running") await this.gates.connect(agentId);
+      if (!this.paneShows(agentId)) return;
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event; the re-mint emits the same event.
       if (draft !== undefined) await this.sessionManager.reviveNew(draft);
       else await this.sessionManager.createSession(agentId, agentName, this.workspaceCwd);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });
       this.log.error(`startChat ${agentId}: ${raw}`);
+      if (!this.paneShows(agentId)) return;
+      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });
     }
   }
 
@@ -2199,21 +2234,30 @@ export class Orchestrator {
     if (agentId === undefined) return;
     const row = this.agents.row(agentId);
     if (row === undefined || row.status === "running") return;
-    if (this.agentView.current.chatConnect?.status === "connecting") return; // one at a time
     this.agentView.emit({ kind: "chatConnectStarted", agentId, forSessionId: sessionId });
     try {
-      await this.agents.connect(agentId);
-      this.agentView.emit({ kind: "chatConnectResolved" });
+      await this.gates.connect(agentId);
+      if (this.paneShows(agentId, sessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
+      this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
+      if (!this.paneShows(agentId, sessionId)) return;
       this.agentView.emit({
         kind: "chatConnectFailed",
         agentId,
         reason: this.connectFailureReason(agentId, err, raw),
         forSessionId: sessionId,
       });
-      this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
     }
+  }
+
+  /** The latest connect on demand owns the chat pane: an earlier one whose
+   * pane was taken stands down when its connect settles — its agent still
+   * comes up, but its chat neither lands nor fails over the later one. A
+   * repeat of the same request shows the same pane and shares its work —
+   * the connect it joined, the new session it asked for. */
+  private paneShows(agentId: string, forSessionId?: string): boolean {
+    return chatPaneShows(this.agentView.current.chatConnect, agentId, forSessionId);
   }
 
   /** Prefer the pool's own crash detail (spawn failed / initialize failed)

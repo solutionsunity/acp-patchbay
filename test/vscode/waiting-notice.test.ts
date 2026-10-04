@@ -3,7 +3,7 @@
 // the native notification — with the Agent View hidden, and with it open on
 // a different session.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +26,7 @@ interface Internal {
       };
     };
     agents: AgentsDoor;
+    gates: GatesDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -71,7 +72,7 @@ suite("waiting-on-user notice", () => {
       await orchestrator.agents.save(
         fakeAgentConfig(AGENT_ID, "Waiting Fake", fakeAgentPath, { turn: [{ type: "elicit", message: "Which branch?" }] }),
       );
-      await orchestrator.agents.connect(AGENT_ID);
+      await orchestrator.gates.connect(AGENT_ID);
 
       // 1. The Agent View is hidden.
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
@@ -100,7 +101,7 @@ suite("waiting-on-user notice", () => {
       assert.strictEqual(noticeFor("Which branch?"), undefined);
     } finally {
       window.showWarningMessage = original;
-      await orchestrator.agents.remove(AGENT_ID);
+      await orchestrator.gates.remove(AGENT_ID);
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -117,16 +118,16 @@ suite("waiting-on-user notice", () => {
           turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }],
         }),
       );
-      await orchestrator.agents.connect(AGENT_ID);
+      await orchestrator.gates.connect(AGENT_ID);
       const sessionId = await orchestrator.sessionManager.createSession(AGENT_ID, "Waiting Fake", cwd);
       void orchestrator.sessionManager.sendPrompt(sessionId, "go").catch(() => {});
       const card = () => orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "permission");
       await waitFor(() => (card()?.resolution === null ? true : undefined));
 
-      await orchestrator.agents.stop(AGENT_ID);
+      await orchestrator.gates.stop(AGENT_ID);
       await waitFor(() => (card()?.resolution != null ? true : undefined));
     } finally {
-      await orchestrator.agents.remove(AGENT_ID);
+      await orchestrator.gates.remove(AGENT_ID);
       await rm(cwd, { recursive: true, force: true });
     }
   });

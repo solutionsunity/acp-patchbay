@@ -5,7 +5,7 @@
 // the user's next save. The no-editor disk path stays covered by
 // verification.test.ts.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,6 +19,7 @@ interface Internal {
     };
     broker: { resolve(requestId: string, optionId: string): void };
     agents: AgentsDoor;
+    gates: GatesDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -58,7 +59,7 @@ suite("live-buffer write (W1)", () => {
           turn: [{ type: "writeFile", path: target, content: "from agent\n" }],
         }),
       );
-      await orchestrator.agents.connect("live-write-e2e");
+      await orchestrator.gates.connect("live-write-e2e");
       const sessionId = await orchestrator.sessionManager.createSession(
         "live-write-e2e",
         "Live Write Fake",
@@ -76,7 +77,7 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
     } finally {
-      await orchestrator.agents.remove("live-write-e2e");
+      await orchestrator.gates.remove("live-write-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -97,7 +98,7 @@ suite("live-buffer write (W1)", () => {
           turn: [{ type: "readFile", path: missing }],
         }),
       );
-      await orchestrator.agents.connect("live-read-e2e");
+      await orchestrator.gates.connect("live-read-e2e");
       const sessionId = await orchestrator.sessionManager.createSession("live-read-e2e", "Live Read Fake", cwd);
       await orchestrator.sessionManager.sendPrompt(sessionId, "go");
       const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
@@ -106,7 +107,7 @@ suite("live-buffer write (W1)", () => {
         .join("");
       assert.strictEqual(text, `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
-      await orchestrator.agents.remove("live-read-e2e");
+      await orchestrator.gates.remove("live-read-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

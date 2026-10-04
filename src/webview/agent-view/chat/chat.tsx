@@ -15,6 +15,7 @@ import {
   type TurnUsage,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
+import { chatPaneProgress } from "../../shared/agent-work";
 import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
 import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
@@ -324,34 +325,23 @@ export function Chat(props: {
   }, [sentinel, grow]);
 
   // The in-pane connect state: a chat being started takes over the
-  // pane — "Connecting…" resolving into the session, or the failure with
-  // its specific reason and a Retry, never a bounce to the empty state.
-  // `?? null` guards snapshots minted before this field existed (persisted
-  // last-known views survive extension upgrades).
+  // pane — what its agent is busy with, resolving into the session, or the
+  // failure with its specific reason and a Retry, never a bounce to the
+  // empty state. `?? null` guards snapshots minted before this field
+  // existed (persisted last-known views survive extension upgrades).
   const connect = props.state.chatConnect ?? null;
   if (connect !== null) {
     const agent = agents.find((a) => a.id === connect.agentId);
     const name = agent?.name ?? connect.agentId;
-    if (connect.status === "connecting") {
-      // The pool's warmup phase label rides AgentSummary.detail while a
-      // launcher download is genuinely in flight ("downloading the agent
-      // package…") — the difference between a 20-second silent connect
-      // and a said reason.
-      const phase = agent?.status === "reconnecting" ? agent.detail : undefined;
-      return (
-        <StatePage
-          icon="loading"
-          spin
-          tag={<>Connecting {name}…{phase !== undefined ? ` — ${phase}` : ""}</>}
-        />
-      );
+    if (connect.reason === undefined) {
+      return <StatePage icon="loading" spin tag={chatPaneProgress(connect, agent)} />;
     }
     return (
       <StatePage
         icon="warning"
         tag={
           <>
-            {name} couldn't start{connect.reason !== undefined ? ` — ${connect.reason}` : ""}
+            {name} couldn't start — {connect.reason}
           </>
         }
       >

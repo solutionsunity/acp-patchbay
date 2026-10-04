@@ -144,8 +144,8 @@ export function agentViewState({ live }) {
     // `silent` declared no session/list — the sessions drawer must say so
     // fake's agent has a newer version — the agent chip's upgrade chip (#37)
     agents: [
-      { id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], update: { from: "1.0.0", to: "1.2.0" } },
-      { id: "silent", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], capabilities: unlistedMatrix },
+      { id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [], update: { from: "1.0.0", to: "1.2.0" } },
+      { id: "silent", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], busy: [], capabilities: unlistedMatrix },
     ],
     // s2: newer activity + unseen — must sort above the active s1 and show
     // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
@@ -207,7 +207,7 @@ export function settingsState() {
     agents: [
       {
         id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false,
-        authMethods: [], protocolVersion: 1,
+        authMethods: [], busy: [], protocolVersion: 1,
         // the card's upgrade chip (#37)
         update: { from: "0.9.0", to: "1.0.0" },
         capabilities: {
@@ -221,7 +221,7 @@ export function settingsState() {
           auth: { declared: true, used: true },
         },
       },
-      { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [] },
+      { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], busy: [] },
     ],
     registryAgents: [
       { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null },
@@ -234,7 +234,7 @@ export function settingsState() {
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       env: { API_KEY: "sk-fixture" }, defaults: {}, registrySource: null, lastSeenVersion: null,
     }],
-    sessionsActiveToday: 7, agentKnobs: {}, registryFetchedAt: "", verifyingAgents: {},
+    sessionsActiveToday: 7, agentKnobs: {}, registryFetchedAt: "",
     wireLog: { active: false, until: null }, dataInventory: null,
     preferences, doneSounds: ["Glass", "Ping"],
   };

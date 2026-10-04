@@ -138,10 +138,16 @@ smart ＋).
 ### 7 · Chat pane states
 
 Empty (zero agents → `Set up an agent…` → Settings; otherwise `New chat` → the
-smart ＋) · connecting takeover (`Connecting {agent}…`, spinner) · connect-failed
-takeover (the specific reason + `Retry` / `Settings` / `Dismiss`) — a failure
-never bounces silently back to the empty state, and a session arriving clears the
-takeover. The crash banner carries the process's stderr tail inline — the reason
+smart ＋) · in-progress takeover (spinner + while the chat waits on its
+agent, what the agent's queue runs for it: `Connecting {agent}…` with the
+launch phase while it starts, `Upgrading {agent} to {version}…`,
+`Restarting {agent}…`, …; `Starting a chat with {agent}…` once the agent
+runs — a running agent serves a chat at once, never behind its other work)
+· connect-failed takeover (the specific
+reason + `Retry` / `Settings` / `Dismiss`) — a failure never bounces silently
+back to the empty state, and a session arriving clears the takeover. The pane
+is one place: the latest connect on demand owns it, and an earlier one whose
+pane was taken stands down — its agent still comes up, its chat doesn't land. The crash banner carries the process's stderr tail inline — the reason
 readable without the Output panel.
 
 ---
@@ -173,7 +179,8 @@ mode, `Add from list` in custom mode) · `Verify after add` checkbox.
 
 Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
 registry has a newer version than the pin — the same chip as the Agent View's,
-indicator and action in one · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
+indicator and action in one; while an upgrade runs it reads `upgrading to
+{version}…` with a spinner and takes no click · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
 · default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config
 option, keyed by the option's own id — category is UX-only in ACP, so it only
@@ -201,9 +208,10 @@ still outstanding for this agent's version, or the agent needs auth — the same
 predicate the connect/reconnect auto-retry gates on, so the manual control can't
 drift from what the automatic one already covers. Once a version is fully used,
 reconnecting restores that instantly and the button stays hidden — nothing to do.
-While a Verify round-trip (manual or "Verify after add") is in flight, the trigger
-dims and reads `Verifying…` — no separate status line, the button itself is the
-state.
+While the agent's queue holds a Verify (manual or "Verify after add"), the
+trigger spins and reads `Verifying…` — no separate status line, the button
+itself is the state. Anything the queue holds for the agent dims the controls
+that would only wait behind it (Log in, Log out, Verify); Stop never dims.
 
 ### Capability matrix
 

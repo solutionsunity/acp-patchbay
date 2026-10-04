@@ -5,7 +5,7 @@
 // used on those rows — the matrix's honest data-plane record (the fidelity
 // aggregate that once hung off these rows is removed, 2026-07-12).
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,6 +32,7 @@ interface Internal {
     };
     usedCapabilities: { remove(id: string): Promise<void> };
     agents: AgentsDoor;
+    gates: GatesDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       sendPrompt(sessionId: string, text: string): Promise<void>;
@@ -85,7 +86,7 @@ suite("opportunistic fs/terminal verification", () => {
           ],
         }),
       );
-      await orchestrator.agents.connect("verify-e2e");
+      await orchestrator.gates.connect("verify-e2e");
 
       const matrix = () =>
         orchestrator.agentView.current.agents.find((a) => a.id === "verify-e2e")!.capabilities!;
@@ -112,7 +113,7 @@ suite("opportunistic fs/terminal verification", () => {
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await orchestrator.agents.remove("verify-e2e");
+      await orchestrator.gates.remove("verify-e2e");
       await rm(cwd, { recursive: true, force: true });
     }
   });

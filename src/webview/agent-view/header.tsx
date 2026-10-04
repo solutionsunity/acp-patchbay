@@ -9,7 +9,8 @@
 // native view title bar (package.json view/title), not here. The usage
 // gauge lives in the composer's stats strip (composer/stats.tsx).
 import type { ReactNode } from "react";
-import type { AgentStatus, AgentSummary, AgentUpdate } from "../../shared/protocol";
+import type { AgentStatus, AgentSummary } from "../../shared/protocol";
+import { upgradeOffer } from "../shared/agent-work";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
 import { UpgradeChip } from "../shared/upgrade-chip";
@@ -21,20 +22,20 @@ export function Dot({ status }: { status: AgentStatus | "none" }) {
 
 export function Header(props: {
   agent: AgentSummary | null;
-  update: AgentUpdate | null;
   onUpgrade(): void;
   onSessions(): void;
   onNew(): void;
   children?: ReactNode;
 }) {
+  const offer = upgradeOffer(props.agent ?? undefined);
   return (
     <div className="hdr">
       {props.agent !== null && (
         <div className="agent-chip" title="Current session's agent">
           <Dot status={props.agent.status} />
           <span className="name">{props.agent.name}</span>
-          {props.update !== null && (
-            <UpgradeChip agentName={props.agent.name} update={props.update} onUpgrade={props.onUpgrade} />
+          {offer !== null && (
+            <UpgradeChip agentName={props.agent.name} offer={offer} onUpgrade={props.onUpgrade} />
           )}
         </div>
       )}

@@ -565,7 +565,21 @@ export interface AgentSummary {
   /** A newer registry version than the agent's pin — the upgrade chip,
    * never applied on its own; absent when there is none. */
   update?: AgentUpdate;
+  /** What the agent's queue holds for it: the operation running first,
+   * then the ones waiting their turn — empty while it is idle. The views'
+   * one busy state for the agent. */
+  busy: readonly AgentWork[];
 }
+
+/** One operation an agent's queue holds, as the views show it. */
+export type AgentWork =
+  | { kind: "connect" | "restart" | "login" | "logout" | "verify" }
+  | {
+      kind: "upgrade";
+      /** The version it installs: the registry's while the update is on
+       * offer, the new pin once the upgrade has saved it. */
+      to?: string;
+    };
 
 /** The live-selection indicator's data (the ghost chip):
  * position only, never the text — the text is read host-side at the moment
@@ -1182,18 +1196,31 @@ export interface AvailableCommand {
 }
 
 /** The in-pane connect state for a chat being started: "+" on a
- * not-yet-running agent connects inside the chat pane itself — a
- * lightweight "Connecting…" resolving into the session, or a failure with
- * the specific reason and a Retry, never a bounce back to the empty state. */
+ * not-yet-running agent connects inside the chat pane itself — in progress
+ * until the session lands, saying what the agent is busy with (read from
+ * its row), or a failure with the specific reason and a Retry, never a
+ * bounce back to the empty state. */
 export interface ChatConnectView {
   agentId: string;
-  status: "connecting" | "failed";
+  /** Why it failed — present only once it has. */
   reason?: string;
   /** Present when the connect was triggered by opening an existing session
    * (every open — click, palette, own window — is a connect trigger: the
    * running agent is the session's prerequisite). Retry then re-opens that
    * session instead of minting a new one via startChat. */
   forSessionId?: string;
+}
+
+/** True while the pane still shows this request in progress — a new chat
+ * with the agent, or the open of one of its sessions. The pane is one
+ * place and the latest connect on demand owns it: a request whose pane was
+ * taken, or has failed, has nothing left to land in it. */
+export function chatPaneShows(
+  pane: ChatConnectView | null,
+  agentId: string,
+  forSessionId: string | undefined,
+): boolean {
+  return pane !== null && pane.agentId === agentId && pane.forSessionId === forSessionId && pane.reason === undefined;
 }
 
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
@@ -1254,8 +1281,9 @@ export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
   activeSessionId: string | null;
-  /** Non-null while a "+"-initiated chat is connecting or has failed —
-   * cleared by success (the session activates), retry, or dismissal. */
+  /** Non-null while a connect on demand — a new chat, or the open of a
+   * session whose agent is off — is in progress or has failed; cleared by
+   * success (the session activates), retry, or dismissal. */
   chatConnect: ChatConnectView | null;
   /** True while the startup restore is still settling (startup connects +
    * last-active-session reactivation, orchestrator.ts) — the rendering area
@@ -1800,9 +1828,9 @@ export function reduceAgentView(
       // the snapshot's fetchedAt for the Add Agent card's freshness line.
       return { ...state, registryAgents: event.agents };
     case "chatConnectStarted":
-      return { ...state, chatConnect: { agentId: event.agentId, status: "connecting", forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { agentId: event.agentId, forSessionId: event.forSessionId } };
     case "chatConnectFailed":
-      return { ...state, chatConnect: { agentId: event.agentId, status: "failed", reason: event.reason, forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { agentId: event.agentId, reason: event.reason, forSessionId: event.forSessionId } };
     case "chatConnectResolved":
       return { ...state, chatConnect: null };
     case "startupSettled":
@@ -2354,10 +2382,6 @@ export interface SettingsState {
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
-  /** Present while a Verify round-trip (manual click or "Verify after add")
-   * is in flight for this agent — the card's Verify control dims and reads
-   * "Verifying…" until it clears. */
-  verifyingAgents: Readonly<Record<string, true>>;
   /** Wire log (Audit page): live state of the raw-frame tap. Never
    * persisted — debugging is a session act, a reload always starts clean. */
   wireLog: { active: boolean; until: string | null };
@@ -2401,7 +2425,6 @@ export const initialSettingsState: SettingsState = {
   sessionsActiveToday: 0,
   agentKnobs: {},
   registryFetchedAt: "",
-  verifyingAgents: {},
   wireLog: { active: false, until: null },
   dataInventory: null,
   preferences: DEFAULT_PREFERENCES,
@@ -2434,8 +2457,6 @@ export type SettingsEvent =
   | { kind: "agentKnobsReleased"; agentId: string }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
-  | { kind: "agentVerifyStarted"; agentId: string }
-  | { kind: "agentVerifyFinished"; agentId: string }
   | { kind: "sectionChanged"; section: SettingsSectionId };
 
 export function reduceSettings(
@@ -2460,7 +2481,6 @@ export function reduceSettings(
         ...state,
         agents: reduceAgents(state.agents, event),
         agentKnobs: dropKey(state.agentKnobs, event.agentId),
-        verifyingAgents: dropKey(state.verifyingAgents, event.agentId),
       };
     case "registryChanged":
       return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
@@ -2473,15 +2493,6 @@ export function reduceSettings(
       };
     case "auditTailChanged":
       return { ...state, auditTail: event.entries };
-    case "agentVerifyStarted":
-      return {
-        ...state,
-        verifyingAgents: { ...state.verifyingAgents, [event.agentId]: true },
-      };
-    case "agentVerifyFinished": {
-      const { [event.agentId]: _v, ...rest } = state.verifyingAgents;
-      return { ...state, verifyingAgents: rest };
-    }
     case "integrationRegistryLoaded":
       return { ...state, integrationRegistry: event.entries };
     case "integrationsChanged": {
@@ -2550,8 +2561,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "agentKnobsReleased",
   "wireLogChanged",
   "dataInventoryChanged",
-  "agentVerifyStarted",
-  "agentVerifyFinished",
   "sectionChanged",
 ]);
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import {
   applyHostMessage,
+  chatPaneShows,
   coalesceAgentViewEvent,
   initialAgentViewState,
   initialSettingsState,
@@ -14,8 +15,8 @@ import {
   type SettingsEvent,
 } from "../src/shared/protocol";
 
-const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false, authMethods: [] };
-const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [] };
+const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
+const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
 
 const events: AgentViewEvent[] = [
   { kind: "agentUpserted", agent: claude },
@@ -82,13 +83,11 @@ describe("reducers", () => {
 
     const settings = [
       { kind: "agentUpserted", agent: claude } as const,
-      { kind: "agentVerifyStarted", agentId: "claude" } as const,
       { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
       { kind: "agentRemoved", agentId: "claude" } as const,
     ].reduce(reduceSettings, initialSettingsState);
     expect(settings.agents).toEqual([]);
     expect(settings.agentKnobs).toEqual({});
-    expect(settings.verifyingAgents).toEqual({});
   });
 
   // Offerings are connection state: the defaults editor's session rode the
@@ -104,20 +103,20 @@ describe("reducers", () => {
     ).toEqual({});
   });
 
-  // P17: the in-pane connect lifecycle — started → connecting pane,
-  // failed → reason + retry, and the session arriving clears it (reducer-
-  // level, so it can't desync from reality); dismiss clears a failure.
-  it("chatConnect: connecting → failed → cleared by sessionCreated or dismissal", () => {
+  // The in-pane connect lifecycle — started → in progress (what the agent
+  // is busy with comes from its row), failed → reason + retry, and the
+  // session arriving clears it (reducer-level, so it can't desync from
+  // reality); dismiss clears a failure.
+  it("chatConnect: in progress → failed → cleared by sessionCreated or dismissal", () => {
     const connecting = replay(initialAgentViewState, [
       { kind: "chatConnectStarted", agentId: "claude" },
     ]);
-    expect(connecting.chatConnect).toEqual({ agentId: "claude", status: "connecting" });
+    expect(connecting.chatConnect).toEqual({ agentId: "claude" });
 
     const failed = replay(connecting, [
       { kind: "chatConnectFailed", agentId: "claude", reason: "spawn failed: ENOENT" },
     ]);
-    expect(failed.chatConnect?.status).toBe("failed");
-    expect(failed.chatConnect?.reason).toBe("spawn failed: ENOENT");
+    expect(failed.chatConnect).toEqual({ agentId: "claude", reason: "spawn failed: ENOENT" });
 
     const dismissed = replay(failed, [{ kind: "chatConnectResolved" }]);
     expect(dismissed.chatConnect).toBeNull();
@@ -154,7 +153,23 @@ describe("reducers", () => {
     expect(other.activeSessionId).toBe("s2");
   });
 
-  it("chatConnect carries forSessionId through connecting and failed — the Retry-as-same-click hook", () => {
+  // The pane is one place: a request still owns it only while it shows that
+  // same request in progress — the latest connect on demand took it, or it
+  // failed, and the earlier one stands down.
+  it("chatPaneShows: only the request the pane shows in progress", () => {
+    const newChat = { agentId: "claude" };
+    expect(chatPaneShows(newChat, "claude", undefined)).toBe(true);
+    expect(chatPaneShows(null, "claude", undefined)).toBe(false);
+    expect(chatPaneShows({ ...newChat, reason: "spawn failed" }, "claude", undefined)).toBe(false);
+    expect(chatPaneShows(newChat, "gemini", undefined)).toBe(false);
+    // a new chat and a session open on one agent are two requests
+    expect(chatPaneShows(newChat, "claude", "s1")).toBe(false);
+    expect(chatPaneShows({ agentId: "claude", forSessionId: "s1" }, "claude", undefined)).toBe(false);
+    expect(chatPaneShows({ agentId: "claude", forSessionId: "s1" }, "claude", "s1")).toBe(true);
+    expect(chatPaneShows({ agentId: "claude", forSessionId: "s2" }, "claude", "s1")).toBe(false);
+  });
+
+  it("chatConnect carries forSessionId through progress and failure — the Retry-as-same-click hook", () => {
     const connecting = replay(initialAgentViewState, [
       { kind: "chatConnectStarted", agentId: "claude", forSessionId: "s9" },
     ]);
@@ -239,16 +254,15 @@ describe("settings projections (ui.md § Settings Agents)", () => {
     expect(reduceSettings(s, { kind: "agentKnobsReleased", agentId: "claude" }).agentKnobs.claude).toBeUndefined();
   });
 
-  it("agentVerifyStarted/Finished track exactly the in-flight agents", () => {
-    const s1 = [
-      { kind: "agentVerifyStarted", agentId: "claude" } as const,
-      { kind: "agentVerifyStarted", agentId: "gemini" } as const,
-    ].reduce(reduceSettings, initialSettingsState);
-    expect(s1.verifyingAgents).toEqual({ claude: true, gemini: true });
-
-    const s2 = reduceSettings(s1, { kind: "agentVerifyFinished", agentId: "claude" });
-    expect(s2.verifyingAgents).toEqual({ gemini: true });
-    expect(s2.verifyingAgents.claude).toBeUndefined();
+  // Busy is a row fact, not a side map: each upsert carries what the
+  // agent's queue holds, idle included, so nothing is left to clear.
+  it("busy rides the row — an upsert replaces it whole", () => {
+    const verifying = reduceSettings(initialSettingsState, {
+      kind: "agentUpserted",
+      agent: { ...claude, busy: [{ kind: "verify" }] },
+    });
+    expect(verifying.agents[0]!.busy).toEqual([{ kind: "verify" }]);
+    expect(reduceSettings(verifying, { kind: "agentUpserted", agent: claude }).agents[0]!.busy).toEqual([]);
   });
 });
 

@@ -454,6 +454,8 @@ export class SessionManager {
   private walks = new Map<string, Promise<void>>();
   /** In-flight zero-turn re-mints by retired id (see recreateFromRow). */
   private recreating = new Map<string, Promise<string>>();
+  /** In-flight new sessions by agent (see createSession). */
+  private creating = new Map<string, Promise<string>>();
   /** Rapid re-clicks must not stack replays — one hydration per session. */
   private hydrating = new Set<string>();
   /** Sessions inside a session/load replay window: their transcript events
@@ -757,11 +759,20 @@ export class SessionManager {
       : this.hooks.emit.bind(this.hooks);
   }
 
-  async createSession(
-    agentId: string,
-    agentName: string,
-    cwd: string,
-  ): Promise<string> {
+  /** An agent's new session — one at a time: an agent has one new session
+   * (findNeverPrompted), and a second ask while the first is still on the
+   * wire gets the same one, not a sibling blank shell. */
+  createSession(agentId: string, agentName: string, cwd: string): Promise<string> {
+    const inFlight = this.creating.get(agentId);
+    if (inFlight !== undefined) return inFlight;
+    const run = this.mintSession(agentId, agentName, cwd).finally(() => {
+      if (this.creating.get(agentId) === run) this.creating.delete(agentId);
+    });
+    this.creating.set(agentId, run);
+    return run;
+  }
+
+  private async mintSession(agentId: string, agentName: string, cwd: string): Promise<string> {
     const saved = this.savedRootsFor(cwd);
     const { sessionId, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
       cwd,

@@ -4,7 +4,7 @@
 // out of it asks; the process cwd standing in for an absent folder is never a
 // root — this suite runs with no folder open, so that state is live here.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ interface Internal {
       evaluateFileWrites(sessionId: string, paths: readonly string[]): Promise<string>;
     };
     agents: AgentsDoor;
+    gates: GatesDoor;
     sessionManager: {
       createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
       addRoot(sessionId: string, path: string): Promise<void>;
@@ -53,7 +54,7 @@ suite("write scope (issue #56)", () => {
           ],
         }),
       );
-      await orchestrator.agents.connect("write-scope-e2e");
+      await orchestrator.gates.connect("write-scope-e2e");
       const born = await orchestrator.sessionManager.createSession("write-scope-e2e", "Write Scope Fake", root);
       await orchestrator.sessionManager.addRoot(born, root);
       // a never-prompted session is re-minted to carry its new root
@@ -76,7 +77,7 @@ suite("write scope (issue #56)", () => {
       assert.strictEqual(await readFile(inside, "utf8"), "in\n");
       await assert.rejects(readFile(escaped, "utf8"), "the rejected write never landed");
     } finally {
-      await orchestrator.agents.remove("write-scope-e2e");
+      await orchestrator.gates.remove("write-scope-e2e");
       await rm(dir, { recursive: true, force: true });
     }
   });

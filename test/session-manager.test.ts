@@ -221,6 +221,22 @@ describe("SessionManager", () => {
     await h.pool.stop("sm1");
   });
 
+  // A chat started twice before the first lands (a double click, the
+  // palette and "+") is one new session, not two blank shells.
+  it("a second new session asked for while the first is on the wire is the same session", async () => {
+    const h = harness();
+    await h.pool.connect(spec({}, "sm-join"));
+    const newSessions = vi.spyOn(h.pool, "newSession");
+    const [first, second] = await Promise.all([
+      h.sessionManager.createSession("sm-join", "Fake Agent", cwd),
+      h.sessionManager.createSession("sm-join", "Fake Agent", cwd),
+    ]);
+    expect(second).toBe(first);
+    expect(newSessions).toHaveBeenCalledTimes(1);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([first]);
+    await h.pool.stop("sm-join");
+  });
+
   it("renders tool calls, plans, and advertised commands", async () => {
     const h = harness();
     await h.pool.connect(

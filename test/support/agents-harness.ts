@@ -1,13 +1,15 @@
 // The agents store wired the way the orchestrator wires it — the pool's
-// reports go to the store, the capability tracker under it, every saved fact
-// in memory — minus vscode. One wiring for every suite that drives agents
-// over the real fake agent, so none of them carries its own copy of a
-// writer.
+// reports go to the store, the capability tracker under it, the queue and
+// the gates over it, every saved fact in memory — minus vscode. One wiring
+// for every suite that drives agents over the real fake agent, so none of
+// them carries its own copy of a writer.
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
-import { AgentsStore, type AgentsStoreDeps } from "../../src/orchestrator/agents-store";
+import { AgentGates, type AgentTurn } from "../../src/orchestrator/agent-gates";
+import { AgentsStore, type AgentsStoreDeps, type AgentsStoreHooks } from "../../src/orchestrator/agents-store";
 import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
-import { AgentPool } from "../../src/orchestrator/pool";
+import { AgentPool, type LaunchResolver } from "../../src/orchestrator/pool";
+import { Queue } from "../../src/orchestrator/queue";
 import { AcpRegistryStore } from "../../src/orchestrator/stores/acp-registry";
 import { AgentConfigStore } from "../../src/orchestrator/stores/agent-configs";
 import { AuthLockStore } from "../../src/orchestrator/stores/auth-locks";
@@ -29,7 +31,10 @@ import { stubFsTerminalHooks } from "./stub-hooks";
 export interface AgentsHarness {
   pool: AgentPool;
   tracker: CapabilityTracker;
+  /** The store itself — its operations run here unqueued, as a unit. */
   agents: AgentsStore;
+  /** The doors' way to the connection operations: through the queue. */
+  gates: AgentGates;
   deps: AgentsStoreDeps;
   events: AgentViewEvent[];
   state(): AgentViewState;
@@ -46,9 +51,21 @@ export interface AgentsHarness {
   seedAgent(agentId: string): void;
 }
 
-/** `dir` holds the probe workspaces and the registry cache; `kv` is the
- * machine file — pass one to share saved facts with a second harness. */
-export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): AgentsHarness {
+/** `dir` holds the probe workspaces and the registry cache. */
+export function agentsHarness(
+  dir: string,
+  opts: {
+    /** The machine file — pass one to share saved facts with a second
+     * harness. */
+    kv?: MemoryKV;
+    /** Replaces the store's defaults: no open work, every question
+     * answered yes. */
+    hooks?: Partial<AgentsStoreHooks>;
+    /** The pool's launch phase — absent, specs spawn as given. */
+    resolveLaunch?: LaunchResolver;
+  } = {},
+): AgentsHarness {
+  const kv = opts.kv ?? new MemoryKV();
   const events: AgentViewEvent[] = [];
   const removed: string[] = [];
   const probes: AgentsHarness["probes"] = [];
@@ -62,7 +79,8 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
     onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
       agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
     ...stubFsTerminalHooks(),
-  });
+  }, undefined, { resolveLaunch: opts.resolveLaunch });
+  const queue = new Queue<AgentTurn>((agentId) => agents.publish(agentId));
   const usedCapabilities = new UsedCapabilityStore(kv);
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
     changed: (agentId) => agents.publish(agentId),
@@ -85,6 +103,7 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
     lastConnected: new LastConnectedStore(new MemoryKV()),
     registry: new AcpRegistryStore(join(dir, "registry"), () => {}),
     tracker,
+    busy: (agentId) => queue.held(agentId),
     workspaceCwd: dir,
     binaryCacheDir: join(dir, "bin-cache"),
     probeRootBase: join(dir, "probe"),
@@ -99,6 +118,7 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
     removed: (agentId) => removed.push(agentId),
     authCleared: () => {},
     defaultsChanged: () => {},
+    ...opts.hooks,
   });
   const seedAgent = (agentId: string) => {
     // MemoryKV writes land before the promise resolves — the record is
@@ -116,5 +136,5 @@ export function agentsHarness(dir: string, kv: MemoryKV = new MemoryKV()): Agent
     agents.publish(agentId);
   };
   const row = (agentId: string) => state().agents.find((a) => a.id === agentId);
-  return { pool, tracker, agents, deps, events, state, row, removed, probes, seedAgent };
+  return { pool, tracker, agents, gates: new AgentGates(agents, queue), deps, events, state, row, removed, probes, seedAgent };
 }
