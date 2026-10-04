@@ -91,7 +91,11 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
 
   sessionManager = new SessionManager(
     pool,
-    { emit: (...evs) => events.push(...evs), workspaceRoots: () => [workspaceRoot] },
+    {
+      emit: (...evs) => events.push(...evs),
+      workspaceRoots: () => [workspaceRoot],
+      cancelAsks: (sessionId) => broker.cancelPending(sessionId),
+    },
     () => workspaceRoot,
   );
   // The extension's own handlers; only the live-buffer read/write differ
@@ -199,7 +203,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
 
     const turn = h.sessionManager.sendPrompt(sessionId, "go");
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
-    h.broker.cancelPending(sessionId);
+    await h.sessionManager.stopTurn(sessionId);
     await turn;
 
     expect(textOf(sessionId, h.events)).toContain(
@@ -420,6 +424,43 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await turn;
     expect(textOf(sessionId, h.events)).toContain("permission: allow_once");
     await h.pool.stop("p2");
+  });
+
+  // ACP: a client that cancels a turn MUST answer its pending permission
+  // requests as cancelled. Every way a turn is told to stop owes it — the
+  // composer's Stop, and the cancel a Reload sends before it re-reads.
+  it("a Reload answers the turn's open ask as cancelled — the agent is never left waiting", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true },
+          turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }],
+        },
+        "p3",
+      ),
+    );
+    const sessionId = await h.sessionManager.createSession("p3", "Fake Agent", workspaceRoot);
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
+    await h.sessionManager.reload(sessionId);
+    expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
+    await turn;
+    await h.pool.stop("p3");
+  });
+
+  it("a Close answers the turn's open ask as cancelled before the session goes", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }] }, "p4"),
+    );
+    const sessionId = await h.sessionManager.createSession("p4", "Fake Agent", workspaceRoot);
+    const turn = h.sessionManager.sendPrompt(sessionId, "go");
+    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
+    await h.sessionManager.close(sessionId);
+    expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
+    await turn;
+    await h.pool.stop("p4");
   });
 });
 

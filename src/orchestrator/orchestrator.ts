@@ -619,6 +619,7 @@ export class Orchestrator {
         connectForSession: (sessionId) => void this.connectForSession(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
+        cancelAsks: (sessionId) => this.broker.cancelPending(sessionId),
         authLocked: (agentId) => this.agents.authLocked(agentId),
       },
       () => this.workspaceCwd,
@@ -1667,8 +1668,7 @@ export class Orchestrator {
         this.sessionManager.open(action.sessionId);
         break;
       case "closeSession":
-        void this.sessionManager.close(action.sessionId);
-        this.broker.cancelPending(action.sessionId); // same duty: an abandoned turn answers cancelled
+        void this.sessionManager.close(action.sessionId).catch(this.logCatch(`close ${action.sessionId}`));
         break;
       case "reloadSession":
         void this.sessionManager.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
@@ -1724,10 +1724,7 @@ export class Orchestrator {
         this.saveDraft(action.sessionId, action.draft);
         break;
       case "stopTurn":
-        void this.sessionManager.stopTurn(action.sessionId);
-        // The spec's cancellation MUST: pending permission requests resolve
-        // with the cancelled outcome — the agent is not left hanging.
-        this.broker.cancelPending(action.sessionId);
+        void this.sessionManager.stopTurn(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
         break;
       case "verifyAgent":
         void this.gates.verify(action.agentId).catch(this.logCatch(`verify ${action.agentId}`));

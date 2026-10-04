@@ -164,6 +164,11 @@ export interface SessionManagerHooks {
    * view and the user hasn't looked yet — the reaper must not close under
    * an unseen result (reducer-derived `unseen` on the session summary). */
   isUnseen?(sessionId: string): boolean;
+  /** The session's open asks (permission, file write, terminal command,
+   * elicitation — the broker holds them) are answered cancelled: a turn
+   * told to stop owes the agent that answer (an ACP MUST), and so does a
+   * session that closes. */
+  cancelAsks?(sessionId: string): void;
   /** Standing auth lock on this agent (the orchestrator's persisted,
    * evidence-gated auth state). While it holds, no turn may start: the
    * turn-start door queues the words instead of firing them into a wire
@@ -902,6 +907,8 @@ export class SessionManager {
     // Closing while streaming means stop, then close — never a session/delete
     // fired under a live turn.
     await this.interruptTurn(sessionId);
+    // Whatever the session still asks, it asks no one now.
+    this.hooks.cancelAsks?.(sessionId);
     const session = this.sessions.get(sessionId);
     const agentId = session?.agentId ?? this.known.get(sessionId)?.agentId;
     this.sessions.delete(sessionId);
@@ -2257,7 +2264,11 @@ export class SessionManager {
     // A reload's cancel is plumbing, not the user ending the work: it keeps
     // its held words (keepHeldWords) and re-drains after the re-attach.
     if (opts?.keepHeldWords !== true) this.clearPromptQueue(sessionId);
-    await this.pool.cancel(session.agentId, sessionId);
+    // The cancel goes out first, then the asks it leaves are answered — the
+    // agent hears the turn is ending before it hears why its ask was.
+    const cancelled = this.pool.cancel(session.agentId, sessionId);
+    this.hooks.cancelAsks?.(sessionId);
+    await cancelled;
   }
 
   /** Drops one still-queued prompt (composer row × button). */

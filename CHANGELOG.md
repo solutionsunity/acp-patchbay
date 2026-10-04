@@ -65,6 +65,10 @@
   looked connected until the agent's next start.
 - Removing an agent also lets go of everything patchbay held for it in
   this window, including a chat pane still waiting on it.
+- Reloading a session while the agent waits on your answer (a permission,
+  a file write, a command) now tells the agent the question is cancelled,
+  as ACP requires. Before, the reload sat out its 3-second wait and the
+  agent was left waiting on an answer that never came.
 
 ## 0.84.1 — 2026-09-29
 
