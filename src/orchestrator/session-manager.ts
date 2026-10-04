@@ -245,11 +245,15 @@ function deriveTitle(promptText: string): string {
 
 /** Thrown by sendPromptNow when the turn never started (attach failed or
  * the session vanished under it): nothing was rendered and nothing reached
- * the wire, so the caller may safely re-hold the words. Past that point a
+ * the wire, so the words go back to the held ones. Past that point a
  * failure means the words were spent — a rendered user message with an
- * honest error turn. */
+ * honest error turn. `sessionId` is where the turn would have run: the
+ * zero-turn rung may have minted a fresh id before the failure. */
 class TurnNotStartedError extends Error {
-  constructor(readonly reason: Error) {
+  constructor(
+    readonly reason: Error,
+    readonly sessionId: string,
+  ) {
     super(reason.message);
   }
 }
@@ -1873,7 +1877,20 @@ export class SessionManager {
       if (!inFlight && !locked) this.drainQueue(sessionId);
       return;
     }
-    return this.sendPromptNow(sessionId, agentId, text, parts);
+    return this.sendPromptNow(sessionId, agentId, text, parts).catch((err: unknown) => {
+      // The composer let these words go when it sent them, and the turn
+      // never started: they wait among the held ones, where the next open,
+      // reload or prompt sends them — only the user discards words.
+      if (err instanceof TurnNotStartedError) {
+        this.reHold(err.sessionId, {
+          id: newBlockId("queued"),
+          text,
+          ...(parts !== undefined ? { parts } : {}),
+          ...(draft !== undefined ? { draft } : {}),
+        });
+      }
+      throw err;
+    });
   }
 
   /** The body behind the door: attach, transcript write, wire call, turn
@@ -1904,7 +1921,7 @@ export class SessionManager {
       // The turn never started: nothing rendered, nothing on the wire —
       // the caller may safely re-hold the words.
       this.turnStarting.delete(sessionId);
-      throw new TurnNotStartedError(err as Error);
+      throw new TurnNotStartedError(err as Error, sessionId);
     }
     // A mode-set confirmation that hasn't arrived by the next prompt is
     // not coming — the flag attributes the *immediate* notification to the
@@ -2137,16 +2154,10 @@ export class SessionManager {
     this.persistQueue(sessionId);
     void this.sendPromptNow(sessionId, agentId, next.text, next.parts).catch((err: Error) => {
       if (err instanceof TurnNotStartedError) {
-        // Nothing rendered, nothing sent — the words go back to the front
-        // (only the user discards); view rows resync wholesale so display
-        // order stays firing order. The next open/prompt/unlock retries.
+        // Nothing rendered, nothing sent — the words go back (only the user
+        // discards). The next open/prompt/unlock retries.
         this.log.info(`session ${sessionId}: held words re-held — ${err.message}`);
-        const queue = this.promptQueues.get(sessionId) ?? [];
-        queue.unshift(next);
-        this.promptQueues.set(sessionId, queue);
-        this.hooks.emit({ kind: "promptQueueCleared", sessionId });
-        for (const q of queue) this.hooks.emit({ kind: "promptQueued", sessionId, prompt: q });
-        this.persistQueue(sessionId);
+        this.reHold(err.sessionId, next);
         return;
       }
       // The wire settled: the words were spent — rendered as a user
@@ -2155,6 +2166,18 @@ export class SessionManager {
       // rejection would retry forever off its own turn's end.
       this.log.info(`session ${sessionId}: queued prompt failed — ${err.message}`);
     });
+  }
+
+  /** Words whose turn never started go back to the front of the held ones
+   * — anything held meanwhile came after them. The view's rows resync
+   * wholesale, so their order stays the firing order. */
+  private reHold(sessionId: string, words: QueuedPrompt): void {
+    const queue = this.promptQueues.get(sessionId) ?? [];
+    queue.unshift(words);
+    this.promptQueues.set(sessionId, queue);
+    this.hooks.emit({ kind: "promptQueueCleared", sessionId });
+    for (const q of queue) this.hooks.emit({ kind: "promptQueued", sessionId, prompt: q });
+    this.persistQueue(sessionId);
   }
 
   /** The one continuity write. A patch is refused for an agent whose rows

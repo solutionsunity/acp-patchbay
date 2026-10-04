@@ -2362,6 +2362,54 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh2c");
   });
 
+  // The composer lets its words go the moment it sends them — a turn that
+  // never starts must not take them along: only the user discards words.
+  it("a prompt whose turn never started keeps its words — held, with the editor state to take back", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "lost-2.jsonl"), "", "utf8");
+    const continuityStore = new SessionContinuityStore(new MemoryKV());
+    const h = harness({ continuityStore });
+    await h.pool.connect(
+      spec({ declare: { ...LIST_CAPS, loadSession: true }, failLoad: true }, "sh2d"),
+    );
+    await h.sessionManager.syncAgentSessions("sh2d");
+
+    await expect(h.sessionManager.sendPrompt("lost-2", "continue please", undefined, "{editor}")).rejects.toThrow();
+
+    expect(h.state().promptQueue["lost-2"]).toMatchObject([{ text: "continue please", draft: "{editor}" }]);
+    expect(continuityStore.read("lost-2", "sh2d")?.queue).toMatchObject([{ text: "continue please" }]);
+    // nothing reached the transcript — no user message for a turn that never was
+    expect(h.state().transcripts["lost-2"]).toEqual([]);
+
+    await h.pool.stop("sh2d");
+  });
+
+  it("held words drained into a turn that never started go back to the front — the order is the firing order", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".fake-agent-sessions"), { recursive: true });
+    await writeFile(join(cwd, ".fake-agent-sessions", "lost-3.jsonl"), "", "utf8");
+    // words held in an earlier window, waiting on the session's row
+    const continuityStore = new SessionContinuityStore(new MemoryKV());
+    await continuityStore.patch("lost-3", "sh2e", cwd, { queue: [{ id: "q-earlier", text: "first" }] });
+    const h = harness({ continuityStore });
+    await h.pool.connect(
+      spec({ declare: { ...LIST_CAPS, loadSession: true }, failLoad: true }, "sh2e"),
+    );
+    await h.sessionManager.syncAgentSessions("sh2e");
+
+    // a prompt behind held words releases the front — whose load then fails
+    await h.sessionManager.sendPrompt("lost-3", "second");
+    await vi.waitFor(() =>
+      expect(h.events.filter((e) => e.kind === "promptQueueCleared" && e.sessionId === "lost-3")).toHaveLength(1),
+    );
+
+    expect(h.state().promptQueue["lost-3"]?.map((q) => q.text)).toEqual(["first", "second"]);
+    expect(continuityStore.read("lost-3", "sh2e")?.queue?.map((q) => q.text)).toEqual(["first", "second"]);
+
+    await h.pool.stop("sh2e");
+  });
+
   it("the agent's title always wins — patchbay-side rename is gone", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS, listWithTitles: true }, "sh3"));

@@ -69,6 +69,10 @@
   a file write, a command) now tells the agent the question is cancelled,
   as ACP requires. Before, the reload sat out its 3-second wait and the
   agent was left waiting on an answer that never came.
+- A message sent to a session that can't be reopened at that moment (the
+  agent no longer has it, say) no longer disappears with the cleared box:
+  it waits with the held prompts above the composer, to send again or take
+  back.
 
 ## 0.84.1 — 2026-09-29
 

@@ -793,9 +793,9 @@ draft, which the composer flushes on blur so the click reads truth. A
 non-tail row is edited by hand: copy, ×, paste. The drain rides
 success: it fires one held prompt per completed turn (plus login, open, and
 reload's re-attach), holds while the agent isn't running, and never
-auto-retries after a failure — a send that never started re-holds the words
-at the front; a send the wire settled is spent, visible as a user message
-with its error turn. The composer **draft** is per-session state owned
+auto-retries after a failure — a send that never started, drained or sent
+straight from the composer, re-holds the words at the front; a send the
+wire settled is spent, visible as a user message with its error turn. The composer **draft** is per-session state owned
 here, not by the webview (render-only): the composer edits the live buffer,
 saves debounced, and reads the durable copy only when switching sessions —
 its own echoes never fight the keyboard. A new chat in flight leaves no
