@@ -573,7 +573,7 @@ export interface AgentSummary {
 
 /** One operation an agent's queue holds, as the views show it. */
 export type AgentWork =
-  | { kind: "connect" | "restart" | "login" | "logout" | "verify" }
+  | { kind: "connect" | "restart" | "login" | "logout" | "verify" | "stop" | "remove" }
   | {
       kind: "upgrade";
       /** The version it installs: the registry's while the update is on

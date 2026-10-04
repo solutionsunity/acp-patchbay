@@ -1,6 +1,6 @@
 // P2 gate: pool against the fake agent — connect, capture declared,
 // crash → visible → one-action restart, two concurrent sessions on one connection.
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
@@ -321,5 +321,117 @@ describe("AgentPool", () => {
     await expect(pool.connect(spec({}, "no-runtime"))).rejects.toThrow(/launch prerequisite unavailable/);
     const crashed = statuses.find((s) => s.status === "crashed");
     expect(crashed?.detail).toContain("node did not answer --version");
+  });
+});
+
+describe("AgentPool — stopping", () => {
+  it("a process stops once: a stop asked for while it goes down gets that same stop", async () => {
+    const { pool, rec } = makePool();
+    await pool.connect(spec({}, "twice"));
+    const first = pool.stop("twice");
+    expect(pool.stop("twice")).toBe(first);
+    await first;
+    const reported = rec.statuses.length;
+    await pool.stop("twice");
+    expect(rec.statuses).toHaveLength(reported);
+  });
+
+  it("a launch whose signal has already aborted never starts", async () => {
+    const { pool, rec } = makePool();
+    const controller = new AbortController();
+    controller.abort(new Error("stopped by test"));
+    await expect(pool.connect(spec({}, "never"), { signal: controller.signal })).rejects.toThrow("stopped by test");
+    expect(pool.get("never")).toBeUndefined();
+    expect(rec.statuses).toEqual([]);
+  });
+
+  it("a signal stops a launch in its launch phase: nothing spawns, the entry reads stopped", async () => {
+    const statuses: Array<{ status: AgentStatus; detail?: string }> = [];
+    let phase!: (label: string) => void;
+    let release!: () => void;
+    const pool = new AgentPool(
+      {
+        onStatusChanged: (_id, status, detail) => statuses.push({ status, detail }),
+        onDeclaredCaptured: () => {},
+        onSessionUpdate: () => {},
+        ...stubFsTerminalHooks(),
+      },
+      undefined,
+      {
+        resolveLaunch: (s, onPhase) => {
+          phase = onPhase;
+          onPhase("downloading Fake 1.0…");
+          return new Promise((resolve) => (release = () => resolve(spec({}, s.agentId))));
+        },
+      },
+    );
+    const controller = new AbortController();
+    const connecting = pool.connect(spec({}, "mid-download"), { signal: controller.signal });
+    controller.abort(new Error("stopped by test"));
+    await expect(connecting).rejects.toThrow("stopped by test");
+    expect(pool.get("mid-download")?.status).toBe("stopped");
+    // The resolver runs on unwatched — its download is the cache's — and
+    // neither its late label nor its spec moves the stopped launch.
+    phase("downloading Fake 1.0… 90%");
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(pool.get("mid-download")?.status).toBe("stopped");
+    expect(pool.get("mid-download")?.detail).toBeUndefined();
+    expect(statuses.map((s) => s.status)).toEqual(["reconnecting", "reconnecting", "stopped"]);
+  });
+
+  // A launcher shaped like the registry's npx launch, so the connect warms
+  // it first: the stand-in sleeps where a real one would download, and
+  // records its pid. A shebang script — POSIX only.
+  it.skipIf(process.platform === "win32")(
+    "a signal during the launcher warmup kills the warmup, and nothing spawns",
+    async () => {
+      const bin = await mkdtemp(join(tmpdir(), "patchbay-warm-"));
+      const pidFile = join(bin, "pid");
+      await writeFile(
+        join(bin, "npx"),
+        `#!${process.execPath}\nrequire("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetTimeout(() => {}, 30000);\n`,
+      );
+      await chmod(join(bin, "npx"), 0o755);
+      const { pool, rec } = makePool();
+      const controller = new AbortController();
+      const connecting = pool.connect(
+        // PATH holds only the stand-in, so the cache repair a killed
+        // warmup runs finds no npm to ask and touches nothing.
+        { agentId: "warm", name: "Warm", command: join(bin, "npx"), args: ["-y", "fake-pkg@1.0.0"], env: { PATH: bin }, cwd },
+        { signal: controller.signal },
+      );
+      const pid = Number(await waitFor(() => readFile(pidFile, "utf8").then((t) => t || undefined, () => undefined)));
+      controller.abort(new Error("stopped by test"));
+      await expect(connecting).rejects.toThrow("stopped by test");
+      expect(() => process.kill(pid, 0)).toThrow();
+      expect(pool.get("warm")?.status).toBe("stopped");
+      expect(rec.statuses.map((s) => s.status)).not.toContain("running");
+      await rm(bin, { recursive: true, force: true });
+    },
+  );
+
+  it("a call cut off by its connection's own stop is no evidence against the capability", async () => {
+    const evidence: string[] = [];
+    const pool = new AgentPool({
+      onStatusChanged: () => {},
+      onDeclaredCaptured: () => {},
+      onSessionUpdate: () => {},
+      onCapabilityEvidence: (_id, row, kind) => evidence.push(`${row}:${kind}`),
+      ...stubFsTerminalHooks(),
+    });
+    await pool.connect(
+      spec(
+        { declare: { promptCapabilities: { image: true } }, turn: [{ type: "chunk", text: "slow" }], stepDelayMs: 5000 },
+        "cut-off",
+      ),
+    );
+    const { sessionId } = await pool.newSession("cut-off", cwd);
+    const turn = pool.prompt("cut-off", sessionId, [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
+    const cut = expect(turn).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 100));
+    await pool.stop("cut-off");
+    await cut;
+    expect(evidence.filter((e) => e.startsWith("prompt.image"))).toEqual([]);
   });
 });

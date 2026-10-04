@@ -40,6 +40,18 @@
   registry no longer lists keeps running instead of being left stopped. An
   agent saved under an older id than the registry's is upgraded in place
   instead of being added a second time.
+- Stop and Remove now end whatever the agent is doing. Stop is offered while
+  an agent is still starting, downloading included, and ends the start;
+  removing an agent mid-download no longer starts it once the download
+  finishes, and Erase all data no longer leaves one starting either. Work
+  asked of the agent meanwhile (a Verify, an Upgrade) is dropped instead of
+  running after them, and an Upgrade stopped before it saved the new
+  version keeps the old one. A login still open in its terminal is left to
+  you: patchbay stops waiting on it and the terminal stays open until you
+  close it — a login you finish there still counts. While a Stop or Remove
+  runs, its button spins.
+- Stopping an agent mid-reply no longer marks what that reply carried (an
+  image, say) as suspect in the capability matrix.
 
 ## 0.84.1 — 2026-09-29
 

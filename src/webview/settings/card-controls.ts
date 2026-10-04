@@ -7,7 +7,7 @@
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout/verify regressions happened.
-import type { AgentConfigView, AgentSummary, AuthMethodView } from "../../shared/protocol";
+import type { AgentConfigView, AgentSummary, AgentWork, AuthMethodView } from "../../shared/protocol";
 import { hasUnusedProbe } from "../../shared/protocol";
 import { upgradeOffer, type UpgradeOffer } from "../shared/agent-work";
 
@@ -25,7 +25,8 @@ export interface AgentCardControls {
    * note — LoginControl renders whichever applies from `methods`). */
   login: { show: boolean; disabled: boolean };
   logout: { show: boolean; disabled: boolean };
-  stop: { show: boolean };
+  /** Never disabled — it cuts in on whatever the agent's queue holds. */
+  stop: { show: boolean; busy: boolean };
   verify: { show: boolean; disabled: boolean; busy: boolean };
   connect: { show: boolean };
   /** Non-null when the registry is ahead of the pinned version, or while an
@@ -33,7 +34,7 @@ export interface AgentCardControls {
    * the action. Never auto-applied. */
   upgrade: UpgradeOffer | null;
   edit: { show: boolean };
-  remove: { show: boolean };
+  remove: { show: boolean; busy: boolean };
 }
 
 /** The wire's runnable subset — "agent"-kind (`authenticate`),
@@ -52,15 +53,18 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   const { agent, config } = inputs;
   const matrix = agent?.capabilities;
   // Anything the agent's queue holds dims the controls that would only
-  // queue behind it; Verify spins while the check itself runs or waits.
+  // queue behind it; Verify, Stop and Remove each spin while their own
+  // operation runs or waits.
   const busy = agent?.busy ?? [];
   const working = busy.length > 0;
-  const verifying = busy.some((w) => w.kind === "verify");
+  const holds = (kind: AgentWork["kind"]) => busy.some((w) => w.kind === kind);
   const authMethods = agent?.authMethods ?? [];
   // No summary at all = the orchestrator never saw this config — the honest
   // unknown is "untested", never a claimed "stopped".
   const status = agent?.status ?? "untested";
   const running = status === "running";
+  // Something to stop: the process, its launch, or work its queue holds.
+  const live = running || status === "reconnecting" || working;
   const needsAuth = agent?.needsAuth === true;
   const hasRunnableLogin = runnableLoginMethods(authMethods).length > 0;
   // Verify gates on hasUnusedProbe (protocol.ts): fork-declared-unproven
@@ -92,13 +96,14 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
       show: running && !needsAuth && matrix?.["auth.logout"]?.declared === true,
       disabled: working,
     },
-    // Never disabled — killing a hung process is the escape hatch and
-    // must stay reachable whatever the queue holds.
-    stop: { show: running },
-    verify: { show: running && needsVerify, disabled: working, busy: verifying },
-    connect: { show: !running && config !== undefined },
+    // Killing a hung process is the escape hatch, so Stop is there from
+    // the launch on — a download included — whatever the queue holds;
+    // Connect only while there is nothing to stop.
+    stop: { show: live, busy: holds("stop") },
+    verify: { show: running && needsVerify, disabled: working, busy: holds("verify") },
+    connect: { show: !live && config !== undefined },
     upgrade: upgradeOffer(agent),
     edit: { show: true },
-    remove: { show: config !== undefined },
+    remove: { show: config !== undefined, busy: holds("remove") },
   };
 }

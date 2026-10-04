@@ -1,9 +1,10 @@
-// The queue's three rules per row (queue.ts): a request for an operation
-// the row holds joins it, anything else takes its turn in arrival order
-// whatever the one before it did, and rows never wait on each other — with
-// every move of a row's holdings reported.
+// The queue's rules per row (queue.ts): a request for an operation the row
+// holds joins it, anything else takes its turn in arrival order whatever
+// the one before it did, one that cuts in ends the row's work first, and
+// rows never wait on each other — with every move of a row's holdings
+// reported.
 import { describe, expect, it } from "vitest";
-import { Queue } from "../src/orchestrator/queue";
+import { Cancelled, Queue } from "../src/orchestrator/queue";
 
 /** A body the test settles by hand, counting how often it started. */
 function gate<T = void>() {
@@ -36,6 +37,8 @@ describe("Queue", () => {
     await tick();
     g.resolve("up");
     expect(await first).toBe("up");
+    // The outcome is heard once the row no longer holds the operation.
+    expect(q.held("a")).toEqual([]);
     expect(await second).toBe("up");
     expect(g.starts).toBe(1);
   });
@@ -123,5 +126,112 @@ describe("Queue", () => {
     await tick();
     expect(moves).toEqual([["connect"], ["connect", "verify"], ["verify"], []]);
     expect(q.held("a")).toEqual([]);
+  });
+});
+
+describe("Queue — cutting in", () => {
+  type Work = "connect" | "verify" | "upgrade" | "stop" | "remove";
+
+  it("tells the running operation to stop and drops the waiting ones — each settles as Cancelled at once", async () => {
+    const q = new Queue<Work>(() => {});
+    const running = gate();
+    const waiting = gate();
+    let signal: AbortSignal | undefined;
+    const connect = q.run("a", "connect", (s) => ((signal = s), running.body()));
+    const verify = q.run("a", "verify", waiting.body);
+    await tick();
+    const stop = gate();
+    const cut = q.cut("a", "stop", stop.body);
+    expect(signal?.aborted).toBe(true);
+    await expect(connect).rejects.toThrow(Cancelled);
+    await expect(connect).rejects.toThrow("cancelled by stop");
+    await expect(verify).rejects.toThrow(Cancelled);
+    // The cut-in runs once what it cut has unwound — not before.
+    await tick();
+    expect(stop.starts).toBe(0);
+    running.reject(new Error("aborted"));
+    await tick();
+    expect(stop.starts).toBe(1);
+    expect(waiting.starts).toBe(0);
+    stop.resolve();
+    await cut;
+  });
+
+  it("a dropped operation leaves the row at once; the cut running one stays until it has unwound", async () => {
+    const moves: string[][] = [];
+    const q = new Queue<Work>((row) => moves.push(q.held(row)));
+    const running = gate();
+    void q.run("a", "connect", running.body).catch(() => {});
+    void q.run("a", "verify", async () => {}).catch(() => {});
+    await tick();
+    const stop = q.cut("a", "stop", async () => {});
+    await tick();
+    expect(q.held("a")).toEqual(["connect", "stop"]);
+    running.resolve();
+    await stop;
+    await tick();
+    expect(moves).toEqual([
+      ["connect"],
+      ["connect", "verify"],
+      ["connect", "verify", "stop"],
+      ["connect", "stop"],
+      ["stop"],
+      [],
+    ]);
+  });
+
+  it("an operation once cut is not joined: asked for again, it is a new one, in its turn", async () => {
+    const q = new Queue<Work>(() => {});
+    const first = gate();
+    const second = gate();
+    const cut = q.run("a", "connect", first.body);
+    await tick();
+    void q.cut("a", "stop", async () => {});
+    const again = q.run("a", "connect", second.body);
+    await expect(cut).rejects.toThrow(Cancelled);
+    first.reject(new Error("aborted"));
+    await tick();
+    expect(second.starts).toBe(1);
+    second.resolve();
+    await again;
+  });
+
+  it("what cuts in is never cut: a later cut-in takes its turn behind it, and a repeat joins it", async () => {
+    const q = new Queue<Work>(() => {});
+    const stop = gate();
+    const remove = gate();
+    const first = q.cut("a", "stop", stop.body);
+    const repeat = q.cut("a", "stop", stop.body);
+    const removed = q.cut("a", "remove", remove.body);
+    expect(q.held("a")).toEqual(["stop", "remove"]);
+    await tick();
+    expect([stop.starts, remove.starts]).toEqual([1, 0]);
+    stop.resolve();
+    await Promise.all([first, repeat]);
+    await tick();
+    expect(remove.starts).toBe(1);
+    remove.resolve();
+    await removed;
+  });
+
+  it("cutAll ends every row's work and settles once all of it has left", async () => {
+    const q = new Queue<Work>(() => {});
+    const a = gate();
+    const signals: AbortSignal[] = [];
+    const ran = q.run("a", "connect", (s) => (signals.push(s), a.body()));
+    const waits = q.run("a", "upgrade", async () => {});
+    const b = q.run("b", "verify", (s) => (signals.push(s), new Promise<void>((resolve) => s.addEventListener("abort", () => resolve()))));
+    await tick();
+    let settled = false;
+    const all = q.cutAll("stop").then(() => (settled = true));
+    expect(signals.map((s) => s.aborted)).toEqual([true, true]);
+    await expect(ran).rejects.toThrow(Cancelled);
+    await expect(waits).rejects.toThrow(Cancelled);
+    await expect(b).rejects.toThrow(Cancelled);
+    await tick();
+    expect(settled).toBe(false);
+    a.reject(new Error("aborted"));
+    await all;
+    expect([q.held("a"), q.held("b")]).toEqual([[], []]);
   });
 });

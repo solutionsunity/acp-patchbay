@@ -46,6 +46,8 @@ describe("chatPaneProgress", () => {
     expect(line([{ kind: "login" }])).toBe("Logging in to Claude…");
     expect(line([{ kind: "logout" }])).toBe("Logging out of Claude…");
     expect(line([{ kind: "verify" }, { kind: "connect" }])).toBe("Verifying Claude…");
+    expect(line([{ kind: "stop" }])).toBe("Stopping Claude…");
+    expect(line([{ kind: "remove" }])).toBe("Removing Claude…");
   });
 
   it("adds the launch phase while the process starts", () => {

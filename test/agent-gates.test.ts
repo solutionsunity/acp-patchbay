@@ -1,59 +1,69 @@
 // The agents' gates (agent-gates.ts) over a stub store: connection work
-// takes its turn in the queue and a repeat joins it, Stop and Remove pass
-// at once, and a login is one operation per method — the store's own
-// operations stay plain, so every one of these rules is the gates'.
+// takes its turn in the queue and a repeat joins it; Stop and Remove cut in
+// — the process down at once, what runs told to stop and what waits
+// dropped, the cut-in's own run once what it cut has unwound; and a login
+// is one operation per method. The store's own operations stay plain, so
+// every one of these rules is the gates'.
 import { describe, expect, it } from "vitest";
-import { AgentGates, type AgentTurn } from "../src/orchestrator/agent-gates";
+import { AgentGates, type AgentOperation } from "../src/orchestrator/agent-gates";
 import type { ConnectionOperations } from "../src/orchestrator/agents-store";
-import { Queue } from "../src/orchestrator/queue";
+import { Cancelled, Queue } from "../src/orchestrator/queue";
 
 /** A store whose operations each wait for the test to let them finish,
- * recording what ran. */
+ * recording what ran and the signal each was handed. */
 function stubStore() {
   const ran: string[] = [];
-  const pending: Array<() => void> = [];
-  const op = (name: string) => () => {
+  const signals = new Map<string, AbortSignal>();
+  const pending: Array<{ name: string; finish: () => void }> = [];
+  const op = (name: string, signal?: AbortSignal) => {
     ran.push(name);
-    return new Promise<void>((resolve) => pending.push(resolve));
+    if (signal !== undefined) signals.set(name, signal);
+    return new Promise<void>((resolve) => pending.push({ name, finish: resolve }));
   };
   const store: ConnectionOperations = {
-    connect: op("connect"),
-    restart: op("restart"),
-    upgrade: op("upgrade"),
-    login: (_agentId, methodId) => op(`login:${methodId}`)(),
-    logout: op("logout"),
-    verify: () => op("verify")().then(() => "ok" as const),
-    stop: op("stop"),
-    remove: op("remove"),
+    connect: (_agentId, signal) => op("connect", signal),
+    restart: (_agentId, signal) => op("restart", signal),
+    upgrade: (_agentId, signal) => op("upgrade", signal),
+    login: (_agentId, methodId, signal) => op(`login:${methodId}`, signal),
+    logout: () => op("logout"),
+    verify: () => op("verify").then(() => "ok" as const),
+    stop: () => op("stop"),
+    remove: () => op("remove"),
+    stopAll: () => op("stopAll"),
   };
-  /** Lets the oldest running operation finish. */
-  const finish = () => pending.shift()?.();
-  return { store, ran, finish };
+  /** Lets every operation running as `name` finish — one told to stop
+   * included: that is it unwinding. */
+  const finish = (name: string) => {
+    for (const p of pending.filter((q) => q.name === name)) {
+      pending.splice(pending.indexOf(p), 1);
+      p.finish();
+    }
+  };
+  return { store, ran, signals, finish };
 }
 
 const tick = () => new Promise((r) => setImmediate(r));
 
 function gated() {
-  const { store, ran, finish } = stubStore();
-  const queue = new Queue<AgentTurn>(() => {});
-  return { gates: new AgentGates(store, queue), queue, ran, finish };
+  const { store, ran, signals, finish } = stubStore();
+  const queue = new Queue<AgentOperation>(() => {});
+  return { gates: new AgentGates(store, queue), queue, ran, signals, finish };
 }
 
 describe("AgentGates", () => {
   it("connection work takes its turn on the agent, in arrival order", async () => {
     const { gates, ran, finish } = gated();
-    void gates.connect("a");
-    void gates.upgrade("a");
-    void gates.verify("a");
+    const work = [gates.connect("a"), gates.upgrade("a"), gates.verify("a")];
     await tick();
     expect(ran).toEqual(["connect"]);
-    finish();
+    finish("connect");
     await tick();
     expect(ran).toEqual(["connect", "upgrade"]);
-    finish();
+    finish("upgrade");
     await tick();
     expect(ran).toEqual(["connect", "upgrade", "verify"]);
-    finish();
+    finish("verify");
+    await Promise.all(work);
   });
 
   it("a repeat of an operation held joins it", async () => {
@@ -61,44 +71,128 @@ describe("AgentGates", () => {
     const first = gates.upgrade("a");
     const second = gates.upgrade("a");
     await tick();
-    finish();
+    finish("upgrade");
     await Promise.all([first, second]);
     expect(ran).toEqual(["upgrade"]);
   });
 
-  it("Stop and Remove pass at once — never behind held work, never held", async () => {
-    const { gates, queue, ran, finish } = gated();
-    void gates.connect("a");
+  it("Stop cuts in: the process goes down at once, what runs is told to stop, what waits is dropped", async () => {
+    const { gates, queue, ran, signals, finish } = gated();
+    const connect = gates.connect("a");
+    const verify = gates.verify("a");
     await tick();
-    void gates.stop("a");
-    void gates.remove("a");
-    expect(ran).toEqual(["connect", "stop", "remove"]);
-    expect(queue.held("a")).toEqual(["connect"]);
-    finish();
-    finish();
-    finish();
+    const stop = gates.stop("a");
+    // Never behind the work it cuts — that work may be waiting on a hung
+    // agent, and ends only with its process.
+    expect(ran).toEqual(["connect", "stop"]);
+    expect(signals.get("connect")?.aborted).toBe(true);
+    // Both settle at once, before anything has unwound.
+    await expect(connect).rejects.toBeInstanceOf(Cancelled);
+    await expect(verify).rejects.toBeInstanceOf(Cancelled);
+    // The connect is still unwinding; the Stop's own run waits for it.
+    expect(queue.held("a")).toEqual(["connect", "stop"]);
+    await tick();
+    expect(ran).toEqual(["connect", "stop"]);
+    finish("connect");
+    await tick();
+    // The dropped verify never ran.
+    expect(ran).toEqual(["connect", "stop", "stop"]);
+    finish("stop");
+    await stop;
+    expect(queue.held("a")).toEqual([]);
+  });
+
+  it("Remove cuts in the same way, and is held — the row's busy state — until it is done", async () => {
+    const { gates, queue, ran, finish } = gated();
+    const login = gates.login("a", "terminal");
+    await tick();
+    const remove = gates.remove("a");
+    await expect(login).rejects.toBeInstanceOf(Cancelled);
+    expect(queue.held("a")).toEqual(["login", "remove"]);
+    finish("login:terminal");
+    finish("stop");
+    await tick();
+    expect(ran).toEqual(["login:terminal", "stop", "remove"]);
+    expect(queue.held("a")).toEqual(["remove"]);
+    finish("remove");
+    await remove;
+    expect(queue.held("a")).toEqual([]);
+  });
+
+  it("a cut-in is never cut: a Remove asked for during a Stop runs once the Stop is done", async () => {
+    const { gates, queue, ran, finish } = gated();
+    const stop = gates.stop("a");
+    const remove = gates.remove("a");
+    expect(queue.held("a")).toEqual(["stop", "remove"]);
+    await tick();
+    expect(ran).not.toContain("remove");
+    finish("stop");
+    await stop;
+    await tick();
+    expect(ran).toContain("remove");
+    finish("remove");
+    await remove;
+  });
+
+  it("work asked for after a cut waits for what the cut left unwinding, and for the cut-in", async () => {
+    const { gates, ran, finish } = gated();
+    const cut = gates.connect("a");
+    await tick();
+    const stop = gates.stop("a");
+    const again = gates.connect("a");
+    await expect(cut).rejects.toBeInstanceOf(Cancelled);
+    finish("stop");
+    await tick();
+    expect(ran.filter((r) => r === "connect")).toHaveLength(1);
+    finish("connect");
+    await tick();
+    finish("stop");
+    await stop;
+    await tick();
+    // A new operation, not the one cut: it runs.
+    expect(ran.filter((r) => r === "connect")).toHaveLength(2);
+    finish("connect");
+    await again;
+  });
+
+  it("stopAll ends every agent's work and takes every process down", async () => {
+    const { gates, queue, ran, finish } = gated();
+    const a = gates.connect("a");
+    const b = gates.verify("b");
+    const bWaiting = gates.upgrade("b");
+    await tick();
+    const all = gates.stopAll();
+    expect(ran).toContain("stopAll");
+    await expect(a).rejects.toBeInstanceOf(Cancelled);
+    await expect(b).rejects.toBeInstanceOf(Cancelled);
+    await expect(bWaiting).rejects.toBeInstanceOf(Cancelled);
+    finish("stopAll");
+    finish("connect");
+    finish("verify");
+    await all;
+    expect(queue.held("a")).toEqual([]);
+    expect(queue.held("b")).toEqual([]);
+    expect(ran).not.toContain("upgrade");
   });
 
   it("a login is one operation per method: the same method joins, another takes its turn", async () => {
     const { gates, queue, ran, finish } = gated();
-    void gates.login("a", "browser");
-    void gates.login("a", "browser");
-    void gates.login("a", "terminal");
+    const work = [gates.login("a", "browser"), gates.login("a", "browser"), gates.login("a", "terminal")];
     await tick();
     expect(queue.held("a")).toEqual(["login", "login"]);
-    finish();
+    finish("login:browser");
     await tick();
     expect(ran).toEqual(["login:browser", "login:terminal"]);
-    finish();
+    finish("login:terminal");
+    await Promise.all(work);
   });
 
   it("agents never wait on each other", async () => {
     const { gates, ran, finish } = gated();
-    void gates.connect("a");
-    void gates.connect("b");
+    const work = [gates.connect("a"), gates.connect("b")];
     await tick();
     expect(ran).toEqual(["connect", "connect"]);
-    finish();
-    finish();
+    finish("connect");
+    await Promise.all(work);
   });
 });

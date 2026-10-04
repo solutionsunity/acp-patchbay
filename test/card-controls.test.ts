@@ -180,6 +180,31 @@ describe("agentCardControls", () => {
     expect(c.connect.show).toBe(true);
   });
 
+  // Stop cuts in on anything the agent's queue holds, a launch's download
+  // included — so it is there from the launch on, and Connect, which would
+  // only join what runs, is not.
+  it("a launch under way: Stop offered, Connect not", () => {
+    const c = agentCardControls(inputs({ agent: summary({ status: "reconnecting" }), busy: [{ kind: "connect" }] }));
+    expect(c.stop).toEqual({ show: true, busy: false });
+    expect(c.connect.show).toBe(false);
+  });
+
+  it("work held on a stopped agent — an upgrade between its stop and its launch: Stop offered, Connect not", () => {
+    const c = agentCardControls(inputs({ agent: summary({ status: "stopped" }), busy: [{ kind: "upgrade", to: "1.2.0" }] }));
+    expect(c.stop.show).toBe(true);
+    expect(c.connect.show).toBe(false);
+  });
+
+  it("Stop and Remove each spin while their own operation runs — Stop never disabled", () => {
+    const stopping = agentCardControls(inputs({ busy: [{ kind: "stop" }] }));
+    expect(stopping.stop).toEqual({ show: true, busy: true });
+    expect(stopping.remove.busy).toBe(false);
+    const removing = agentCardControls(inputs({ agent: summary({ status: "stopped" }), busy: [{ kind: "remove" }] }));
+    expect(removing.remove).toEqual({ show: true, busy: true });
+    expect(removing.stop.busy).toBe(false);
+    expect(removing.connect.show).toBe(false);
+  });
+
   it("not running: connect (config present), no logout/stop/verify", () => {
     const c = agentCardControls(inputs({ agent: summary({ status: "stopped" }) }));
     expect(c.connect.show).toBe(true);
@@ -234,6 +259,18 @@ describe("agentCardControls", () => {
           }));
           expect(c.login.show && c.logout.show).toBe(false);
         }
+      }
+    }
+  });
+
+  // Connect and Stop are never both offered: one starts what isn't there,
+  // the other ends what is.
+  it("connect/stop exclusivity holds across the state matrix", () => {
+    for (const status of ["running", "stopped", "crashed", "reconnecting", "untested"] as const) {
+      for (const busy of [[], [{ kind: "connect" }], [{ kind: "stop" }], [{ kind: "remove" }]] as AgentWork[][]) {
+        const c = agentCardControls(inputs({ agent: summary({ status }), busy }));
+        expect(c.connect.show && c.stop.show).toBe(false);
+        expect(c.connect.show || c.stop.show).toBe(true);
       }
     }
   });

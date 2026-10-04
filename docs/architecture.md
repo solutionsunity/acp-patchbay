@@ -320,16 +320,31 @@ flowchart TD
   shares that connect, a second Upgrade shares the first's question and
   restart; any other waits in arrival order, and agents never wait on each
   other. A connect whose turn finds the agent running is already done.
-  Stop and Remove pass at once — the escape hatch is never queued behind a
-  hung launch — and saves never meet the gates. Add and startup are the
+  Stop and Remove cut in — the escape hatch is never queued behind a hung
+  launch: the agent's process goes down at once, the running operation is
+  told to stop (its abort signal) and the waiting ones are dropped, each
+  settling as `Cancelled` at once, and the cut-in runs once what it cut has
+  unwound, so a Remove never purges under an upgrade still saving. A cut-in
+  is never cut itself — a Remove asked for during a Stop runs after it. A
+  launch still in its launch phase (download, runtime check, launcher
+  warmup) is told to stop through its connect's signal — the pool marks it
+  stopped, kills a warmup, and never spawns; a download it started goes on
+  into the shared cache, where the next launch finds it — and a terminal
+  login is no longer waited on: its terminal stays the user's to finish,
+  use or close, and its return code, the login's only word, still counts
+  by the same rules when it comes; only the probe and restart that follow
+  a login, which need the process the stop ended, don't run. The window's end and erase cut every agent's
+  work at once, the same way (`stopAll`). Saves never meet the gates. Add and startup are the
   orchestrator's features: the store saves (or reads what to open), the
   connect and the free check pass the gates. Gates decide policy only; the
   store keeps its facts valid at its one writer whatever the gates admit.
   What the queue holds is the row's `busy`, read by the store, never kept —
   the views' one busy state: the Settings card dims the controls that
-  would only wait (never Stop), the upgrade chip reads `upgrading to
-  x.y.z…`, and the chat pane says what the agent is busy with while a chat
-  waits on it. Live only — it ends with the window.
+  would only wait (never Stop) and spins Verify, Stop or Remove while its
+  own operation runs, the upgrade chip reads `upgrading to x.y.z…`, and the
+  chat pane says what the agent is busy with while a chat waits on it — a
+  chat whose connect a Stop or Remove ended simply closes its pane. Live
+  only — it ends with the window.
 
 ## Agent capability matrix
 
@@ -354,7 +369,9 @@ its own surface: pool.ts's wire chokepoint raises `needsAuth` on any -32000 —
 probe, connect, or a mid-session prompt after credentials expired — one
 writer for the spec's "prompt the user to authenticate again"); only
 outgoing agent RPCs can indict — a client-side handler
-throwing is patchbay's own gate rejecting, never the agent failing. Suspect
+throwing is patchbay's own gate rejecting, never the agent failing — and a
+call cut off by its connection's own stop indicts nothing either: patchbay
+ended it, the agent didn't fail it. Suspect
 persists version-keyed exactly like used: a broken bridge must not look clean
 after a restart.
 

@@ -683,8 +683,13 @@ export function AgentsSection(props: {
                       />
                     )}
                     {controls.stop.show && (
-                      <Button variant="outline" size="icon" className="size-8" title="Stop" aria-label="Stop" onClick={() => props.onStop(id)}>
-                        <Icon name="debug-stop" />
+                      <Button
+                        variant="outline" size="icon" className="size-8"
+                        title={controls.stop.busy ? "Stopping…" : "Stop"}
+                        aria-label="Stop"
+                        onClick={() => props.onStop(id)}
+                      >
+                        <Icon name={controls.stop.busy ? "loading" : "debug-stop"} spin={controls.stop.busy} />
                       </Button>
                     )}
                     {controls.verify.show && (
@@ -713,6 +718,7 @@ export function AgentsSection(props: {
                         label="Remove"
                         icon="trash"
                         title="stops the agent and forgets it — config, env, and capability cache"
+                        busy={controls.remove.busy}
                         onConfirm={() => props.onRemove(id)}
                       />
                     )}

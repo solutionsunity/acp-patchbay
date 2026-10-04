@@ -32,6 +32,7 @@ import type {
   SettingsEvent,
 } from "../shared/protocol";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
+import { unlessAborted } from "./abort";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { terminalAuthOf, type TerminalAuth } from "./capabilities";
@@ -100,17 +101,20 @@ export interface AgentsStoreHooks {
   defaultsChanged(agentId: string): void;
 }
 
-/** The operations on an agent's connection — every door reaches them
- * through the orchestrator's gates, which decide when each runs. */
+/** The operations on agents' connections — every door reaches them through
+ * the orchestrator's gates, which decide when each runs. One that takes a
+ * `signal` stops where it is once the signal aborts, and throws its
+ * reason. */
 export interface ConnectionOperations {
-  connect(agentId: string): Promise<void>;
-  restart(agentId: string): Promise<void>;
-  upgrade(agentId: string): Promise<void>;
-  login(agentId: string, methodId: string): Promise<void>;
+  connect(agentId: string, signal?: AbortSignal): Promise<void>;
+  restart(agentId: string, signal?: AbortSignal): Promise<void>;
+  upgrade(agentId: string, signal?: AbortSignal): Promise<void>;
+  login(agentId: string, methodId: string, signal?: AbortSignal): Promise<void>;
   logout(agentId: string): Promise<void>;
   verify(agentId: string): Promise<ProbeOutcome>;
   stop(agentId: string): Promise<void>;
   remove(agentId: string): Promise<void>;
+  stopAll(): Promise<void>;
 }
 
 export class AgentsStore implements ConnectionOperations {
@@ -347,14 +351,15 @@ export class AgentsStore implements ConnectionOperations {
    * carry them. It spawns what the store says, the same reading a restart
    * makes, so a re-added agent keeps its stored defaults from the first
    * connect. Throws when the agent has no saved config, or when the connect
-   * fails (the pool already reported the crash and its reason). */
-  async connect(agentId: string): Promise<void> {
+   * fails (the pool already reported the crash and its reason) or is
+   * stopped. */
+  async connect(agentId: string, signal?: AbortSignal): Promise<void> {
     if (this.deps.pool.get(agentId)?.status === "running") return;
     const spec = this.spec(agentId);
     if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
     const env = await this.deps.env.get(agentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
-    await this.deps.pool.connect(merged);
+    await this.deps.pool.connect(merged, { signal });
     void this.warnOnPathDivergence(merged);
   }
 
@@ -373,14 +378,14 @@ export class AgentsStore implements ConnectionOperations {
    * connect-time snapshot (a command edit or key rotation in Settings must
    * reach the very next spawn). No config behind the connection: the
    * snapshot is all there is, and pool.restart falls back to it. */
-  async restart(agentId: string): Promise<void> {
+  async restart(agentId: string, signal?: AbortSignal): Promise<void> {
     const spec = this.spec(agentId);
     if (spec === undefined) {
-      await this.deps.pool.restart(agentId);
+      await this.deps.pool.restart(agentId, { signal });
       return;
     }
     const env = await this.deps.env.get(agentId);
-    await this.deps.pool.restart(agentId, { ...spec, env: { ...spec.env, ...env } });
+    await this.deps.pool.restart(agentId, { spec: { ...spec, env: { ...spec.env, ...env } }, signal });
   }
 
   /** Re-resolves the registry's current (possibly newer) pinned version and
@@ -392,8 +397,9 @@ export class AgentsStore implements ConnectionOperations {
    * still-uncached binary version re-gates on the confirmation, and a stop
    * that would disconnect open conversations asks first — here, not at any
    * one button, so every surface that offers Upgrade gets the same
-   * question. */
-  async upgrade(agentId: string): Promise<void> {
+   * question. Stopped before the new pin is saved, the agent keeps its
+   * version. */
+  async upgrade(agentId: string, signal?: AbortSignal): Promise<void> {
     const config = this.config(agentId);
     const registryId = config?.registrySource?.registryId;
     if (config === undefined || registryId === undefined) return;
@@ -404,13 +410,15 @@ export class AgentsStore implements ConnectionOperations {
       if (!(await this.confirmUpgrade(config.name, this.hooks.openWork(agentId)))) return;
       await this.deps.pool.stop(agentId);
     }
+    signal?.throwIfAborted();
     // Saved under the agent's own id: a config that predates the registry
     // naming has an id the registry doesn't use.
     await this.persistAgentConfig({ ...launch.spec, agentId }, launch.registrySource);
     try {
-      await this.connect(agentId);
+      await this.connect(agentId, signal);
     } catch {
-      // the pool already reported the crash, with its reason, on the row
+      // the pool already put how the launch ended — its crash and reason,
+      // or a stop — on the row
     }
   }
 
@@ -533,8 +541,9 @@ export class AgentsStore implements ConnectionOperations {
    * cannot drive never reaches a wire call: the card shows no button for
    * it, and this is the writer holding the same line — `authenticate`
    * belongs to the agent type alone. Failure leaves needsAuth set — the
-   * honest signal, no separate reply channel. */
-  async login(agentId: string, methodId: string): Promise<void> {
+   * honest signal, no separate reply channel. `signal` stops the wait on a
+   * terminal login — never its terminal. */
+  async login(agentId: string, methodId: string, signal?: AbortSignal): Promise<void> {
     // The method as the connection's own `initialize` declared it — its
     // kind (capabilities.ts's one classification), and the raw entry a
     // terminal recipe or typed terminal method is read from. Command paths
@@ -552,7 +561,7 @@ export class AgentsStore implements ConnectionOperations {
     if (recipe !== null) {
       // terminal-recipe method: the login runs in a visible terminal,
       // `authenticate` is never called on it (meta.ts).
-      await this.loginViaTerminal(agentId, recipe);
+      await this.loginViaTerminal(agentId, recipe, signal);
       return;
     }
     const typed = method === undefined ? null : terminalAuthOf(method);
@@ -562,7 +571,7 @@ export class AgentsStore implements ConnectionOperations {
       // `authenticate` is never called on it either, so a login's
       // success is always terminal-ran-plus-reprobe, never the RPC's
       // word for it.
-      await this.typedLoginViaTerminal(agentId, typed);
+      await this.typedLoginViaTerminal(agentId, typed, signal);
       return;
     }
     await this.deps.tracker.authenticate(agentId, methodId);
@@ -819,26 +828,41 @@ export class AgentsStore implements ConnectionOperations {
    * evidence, locking with the exit code as the card's reason. An unknown
    * exit (task never started, terminated, terminal closed mid-run) is not
    * affirmative: no evidence noted, the fallback probe runs, and the lock
-   * heals later through a same-method success or a completed prompt. */
-  private async loginViaTerminal(agentId: string, recipe: TerminalAuthRecipe): Promise<void> {
+   * heals later through a same-method success or a completed prompt.
+   *
+   * The login is waited on until the task reports. Stopped before that,
+   * the agent stops waiting, and the terminal stays the user's to finish,
+   * use or close; what the task then reports is the login's result all the
+   * same and is noted by the same rules — the return code is the only word
+   * on it — while the probe and the restart, which need the process the
+   * stop ended, don't run. */
+  private async loginViaTerminal(
+    agentId: string,
+    recipe: TerminalAuthRecipe,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const name = recipe.label ?? `${this.name(agentId) ?? agentId} login`;
-    const exitCode = await this.hooks.runLoginTask(name, recipe);
-    this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
-    if (exitCode !== undefined && exitCode !== 0) {
-      this.noteAuthEvidence(agentId, {
-        kind: "loginFailed",
-        reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
-      });
-      return;
-    }
-    // Exit 0 is the affirmative evidence — it clears the lock (the
-    // authority table's call); the probe below is corroboration and the
-    // offering re-read, not the clearer: on a lazy-auth agent its
-    // session/new success bears nothing either way. An *unknown* exit
-    // (task never started, terminated, terminal closed mid-run) is not
-    // affirmative — no evidence is noted, and the lock heals later through
-    // a same-method success or a completed prompt.
-    if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });
+    const reported = this.hooks.runLoginTask(name, recipe).then((exitCode) => {
+      this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
+      if (exitCode !== undefined && exitCode !== 0) {
+        this.noteAuthEvidence(agentId, {
+          kind: "loginFailed",
+          reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
+        });
+      }
+      // Exit 0 is the affirmative evidence — it clears the lock (the
+      // authority table's call); the probe below is corroboration and the
+      // offering re-read, not the clearer: on a lazy-auth agent its
+      // session/new success bears nothing either way. An *unknown* exit
+      // (task never started, terminated, terminal closed mid-run) is not
+      // affirmative — no evidence is noted, and the lock heals later
+      // through a same-method success or a completed prompt.
+      if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });
+      return exitCode;
+    });
+    const exitCode = await unlessAborted(reported, signal);
+    signal?.throwIfAborted();
+    if (exitCode !== undefined && exitCode !== 0) return;
     const outcome = await this.verify(agentId);
     // "skipped" = the probe is latch-deferred (first-session-mcp-latch) —
     // no corroboration is possible without spending the latch slot, and
@@ -848,7 +872,7 @@ export class AgentsStore implements ConnectionOperations {
       this.log.info(
         `${agentId}: login succeeded but the probe is latch-deferred — restarting so the process reads the fresh credentials`,
       );
-      await this.restart(agentId);
+      await this.restart(agentId, signal);
       return;
     }
     if (outcome === "auth_required") {
@@ -862,7 +886,7 @@ export class AgentsStore implements ConnectionOperations {
       this.log.info(
         `${agentId}: login succeeded but the running process still reports auth_required — restarting it to pick up the fresh credentials`,
       );
-      await this.restart(agentId);
+      await this.restart(agentId, signal);
     }
   }
 
@@ -876,7 +900,7 @@ export class AgentsStore implements ConnectionOperations {
    * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
    * guards, and it must not win here any more than it can at spawn;
    * not-found falls back to the bare name and lets the task report it. */
-  private async typedLoginViaTerminal(agentId: string, typed: TerminalAuth): Promise<void> {
+  private async typedLoginViaTerminal(agentId: string, typed: TerminalAuth, signal?: AbortSignal): Promise<void> {
     const spec = this.spec(agentId);
     if (spec === undefined) {
       this.log.warn(`typed terminal login: no configured spec for ${agentId}`);
@@ -888,10 +912,6 @@ export class AgentsStore implements ConnectionOperations {
       process.platform === "win32"
         ? (resolveExecutableWin32(spec.command, { ...process.env, ...env }) ?? spec.command)
         : spec.command;
-    await this.loginViaTerminal(agentId, {
-      command,
-      args: [...spec.args, ...typed.args],
-      env,
-    });
+    await this.loginViaTerminal(agentId, { command, args: [...spec.args, ...typed.args], env }, signal);
   }
 }

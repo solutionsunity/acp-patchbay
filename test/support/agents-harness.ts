@@ -5,7 +5,7 @@
 // them carries its own copy of a writer.
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
-import { AgentGates, type AgentTurn } from "../../src/orchestrator/agent-gates";
+import { AgentGates, type AgentOperation } from "../../src/orchestrator/agent-gates";
 import { AgentsStore, type AgentsStoreDeps, type AgentsStoreHooks } from "../../src/orchestrator/agents-store";
 import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchResolver } from "../../src/orchestrator/pool";
@@ -80,7 +80,7 @@ export function agentsHarness(
       agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
     ...stubFsTerminalHooks(),
   }, undefined, { resolveLaunch: opts.resolveLaunch });
-  const queue = new Queue<AgentTurn>((agentId) => agents.publish(agentId));
+  const queue = new Queue<AgentOperation>((agentId) => agents.publish(agentId));
   const usedCapabilities = new UsedCapabilityStore(kv);
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
     changed: (agentId) => agents.publish(agentId),

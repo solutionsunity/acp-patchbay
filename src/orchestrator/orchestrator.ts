@@ -32,7 +32,7 @@ import {
   type SettingsState,
 } from "../shared/protocol";
 import { openAsks, type OpenAsk } from "../shared/attention";
-import { AgentGates, type AgentTurn } from "./agent-gates";
+import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
@@ -52,7 +52,7 @@ import { sessionKnobExtras } from "./extensions";
 import { runLoginTask } from "./login-task";
 import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
-import { Queue } from "./queue";
+import { Cancelled, Queue } from "./queue";
 import { normalizeRootPath, SessionManager } from "./session-manager";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
@@ -700,7 +700,7 @@ export class Orchestrator {
     // turns, and the gates — the one way any door reaches an operation on
     // an agent's connection — decide how each operation meets it. What the
     // queue holds is the agent's busy state, so every move re-sends its row.
-    const queue = new Queue<AgentTurn>((agentId) => this.agents.publish(agentId));
+    const queue = new Queue<AgentOperation>((agentId) => this.agents.publish(agentId));
     const agents = new AgentsStore(
       {
         pool: this.pool,
@@ -826,8 +826,9 @@ export class Orchestrator {
   }
 
   /** "Disconnect & erase all data": stop reality first —
-   * every agent process (graceful ladder) and terminal tree — then the
-   * erase sweep (erase-all.ts owns the ordering constraint), then both
+   * every agent's work ended and its process down (graceful ladder), every
+   * terminal tree — so nothing launches for an agent the sweep forgets, then
+   * the erase sweep (erase-all.ts owns the ordering constraint), then both
    * channels catch up through ordinary events: agents and sessions leave
    * row by row, configs/integrations/rules/audit republish empty. Never
    * automatic; the Settings action is the only caller. */
@@ -835,7 +836,7 @@ export class Orchestrator {
     this.log.info("erase all data: stopping every process");
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     this.clientHost.clear();
-    await this.agents.stopAll();
+    await this.gates.stopAll();
     this.sessionManager.reset();
     this.contextTokenToSession.clear();
 
@@ -888,8 +889,9 @@ export class Orchestrator {
 
   /** deactivate's bounded best-effort: terminal trees get a
    * straight SIGKILL (batch commands — no protocol to be graceful about),
-   * agents get the pool ladder on its tight budget, and the whole sweep is
-   * raced against the ~2s VS Code actually waits before killing the host.
+   * agents get the pool ladder on its tight budget — their work ended first,
+   * so nothing waiting on them launches as they go down — and the whole
+   * sweep is raced against the ~2s VS Code actually waits before killing the host.
    * Whatever this couldn't reach, the next activate's reap covers. */
   async shutdown(): Promise<void> {
     // Reload-continuation stamp, written before any killing — the running
@@ -899,7 +901,7 @@ export class Orchestrator {
     await this.agents.stampRunning();
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     await Promise.race([
-      this.agents.stopAll(),
+      this.gates.stopAll(),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
     ]);
   }
@@ -1574,7 +1576,9 @@ export class Orchestrator {
         `${nameOf(id)} ${u.to} is available — you run ${u.from}.`,
         "Upgrade",
       );
-      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) await this.gates.upgrade(id);
+      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) {
+        await this.gates.upgrade(id).catch(this.logCatch(`upgrade ${id}`));
+      }
       return;
     }
     const picked = await vscode.window.showInformationMessage(
@@ -1587,7 +1591,9 @@ export class Orchestrator {
       { canPickMany: true, placeHolder: "Upgrade which agents?" },
     );
     for (const item of chosen ?? []) {
-      if (this.agents.updates()[item.id] !== undefined) await this.gates.upgrade(item.id);
+      if (this.agents.updates()[item.id] !== undefined) {
+        await this.gates.upgrade(item.id).catch(this.logCatch(`upgrade ${item.id}`));
+      }
     }
   }
 
@@ -1629,7 +1635,7 @@ export class Orchestrator {
         void this.gates.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
         break;
       case "stopAgent":
-        void this.gates.stop(action.agentId);
+        void this.gates.stop(action.agentId).catch(this.logCatch(`stop ${action.agentId}`));
         break;
       case "startChat":
         void this.startChat(action.agentId);
@@ -1719,7 +1725,7 @@ export class Orchestrator {
         this.broker.cancelPending(action.sessionId);
         break;
       case "verifyAgent":
-        void this.gates.verify(action.agentId);
+        void this.gates.verify(action.agentId).catch(this.logCatch(`verify ${action.agentId}`));
         break;
       case "editAgentDefaults":
         void (action.open ? this.defaultsEditor.open(action.agentId) : this.defaultsEditor.close(action.agentId));
@@ -1740,7 +1746,7 @@ export class Orchestrator {
         void this.gates.logout(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
         break;
       case "upgradeAgent":
-        void this.gates.upgrade(action.agentId);
+        void this.gates.upgrade(action.agentId).catch(this.logCatch(`upgrade ${action.agentId}`));
         break;
       case "refreshRegistry":
         void this.acpRegistry.refresh("manual");
@@ -1907,7 +1913,7 @@ export class Orchestrator {
         void this.agents.save(action.config);
         break;
       case "removeAgentConfig":
-        void this.gates.remove(action.agentId);
+        void this.gates.remove(action.agentId).catch(this.logCatch(`remove ${action.agentId}`));
         break;
       case "reorderAgentConfigs":
         void this.agents.reorder(action.ids).catch(this.logCatch("reorderAgentConfigs"));
@@ -2176,9 +2182,10 @@ export class Orchestrator {
     if (agentId === undefined) return;
     try {
       await this.gates.connect(agentId);
-      if (verifyAfterConnect) void this.gates.verify(agentId);
+      if (verifyAfterConnect) void this.gates.verify(agentId).catch(this.logCatch(`verify ${agentId}`));
     } catch {
-      // the pool already reported the crash, with its reason, on the row
+      // the pool already put how the launch ended — its crash and reason,
+      // or a stop — on the row
     }
   }
 
@@ -2214,10 +2221,8 @@ export class Orchestrator {
       if (draft !== undefined) await this.sessionManager.reviveNew(draft);
       else await this.sessionManager.createSession(agentId, agentName, this.workspaceCwd);
     } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      this.log.error(`startChat ${agentId}: ${raw}`);
-      if (!this.paneShows(agentId)) return;
-      this.agentView.emit({ kind: "chatConnectFailed", agentId, reason: this.connectFailureReason(agentId, err, raw) });
+      this.logCatch(`startChat ${agentId}`)(err);
+      this.chatPaneFailed(agentId, err);
     }
   }
 
@@ -2239,16 +2244,27 @@ export class Orchestrator {
       await this.gates.connect(agentId);
       if (this.paneShows(agentId, sessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      this.log.error(`connect for session ${sessionId} (${agentId}): ${raw}`);
-      if (!this.paneShows(agentId, sessionId)) return;
-      this.agentView.emit({
-        kind: "chatConnectFailed",
-        agentId,
-        reason: this.connectFailureReason(agentId, err, raw),
-        forSessionId: sessionId,
-      });
+      this.logCatch(`connect for session ${sessionId} (${agentId})`)(err);
+      this.chatPaneFailed(agentId, err, sessionId);
     }
+  }
+
+  /** A chat that didn't land on its agent: the pane says why, with a Retry
+   * — unless the user's own Stop or Remove ended it, and the pane just
+   * goes. A pane taken by a later request is not this one's to touch. */
+  private chatPaneFailed(agentId: string, err: unknown, forSessionId?: string): void {
+    if (!this.paneShows(agentId, forSessionId)) return;
+    if (err instanceof Cancelled) {
+      this.agentView.emit({ kind: "chatConnectResolved" });
+      return;
+    }
+    const raw = err instanceof Error ? err.message : String(err);
+    this.agentView.emit({
+      kind: "chatConnectFailed",
+      agentId,
+      reason: this.connectFailureReason(agentId, err, raw),
+      forSessionId,
+    });
   }
 
   /** The latest connect on demand owns the chat pane: an earlier one whose
@@ -2281,14 +2297,18 @@ export class Orchestrator {
    * signal back to the UI), but silently dropping the error entirely left
    * nothing to debug from. */
   private logCatch(context: string): (err: unknown) => void {
-    return (err) => this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+    return (err) => {
+      // Ended by the user's own Stop or Remove — no failure.
+      if (err instanceof Cancelled) this.log.info(`${context}: ${err.message}`);
+      else this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+    };
   }
 
   dispose(): void {
     this.sessionManager.dispose();
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
-    void this.agents.stopAll();
+    void this.gates.stopAll();
     this.agentView.flushNow();
     this.settings.flushNow();
     this.statusBarItem.dispose();

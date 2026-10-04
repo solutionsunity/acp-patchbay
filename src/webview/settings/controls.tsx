@@ -49,17 +49,20 @@ export function ConfirmButton(props: {
    * an open Radix AlertDialog from the tree mid-interaction can strand the
    * body's pointer-events lock and freeze the whole webview. */
   disabled?: boolean;
+  /** What it confirms is under way: the icon spins, the trigger dimmed. */
+  busy?: boolean;
   onConfirm(): void;
 }) {
+  const disabled = props.disabled === true || props.busy === true;
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
         {props.icon !== undefined ? (
-          <Button variant={props.variant ?? "outline"} size="icon" className="size-8" title={props.label} aria-label={props.label} disabled={props.disabled}>
-            <Icon name={props.icon} />
+          <Button variant={props.variant ?? "outline"} size="icon" className="size-8" title={props.label} aria-label={props.label} disabled={disabled}>
+            <Icon name={props.busy === true ? "loading" : props.icon} spin={props.busy === true} />
           </Button>
         ) : (
-          <Button variant={props.variant ?? "outline"} size="sm" disabled={props.disabled}>{props.label}</Button>
+          <Button variant={props.variant ?? "outline"} size="sm" disabled={disabled}>{props.label}</Button>
         )}
       </AlertDialogTrigger>
       <AlertDialogContent>

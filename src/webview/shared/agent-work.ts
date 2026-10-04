@@ -53,5 +53,9 @@ function workLine(work: AgentWork, name: string): string {
       return `Logging out of ${name}…`;
     case "verify":
       return `Verifying ${name}…`;
+    case "stop":
+      return `Stopping ${name}…`;
+    case "remove":
+      return `Removing ${name}…`;
   }
 }

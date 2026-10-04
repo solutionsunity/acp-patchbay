@@ -3,12 +3,14 @@
 // with its SecretStorage env, Remove purges every saved fact, auth evidence
 // for an agent with no config writes nothing, startup reads what this window
 // opens with, and the gates put the connection operations through the
-// queue — its holdings riding the row as busy.
+// queue — its holdings riding the row as busy — with Stop and Remove
+// ending whatever it holds.
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Cancelled } from "../src/orchestrator/queue";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { AgentConfigView } from "../src/shared/protocol";
@@ -276,16 +278,116 @@ describe("the gates", () => {
     await h.agents.stop("reg");
   });
 
-  it("Stop never waits its turn — the escape hatch reaches an agent whose queue is held", async () => {
+  it("Stop never waits its turn, and an upgrade it stopped goes no further — the agent keeps its version", async () => {
     const user = asking();
     const h = agentsHarness(dir, { hooks: user.hooks });
     await upgradable(h);
 
     const upgrade = h.gates.upgrade("reg");
     await vi.waitFor(() => expect(user.asked).toHaveLength(1));
-    await h.gates.stop("reg");
-    expect(h.row("reg")?.status).toBe("stopped");
-    user.answer(false);
-    await upgrade;
+    const cut = expect(upgrade).rejects.toBeInstanceOf(Cancelled);
+    const stop = h.gates.stop("reg");
+    // The escape hatch reaches the agent whatever its queue holds.
+    await vi.waitFor(() => expect(h.row("reg")?.status).toBe("stopped"));
+    await cut;
+    expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "stop" }]);
+    // The question still open is answered yes: the upgrade, told to stop,
+    // saves no new pin and starts nothing.
+    user.answer(true);
+    await stop;
+    expect(h.agents.config("reg")?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.row("reg")).toMatchObject({ status: "stopped", busy: [] });
+  });
+
+  // Before Stop and Remove could reach a launch still downloading, Remove
+  // finished launching an agent that no longer existed.
+  it("Remove during a launch ends it: the removed agent never starts", async () => {
+    let release!: () => void;
+    const download = new Promise<void>((resolve) => (release = resolve));
+    const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await download, spec) });
+    await h.agents.save(fakeConfig("doomed", {}));
+    const connect = h.gates.connect("doomed");
+    await vi.waitFor(() => expect(h.pool.get("doomed")?.status).toBe("reconnecting"));
+    const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
+
+    await h.gates.remove("doomed");
+    await cut;
+    // The download lands after all — and launches nothing.
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.pool.get("doomed")?.status).toBe("stopped");
+    expect(h.agents.config("doomed")).toBeUndefined();
+    expect(h.row("doomed")).toBeUndefined();
+    expect(h.removed).toEqual(["doomed"]);
+  });
+
+  it("Stop during a launch ends it, and the next Connect starts afresh", async () => {
+    let hold: Promise<void> | null = new Promise<void>(() => {});
+    const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await hold, spec) });
+    await h.agents.save(fakeConfig("slow", {}));
+    const connect = h.gates.connect("slow");
+    await vi.waitFor(() => expect(h.pool.get("slow")?.status).toBe("reconnecting"));
+    const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
+
+    await h.gates.stop("slow");
+    await cut;
+    expect(h.row("slow")).toMatchObject({ status: "stopped", busy: [] });
+    hold = null;
+    await h.gates.connect("slow");
+    expect(h.row("slow")?.status).toBe("running");
+    await h.agents.stopAll();
+  });
+
+  it("a terminal login holds the agent until its terminal reports an exit or is closed — the exit is evidence", async () => {
+    let close: ((exitCode: number | undefined) => void) | undefined;
+    const h = agentsHarness(dir, {
+      hooks: { runLoginTask: () => new Promise<number | undefined>((resolve) => (close = resolve)) },
+    });
+    await h.agents.save(
+      fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
+    );
+    await h.gates.connect("tl");
+    const login = h.gates.login("tl", "tl");
+    await vi.waitFor(() => expect(close).toBeDefined());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.row("tl")?.busy).toEqual([{ kind: "login" }]);
+
+    close?.(1);
+    await login;
+    expect(h.agents.authLocked("tl")).toBe(true);
+    await h.agents.stopAll();
+  });
+
+  // The login's terminal is the user's: a Stop stops waiting on it, never
+  // closes it — the user may still finish the login there, or use it. The
+  // return code is the login's only word, so it still counts when it comes.
+  it("Stop stops waiting on a terminal login and leaves the terminal be — its return code still counts", async () => {
+    let close: ((exitCode: number | undefined) => void) | undefined;
+    const h = agentsHarness(dir, {
+      // The login's terminal: open until the user is done with it.
+      hooks: { runLoginTask: () => new Promise<number | undefined>((resolve) => (close = resolve)) },
+    });
+    await h.agents.save(
+      fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
+    );
+    await h.gates.connect("tl");
+    const probes = vi.spyOn(h.tracker, "verify");
+    const restarts = vi.spyOn(h.pool, "restart");
+    const login = h.gates.login("tl", "tl");
+    await vi.waitFor(() => expect(close).toBeDefined());
+    const cut = expect(login).rejects.toBeInstanceOf(Cancelled);
+
+    // The terminal is still open; the Stop doesn't wait for it.
+    await h.gates.stop("tl");
+    await cut;
+    expect(h.row("tl")).toMatchObject({ status: "stopped", busy: [] });
+    // The user is done with it later, and its code is the login's result.
+    // The probe and the restart that follow a login need the process the
+    // stop ended: neither runs.
+    close?.(1);
+    await vi.waitFor(() => expect(h.agents.authLocked("tl")).toBe(true));
+    expect(probes).not.toHaveBeenCalled();
+    expect(restarts).not.toHaveBeenCalled();
+    expect(h.row("tl")?.status).toBe("stopped");
   });
 });

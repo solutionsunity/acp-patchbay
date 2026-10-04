@@ -545,6 +545,19 @@ for (const theme of Object.keys(THEMES)) {
   const upgrading = p.locator('button[aria-label="Claude Code upgrading to 1.0.0…"]');
   await upgrading.waitFor({ timeout: 3000 });
   check(`[${theme}] an upgrade under way: the chip says so and takes no click`, await upgrading.isDisabled());
+  // A Stop or a Remove under way spins its own control — Stop still takes
+  // a click, the escape hatch never dims.
+  await upsert({ ...claudeRow, busy: [{ kind: "stop" }] });
+  const stopping = p.locator('button[aria-label="Stop"][title="Stopping…"]');
+  await stopping.waitFor({ timeout: 3000 });
+  check(
+    `[${theme}] a Stop under way: Stop spins and stays enabled`,
+    (await stopping.isEnabled()) && (await stopping.locator(".codicon-modifier-spin").count()) === 1,
+  );
+  await upsert({ ...claudeRow, status: "stopped", busy: [{ kind: "remove" }] });
+  const removing = p.locator('button[aria-label="Remove"] .codicon-modifier-spin');
+  await removing.waitFor({ timeout: 3000 });
+  check(`[${theme}] a Remove under way: Remove spins and takes no click`, await p.locator('button[aria-label="Remove"]').isDisabled());
   await upsert(claudeRow);
   const [btnColor, bodyColor] = await p.evaluate(() => {
     // Row actions are icon-only buttons (aria-label carries the semantics).

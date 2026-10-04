@@ -181,7 +181,7 @@ Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
 registry has a newer version than the pin — the same chip as the Agent View's,
 indicator and action in one; while an upgrade runs it reads `upgrading to
 {version}…` with a spinner and takes no click · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
-· default knobs render **exactly what the agent
+(spins and takes no click while the agent is being removed) · default knobs render **exactly what the agent
 offered**: the mode selector (when modes exist) plus one select per offered config
 option, keyed by the option's own id — category is UX-only in ACP, so it only
 decorates with an icon when reported; boolean options render a tri-state default
@@ -195,7 +195,10 @@ defaults: … — connect to edit`); connected with the session still opening �
 `reading this agent's knob offering…`; an agent that can't open one yet (a
 latched agent before its first session) states why; an agent that offered
 nothing reads `this agent offered no session knobs`, and saved selections the
-current surface doesn't offer are stated rather than silently blanked · Stop ·
+current surface doesn't offer are stated rather than silently blanked · Stop —
+offered whenever there is something to stop: the process, its launch (a
+download included), or work the agent's queue holds; it spins while a Stop
+runs and never dims; `Connect` shows only when there is nothing to stop ·
 `Diagnostics…` → modal that **discloses cost before running**
 (behavior probes consume real turns; ephemeral session in a temp directory — never
 the workspace). Crashed card: red note with time + one `Restart` + the process's

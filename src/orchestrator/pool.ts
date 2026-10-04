@@ -14,6 +14,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
 import { formatCommandLine } from "../shared/command-line";
 import { nullLogger, type Logger } from "./logger";
+import { unlessAborted } from "./abort";
 import { isRefusal } from "./client-replies";
 import {
   clientCapabilitiesWire,
@@ -187,6 +188,9 @@ interface Entry {
    * agent sends from inside its own open finds no session here. */
   sessions: Map<string, string>;
   stopping: boolean;
+  /** The process's stop, once one was asked — every later request waits
+   * for the same end. */
+  stopped: Promise<void> | null;
   stderrTail: string[];
 }
 
@@ -346,16 +350,21 @@ export class AgentPool {
 
   /** Spawn + initialize — the agent's one process in this window, carrying
    * every session opened with it. Declared table is captured fresh on every
-   * connect. */
+   * connect. `signal` stops the launch before anything spawns — the launch
+   * phase and the warmup — and the entry reads stopped; once the process
+   * exists, a stop reaches the process itself. */
   async connect(
     spec: LaunchSpec,
     opts?: {
+      signal?: AbortSignal;
       /** Internal: set on the one retry after a launcher-cache repair, so a
        * repair that didn't actually fix things can never loop. */
       repairAttempted?: boolean;
     },
   ): Promise<DeclaredCapabilities> {
     const agentId = spec.agentId;
+    const signal = opts?.signal;
+    signal?.throwIfAborted();
     const existing = this.entries.get(agentId);
     if (existing && (existing.status === "running" || existing.status === "reconnecting")) {
       throw new Error(`agent ${agentId} is already connected`);
@@ -371,6 +380,7 @@ export class AgentPool {
       status: "reconnecting",
       sessions: new Map(),
       stopping: false,
+      stopped: null,
       stderrTail: [],
     };
     this.entries.set(agentId, entry);
@@ -383,15 +393,21 @@ export class AgentPool {
     // happen here, labeled on this entry's status. The resolved spec
     // replaces the connect-time snapshot and feeds warmup and the real
     // spawn alike: both MUST see the same env or the warmup would warm a
-    // different package cache than the launch reads.
+    // different package cache than the launch reads. A stop stops the
+    // waiting, not the resolver: a download it started is the cache's,
+    // which other launches may share, and lands there for the next one.
     if (this.launchResolver !== undefined) {
       try {
-        spec = await this.launchResolver(spec, (label) =>
-          this.setStatus(entry, "reconnecting", label),
+        spec = await unlessAborted(
+          this.launchResolver(spec, (label) => {
+            if (!signal?.aborted) this.setStatus(entry, "reconnecting", label);
+          }),
+          signal,
         );
         entry.spec = spec;
         this.clearPhaseLabel(entry);
       } catch (err) {
+        if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
         const detail = `launch prerequisite unavailable — ${(err as Error).message}`;
         this.markDead(entry, detail);
         throw new Error(detail);
@@ -402,7 +418,10 @@ export class AgentPool {
     // the "run it once manually" advice, done by patchbay itself, with the
     // honest "downloading" label while it's genuinely fetching.
     const warm = warmupSpawn(spec);
-    if (warm !== null) await this.warmLauncherCache(entry, warm, spec);
+    if (warm !== null && signal?.aborted !== true) await this.warmLauncherCache(entry, warm, spec, signal);
+    // The last moment the signal reaches the launch: from the spawn on, a
+    // stop reaches the process.
+    if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
 
     this.log.info(`${agentId}: spawning ${spec.command} (${spec.args.length} args)`);
     const launch = resolveSpawn(spec.command, spec.args, spawnEnv(spec));
@@ -599,13 +618,15 @@ export class AgentPool {
       // event lands (observed live: exitCode still null here), so wait
       // briefly for the real code — the timeout path's SIGTERM above makes
       // an exit imminent either way.
+      // A stopped launch is never retried.
       if (
         opts?.repairAttempted !== true &&
+        !entry.stopping &&
         isMissingBinSignature(await exitCodeWithin(child, 2_500), entry.stderrTail) &&
         (await this.repairLauncherCache(spec))
       ) {
         this.log.info(`${agentId}: launcher cache repaired — retrying connect`);
-        return this.connect(spec, { repairAttempted: true });
+        return this.connect(spec, { signal, repairAttempted: true });
       }
       throw err;
     }
@@ -644,22 +665,24 @@ export class AgentPool {
    * exits on its own — `connection.close()` never ends the pipe), grace,
    * SIGTERM the tree, grace, SIGKILL the tree — then a final group sweep,
    * because a leader that exited cleanly can still leave grandchildren
-   * behind. */
-  async stop(agentId: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
+   * behind. A process stops once: asked again while it goes down, or after,
+   * the request gets that same stop. */
+  stop(agentId: string, budget: StopBudget = INTERACTIVE_STOP): Promise<void> {
     const entry = this.entries.get(agentId);
-    // Pre-spawn (runtime resolve / warmup) there is nothing to stop and
-    // nothing safe to mutate: the in-flight connect() closure owns this
-    // entry, and flipping its status to "stopped" here would unlock the
-    // orchestrator's connect gate mid-connect — a second connect would
-    // then install a fresh entry while the first, gate defused, spawns
-    // onto the orphaned one (two live processes, one unreachable). The
-    // card offers Stop only while running, so no user control reaches
-    // this window anyway — an abortable pre-spawn phase is a visible
-    // extension point, deliberately unfilled.
-    if (!entry || entry.process === null) return;
+    // Pre-spawn (runtime resolve / warmup) there is no process to stop, and
+    // the entry is not this call's to write: the in-flight connect() owns
+    // it — flipped to "stopped" from here, a second connect could install a
+    // fresh entry while the first spawns onto the orphaned one (two live
+    // processes, one unreachable). A launch that far is stopped through its
+    // connect's signal, and marks its own entry stopped.
+    if (!entry || entry.process === null) return Promise.resolve();
+    entry.stopped ??= this.end(entry, entry.process, budget);
+    return entry.stopped;
+  }
+
+  private async end(entry: Entry, proc: ChildProcess, budget: StopBudget): Promise<void> {
     entry.stopping = true;
     entry.connection?.close();
-    const proc = entry.process;
     if (proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
       const exited = new Promise<void>((resolve) => {
         if (proc.exitCode !== null || proc.signalCode !== null) resolve();
@@ -690,13 +713,16 @@ export class AgentPool {
   /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets.
    * `spec`, when given, replaces the entry's connect-time snapshot — the
    * caller read current config and secrets; a restart is a spawn and must
-   * not resurrect stale command/args/env. */
-  async restart(agentId: string, spec?: LaunchSpec): Promise<DeclaredCapabilities> {
+   * not resurrect stale command/args/env. `signal` is the connect's. */
+  async restart(
+    agentId: string,
+    opts?: { spec?: LaunchSpec; signal?: AbortSignal },
+  ): Promise<DeclaredCapabilities> {
     const entry = this.entries.get(agentId);
     if (!entry) throw new Error(`unknown agent ${agentId}`);
     await this.stop(agentId);
     entry.stopping = false;
-    return this.connect(spec ?? entry.spec);
+    return this.connect(opts?.spec ?? entry.spec, { signal: opts?.signal });
   }
 
   /** `additionalDirectories` crosses the wire only when the agent advertises
@@ -989,9 +1015,10 @@ export class AgentPool {
    * call settles, whatever rows the proof table ties to its method + params
    * (capabilities.ts CAPABILITY_PROOFS) get their evidence — "used" on
    * success, "suspect" on failure — and no other place in pool.ts decides
-   * what a wire fact means. One failure is exempt from suspicion:
+   * what a wire fact means. Two failures are exempt from suspicion:
    * auth_required (-32000) is the honest pre-login state, already surfaced
-   * as its own condition, not a capability misbehaving. `priorSessionCount`
+   * as its own condition, not a capability misbehaving; and a call cut off
+   * by its connection's own stop failed by patchbay's hand. `priorSessionCount`
    * is captured before the await: "a second session on a connection already
    * serving one" must count the sessions as they stood when the call was
    * made. */
@@ -1037,7 +1064,7 @@ export class AgentPool {
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {
         this.hooks.onAuthWireFact?.(agentId, method, "auth_required", startedAt, auth.reason);
-      } else if (opts?.failureIsRoutine !== true) {
+      } else if (opts?.failureIsRoutine !== true && !entry.stopping) {
         for (const row of rowsProvenBy(fact)) {
           this.hooks.onCapabilityEvidence?.(agentId, row, "suspect");
         }
@@ -1063,11 +1090,13 @@ export class AgentPool {
    * the real story with its own error surface); it only means the download
    * time counts against initialize again, exactly the pre-warmup behavior.
    * The status detail flips to "downloading…" only once the warmup outlives
-   * a warm-cache resolution, and clears the moment the phase ends. */
+   * a warm-cache resolution, and clears the moment the phase ends. `signal`
+   * ends it the way the cap does. */
   private warmLauncherCache(
     entry: Entry,
     warm: { command: string; args: string[] },
     spec: LaunchSpec,
+    signal: AbortSignal | undefined,
   ): Promise<void> {
     const launch = resolveSpawn(warm.command, warm.args, spawnEnv(spec));
     if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
@@ -1078,33 +1107,45 @@ export class AgentPool {
         () => this.setStatus(entry, "reconnecting", "downloading the agent package…"),
         DOWNLOAD_LABEL_AFTER_MS,
       );
-      let capped = false;
-      const cap = setTimeout(() => {
-        capped = true;
+      /** Why the warmup was killed before it finished, if it was. */
+      let cut: string | null = null;
+      const kill = (why: string) => {
+        cut = why;
         if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
-      }, WARMUP_TIMEOUT_MS);
+      };
+      const cap = setTimeout(() => kill(`capped at ${WARMUP_TIMEOUT_MS}ms`), WARMUP_TIMEOUT_MS);
+      const stop = () => kill("stopped");
+      signal?.addEventListener("abort", stop, { once: true });
       const settle = (outcome: string) => {
         clearTimeout(label);
         clearTimeout(cap);
+        signal?.removeEventListener("abort", stop);
         this.clearPhaseLabel(entry);
         this.log.debug(`${spec.agentId}: launcher warmup ${outcome}`);
         resolve();
       };
       child.on("error", (err) => settle(`spawn failed — ${err.message}`));
       child.on("exit", (code, sig) => {
-        // The cap's SIGKILL mid-install is itself the cache-poison mechanism
-        // (npm doesn't roll back) — clean up the entry we just interrupted,
-        // before the real spawn runs, so it never inherits a half-written
+        // A SIGKILL mid-install is itself the cache-poison mechanism (npm
+        // doesn't roll back) — clean up the entry we just interrupted,
+        // before any real spawn runs, so it never inherits a half-written
         // cache that npx would forever treat as installed.
-        if (capped) {
-          void this.repairLauncherCache(spec).then(() =>
-            settle(`capped at ${WARMUP_TIMEOUT_MS}ms — interrupted cache entry purged`),
-          );
+        if (cut !== null) {
+          const why = cut;
+          void this.repairLauncherCache(spec).then(() => settle(`${why} — interrupted cache entry purged`));
           return;
         }
         settle(code === 0 ? "done" : `ended (code=${code}, sig=${sig})`);
       });
     });
+  }
+
+  /** A launch its signal stopped before anything spawned: the entry reads
+   * stopped, and the signal's reason is what the connect throws. */
+  private stoppedBeforeSpawn(entry: Entry, signal: AbortSignal): unknown {
+    entry.stopping = true;
+    this.setStatus(entry, "stopped");
+    return signal.reason;
   }
 
   /** Purges the npx cache entries attributable to this spec's package
