@@ -15,9 +15,8 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
 - **Known sessions** — the sessions store's routing index of the agent's
-  own `session/list` (session id → owning agent, the agent's own id for
-  the session, plus the knob seed the wire cannot re-report), repopulated
-  every connect. The session id is patchbay's, minted when the session
+  own `session/list` (session id → owning agent and the agent's own id
+  for the session), repopulated every connect. The session id is patchbay's, minted when the session
   enters and kept for the window's life — the id the views, actions,
   events, the broker and the context tokens use. The agent's own id is the
   handle every wire call carries and the one inbound traffic (updates,
@@ -149,7 +148,7 @@ each with different truth semantics, so each gets different placement:
 
 | Store | Contents | Placement | Why |
 |---|---|---|---|
-| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): patchbay's id → agent, the agent's own id, knob seed | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
+| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): patchbay's id → agent, the agent's own id | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
 | Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
 | Last-active pointer | The one session the Agent View returns to on the next activate — its agent and the agent's own id for it, what the next window can find it by (patchbay's ids live with a window) | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
@@ -724,16 +723,16 @@ two places, and every attach decides between them by one question — *did the
 user just do something, or did plumbing?*
 
 - **Session knobs** — the session's own agent-confirmed combination,
-  snapshotted per publish onto the known-session row and mirrored to the
-  session's continuity row (below). An **involuntary re-attach** — window reload, connection death,
+  saved per publish on the session's continuity row (below), its one
+  home. An **involuntary re-attach** — window reload, connection death,
   idle release, the roots re-apply — must re-seed it after the wire attach:
   agents reset knob state to their defaults on `session/load` (observed:
   claude-agent-acp rebuilds session config), and the user asked to change
   nothing — so honoring the agent's load-time reset would force its
   cache-miss over the user's reality. A restored window is in this arm: the
-  durable copy rehydrates the row when `session/list` re-enters it (the
-  first persisted-copy of this fact was lost with the removed session index —
-  its rationale was orphaned by that pivot, not superseded).
+  row is read again when `session/list` names the session (the first
+  persisted copy of this fact was lost with the removed session index — its
+  rationale was orphaned by that pivot, not superseded).
 - **Composer knobs** — the user's current working combination *per agent*
   (`stores/composer-knobs.ts`, machine store), written only when the user sets
   a knob and the agent confirms it (config surface: off the set response;
@@ -747,7 +746,7 @@ user just do something, or did plumbing?*
 | Attach | Seed applied |
 |---|---|
 | Fresh `session/new` | Entry seed: per-agent defaults, or the composer combination, by the `knobSource` preference — once, via set requests, skipped silently where the option isn't offered |
-| Involuntary re-attach (window reload, connection death, idle release, roots re-apply) — the session's combination is in hand (in-memory row, or the durable copy after a reload) | The session's own combination, re-seeded over the agent's load-time reset |
+| Involuntary re-attach (window reload, connection death, idle release, roots re-apply) — the session's combination is in hand (its continuity row) | The session's own combination, re-seeded over the agent's load-time reset |
 | Deliberate entry from history — nothing in hand (never steered, or its durable row already pruned) | Entry seed, same as fresh. This knowingly overrides an agent that honestly restores per-session knob state on load: entry is deliberate, the user's current combination wins |
 
 ```mermaid
@@ -761,9 +760,9 @@ flowchart TD
 Per-agent defaults themselves are written only by the Settings save path —
 read-only to the session layer, the seed's fallback, never its record.
 
-**Session continuity — the survives-reload family.** One durable row per
-session (`stores/session-continuity.ts`, machine store) carries everything a
-window reload would otherwise lose and the wire cannot re-report: the
+**Session continuity — what the user staged and steered.** One durable row
+per session (`stores/session-continuity.ts`, machine store) carries
+everything the wire cannot report again: the
 agent-confirmed **knob combination** (agents reset knobs on load), user-added
 **context roots** (the list this client intends to send at the next open —
 every open re-sends the whole list, so losing it would overwrite the
@@ -773,22 +772,25 @@ prompt queue**, prepared **context chips**
 (image bytes stay in the attachments stash; the row carries the file
 reference, and a reference whose temp file the OS reclaimed drops honestly
 on rehydration), and the **composer draft**. Not a cache of readable
-reality — the same justification as the auth locks. Written through one
-chokepoint (`noteContinuity`); rehydrated once, when `session/list` re-enters
-the session (roots/queue/draft re-emit into the view immediately, chips
-decode async, knobs ride the known row into the reattach rule). That
-re-entry is the row's only reader, so a row exists only where it can come:
-one predicate (`continuityReachable` — the agent declares `session/list`
-*and* a rung to open the session, `session/load` or `session/resume`) gates
-the writer, and an agent failing it drops every row it has at connect. Each
-row carries its workspace cwd, since `session/list` is read per cwd: after
-every complete walk the agent's rows for that workspace are reconciled
-against what the walk reported (live sessions exempt), which also reclaims a
-session deleted while no window was open. A row without a cwd on record was
-written before the field existed — the first walk that names it stamps it,
-one that does not drops it. Rows leave with their session: close,
-walk-reconcile, agent removal (every workspace), erase-all; a zero-turn
-re-mint moves the row to the session's new agent id. Held words rehydrated behind a standing auth lock stay held;
+reality — the same justification as the auth locks. The row is these facts'
+one home, in the window as across a reload: the sessions store reads it
+whenever it needs one (`saved`) and keeps no copy, and every change writes
+it field by field before the view hears of it — so every session has one,
+whatever its agent declares, and a chip staged while its session is
+detached waits there for the next prompt. When `session/list` names a
+session the window didn't know, the row's roots, held words and draft go
+to the view at once and its chips once their image bytes are read back
+from the stash. Each row carries its workspace cwd, since `session/list` is
+read per cwd: after every complete walk the agent's rows for that
+workspace are reconciled against what the walk reported (live sessions
+exempt), which also reclaims a session deleted while no window was open;
+an agent that cannot list is reconciled at its connect against the
+sessions this window holds — no list will name an earlier window's again.
+A row without a cwd on record was written before the field existed — the
+first walk that names it stamps it, one that does not drops it. Rows leave
+with their session: close, reconcile, agent removal (every workspace),
+erase-all; a zero-turn re-mint moves the row to the session's new agent
+id. Held words rehydrated behind a standing auth lock stay held;
 opening the session (or the lock clearing) is their release, and a new
 prompt sent while held words wait joins the queue *behind* them — order is
 part of the contract. Held words also survive an involuntary drop (crash,

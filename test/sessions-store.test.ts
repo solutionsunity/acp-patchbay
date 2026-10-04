@@ -126,8 +126,6 @@ function harness(opts?: {
       resyncView: () => {
         resyncs += 1;
       },
-      contextRootsFor: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).contextRoots[sessionId] ?? [],
       workspaceRoots: () => workspaceRoots,
       savedRoots: () => opts?.savedRoots ?? [],
       rootExists: (path) => !missingRoots.includes(path),
@@ -142,19 +140,8 @@ function harness(opts?: {
       connectForSession: (sessionId) => opts?.onConnectForSession?.(sessionId),
       isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
       authLocked: (agentId) => opts?.authLocked?.(agentId) ?? false,
-      continuityFor: (agentSessionId, agentId) => continuity.read(agentSessionId, agentId),
-      onContinuity: (agentSessionId, agentId, sessionCwd, patch) => {
-        void (patch === null
-          ? continuity.forget(agentSessionId, agentId)
-          : continuity.patch(agentSessionId, agentId, sessionCwd, patch));
-      },
-      reconcileContinuity: (agentId, sessionCwd, keep) => {
-        void continuity.reconcile(agentId, sessionCwd, keep);
-      },
-      forgetAgentContinuity: (agentId) => {
-        void continuity.forgetAgent(agentId);
-      },
     },
+    continuity,
     () => cwd,
     undefined,
     undefined,
@@ -331,13 +318,21 @@ describe("SessionsStore", () => {
     ]);
 
     // not the tail — refused, nothing moves
-    expect(h.sessions.reclaimQueuedPrompt(sessionId, a!.id)).toBeUndefined();
+    h.sessions.takeBack(sessionId, a!.id);
     expect(h.state().promptQueue[sessionId]).toHaveLength(3);
-    // the tail — comes back with its editor state, the rest keep their order
-    expect(h.sessions.reclaimQueuedPrompt(sessionId, c!.id)).toMatchObject({ draft: '{"editor":"fourth"}' });
+    // the tail, into a composer already holding words — refused: merging
+    // two messages is the user's call, made with Copy
+    h.sessions.saveDraft(sessionId, '{"editor":"typing"}');
+    h.sessions.takeBack(sessionId, c!.id);
+    expect(h.state().promptQueue[sessionId]).toHaveLength(3);
+    // into an empty one — it comes back as the draft, the rest keep their order
+    h.sessions.saveDraft(sessionId, "");
+    h.sessions.takeBack(sessionId, c!.id);
+    expect(h.state().drafts[sessionId]).toBe('{"editor":"fourth"}');
     expect(h.state().promptQueue[sessionId]!.map((q) => q.text)).toEqual(["second", "third"]);
     // the new tail has nothing to come back as — refused, it copies and fires
-    expect(h.sessions.reclaimQueuedPrompt(sessionId, b!.id)).toBeUndefined();
+    h.sessions.saveDraft(sessionId, "");
+    h.sessions.takeBack(sessionId, b!.id);
     expect(h.state().promptQueue[sessionId]).toHaveLength(2);
 
     await promptDone;
@@ -1283,7 +1278,7 @@ describe("SessionsStore", () => {
     await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm9"));
     const sessionId = await h.sessions.createSession("sm9", "Fake Agent", cwd);
 
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-1",
       kind: "selection",
       label: "Selection: a.ts:1-2",
@@ -1318,7 +1313,7 @@ describe("SessionsStore", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("img1", "Fake Agent", cwd);
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-img",
       kind: "image",
       label: "Image (image/png)",
@@ -1342,14 +1337,14 @@ describe("SessionsStore", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("emb1", "Fake Agent", cwd);
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-sel",
       kind: "selection",
       label: "Selection: a.ts:1-2",
       content: "const x = 1;",
       sourceUri: "file:///ws/a.ts#L1-2",
     });
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-diag",
       kind: "diagnostics",
       label: "Problems (1)",
@@ -1373,7 +1368,7 @@ describe("SessionsStore", () => {
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "img2"));
     const sessionId = await h.sessions.createSession("img2", "Fake Agent", cwd);
     const bytes = Buffer.from("fake-jpeg-bytes");
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-img-fb",
       kind: "image",
       label: "Image (image/jpeg)",
@@ -1398,14 +1393,14 @@ describe("SessionsStore", () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "att1"));
     const sessionId = await h.sessions.createSession("att1", "Fake Agent", cwd);
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-att",
       kind: "attachment",
       label: "File: report.pdf",
       path: "/ws/docs/report.pdf",
       mimeType: "application/pdf",
     });
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-att-2",
       kind: "attachment",
       label: "File: blob.bin",
@@ -1424,12 +1419,34 @@ describe("SessionsStore", () => {
     await h.pool.stop("att1");
   });
 
+  // A chip is the session's, not its connection's: staged while the session
+  // is detached, it waits on the session's row and rides the next prompt.
+  it("a chip staged while the session is detached waits on its row — and rides the next prompt", async () => {
+    const h = harness();
+    const script: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "echoBlocks" }] };
+    await h.pool.connect(spec(script, "sm-late-chip"));
+    const sessionId = await h.sessions.createSession("sm-late-chip", "Fake Agent", cwd);
+    await h.sessions.sendPrompt(sessionId, "first"); // prompted: the load rung reopens it
+    await h.pool.stop("sm-late-chip");
+    expect(h.sessions.isLive(sessionId)).toBe(false);
+
+    await h.sessions.addContext(sessionId, { kind: "selection", id: "late-chip", label: "a.ts:1", content: "const late = 1;" });
+    expect(h.state().contextChips[sessionId]).toMatchObject([{ id: "late-chip" }]);
+
+    await h.pool.connect(spec(script, "sm-late-chip"));
+    await h.sessions.sendPrompt(sessionId, "with the chip");
+    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(textOf(echoed)).toContain("const late = 1;");
+    expect(h.state().contextChips[sessionId]).toEqual([]);
+    await h.pool.stop("sm-late-chip");
+  });
+
   it("removeContext drops a chip before it's ever sent", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
     const sessionId = await h.sessions.createSession("sm10", "Fake Agent", cwd);
 
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "chip-1",
       kind: "file",
       label: "File: a.ts",
@@ -1906,7 +1923,7 @@ describe("SessionsStore", () => {
     const sessionId = await h1.sessions.createSession("smq6", "Fake Agent", cwd);
     await h1.sessions.sendPrompt(sessionId, "real turn"); // persists agent-side
     await h1.sessions.addRoot(sessionId, "/repo/extra");
-    h1.sessions.addContext(sessionId, {
+    await h1.sessions.addContext(sessionId, {
       kind: "selection",
       id: "chip-1",
       label: "main.ts:1-3",
@@ -1914,7 +1931,7 @@ describe("SessionsStore", () => {
     });
     locked = true; // logout witnessed
     await h1.sessions.sendPrompt(sessionId, "held words"); // → held row
-    h1.sessions.persistDraft(sessionId, "half-typed thought"); // the orchestrator's debounced save
+    h1.sessions.saveDraft(sessionId, "half-typed thought"); // the composer's debounced save
     const handle = h1.sessions.handleOf(sessionId)!;
     await h1.pool.stop("smq6");
 
@@ -1950,11 +1967,10 @@ describe("SessionsStore", () => {
     await h2.pool.stop("smq6");
   });
 
-  // The row's lifetime, issue #29: a row is written only where the agent's
-  // own list can name the session again and the ladder can open it — the
-  // same predicate the reclaim depends on. Anything else is stored for a
-  // reader that never comes.
-  describe("continuity rows live only where they can be read back (issue #29)", () => {
+  // The row's lifetime (issue #29, refined by the sessions store): the row
+  // is the one home of what the user staged, so every session has one; it
+  // leaves when nothing can name its session again.
+  describe("a continuity row per session, gone when nothing can name it again (issue #29)", () => {
     const CONTINUITY_KEY = "acpPatchbay.sessionContinuity";
     const MODEL_KNOB = [
       {
@@ -1970,7 +1986,7 @@ describe("SessionsStore", () => {
       },
     ];
 
-    it("an agent without session/list writes no row — knobs, roots, chips, held words, draft alike; a list+resume agent writes them all", async () => {
+    it("every session's staging lives on its row, whatever its agent declares — knobs, roots, chips, held words, draft alike", async () => {
       let locked = false;
       const kv = new MemoryKV();
       const store = new SessionContinuityStore(kv);
@@ -1987,38 +2003,32 @@ describe("SessionsStore", () => {
         await h.sessions.sendPrompt(sessionId, "first turn");
         await h.sessions.setKnob(sessionId, "model", "sonnet");
         await h.sessions.addRoot(sessionId, "/repo/extra");
-        h.sessions.addContext(sessionId, { kind: "selection", id: `${agentId}-chip`, label: "a.ts:1", content: "x" });
+        await h.sessions.addContext(sessionId, { kind: "selection", id: `${agentId}-chip`, label: "a.ts:1", content: "x" });
         locked = true;
         await h.sessions.sendPrompt(sessionId, "held words");
         locked = false;
-        h.sessions.persistDraft(sessionId, "half a thought");
+        h.sessions.saveDraft(sessionId, "half a thought");
         return sessionId;
       };
 
-      await h.pool.connect(spec(script(false), "c29-nolist"));
-      const unlisted = await stage("c29-nolist");
-      // the view holds everything the user staged — only the durable copy is refused
-      expect(h.state().contextRoots[unlisted]).toEqual(["/repo/extra"]);
-      expect(h.state().promptQueue[unlisted]).toMatchObject([{ text: "held words" }]);
-      expect(store.list()).toEqual([]);
-
-      await h.pool.connect(spec(script(true), "c29-list"));
-      const listed = await stage("c29-list");
-      expect(store.list().map((r) => r.agentId)).toEqual(["c29-list"]);
-      expect(store.read(h.sessions.handleOf(listed)!, "c29-list")).toMatchObject({
-        knobs: { model: "sonnet" },
-        roots: ["/repo/extra"],
-        chips: [{ id: "c29-list-chip" }],
-        queue: [{ text: "held words" }],
-        draft: "half a thought",
-      });
-      expect(store.list()[0]?.cwd).toBe(cwd);
+      for (const [agentId, list] of [["c29-nolist", false], ["c29-list", true]] as const) {
+        await h.pool.connect(spec(script(list), agentId));
+        const sessionId = await stage(agentId);
+        expect(store.read(h.sessions.handleOf(sessionId)!, agentId)).toMatchObject({
+          knobs: { model: "sonnet" },
+          roots: ["/repo/extra"],
+          chips: [{ id: `${agentId}-chip` }],
+          queue: [{ text: "held words" }],
+          draft: "half a thought",
+        });
+      }
+      expect(store.list().map((r) => r.cwd)).toEqual([cwd, cwd]);
 
       await h.pool.stop("c29-nolist");
       await h.pool.stop("c29-list");
     });
 
-    it("connecting an agent that cannot bring sessions back drops every row it has — older builds' rows included, every workspace", async () => {
+    it("an agent that cannot list drops, at its connect, the rows of this workspace no session here holds — older builds' included; this window's stay", async () => {
       const kv = new MemoryKV();
       const store = new SessionContinuityStore(kv);
       await store.patch("stale", "c29-load", cwd, { draft: "old words" });
@@ -2029,10 +2039,19 @@ describe("SessionsStore", () => {
         { id: "c29-load\u0000legacy", agentId: "c29-load", draft: "no cwd" },
       ]);
       const h = harness({ continuityStore: store });
-      // load without list: a rung, but nothing ever names the id again
+      // load without list: a rung, but nothing will ever name an earlier
+      // window's sessions again
       await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
       await h.sessions.syncAgentSessions("c29-load");
-      expect(store.list().map((r) => r.id)).toEqual(["c29-other\u0000other"]);
+      expect(store.list().map((r) => r.id).sort()).toEqual(["c29-load\u0000stale-elsewhere", "c29-other\u0000other"]);
+
+      // a session of this window keeps its row across the agent's reconnect
+      const sessionId = await h.sessions.createSession("c29-load", "Fake Agent", cwd);
+      h.sessions.saveDraft(sessionId, "half a thought");
+      await h.pool.stop("c29-load");
+      await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
+      await h.sessions.syncAgentSessions("c29-load");
+      expect(store.read(h.sessions.handleOf(sessionId)!, "c29-load")).toEqual({ draft: "half a thought" });
       await h.pool.stop("c29-load");
     });
 
@@ -2099,9 +2118,7 @@ describe("SessionsStore", () => {
       await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "c29-draft"));
       const sessionId = await h.sessions.createSession("c29-draft", "Fake Agent", cwd);
       const before = h.sessions.handleOf(sessionId);
-      // the orchestrator's draft path: durable write (refused here) + view mirror
-      h.sessions.persistDraft(sessionId, "typed before any turn");
-      h.events.push({ kind: "sessionDraftChanged", sessionId, draft: "typed before any turn" });
+      h.sessions.saveDraft(sessionId, "typed before any turn");
       await h.sessions.addRoot(sessionId, "/repo/backend");
       expect(h.sessions.handleOf(sessionId)).not.toBe(before);
       expect(h.state().activeSessionId).toBe(sessionId);
@@ -2221,7 +2238,7 @@ describe("SessionsStore", () => {
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30b"));
       const sessionId = await h.sessions.createSession("c30b", "Fake Agent", cwd);
       const before = h.sessions.handleOf(sessionId);
-      h.sessions.addContext(sessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
+      await h.sessions.addContext(sessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
       await untilStatus(h, "c30b", "crashed");
 
       await h.pool.connect(spec({}, "c30b"));
@@ -3070,20 +3087,20 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm-parts"));
     const sessionId = await h.sessions.createSession("sm-parts", "Fake Agent", cwd);
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "img-1",
       kind: "image",
       label: "pasted image",
       content: Buffer.from("89504e470d0a1a0a", "hex").toString("base64"),
       mimeType: "image/png",
     });
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "att-1",
       kind: "attachment",
       label: "notes.md",
       path: "/ws/notes.md",
     });
-    h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(sessionId, {
       id: "sel-1",
       kind: "selection",
       label: "Selection: a.ts:1-2",

@@ -589,24 +589,6 @@ export class Orchestrator {
         // everything here.
         seedFor: (agentId) => this.agents.knobSeed(agentId, this.preferences.get().knobSource),
         onKnobsConfirmed: (agentId, seed) => this.agents.recordKnobs(agentId, seed),
-        continuityFor: (sessionId, agentId) => this.sessionContinuity.read(sessionId, agentId),
-        onContinuity: (sessionId, agentId, sessionCwd, patch) => {
-          void (patch === null
-            ? this.sessionContinuity.forget(sessionId, agentId)
-            : this.sessionContinuity.patch(sessionId, agentId, sessionCwd, patch)
-          ).catch((err: Error) => this.log.error(`session continuity ${sessionId} — ${err.message}`));
-        },
-        reconcileContinuity: (agentId, sessionCwd, keep) => {
-          void this.sessionContinuity
-            .reconcile(agentId, sessionCwd, keep)
-            .catch((err: Error) => this.log.error(`session continuity reconcile ${agentId} — ${err.message}`));
-        },
-        forgetAgentContinuity: (agentId) => {
-          void this.sessionContinuity
-            .forgetAgent(agentId)
-            .catch((err: Error) => this.log.error(`session continuity drop ${agentId} — ${err.message}`));
-        },
-        contextRootsFor: (sessionId) => this.agentView.current.contextRoots[sessionId] ?? [],
         rootsChanged: (sessionId) => {
           // Every subprocess of the session was spawned with one of its
           // tokens (one per attach; a re-attach mints a fresh one).
@@ -638,6 +620,7 @@ export class Orchestrator {
           if (this.pointerRow === sessionId) this.recordPointer(sessionId);
         },
       },
+      this.sessionContinuity,
       () => this.workspaceCwd,
       async (contextToken, agentId) => {
         // McpServerStdio is the untagged union member — no discriminant
@@ -1155,22 +1138,6 @@ export class Orchestrator {
       playDoneSound(this.log, prefs.doneSound);
       return; // one chime per batch, however many turns settled together
     }
-  }
-
-  /** The session draft's one write: durable row (through the sessions
-   * store's continuity gate) + view mirror. Unchanged drafts write
-   * nothing: every save rewrites the whole machine KV file, and the
-   * debounce ticks while a user merely moves the caret. The view mirror is
-   * what sibling views (detached panels) and the next session switch read —
-   * the composer applies drafts only when idle, so echoes never fight the
-   * keyboard. */
-  private saveDraft(sessionId: string, draft: string): void {
-    // A draft for a row the view no longer has (a stale panel's late save)
-    // would sit in the mirror with nothing to show it — refused whole.
-    if (!this.agentView.current.sessions.some((v) => v.id === sessionId)) return;
-    if ((this.agentView.current.drafts[sessionId] ?? "") === draft) return;
-    this.sessions.persistDraft(sessionId, draft);
-    this.agentView.emit({ kind: "sessionDraftChanged", sessionId, draft });
   }
 
   /** The Settings "active today" tile — recomputed from canonical Agent
@@ -1741,20 +1708,12 @@ export class Orchestrator {
       case "removeQueuedPrompt":
         this.sessions.removeQueuedPrompt(action.sessionId, action.promptId);
         break;
-      case "reclaimQueuedPrompt": {
-        // Only into an empty composer: the durable draft is the composer's
-        // truth here — it flushes on blur, so the click that sent this
-        // action came after the buffer's last save. A non-empty draft
-        // refuses; merging two messages into one is the user's call, made
-        // with Copy. The tail-only rule is the sessions store's.
-        if ((this.agentView.current.drafts[action.sessionId] ?? "") !== "") break;
-        const reclaimed = this.sessions.reclaimQueuedPrompt(action.sessionId, action.promptId);
-        if (reclaimed !== undefined) this.saveDraft(action.sessionId, reclaimed.draft);
+      case "reclaimQueuedPrompt":
+        this.sessions.takeBack(action.sessionId, action.promptId);
         break;
-      }
       case "setSessionDraft":
         // The composer's debounced durable save.
-        this.saveDraft(action.sessionId, action.draft);
+        this.sessions.saveDraft(action.sessionId, action.draft);
         break;
       case "stopTurn":
         void this.sessions.stopTurn(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
@@ -1850,13 +1809,15 @@ export class Orchestrator {
           void vscode.window.showInformationMessage("No selection — select text in a visible editor first.");
           break;
         }
-        this.sessions.addContext(action.sessionId, {
-          id: chipId(),
-          kind: "selection",
-          label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
-          content: selection.text,
-          sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
-        });
+        void this.sessions
+          .addContext(action.sessionId, {
+            id: chipId(),
+            kind: "selection",
+            label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
+            content: selection.text,
+            sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
+          })
+          .catch(this.logCatch(`add context ${action.sessionId}`));
         break;
       }
       case "addFileContext": {
@@ -1865,24 +1826,28 @@ export class Orchestrator {
           void vscode.window.showInformationMessage("No current file — open a file in an editor first.");
           break;
         }
-        this.sessions.addContext(action.sessionId, {
-          id: chipId(),
-          kind: "file",
-          label: `File: ${file.file}`,
-          content: file.content,
-          sourceUri: vscode.Uri.file(file.file).toString(),
-        });
+        void this.sessions
+          .addContext(action.sessionId, {
+            id: chipId(),
+            kind: "file",
+            label: `File: ${file.file}`,
+            content: file.content,
+            sourceUri: vscode.Uri.file(file.file).toString(),
+          })
+          .catch(this.logCatch(`add context ${action.sessionId}`));
         break;
       }
       case "addDiagnosticsContext": {
         const diagnostics = this.editorStateHost.getDiagnostics();
         if (diagnostics.length === 0) break;
-        this.sessions.addContext(action.sessionId, {
-          id: chipId(),
-          kind: "diagnostics",
-          label: `Problems (${diagnostics.length})`,
-          content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
-        });
+        void this.sessions
+          .addContext(action.sessionId, {
+            id: chipId(),
+            kind: "diagnostics",
+            label: `Problems (${diagnostics.length})`,
+            content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
+          })
+          .catch(this.logCatch(`add context ${action.sessionId}`));
         break;
       }
       case "removeContextChip":
@@ -1976,13 +1941,15 @@ export class Orchestrator {
           .catch(this.logCatch(`removeRoot ${action.sessionId}`));
         break;
       case "addImageContext":
-        this.sessions.addContext(action.sessionId, {
-          id: chipId(),
-          kind: "image",
-          label: action.label,
-          content: action.base64,
-          mimeType: action.mimeType,
-        });
+        void this.sessions
+          .addContext(action.sessionId, {
+            id: chipId(),
+            kind: "image",
+            label: action.label,
+            content: action.base64,
+            mimeType: action.mimeType,
+          })
+          .catch(this.logCatch(`add context ${action.sessionId}`));
         break;
       case "addDroppedFileContext":
         void this.addDroppedFileContext(action).catch(
@@ -2135,7 +2102,7 @@ export class Orchestrator {
     const safe = action.name.replace(/[^\w.-]+/g, "_");
     const path = join(dir, `${chipId()}-${safe}`);
     await writeFile(path, Buffer.from(action.base64, "base64"));
-    this.sessions.addContext(action.sessionId, {
+    await this.sessions.addContext(action.sessionId, {
       id: chipId(),
       kind: "attachment",
       label: `File: ${action.name}`,
@@ -2167,7 +2134,7 @@ export class Orchestrator {
     const form = pickedFileForm(name, size, this.preferences.get().attachmentMaxMB * 1024 * 1024);
     if (form.kind === "image") {
       const bytes = await vscode.workspace.fs.readFile(uri);
-      this.sessions.addContext(sessionId, {
+      await this.sessions.addContext(sessionId, {
         id: chipId(),
         kind: "image",
         label: `Image: ${name}`,
@@ -2175,7 +2142,7 @@ export class Orchestrator {
         mimeType: form.mimeType,
       });
     } else {
-      this.sessions.addContext(sessionId, {
+      await this.sessions.addContext(sessionId, {
         id: chipId(),
         kind: "attachment",
         label: `File: ${name}`,

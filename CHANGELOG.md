@@ -83,6 +83,9 @@
   patchbay doesn't hold is answered at once instead of waiting with no
   card to answer it on. The first window reload after updating opens on
   the home screen instead of the last open session.
+- Context attached to a session while its agent is stopped — a
+  selection, a file, an image — now waits for the next message instead of
+  being silently dropped.
 
 ## 0.84.1 — 2026-09-29
 

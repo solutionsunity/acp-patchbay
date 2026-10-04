@@ -8,6 +8,7 @@ import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
@@ -80,6 +81,7 @@ function harness(extraHooks: {
       emit: (...evs) => events.push(...evs),
       ...extraHooks,
     },
+    new SessionContinuityStore(new MemoryKV()),
     () => cwd,
   );
   return { pool, sessions, capabilityTracker, state };
@@ -325,6 +327,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         // Folded seed (knob id → value), as the orchestrator delivers it.
         seedFor: () => ({ mode: "code", "model-opt": "opus" }),
       },
+      new SessionContinuityStore(new MemoryKV()),
       () => cwd,
     );
     await pool.connect(

@@ -11,7 +11,7 @@ import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-stor
 import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import { continuityReachable, SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { DeclaredCapabilities } from "../src/shared/protocol";
@@ -444,21 +444,6 @@ describe("SessionContinuityStore", () => {
   // preconditions: the agent's own list names the session again, and the
   // open ladder has a rung to bring it back. Either missing, the row is
   // written for nobody.
-  it("continuityReachable: list plus a rung to open — either alone is nothing", () => {
-    const caps = (o: Partial<NonNullable<Parameters<typeof continuityReachable>[0]>>) => ({
-      sessionList: false,
-      loadSession: false,
-      sessionResume: false,
-      ...o,
-    });
-    expect(continuityReachable(undefined)).toBe(false);
-    expect(continuityReachable(caps({}))).toBe(false);
-    expect(continuityReachable(caps({ sessionList: true }))).toBe(false); // named, no rung
-    expect(continuityReachable(caps({ loadSession: true }))).toBe(false); // a rung, nothing names it
-    expect(continuityReachable(caps({ sessionResume: true }))).toBe(false);
-    expect(continuityReachable(caps({ sessionList: true, loadSession: true }))).toBe(true);
-    expect(continuityReachable(caps({ sessionList: true, sessionResume: true }))).toBe(true);
-  });
 
   it("reconcile: this workspace's unreported rows leave, rows without a cwd are stamped when reported and dropped otherwise, other workspaces untouched", async () => {
     const kv = new MemoryKV();

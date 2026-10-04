@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Per-session continuity — the survives-reload family in one row: the last
-// agent-confirmed knob combination, user-added context roots, the held
-// prompt queue, prepared-but-unsent context chips (image bytes stay in the
-// attachments stash; the row carries the file reference), and the composer
-// draft. None of it is a cache of readable reality: agents reset knob
-// state on session/load; the roots are the list this client intends to
-// send at the next open (a session/list row may report the list the last
-// writer set, and a reported list replaces the intended one, but the
-// report is optional and most agents send none); and the rest is
-// user-staged input that exists nowhere else — the same
-// not-a-cache justification as the auth locks.
+// Per-session continuity — what the user staged and steered on a session,
+// in one row: the last agent-confirmed knob combination, user-added context
+// roots, the held prompt queue, prepared-but-unsent context chips (image
+// bytes stay in the attachments stash; the row carries the file reference),
+// and the composer draft. None of it is a cache of readable reality: agents
+// reset knob state on session/load; the roots are the list this client
+// intends to send at the next open (a session/list row may report the list
+// the last writer set, and a reported list replaces the intended one, but
+// the report is optional and most agents send none); and the rest is
+// user-staged input that exists nowhere else — the same not-a-cache
+// justification as the auth locks.
 //
-// A row has exactly one reader after a reload: the agent's own session/list
-// naming the session again, after which the open ladder (load, then resume)
-// brings it back. So a row exists only where that reader can come —
-// `continuityReachable` is the one predicate, consulted by the writer and
-// at connect — and it leaves with its session: close, a complete list walk
-// no longer reporting it for its workspace, its agent removed or found
-// unable to bring sessions back, zero-turn recreate, erase-all.
+// The row is these facts' one home — the sessions store reads it whenever
+// it needs one and keeps no copy — so every session has one, whatever its
+// agent declares. It leaves with its session: close, a complete list walk
+// no longer reporting it for its workspace, its agent removed, erase-all;
+// and for an agent that cannot list, its next connect drops the rows of
+// this workspace no session of the window holds — no list will ever name
+// them again. A zero-turn re-mint moves the row to the session's new id.
 import { z } from "zod";
-import type { DeclaredCapabilities, SessionContinuity } from "../../shared/protocol";
+import type { SessionContinuity } from "../../shared/protocol";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
@@ -86,22 +86,12 @@ const KEY = "acpPatchbay.sessionContinuity";
 
 const FIELDS = ["knobs", "roots", "queue", "chips", "draft"] as const;
 
-/** Row identity is the PAIR: session ids are agent-minted, and two agents
+/** Row identity is the PAIR — the agent and its own id for the session:
+ * that is what names the session again after a reload, and two agents
  * minting the same string are two different sessions — a sessionId-only
  * key would let one agent's row destroy the other's. */
 function rowId(agentId: string, sessionId: string): string {
   return `${agentId}\u0000${sessionId}`;
-}
-
-/** Whether a row written for this agent can ever be read back: its own
- * `session/list` must name the session after a reload, and the open ladder
- * needs a rung — `session/load` or `session/resume` — to bring it back.
- * Either alone reaches nothing: a list without a rung shows rows that
- * cannot open; a rung without a list has no id to open. */
-export function continuityReachable(
-  declared: Pick<DeclaredCapabilities, "sessionList" | "loadSession" | "sessionResume"> | null | undefined,
-): boolean {
-  return declared != null && declared.sessionList && (declared.loadSession || declared.sessionResume);
 }
 
 /** True when a field value carries nothing worth a row: absorbing these as
@@ -163,8 +153,7 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
     );
   }
 
-  /** Every row of the agent, every workspace: the agent is gone, or its
-   * handshake says no row of its sessions can ever be read back. */
+  /** Every row of the agent, every workspace: the agent is gone. */
   forgetAgent(agentId: string): Promise<void> {
     return this.rewrite((current) => current.filter((row) => row.agentId !== agentId));
   }

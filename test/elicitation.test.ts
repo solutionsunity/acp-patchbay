@@ -19,6 +19,7 @@ import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import {
   initialAgentViewState,
@@ -303,7 +304,12 @@ function wireHarness() {
     },
     onElicitationComplete: (agentId, elicitationId) => broker.completeLink(agentId, elicitationId),
   });
-  sessions = new SessionsStore(pool, { emit: (...evs) => events.push(...evs) }, () => dir);
+  sessions = new SessionsStore(
+    pool,
+    { emit: (...evs) => events.push(...evs) },
+    new SessionContinuityStore(new MemoryKV()),
+    () => dir,
+  );
   return {
     pool,
     broker,

@@ -14,6 +14,7 @@ import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { tailBytes } from "../src/orchestrator/terminal-runner";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import {
   initialAgentViewState,
@@ -102,6 +103,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       workspaceRoots: () => [workspaceRoot],
       cancelAsks: (sessionId) => broker.cancelPending(sessionId),
     },
+    new SessionContinuityStore(new MemoryKV()),
     () => workspaceRoot,
   );
   // The extension's own handlers; only the live-buffer read/write differ

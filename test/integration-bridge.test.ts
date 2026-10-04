@@ -20,6 +20,8 @@ import { IpcClient } from "../src/mcp/ipc-client";
 import { encodeLine, parseLines, type IpcRequest, type IpcResponse } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
+import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -285,6 +287,7 @@ function harness(mcpServers: McpServer[]) {
   const sessions = new SessionsStore(
     pool,
     { emit: (...evs) => events.push(...evs) },
+    new SessionContinuityStore(new MemoryKV()),
     () => dir,
     async () => mcpServers,
   );

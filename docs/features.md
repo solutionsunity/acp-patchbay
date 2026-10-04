@@ -52,7 +52,8 @@ deliverable.
   off open conversations, one question says how many, and how many turns
   are still running; Remove always asks first. A conversation its agent's
   stop disconnected reopens where it was — its knobs, roots and held
-  prompts intact.
+  prompts intact, and context attached to it meanwhile waits for its next
+  message.
 - After reconnect, a session continues natively where the agent supports it:
   `session/load` (full replay) or `session/resume` (context back, no visible
   history — said so with an inline notice). Where it supports neither, the

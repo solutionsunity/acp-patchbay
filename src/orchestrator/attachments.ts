@@ -45,10 +45,15 @@ export function pickedFileForm(
   return { kind: "attachment" };
 }
 
+/** Where a stashed file's bytes live. */
+export function stashedPath(fileName: string): string {
+  return join(ATTACHMENTS_DIR, fileName);
+}
+
 /** Writes an image's bytes into the stash; returns the absolute path. */
 export async function stashImage(fileName: string, base64: string): Promise<string> {
   await mkdir(ATTACHMENTS_DIR, { recursive: true });
-  const file = join(ATTACHMENTS_DIR, fileName);
+  const file = stashedPath(fileName);
   await writeFile(file, Buffer.from(base64, "base64"));
   return file;
 }
@@ -58,7 +63,7 @@ export async function stashImage(fileName: string, base64: string): Promise<stri
  * temp-dir ephemeral by design, and the caller degrades honestly. */
 export async function readStashedImage(fileName: string): Promise<string | null> {
   try {
-    return (await readFile(join(ATTACHMENTS_DIR, fileName))).toString("base64");
+    return (await readFile(stashedPath(fileName))).toString("base64");
   } catch {
     return null;
   }

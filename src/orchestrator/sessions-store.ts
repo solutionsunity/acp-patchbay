@@ -34,7 +34,7 @@ import {
   type UserPart,
   userPartsText,
 } from "../shared/protocol";
-import { imageFileName, readStashedImage, stashImage } from "./attachments";
+import { imageFileName, readStashedImage, stashedPath, stashImage } from "./attachments";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -52,7 +52,7 @@ import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
-import { continuityReachable } from "./stores/session-continuity";
+import type { SessionContinuityStore } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 
@@ -84,30 +84,6 @@ export interface SessionsStoreHooks {
    * attach-time publishes carry agent-reset state, and recording those made
    * "last used" mean "last attached". */
   onKnobsConfirmed?(agentId: string, seed: KnobSeed): void;
-  /** The session's durable continuity row (stores/session-continuity.ts):
-   * knobs, roots, held queue, prepared chips, composer draft — everything
-   * a window reload would otherwise lose and the wire cannot re-report.
-   * Keyed by the agent's id for the session, with its agent: that is what
-   * names the session again after a reload. Read once, when a listed
-   * session enters with nothing in memory; for knobs this is what keeps a
-   * restored session in the involuntary arm of the reattach rule instead
-   * of misfiling as a deliberate fresh entry. */
-  continuityFor?(agentSessionId: string, agentId: string): SessionContinuity | undefined;
-  /** Write-through for the same row: a patch merges the named fields
-   * (empty array/string deletes a field); `null` forgets the whole row —
-   * fired when the session leaves for good (closed) or its agent's id
-   * moves (zero-turn re-mint). `cwd` is the session's workspace: rows are
-   * reconciled per workspace. Only ever called through `noteContinuity`,
-   * which refuses a patch for an agent whose rows could never be read
-   * back. */
-  onContinuity?(agentSessionId: string, agentId: string, cwd: string, patch: SessionContinuity | null): void;
-  /** After a complete `session/list` walk: the agent's rows for this
-   * workspace against what the walk reported — `keep` false, the row
-   * leaves. */
-  reconcileContinuity?(agentId: string, cwd: string, keep: (agentSessionId: string) => boolean): void;
-  /** Every row of the agent, every workspace: the agent was removed, or
-   * its handshake cannot bring a session back (no list, or no rung). */
-  forgetAgentContinuity?(agentId: string): void;
   /** Fires when a real session attaches on an agent (new/load/resume, at
    * the one attach ceremony) — the deferred-probe trigger for latched
    * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
@@ -115,12 +91,6 @@ export interface SessionsStoreHooks {
    * here, which is exactly what makes this the honest "real session" fact.
    * The id is the agent's: probe sessions are known by it. */
   onRealSessionAttached?(agentId: string, agentSessionId: string): void;
-  /** Canonical (AgentViewState-held) external context roots for a session —
-   * read back on reopen/branch: ACP sets `additionalDirectories` only on
-   * the lifecycle requests (new/load/resume/fork), so the list must be
-   * re-sent whole each time; a fresh `LiveSession` needs the durable copy,
-   * not a SessionsStore-local one that would vanish with it. */
-  contextRootsFor?(sessionId: string): readonly string[];
   /** The session's root list moved (a root added or removed, a workspace
    * folder came or went) — the orchestrator tells the session's MCP
    * subprocesses, which re-read `rootsOf`. Fired for attached sessions
@@ -307,13 +277,15 @@ function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
  * This is the store's routing index, not a mirror of the row the user
  * sees: a field lives here only if a store code path branches on it — the
  * owning agent and the agent's id for the session (every wire call routes
- * by them) and the knob seed (re-applied on an involuntary re-attach).
- * What the view shows — title, activity stamp, liveness, the unseen mark —
- * has one home, the view's canonical row; the store reports the evidence
- * that moves it and, when it needs such a fact, reads it through a hook
- * (isActiveSession, …) rather than keeping a copy. In-memory,
- * deliberately: the agent is the source of truth for sessions,
- * repopulated every connect (patchbay stores no transcripts, no index). */
+ * by them). What the user staged and steered — held words, chips, draft,
+ * roots, the knob combination — has one home, the session's continuity
+ * row, read from its file when needed (`saved`). What the view shows —
+ * title, activity stamp, liveness, the unseen mark — has one home, the
+ * view's canonical row; the store reports the evidence that moves it and,
+ * when it needs such a fact, reads it through a hook (isActiveSession, …)
+ * rather than keeping a copy. In-memory, deliberately: the agent is the
+ * source of truth for sessions, repopulated every connect (patchbay
+ * stores no transcripts, no index). */
 interface KnownSession {
   agentId: string;
   /** The agent's own id for the session — what every wire call carries,
@@ -321,16 +293,6 @@ interface KnownSession {
    * so the pair names the row. The zero-turn re-mint replaces it; the
    * row, and every holder keyed by the row's id, stays. */
   handle: string;
-  /** The session's last agent-confirmed knob combination — written at every
-   * publishKnobs, so it outlives the LiveSession (detach on connection
-   * death, idle release) and re-seeds any *involuntary* re-attach: the
-   * user asked to change nothing, so the session's combination must
-   * survive the agent resetting knob state on session/load. Unlike the
-   * rest of this row it also survives a window reload: the wire cannot
-   * re-report it, so the durable continuity row (continuityFor/onContinuity
-   * hooks) rehydrates it when the listed session re-enters — a restored
-   * window is not a deliberate fresh entry. */
-  knobs?: KnobSeed;
   /** True once auto-derived from the first prompt, or set by the agent —
    * either way, later auto-titling must not clobber it again. */
   titled: boolean;
@@ -365,7 +327,6 @@ interface LiveSession {
     messageId: string | null;
     rewriter?: ProseRewriter;
   } | null;
-  pendingContext: ContextChip[];
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
   knobs: NormalizedKnobs;
@@ -410,7 +371,6 @@ function liveSession(agentId: string): LiveSession {
   return {
     agentId,
     openRun: null,
-    pendingContext: [],
     knobs: NO_KNOBS,
     inFlight: false,
     turnSettled: null,
@@ -452,13 +412,6 @@ export class SessionsStore {
    * re-sends tool_call content, so it repopulates itself. */
   private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   private contextTokenCounter = 0;
-  /** Held words, per session — the turn-start door's queue. Mirrored to the
-   * durable continuity row at every mutation, so a window reload or an
-   * agent crash never discards them; only the user does (Stop, the row's
-   * ×, close). The drain releases one per *completed* turn, on login, on
-   * opening the session, or after a reload's re-attach — an errored turn
-   * holds the words instead of retrying into whatever just failed. */
-    private promptQueues = new Map<string, QueuedPrompt[]>();
   /** Sessions with a turn being started right now — the synchronous claim
    * that closes the door↔drain race across sendPromptNow's attach await:
    * checked beside inFlight at every adjudication, taken before any await,
@@ -466,18 +419,12 @@ export class SessionsStore {
    * it, an unlock poke and a turn-end drain landing in the same window
    * would both pass the gates and fire two concurrent turns. */
   private turnStarting = new Set<string>();
-  /** Pending context chips carried across an involuntary LiveSession drop
-   * (connection death, idle release, reload) —
-   * the view keeps rendering them, so the truth they mirror must survive
-   * too, or the next prompt would silently go out without them. The
-   * voluntary path (recreateEmpty) already carries them by hand; restored
-   * at the next attach, dropped with the session at close. */
-  private contextStash = new Map<string, ContextChip[]>();
   /** Per agent: the agent's ids of sessions that left (closed, or re-minted
    * away from) while a session/list walk may be in flight — a page fetched
-   * before that would otherwise resurrect the row with an empty transcript. Each new walk clears its agent's
-   * set first: that walk's pages are post-close truth (a failed agent-side
-   * delete resurrecting the row then is honest, not stale). */
+   * before that would otherwise resurrect the row with an empty
+   * transcript. Each new walk clears its agent's set first: that walk's
+   * pages are post-close truth (a failed agent-side delete resurrecting the
+   * row then is honest, not stale). */
   private closedDuringSync = new Map<string, Set<string>>();
   /** One `session/list` walk per agent at a time — a re-read asked mid-walk
    * joins the one in flight. Two interleaved walks would each clear the
@@ -497,6 +444,9 @@ export class SessionsStore {
   constructor(
     private readonly pool: AgentPool,
     private readonly hooks: SessionsStoreHooks,
+    /** Every session's saved facts, one continuity row each — the truth
+     * for them, read when needed (see `saved`). */
+    private readonly continuity: SessionContinuityStore,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
     /** Builds the local MCP server's mcpServers entry for a fresh session,
@@ -558,10 +508,7 @@ export class SessionsStore {
   private bind(sessionId: string, row: KnownSession): void {
     const key = handleKey(row.agentId, row.handle);
     const crossed = this.byHandle.get(key);
-    if (crossed !== undefined && crossed !== sessionId) {
-      this.known.delete(crossed);
-      this.hooks.emit({ kind: "sessionClosed", sessionId: crossed });
-    }
+    if (crossed !== undefined && crossed !== sessionId) this.forget(crossed);
     this.known.set(sessionId, row);
     this.byHandle.set(key, sessionId);
   }
@@ -573,6 +520,32 @@ export class SessionsStore {
     this.known.delete(sessionId);
     const key = handleKey(row.agentId, row.handle);
     if (this.byHandle.get(key) === sessionId) this.byHandle.delete(key);
+  }
+
+  /** The session's saved facts — what the user staged and steered (held
+   * words, chips, draft, roots, the knob combination), read from its
+   * continuity row, the one place they live. Empty for a session the store
+   * doesn't know. */
+  private saved(sessionId: string): SessionContinuity {
+    const row = this.known.get(sessionId);
+    if (row === undefined) return {};
+    return this.continuity.read(row.handle, row.agentId) ?? {};
+  }
+
+  /** Writes fields of the session's continuity row — an empty value
+   * deletes its field. A session the store doesn't know writes nothing. */
+  private save(sessionId: string, fields: SessionContinuity): void {
+    const row = this.known.get(sessionId);
+    if (row !== undefined) this.write(row, fields);
+  }
+
+  /** The one continuity write: a patch merges its fields into the row the
+   * agent's id names; null forgets the row. */
+  private write(row: { agentId: string; handle: string }, fields: SessionContinuity | null): void {
+    void (fields === null
+      ? this.continuity.forget(row.handle, row.agentId)
+      : this.continuity.patch(row.handle, row.agentId, this.cwd(), fields)
+    ).catch((err: Error) => this.log.error(`session continuity ${row.handle} — ${err.message}`));
   }
 
   /** The still-new (never-prompted) session for an agent, if one exists —
@@ -629,15 +602,9 @@ export class SessionsStore {
     const declared = agent.declared;
     if (declared?.sessionClose !== true) return;
     if (declared.loadSession !== true) return;
-    // The chips survive the release like everything else the view keeps
-    // showing — the reaper's "prompt box empty" condition doesn't cover
-    // them, and a background session must not shed context it displays.
-    if (session.pendingContext.length > 0) {
-      this.contextStash.set(sessionId, session.pendingContext);
-    }
     const handle = this.known.get(sessionId)?.handle;
-    this.sessions.delete(sessionId);
     if (handle === undefined) return;
+    this.dropLiveSession(sessionId, session);
     try {
       await this.pool.closeSession(session.agentId, handle);
       this.log.info(`session ${sessionId}: released (${reason})`);
@@ -676,7 +643,7 @@ export class SessionsStore {
       if (session.lastActivityAt > cutoff) continue;
       if (this.hooks.isActiveSession?.(sessionId) ?? false) continue;
       if (this.hooks.isUnseen?.(sessionId) ?? false) continue;
-      if ((this.promptQueues.get(sessionId)?.length ?? 0) > 0) continue;
+      if ((this.saved(sessionId).queue?.length ?? 0) > 0) continue;
       await this.release(sessionId, "idle");
     }
   }
@@ -861,8 +828,8 @@ export class SessionsStore {
     // The saved roots are this session's own from here on — the same list
     // a user-added root joins.
     if (seeded.length > 0) {
+      this.save(sessionId, { roots: seeded });
       this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: seeded });
-      this.persistRoots(sessionId, seeded);
     }
     this.noticeMissingRoots(sessionId, missing);
     this.hooks.rootsChanged?.(sessionId);
@@ -962,16 +929,12 @@ export class SessionsStore {
     // Whatever the session still asks, it asks no one now.
     this.hooks.cancelAsks?.(sessionId);
     const row = this.known.get(sessionId);
-    this.sessions.delete(sessionId);
-    this.toolDiffs.delete(sessionId);
-    this.unbind(sessionId);
-    this.promptQueues.delete(sessionId); // view-side queue leaves with sessionClosed
-    this.contextStash.delete(sessionId);
+    this.forget(sessionId);
     if (row !== undefined) {
-      this.noteContinuity(row, null);
+      // what the user staged on it leaves with it
+      this.write(row, null);
       this.entomb(row);
     }
-    this.hooks.emit({ kind: "sessionClosed", sessionId });
     // Honest close: forgetting a session locally while a delete-capable
     // agent keeps it would just resurrect it on the next session/list sync.
     // Gated on used, not declared; spec makes delete idempotent, and a
@@ -981,6 +944,17 @@ export class SessionsStore {
         this.log.info(`session ${sessionId}: agent-side delete failed — ${err.message}`);
       });
     }
+  }
+
+  /** The one way a session leaves for good: its attachment, its diff texts,
+   * its row in both indexes, its view row. The continuity row is the
+   * caller's — close forgets it, a prune leaves it to the reconcile, and a
+   * removed agent's go together. */
+  private forget(sessionId: string): void {
+    this.sessions.delete(sessionId);
+    this.toolDiffs.delete(sessionId);
+    this.unbind(sessionId);
+    this.hooks.emit({ kind: "sessionClosed", sessionId });
   }
 
   /** Shield against a session/list walk already in flight: its earlier
@@ -999,8 +973,6 @@ export class SessionsStore {
     this.known.clear();
     this.byHandle.clear();
     this.toolDiffs.clear();
-    this.promptQueues.clear();
-    this.contextStash.clear();
     this.closedDuringSync.clear();
   }
 
@@ -1010,19 +982,15 @@ export class SessionsStore {
    * re-add). No agent-side delete: the process is already gone. */
   forgetAgentSessions(agentId: string): void {
     for (const [sessionId, entry] of [...this.known]) {
-      if (entry.agentId !== agentId) continue;
-      this.sessions.delete(sessionId);
-      this.toolDiffs.delete(sessionId);
-      this.unbind(sessionId);
-      this.promptQueues.delete(sessionId);
-      this.contextStash.delete(sessionId);
-      this.hooks.emit({ kind: "sessionClosed", sessionId });
+      if (entry.agentId === agentId) this.forget(sessionId);
     }
     this.closedDuringSync.delete(agentId);
     // Same contract as the auth lock: cleared with the agent's config — a
     // removed agent's rows have no walk left to reconcile them. By agent,
     // not by index: rows of other workspaces were never indexed here.
-    this.hooks.forgetAgentContinuity?.(agentId);
+    void this.continuity
+      .forgetAgent(agentId)
+      .catch((err: Error) => this.log.error(`session continuity drop ${agentId} — ${err.message}`));
   }
 
   /** Sessions ride their agent's connection: any status but running — a
@@ -1041,24 +1009,21 @@ export class SessionsStore {
     }
   }
 
-  /** Shared teardown for an involuntary live-session drop. Order matters,
-   * because this runs synchronously inside the process's exit handler
-   * while the dying prompt's rejection lands a microtask later: the sweep
-   * and seal must happen HERE, on the session that still holds the open
-   * tool calls and the rewriter tail — endTurn will find the session gone
-   * and can only place the turn-end block. Queued prompts SURVIVE an
-   * involuntary drop (only the user discards words — Stop, the row's ×,
-   * close): the rows stay backed by the in-memory queue and its durable
-   * copy, and the drain's running-agent gate holds them until a reattach
-   * can actually send. Pending chips stash for the next attach so the
-   * rendered chips stay backed by truth. */
+  /** The shared drop helper: the one way a session detaches from its
+   * connection and stays known — a crash, a stop, idle release, a reload,
+   * a failed roots re-apply. Order matters, because this runs
+   * synchronously inside the process's exit handler while the dying
+   * prompt's rejection lands a microtask later: the sweep and seal must
+   * happen HERE, on the session that still holds the open tool calls and
+   * the rewriter tail — endTurn will find the session gone and can only
+   * place the turn-end block. What the user staged stays on the session's
+   * continuity row, untouched: held words (only the user discards words —
+   * Stop, the row's ×, close; the drain's running-agent gate holds them
+   * until a reattach can send), chips, draft, roots, knobs. */
   private dropLiveSession(sessionId: string, session: LiveSession): void {
     if (session.inFlight) {
       this.sweepOpenToolCalls(sessionId, session);
       this.sealRun(sessionId, session);
-    }
-    if (session.pendingContext.length > 0) {
-      this.contextStash.set(sessionId, session.pendingContext);
     }
     this.sessions.delete(sessionId);
     this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
@@ -1071,19 +1036,6 @@ export class SessionsStore {
     this.toolDiffs.delete(sessionId);
   }
 
-  /** The stash's other half — called only AFTER an attach rung succeeded:
-   * consuming the stash before the RPC settles would destroy the only
-   * copy on every failed rung (a transient load failure descending the
-   * ladder would silently shed chips the view keeps rendering). */
-  private restoreStashedContext(sessionId: string): void {
-    const stashed = this.contextStash.get(sessionId);
-    if (stashed === undefined) return;
-    const session = this.sessions.get(sessionId);
-    if (session === undefined) return;
-    this.contextStash.delete(sessionId);
-    session.pendingContext = stashed;
-  }
-
   /** Reads the agent's own session history (`session/list`, cwd-filtered
    * to this workspace) into the view — run on every connect of a
    * list-capable agent. The wire list is the ONLY list (patchbay persists
@@ -1092,12 +1044,22 @@ export class SessionsStore {
    * dropping known rows the agent no longer reports — only happens after a
    * *complete* pagination walk: a truncated read must never erase. */
   async syncAgentSessions(agentId: string): Promise<void> {
-    const declared = this.pool.get(agentId)?.declared;
-    // A handshake that cannot bring a session back makes every row of the
-    // agent unreadable — rows from before the writer refused them included.
-    if (!continuityReachable(declared)) this.hooks.forgetAgentContinuity?.(agentId);
-    if (declared?.sessionList !== true) return;
+    if (this.pool.get(agentId)?.declared?.sessionList !== true) {
+      // No list will ever name a session of this agent again, so a row of
+      // this workspace that no session of this window holds has no reader
+      // left — an earlier window's go; this window's stay with its sessions.
+      this.reconcile(agentId, (handle) => this.rowFor(agentId, handle) !== undefined);
+      return;
+    }
     await this.walkAgentSessions(agentId);
+  }
+
+  /** The agent's continuity rows for this workspace, held against what
+   * names them: `keep` false, the row leaves. */
+  private reconcile(agentId: string, keep: (agentSessionId: string) => boolean): void {
+    void this.continuity
+      .reconcile(agentId, this.cwd(), keep)
+      .catch((err: Error) => this.log.error(`session continuity reconcile ${agentId} — ${err.message}`));
   }
 
   /** The user is about to read the list (drawer opening, palette pick):
@@ -1176,13 +1138,7 @@ export class SessionsStore {
       // longer reports (deleted externally, or a zero-turn shell it never
       // persisted) is gone; live sessions are exempt (a just-created id may
       // trail the agent's own list).
-      this.unbind(sessionId);
-      this.toolDiffs.delete(sessionId);
-      // The stash too — a pruned id can never re-attach, and an image
-      // chip's payload must not sit orphaned until erase-all.
-      this.contextStash.delete(sessionId);
-      this.promptQueues.delete(sessionId);
-      this.hooks.emit({ kind: "sessionClosed", sessionId });
+      this.forget(sessionId);
       this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
     }
     // The durable rows by the same truth, index or not: a session deleted
@@ -1191,7 +1147,7 @@ export class SessionsStore {
     const attached = new Set(
       this.sessionsOn(agentId).flatMap((sessionId) => this.known.get(sessionId)?.handle ?? []),
     );
-    this.hooks.reconcileContinuity?.(agentId, cwd, (handle) => seen.has(handle) || attached.has(handle));
+    this.reconcile(agentId, (handle) => seen.has(handle) || attached.has(handle));
   }
 
   /** One listed session into the view. Title rule: the agent's title wins
@@ -1210,45 +1166,32 @@ export class SessionsStore {
       const title = meta.title ?? "Untitled session";
       const at = meta.updatedAt ?? now;
       // The durable continuity row re-enters with the session — the fields
-      // the wire list cannot carry. Knobs ride the known row (consumed by
-      // the reattach rule); roots/queue/draft re-emit into the view now;
-      // chips decode async (image bytes come back from the stash) and land
-      // via rehydrateChips.
-      const cont = this.hooks.continuityFor?.(info.sessionId, agentId);
+      // the wire list cannot carry stay there, read as they are needed; the
+      // view gets them now: roots, held words and draft at once, chips once
+      // their image bytes are read back from the stash (rehydrateChips).
       const sessionId = randomUUID();
       this.bind(sessionId, {
         agentId,
         handle: info.sessionId,
         titled: true,
         everPrompted: true, // listed = persisted agent-side = prior turns
-        ...(cont?.knobs !== undefined ? { knobs: cont.knobs } : {}),
       });
+      const saved = this.saved(sessionId);
       this.hooks.emit({
         kind: "sessionListed",
         session: { id: sessionId, agentId, title, live: false, updatedAt: at },
       });
       if (info.additionalDirectories !== undefined) {
         // the view has no list for this session yet; the row may
-        this.adoptReportedRoots(sessionId, info.additionalDirectories, [], cont?.roots ?? []);
-      } else if (cont?.roots !== undefined && cont.roots.length > 0) {
-        this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: cont.roots });
+        this.adoptReportedRoots(sessionId, info.additionalDirectories, []);
+      } else if ((saved.roots?.length ?? 0) > 0) {
+        this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: saved.roots! });
       }
-      if (cont?.queue !== undefined && cont.queue.length > 0) {
-        // Re-minted ids: the persisted ones came from the old window's
-        // counter, which restarts here — a collision with a fresh
-        // newBlockId("queued") would make a row's × remove the wrong words.
-        const rehydrated = cont.queue.map((q) => ({ ...q, id: newBlockId("queued") }));
-        this.promptQueues.set(sessionId, rehydrated);
-        for (const prompt of rehydrated) {
-          this.hooks.emit({ kind: "promptQueued", sessionId, prompt });
-        }
+      for (const prompt of saved.queue ?? []) this.hooks.emit({ kind: "promptQueued", sessionId, prompt });
+      if ((saved.draft ?? "") !== "") {
+        this.hooks.emit({ kind: "sessionDraftChanged", sessionId, draft: saved.draft! });
       }
-      if (cont?.draft !== undefined && cont.draft !== "") {
-        this.hooks.emit({ kind: "sessionDraftChanged", sessionId, draft: cont.draft });
-      }
-      if (cont?.chips !== undefined && cont.chips.length > 0) {
-        void this.rehydrateChips(sessionId, cont.chips);
-      }
+      if ((saved.chips?.length ?? 0) > 0) void this.rehydrateChips(sessionId, saved.chips!);
       return;
     }
     // A session known but not open here: whoever opened it last set its
@@ -1256,9 +1199,8 @@ export class SessionsStore {
     // writer and the report can only echo or trail a re-apply in flight —
     // adopting it would revert the chip to a list already replaced.
     if (info.additionalDirectories !== undefined && !this.sessions.has(existing)) {
-      // view and row hold the same list here — every change writes both
-      const held = this.hooks.contextRootsFor?.(existing) ?? [];
-      this.adoptReportedRoots(existing, info.additionalDirectories, held, held);
+      // the view shows what the row holds — every change writes both
+      this.adoptReportedRoots(existing, info.additionalDirectories, this.addedRootsOf(existing));
     }
     // Only what the wire carried rides — the row's own is the truth
     // otherwise (silence is no event at all), and the reducer's newest-wins
@@ -1275,20 +1217,15 @@ export class SessionsStore {
    * those from reality at every open and the row keeps only what the user
    * added. An omitted field never reaches here: the report is optional, so
    * silence says nothing about the list, and the intended list stands.
-   * `shown` is what the view lists now, `stored` what the row carries —
-   * each is written only where it differs, so a walk that reports what is
-   * already held moves nothing. */
-  private adoptReportedRoots(
-    sessionId: string,
-    reported: readonly string[],
-    shown: readonly string[],
-    stored: readonly string[],
-  ): void {
+   * `shown` is what the view lists now; the row and the view are each
+   * written only where they differ, so a walk that reports what is already
+   * held moves nothing. */
+  private adoptReportedRoots(sessionId: string, reported: readonly string[], shown: readonly string[]): void {
     const folders = new Set(this.hooks.workspaceRoots?.() ?? []);
     const added = reported.filter((p) => !folders.has(p));
     const same = (a: readonly string[]) => a.length === added.length && a.every((p, i) => p === added[i]);
+    if (!same(this.addedRootsOf(sessionId))) this.save(sessionId, { roots: added });
     if (!same(shown)) this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: added });
-    if (!same(stored)) this.persistRoots(sessionId, added);
   }
 
   /** One-click reload: re-attach on demand, even when the session
@@ -1316,10 +1253,7 @@ export class SessionsStore {
       this.hooks.emit({ kind: "transcriptReset", sessionId });
       this.dropToolDiffs(sessionId);
       const dying = this.sessions.get(sessionId);
-      if (dying !== undefined && dying.pendingContext.length > 0) {
-        this.contextStash.set(sessionId, dying.pendingContext);
-      }
-      this.sessions.delete(sessionId);
+      if (dying !== undefined) this.dropLiveSession(sessionId, dying);
       const agentId = this.known.get(sessionId)?.agentId;
       if (agentId === undefined) return;
       await this.ensureAttached(sessionId, agentId);
@@ -1391,12 +1325,11 @@ export class SessionsStore {
     const declared = this.pool.get(agentId)?.declared;
     // Read before any rung publishes: the attach's own publishKnobs
     // overwrites this snapshot with the agent's reset state.
-    const remembered = this.known.get(sessionId)?.knobs;
+    const remembered = this.saved(sessionId).knobs;
     let error: Error | undefined;
     if (declared?.loadSession) {
       try {
         await this.reopen(sessionId, agentId);
-        this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
         return { attached: true };
       } catch (err) {
@@ -1409,7 +1342,6 @@ export class SessionsStore {
     if (declared?.sessionResume) {
       try {
         await this.resumeReattach(sessionId, agentId);
-        this.restoreStashedContext(sessionId);
         await this.reseedAfterAttach(sessionId, agentId, remembered);
         return { attached: true };
       } catch (err) {
@@ -1522,21 +1454,16 @@ export class SessionsStore {
   }
 
   /** The one exit for knob state: stores the normalized truth on the
-   * session (set routing reads the surface from it), snapshots the
-   * combination on the KnownSession row (what reseedAfterAttach restores),
-   * and emits the full view replace. */
+   * session (set routing reads the surface from it), saves the combination
+   * on the session's continuity row (what reseedAfterAttach restores — the
+   * agent cannot report it again after it resets knob state on load), and
+   * emits the full view replace. */
   private publishKnobs(sessionId: string, knobs: NormalizedKnobs): void {
     const session = this.sessions.get(sessionId);
     if (session) session.knobs = knobs;
-    // An empty surface is not a combination — snapshotting it would erase a
-    // real one with "this agent offered nothing this time".
-    if (knobs.knobs.length > 0) {
-      const entry = this.known.get(sessionId);
-      if (entry !== undefined) {
-        entry.knobs = confirmedFromKnobs(knobs);
-        this.noteContinuity(entry, { knobs: entry.knobs });
-      }
-    }
+    // An empty surface is not a combination — saving it would erase a real
+    // one with "this agent offered nothing this time".
+    if (knobs.knobs.length > 0) this.save(sessionId, { knobs: confirmedFromKnobs(knobs) });
     this.hooks.emit({ kind: "sessionKnobsSet", sessionId, knobs: knobs.knobs });
   }
 
@@ -1601,41 +1528,39 @@ export class SessionsStore {
     );
   }
 
-  addContext(sessionId: string, chip: ContextChip): void {
-    const session = this.sessions.get(sessionId);
-    if (session === undefined) return;
+  /** Stages a chip for the session's next prompt — on its continuity row,
+   * whether the session is attached right now or not. An image's bytes
+   * land in the stash first: the row carries only the file, and names it
+   * once it exists. */
+  async addContext(sessionId: string, chip: ContextChip): Promise<void> {
+    if (!this.known.has(sessionId)) return;
     if (chip.kind === "image") {
-      // Bytes into the stash at ingress, not at send: the durable chip row
-      // carries only the file reference, so a reload must find real bytes.
-      void stashImage(imageFileName(chip.id, chip.mimeType), chip.content).catch((err: Error) => {
-        this.log.info(`session ${sessionId}: image stash at ingress failed — ${err.message}`);
-      });
+      try {
+        await stashImage(imageFileName(chip.id, chip.mimeType), chip.content);
+      } catch (err) {
+        this.log.info(`session ${sessionId}: image not staged — the stash refused it: ${(err as Error).message}`);
+        return;
+      }
+      if (!this.known.has(sessionId)) return; // closed while the bytes landed
     }
-    session.pendingContext.push(chip);
+    this.save(sessionId, { chips: [...(this.saved(sessionId).chips ?? []), persistChip(chip)] });
     this.hooks.emit({ kind: "contextChipAdded", sessionId, chip });
-    this.persistChips(sessionId);
   }
 
   removeContext(sessionId: string, chipId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (session !== undefined) {
-      session.pendingContext = session.pendingContext.filter((c) => c.id !== chipId);
-    } else if (this.contextStash.has(sessionId)) {
-      // A rehydrated chip removed before its session re-attached: the
-      // stash is the only copy — filtering just pendingContext would
-      // resurrect the chip at the next attach.
-      this.contextStash.set(
-        sessionId,
-        this.contextStash.get(sessionId)!.filter((c) => c.id !== chipId),
-      );
-    } else return;
+    const chips = this.saved(sessionId).chips ?? [];
+    if (!chips.some((c) => c.id === chipId)) return;
+    this.save(sessionId, { chips: chips.filter((c) => c.id !== chipId) });
     this.hooks.emit({ kind: "contextChipRemoved", sessionId, chipId });
-    this.persistChips(sessionId);
   }
 
-  /** External context roots: patchbay holds no local
-   * copy — the canonical list lives in AgentViewState, read back via
-   * `contextRootsFor` so this stays "append/remove, republish, re-apply."
+  /** The session's user-added roots — its continuity row's list. */
+  private addedRootsOf(sessionId: string): readonly string[] {
+    return this.saved(sessionId).roots ?? [];
+  }
+
+  /** External context roots: the list lives on the session's continuity
+   * row, so this stays "append/remove, republish, re-apply."
    * The list has two readers: the agent, which ACP tells only on lifecycle
    * requests (so a change re-applies to the live attachment through one,
    * reapplyRoots), and the session's MCP servers, which the orchestrator
@@ -1644,19 +1569,21 @@ export class SessionsStore {
    * states, from the same declared facts the pool holds, whether and when
    * the agent gets it. */
   async addRoot(sessionId: string, path: string): Promise<void> {
+    if (!this.known.has(sessionId)) return;
     const normalized = normalizeRootPath(path);
-    const current = this.hooks.contextRootsFor?.(sessionId) ?? [];
+    const current = this.addedRootsOf(sessionId);
     if (current.includes(normalized)) return;
-    this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: [...current, normalized] });
-    this.persistRoots(sessionId, [...current, normalized]);
+    const next = [...current, normalized];
+    this.save(sessionId, { roots: next });
+    this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: next });
     await this.reapplyRoots(sessionId);
   }
 
   async removeRoot(sessionId: string, path: string): Promise<void> {
-    const current = this.hooks.contextRootsFor?.(sessionId) ?? [];
-    const next = current.filter((p) => p !== path);
+    if (!this.known.has(sessionId)) return;
+    const next = this.addedRootsOf(sessionId).filter((p) => p !== path);
+    this.save(sessionId, { roots: next });
     this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: next });
-    this.persistRoots(sessionId, next);
     await this.reapplyRoots(sessionId);
   }
 
@@ -1667,7 +1594,7 @@ export class SessionsStore {
    * disagree — they are derived from the same facts. */
   private rootsFor(sessionId: string | null, cwd: string): string[] {
     const folders = (this.hooks.workspaceRoots?.() ?? []).filter((f) => f !== cwd);
-    const added = sessionId === null ? [] : (this.hooks.contextRootsFor?.(sessionId) ?? []);
+    const added = sessionId === null ? [] : this.addedRootsOf(sessionId);
     return [...folders, ...added];
   }
 
@@ -1705,12 +1632,6 @@ export class SessionsStore {
     for (const sessionId of [...this.sessions.keys()]) {
       await this.reapplyRoots(sessionId);
     }
-  }
-
-  private persistRoots(sessionId: string, roots: readonly string[]): void {
-    const row = this.known.get(sessionId);
-    if (row === undefined) return;
-    this.noteContinuity(row, { roots: [...roots] });
   }
 
   /** Pushes the canonical root list to a *live* attachment: the session's
@@ -1773,13 +1694,9 @@ export class SessionsStore {
       await this.applySeed(sessionId, seed);
       this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
     } catch (err) {
-      // An involuntary detach like any other: the chips the view renders
-      // must survive it (the next attach restores them).
+      // An involuntary detach like any other.
       const dying = this.sessions.get(sessionId);
-      if (dying !== undefined && dying.pendingContext.length > 0) {
-        this.contextStash.set(sessionId, dying.pendingContext);
-      }
-      this.sessions.delete(sessionId);
+      if (dying !== undefined) this.dropLiveSession(sessionId, dying);
       this.log.info(
         `session ${sessionId}: root re-apply failed (${(err as Error).message}) — detached; next prompt re-enters the continuation ladder`,
       );
@@ -1808,24 +1725,22 @@ export class SessionsStore {
       this.retire(agentId, handle);
       throw new Error(`session ${sessionId} was closed while it was minted again`);
     }
-    // The row's knob snapshot is what every publish wrote — the same fact a
-    // live attachment holds, from its one durable home.
-    const seed = row.knobs ?? {};
-    const carried = this.hooks.continuityFor?.(was, agentId);
+    // Read under the old id, before it moves: the knob combination is what
+    // every publish wrote — the same fact a live attachment holds, from its
+    // one durable home.
+    const carried = this.saved(sessionId);
+    const seed = carried.knobs ?? {};
     this.unbind(sessionId);
     row.handle = handle;
     this.bind(sessionId, row);
     this.hooks.mapContextToken?.(contextToken, sessionId);
     // The continuity row follows the session to its new id.
-    this.noteContinuity({ agentId, handle: was }, null);
-    if (carried !== undefined) this.noteContinuity(row, carried);
+    this.write({ agentId, handle: was }, null);
+    if (Object.keys(carried).length > 0) this.write(row, carried);
     // Same shield as close(): an in-flight session/list walk's stale page
     // must not resurrect the retired shell.
     this.entomb({ agentId, handle: was });
-    const fresh = liveSession(agentId);
-    fresh.pendingContext = old?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
-    this.contextStash.delete(sessionId);
-    this.sessions.set(sessionId, fresh);
+    this.sessions.set(sessionId, liveSession(agentId));
     this.hooks.handleChanged?.(sessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
@@ -1868,22 +1783,17 @@ export class SessionsStore {
     const inFlight =
       this.sessions.get(sessionId)?.inFlight === true || this.turnStarting.has(sessionId);
     const locked = this.hooks.authLocked?.(agentId) === true;
-    const behindHeld = (this.promptQueues.get(sessionId)?.length ?? 0) > 0;
-    if (inFlight || locked || behindHeld) {
+    const held = this.saved(sessionId).queue ?? [];
+    if (inFlight || locked || held.length > 0) {
+      // Ids outlive the window with the row, so they are unique anywhere.
       const queued: QueuedPrompt = {
-        id: newBlockId("queued"),
+        id: randomUUID(),
         text,
         ...(parts !== undefined ? { parts } : {}),
         ...(draft !== undefined ? { draft } : {}),
       };
-      let queue = this.promptQueues.get(sessionId);
-      if (queue === undefined) {
-        queue = [];
-        this.promptQueues.set(sessionId, queue);
-      }
-      queue.push(queued);
+      this.save(sessionId, { queue: [...held, queued] });
       this.hooks.emit({ kind: "promptQueued", sessionId, prompt: queued });
-      this.persistQueue(sessionId);
       // Held only by order — rehydrated words whose firing trigger died
       // with the old window: release the front now; this prompt fires
       // after them, one per turn end.
@@ -1896,7 +1806,7 @@ export class SessionsStore {
       // reload or prompt sends them — only the user discards words.
       if (err instanceof TurnNotStartedError) {
         this.reHold(sessionId, {
-          id: newBlockId("queued"),
+          id: randomUUID(),
           text,
           ...(parts !== undefined ? { parts } : {}),
           ...(draft !== undefined ? { draft } : {}),
@@ -1963,25 +1873,18 @@ export class SessionsStore {
     const startedAt = new Date().toISOString();
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
-    // (explicitly add editor state to the prompt).
-    const chips = session.pendingContext;
-    session.pendingContext = [];
-    this.persistChips(sessionId);
+    // (explicitly add editor state to the prompt). The turn takes the
+    // chips off the session's row.
+    const chips = this.saved(sessionId).chips ?? [];
+    if (chips.length > 0) this.save(sessionId, { chips: [] });
     for (const chip of chips) {
       events.push({ kind: "contextChipRemoved", sessionId, chipId: chip.id });
     }
     // The transcript's copy of the prompt, in the part vocabulary — chips
-    // first, then prose, the same order the wire blocks below carry. Image
-    // bytes stash to the attachments dir (fire-and-forget: the part names
-    // its file up front; a failed write degrades to a label chip at render).
+    // first, then prose, the same order the wire blocks below carry. An
+    // image is the file its chip staged in the attachments dir.
     const userParts: UserPart[] = chips.map((c): UserPart => {
-      if (c.kind === "image") {
-        const file = imageFileName(c.id, c.mimeType);
-        void stashImage(file, c.content).catch((err: Error) => {
-          this.log.info(`session ${sessionId}: image stash failed — ${err.message}`);
-        });
-        return { kind: "image", mimeType: c.mimeType, file };
-      }
+      if (c.kind === "image") return { kind: "image", mimeType: c.mimeType, file: c.file };
       if (c.kind === "attachment") {
         return { kind: "attachment", name: basename(c.path), path: c.path };
       }
@@ -2026,9 +1929,16 @@ export class SessionsStore {
     for (const c of chips) {
       if (c.kind === "image") {
         if (acceptsImages) {
-          prompt.push({ type: "image", data: c.content, mimeType: c.mimeType });
+          // The bytes are the staged file's; one the OS reclaimed since
+          // leaves the prompt without it, said in the log.
+          const data = await readStashedImage(c.file);
+          if (data === null) {
+            this.log.info(`session ${sessionId}: pasted image "${c.label}" not sent — its stash file is gone`);
+          } else {
+            prompt.push({ type: "image", data, mimeType: c.mimeType });
+          }
         } else {
-          prompt.push(await imageAsResourceLink(c));
+          prompt.push(imageAsResourceLink(c));
         }
       } else if (c.kind === "attachment") {
         prompt.push({
@@ -2159,10 +2069,10 @@ export class SessionsStore {
     // could have sent. Open/prompt/unlock re-fire the drain once a
     // connection is back.
     if (this.pool.get(agentId)?.status !== "running") return;
-    const next = this.promptQueues.get(sessionId)?.shift();
+    const [next, ...rest] = this.saved(sessionId).queue ?? [];
     if (next === undefined) return;
+    this.save(sessionId, { queue: rest });
     this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId: next.id });
-    this.persistQueue(sessionId);
     void this.sendPromptNow(sessionId, agentId, next.text, next.parts).catch((err: Error) => {
       if (err instanceof TurnNotStartedError) {
         // Nothing rendered, nothing sent — the words go back (only the user
@@ -2185,64 +2095,40 @@ export class SessionsStore {
    * meanwhile took its held words with it, these included. */
   private reHold(sessionId: string, words: QueuedPrompt): void {
     if (!this.known.has(sessionId)) return;
-    const queue = this.promptQueues.get(sessionId) ?? [];
-    queue.unshift(words);
-    this.promptQueues.set(sessionId, queue);
+    const queue = [words, ...(this.saved(sessionId).queue ?? [])];
+    this.save(sessionId, { queue });
     this.hooks.emit({ kind: "promptQueueCleared", sessionId });
     for (const q of queue) this.hooks.emit({ kind: "promptQueued", sessionId, prompt: q });
-    this.persistQueue(sessionId);
   }
 
-  /** The one continuity write. A patch is refused for an agent whose rows
-   * could never be read back — no `session/list` to name the session after
-   * a reload, or no rung to open it — so nothing is stored for a reader
-   * that cannot come; forgetting (`null`) always passes. The predicate
-   * reads the handshake the pool holds for the agent (kept past a stop),
-   * so a stopped agent's detached session still writes honestly. */
-  private noteContinuity(row: { agentId: string; handle: string }, patch: SessionContinuity | null): void {
-    if (patch !== null) {
-      if (!continuityReachable(this.pool.get(row.agentId)?.declared)) return;
-    }
-    this.hooks.onContinuity?.(row.handle, row.agentId, this.cwd(), patch);
+  /** The composer's draft for the session — saved as the composer hands it
+   * over (debounced), the editor state opaque here. A draft for a session
+   * the store doesn't know (a stale panel's late save) is refused whole,
+   * and an unchanged one writes nothing: every save rewrites the whole
+   * machine file, and the debounce ticks while a user merely moves the
+   * caret. The view's copy is what sibling views (detached panels) and the
+   * next session switch read — the composer applies drafts only when idle,
+   * so echoes never fight the keyboard. */
+  saveDraft(sessionId: string, draft: string): void {
+    if (!this.known.has(sessionId)) return;
+    if ((this.saved(sessionId).draft ?? "") === draft) return;
+    this.save(sessionId, { draft });
+    this.hooks.emit({ kind: "sessionDraftChanged", sessionId, draft });
   }
 
-  /** Durable copies of the queue, the chip row, and the composer draft —
-   * written through at every mutation so a window reload finds the truth.
-   * Both live and merely-listed sessions persist; an unknown id writes
-   * nothing. */
-  private persistQueue(sessionId: string): void {
-    const row = this.known.get(sessionId);
-    if (row === undefined) return;
-    this.noteContinuity(row, { queue: [...(this.promptQueues.get(sessionId) ?? [])] });
-  }
-
-  private persistChips(sessionId: string): void {
-    const row = this.known.get(sessionId);
-    if (row === undefined) return;
-    const chips = this.sessions.get(sessionId)?.pendingContext ?? this.contextStash.get(sessionId) ?? [];
-    this.noteContinuity(row, { chips: chips.map(persistChip) });
-  }
-
-  /** The draft is opaque here (serialized editor state); the view mirror
-   * is the orchestrator's, this is only its durable copy. */
-  persistDraft(sessionId: string, draft: string): void {
-    const row = this.known.get(sessionId);
-    if (row === undefined) return;
-    this.noteContinuity(row, { draft });
-  }
-
-  /** Decodes persisted chips back into the view (image bytes read from the
-   * attachments stash) — and into the stash map, which the attach ceremony
-   * installs into pendingContext exactly like an in-window detach. A chip
-   * whose stash file the OS reclaimed drops honestly, logged; the durable
-   * row is rewritten so the husk doesn't return next reload. */
+  /** Decodes saved chips for the view (image bytes read from the
+   * attachments stash). A chip whose stash file the OS reclaimed drops
+   * honestly, logged, and leaves the row too, so the husk doesn't return
+   * next reload. */
   private async rehydrateChips(sessionId: string, persisted: readonly PersistedChip[]): Promise<void> {
     const chips: ContextChip[] = [];
+    const gone = new Set<string>();
     for (const chip of persisted) {
       if (chip.kind === "image") {
         const content = await readStashedImage(chip.file);
         if (content === null) {
           this.log.info(`session ${sessionId}: pasted image "${chip.label}" not rehydrated — stash file gone`);
+          gone.add(chip.id);
           continue;
         }
         chips.push({ kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, content });
@@ -2265,16 +2151,12 @@ export class SessionsStore {
       }
     }
     // The reads above are async: the session may have been closed or
-    // pruned meanwhile — applying now would ghost a stash entry no
-    // teardown will ever remove and emit chips into a deleted view row.
+    // pruned meanwhile — emitting now would put chips into a deleted row.
     if (!this.known.has(sessionId)) return;
-    if (chips.length > 0) {
-      const session = this.sessions.get(sessionId);
-      if (session !== undefined) session.pendingContext.push(...chips);
-      else this.contextStash.set(sessionId, [...(this.contextStash.get(sessionId) ?? []), ...chips]);
-      for (const chip of chips) this.hooks.emit({ kind: "contextChipAdded", sessionId, chip });
+    for (const chip of chips) this.hooks.emit({ kind: "contextChipAdded", sessionId, chip });
+    if (gone.size > 0) {
+      this.save(sessionId, { chips: (this.saved(sessionId).chips ?? []).filter((c) => !gone.has(c.id)) });
     }
-    if (chips.length < persisted.length) this.persistChips(sessionId);
   }
 
   /** The auth lock's release valve: when an agent's lock clears, fire the
@@ -2283,9 +2165,8 @@ export class SessionsStore {
    * turn-start door would wait forever behind a login that already
    * happened. */
   drainHeldQueues(agentId: string): void {
-    for (const sessionId of [...this.promptQueues.keys()]) {
-      const owner = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-      if (owner === agentId) this.drainQueue(sessionId);
+    for (const [sessionId, row] of [...this.known]) {
+      if (row.agentId === agentId) this.drainQueue(sessionId);
     }
   }
 
@@ -2307,40 +2188,36 @@ export class SessionsStore {
 
   /** Drops one still-queued prompt (composer row × button). */
   removeQueuedPrompt(sessionId: string, promptId: string): void {
-    const queue = this.promptQueues.get(sessionId);
-    const index = queue?.findIndex((q) => q.id === promptId) ?? -1;
-    if (queue === undefined || index === -1) return;
-    queue.splice(index, 1);
+    const queue = this.saved(sessionId).queue ?? [];
+    if (!queue.some((q) => q.id === promptId)) return;
+    this.save(sessionId, { queue: queue.filter((q) => q.id !== promptId) });
     this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId });
-    this.persistQueue(sessionId);
   }
 
   /** Take the queue's tail back for editing: the row leaves the queue and
-   * its editor state is returned for the caller to make the draft. Tail
-   * only — the one row whose place a resend keeps — and only a row that
-   * carries its editor state (one held before the composer sent it has
-   * nothing to come back as; it copies and fires). Anything else is a
-   * no-op: a row that already fired is simply gone. */
-  reclaimQueuedPrompt(sessionId: string, promptId: string): (QueuedPrompt & { draft: string }) | undefined {
-    const queue = this.promptQueues.get(sessionId);
-    const tail = queue?.at(-1);
-    if (queue === undefined || tail === undefined || tail.id !== promptId || tail.draft === undefined) {
-      return undefined;
-    }
-    queue.pop();
-    this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId });
-    this.persistQueue(sessionId);
-    return { ...tail, draft: tail.draft };
+   * its editor state becomes the session's draft. Only into an empty
+   * draft — the composer flushes its buffer on blur, so the click that
+   * asks came after its last save, and merging two messages into one is
+   * the user's call, made with Copy. Tail only — the one row whose place
+   * a resend keeps — and only a row that carries its editor state (one
+   * held before the composer sent it has nothing to come back as; it
+   * copies and fires). Anything else is a no-op: a row that already fired
+   * is simply gone. */
+  takeBack(sessionId: string, promptId: string): void {
+    const { queue = [], draft = "" } = this.saved(sessionId);
+    const tail = queue.at(-1);
+    if (draft !== "" || tail === undefined || tail.id !== promptId || tail.draft === undefined) return;
+    this.save(sessionId, { queue: queue.slice(0, -1), draft: tail.draft });
+    this.hooks.emit(
+      { kind: "promptUnqueued", sessionId, promptId },
+      { kind: "sessionDraftChanged", sessionId, draft: tail.draft },
+    );
   }
 
   private clearPromptQueue(sessionId: string): void {
-    if ((this.promptQueues.get(sessionId)?.length ?? 0) > 0) {
-      this.hooks.emit({ kind: "promptQueueCleared", sessionId });
-      this.promptQueues.delete(sessionId);
-      this.persistQueue(sessionId);
-      return;
-    }
-    this.promptQueues.delete(sessionId);
+    if ((this.saved(sessionId).queue?.length ?? 0) === 0) return;
+    this.save(sessionId, { queue: [] });
+    this.hooks.emit({ kind: "promptQueueCleared", sessionId });
   }
 
   /** Honest interruption: a live turn is cancelled (per the spec)
@@ -2878,15 +2755,16 @@ export class SessionsStore {
 }
 
 /** The image-paste fallback for agents that never declared
- * `promptCapabilities.image`: bytes to the attachments stash, sent as a
+ * `promptCapabilities.image`: the chip's stashed file, sent as a
  * ResourceLink (with ContentBlock::Text, the baseline every agent must
- * accept). The same stash file backs the transcript's preview. */
-async function imageAsResourceLink(
-  chip: Extract<ContextChip, { kind: "image" }>,
-): Promise<ContentBlock> {
-  const name = imageFileName(chip.id, chip.mimeType);
-  const file = await stashImage(name, chip.content);
-  return { type: "resource_link", uri: pathToFileURL(file).toString(), name, mimeType: chip.mimeType };
+ * accept). The same file backs the transcript's preview. */
+function imageAsResourceLink(chip: Extract<PersistedChip, { kind: "image" }>): ContentBlock {
+  return {
+    type: "resource_link",
+    uri: pathToFileURL(stashedPath(chip.file)).toString(),
+    name: chip.file,
+    mimeType: chip.mimeType,
+  };
 }
 
 /** PromptResponse.usage (UNSTABLE in ACP, optional per agent) → the view's

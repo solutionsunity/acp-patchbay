@@ -25,6 +25,8 @@ import {
 } from "../src/mcp/ipc-protocol";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
+import { MemoryKV } from "../src/orchestrator/stores/kv";
+import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -141,6 +143,7 @@ function harness() {
       emit: (...evs) => events.push(...evs),
       mapContextToken: (token, sessionId) => host.contextTokenToSession.set(token, sessionId),
     },
+    new SessionContinuityStore(new MemoryKV()),
     () => dir,
     mcpServersFor,
   );
