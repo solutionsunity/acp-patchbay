@@ -358,7 +358,7 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
 
   it("lists the directory and every variable the agent sets, a handed-out value masked", async () => {
     const { broker, events } = harness();
-    void broker.gateCommand(
+    const gated = broker.gateCommand(
       "s1",
       run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js", API_KEY: HANDED_OUT } }),
     );
@@ -371,6 +371,9 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
       ],
     });
     broker.cancelPending("s1");
+    // The cancel is audited into the test's directory: it lands before the
+    // directory goes.
+    await gated;
   });
 
   it("keeps argument boundaries: `rm \"a b\"` is never `rm a b`, on the card or to a rule", async () => {
