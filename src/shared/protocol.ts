@@ -122,8 +122,8 @@ export type Action =
    * `resource_link` content block *at its place in the prompt* instead of
    * a chip riding ahead of the prose. Absent for plain text prompts.
    * `draft` is the composer's serialized editor state for these words —
-   * kept only if the prompt is held (QueuedPrompt.draft), dropped on a
-   * direct send. */
+   * kept only while they are held (QueuedPrompt.draft): queued at the
+   * door, or back among the held ones after a turn that never started. */
   | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[]; draft?: string }
   | { kind: "stopTurn"; sessionId: string }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
