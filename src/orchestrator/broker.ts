@@ -32,6 +32,7 @@ import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import { NodeTerminalRunner, type CreateTerminalParams, type TerminalRunner } from "./terminal-runner";
+import { newBlockId } from "./block-ids";
 import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
@@ -50,11 +51,6 @@ export interface BrokerHooks {
    * neither patchbay nor the agent's model can see the page or what the
    * user types into it. Called only on the user's own click. */
   openLink?(href: string): void;
-}
-
-let blockCounter = 0;
-function newBlockId(prefix: string): string {
-  return `${prefix}-${++blockCounter}`;
 }
 
 const STANDARD_OPTIONS: readonly PermissionOptionView[] = [

@@ -25,17 +25,13 @@ import { createProseRewriter, type ProseRewriter } from "./extensions";
 import type { Logger } from "./logger";
 import { planUsageOf } from "./meta";
 import { toolLocationsOf } from "./tool-locations";
+import { randomUUID } from "node:crypto";
 import type { PatchbaySessionId } from "../shared/ids";
+import { newBlockId } from "./block-ids";
 
 /** Joins several changed regions of one file into one openable diff — the
  * same line on both sides, so it reads as a boundary and never as a change. */
 const REGION_MARKER = "\n⋯\n";
-
-let blockCounter = 0;
-/** A transcript block's id, unique for the window. */
-export function newBlockId(prefix: string): string {
-  return `${prefix}-${++blockCounter}`;
-}
 
 /** One XML-ish element (open…close on the same tag, first close wins — the
  * harness envelopes never nest their own tag) or a self-closing one. */
@@ -531,10 +527,13 @@ export class SessionStream {
   }
 
   /** Images arriving in content are copied to the attachments stash for
-   * preview, fire-and-forget; a failed write only costs the preview. */
+   * preview, fire-and-forget; a failed write only costs the preview. The
+   * stash is one folder every window and every reload shares, so a stashed
+   * image's name is random — a counter restarting at 1 would name another
+   * window's image again. */
   private imageStash(patchbaySessionId: PatchbaySessionId, source: string): ImageStash {
     return {
-      id: () => `${source}-${++blockCounter}`,
+      id: () => `${source}-${randomUUID()}`,
       onError: (err) => this.log.info(`session ${patchbaySessionId}: ${source} image stash failed — ${err.message}`),
     };
   }
