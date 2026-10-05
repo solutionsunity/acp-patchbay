@@ -11,9 +11,13 @@
 // line one by one. A turn starts only once the attachment line is idle, so
 // nothing re-binds the session under a turn and no prompt fires into a
 // replay; a knob set waits for the attachment line only — ACP lets a mode or
-// an option change land mid-turn. What a session's own facts allow stays the
-// store's to enforce: one turn at a time, never under a standing auth lock.
-// What the two lines hold is the session's busy state for the views.
+// an option change land mid-turn. Every line's work but a close also enters
+// behind what the session's agent's row holds right then — a restart, an
+// upgrade, a login — so nothing binds a session to a connection being
+// replaced; a close, the escape hatch, waits on nothing. What a session's own
+// facts allow stays the store's to enforce: one turn at a time, never under a
+// standing auth lock. What the two lines hold is the session's busy state for
+// the views.
 import { randomUUID } from "node:crypto";
 import type { QueuedPrompt, SessionWork } from "../shared/protocol";
 import { unlessAborted } from "./abort";
@@ -38,6 +42,8 @@ export interface SessionGateAsks {
   /** A failure no door hears — a background attach, a held prompt's turn,
    * an idle release — for the log. */
   failed(context: string, err: unknown): void;
+  /** Settles once the work the agent's row holds now has left it. */
+  agentSettled(agentId: string): Promise<void>;
 }
 
 export class SessionGates {
@@ -149,18 +155,26 @@ export class SessionGates {
    * the wire — and the session is read again from its agent; held words go
    * once it is back. A repeat joins. */
   async reload(sessionId: string): Promise<void> {
-    await this.attachLine.run(sessionId, "reload", async (signal) => {
-      await this.turnLine.end(sessionId, "reload");
-      // The re-attach sends the whole root list: a change the turn held
-      // back goes with it.
-      this.rootsWaiting.delete(sessionId);
-      await this.sessions.reload(sessionId, signal);
-    });
+    await this.attachLine.run(
+      sessionId,
+      "reload",
+      async (signal) => {
+        await this.turnLine.end(sessionId, "reload");
+        // The re-attach sends the whole root list: a change the turn held
+        // back goes with it.
+        this.rootsWaiting.delete(sessionId);
+        await this.sessions.reload(sessionId, signal);
+      },
+      "reload",
+      this.agentWork(sessionId),
+    );
     this.drain(sessionId);
   }
 
   /** Close: everything the session's lines hold ends — its turn told to
-   * stop, its attach work dropped — then the session leaves for good. */
+   * stop, its attach work dropped — then the session leaves for good. It
+   * waits on nothing its agent does: a hung restart never keeps a session
+   * open. */
   close(sessionId: string): Promise<void> {
     this.rootsWaiting.delete(sessionId);
     return this.attachLine.cut(sessionId, "close", async () => {
@@ -177,6 +191,7 @@ export class SessionGates {
       "knob",
       () => this.sessions.setKnob(sessionId, knobId, value),
       `knob:${knobId}:${String(value)}`,
+      this.agentWork(sessionId),
     );
   }
 
@@ -227,7 +242,13 @@ export class SessionGates {
    * already there joined; at once when it already is and nothing waits. */
   private attach(sessionId: string): Promise<boolean> {
     if (this.sessions.isLive(sessionId) && this.attachLine.held(sessionId).length === 0) return Promise.resolve(true);
-    return this.attachLine.run(sessionId, "open", (signal) => this.sessions.hydrate(sessionId, signal));
+    return this.attachLine.run(
+      sessionId,
+      "open",
+      (signal) => this.sessions.hydrate(sessionId, signal),
+      "open",
+      this.agentWork(sessionId),
+    );
   }
 
   /** One turn on the turn line: the session attached first, then the
@@ -250,7 +271,7 @@ export class SessionGates {
         },
         // never joined: each prompt is its own turn
         `prompt:${words.id ?? randomUUID()}`,
-        this.attachLine.settled(sessionId),
+        Promise.all([this.attachLine.settled(sessionId), this.agentWork(sessionId)]),
       );
     } catch (err) {
       const by = err instanceof Cancelled ? err.by : null;
@@ -303,7 +324,15 @@ export class SessionGates {
       "roots",
       (signal) => this.sessions.reapplyRoots(sessionId, signal),
       `roots:${randomUUID()}`,
+      this.agentWork(sessionId),
     );
+  }
+
+  /** Settles once the work its agent's row holds right now has left it —
+   * what a session's work enters behind. */
+  private agentWork(sessionId: string): Promise<void> | undefined {
+    const agentId = this.sessions.agentFor(sessionId);
+    return agentId === undefined ? undefined : this.asks.agentSettled(agentId);
   }
 
   /** The resource timer's sweep: a session the store calls idle is
@@ -315,7 +344,7 @@ export class SessionGates {
     for (const sessionId of this.sessions.idle(idleCloseMs)) {
       if (this.busy(sessionId).length > 0) continue;
       this.attachLine
-        .run(sessionId, "release", () => this.sessions.release(sessionId, "idle"))
+        .run(sessionId, "release", () => this.sessions.release(sessionId, "idle"), "release", this.agentWork(sessionId))
         .catch((err: unknown) => this.asks.failed(`release ${sessionId}`, err));
     }
   }

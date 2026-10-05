@@ -681,6 +681,7 @@ export class Orchestrator {
       {
         connect: (sessionId) => void this.connectForSession(sessionId),
         failed: (context, err) => this.logCatch(context)(err),
+        agentSettled: (agentId) => this.gates.settled(agentId),
       },
       {
         // Read fresh every sweep (store-truth) — 0 in Preferences disables.

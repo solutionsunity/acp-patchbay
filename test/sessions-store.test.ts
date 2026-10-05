@@ -11,6 +11,7 @@ import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { SessionGates } from "../src/orchestrator/session-gates";
 import { harnessEnvelopeTag, SessionsStore } from "../src/orchestrator/sessions-store";
+import { Queue } from "../src/orchestrator/queue";
 import { sessionsActiveToday } from "../src/orchestrator/session-stats";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
@@ -78,6 +79,9 @@ function harness(opts?: {
   /** Folders gone from disk — stand-in for the orchestrator's reality
    * read. Mutable through the returned array. */
   missingRoots?: readonly string[];
+  /** Stand-in for the agents' queue: what a session's work enters behind.
+   * Absent, agents' rows hold nothing. */
+  agentSettled?(agentId: string): Promise<void>;
 }): {
   pool: AgentPool;
   sessions: SessionsStore;
@@ -152,6 +156,7 @@ function harness(opts?: {
   const gates = gatesFor(sessions, (event) => events.push(event), {
     idleCloseMs: opts?.idleCloseMs ?? null,
     connect: (sessionId) => opts?.onConnectForSession?.(sessionId),
+    ...(opts?.agentSettled !== undefined ? { agentSettled: opts.agentSettled } : {}),
   });
   return {
     pool,
@@ -3007,6 +3012,82 @@ describe("session activity stamp — one home", () => {
     expect(h.state().sessions.find((s) => s.id === b)?.agentId).toBe("twin-b");
     await h.pool.stop("twin-a");
     await h.pool.stop("twin-b");
+  });
+});
+
+describe("a session's work enters behind its agent's", () => {
+  /** A stand-in for the agents' queue: `hold` puts one operation on an
+   * agent's row — a restart, say — that runs until the test finishes it. */
+  function agentsQueue() {
+    const line = new Queue<"restart">(() => {});
+    return {
+      settled: (agentId: string) => line.settled(agentId),
+      hold(agentId: string): { finish(): Promise<void> } {
+        let end!: () => void;
+        const running = new Promise<void>((started) => {
+          void line.run(agentId, "restart", () => new Promise<void>((r) => ((end = r), started())));
+        });
+        return { finish: () => running.then(() => end()) };
+      },
+    };
+  }
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it("a reload asked while the agent's row holds work runs after it — never against a connection being replaced", async () => {
+    const agents = agentsQueue();
+    const h = harness({ agentSettled: agents.settled });
+    await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw1"));
+    const sessionId = await h.sessions.createSession("sw1", "Fake Agent", cwd);
+    await h.gates.prompt(sessionId, { text: "first" });
+    const restart = agents.hold("sw1");
+    const reloaded = h.gates.reload(sessionId);
+    await sleep(50);
+    expect(h.events.some((e) => e.kind === "transcriptReset")).toBe(false);
+    expect(h.state().sessions[0]!.busy).toEqual(["reload"]);
+    await restart.finish();
+    await reloaded;
+    expect(h.events.some((e) => e.kind === "transcriptReset")).toBe(true);
+    expect(h.state().sessions[0]!.busy).toEqual([]);
+    await h.pool.stop("sw1");
+  });
+
+  it("a prompt sent meanwhile is underway at once and reaches the wire after it; a close waits on nothing", async () => {
+    const agents = agentsQueue();
+    const h = harness({ agentSettled: agents.settled });
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sw2"));
+    const sessionId = await h.sessions.createSession("sw2", "Fake Agent", cwd);
+    const restart = agents.hold("sw2");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
+    await sleep(50);
+    expect(h.state().transcripts[sessionId]).toEqual([]);
+    expect(h.state().sessions[0]!.busy).toEqual(["prompt"]);
+    await restart.finish();
+    await turn;
+    expect(textOf(h.state().transcripts[sessionId]![1])).toBe("hi");
+
+    const stuck = agents.hold("sw2"); // still running when the close comes
+    await h.gates.close(sessionId);
+    expect(h.state().sessions).toEqual([]);
+    await stuck.finish();
+    await h.pool.stop("sw2");
+  });
+
+  it("an open while the agent's row holds work attaches once it is done", async () => {
+    const agents = agentsQueue();
+    const h = harness({ agentSettled: agents.settled });
+    await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw3"));
+    const sessionId = await h.sessions.createSession("sw3", "Fake Agent", cwd);
+    await h.gates.prompt(sessionId, { text: "first" });
+    h.sessions.invalidateAgent("sw3"); // its sessions detach, as a restart's would
+    const restart = agents.hold("sw3");
+    h.gates.activate(sessionId);
+    await sleep(50);
+    expect(h.sessions.isLive(sessionId)).toBe(false);
+    expect(h.state().sessions[0]!.busy).toEqual(["open"]);
+    await restart.finish();
+    for (let i = 0; i < 100 && !h.sessions.isLive(sessionId); i++) await sleep(20);
+    expect(h.sessions.isLive(sessionId)).toBe(true);
+    await h.pool.stop("sw3");
   });
 });
 

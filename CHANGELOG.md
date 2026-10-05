@@ -97,7 +97,9 @@
   or effort change made meanwhile applies then instead of being dropped.
   An idle session is released only when nothing else is happening on it,
   so a message sent at that moment reopens the session instead of racing
-  the release.
+  the release. Work on a session also waits for work on its agent: a
+  reload, an open or a message during an agent restart, upgrade or login
+  goes once that is done, never to the connection being replaced.
 
 ## 0.84.1 — 2026-09-29
 

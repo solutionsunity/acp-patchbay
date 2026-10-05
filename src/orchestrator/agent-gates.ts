@@ -126,6 +126,13 @@ export class AgentGates implements ConnectionOperations {
     return this.unlessDeclined("remove", agentId, () => this.pass("remove", agentId, () => this.agents.remove(agentId)));
   }
 
+  /** Settles once the work the agent's row holds now has left it — what a
+   * session's work enters behind, so nothing binds a session to a
+   * connection being replaced. */
+  settled(agentId: string): Promise<void> {
+    return this.queue.settled(agentId);
+  }
+
   /** Every agent's connection ends — the window closing, or erase: all the
    * agents' work is ended as their Stop would end it, and every process
    * goes down on the shutdown budget. Nobody is asked: both are past

@@ -392,7 +392,11 @@ flowchart TD
   the agent 3 s to end it before ending it here — an agent that ignores
   the cancel never holds a session; one still attaching just ends. The
   prompt whose turn was ended settles as `Cancelled` at once.
-  Sessions never wait on each other. Gates decide policy only; the store
+  Sessions never wait on each other, but every session's work except a
+  close enters behind what its agent's row holds at that moment — a
+  restart, an upgrade, a login — so nothing binds a session to a
+  connection being replaced. A close waits on nothing: a hung restart
+  never keeps a session open. Gates decide policy only; the store
   keeps its facts valid at its writer whatever the gates admit — one turn
   at a time, never under a standing auth lock. What the two lines hold is
   the session's `busy`, read by the views, never kept: a turn on the line
