@@ -11,6 +11,9 @@ const run = (label, cmd) => {
 
 run("typecheck", "tsc --noEmit");
 run("lint (correctness classes)", "eslint src test scripts");
+// What the compiler can't see: exports, files and dependencies nothing uses —
+// and imports the manifest doesn't name (knip.jsonc).
+run("unused code", "knip");
 // Built before the unit tests, which spawn the bundles — the local MCP
 // server, the bridge, the fake agent: a test runs what the source says, never
 // a build left over from an earlier run.

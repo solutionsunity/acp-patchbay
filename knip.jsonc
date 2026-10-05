@@ -1,0 +1,36 @@
+{
+  // Unused code the compiler can't see: an export nothing imports, a file
+  // nothing reaches, a dependency the manifest names but nothing uses — or
+  // one the code uses that the manifest doesn't name. Run by the gate.
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    // the bundles esbuild.mjs builds
+    "src/extension.ts",
+    "src/webview/*/index.tsx",
+    "src/webview/agent-view/mermaid-main.ts",
+    "src/mcp/server-main.ts",
+    "src/mcp/bridge-main.ts",
+    // the suites and what they run
+    "test/**/*.test.ts",
+    "test/fake-agent/main.ts",
+    // a drive run by hand (npx tsx), against a real agent
+    "test/support/e2e-repair-drive.ts",
+    "scripts/**/*.mjs",
+    "esbuild.mjs"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "test/**/*.ts", "scripts/**/*.mjs"],
+  // shadcn components are source copies: each keeps its whole API, used or not
+  "ignore": ["src/webview/components/ui/**"],
+  // a type a module's own signatures use is part of its surface
+  "ignoreExportsUsedInFile": { "interface": true, "type": true },
+  "ignoreDependencies": [
+    // copied into out/ by esbuild.mjs, by path
+    "@vscode/codicons",
+    // imported from CSS (theme.css)
+    "tailwindcss",
+    // ambient types for the webviews
+    "@types/vscode-webview",
+    // loaded by the vscode-test runner
+    "@vscode/test-electron"
+  ]
+}

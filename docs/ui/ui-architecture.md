@@ -183,10 +183,15 @@ attacker-controllable content rendered into a webview with real DOM access.
 Memoized block-level re-rendering so only the actively-streaming tail re-parses per
 update. Tree-shakeable plugins as needed: GFM, Mermaid, KaTeX math, CJK.
 
-Two integration notes:
+Three integration notes:
 - Map VS Code's injected theme CSS variables onto the shadcn/Tailwind variable
   names Streamdown expects, so rendered markdown matches the user's active theme
   rather than a hardcoded default palette.
+- Shiki's grammars and themes come one each from its own family packages
+  (`@shikijs/langs/<language>`, `@shikijs/themes/<theme>`) — shiki's index
+  would bundle every grammar it has. Shiki pins its family to its own exact
+  version, so the manifest pins all three to one version: they move
+  together.
 - Tool calls, diffs, and plans never go through Streamdown as structure. Parse
   `session/update` content by type upstream; markdown-rendered text is the
   agent's prose — `agent_message_chunk` / `agent_thought_chunk` text deltas
