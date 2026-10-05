@@ -5,6 +5,7 @@
 // agent; a copied config carries what its owner typed, never an OAuth token.
 import { useState } from "react";
 import type {
+  McpServerConnectView,
   McpServerProbeView,
   McpServerRoutingView,
   McpServerSourceView,
@@ -158,6 +159,8 @@ function RoutingEditor(props: {
  * looking connected while its server 400s on every handshake). */
 function ProbeStrip(props: {
   probe: McpServerProbeView | undefined;
+  /** A probe is on the server's line. */
+  probing: boolean;
   /** Probing needs something to reach — no endpoint/credential, no button. */
   probeable: boolean;
   expanded: boolean;
@@ -167,6 +170,13 @@ function ProbeStrip(props: {
   const { probe } = props;
   const asOf = (at: string) =>
     new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  if (props.probing) {
+    return (
+      <div className="row mt-1 text-[12px] text-muted-foreground">
+        <Icon name="loading" spin /> checking server…
+      </div>
+    );
+  }
   if (probe === undefined) {
     if (!props.probeable) return null;
     return (
@@ -175,13 +185,6 @@ function ProbeStrip(props: {
         <Button variant="outline" size="sm" onClick={props.onProbe} title="patchbay's own handshake with this server — initialize + tools/list, no agent involved">
           <Icon name="search" /> Check server
         </Button>
-      </div>
-    );
-  }
-  if (probe.status === "probing") {
-    return (
-      <div className="row mt-1 text-[12px] text-muted-foreground">
-        <Icon name="loading" spin /> checking server…
       </div>
     );
   }
@@ -251,7 +254,8 @@ function firstLine(text: string): string {
  * undifferentiated run of inputs. */
 function CatalogRow(props: {
   entry: SettingsState["mcpCatalog"][number];
-  flow: SettingsState["connectFlow"][string] | undefined;
+  /** This entry's connect under way or failed. */
+  flow: McpServerConnectView | undefined;
   expanded: boolean;
   onToggle(): void;
   onConnectKey(token: string, url?: string): void;
@@ -262,7 +266,7 @@ function CatalogRow(props: {
   const { entry, flow } = props;
   const [key, setKey] = useState("");
   const [url, setUrl] = useState("");
-  const pending = flow?.status === "pending";
+  const pending = flow?.status === "running";
   const userUrlValue = entry.userUrl ? url.trim() : undefined;
   const urlMissing = entry.userUrl && url.trim() === "";
   // A gated remote with a verified local server is still connectable —
@@ -419,7 +423,8 @@ export function McpServersSection(props: {
   onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): void;
   onImportJson(json: string): void;
   onUpdateJson(serverId: string, json: string): void;
-  onCancelConnect(serverId: string): void;
+  /** `key` is the connect's own, off the published connect. */
+  onCancelConnect(key: string): void;
   onSetActive(serverId: string, active: boolean): void;
   onRemove(serverId: string): void;
   onSetRouting(serverId: string, routing: McpServerRoutingView): void;
@@ -435,12 +440,6 @@ export function McpServersSection(props: {
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogMechanisms, setCatalogMechanisms] = useState<ReadonlySet<Mechanism>>(new Set());
   const [adding, setAdding] = useState<"stdio" | "http" | "json" | null>(null);
-  /** The name of the last submitted custom add — the form clears on submit,
-   * so the OAuth pending/failed note needs its own anchor to render from
-   * (a failed custom OAuth stores nothing, so there's no card to carry it).
-   * The id is generated orchestrator-side as a slug of the name — mirrored
-   * here for lookup only, not invented meaning. */
-  const [lastCustomId, setLastCustomId] = useState<string | null>(null);
   const [editingJsonId, setEditingJsonId] = useState<string | null>(null);
   // Card body (command line, JSON edit, routing) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
@@ -517,8 +516,6 @@ export function McpServersSection(props: {
             token: authType === "header" ? token : undefined,
           };
     props.onAddCustom(name.trim(), source, "auto");
-    // mirror of the orchestrator's slug, for flow-note lookup only
-    setLastCustomId(name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""));
     setAdding(null);
     setName("");
     setCommand("");
@@ -619,6 +616,7 @@ export function McpServersSection(props: {
                   </div>
                   <ProbeStrip
                     probe={server.probe}
+                    probing={server.busy.includes("probe")}
                     probeable={server.connected && server.active}
                     expanded={openTools[server.id] === true}
                     onToggleTools={() =>
@@ -674,14 +672,16 @@ export function McpServersSection(props: {
                       </Button>
                     </div>
                   ) : null}
-                  {state.connectFlow[server.id]?.status === "failed" && (
-                    <div className="note mt-1.5">
-                      {state.connectFlow[server.id]?.reason}{" "}
-                      <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(server.id)} title="clear this note">
-                        Dismiss
-                      </Button>
-                    </div>
-                  )}
+                  {state.mcpConnects
+                    .filter((c) => c.kind === "server" && c.subject === server.id && c.status === "failed")
+                    .map((c) => (
+                      <div className="note mt-1.5" key={c.key}>
+                        {c.reason}{" "}
+                        <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
+                          Dismiss
+                        </Button>
+                      </div>
+                    ))}
                   {detailsOpen && (
                     <div className="mt-2">
                       <RoutingEditor
@@ -854,29 +854,31 @@ export function McpServersSection(props: {
             </div>
           </div>
         )}
-        {lastCustomId !== null && state.connectFlow[lastCustomId]?.status === "pending" && (
-          <div className="note mt-1.5">
-            Waiting for authorization in your browser…{" "}
-            <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(lastCustomId)}>
-              Cancel
-            </Button>
-          </div>
-        )}
-        {lastCustomId !== null && state.connectFlow[lastCustomId]?.status === "failed" && (
-          <div className="note mt-1.5">
-            Adding "{lastCustomId}" failed — nothing was stored:{" "}
-            {state.connectFlow[lastCustomId]?.reason}{" "}
-            <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(lastCustomId)} title="clear this note">
-              Dismiss
-            </Button>
-          </div>
-        )}
-        {Object.entries(state.connectFlow)
-          .filter(([flowId, f]) => (flowId === "import" || flowId.startsWith("import:")) && f.status === "failed")
-          .map(([flowId, f]) => (
-            <div className="note mt-1.5" key={flowId}>
-              Import: {f.status === "failed" ? f.reason : ""}{" "}
-              <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(flowId)} title="clear this note">
+        {state.mcpConnects
+          .filter((c) => c.kind === "custom")
+          .map((c) =>
+            c.status === "running" ? (
+              <div className="note mt-1.5" key={c.key}>
+                Adding "{c.subject}" — waiting for authorization in your browser…{" "}
+                <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <div className="note mt-1.5" key={c.key}>
+                Adding "{c.subject}" failed — nothing was stored: {c.reason}{" "}
+                <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
+                  Dismiss
+                </Button>
+              </div>
+            ),
+          )}
+        {state.mcpConnects
+          .filter((c) => c.kind === "import" && c.status === "failed")
+          .map((c) => (
+            <div className="note mt-1.5" key={c.key}>
+              Import: {c.reason}{" "}
+              <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(c.key)} title="clear this note">
                 Dismiss
               </Button>
             </div>
@@ -918,21 +920,26 @@ export function McpServersSection(props: {
             )}
           </div>
         )}
-        {shown.map((entry) => (
-          <CatalogRow
-            key={entry.id}
-            entry={entry}
-            flow={state.connectFlow[entry.id]}
-            expanded={expandedCatalogId === entry.id}
-            onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
-            onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
-            onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
-            onCancelConnect={() => props.onCancelConnect(entry.id)}
-            onUseLocal={() => {
-              if (entry.local !== null) useLocal(entry.name, entry.local);
-            }}
-          />
-        ))}
+        {shown.map((entry) => {
+          const flow = state.mcpConnects.find((c) => c.kind === "catalog" && c.subject === entry.id);
+          return (
+            <CatalogRow
+              key={entry.id}
+              entry={entry}
+              flow={flow}
+              expanded={expandedCatalogId === entry.id}
+              onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
+              onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
+              onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
+              onCancelConnect={() => {
+                if (flow !== undefined) props.onCancelConnect(flow.key);
+              }}
+              onUseLocal={() => {
+                if (entry.local !== null) useLocal(entry.name, entry.local);
+              }}
+            />
+          );
+        })}
         {available.length === 0 ? (
           <div className="note m-0">Everything curated is already connected.</div>
         ) : shown.length === 0 ? (

@@ -13,13 +13,16 @@
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type {
+  McpServerConnectView,
   McpServerProbeView,
   McpServerRoutingView,
   McpServerSourceView,
   McpServerView,
+  McpServerWork,
   RegistryEntryView,
   SettingsEvent,
 } from "../shared/protocol";
+import { unlessAborted } from "./abort";
 import { probeMcpServer, type ProbeFn, type ProbeTarget } from "./mcp-probe";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
@@ -31,6 +34,38 @@ import type { SecretEnvStore } from "./stores/secret-env";
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
+}
+
+/** What the gates' lines hold — read when the store publishes, never kept:
+ * each server's line, and the connects under way. */
+export interface McpServerLines {
+  busy(serverId: string): readonly McpServerWork[];
+  /** The connect line's keys holding work (`connectKey`). */
+  connecting(): readonly string[];
+}
+
+/** The operations that take time — a connect, an add, a probe, a remove —
+ * each reached only through the gates, which order them on their lines. */
+export type McpServerLineOperations = Pick<
+  McpServersStore,
+  "connectRegistryWithKey" | "connectRegistryOAuth" | "addCustom" | "probe" | "remove"
+>;
+
+/** The connect line's keys — one line per curated entry, one per custom
+ * name — and the keys a failure is held under besides: an import (and each
+ * of its entries) and a server's save. One vocabulary, so the published
+ * connects are read straight off a key. */
+export const connectKey = {
+  catalog: (catalogId: string) => `catalog:${catalogId}`,
+  custom: (name: string) => `custom:${name}`,
+  import: (entryName?: string) => (entryName === undefined ? "import" : `import:${entryName}`),
+  server: (serverId: string) => `server:${serverId}`,
+};
+
+function connectOf(key: string): Pick<McpServerConnectView, "kind" | "subject"> {
+  const at = key.indexOf(":");
+  const kind = (at === -1 ? key : key.slice(0, at)) as McpServerConnectView["kind"];
+  return { kind, subject: at === -1 ? "" : key.slice(at + 1) };
 }
 
 /** A server given to a session at its attach: its id, and how it reached
@@ -46,9 +81,6 @@ const CLIENT_INFO = {
   clientName: "acp-patchbay",
   clientUri: "https://github.com/solutionsunity/acp-patchbay",
 };
-
-/** User-abandoned browser flow — not a failure, just no outcome. */
-class ConnectCancelled extends Error {}
 
 const BROWSER_FLOW_TIMEOUT_MS = 10 * 60_000;
 
@@ -90,6 +122,14 @@ function cloneRouting(routing: McpServerRoutingView): "auto" | string[] | { exce
 function isExpired(token: StoredToken): boolean {
   if (token.expiresAt === undefined) return false;
   return Date.now() > Date.parse(token.expiresAt) - 60_000;
+}
+
+/** Refresh context is captured at an OAuth connect only — static keys
+ * never expire on our side. */
+function refreshable(
+  token: StoredToken,
+): token is StoredToken & { refreshToken: string; tokenEndpoint: string; clientId: string } {
+  return token.refreshToken !== undefined && token.tokenEndpoint !== undefined && token.clientId !== undefined;
 }
 
 function expiresAtFrom(expiresIn: number | undefined): string | undefined {
@@ -155,6 +195,7 @@ export class McpServersStore {
      * config record carries no env at all. */
     private readonly envStore: SecretEnvStore,
     private readonly hooks: McpServersStoreHooks,
+    private readonly lines: McpServerLines,
     /** The directory agents are launched in — and so the one their
      * spawned stdio servers inherit. The probe runs custom-stdio servers
      * here so it reports the same reality the agent's own spawn will. */
@@ -176,50 +217,51 @@ export class McpServersStore {
    * re-reads reality instead of trusting last week's snapshot. */
   private readonly probes = new Map<string, McpServerProbeView>();
 
-  /** In-flight browser flows by server id — each holds its own
-   * cancel trigger, so an abandoned browser tab isn't a forever-pending
-   * "Connecting…" (the tab may simply never answer). */
-  private readonly pendingConnects = new Map<string, () => void>();
+  /** The last failure under each connect key — a connect's, an add's, an
+   * import's, a server's save — held until it is dismissed or the same
+   * thing is tried again. Live: a new window starts with none. */
+  private readonly failures = new Map<string, string>();
 
-  /** Cancels an in-flight browser flow; with nothing in flight it clears a
-   * lingering failed note instead — the same "no outcome, back to idle". */
-  cancelConnect(id: string): void {
-    const cancel = this.pendingConnects.get(id);
-    if (cancel !== undefined) cancel();
-    else this.hooks.emit({ kind: "mcpServerConnectResolved", registryId: id });
-  }
+  /** The refresh in flight per credential — see `refreshOnce`. */
+  private readonly refreshing = new Map<string, Promise<void>>();
 
-  /** Races the browser flow against user cancel and a hard timeout. The
-   * losing flow is left to die quietly — its eventual result is dropped,
-   * never stored. */
-  private async raceBrowserFlow<T>(id: string, flow: Promise<T>): Promise<T> {
-    flow.catch(() => {}); // the race may abandon it — never an unhandled rejection
-    let timer: ReturnType<typeof setTimeout>;
-    const interrupted = new Promise<never>((_, reject) => {
-      this.pendingConnects.set(id, () => reject(new ConnectCancelled()));
-      timer = setTimeout(
-        () => reject(new Error("timed out waiting for browser authorization")),
-        BROWSER_FLOW_TIMEOUT_MS,
-      );
-    });
+  /** One attempt under a connect key: it clears the last one's failure,
+   * and holds its own until dismissed. One the gates told to stop is no
+   * failure — nothing was stored, and there is nothing to say. */
+  private async attempt<T>(key: string, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+    this.failures.delete(key);
     try {
-      return await Promise.race([flow, interrupted]);
-    } finally {
-      clearTimeout(timer!);
-      this.pendingConnects.delete(id);
+      return await run();
+    } catch (err) {
+      if (signal?.aborted === true) {
+        this.log.info(`${key}: stopped — nothing stored`);
+      } else {
+        this.failures.set(key, (err as Error).message);
+        this.log.error(`${key}: failed — ${(err as Error).message}`);
+      }
+      throw err;
     }
   }
 
-  /** One outcome path for a browser flow that didn't finish: cancel clears
-   * the pending state without inventing a failure; anything else is a
-   * labeled failure. */
-  private emitFlowOutcome(id: string, err: unknown): void {
-    if (err instanceof ConnectCancelled) {
-      this.log.info(`${id}: browser OAuth cancelled — nothing stored`);
-      this.hooks.emit({ kind: "mcpServerConnectResolved", registryId: id });
-    } else {
-      this.log.error(`${id}: connect failed — ${(err as Error).message}`);
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId: id, reason: (err as Error).message });
+  /** Clears a failure's note. */
+  async dismiss(key: string): Promise<void> {
+    this.failures.delete(key);
+    await this.refresh();
+  }
+
+  /** A browser flow, given up when told to stop or after
+   * BROWSER_FLOW_TIMEOUT_MS — an abandoned tab may never answer. The flow
+   * left behind dies quietly; its result is never stored. */
+  private async browserFlow<T>(flow: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    flow.catch(() => {}); // given up, it may still reject — never unhandled
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const capped = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timed out waiting for browser authorization")), BROWSER_FLOW_TIMEOUT_MS);
+    });
+    try {
+      return await unlessAborted(Promise.race([flow, capped]), signal);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -252,13 +294,25 @@ export class McpServersStore {
     }));
   }
 
-  /** Re-reads config + token presence and republishes both lists wholesale —
-   * same "replace, don't patch" shape as the capability matrix. */
+  /** Re-reads config + token presence and republishes the lists wholesale
+   * — same "replace, don't patch" shape as the capability matrix. */
   async refresh(): Promise<void> {
     this.hooks.emit(
       { kind: "mcpCatalogLoaded", entries: this.registryViews() },
-      { kind: "mcpServersChanged", servers: await this.currentViews() },
+      { kind: "mcpServersChanged", servers: await this.currentViews(), connects: this.connectViews() },
     );
+  }
+
+  /** The connects under way, read off the connect line, and the failures
+   * held — one under a key that runs again shows running. */
+  private connectViews(): McpServerConnectView[] {
+    const running = this.lines.connecting();
+    return [
+      ...running.map((key) => ({ key, ...connectOf(key), status: "running" as const })),
+      ...[...this.failures]
+        .filter(([key]) => !running.includes(key))
+        .map(([key, reason]) => ({ key, ...connectOf(key), status: "failed" as const, reason })),
+    ];
   }
 
   private async currentViews(): Promise<McpServerView[]> {
@@ -284,6 +338,7 @@ export class McpServersStore {
         routing: config.routing,
         transport: config.transport,
         probe: this.probes.get(config.id),
+        busy: this.lines.busy(config.id),
         editJson: await this.editJsonFor(config.id, source),
       });
     }
@@ -350,69 +405,48 @@ export class McpServersStore {
     return { error: "no endpoint available" };
   }
 
-  /** Static-key connect (the v1 floor):
-   * store the pasted key, record which mechanism/endpoint this connection
-   * uses. No network round-trip; the first real request proves the key. */
-  async connectRegistryWithKey(registryId: string, token: string, url?: string): Promise<void> {
-    const entry = this.entryFor(registryId);
-    if (entry === undefined || entry.auth.header === null) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: "no API-key mode for this server" });
-      return;
-    }
-    const endpoint = this.resolveEndpoint(entry, url);
-    if ("error" in endpoint) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: endpoint.error });
-      return;
-    }
-    if (token.trim() === "") {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: "key is empty" });
-      return;
-    }
-    await this.tokens.set(registryId, { accessToken: token.trim() });
-    this.log.info(`${registryId}: connected with key (endpoint ${loggableUrl(endpoint.url)})`);
-    await this.configs.upsert({
-      id: registryId,
-      name: entry.name,
-      source: {
-        kind: "registry",
-        registryId,
-        authMode: "header",
-        ...(entry.userUrl ? { url: endpoint.url } : {}),
-      },
-      routing: "auto",
-      active: true,
-      transport: "auto",
+  /** Static-key connect (the v1 floor): store the pasted key, record
+   * which mechanism/endpoint this connection uses. No network round-trip;
+   * the first real request proves the key. Returns the server's id. */
+  connectRegistryWithKey(registryId: string, token: string, url?: string, signal?: AbortSignal): Promise<string> {
+    return this.attempt(connectKey.catalog(registryId), signal, async () => {
+      const entry = this.entryFor(registryId);
+      if (entry === undefined || entry.auth.header === null) throw new Error("no API-key mode for this server");
+      const endpoint = this.resolveEndpoint(entry, url);
+      if ("error" in endpoint) throw new Error(endpoint.error);
+      if (token.trim() === "") throw new Error("key is empty");
+      await this.tokens.set(registryId, { accessToken: token.trim() });
+      this.log.info(`${registryId}: connected with key (endpoint ${loggableUrl(endpoint.url)})`);
+      await this.configs.upsert({
+        id: registryId,
+        name: entry.name,
+        source: {
+          kind: "registry",
+          registryId,
+          authMode: "header",
+          ...(entry.userUrl ? { url: endpoint.url } : {}),
+        },
+        routing: "auto",
+        active: true,
+        transport: "auto",
+      });
+      return registryId;
     });
-    await this.refresh();
-    void this.probe(registryId);
   }
 
-  /** MCP-spec OAuth connect: URL-only —
-   * discovery, dynamic client registration, PKCE, browser redirect via the
-   * injected user agent. Failure (gated DCR, non-compliant server, denied
-   * consent, timeout) is immediate and labeled. */
-  async connectRegistryOAuth(registryId: string, url?: string): Promise<void> {
-    const entry = this.entryFor(registryId);
-    if (entry === undefined || !entry.auth.oauth) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: "no OAuth mode for this server" });
-      return;
-    }
-    const endpoint = this.resolveEndpoint(entry, url);
-    if ("error" in endpoint) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: endpoint.error });
-      return;
-    }
-    if (this.oauthUserAgent === null) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId, reason: "OAuth is unavailable in this environment" });
-      return;
-    }
-    this.hooks.emit({ kind: "mcpServerConnectStarted", registryId });
-    this.log.info(`${registryId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
-    try {
-      const result = await this.raceBrowserFlow(
-        registryId,
-        connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent),
-      );
+  /** MCP-spec OAuth connect: URL-only — discovery, dynamic client
+   * registration, PKCE, browser redirect via the injected user agent.
+   * Failure (gated DCR, non-compliant server, denied consent, timeout) is
+   * immediate and labeled. Returns the server's id. */
+  connectRegistryOAuth(registryId: string, url?: string, signal?: AbortSignal): Promise<string> {
+    return this.attempt(connectKey.catalog(registryId), signal, async () => {
+      const entry = this.entryFor(registryId);
+      if (entry === undefined || !entry.auth.oauth) throw new Error("no OAuth mode for this server");
+      const endpoint = this.resolveEndpoint(entry, url);
+      if ("error" in endpoint) throw new Error(endpoint.error);
+      if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
+      this.log.info(`${registryId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
+      const result = await this.browserFlow(connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent), signal);
       await this.tokens.set(registryId, {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
@@ -434,10 +468,8 @@ export class McpServersStore {
         transport: "auto",
       });
       this.log.info(`${registryId}: connected via OAuth`);
-      await this.refresh();
-    } catch (err) {
-      this.emitFlowOutcome(registryId, err);
-    }
+      return registryId;
+    });
   }
 
   /** A free id derived from the display name — slug, uniquified against
@@ -455,136 +487,111 @@ export class McpServersStore {
    * browser flow *first* and stores only on success — cancelling consent
    * means nothing was added, never a stranded credential-less record.
    * Returns the generated id (slug of `name`, uniquified). */
-  async addCustom(
+  addCustom(
     name: string,
     source: McpServerSourceView,
     routing: McpServerRoutingView,
+    signal?: AbortSignal,
   ): Promise<string> {
-    const id = this.uniqueId(name);
-    let configSource: McpServerSource;
-    if (source.kind === "custom-stdio") {
-      // `args` arrive structured (form lines / imported JSON) and are never
-      // re-parsed; the `command` field alone may still be a typed line
-      // ("npx foo"), so it gets the quote-aware house parser (parsing is
-      // logic, and it lives here).
-      const parsed = parseCommandLine(source.command);
-      if (parsed === null) {
-        this.hooks.emit({
-          kind: "mcpServerConnectFailed",
-          registryId: id,
-          reason: "command line has an unterminated quote",
-        });
-        return id;
-      }
-      configSource = {
-        kind: "custom-stdio",
-        command: parsed.command,
-        args: [...parsed.args, ...source.args],
-      };
-      // Values ride the action once and land in SecretStorage — the config
-      // record above deliberately carries no env.
-      await this.envStore.set(id, { ...source.env });
-    } else {
-      configSource = {
-        kind: "custom-http",
-        url: source.url,
-        authType: source.authType,
-        headerName: source.headerName ?? "Authorization",
-        valuePrefix: source.valuePrefix ?? "Bearer ",
-      };
-      if (source.authType === "header") {
-        if (!source.token) {
-          this.hooks.emit({ kind: "mcpServerConnectFailed", registryId: id, reason: "key is empty" });
-          return id;
+    return this.attempt(connectKey.custom(name), signal, async () => {
+      const id = this.uniqueId(name);
+      let configSource: McpServerSource;
+      if (source.kind === "custom-stdio") {
+        // `args` arrive structured (form lines / imported JSON) and are never
+        // re-parsed; the `command` field alone may still be a typed line
+        // ("npx foo"), so it gets the quote-aware house parser (parsing is
+        // logic, and it lives here).
+        const parsed = parseCommandLine(source.command);
+        if (parsed === null) throw new Error("command line has an unterminated quote");
+        configSource = {
+          kind: "custom-stdio",
+          command: parsed.command,
+          args: [...parsed.args, ...source.args],
+        };
+        // Values ride the action once and land in SecretStorage — the config
+        // record above deliberately carries no env.
+        await this.envStore.set(id, { ...source.env });
+      } else {
+        configSource = {
+          kind: "custom-http",
+          url: source.url,
+          authType: source.authType,
+          headerName: source.headerName ?? "Authorization",
+          valuePrefix: source.valuePrefix ?? "Bearer ",
+        };
+        if (source.authType === "header") {
+          if (!source.token) throw new Error("key is empty");
+          await this.tokens.set(id, { accessToken: source.token });
         }
-        await this.tokens.set(id, { accessToken: source.token });
+        if (source.authType === "oauth") {
+          if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
+          const result = await this.browserFlow(connectMcpOAuth(source.url, CLIENT_INFO, this.oauthUserAgent), signal);
+          await this.tokens.set(id, {
+            accessToken: result.accessToken,
+            refreshToken: result.refreshToken,
+            expiresAt: expiresAtFrom(result.expiresIn),
+            tokenEndpoint: result.tokenEndpoint,
+            clientId: result.clientId,
+          });
+        }
       }
-      if (source.authType === "oauth") {
-        const connected = await this.runCustomOAuth(id, source.url);
-        if (!connected) return id; // failed/cancelled labeled — nothing stored
-      }
-    }
-    await this.configs.upsert({
-      id,
-      name,
-      source: configSource,
-      routing: cloneRouting(routing),
-      active: true,
-      transport: "auto",
-    });
-    this.log.info(`${id}: custom ${configSource.kind} added`);
-    await this.refresh();
-    void this.probe(id);
-    return id;
-  }
-
-  /** Browser OAuth for a custom URL — token stored on success only. */
-  private async runCustomOAuth(id: string, url: string): Promise<boolean> {
-    if (this.oauthUserAgent === null) {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId: id, reason: "OAuth is unavailable in this environment" });
-      return false;
-    }
-    this.hooks.emit({ kind: "mcpServerConnectStarted", registryId: id });
-    try {
-      const result = await this.raceBrowserFlow(id, connectMcpOAuth(url, CLIENT_INFO, this.oauthUserAgent));
-      await this.tokens.set(id, {
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresAt: expiresAtFrom(result.expiresIn),
-        tokenEndpoint: result.tokenEndpoint,
-        clientId: result.clientId,
+      await this.configs.upsert({
+        id,
+        name,
+        source: configSource,
+        routing: cloneRouting(routing),
+        active: true,
+        transport: "auto",
       });
-      return true;
-    } catch (err) {
-      this.emitFlowOutcome(id, err);
-      return false;
-    }
+      this.log.info(`${id}: custom ${configSource.kind} added`);
+      return id;
+    });
   }
 
-  /** Imports the well-known `{"mcpServers": {...}}` JSON (a bare name→spec
-   * map is accepted too). Each entry becomes a custom server named by its
-   * key; per-entry failures are labeled and don't stop the rest. Only what
-   * validates is stored — a trust boundary, same as every store read. */
-  async importJson(json: string): Promise<void> {
+  /** Reads the well-known `{"mcpServers": {...}}` JSON (a bare name→spec
+   * map is accepted too) into the entries an import adds — each a custom
+   * server named by its key. Only what validates comes back — a trust
+   * boundary, same as every store read; the rest is held as the import's
+   * failures, per entry, without stopping the others. */
+  async importEntries(json: string): Promise<{ name: string; source: McpServerSourceView }[]> {
+    for (const key of [...this.failures.keys()]) {
+      if (connectOf(key).kind === "import") this.failures.delete(key);
+    }
+    const entries: { name: string; source: McpServerSourceView }[] = [];
     let parsed: unknown;
     try {
       parsed = JSON.parse(json);
     } catch {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId: "import", reason: "not valid JSON" });
-      return;
+      this.failures.set(connectKey.import(), "not valid JSON");
     }
-    const root = (parsed as { mcpServers?: unknown }).mcpServers ?? parsed;
-    if (typeof root !== "object" || root === null || Array.isArray(root)) {
-      this.hooks.emit({
-        kind: "mcpServerConnectFailed",
-        registryId: "import",
-        reason: 'expected {"mcpServers": {name: {...}}} or a name→server map',
-      });
-      return;
-    }
-    for (const [name, raw] of Object.entries(root)) {
-      const spec = mcpServersEntrySchema.safeParse(raw);
-      if (!spec.success) {
-        this.hooks.emit({
-          kind: "mcpServerConnectFailed",
-          registryId: `import:${slugify(name)}`,
-          reason: `"${name}": neither a command entry nor a url entry`,
+    const root = (parsed as { mcpServers?: unknown } | undefined)?.mcpServers ?? parsed;
+    if (parsed !== undefined && (typeof root !== "object" || root === null || Array.isArray(root))) {
+      this.failures.set(connectKey.import(), 'expected {"mcpServers": {name: {...}}} or a name→server map');
+    } else if (parsed !== undefined) {
+      for (const [name, raw] of Object.entries(root as Record<string, unknown>)) {
+        const spec = mcpServersEntrySchema.safeParse(raw);
+        if (!spec.success) {
+          this.failures.set(connectKey.import(name), `"${name}": neither a command entry nor a url entry`);
+          continue;
+        }
+        entries.push({
+          name,
+          source:
+            "command" in spec.data
+              ? { kind: "custom-stdio", command: spec.data.command, args: spec.data.args, env: spec.data.env }
+              : {
+                  kind: "custom-http",
+                  url: spec.data.url,
+                  authType: spec.data.authType,
+                  headerName: spec.data.headerName,
+                  valuePrefix: spec.data.valuePrefix,
+                  token: spec.data.token,
+                },
         });
-        continue;
       }
-      const source: McpServerSourceView =
-        "command" in spec.data
-          ? { kind: "custom-stdio", command: spec.data.command, args: spec.data.args, env: spec.data.env }
-          : {
-              kind: "custom-http",
-              url: spec.data.url,
-              authType: spec.data.authType,
-              headerName: spec.data.headerName,
-              valuePrefix: spec.data.valuePrefix,
-              token: spec.data.token,
-            };
-      await this.addCustom(name, source, "auto");
     }
+    await this.refresh();
+    return entries;
   }
 
   /** Applies an edited mcpServers entry to one custom server — the box is
@@ -594,20 +601,20 @@ export class McpServersStore {
   async updateFromJson(id: string, json: string): Promise<void> {
     const existing = this.configs.get(id);
     if (existing === undefined || existing.source.kind === "registry") return;
+    const key = connectKey.server(id);
+    this.failures.delete(key);
     let raw: unknown;
     try {
       raw = JSON.parse(json);
     } catch {
-      this.hooks.emit({ kind: "mcpServerConnectFailed", registryId: id, reason: "not valid JSON" });
+      this.failures.set(key, "not valid JSON");
+      await this.refresh();
       return;
     }
     const spec = mcpServersEntrySchema.safeParse(raw);
     if (!spec.success) {
-      this.hooks.emit({
-        kind: "mcpServerConnectFailed",
-        registryId: id,
-        reason: "neither a command entry nor a url entry",
-      });
+      this.failures.set(key, "neither a command entry nor a url entry");
+      await this.refresh();
       return;
     }
     if ("command" in spec.data) {
@@ -641,11 +648,11 @@ export class McpServersStore {
    * `setActive(false)`, which keeps everything and only unroutes. */
   async remove(id: string): Promise<void> {
     this.probes.delete(id);
+    this.failures.delete(connectKey.server(id));
     await this.tokens.remove(id);
     await this.envStore.remove(id);
     await this.configs.remove(id);
     this.log.info(`${id}: removed — credential, env, and config cleared`);
-    await this.refresh();
   }
 
   async setActive(id: string, active: boolean): Promise<void> {
@@ -653,7 +660,6 @@ export class McpServersStore {
     if (existing === undefined) return;
     await this.configs.upsert({ ...existing, active });
     await this.refresh();
-    if (active) void this.probe(id);
   }
 
   /** Settings drag-drop — persist the dropped order and republish. Order
@@ -676,11 +682,9 @@ export class McpServersStore {
    * Explicit-trigger only (connect, power-on, refresh button): probing a
    * custom-stdio server executes its command, and even http shouldn't fire
    * on background sweeps — reality is read when the user acts on it. */
-  async probe(id: string): Promise<void> {
+  async probe(id: string, signal?: AbortSignal): Promise<void> {
     const config = this.configs.get(id);
     if (config === undefined) return;
-    this.probes.set(id, { status: "probing", at: new Date().toISOString() });
-    await this.refresh();
     let target: ProbeTarget | null = null;
     try {
       target = await this.probeTargetFor(config);
@@ -689,7 +693,7 @@ export class McpServersStore {
         // the card's connected flag already tells that story.
         this.probes.delete(id);
       } else {
-        const outcome = await this.probeFn(target);
+        const outcome = await unlessAborted(this.probeFn(target, signal), signal);
         this.probes.set(id, {
           status: "ok",
           at: new Date().toISOString(),
@@ -700,6 +704,8 @@ export class McpServersStore {
         this.log.info(`${id}: probe ok — ${outcome.tools.length} tool(s)`);
       }
     } catch (err) {
+      // Told to stop, the probe has no outcome to keep.
+      if (signal?.aborted === true) throw err;
       // A stdio failure names where the command ran: a server that reads
       // project-local config fails differently per directory, and the
       // reason should let the user see which one was tried.
@@ -710,7 +716,6 @@ export class McpServersStore {
       this.probes.set(id, { status: "failed", at: new Date().toISOString(), reason });
       this.log.info(`${id}: probe failed — ${reason}`);
     }
-    await this.refresh();
   }
 
   /** The probe's connection recipe for one server — same resolution as
@@ -732,7 +737,7 @@ export class McpServersStore {
     if (url === "") return null;
     const shape = headerShapeOf(source, entry);
     if (shape === null) return { kind: "http", url, header: null };
-    const token = (await this.getToken(config.id))?.accessToken ?? null;
+    const token = (await this.freshToken(config.id))?.accessToken ?? null;
     if (token === null) return null; // needs a credential, none stored
     return { kind: "http", url, header: { name: shape.headerName, value: `${shape.valuePrefix}${token}` } };
   }
@@ -754,23 +759,44 @@ export class McpServersStore {
   async credentialFor(serverId: string, agentId: string): Promise<{ accessToken: string } | null> {
     const config = this.configs.get(serverId);
     if (config === undefined || !reaches(config, agentId)) return null;
-    return this.getToken(serverId);
+    return this.freshToken(serverId);
   }
 
-  /** A currently-valid token, refreshed transparently if it's near/past
-   * expiry and refresh context exists — a bridge never sees a refresh
-   * token, only ever a fresh access token. Refresh context (token endpoint +
-   * client id) was captured at connect, since OAuth endpoints are
-   * discovered, not static (StoredToken carries them). */
-  private async getToken(serverId: string): Promise<{ accessToken: string } | null> {
+  /** The stored token, refreshed first when near expiry and refreshable —
+   * a bridge never sees a refresh token, only ever a fresh access token. A
+   * refresh that fails leaves the stale one: the server's own 401 speaks. */
+  private async freshToken(serverId: string): Promise<{ accessToken: string } | null> {
     const stored = await this.tokens.get(serverId);
     if (stored === null) return null;
-    if (!isExpired(stored)) return { accessToken: stored.accessToken };
-    if (stored.refreshToken === undefined || stored.tokenEndpoint === undefined || stored.clientId === undefined) {
-      return { accessToken: stored.accessToken }; // nothing to refresh with — let the server's own 401 speak
-    }
+    if (isExpired(stored) && refreshable(stored)) await this.refreshOnce(serverId);
+    const current = await this.tokens.get(serverId);
+    return current === null ? null : { accessToken: current.accessToken };
+  }
+
+  /** One refresh per credential at a time, shared by whoever asks
+   * meanwhile — a bridge's request, an attach, a probe. A refresh token
+   * spent twice can cost the grant: every connect here is a public client,
+   * which OAuth 2.1 has the server rotate or bind refresh tokens for, and a
+   * rotating server takes a replay for theft. */
+  private refreshOnce(serverId: string): Promise<void> {
+    const running = this.refreshing.get(serverId);
+    if (running !== undefined) return running;
+    const run = this.refreshCredential(serverId).finally(() => this.refreshing.delete(serverId));
+    this.refreshing.set(serverId, run);
+    return run;
+  }
+
+  /** Refreshes the stored credential if it still needs it. The refresh
+   * context (token endpoint + client id) was captured at connect, since
+   * OAuth endpoints are discovered, not static. */
+  private async refreshCredential(serverId: string): Promise<void> {
+    const stored = await this.tokens.get(serverId);
+    if (stored === null || !isExpired(stored) || !refreshable(stored)) return;
     try {
       const refreshed = await refreshMcpOAuth(stored.tokenEndpoint, stored.clientId, stored.refreshToken);
+      // Removed or connected anew while the request was out: the answer is
+      // for a credential that no longer stands.
+      if ((await this.tokens.get(serverId))?.refreshToken !== stored.refreshToken) return;
       await this.tokens.set(serverId, {
         accessToken: refreshed.accessToken,
         refreshToken: refreshed.refreshToken,
@@ -778,9 +804,8 @@ export class McpServersStore {
         tokenEndpoint: stored.tokenEndpoint,
         clientId: stored.clientId,
       });
-      return { accessToken: refreshed.accessToken };
-    } catch {
-      return { accessToken: stored.accessToken }; // refresh failed — let the bridge's own retry surface it
+    } catch (err) {
+      this.log.error(`${serverId}: credential refresh failed — ${(err as Error).message}`);
     }
   }
 
@@ -836,11 +861,11 @@ export class McpServersStore {
 
       const header = headerShapeOf(source, entry);
       if (declaresHttp && config.transport === "auto") {
-        // getToken refreshes transparently, so the agent starts the session
+        // freshToken refreshes first, so the agent starts the session
         // with the freshest credential we can mint — but passthrough is a
         // snapshot: a token expiring mid-session is the agent's 401 to
         // surface, not ours to fix (the bridge path re-reads per request).
-        const token = header !== null ? (await this.getToken(config.id))?.accessToken : null;
+        const token = header !== null ? (await this.freshToken(config.id))?.accessToken : null;
         servers.push({
           type: "http",
           name: config.name,

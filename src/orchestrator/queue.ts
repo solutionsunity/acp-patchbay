@@ -42,6 +42,11 @@ export class Queue<Work extends string> {
     return (this.rows.get(row) ?? []).map((h) => h.work);
   }
 
+  /** Every row holding work now. */
+  holding(): string[] {
+    return [...this.rows.keys()];
+  }
+
   /** Runs `body` as `work` on `row` in its turn; the promise is the
    * operation's outcome, shared by every request that joined it.
    * `identity` is what makes two requests one operation — the work's kind,

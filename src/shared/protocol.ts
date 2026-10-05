@@ -197,9 +197,10 @@ export type Action =
   /** Replaces one custom server's config from its edited mcpServers entry
    * JSON — env (and a header key) stored exactly as written. */
   | { kind: "updateMcpServerJson"; serverId: string; json: string }
-  /** Abandons an in-flight browser OAuth connect — the pending state clears
-   * and nothing is stored (the browser tab, if still open, dies unanswered). */
-  | { kind: "cancelMcpServerConnect"; serverId: string }
+  /** Abandons a connect under way — nothing is stored, and a browser tab
+   * still open dies unanswered — or dismisses a failure's note. `key` is
+   * the store's own, read off the published connect, never built here. */
+  | { kind: "cancelMcpServerConnect"; key: string }
   /** Disconnect and remove are the same act — the full clear (config +
    * credential + env). A curated entry then reappears in the catalog, ready
    * for a fresh connect; a custom one is simply gone. The non-destructive
@@ -395,7 +396,6 @@ export type McpServerSourceView =
  * (initialize + tools/list, no agent, no LLM turn). A point-in-time read of
  * the server — always shown with its timestamp, never as a timeless fact. */
 export type McpServerProbeView =
-  | { status: "probing"; at: string }
   | {
       status: "ok";
       at: string;
@@ -429,6 +429,9 @@ export interface McpServerView {
    * (provider-side truth: "reachable, N tools", never "working in your
    * sessions"). Absent = never probed this session. */
   probe?: McpServerProbeView;
+  /** What the server's line holds: a probe running or waiting, a remove
+   * under way — its busy state. */
+  busy: readonly McpServerWork[];
   /** Present for custom servers only: the editable mcpServers entry JSON,
    * env values and a header key included — the owner typed them and reads
    * them back. OAuth tokens (flow-minted) never appear. */
@@ -470,11 +473,20 @@ export interface RegistryEntryView {
     | null;
 }
 
-/** Connect-in-flight state per registryId — "pending" while the browser
- * authorization is out, "failed" with the labeled reason; cleared by
- * `mcpServersChanged` once connected. */
-export interface ConnectFlowView {
-  status: "pending" | "failed";
+/** What an MCP server's line can hold. */
+export type McpServerWork = "probe" | "remove";
+
+/** A connect under way or failed — a curated entry's, a custom add's, an
+ * import's — or a server's save that failed: the MCP-servers store's live
+ * facts, published with the servers. A running one is what the store's
+ * connect line holds; a failed one stays until dismissed or tried again.
+ * `subject` is the catalog id, the custom name, the imported entry's name
+ * ("" for the import as a whole) or the server's id. */
+export interface McpServerConnectView {
+  key: string;
+  kind: "catalog" | "custom" | "import" | "server";
+  subject: string;
+  status: "running" | "failed";
   reason?: string;
 }
 
@@ -2336,10 +2348,7 @@ export interface SettingsState {
   auditTail: readonly AuditEntryView[];
   mcpCatalog: readonly RegistryEntryView[];
   mcpServers: readonly McpServerView[];
-  /** Keyed by registryId (or a custom server's id) while a connect is in
-   * flight or just failed; cleared once `mcpServersChanged` reports it
-   * connected. */
-  connectFlow: Readonly<Record<string, ConnectFlowView>>;
+  mcpConnects: readonly McpServerConnectView[];
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as registry/custom (`{ configuredId }`). */
@@ -2392,7 +2401,7 @@ export const initialSettingsState: SettingsState = {
   auditTail: [],
   mcpCatalog: [],
   mcpServers: [],
-  connectFlow: {},
+  mcpConnects: [],
   agentConfigs: [],
   sessionsActiveToday: 0,
   agentKnobs: {},
@@ -2414,13 +2423,11 @@ export type SettingsEvent =
     }
   | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
   | { kind: "mcpCatalogLoaded"; entries: readonly RegistryEntryView[] }
-  | { kind: "mcpServersChanged"; servers: readonly McpServerView[] }
-  /** A browser-authorization connect is out — the card shows waiting state. */
-  | { kind: "mcpServerConnectStarted"; registryId: string }
-  | { kind: "mcpServerConnectFailed"; registryId: string; reason: string }
-  /** In-flight/failed connect state cleared without an outcome — the
-   * user cancelled a browser flow that will never answer. */
-  | { kind: "mcpServerConnectResolved"; registryId: string }
+  | {
+      kind: "mcpServersChanged";
+      servers: readonly McpServerView[];
+      connects: readonly McpServerConnectView[];
+    }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
@@ -2467,35 +2474,8 @@ export function reduceSettings(
       return { ...state, auditTail: event.entries };
     case "mcpCatalogLoaded":
       return { ...state, mcpCatalog: event.entries };
-    case "mcpServersChanged": {
-      // A connected server retires its in-flight/failed connect card
-      // (keyed by registryId for curated entries, by the server's own
-      // id for custom-http OAuth — currentViews reports both as connected).
-      const connectedIds = new Set(
-        event.servers.filter((i) => i.connected).flatMap((i) => [i.id, i.registryId ?? i.id]),
-      );
-      const connectFlow = Object.fromEntries(
-        Object.entries(state.connectFlow).filter(([id]) => !connectedIds.has(id)),
-      );
-      return { ...state, mcpServers: event.servers, connectFlow };
-    }
-    case "mcpServerConnectStarted":
-      return {
-        ...state,
-        connectFlow: { ...state.connectFlow, [event.registryId]: { status: "pending" } },
-      };
-    case "mcpServerConnectResolved": {
-      const { [event.registryId]: _cleared, ...connectFlow } = state.connectFlow;
-      return { ...state, connectFlow };
-    }
-    case "mcpServerConnectFailed":
-      return {
-        ...state,
-        connectFlow: {
-          ...state.connectFlow,
-          [event.registryId]: { status: "failed", reason: event.reason },
-        },
-      };
+    case "mcpServersChanged":
+      return { ...state, mcpServers: event.servers, mcpConnects: event.connects };
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };
     case "sessionStatsChanged":
@@ -2524,9 +2504,6 @@ const SETTINGS_ONLY_KINDS = new Set([
   "auditTailChanged",
   "mcpCatalogLoaded",
   "mcpServersChanged",
-  "mcpServerConnectStarted",
-  "mcpServerConnectFailed",
-  "mcpServerConnectResolved",
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",

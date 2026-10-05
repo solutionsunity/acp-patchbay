@@ -140,8 +140,8 @@ export function App({ state }: { state: SettingsState }) {
             onUpdateJson={(serverId, json) =>
               send({ kind: "updateMcpServerJson", serverId, json })
             }
-            onCancelConnect={(serverId) =>
-              send({ kind: "cancelMcpServerConnect", serverId })
+            onCancelConnect={(key) =>
+              send({ kind: "cancelMcpServerConnect", key })
             }
             onSetActive={(serverId, active) =>
               send({ kind: "setMcpServerActive", serverId, active })

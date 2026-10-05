@@ -1120,6 +1120,28 @@ flowchart TD
   is reach, not consent: which servers an agent receives is separate from whether
   a given tool call is allowed — consent rides the permission broker per call,
   for every request_permission-routing agent.
+- **MCP-server operations take turns too**, with the same two tools: lines
+  the queue keeps and the MCP gates (mcp-server-gates.ts — the one way any
+  door reaches an operation that takes time; the orchestrator's handle on
+  the MCP-servers store carries none of them). A server's line holds its
+  probe and its remove; the connect line holds the connects under way, one
+  line per curated entry and one per custom name. A repeat joins: a second
+  Connect on a card while its browser flow is out is that flow, a second
+  probe of a server is the one running. Remove cuts in: a probe still
+  running is told to stop and keeps no outcome, and the remove runs once it
+  has unwound. Saves — an edit, reach, transport, order, mute — never wait.
+  What the lines hold is the side's busy state, read by the store when it
+  publishes and never kept: a server's `busy`, and the connects under way.
+  The failure of the last attempt under a connect key — a connect's, an
+  add's, an import entry's, a server's save — is the store's live fact,
+  held until dismissed or tried again; the view keeps no copy. A credential
+  refresh is the credential's own rule, held at its writer, not a line's:
+  one refresh per credential at a time, shared by whoever asks meanwhile — a
+  bridge, an attach, a probe — since a refresh token spent twice can cost
+  the grant (every connect here is an OAuth public client, whose refresh
+  tokens the server rotates or binds); an answer that lands after the
+  credential was removed or replaced stores nothing, and a failed refresh is
+  logged and leaves the old token for the server's own 401 to speak.
 
 ## Rules, skills, commands
 

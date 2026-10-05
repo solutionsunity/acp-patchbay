@@ -29,13 +29,15 @@ export interface ProbeOutcome {
   tools: { name: string; description: string }[];
 }
 
-export type ProbeFn = (target: ProbeTarget) => Promise<ProbeOutcome>;
+export type ProbeFn = (target: ProbeTarget, signal?: AbortSignal) => Promise<ProbeOutcome>;
 
 const PROBE_TIMEOUT_MS = 20_000;
 /** Pagination guard — a server misbehaving on cursors must not loop us. */
 const MAX_TOOL_PAGES = 20;
 
-export async function probeMcpServer(target: ProbeTarget): Promise<ProbeOutcome> {
+/** Told to stop, the handshake ends where it waits, and the client's close
+ * ends a stdio server it started. */
+export async function probeMcpServer(target: ProbeTarget, signal?: AbortSignal): Promise<ProbeOutcome> {
   const transport =
     target.kind === "http"
       ? new StreamableHTTPClientTransport(new URL(target.url), {
@@ -53,12 +55,12 @@ export async function probeMcpServer(target: ProbeTarget): Promise<ProbeOutcome>
         });
   const client = new Client({ name: "acp-patchbay", version: "0" });
   try {
-    await client.connect(transport, { timeout: PROBE_TIMEOUT_MS });
+    await client.connect(transport, { timeout: PROBE_TIMEOUT_MS, signal });
     const serverInfo = client.getServerVersion();
     const tools: ProbeOutcome["tools"] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-      const result = await client.listTools({ cursor }, { timeout: PROBE_TIMEOUT_MS });
+      const result = await client.listTools({ cursor }, { timeout: PROBE_TIMEOUT_MS, signal });
       for (const tool of result.tools) {
         tools.push({ name: tool.name, description: tool.description ?? "" });
       }

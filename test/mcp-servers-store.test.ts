@@ -7,14 +7,17 @@
 // calling tools through the real bridge subprocess) is
 // test/mcp-bridge.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { McpServerGates } from "../src/orchestrator/mcp-server-gates";
 import { McpServersStore } from "../src/orchestrator/mcp-servers-store";
+import { Queue } from "../src/orchestrator/queue";
 import type { ProbeFn, ProbeTarget } from "../src/orchestrator/mcp-probe";
 import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
 import { McpServerTokenStore, MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { CatalogEntry } from "../src/orchestrator/stores/mcp-catalog";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
-import type { SettingsEvent } from "../src/shared/protocol";
+import type { McpServerConnectView, McpServerWork, SettingsEvent } from "../src/shared/protocol";
+import type { OAuthUserAgent } from "../src/orchestrator/mcp-oauth";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 
 let provider: FakeOAuthProvider;
@@ -55,7 +58,7 @@ function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<str
  * custom-stdio servers in the same one. */
 const WORKSPACE_CWD = "/workspace/project";
 
-function harness(catalog: CatalogEntry[]) {
+function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } = {}) {
   const events: SettingsEvent[] = [];
   const configs = new McpServerConfigStore(new MemoryKV());
   const secrets = new MemorySecrets();
@@ -67,32 +70,58 @@ function harness(catalog: CatalogEntry[]) {
     probed.push(target);
     return { serverName: "fake-server", serverVersion: "1.0", tools: [{ name: "t_one", description: "d" }] };
   };
-  const manager = new McpServersStore(
+  // The lines and gates, built the way the orchestrator builds them: the
+  // operations that take time go through the gates, as every door's do.
+  let manager!: McpServersStore;
+  const republish = () => void manager.refresh();
+  const serverLine = new Queue<McpServerWork>(republish);
+  const connectLine = new Queue<"connect">(republish);
+  manager = new McpServersStore(
     catalog,
     configs,
     tokens,
     envStore,
     { emit: (...evs) => events.push(...evs) },
+    { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
     WORKSPACE_CWD,
-    fakeUserAgent(),
+    opts.userAgent ?? fakeUserAgent(),
     undefined,
-    (target) => probeFn(target),
+    (target, signal) => probeFn(target, signal),
   );
+  const gates = new McpServerGates(manager, serverLine, connectLine);
   return {
-    manager, configs, tokens, envStore, events, probed,
+    manager, gates, configs, tokens, envStore, events, probed,
     setProbeFn(fn: ProbeFn) { probeFn = fn; },
   };
+}
+
+/** The connects the store last published — running ones and held
+ * failures. */
+function connects(events: readonly SettingsEvent[]): readonly McpServerConnectView[] {
+  const last = [...events].reverse().find((e) => e.kind === "mcpServersChanged");
+  return last?.kind === "mcpServersChanged" ? last.connects : [];
+}
+
+/** The connects as published once the store has published again — a line
+ * move republishes on its own, a beat after the operation settles. */
+async function published(h: { manager: McpServersStore; events: SettingsEvent[] }): Promise<readonly McpServerConnectView[]> {
+  await h.manager.refresh();
+  return connects(h.events);
+}
+
+function failure(key: string, reason: RegExp) {
+  return expect.objectContaining({ key, status: "failed", reason: expect.stringMatching(reason) });
 }
 
 describe("McpServersStore — key connect (the v1 floor)", () => {
   it("stores the pasted key and upserts the config entry with authMode header", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "pasted-key-1");
+    await h.gates.connectWithKey("svc", "pasted-key-1");
 
     expect((await h.tokens.get("svc"))?.accessToken).toBe("pasted-key-1");
-    // connect kicks the tool probe fire-and-forget — settle it so the last
-    // mcpServersChanged is the deterministic post-probe view
-    await new Promise((r) => setTimeout(r, 0));
+    // the connect probed the server before it settled; published once
+    // more, the last view is the post-probe one
+    await h.manager.refresh();
     const changed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
     expect(changed?.kind === "mcpServersChanged" && changed.servers).toEqual([
       {
@@ -112,6 +141,7 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
           serverVersion: "1.0",
           tools: [{ name: "t_one", description: "d" }],
         },
+        busy: [],
         editJson: undefined,
       },
     ]);
@@ -127,19 +157,21 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
 
   it("a per-account entry (userUrl) requires the user's endpoint and persists it", async () => {
     const h = harness([entry({ url: "", userUrl: true })]);
-    await h.manager.connectRegistryWithKey("svc", "k");
-    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /endpoint URL/ });
+    await expect(h.gates.connectWithKey("svc", "k")).rejects.toThrow(/endpoint URL/);
+    expect(await published(h)).toEqual([failure("catalog:svc", /endpoint URL/)]);
 
-    await h.manager.connectRegistryWithKey("svc", "k", "https://mine.example.test/mcp");
+    await h.gates.connectWithKey("svc", "k", "https://mine.example.test/mcp");
     expect(h.configs.get("svc")?.source).toMatchObject({
       url: "https://mine.example.test/mcp",
     });
+    // the attempt that worked cleared the held failure
+    expect(await published(h)).toEqual([]);
   });
 
   it("refuses on an entry with no key mode", async () => {
     const h = harness([entry({ auth: { header: null, oauth: false } })]);
-    await h.manager.connectRegistryWithKey("svc", "k");
-    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /no API-key mode/ });
+    await expect(h.gates.connectWithKey("svc", "k")).rejects.toThrow(/no API-key mode/);
+    expect(await published(h)).toEqual([failure("catalog:svc", /no API-key mode/)]);
     expect(await h.tokens.get("svc")).toBeNull();
   });
 });
@@ -147,9 +179,8 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
 describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)", () => {
   it("connects with only the entry's URL and captures refresh context alongside the token", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryOAuth("svc");
+    await h.gates.connectOAuth("svc");
 
-    expect(h.events.some((e) => e.kind === "mcpServerConnectStarted")).toBe(true);
     const stored = await h.tokens.get("svc");
     expect(stored).toMatchObject({
       accessToken: "access-1",
@@ -163,24 +194,22 @@ describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)",
   it("gated DCR fails labeled — pitfall §2, pointing at the key path", async () => {
     provider.gateDcr = true;
     const h = harness([entry()]);
-    await h.manager.connectRegistryOAuth("svc");
-    const failed = h.events.at(-1);
-    expect(failed).toMatchObject({ kind: "mcpServerConnectFailed", registryId: "svc" });
-    expect(failed?.kind === "mcpServerConnectFailed" && failed.reason).toMatch(/API-key path/);
+    await expect(h.gates.connectOAuth("svc")).rejects.toThrow(/API-key path/);
+    expect(await published(h)).toEqual([failure("catalog:svc", /API-key path/)]);
     expect(await h.tokens.get("svc")).toBeNull();
   });
 
   it("refuses on an entry without an OAuth mode", async () => {
     const h = harness([entry({ auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "", keyUrl: "" }, oauth: false } })]);
-    await h.manager.connectRegistryOAuth("svc");
-    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /no OAuth mode/ });
+    await expect(h.gates.connectOAuth("svc")).rejects.toThrow(/no OAuth mode/);
+    expect(await published(h)).toEqual([failure("catalog:svc", /no OAuth mode/)]);
   });
 });
 
 describe("McpServersStore — custom escape hatch", () => {
   it("custom-stdio needs no token and is immediately connected", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Local Tool",
       { kind: "custom-stdio", command: "echo", args: ["hi"], env: {} },
       "auto",
@@ -195,7 +224,7 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("custom-http header auth stores the key in SecretStorage, never in config — custom header names included", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Stitch-like",
       {
         kind: "custom-http",
@@ -215,7 +244,7 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("custom-http OAuth runs the same MCP-spec flow as catalog entries", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "My OAuth",
       { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" },
       "auto",
@@ -225,10 +254,10 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("disconnect is remove — the full clear; a curated entry just reverts to the catalog", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "static-key");
+    await h.gates.connectWithKey("svc", "static-key");
     expect(h.configs.get("svc")).toBeDefined();
 
-    await h.manager.remove("svc");
+    await h.gates.remove("svc");
     expect(await h.tokens.get("svc")).toBeNull();
     expect(h.configs.list()).toEqual([]);
     // the catalog entry itself is shipped data — still there, ready to reconnect
@@ -237,7 +266,7 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("inactive keeps config and credential but reaches no agent until toggled back", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Mute Me",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
       ["agent-a"],
@@ -255,37 +284,27 @@ describe("McpServersStore — custom escape hatch", () => {
   it("a failed custom OAuth add stores nothing — no stranded credential-less record", async () => {
     const h = harness([]);
     provider.denyConsent = true; // user rejects in the browser
-    await h.manager.addCustom(
-      "OAuth Fail",
-      { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" },
-      "auto",
-    );
+    await expect(
+      h.gates.addCustom("OAuth Fail", { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" }, "auto"),
+    ).rejects.toThrow();
     expect(h.configs.get("oauth-fail")).toBeUndefined();
     expect(await h.tokens.get("oauth-fail")).toBeNull();
-    expect(
-      h.events.some((e) => e.kind === "mcpServerConnectFailed" && e.registryId === "oauth-fail"),
-    ).toBe(true);
+    expect(await published(h)).toEqual([failure("custom:OAuth Fail", /./)]);
   });
 
   it("a blank key on a custom header add fails labeled, storing nothing", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
-      "No Key",
-      { kind: "custom-http", url: "https://example.test/mcp", authType: "header" },
-      "auto",
-    );
+    await expect(
+      h.gates.addCustom("No Key", { kind: "custom-http", url: "https://example.test/mcp", authType: "header" }, "auto"),
+    ).rejects.toThrow(/key is empty/);
     expect(h.configs.get("no-key")).toBeUndefined();
-    expect(
-      h.events.some(
-        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "no-key" && /key/.test(e.reason),
-      ),
-    ).toBe(true);
+    expect(await published(h)).toEqual([failure("custom:No Key", /key is empty/)]);
   });
 
   it("remove deletes both the token and the config entry", async () => {
     const h = harness([]);
-    await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
-    await h.manager.remove("local-tool");
+    await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    await h.gates.remove("local-tool");
     expect(h.configs.list()).toEqual([]);
   });
 });
@@ -293,11 +312,11 @@ describe("McpServersStore — custom escape hatch", () => {
 describe("McpServersStore — routing and mcpServers", () => {
   it("auto reaches every agent; an explicit list pins exactly; except narrows", async () => {
     const h = harness([]);
-    await h.manager.addCustom("Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
-    await h.manager.addCustom("Pinned Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, [
+    await h.gates.addCustom("Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Pinned Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, [
       "agent-b",
     ]);
-    await h.manager.addCustom("Except Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, {
+    await h.gates.addCustom("Except Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, {
       except: ["agent-a"],
     });
 
@@ -316,7 +335,7 @@ describe("McpServersStore — routing and mcpServers", () => {
         auth: { header: { headerName: "X-Goog-Api-Key", valuePrefix: "", hint: "", keyUrl: "" }, oauth: false },
       }),
     ]);
-    await h.manager.connectRegistryWithKey("stitch", "goog-key");
+    await h.gates.connectWithKey("stitch", "goog-key");
 
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers).toHaveLength(1);
@@ -333,7 +352,7 @@ describe("McpServersStore — routing and mcpServers", () => {
         auth: { header: { headerName: "X-Custom", valuePrefix: "", hint: "", keyUrl: "" }, oauth: true },
       }),
     ]);
-    await h.manager.connectRegistryOAuth("svc");
+    await h.gates.connectOAuth("svc");
 
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     const env = envOf(servers[0]!);
@@ -343,7 +362,7 @@ describe("McpServersStore — routing and mcpServers", () => {
 
   it("a per-account entry's user-supplied URL is what reaches the bridge", async () => {
     const h = harness([entry({ id: "acct", url: "", userUrl: true })]);
-    await h.manager.connectRegistryWithKey("acct", "k", "https://mine.example.test/mcp");
+    await h.gates.connectWithKey("acct", "k", "https://mine.example.test/mcp");
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_MCP_SERVER_URL).toBe("https://mine.example.test/mcp");
@@ -366,14 +385,14 @@ describe("McpServersStore — routing and mcpServers", () => {
 
   it("setRouting persists a new explicit agent list", async () => {
     const h = harness([]);
-    await h.manager.addCustom("T1", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    await h.gates.addCustom("T1", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
     await h.manager.setRouting("t1", ["agent-x"]);
     expect(h.configs.get("t1")?.routing).toEqual(["agent-x"]);
   });
 
   it("a custom-stdio command line is parsed quote-aware, never stored as one executable string", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Srv",
       { kind: "custom-stdio", command: 'npx some-server --root "/tmp/my dir"', args: [], env: {} },
       "auto",
@@ -391,7 +410,7 @@ describe("McpServersStore — routing and mcpServers", () => {
 
   it("custom-stdio env values land in SecretStorage, never the config record — served to the agent only at attach", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Keyed",
       { kind: "custom-stdio", command: "srv", args: [], env: { SRV_API_KEY: "sk-secret" } },
       "auto",
@@ -404,30 +423,24 @@ describe("McpServersStore — routing and mcpServers", () => {
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(envOf(servers[0]!)).toEqual({ SRV_API_KEY: "sk-secret" });
     // remove purges it with the rest
-    await h.manager.remove("keyed");
+    await h.gates.remove("keyed");
     expect(await h.envStore.get("keyed")).toEqual({});
   });
 
   it("an unterminated quote in a custom-stdio line fails labeled, storing nothing", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
-      "Bad",
-      { kind: "custom-stdio", command: 'npx "broken', args: [], env: {} },
-      "auto",
-    );
+    await expect(
+      h.gates.addCustom("Bad", { kind: "custom-stdio", command: 'npx "broken', args: [], env: {} }, "auto"),
+    ).rejects.toThrow(/quote/);
     expect(h.configs.get("bad")).toBeUndefined();
-    expect(
-      h.events.some(
-        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "bad" && /quote/.test(e.reason),
-      ),
-    ).toBe(true);
+    expect(await published(h)).toEqual([failure("custom:Bad", /quote/)]);
   });
 });
 
 describe("McpServersStore — http passthrough (prompt.image mechanics)", () => {
   it("an agent declaring mcp.http gets a type:http entry with the credential in headers", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "key-9");
+    await h.gates.connectWithKey("svc", "key-9");
 
     const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toEqual([
@@ -443,7 +456,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("transport 'bridge' pins the stdio bridge even for a declaring agent (the escape hatch)", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "key-9");
+    await h.gates.connectWithKey("svc", "key-9");
     await h.manager.setTransport("svc", "bridge");
 
     const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
@@ -456,7 +469,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("a non-declaring agent rides the bridge regardless of transport 'auto'", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "key-9");
+    await h.gates.connectWithKey("svc", "key-9");
 
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers).toHaveLength(1);
@@ -465,7 +478,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("custom-stdio is handed through as-is either way", async () => {
     const h = harness([]);
-    await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
 
     const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toHaveLength(1);
@@ -477,8 +490,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 describe("McpServersStore — connect-time tool probe", () => {
   it("connect kicks a probe with the resolved endpoint and fresh credential", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "key-7");
-    await new Promise((r) => setTimeout(r, 0));
+    await h.gates.connectWithKey("svc", "key-7");
 
     expect(h.probed).toEqual([
       {
@@ -491,12 +503,11 @@ describe("McpServersStore — connect-time tool probe", () => {
 
   it("probing a custom-stdio server carries its command, SecretStorage env, and the workspace cwd the agent's spawn will inherit", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Local Tool",
       { kind: "custom-stdio", command: "echo", args: ["hi"], env: { MY_KEY: "v1" } },
       "auto",
     );
-    await new Promise((r) => setTimeout(r, 0));
 
     expect(h.probed).toEqual([
       { kind: "stdio", command: "echo", args: ["hi"], env: { MY_KEY: "v1" }, cwd: WORKSPACE_CWD },
@@ -508,8 +519,8 @@ describe("McpServersStore — connect-time tool probe", () => {
     h.setProbeFn(async () => {
       throw new Error("Connection closed");
     });
-    await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
-    await new Promise((r) => setTimeout(r, 0));
+    await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    await h.manager.refresh();
 
     const failed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
     expect(failed?.kind === "mcpServersChanged" && failed.servers[0]?.probe).toMatchObject({
@@ -526,8 +537,8 @@ describe("McpServersStore — connect-time tool probe", () => {
       h.probed.push(target);
       return { serverName: "fake-server", serverVersion: "1.0", tools: [] };
     });
-    await h.manager.connectRegistryWithKey("svc", "key-7");
-    await new Promise((r) => setTimeout(r, 0));
+    await h.gates.connectWithKey("svc", "key-7");
+    await h.manager.refresh();
 
     const failed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
     expect(failed?.kind === "mcpServersChanged" && failed.servers[0]?.probe).toMatchObject({
@@ -536,7 +547,8 @@ describe("McpServersStore — connect-time tool probe", () => {
     });
 
     fail = false;
-    await h.manager.probe("svc");
+    await h.gates.probe("svc");
+    await h.manager.refresh();
     const ok = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
     expect(ok?.kind === "mcpServersChanged" && ok.servers[0]?.probe).toMatchObject({
       status: "ok",
@@ -548,7 +560,7 @@ describe("McpServersStore — connect-time tool probe", () => {
 describe("McpServersStore — JSON import and edit (the well-known mcpServers shape)", () => {
   it("imports stdio and url entries, ids slugged from names, env straight to SecretStorage; bad entries labeled, rest unaffected", async () => {
     const h = harness([]);
-    await h.manager.importJson(
+    await h.gates.importJson(
       JSON.stringify({
         mcpServers: {
           "My Files": { command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } },
@@ -569,34 +581,30 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
       authType: "none",
     });
     expect(h.configs.get("broken")).toBeUndefined();
-    expect(
-      h.events.some(
-        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "import:broken",
-      ),
-    ).toBe(true);
+    expect(await published(h)).toEqual([failure("import:broken", /neither a command entry nor a url entry/)]);
   });
 
   it("name collisions uniquify the generated id instead of overwriting", async () => {
     const h = harness([]);
-    await h.manager.addCustom("Tool", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
-    await h.manager.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
     expect(h.configs.get("tool")?.source).toMatchObject({ command: "a" });
     expect(h.configs.get("tool-2")?.source).toMatchObject({ command: "b" });
   });
 
   it("exportJson emits the mcpServers document Import reads back — stdio, custom-http, and curated alike (issue #11)", async () => {
     const h = harness([entry()]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "My Files",
       { kind: "custom-stdio", command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } },
       "auto",
     );
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Remote",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k" },
       "auto",
     );
-    await h.manager.connectRegistryWithKey("svc", "pasted-key-1");
+    await h.gates.connectWithKey("svc", "pasted-key-1");
 
     const files = JSON.parse((await h.manager.exportJson("my-files"))!);
     expect(files).toEqual({
@@ -617,19 +625,19 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
     // round-trip: what Copy emits, Import accepts — same id, same launch line, same env
     const fresh = harness([]);
-    await fresh.manager.importJson(JSON.stringify(files));
+    await fresh.gates.importJson(JSON.stringify(files));
     expect(fresh.configs.get("my-files")?.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
       args: ["-y", "files-server"],
     });
     expect(await fresh.envStore.get("my-files")).toEqual({ FILES_KEY: "sk-1" });
-    expect(fresh.events.some((e) => e.kind === "mcpServerConnectFailed")).toBe(false);
+    expect(await published(fresh)).toEqual([]);
   });
 
   it("an OAuth-minted token never rides editJson or Copy — only what the owner typed does (issue #12)", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryOAuth("svc");
+    await h.gates.connectOAuth("svc");
     const json = (await h.manager.exportJson("svc"))!;
     expect(JSON.parse(json).mcpServers.Service).toEqual({ url: provider.mcpUrl, authType: "oauth" });
     expect(json).not.toContain((await h.tokens.get("svc"))!.accessToken);
@@ -637,12 +645,12 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("editJson shows the stored env and header key; updateFromJson stores the box as written (issue #12)", async () => {
     const h = harness([]);
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Editable",
       { kind: "custom-stdio", command: "srv", args: ["--x"], env: { KEEP: "old", GONE: "bye", SWAP: "1" } },
       "auto",
     );
-    await h.manager.addCustom(
+    await h.gates.addCustom(
       "Keyed",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k1" },
       "auto",
@@ -676,44 +684,91 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
   });
 });
 
-describe("McpServersStore — cancelling a browser flow", () => {
-  it("cancel clears the pending state without inventing a failure; nothing is stored", async () => {
-    const events: SettingsEvent[] = [];
-    const configs = new McpServerConfigStore(new MemoryKV());
-    const secrets = new MemorySecrets();
-    const tokens = new McpServerTokenStore(secrets);
-    const manager = new McpServersStore(
-      [entry()],
-      configs,
-      tokens,
-      new SecretEnvStore(secrets, "acpPatchbay.integration"),
-      { emit: (...evs) => events.push(...evs) },
-      WORKSPACE_CWD,
-      {
-        redirectUri: async () => "vscode://solutionsunity.acp-patchbay/oauth-callback",
-        authorize: () => new Promise(() => {}), // the browser tab that never answers
-      },
-    );
+describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
+  /** The browser tab that never answers. */
+  const silentTab: OAuthUserAgent = {
+    redirectUri: async () => "vscode://solutionsunity.acp-patchbay/oauth-callback",
+    authorize: () => new Promise(() => {}),
+  };
 
-    const inFlight = manager.connectRegistryOAuth("svc");
-    // wait until the flow is actually pending, then abandon it
-    for (let i = 0; i < 200 && !events.some((e) => e.kind === "mcpServerConnectStarted"); i++) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    manager.cancelConnect("svc");
-    await inFlight;
+  it("a connect out shows running; told to stop, it stores nothing and leaves no failure", async () => {
+    const h = harness([entry()], { userAgent: silentTab });
+    const flow = h.gates.connectOAuth("svc").catch((err: unknown) => err);
+    expect(await published(h)).toEqual([expect.objectContaining({ key: "catalog:svc", kind: "catalog", subject: "svc", status: "running" })]);
 
-    expect(events.some((e) => e.kind === "mcpServerConnectResolved" && e.registryId === "svc")).toBe(true);
-    expect(events.some((e) => e.kind === "mcpServerConnectFailed")).toBe(false);
-    expect(await tokens.get("svc")).toBeNull();
-    expect(configs.list()).toEqual([]);
+    await h.gates.cancel("catalog:svc");
+    expect(await flow).toMatchObject({ by: "cancel" });
+    expect(await published(h)).toEqual([]);
+    expect(await h.tokens.get("svc")).toBeNull();
+    expect(h.configs.list()).toEqual([]);
+  });
+
+  it("a second Connect while a card's browser flow is out is that flow — one tab, one outcome", async () => {
+    let tabs = 0;
+    const h = harness([entry()], { userAgent: { ...silentTab, authorize: () => (tabs++, new Promise(() => {})) } });
+    const first = h.gates.connectOAuth("svc").catch((err: unknown) => err);
+    const second = h.gates.connectOAuth("svc").catch((err: unknown) => err);
+    for (let i = 0; i < 200 && tabs === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    await h.gates.cancel("catalog:svc");
+    expect(await first).toMatchObject({ by: "cancel" });
+    expect(await second).toMatchObject({ by: "cancel" });
+    expect(tabs).toBe(1);
+  });
+
+  it("a failure is held until dismissed", async () => {
+    const h = harness([entry({ auth: { header: null, oauth: false } })]);
+    await h.gates.connectWithKey("svc", "k").catch(() => {});
+    expect(await published(h)).toEqual([failure("catalog:svc", /no API-key mode/)]);
+    await h.gates.cancel("catalog:svc");
+    expect(await published(h)).toEqual([]);
+  });
+
+  it("a probe on the line is the server's busy state; a second probe joins it", async () => {
+    const h = harness([]);
+    await h.gates.addCustom("Slow", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    let release!: () => void;
+    let probes = 0;
+    h.setProbeFn(() => {
+      probes++;
+      return new Promise((resolve) => {
+        release = () => resolve({ serverName: "slow", serverVersion: "1", tools: [] });
+      });
+    });
+    const one = h.gates.probe("slow");
+    const two = h.gates.probe("slow");
+    for (let i = 0; i < 200 && probes === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    await h.manager.refresh();
+    const busy = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(busy?.kind === "mcpServersChanged" && busy.servers[0]?.busy).toEqual(["probe"]);
+    release();
+    await Promise.all([one, two]);
+    expect(probes).toBe(1);
+  });
+
+  it("Remove cuts in: a probe still running is told to stop, keeps no outcome, and the server is gone", async () => {
+    const h = harness([]);
+    await h.gates.addCustom("Hung", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    let told = false;
+    h.setProbeFn((_target, signal) => {
+      signal?.addEventListener("abort", () => (told = true), { once: true });
+      return new Promise(() => {});
+    });
+    const probing = h.gates.probe("hung").catch((err: unknown) => err);
+    await new Promise((r) => setTimeout(r, 20));
+    await h.gates.remove("hung");
+    expect(told).toBe(true);
+    expect(await probing).toMatchObject({ by: "remove" });
+    expect(h.configs.get("hung")).toBeUndefined();
+    await h.manager.refresh();
+    const after = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(after?.kind === "mcpServersChanged" && after.servers).toEqual([]);
   });
 });
 
 describe("McpServersStore — a bridge's credential", () => {
   it("refreshes a near-expiry OAuth token with the captured context", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryOAuth("svc");
+    await h.gates.connectOAuth("svc");
     // age the token into the refresh margin
     const stored = (await h.tokens.get("svc"))!;
     await h.tokens.set("svc", { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
@@ -723,9 +778,35 @@ describe("McpServersStore — a bridge's credential", () => {
     expect((await h.tokens.get("svc"))?.accessToken).toBe("refreshed-2");
   });
 
+  it("asked at once by several, a near-expiry credential spends its refresh token once", async () => {
+    const h = harness([entry()]);
+    await h.gates.connectOAuth("svc");
+    const stored = (await h.tokens.get("svc"))!;
+    await h.tokens.set("svc", { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
+
+    const answers = await Promise.all([
+      h.manager.credentialFor("svc", "agent-a"),
+      h.manager.credentialFor("svc", "agent-b"),
+      h.manager.credentialFor("svc", "agent-a"),
+    ]);
+    expect(answers.map((a) => a?.accessToken)).toEqual(["refreshed-2", "refreshed-2", "refreshed-2"]);
+    expect(provider.tokenRequests.filter((r) => r.get("grant_type") === "refresh_token")).toHaveLength(1);
+  });
+
+  it("a refresh that lands after the server was removed stores nothing", async () => {
+    const h = harness([entry()]);
+    await h.gates.connectOAuth("svc");
+    const stored = (await h.tokens.get("svc"))!;
+    await h.tokens.set("svc", { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
+    const asked = h.manager.credentialFor("svc", "agent-a");
+    await h.gates.remove("svc");
+    await asked;
+    expect(await h.tokens.get("svc")).toBeNull();
+  });
+
   it("returns a static key as-is — nothing to refresh, no expiry on our side", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "static-key");
+    await h.gates.connectWithKey("svc", "static-key");
     expect((await h.manager.credentialFor("svc", "agent-a"))?.accessToken).toBe("static-key");
   });
 
@@ -736,7 +817,7 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("answers only while the server reaches the agent — muting, re-routing or removing it reaches a running bridge (#72)", async () => {
     const h = harness([entry()]);
-    await h.manager.connectRegistryWithKey("svc", "static-key");
+    await h.gates.connectWithKey("svc", "static-key");
     expect((await h.manager.credentialFor("svc", "agent-a"))?.accessToken).toBe("static-key");
 
     await h.manager.setRouting("svc", ["agent-b"]);
@@ -747,7 +828,7 @@ describe("McpServersStore — a bridge's credential", () => {
     expect(await h.manager.credentialFor("svc", "agent-b")).toBeNull();
 
     await h.manager.setActive("svc", true);
-    await h.manager.remove("svc");
+    await h.gates.remove("svc");
     expect(await h.manager.credentialFor("svc", "agent-b")).toBeNull();
     expect(await h.manager.credentialFor("no-such-server", "agent-b")).toBeNull();
   });

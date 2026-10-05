@@ -44,7 +44,8 @@ import { ChannelHost } from "./channel";
 import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
-import { McpServersStore } from "./mcp-servers-store";
+import { McpServerGates } from "./mcp-server-gates";
+import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { normalizeKnobs } from "./knobs";
 import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
@@ -53,6 +54,7 @@ import { runLoginTask } from "./login-task";
 import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { Cancelled, Queue } from "./queue";
+import type { McpServerWork } from "../shared/protocol";
 import { type AttachWork, SessionGates } from "./session-gates";
 import { normalizeRootPath, SessionsStore, type SessionConnectionOperations } from "./sessions-store";
 import { nonce } from "./webview-host";
@@ -167,7 +169,10 @@ export class Orchestrator {
   readonly broker: PermissionBroker;
   readonly editorStateHost: EditorStateHost;
   readonly mcpServerTokens: McpServerTokenStore;
-  readonly mcpServers: McpServersStore;
+  /** The MCP-servers store without the operations that take time — those
+   * are reached only through the MCP gates. */
+  readonly mcpServers: Omit<McpServersStore, keyof McpServerLineOperations>;
+  readonly mcpServerGates: McpServerGates;
   /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
   readonly oauthCallbacks = new OAuthCallbackRegistry();
 
@@ -270,12 +275,20 @@ export class Orchestrator {
     // remote / WSL / Codespaces — never a hand-rolled 127.0.0.1 server.
     // extension.ts's registerUriHandler feeds callbacks into oauthCallbacks.
     const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
-    this.mcpServers = new McpServersStore(
+    // The management side's tools for MCP servers: a line per server (its
+    // probe, its remove) and one per connect under way, and the gates over
+    // them. What the lines hold is the MCP side's busy state, so every move
+    // republishes it.
+    const republish = () => void this.mcpServers.refresh();
+    const serverLine = new Queue<McpServerWork>(republish);
+    const connectLine = new Queue<"connect">(republish);
+    const mcpServers = new McpServersStore(
       loadCatalog(),
       this.mcpServerConfigs,
       this.mcpServerTokens,
       this.mcpServerEnv,
       { emit: (...events) => this.settings.emit(...events) },
+      { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
       this.workspaceCwd,
       {
         redirectUri: async () => {
@@ -292,6 +305,8 @@ export class Orchestrator {
       },
       log,
     );
+    this.mcpServers = mcpServers;
+    this.mcpServerGates = new McpServerGates(mcpServers, serverLine, connectLine);
 
     // The registry starts empty — the picker fills when the first fetch
     // (cache or network) resolves and publishes via registryChanged.
@@ -862,7 +877,7 @@ export class Orchestrator {
     this.log.info("erase all data: stopping every process");
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     this.clientHost.clear();
-    await Promise.all([this.gates.stopAll(), this.sessionGates.endAll()]);
+    await Promise.all([this.gates.stopAll(), this.sessionGates.endAll(), this.mcpServerGates.endAll()]);
     this.sessions.reset();
 
     await eraseAllData({
@@ -926,7 +941,7 @@ export class Orchestrator {
     await this.agents.stampRunning();
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     await Promise.race([
-      Promise.all([this.gates.stopAll(), this.sessionGates.endAll()]),
+      Promise.all([this.gates.stopAll(), this.sessionGates.endAll(), this.mcpServerGates.endAll()]),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
     ]);
   }
@@ -1863,29 +1878,35 @@ export class Orchestrator {
       case "removeContextChip":
         this.sessions.removeContext(action.sessionId, action.chipId);
         break;
+      // A connect's failure is the store's to hold and show; the log has it
+      // already.
       case "connectRegistryKey":
-        void this.mcpServers.connectRegistryWithKey(action.registryId, action.token, action.url);
+        void this.mcpServerGates.connectWithKey(action.registryId, action.token, action.url).catch(() => {});
         break;
       case "connectRegistryOAuth":
-        void this.mcpServers.connectRegistryOAuth(action.registryId, action.url);
+        void this.mcpServerGates.connectOAuth(action.registryId, action.url).catch(() => {});
         break;
       case "addCustomMcpServer":
-        void this.mcpServers.addCustom(action.name, action.source, action.routing);
+        void this.mcpServerGates.addCustom(action.name, action.source, action.routing).catch(() => {});
         break;
       case "importMcpServersJson":
-        void this.mcpServers.importJson(action.json);
+        void this.mcpServerGates.importJson(action.json).catch(this.logCatch("import MCP servers"));
         break;
       case "updateMcpServerJson":
         void this.mcpServers.updateFromJson(action.serverId, action.json);
         break;
       case "cancelMcpServerConnect":
-        this.mcpServers.cancelConnect(action.serverId);
+        void this.mcpServerGates.cancel(action.key).catch(this.logCatch(`cancel ${action.key}`));
         break;
       case "setMcpServerActive":
-        void this.mcpServers.setActive(action.serverId, action.active);
+        // Switched on, it is probed at once: the user just acted on it.
+        void this.mcpServers
+          .setActive(action.serverId, action.active)
+          .then(() => (action.active ? this.mcpServerGates.probe(action.serverId) : undefined))
+          .catch(this.logCatch(`switch ${action.serverId}`));
         break;
       case "removeMcpServer":
-        void this.mcpServers.remove(action.serverId);
+        void this.mcpServerGates.remove(action.serverId).catch(this.logCatch(`remove ${action.serverId}`));
         break;
       case "setMcpServerRouting":
         void this.mcpServers.setRouting(action.serverId, action.routing);
@@ -1894,7 +1915,7 @@ export class Orchestrator {
         void this.mcpServers.setTransport(action.serverId, action.transport);
         break;
       case "probeMcpServer":
-        void this.mcpServers.probe(action.serverId);
+        void this.mcpServerGates.probe(action.serverId).catch(this.logCatch(`probe ${action.serverId}`));
         break;
       case "copyMcpServerJson":
         void this.copyMcpServerJson(action.serverId);
@@ -2322,6 +2343,7 @@ export class Orchestrator {
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
     void this.sessionGates.endAll();
+    void this.mcpServerGates.endAll();
     void this.gates.stopAll();
     this.agentView.flushNow();
     this.settings.flushNow();

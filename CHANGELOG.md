@@ -111,6 +111,16 @@
   goes once that is done, never to the connection being replaced.
 - Settings and its messages say "MCP server" wherever they said
   "integration" — the name the Settings page already used.
+- Work on an MCP server takes turns. A second click on Connect while a
+  browser sign-in is out is that same sign-in, not a second tab. A failed
+  connect or add keeps its note until you dismiss it or try again;
+  before, the next refresh of the list could clear it, and only the last
+  custom add's note could show. Removing a server while it is being
+  checked stops the check.
+- Several requests arriving as an MCP server's sign-in expires now
+  refresh it once. Before, each refreshed it on its own, and a server that
+  rotates refresh tokens could treat the repeats as theft and revoke the
+  sign-in. A refresh that fails is now logged.
 
 ## 0.84.1 — 2026-09-29
 
