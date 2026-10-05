@@ -11,6 +11,7 @@ import type {
   McpServerSourceView,
   SettingsState,
 } from "../../shared/protocol";
+import { count } from "../../shared/count";
 import { Icon } from "../shared/icon";
 import { filterCatalog, MECHANISMS, mechanismsOf, type Mechanism } from "./catalog-filter";
 import { ConfirmButton, Field } from "./controls";
@@ -211,7 +212,7 @@ function ProbeStrip(props: {
           onClick={props.onToggleTools}
         >
           <Icon name={props.expanded ? "chevron-down" : "chevron-right"} />
-          {probe.tools.length} tool{probe.tools.length === 1 ? "" : "s"}
+          {count(probe.tools.length, "tool")}
         </button>
         <span>as of {asOf(probe.at)}</span>
         <Button

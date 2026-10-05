@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, SettingsState } from "../../shared/protocol";
 import { formatCommandLine } from "../../shared/command-line";
+import { count } from "../../shared/count";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
@@ -297,7 +298,7 @@ function AddAgentRow(props: {
       </div>
       {props.state.registryFetchedAt !== "" && (
         <div className="note mx-0 mb-0 mt-1">
-          {registryCount} agent{registryCount === 1 ? "" : "s"} in the ACP registry · last
+          {count(registryCount, "agent")} in the ACP registry · last
           checked {new Date(props.state.registryFetchedAt).toLocaleString()}
         </div>
       )}

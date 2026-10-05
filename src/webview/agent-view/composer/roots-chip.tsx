@@ -11,6 +11,7 @@
 // offers that open — the same reload the session row's menu has. An
 // added row also says whether it is saved for new sessions; the chip only
 // saves (the shortcut), Settings manages the saved lists.
+import { count } from "../../../shared/count";
 import { NO_WORKSPACE_TO_SAVE, type SavedRootsView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
@@ -38,7 +39,7 @@ export function RootsChip({
   controls: RootsControls;
 }) {
   const send = useActions();
-  const count = workspaceRoots.length + roots.length;
+  const total = workspaceRoots.length + roots.length;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -46,7 +47,7 @@ export function RootsChip({
             .ctx-chip component rule — keeps this chip on the same font
             step as its plain-span siblings */}
         <Button variant="ghost" size="sm" className="ctx-chip h-auto text-[10px]">
-          <Icon name="root-folder" /> {count} root{count === 1 ? "" : "s"}
+          <Icon name="root-folder" /> {count(total, "root")}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" side="top" className="w-auto min-w-56">

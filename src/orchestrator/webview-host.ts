@@ -23,6 +23,7 @@
 //   script loads, transitively. Host/scheme sources are ignored under it,
 //   which is fine — nonce was already the only script source.
 import * as vscode from "vscode";
+import { count } from "../shared/count";
 import type { ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
 import type { ChannelEndpoint } from "./channel";
@@ -157,7 +158,7 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
     this.view.badge =
       this.waiting === 0
         ? undefined
-        : { value: this.waiting, tooltip: `${this.waiting} session${this.waiting === 1 ? "" : "s"} waiting on you` };
+        : { value: this.waiting, tooltip: `${count(this.waiting, "session")} waiting on you` };
   }
 }
 
