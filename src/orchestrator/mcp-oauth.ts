@@ -135,7 +135,7 @@ export async function discoverAuthorizationServer(
 /** RFC 8414 (+ OIDC discovery variants): the authorization server's own
  * endpoints. Tries OAuth metadata first, then openid-configuration, each
  * path-aware before bare-origin. */
-export async function discoverAuthServerMetadata(
+async function discoverAuthServerMetadata(
   authServer: URL,
   fetchFn?: FetchFn,
 ): Promise<AuthServerMetadata> {

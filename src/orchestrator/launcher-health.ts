@@ -217,7 +217,7 @@ export async function bundledVersionInNpxCache(
  * compare — silence, not an error). Bin names come from PATH_SIBLINGS only,
  * never from registry data; resolution (spawn-resolve.ts) finds the npm
  * .cmd shims these CLIs usually are on Windows. */
-export function pathSiblingVersion(
+function pathSiblingVersion(
   bin: string,
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,

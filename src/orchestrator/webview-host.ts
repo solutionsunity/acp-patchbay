@@ -41,7 +41,7 @@ export function nonce(): string {
     .join("");
 }
 
-export function webviewHtml(
+function webviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   bundle: Bundle,

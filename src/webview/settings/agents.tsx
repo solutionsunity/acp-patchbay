@@ -406,7 +406,7 @@ function LoginControl(props: {
  * to shadcn primitives. */
 const TILE = "min-w-24 flex-none rounded-lg px-4 py-2.5 text-center";
 
-export function StatTiles({ state, children }: { state: SettingsState; children?: ReactNode }) {
+function StatTiles({ state, children }: { state: SettingsState; children?: ReactNode }) {
   const running = state.agents.filter((a) => a.status === "running").length;
   const tiles = [
     { n: state.agents.length, label: "agents", icon: "hubot" },

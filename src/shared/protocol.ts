@@ -8,8 +8,6 @@
 
 // ── envelope ─────────────────────────────────────────────────────────────────
 
-export type ChannelId = "agentView" | "settings";
-
 export interface SnapshotMsg<S> {
   kind: "snapshot";
   rev: number;
@@ -66,7 +64,7 @@ export interface SavedRootsView {
   missing: readonly string[];
 }
 
-export const NO_SAVED_ROOTS: SavedRootsView = { workspace: null, machine: [], missing: [] };
+const NO_SAVED_ROOTS: SavedRootsView = { workspace: null, machine: [], missing: [] };
 
 /** What both saving surfaces say where `workspace` is null. */
 export const NO_WORKSPACE_TO_SAVE = "No folder open — there is no workspace to save to.";

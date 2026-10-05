@@ -254,7 +254,7 @@ const promptCarries =
   (params: unknown): boolean =>
     (params as PromptRequest).prompt.some((block) => block.type === blockType);
 
-export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly CapabilityProof[]>> = {
+const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly CapabilityProof[]>> = {
   "fs.readTextFile": [{ via: "clientRequest", method: methods.client.fs.readTextFile }],
   "fs.writeTextFile": [{ via: "clientRequest", method: methods.client.fs.writeTextFile }],
   terminal: [{ via: "clientRequest", method: methods.client.terminal.create }],

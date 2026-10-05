@@ -18,7 +18,7 @@ import type { KV } from "./kv";
  * (knobs.ts foldSeed), never written again — new saves carry `options`
  * alone. (Supersedes the earlier {model, mode, effort} triple, which
  * required categories to map back to options.) */
-export const agentDefaultsSchema = z.object({
+const agentDefaultsSchema = z.object({
   mode: z.string().optional(),
   // boolean covers boolean-typed options (a thinking toggle); the wire call
   // (session/set_config_option) carries both shapes natively.
@@ -28,7 +28,7 @@ export const agentDefaultsSchema = z.object({
 /** Present only when this config was created from the official ACP agent
  * registry — the pinned version drives the update fact (the upgrade chip)
  * and is what gets re-resolved on Upgrade. Absent for custom commands. */
-export const agentRegistrySourceSchema = z.object({
+const agentRegistrySourceSchema = z.object({
   registryId: z.string().min(1),
   distributionKind: z.enum(["npx", "uvx", "binary"]),
   pinnedVersion: z.string().min(1),
@@ -44,7 +44,6 @@ export const agentRegistrySourceSchema = z.object({
     .object({ archiveUrl: z.string().min(1), cmd: z.string().min(1), sha256: z.string().optional() })
     .optional(),
 });
-export type AgentRegistrySource = z.infer<typeof agentRegistrySourceSchema>;
 
 export const agentConfigSchema = z.object({
   id: z.string().min(1),

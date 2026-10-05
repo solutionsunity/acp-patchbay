@@ -54,7 +54,6 @@ const distributionSchema = z.object({
   uvx: npxOrUvxDistSchema.optional(),
   binary: z.record(z.string(), binaryTargetSchema).optional(),
 });
-export type Distribution = z.infer<typeof distributionSchema>;
 
 export const registryAgentSchema = z.object({
   id: z.string().min(1),
