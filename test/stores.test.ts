@@ -95,18 +95,25 @@ describe("LastActiveSessionStore — the last-open-session pointer", () => {
   it("holds the latest activation, by agent and the agent's own id; wipe clears it", async () => {
     const store = new LastActiveSessionStore(new MemoryKV());
     expect(store.get()).toBeUndefined();
-    await store.set({ agentId: "a" as PatchbayAgentId, sessionId: "s1" });
-    await store.set({ agentId: "b" as PatchbayAgentId, sessionId: "s1" });
-    expect(store.get()).toEqual({ agentId: "b", sessionId: "s1" });
+    await store.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
+    await store.set({ patchbayAgentId: "b" as PatchbayAgentId, sessionId: "s1" });
+    expect(store.get()).toEqual({ patchbayAgentId: "b", sessionId: "s1" });
     await store.wipe();
     expect(store.get()).toBeUndefined();
   });
 
   it("survives what a reload survives — no freshness bound, unlike the stamp", async () => {
     const kv = new MemoryKV();
-    await new LastActiveSessionStore(kv).set({ agentId: "a" as PatchbayAgentId, sessionId: "s1" });
+    await new LastActiveSessionStore(kv).set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
     // A fresh store over the same KV (the next activate) still reads it.
-    expect(new LastActiveSessionStore(kv).get()).toEqual({ agentId: "a", sessionId: "s1" });
+    expect(new LastActiveSessionStore(kv).get()).toEqual({ patchbayAgentId: "a", sessionId: "s1" });
+  });
+
+  it("a pointer written under the old field name still points — the window that installs this version returns", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.lastActiveSession", { agentId: "a", sessionId: "s1" });
+    expect(new LastActiveSessionStore(kv).get()).toEqual({ patchbayAgentId: "a", sessionId: "s1" });
+    expect(kv.get("acpPatchbay.lastActiveSession")).not.toHaveProperty("agentId");
   });
 
   it("a value of another shape — the bare id an older version stored — is no pointer", async () => {

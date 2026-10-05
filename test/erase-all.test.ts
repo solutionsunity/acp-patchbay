@@ -75,7 +75,7 @@ describe("eraseAllData", () => {
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
     await decisionAudit.append({ kind: "permission", decision: "allow" });
     await lastConnected.write(["claude" as PatchbayAgentId]);
-    await lastActiveSession.set({ agentId: "a" as PatchbayAgentId, sessionId: "s1" });
+    await lastActiveSession.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
     await composerKnobs.record("claude" as PatchbayAgentId, { mode: "code" });
     await authLocks.upsert({ id: "claude" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });

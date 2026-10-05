@@ -19,19 +19,29 @@ import type { PatchbayAgentId } from "../../shared/ids";
 const KEY = "acpPatchbay.lastActiveSession";
 
 export interface SessionPointer {
-  agentId: PatchbayAgentId;
+  patchbayAgentId: PatchbayAgentId;
   /** The agent's own id for the session. */
   sessionId: string;
 }
 
 function isPointer(value: unknown): value is SessionPointer {
   if (value === null || typeof value !== "object") return false;
-  const { agentId, sessionId } = value as Record<string, unknown>;
-  return typeof agentId === "string" && typeof sessionId === "string";
+  const { patchbayAgentId, sessionId } = value as Record<string, unknown>;
+  return typeof patchbayAgentId === "string" && typeof sessionId === "string";
 }
 
 export class LastActiveSessionStore {
-  constructor(private readonly kv: KV) {}
+  constructor(private readonly kv: KV) {
+    // Once, at construction: a pointer written before agent ids were named
+    // for their store holds the agent as `agentId` — rewritten under the
+    // name it has now, so the window that installs this version still
+    // returns to the session it left.
+    const stored = kv.get<unknown>(KEY);
+    if (typeof stored === "object" && stored !== null && "agentId" in stored) {
+      const { agentId, ...rest } = stored;
+      void kv.update(KEY, { ...rest, patchbayAgentId: agentId });
+    }
+  }
 
   get(): SessionPointer | undefined {
     const value = this.kv.get<unknown>(KEY);
@@ -40,8 +50,8 @@ export class LastActiveSessionStore {
 
   async set(pointer: SessionPointer): Promise<void> {
     const current = this.get();
-    if (current?.agentId === pointer.agentId && current.sessionId === pointer.sessionId) return;
-    await this.kv.update(KEY, { agentId: pointer.agentId, sessionId: pointer.sessionId });
+    if (current?.patchbayAgentId === pointer.patchbayAgentId && current.sessionId === pointer.sessionId) return;
+    await this.kv.update(KEY, { patchbayAgentId: pointer.patchbayAgentId, sessionId: pointer.sessionId });
   }
 
   /** The session it points at closed, or "Disconnect & erase all data". */

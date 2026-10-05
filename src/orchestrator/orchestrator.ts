@@ -948,7 +948,7 @@ export class Orchestrator {
     if (pointer === undefined) return;
     await Promise.allSettled([...this.pendingSyncs.values()]);
     if (this.agentView.current.activePatchbaySessionId !== null) return;
-    const patchbaySessionId = this.sessions.rowFor(pointer.agentId, pointer.sessionId);
+    const patchbaySessionId = this.sessions.rowFor(pointer.patchbayAgentId, pointer.sessionId);
     if (patchbaySessionId === undefined) return;
     this.sessionGates.activate(patchbaySessionId);
   }
@@ -1121,7 +1121,7 @@ export class Orchestrator {
     const sessionId = this.sessions.sessionIdOf(patchbaySessionId);
     if (patchbayAgentId === undefined || sessionId === undefined) return;
     this.pointerRow = patchbaySessionId;
-    void this.lastActiveSession.set({ agentId: patchbayAgentId, sessionId });
+    void this.lastActiveSession.set({ patchbayAgentId, sessionId });
   }
 
   /** Done-sound (Preferences): the system chime as a turn resolves —
