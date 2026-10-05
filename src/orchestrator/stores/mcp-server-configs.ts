@@ -82,11 +82,12 @@ export class McpServerConfigStore extends GlobalRecordStore<McpServerConfig> {
   /** Adds a record under a display name no other record holds — picked in
    * the same write, so two adds can't both take it: the name rides the
    * wire as the server's name, and two of one name would collide in an
-   * agent. A taken name gets a number. Returns the name it got. */
-  async add(value: McpServerConfig): Promise<string> {
+   * agent. A taken name — or a `reserved` one, a server that is never
+   * stored — gets a number. Returns the name it got. */
+  async add(value: McpServerConfig, reserved: readonly string[] = []): Promise<string> {
     let name = value.name;
     await this.rewrite((current) => {
-      const taken = new Set(current.map((v) => v.name));
+      const taken = new Set([...reserved, ...current.map((v) => v.name)]);
       for (let n = 2; taken.has(name); n++) name = `${value.name} ${n}`;
       current.push({ ...value, name });
       return current;

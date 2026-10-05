@@ -11,15 +11,17 @@ implementation time, since vendors move.
 
 ## Scope and roles
 
-- Patchbay is always the **OAuth client / credential holder** in every flow here.
-  The ACP agent downstream never sees a credential and never participates in an
-  auth handshake: it talks to patchbay's stdio-to-HTTP bridge
-  (`mcp-bridge.js`), which fetches a current token from the orchestrator
-  over IPC and attaches it to outbound requests. That bridge architecture is
-  fixed; this document decides *how the orchestrator obtains tokens*. (The
-  bridge carries one more thing of patchbay's on the agent's behalf — the
-  session's roots, as MCP's client-side `roots` capability; that mechanism is
-  recorded with the local server in the architecture doc.)
+- Patchbay is always the **OAuth client / credential holder** in every flow here;
+  the ACP agent never takes part in an auth handshake. How the credential reaches
+  the server is the delivery [the architecture doc](architecture.md) picks per
+  attach: on the stdio-to-HTTP bridge (`mcp-bridge.js`) the agent never sees it —
+  the bridge fetches a current token from the orchestrator over IPC per request
+  and attaches it to outbound requests; an agent declaring `mcp.http` gets the
+  server passed through, with a fresh token in the session's own headers,
+  ephemeral per session. This document decides *how the orchestrator obtains
+  tokens*. (The bridge carries one more thing of patchbay's on the agent's
+  behalf — the session's roots, as MCP's client-side `roots` capability; that
+  mechanism is recorded with the local server in the architecture doc.)
 - Patchbay orchestrates ACP agents; it is not itself an AI agent. MCP is the
   attachment language agents understand, so **every curated entry is a
   remote MCP server** — no bespoke per-service API clients, ever.
@@ -29,7 +31,7 @@ implementation time, since vendors move.
 ### 1 · Static key in a header — `authType: "header"`
 
 The user pastes a token (PAT / API key) from the vendor's own settings page;
-patchbay stores it in `McpServerTokenStore` (SecretStorage, per-workspace) and
+patchbay stores it in `McpServerTokenStore` (SecretStorage, global to the machine) and
 the bridge sends it on every request.
 
 - **Header name is per-server data, not hardcoded**: most services take
@@ -150,9 +152,10 @@ restate it. Policy for what an entry is:
 4. **`vscode.authentication.getSession('github', …)` stays unused for MCP
    servers.** It would grant a GitHub token with zero setup, but the session
    is account/profile-scoped — the same credential silently available in every
-   workspace — which violates [the features doc](features.md)'s workspace-scoping
-   rule (born of a real incident: a production-access MCP server following a user
-   between repos). PAT-per-workspace keeps the blast radius the design promises.
+   workspace. The reason first recorded, per-workspace credentials, does not
+   hold today: MCP servers and their credentials are global to the machine,
+   and scoping them by workspace is the open design of #70. The decision
+   stands until that design re-derives it.
 5. **Discovery order matters**: `oauth-protected-resource` first (RFC 9728), then
    the authorization server's metadata — the reverse (what VS Code currently does,
    see §3) breaks against spec-correct servers.

@@ -45,6 +45,23 @@ export interface McpServerLines {
   connecting(): readonly string[];
 }
 
+/** What a session's set is built with: the scripts patchbay spawns as
+ * servers, the socket they reach it on, and the wire log's redaction of
+ * every value that crosses to an agent. */
+export interface McpServerWire {
+  editorServerScript: string;
+  bridgeScript: string;
+  socketPath(): string;
+  crossing(value: string): void;
+}
+
+/** Patchbay's own server — the editor's state and the session's roots —
+ * given to every session over stdio, the one delivery every agent takes.
+ * Built in: never stored, never removed, and its name is never another
+ * server's. The id can't be a stored one's: no minted or slugged id holds
+ * a colon. */
+const EDITOR_SERVER = { id: "patchbay:editor", name: "patchbay" } as const;
+
 /** The operations that take time — a connect, an add, a probe, a remove —
  * each reached only through the gates, which order them on their lines. */
 export type McpServerLineOperations = Pick<
@@ -191,6 +208,7 @@ export class McpServersStore {
     private readonly envStore: SecretEnvStore,
     private readonly hooks: McpServersStoreHooks,
     private readonly lines: McpServerLines,
+    private readonly wire: McpServerWire,
     /** The directory agents are launched in — and so the one their
      * spawned stdio servers inherit. The probe runs custom-stdio servers
      * here so it reports the same reality the agent's own spawn will. */
@@ -424,7 +442,7 @@ export class McpServersStore {
         routing: "auto",
         active: true,
         transport: "auto",
-      });
+      }, [EDITOR_SERVER.name]);
       this.log.info(`${id}: ${name} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
       return id;
     });
@@ -463,7 +481,7 @@ export class McpServersStore {
         routing: "auto",
         active: true,
         transport: "auto",
-      });
+      }, [EDITOR_SERVER.name]);
       this.log.info(`${id}: ${name} connected via OAuth`);
       return id;
     });
@@ -529,7 +547,7 @@ export class McpServersStore {
         routing: cloneRouting(routing),
         active: true,
         transport: "auto",
-      });
+      }, [EDITOR_SERVER.name]);
       this.log.info(`${id}: custom ${configSource.kind} ${given} added`);
       return id;
     });
@@ -802,11 +820,13 @@ export class McpServersStore {
     }
   }
 
-  /** The mcpServers entries a session for `agentId` should get — every
-   * server that reaches it (protocol.ts records the fidelity-gate
-   * supersession) and is actually usable (connected where a credential is
-   * needed, a real endpoint where one is required) — and, beside them,
-   * which servers were given and how: the session's attach records it.
+  /** The mcpServers entries a session for `agentId` should get — the
+   * editor server first, then every configured server that reaches it
+   * (protocol.ts records the fidelity-gate supersession) and is actually
+   * usable (connected where a credential is needed, a real endpoint where
+   * one is required) — and, beside them, which servers were given and how:
+   * the session's attach records it. Every value that crosses to the agent
+   * is registered with the wire log's redaction, here, where it crosses.
    * custom-stdio needs no bridge — handed straight through.
    * registry/custom-http go one of two ways (prompt.image mechanics —
    * capability-conditional delivery): `declaresHttp` and transport "auto" ⇒
@@ -817,13 +837,23 @@ export class McpServersStore {
    * bridge, the guaranteed floor. */
   async mcpServersFor(
     agentId: string,
-    bridgeScriptPath: string,
-    ipcSocketPath: string,
     contextToken: string,
     declaresHttp: boolean,
   ): Promise<{ servers: McpServer[]; given: AttachedServer[] }> {
-    const servers: McpServer[] = [];
-    const given: AttachedServer[] = [];
+    // McpServerStdio is the untagged union member — no discriminant needed
+    // since it's the only variant every agent is guaranteed to accept.
+    const servers: McpServer[] = [
+      {
+        name: EDITOR_SERVER.name,
+        command: process.execPath,
+        args: [this.wire.editorServerScript],
+        env: [
+          { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
+          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+        ],
+      },
+    ];
+    const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
     for (const config of this.configs.list()) {
       if (!reaches(config, agentId)) continue;
 
@@ -874,9 +904,9 @@ export class McpServersStore {
       servers.push({
         name: config.name,
         command: process.execPath,
-        args: [bridgeScriptPath],
+        args: [this.wire.bridgeScript],
         env: [
-          { name: "ACP_PATCHBAY_IPC", value: ipcSocketPath },
+          { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
           { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
           { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: config.id },
           { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: url },
@@ -889,6 +919,13 @@ export class McpServersStore {
         ],
       });
       given.push({ id: config.id, delivery: "bridge" });
+    }
+    // Env and header values are secrets by classification. Over-redaction
+    // (plumbing values like socket paths get masked too) is the safe
+    // direction.
+    for (const server of servers) {
+      for (const { value } of "env" in server ? (server.env ?? []) : []) this.wire.crossing(value);
+      for (const { value } of "headers" in server ? (server.headers ?? []) : []) this.wire.crossing(value);
     }
     this.log.debug(
       `mcpServersFor ${agentId}: serving ${servers.length} server(s)` +

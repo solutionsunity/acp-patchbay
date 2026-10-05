@@ -125,7 +125,9 @@
   accounts, say. Each connection is a server of its own; the catalog keeps
   every entry, and a second connection of one takes a number after its
   name. A name another server already holds always does now, custom ones
-  included: two servers of one name would collide in an agent. (#58)
+  included: two servers of one name would collide in an agent. That holds
+  for "patchbay" too, the name of patchbay's own server in every session.
+  (#58)
 - Removing an agent also takes it off every MCP server's list of agents
   it reaches.
 

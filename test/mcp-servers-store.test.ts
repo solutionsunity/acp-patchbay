@@ -64,6 +64,8 @@ function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } =
   const secrets = new MemorySecrets();
   // Every key a secret was written under — what "stores nothing" checks.
   const storedKeys: string[] = [];
+  // Every value an attach handed to an agent, as the wire log hears it.
+  const crossed: string[] = [];
   const store = secrets.store.bind(secrets);
   secrets.store = (key, value) => (storedKeys.push(key), store(key, value));
   const tokens = new McpServerTokenStore(secrets);
@@ -87,6 +89,12 @@ function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } =
     envStore,
     { emit: (...evs) => events.push(...evs) },
     { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
+    {
+      editorServerScript: "/mcp-server.js",
+      bridgeScript: "/bridge.js",
+      socketPath: () => "/sock",
+      crossing: (value) => crossed.push(value),
+    },
     WORKSPACE_CWD,
     opts.userAgent ?? fakeUserAgent(),
     undefined,
@@ -94,7 +102,7 @@ function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } =
   );
   const gates = new McpServerGates(manager, serverLine, connectLine);
   return {
-    manager, gates, configs, tokens, envStore, events, probed, storedKeys,
+    manager, gates, configs, tokens, envStore, events, probed, storedKeys, crossed,
     setProbeFn(fn: ProbeFn) { probeFn = fn; },
   };
 }
@@ -111,6 +119,13 @@ function connects(events: readonly SettingsEvent[]): readonly McpServerConnectVi
 async function published(h: { manager: McpServersStore; events: SettingsEvent[] }): Promise<readonly McpServerConnectView[]> {
   await h.manager.refresh();
   return connects(h.events);
+}
+
+/** A session's set without the built-in editor server, which leads every
+ * one — what the configured servers contributed. */
+async function configuredFor(h: { manager: McpServersStore }, agentId: string, declaresHttp = false) {
+  const { servers, given } = await h.manager.mcpServersFor(agentId, "ctx-1", declaresHttp);
+  return { servers: servers.slice(1), given: given.slice(1) };
 }
 
 /** A stored server by its display name — ids are minted. */
@@ -281,14 +296,14 @@ describe("McpServersStore — custom escape hatch", () => {
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
       ["agent-a"],
     );
-    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toHaveLength(1);
+    expect((await configuredFor(h, "agent-a", false)).servers).toHaveLength(1);
 
     await h.manager.setActive(id, false);
-    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toEqual([]);
+    expect((await configuredFor(h, "agent-a", false)).servers).toEqual([]);
     expect(await h.tokens.get(id)).not.toBeNull(); // credential intact — muted, not disconnected
 
     await h.manager.setActive(id, true);
-    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toHaveLength(1);
+    expect((await configuredFor(h, "agent-a", false)).servers).toHaveLength(1);
   });
 
   it("a failed custom OAuth add stores nothing — no stranded credential-less record", async () => {
@@ -331,10 +346,10 @@ describe("McpServersStore — routing and mcpServers", () => {
       except: ["agent-a"],
     });
 
-    const agentA = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const agentA = (await configuredFor(h, "agent-a", false)).servers;
     expect(agentA.map((s) => s.name)).toEqual(["Auto Tool"]);
 
-    const agentB = (await h.manager.mcpServersFor("agent-b", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const agentB = (await configuredFor(h, "agent-b", false)).servers;
     expect(agentB.map((s) => s.name)).toEqual(["Auto Tool", "Pinned Tool", "Except Tool"]);
   });
 
@@ -348,7 +363,7 @@ describe("McpServersStore — routing and mcpServers", () => {
     ]);
     await h.gates.connectWithKey("stitch", "goog-key");
 
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     expect(servers).toHaveLength(1);
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("X-Goog-Api-Key");
@@ -365,7 +380,7 @@ describe("McpServersStore — routing and mcpServers", () => {
     ]);
     await h.gates.connectOAuth("svc");
 
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("Authorization");
     expect(env.ACP_PATCHBAY_AUTH_PREFIX).toBe("Bearer ");
@@ -374,7 +389,7 @@ describe("McpServersStore — routing and mcpServers", () => {
   it("a per-account entry's user-supplied URL is what reaches the bridge", async () => {
     const h = harness([entry({ id: "acct", url: "", userUrl: true })]);
     await h.gates.connectWithKey("acct", "k", "https://mine.example.test/mcp");
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_MCP_SERVER_URL).toBe("https://mine.example.test/mcp");
   });
@@ -390,7 +405,7 @@ describe("McpServersStore — routing and mcpServers", () => {
       active: true,
       transport: "auto",
     });
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     expect(servers).toEqual([]);
   });
 
@@ -415,7 +430,7 @@ describe("McpServersStore — routing and mcpServers", () => {
       args: ["some-server", "--root", "/tmp/my dir"],
     });
     // and the agent receives it split the same way
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     expect(servers[0]).toMatchObject({ command: "npx", args: ["some-server", "--root", "/tmp/my dir"] });
   });
 
@@ -431,7 +446,7 @@ describe("McpServersStore — routing and mcpServers", () => {
     // the value round-trips through the secret store...
     expect(await h.envStore.get(id)).toEqual({ SRV_API_KEY: "sk-secret" });
     // ...and reaches the agent's spawn config at attach time
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     expect(envOf(servers[0]!)).toEqual({ SRV_API_KEY: "sk-secret" });
     // remove purges it with the rest
     await h.gates.remove(id);
@@ -453,7 +468,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
     const h = harness([entry()]);
     const id = await h.gates.connectWithKey("svc", "key-9");
 
-    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await configuredFor(h, "agent-a", true);
     expect(servers).toEqual([
       {
         type: "http",
@@ -470,7 +485,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
     const id = await h.gates.connectWithKey("svc", "key-9");
     await h.manager.setTransport(id, "bridge");
 
-    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await configuredFor(h, "agent-a", true);
     expect(servers).toHaveLength(1);
     expect("command" in servers[0]!).toBe(true);
     expect(envOf(servers[0]!).ACP_PATCHBAY_MCP_SERVER_ID).toBe(id);
@@ -482,7 +497,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
     const h = harness([entry()]);
     await h.gates.connectWithKey("svc", "key-9");
 
-    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
+    const servers = (await configuredFor(h, "agent-a", false)).servers;
     expect(servers).toHaveLength(1);
     expect("command" in servers[0]!).toBe(true);
   });
@@ -491,10 +506,38 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
     const h = harness([]);
     const id = await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
 
-    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await configuredFor(h, "agent-a", true);
     expect(servers).toHaveLength(1);
     expect(servers[0]).toMatchObject({ name: "Local Tool", command: "echo" });
     expect(given).toEqual([{ id, delivery: "stdio" }]);
+  });
+});
+
+describe("McpServersStore — one composition of a session's set", () => {
+  it("opens with the built-in editor server, carries the attach's token, and registers every crossing value for redaction", async () => {
+    const h = harness([entry()]);
+    const id = await h.gates.connectWithKey("svc", "key-9");
+    const { servers, given } = await h.manager.mcpServersFor("agent-a", "ctx-7", true);
+    expect(servers[0]).toEqual({
+      name: "patchbay",
+      command: process.execPath,
+      args: ["/mcp-server.js"],
+      env: [
+        { name: "ACP_PATCHBAY_IPC", value: "/sock" },
+        { name: "ACP_PATCHBAY_SESSION_ID", value: "ctx-7" },
+      ],
+    });
+    expect(given).toEqual([
+      { id: "patchbay:editor", delivery: "stdio" },
+      { id, delivery: "http" },
+    ]);
+    expect(h.crossed).toEqual(expect.arrayContaining(["/sock", "ctx-7", "Bearer key-9"]));
+  });
+
+  it("no configured server takes the built-in's name", async () => {
+    const h = harness([]);
+    await h.gates.addCustom("patchbay", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
+    expect(h.configs.list().map((c) => c.name)).toEqual(["patchbay 2"]);
   });
 });
 
@@ -601,7 +644,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
     expect(named(h, "Tool")?.source).toMatchObject({ command: "a" });
     expect(named(h, "Tool 2")?.source).toMatchObject({ command: "b" });
-    const { servers } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const { servers } = await configuredFor(h, "agent-a", false);
     expect(servers.map((sv) => sv.name)).toEqual(["Tool", "Tool 2"]);
   });
 

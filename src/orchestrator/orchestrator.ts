@@ -185,8 +185,6 @@ export class Orchestrator {
   private readonly workspaceCwd: string;
   private readonly binaryCacheDir: string;
   private readonly clientHost: ClientHost;
-  private readonly mcpServerScriptPath: string;
-  private readonly mcpBridgeScriptPath: string;
   /** The session the last-open pointer names, by this window's id for it —
    * null until one is activated here. */
   private pointerRow: string | null = null;
@@ -218,12 +216,6 @@ export class Orchestrator {
     private readonly log: vscode.LogOutputChannel,
   ) {
     this.workspaceCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-    this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
-    this.mcpBridgeScriptPath = vscode.Uri.joinPath(
-      context.extensionUri,
-      "out",
-      "mcp-bridge.js",
-    ).fsPath;
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
 
     // Machine scope lives in a file this extension owns (file-kv.ts), not
@@ -289,6 +281,12 @@ export class Orchestrator {
       this.mcpServerEnv,
       { emit: (...events) => this.settings.emit(...events) },
       { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
+      {
+        editorServerScript: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath,
+        bridgeScript: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-bridge.js").fsPath,
+        socketPath: () => this.editorStateHost.socketPath,
+        crossing: (value) => this.wireLog.registerSecret(value),
+      },
       this.workspaceCwd,
       {
         redirectUri: async () => {
@@ -641,46 +639,17 @@ export class Orchestrator {
       },
       this.sessionContinuity,
       () => this.workspaceCwd,
-      async (contextToken, agentId) => {
-        // McpServerStdio is the untagged union member — no discriminant
-        // needed since it's the only variant every agent is guaranteed to
-        // accept, which is also why the editor server itself always rides
-        // stdio (configured servers get capability-conditional transport).
-        const editorServer = {
-          name: "patchbay",
-          command: process.execPath,
-          args: [this.mcpServerScriptPath],
-          env: [
-            { name: "ACP_PATCHBAY_IPC", value: this.editorStateHost.socketPath },
-            { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
-          ],
-        };
-        // Declared, not used, and that's correct here (prompt.image
-        // mechanics): passthrough is how the mcp.http claim gets exercised
-        // at all — a used-gate would deadlock the row forever.
-        const declaresHttp = this.agents.matrix(agentId)?.["mcp.http"]?.declared === true;
-        const { servers: configuredServers, given } = await this.mcpServers.mcpServersFor(
+      // A session's MCP servers, composed by their store; the agent's
+      // mcp.http claim is read here, where the stores meet. Declared, not
+      // used, and that's correct (prompt.image mechanics): passthrough is
+      // how the claim gets exercised at all — a used-gate would deadlock the
+      // row forever.
+      (contextToken, agentId) =>
+        this.mcpServers.mcpServersFor(
           agentId,
-          this.mcpBridgeScriptPath,
-          this.editorStateHost.socketPath,
           contextToken,
-          declaresHttp,
-        );
-        // Env and header values are secrets by classification, and this
-        // is the one place they cross to
-        // the wire — register every one with the wire log's redaction set.
-        // Over-redaction (plumbing values like socket paths get masked too)
-        // is the safe direction.
-        for (const server of [editorServer, ...configuredServers]) {
-          if ("env" in server && server.env !== undefined) {
-            for (const { value } of server.env) this.wireLog.registerSecret(value);
-          }
-          if ("headers" in server && server.headers !== undefined) {
-            for (const { value } of server.headers) this.wireLog.registerSecret(value);
-          }
-        }
-        return { servers: [editorServer, ...configuredServers], given };
-      },
+          this.agents.matrix(agentId)?.["mcp.http"]?.declared === true,
+        ),
       log,
     );
     // The management side's tools for sessions: two lines per session —
