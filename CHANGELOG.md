@@ -109,6 +109,8 @@
   the release. Work on a session also waits for work on its agent: a
   reload, an open or a message during an agent restart, upgrade or login
   goes once that is done, never to the connection being replaced.
+- Settings and its messages say "MCP server" wherever they said
+  "integration" — the name the Settings page already used.
 
 ## 0.84.1 — 2026-09-29
 

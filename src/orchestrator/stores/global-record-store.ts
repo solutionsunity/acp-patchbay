@@ -3,7 +3,7 @@
 
 // Generic id-keyed record store over the machine-scoped KV (file-kv.ts) —
 // agents,
-// integrations, and the used-capability cache are all "developer env,
+// MCP servers, and the used-capability cache are all "developer env,
 // not code env" (never repo-committed) and all need the same shape: list,
 // upsert-by-id, remove-by-id. One implementation, three instantiations.
 // Same trust-boundary treatment as acp-registry.ts/registry.ts: zod-validated

@@ -24,21 +24,21 @@ export interface IpcRequest {
     | "getRoots"
     | "watchRoots"
     | "requestUserInput"
-    | "getIntegrationToken";
+    | "getMcpServerToken";
   params?: unknown;
 }
 
-/** Params of `getIntegrationToken`: which integration's credential the
+/** Params of `getMcpServerToken`: which server's credential the
  * bridge is presenting. */
-export interface IntegrationTokenParams {
-  integrationId: string;
+export interface McpServerTokenParams {
+  serverId: string;
 }
 
-/** Result of `getIntegrationToken` — null unless the server was given to
+/** Result of `getMcpServerToken` — null unless the server was given to
  * the caller's attach through the bridge and is still connected, switched
  * on and reaching that agent (never silently substitutes another one's
  * credential, never partially connects). */
-export interface IntegrationTokenResult {
+export interface McpServerTokenResult {
   accessToken: string;
 }
 

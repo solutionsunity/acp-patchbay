@@ -44,7 +44,7 @@ import { ChannelHost } from "./channel";
 import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { EditorStateHost } from "./editor-state-host";
-import { IntegrationsManager } from "./integrations";
+import { McpServersStore } from "./mcp-servers-store";
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { normalizeKnobs } from "./knobs";
 import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
@@ -72,8 +72,8 @@ import { resolveLaunch, runtimeName, type DownloadAsk, type DownloadCheck } from
 import { DecisionAuditStore } from "./stores/decision-audit";
 import { FileKV } from "./stores/file-kv";
 import { recoverLegacyGlobalState } from "./stores/vscdb-recovery";
-import { IntegrationConfigStore } from "./stores/integration-configs";
-import { IntegrationTokenStore } from "./stores/integration-tokens";
+import { McpServerConfigStore } from "./stores/mcp-server-configs";
+import { McpServerTokenStore } from "./stores/mcp-server-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
@@ -104,7 +104,7 @@ const DOWNLOAD_CHECK_TEXT: Record<DownloadCheck, string> = {
 
 /** A web page in the system browser — outside the editor, so neither
  * patchbay nor an agent's model sees the page or what the user types. The
- * one way patchbay opens a page: integration sign-in and an agent's link
+ * one way patchbay opens a page: an MCP server's sign-in and an agent's link
  * alike. */
 function openInBrowser(href: string): Thenable<boolean> {
   return vscode.env.openExternal(vscode.Uri.parse(href));
@@ -133,7 +133,7 @@ export class Orchestrator {
   readonly lastConnected: LastConnectedStore;
   readonly lastActiveSession: LastActiveSessionStore;
   readonly agentConfigs: AgentConfigStore;
-  readonly integrationConfigs: IntegrationConfigStore;
+  readonly mcpServerConfigs: McpServerConfigStore;
   readonly usedCapabilities: UsedCapabilityStore;
   /** Standing auth locks (auth-evidence.ts) — persisted so reload and
    * reconnect cannot launder a witnessed logout. Written only by the agents
@@ -141,7 +141,7 @@ export class Orchestrator {
   readonly authLocks: AuthLockStore;
   readonly spawnRegistry: SpawnRegistryStore;
   readonly agentEnv: SecretEnvStore;
-  readonly integrationEnv: SecretEnvStore;
+  readonly mcpServerEnv: SecretEnvStore;
   readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
@@ -166,13 +166,13 @@ export class Orchestrator {
   private readonly defaultsEditor: DefaultsEditor;
   readonly broker: PermissionBroker;
   readonly editorStateHost: EditorStateHost;
-  readonly integrationTokens: IntegrationTokenStore;
-  readonly integrations: IntegrationsManager;
+  readonly mcpServerTokens: McpServerTokenStore;
+  readonly mcpServers: McpServersStore;
   /** Pending OAuth callbacks — extension.ts's UriHandler feeds this. */
   readonly oauthCallbacks = new OAuthCallbackRegistry();
 
   /** The one directory this window's work runs in: agents spawn here (and
-   * their stdio MCP children inherit it), sessions open here, integration
+   * their stdio MCP children inherit it), sessions open here, MCP server
    * probes execute here, relative asset paths resolve here. The process
    * cwd stands in when no folder is open. Derived once — VS Code restarts
    * the extension host when the first folder changes, so it is a process
@@ -181,7 +181,7 @@ export class Orchestrator {
   private readonly binaryCacheDir: string;
   private readonly clientHost: ClientHost;
   private readonly mcpServerScriptPath: string;
-  private readonly integrationBridgeScriptPath: string;
+  private readonly mcpBridgeScriptPath: string;
   /** The session the last-open pointer names, by this window's id for it —
    * null until one is activated here. */
   private pointerRow: string | null = null;
@@ -214,10 +214,10 @@ export class Orchestrator {
   ) {
     this.workspaceCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
     this.mcpServerScriptPath = vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath;
-    this.integrationBridgeScriptPath = vscode.Uri.joinPath(
+    this.mcpBridgeScriptPath = vscode.Uri.joinPath(
       context.extensionUri,
       "out",
-      "integration-bridge.js",
+      "mcp-bridge.js",
     ).fsPath;
     this.binaryCacheDir = join(context.globalStorageUri.fsPath, "bin-cache");
 
@@ -248,13 +248,13 @@ export class Orchestrator {
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
     this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
-    // Agents and integrations are developer-env, not code-env: global to
+    // Agents and MCP servers are developer-env, not code-env: global to
     // this machine, never a repo-committed file. Deliberately global-only —
     // workspace binding may return later as an opt-in (see
-    // stores/integration-configs.ts's header for the incident that shaped
+    // stores/mcp-server-configs.ts's header for the incident that shaped
     // this).
     this.agentConfigs = new AgentConfigStore(machineKV);
-    this.integrationConfigs = new IntegrationConfigStore(machineKV);
+    this.mcpServerConfigs = new McpServerConfigStore(machineKV);
     this.preferences = new PreferencesStore(machineKV);
     this.composerKnobs = new ComposerKnobsStore(machineKV);
     this.sessionContinuity = new SessionContinuityStore(machineKV);
@@ -262,19 +262,19 @@ export class Orchestrator {
     this.authLocks = new AuthLockStore(machineKV);
     this.spawnRegistry = new SpawnRegistryStore(machineKV);
     this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
-    this.integrationEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
-    this.integrationTokens = new IntegrationTokenStore(context.secrets);
+    this.mcpServerEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
+    this.mcpServerTokens = new McpServerTokenStore(context.secrets);
     // OAuth browser/redirect step:
     // the redirect target is this extension's own vscode:// URI, passed
     // through asExternalUri so VS Code resolves it correctly under SSH
     // remote / WSL / Codespaces — never a hand-rolled 127.0.0.1 server.
     // extension.ts's registerUriHandler feeds callbacks into oauthCallbacks.
     const extensionId = context.extension.id; // "solutionsunity.acp-patchbay"
-    this.integrations = new IntegrationsManager(
+    this.mcpServers = new McpServersStore(
       loadCatalog(),
-      this.integrationConfigs,
-      this.integrationTokens,
-      this.integrationEnv,
+      this.mcpServerConfigs,
+      this.mcpServerTokens,
+      this.mcpServerEnv,
       { emit: (...events) => this.settings.emit(...events) },
       this.workspaceCwd,
       {
@@ -321,7 +321,7 @@ export class Orchestrator {
         commandRules: rules.commandRules,
         machineCommandRules: this.machinePermissionRules.get().commandRules,
         fileWriteScope: rules.fileWriteScope,
-        integrationRegistry: this.integrations.registryViews(),
+        mcpCatalog: this.mcpServers.registryViews(),
         preferences: this.preferences.get(),
         doneSounds: listDoneSounds(),
         savedRoots: this.savedRootsView(),
@@ -527,9 +527,9 @@ export class Orchestrator {
         const sessionId = this.sessions.sessionOfToken(contextToken);
         return sessionId === undefined ? [] : this.sessions.rootsOf(sessionId);
       },
-      getIntegrationToken: (contextToken, integrationId) => {
-        const agentId = this.sessions.bridgedTo(contextToken, integrationId);
-        return agentId === undefined ? Promise.resolve(null) : this.integrations.credentialFor(integrationId, agentId);
+      getMcpServerToken: (contextToken, serverId) => {
+        const agentId = this.sessions.bridgedTo(contextToken, serverId);
+        return agentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(serverId, agentId);
       },
     });
     this.editorStateHost.start();
@@ -630,7 +630,7 @@ export class Orchestrator {
         // McpServerStdio is the untagged union member — no discriminant
         // needed since it's the only variant every agent is guaranteed to
         // accept, which is also why the editor server itself always rides
-        // stdio (integrations get capability-conditional transport).
+        // stdio (configured servers get capability-conditional transport).
         const editorServer = {
           name: "patchbay",
           command: process.execPath,
@@ -644,9 +644,9 @@ export class Orchestrator {
         // mechanics): passthrough is how the mcp.http claim gets exercised
         // at all — a used-gate would deadlock the row forever.
         const declaresHttp = this.agents.matrix(agentId)?.["mcp.http"]?.declared === true;
-        const { servers: integrationServers, given } = await this.integrations.mcpServersFor(
+        const { servers: configuredServers, given } = await this.mcpServers.mcpServersFor(
           agentId,
-          this.integrationBridgeScriptPath,
+          this.mcpBridgeScriptPath,
           this.editorStateHost.socketPath,
           contextToken,
           declaresHttp,
@@ -656,7 +656,7 @@ export class Orchestrator {
         // the wire — register every one with the wire log's redaction set.
         // Over-redaction (plumbing values like socket paths get masked too)
         // is the safe direction.
-        for (const server of [editorServer, ...integrationServers]) {
+        for (const server of [editorServer, ...configuredServers]) {
           if ("env" in server && server.env !== undefined) {
             for (const { value } of server.env) this.wireLog.registerSecret(value);
           }
@@ -664,7 +664,7 @@ export class Orchestrator {
             for (const { value } of server.headers) this.wireLog.registerSecret(value);
           }
         }
-        return { servers: [editorServer, ...integrationServers], given };
+        return { servers: [editorServer, ...configuredServers], given };
       },
       log,
     );
@@ -803,7 +803,7 @@ export class Orchestrator {
 
     void this.refreshAuditTail();
     void this.agents.publishAll();
-    void this.integrations.refresh();
+    void this.mcpServers.refresh();
     void this.acpRegistry.load().then(() => {
       this.publishRegistry();
       void this.acpRegistry.refresh("startup");
@@ -856,7 +856,7 @@ export class Orchestrator {
    * terminal tree — so nothing launches for an agent the sweep forgets, then
    * the erase sweep (erase-all.ts owns the ordering constraint), then both
    * channels catch up through ordinary events: agents and sessions leave
-   * row by row, configs/integrations/rules/audit republish empty. Never
+   * row by row, configs/MCP servers/rules/audit republish empty. Never
    * automatic; the Settings action is the only caller. */
   private async eraseEverything(): Promise<void> {
     this.log.info("erase all data: stopping every process");
@@ -867,13 +867,13 @@ export class Orchestrator {
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
-      integrationConfigs: this.integrationConfigs,
+      mcpServerConfigs: this.mcpServerConfigs,
       usedCapabilities: this.usedCapabilities,
       authLocks: this.authLocks,
       spawnRegistry: this.spawnRegistry,
       agentEnv: this.agentEnv,
-      integrationEnv: this.integrationEnv,
-      integrationTokens: this.integrationTokens,
+      mcpServerEnv: this.mcpServerEnv,
+      mcpServerTokens: this.mcpServerTokens,
       permissionRules: this.permissionRules,
       machineRules: this.machinePermissionRules,
       decisionAudit: this.decisionAudit,
@@ -897,7 +897,7 @@ export class Orchestrator {
     }
     await this.agents.erased(this.agentView.current.agents.map((a) => a.id));
     this.agentView.emit({ kind: "chatConnectResolved" });
-    await this.integrations.refresh();
+    await this.mcpServers.refresh();
     this.publishRules();
     this.publishSavedRoots();
     // An open Preferences page settles back to the defaults it now holds
@@ -1505,19 +1505,19 @@ export class Orchestrator {
       (sum, env) => sum + Object.keys(env).length,
       0,
     );
-    const integrations = this.integrationConfigs.list();
-    const integrationEnvCount = (
-      await Promise.all(integrations.map((i) => this.integrationEnv.get(i.id)))
+    const mcpServerConfigs = this.mcpServerConfigs.list();
+    const mcpServerEnvCount = (
+      await Promise.all(mcpServerConfigs.map((i) => this.mcpServerEnv.get(i.id)))
     ).reduce((sum, env) => sum + Object.keys(env).length, 0);
     let tokenCount = 0;
-    for (const i of integrations) {
-      if ((await this.integrationTokens.get(i.id)) !== null) tokenCount++;
+    for (const i of mcpServerConfigs) {
+      if ((await this.mcpServerTokens.get(i.id)) !== null) tokenCount++;
     }
     const rules = this.permissionRules.get();
     const machineRules = this.machinePermissionRules.get();
     const rows: DataInventoryRow[] = [
       { id: "agent-configs", label: "Agent configs", placement: "globalStorage file", detail: count(agentConfigs.length, "agent") },
-      { id: "integration-configs", label: "MCP server configs", placement: "globalStorage file", detail: count(integrations.length, "server") },
+      { id: "mcp-server-configs", label: "MCP server configs", placement: "globalStorage file", detail: count(mcpServerConfigs.length, "server") },
       { id: "used-capabilities", label: "Used-capability cache", placement: "globalStorage file", detail: count(this.usedCapabilities.list().length, "agent record") },
       { id: "machine-rules", label: "Command rules — this machine", placement: "globalStorage file", detail: count(machineRules.commandRules.length, "rule") },
       { id: "spawn-registry", label: "Spawn registry", placement: "globalStorage file", detail: count(this.spawnRegistry.list().length, "process record") },
@@ -1537,7 +1537,7 @@ export class Orchestrator {
         id: "secrets",
         label: "Credentials & env values",
         placement: "SecretStorage",
-        detail: `${count(agentEnvCount + integrationEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`,
+        detail: `${count(agentEnvCount + mcpServerEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`,
       },
       {
         id: "workspace-rules",
@@ -1864,40 +1864,40 @@ export class Orchestrator {
         this.sessions.removeContext(action.sessionId, action.chipId);
         break;
       case "connectRegistryKey":
-        void this.integrations.connectRegistryWithKey(action.registryId, action.token, action.url);
+        void this.mcpServers.connectRegistryWithKey(action.registryId, action.token, action.url);
         break;
       case "connectRegistryOAuth":
-        void this.integrations.connectRegistryOAuth(action.registryId, action.url);
+        void this.mcpServers.connectRegistryOAuth(action.registryId, action.url);
         break;
-      case "addCustomIntegration":
-        void this.integrations.addCustom(action.name, action.source, action.routing);
+      case "addCustomMcpServer":
+        void this.mcpServers.addCustom(action.name, action.source, action.routing);
         break;
-      case "importIntegrationsJson":
-        void this.integrations.importJson(action.json);
+      case "importMcpServersJson":
+        void this.mcpServers.importJson(action.json);
         break;
-      case "updateIntegrationJson":
-        void this.integrations.updateFromJson(action.integrationId, action.json);
+      case "updateMcpServerJson":
+        void this.mcpServers.updateFromJson(action.serverId, action.json);
         break;
-      case "cancelIntegrationConnect":
-        this.integrations.cancelConnect(action.integrationId);
+      case "cancelMcpServerConnect":
+        this.mcpServers.cancelConnect(action.serverId);
         break;
-      case "setIntegrationActive":
-        void this.integrations.setActive(action.integrationId, action.active);
+      case "setMcpServerActive":
+        void this.mcpServers.setActive(action.serverId, action.active);
         break;
-      case "removeIntegration":
-        void this.integrations.remove(action.integrationId);
+      case "removeMcpServer":
+        void this.mcpServers.remove(action.serverId);
         break;
-      case "setIntegrationRouting":
-        void this.integrations.setRouting(action.integrationId, action.routing);
+      case "setMcpServerRouting":
+        void this.mcpServers.setRouting(action.serverId, action.routing);
         break;
-      case "setIntegrationTransport":
-        void this.integrations.setTransport(action.integrationId, action.transport);
+      case "setMcpServerTransport":
+        void this.mcpServers.setTransport(action.serverId, action.transport);
         break;
-      case "probeIntegration":
-        void this.integrations.probe(action.integrationId);
+      case "probeMcpServer":
+        void this.mcpServers.probe(action.serverId);
         break;
-      case "copyIntegrationJson":
-        void this.copyIntegrationJson(action.integrationId);
+      case "copyMcpServerJson":
+        void this.copyMcpServerJson(action.serverId);
         break;
       case "openProposedDiff":
         void this.openProposedDiff(action.blockId).catch(this.logCatch(`openProposedDiff ${action.blockId}`));
@@ -1928,8 +1928,8 @@ export class Orchestrator {
       case "reorderAgentConfigs":
         void this.agents.reorder(action.ids).catch(this.logCatch("reorderAgentConfigs"));
         break;
-      case "reorderIntegrations":
-        void this.integrations.reorder(action.ids);
+      case "reorderMcpServers":
+        void this.mcpServers.reorder(action.ids);
         break;
       case "addContextRoot":
         void this.addContextRoot(action.sessionId);
@@ -2166,13 +2166,13 @@ export class Orchestrator {
    * values, a header key — and never an OAuth token. Copy and paste are
    * the owner's explicit acts; configs never ride a repo, so nothing can
    * follow a user between workspaces on its own. */
-  private async copyIntegrationJson(integrationId: string): Promise<void> {
-    const integration = this.integrationConfigs.get(integrationId);
-    const json = await this.integrations.exportJson(integrationId);
-    if (integration === undefined || json === undefined) return;
+  private async copyMcpServerJson(serverId: string): Promise<void> {
+    const config = this.mcpServerConfigs.get(serverId);
+    const json = await this.mcpServers.exportJson(serverId);
+    if (config === undefined || json === undefined) return;
     await vscode.env.clipboard.writeText(json);
     void vscode.window.showInformationMessage(
-      `Copied "${integration.name}" as an mcpServers entry.`,
+      `Copied "${config.name}" as an mcpServers entry.`,
     );
   }
 

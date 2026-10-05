@@ -1,16 +1,16 @@
-// Integrations manager: catalog key/OAuth connects, custom escape hatch,
+// The MCP-servers store: catalog key/OAuth connects, custom escape hatch,
 // routing, and mcpServers construction — against a real fake MCP-spec OAuth
 // provider (test/support/fake-oauth-provider.ts) and an in-memory global
-// integration-config store (integrations are global, developer-env, never
-// repo-committed — stores/integration-configs.ts). No mocks of
-// IntegrationsManager's own collaborators. The live half (a real agent
+// server-config store (MCP servers are global, developer-env, never
+// repo-committed — stores/mcp-server-configs.ts). No mocks of
+// McpServersStore's own collaborators. The live half (a real agent
 // calling tools through the real bridge subprocess) is
-// test/integration-bridge.test.ts.
+// test/mcp-bridge.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { IntegrationsManager } from "../src/orchestrator/integrations";
-import type { ProbeFn, ProbeTarget } from "../src/orchestrator/integration-probe";
-import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
-import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
+import { McpServersStore } from "../src/orchestrator/mcp-servers-store";
+import type { ProbeFn, ProbeTarget } from "../src/orchestrator/mcp-probe";
+import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
+import { McpServerTokenStore, MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { CatalogEntry } from "../src/orchestrator/stores/mcp-catalog";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
@@ -57,19 +57,19 @@ const WORKSPACE_CWD = "/workspace/project";
 
 function harness(catalog: CatalogEntry[]) {
   const events: SettingsEvent[] = [];
-  const integrationStore = new IntegrationConfigStore(new MemoryKV());
+  const configs = new McpServerConfigStore(new MemoryKV());
   const secrets = new MemorySecrets();
-  const tokens = new IntegrationTokenStore(secrets);
+  const tokens = new McpServerTokenStore(secrets);
   const envStore = new SecretEnvStore(secrets, "acpPatchbay.integration");
-  // Probes are faked — the real one does network/spawn (integration-probe.ts).
+  // Probes are faked — the real one does network/spawn (mcp-probe.ts).
   const probed: ProbeTarget[] = [];
   let probeFn: ProbeFn = async (target) => {
     probed.push(target);
     return { serverName: "fake-server", serverVersion: "1.0", tools: [{ name: "t_one", description: "d" }] };
   };
-  const manager = new IntegrationsManager(
+  const manager = new McpServersStore(
     catalog,
-    integrationStore,
+    configs,
     tokens,
     envStore,
     { emit: (...evs) => events.push(...evs) },
@@ -79,22 +79,22 @@ function harness(catalog: CatalogEntry[]) {
     (target) => probeFn(target),
   );
   return {
-    manager, integrationStore, tokens, envStore, events, probed,
+    manager, configs, tokens, envStore, events, probed,
     setProbeFn(fn: ProbeFn) { probeFn = fn; },
   };
 }
 
-describe("IntegrationsManager — key connect (the v1 floor)", () => {
+describe("McpServersStore — key connect (the v1 floor)", () => {
   it("stores the pasted key and upserts the config entry with authMode header", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "pasted-key-1");
 
     expect((await h.tokens.get("svc"))?.accessToken).toBe("pasted-key-1");
     // connect kicks the tool probe fire-and-forget — settle it so the last
-    // integrationsChanged is the deterministic post-probe view
+    // mcpServersChanged is the deterministic post-probe view
     await new Promise((r) => setTimeout(r, 0));
-    const changed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
-    expect(changed?.kind === "integrationsChanged" && changed.integrations).toEqual([
+    const changed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(changed?.kind === "mcpServersChanged" && changed.servers).toEqual([
       {
         id: "svc",
         name: "Service",
@@ -116,22 +116,22 @@ describe("IntegrationsManager — key connect (the v1 floor)", () => {
       },
     ]);
 
-    expect(h.integrationStore.get("svc")?.source).toMatchObject({
+    expect(h.configs.get("svc")?.source).toMatchObject({
       kind: "registry",
       registryId: "svc",
       authMode: "header",
     });
     // the raw key never touches the non-secret config record
-    expect(JSON.stringify(h.integrationStore.list())).not.toContain("pasted-key-1");
+    expect(JSON.stringify(h.configs.list())).not.toContain("pasted-key-1");
   });
 
   it("a per-account entry (userUrl) requires the user's endpoint and persists it", async () => {
     const h = harness([entry({ url: "", userUrl: true })]);
     await h.manager.connectRegistryWithKey("svc", "k");
-    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /endpoint URL/ });
+    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /endpoint URL/ });
 
     await h.manager.connectRegistryWithKey("svc", "k", "https://mine.example.test/mcp");
-    expect(h.integrationStore.get("svc")?.source).toMatchObject({
+    expect(h.configs.get("svc")?.source).toMatchObject({
       url: "https://mine.example.test/mcp",
     });
   });
@@ -139,17 +139,17 @@ describe("IntegrationsManager — key connect (the v1 floor)", () => {
   it("refuses on an entry with no key mode", async () => {
     const h = harness([entry({ auth: { header: null, oauth: false } })]);
     await h.manager.connectRegistryWithKey("svc", "k");
-    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /no API-key mode/ });
+    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /no API-key mode/ });
     expect(await h.tokens.get("svc")).toBeNull();
   });
 });
 
-describe("IntegrationsManager — OAuth connect (MCP-spec, discovery + DCR + PKCE)", () => {
+describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)", () => {
   it("connects with only the entry's URL and captures refresh context alongside the token", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryOAuth("svc");
 
-    expect(h.events.some((e) => e.kind === "integrationConnectStarted")).toBe(true);
+    expect(h.events.some((e) => e.kind === "mcpServerConnectStarted")).toBe(true);
     const stored = await h.tokens.get("svc");
     expect(stored).toMatchObject({
       accessToken: "access-1",
@@ -157,7 +157,7 @@ describe("IntegrationsManager — OAuth connect (MCP-spec, discovery + DCR + PKC
       tokenEndpoint: provider.tokenEndpoint,
       clientId: "dcr-client-1",
     });
-    expect(h.integrationStore.get("svc")?.source).toMatchObject({ authMode: "oauth" });
+    expect(h.configs.get("svc")?.source).toMatchObject({ authMode: "oauth" });
   });
 
   it("gated DCR fails labeled — pitfall §2, pointing at the key path", async () => {
@@ -165,19 +165,19 @@ describe("IntegrationsManager — OAuth connect (MCP-spec, discovery + DCR + PKC
     const h = harness([entry()]);
     await h.manager.connectRegistryOAuth("svc");
     const failed = h.events.at(-1);
-    expect(failed).toMatchObject({ kind: "integrationConnectFailed", registryId: "svc" });
-    expect(failed?.kind === "integrationConnectFailed" && failed.reason).toMatch(/API-key path/);
+    expect(failed).toMatchObject({ kind: "mcpServerConnectFailed", registryId: "svc" });
+    expect(failed?.kind === "mcpServerConnectFailed" && failed.reason).toMatch(/API-key path/);
     expect(await h.tokens.get("svc")).toBeNull();
   });
 
   it("refuses on an entry without an OAuth mode", async () => {
     const h = harness([entry({ auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "", keyUrl: "" }, oauth: false } })]);
     await h.manager.connectRegistryOAuth("svc");
-    expect(h.events.at(-1)).toMatchObject({ kind: "integrationConnectFailed", reason: /no OAuth mode/ });
+    expect(h.events.at(-1)).toMatchObject({ kind: "mcpServerConnectFailed", reason: /no OAuth mode/ });
   });
 });
 
-describe("IntegrationsManager — custom escape hatch", () => {
+describe("McpServersStore — custom escape hatch", () => {
   it("custom-stdio needs no token and is immediately connected", async () => {
     const h = harness([]);
     await h.manager.addCustom(
@@ -185,8 +185,8 @@ describe("IntegrationsManager — custom escape hatch", () => {
       { kind: "custom-stdio", command: "echo", args: ["hi"], env: {} },
       "auto",
     );
-    const changed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
-    expect(changed?.kind === "integrationsChanged" && changed.integrations[0]).toMatchObject({
+    const changed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(changed?.kind === "mcpServersChanged" && changed.servers[0]).toMatchObject({
       id: "local-tool",
       sourceKind: "custom-stdio",
       connected: true,
@@ -208,7 +208,7 @@ describe("IntegrationsManager — custom escape hatch", () => {
       "auto",
     );
     expect((await h.tokens.get("stitch-like"))?.accessToken).toBe("secret-abc");
-    const serialized = JSON.stringify(h.integrationStore.list());
+    const serialized = JSON.stringify(h.configs.list());
     expect(serialized).not.toContain("secret-abc");
     expect(serialized).toContain("X-Goog-Api-Key");
   });
@@ -226,11 +226,11 @@ describe("IntegrationsManager — custom escape hatch", () => {
   it("disconnect is remove — the full clear; a curated entry just reverts to the catalog", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "static-key");
-    expect(h.integrationStore.get("svc")).toBeDefined();
+    expect(h.configs.get("svc")).toBeDefined();
 
     await h.manager.remove("svc");
     expect(await h.tokens.get("svc")).toBeNull();
-    expect(h.integrationStore.list()).toEqual([]);
+    expect(h.configs.list()).toEqual([]);
     // the catalog entry itself is shipped data — still there, ready to reconnect
     expect(h.manager.registryViews().some((r) => r.id === "svc")).toBe(true);
   });
@@ -260,10 +260,10 @@ describe("IntegrationsManager — custom escape hatch", () => {
       { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" },
       "auto",
     );
-    expect(h.integrationStore.get("oauth-fail")).toBeUndefined();
+    expect(h.configs.get("oauth-fail")).toBeUndefined();
     expect(await h.tokens.get("oauth-fail")).toBeNull();
     expect(
-      h.events.some((e) => e.kind === "integrationConnectFailed" && e.registryId === "oauth-fail"),
+      h.events.some((e) => e.kind === "mcpServerConnectFailed" && e.registryId === "oauth-fail"),
     ).toBe(true);
   });
 
@@ -274,10 +274,10 @@ describe("IntegrationsManager — custom escape hatch", () => {
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header" },
       "auto",
     );
-    expect(h.integrationStore.get("no-key")).toBeUndefined();
+    expect(h.configs.get("no-key")).toBeUndefined();
     expect(
       h.events.some(
-        (e) => e.kind === "integrationConnectFailed" && e.registryId === "no-key" && /key/.test(e.reason),
+        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "no-key" && /key/.test(e.reason),
       ),
     ).toBe(true);
   });
@@ -286,11 +286,11 @@ describe("IntegrationsManager — custom escape hatch", () => {
     const h = harness([]);
     await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
     await h.manager.remove("local-tool");
-    expect(h.integrationStore.list()).toEqual([]);
+    expect(h.configs.list()).toEqual([]);
   });
 });
 
-describe("IntegrationsManager — routing and mcpServers", () => {
+describe("McpServersStore — routing and mcpServers", () => {
   it("auto reaches every agent; an explicit list pins exactly; except narrows", async () => {
     const h = harness([]);
     await h.manager.addCustom("Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
@@ -308,7 +308,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     expect(agentB.map((s) => s.name)).toEqual(["Auto Tool", "Pinned Tool", "Except Tool"]);
   });
 
-  it("the bridge env carries the integration's own header shape — Stitch-style custom headers included", async () => {
+  it("the bridge env carries the server's own header shape — Stitch-style custom headers included", async () => {
     const h = harness([
       entry({
         id: "stitch",
@@ -323,10 +323,10 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("X-Goog-Api-Key");
     expect(env.ACP_PATCHBAY_AUTH_PREFIX).toBe("");
-    expect(env.ACP_PATCHBAY_INTEGRATION_URL).toBe(provider.mcpUrl);
+    expect(env.ACP_PATCHBAY_MCP_SERVER_URL).toBe(provider.mcpUrl);
   });
 
-  it("an OAuth-connected integration rides Authorization: Bearer regardless of the entry's key-header shape", async () => {
+  it("an OAuth-connected server rides Authorization: Bearer regardless of the entry's key-header shape", async () => {
     const h = harness([
       entry({
         id: "svc",
@@ -346,13 +346,13 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     await h.manager.connectRegistryWithKey("acct", "k", "https://mine.example.test/mcp");
     const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     const env = envOf(servers[0]!);
-    expect(env.ACP_PATCHBAY_INTEGRATION_URL).toBe("https://mine.example.test/mcp");
+    expect(env.ACP_PATCHBAY_MCP_SERVER_URL).toBe("https://mine.example.test/mcp");
   });
 
-  it("a routed-but-unconnected integration contributes no server (nothing to route to)", async () => {
+  it("a routed-but-unconnected server contributes no entry (nothing to route to)", async () => {
     const h = harness([entry()]);
     // config entry exists (e.g. pasted from a shared config), no token here
-    await h.integrationStore.upsert({
+    await h.configs.upsert({
       id: "svc",
       name: "Service",
       source: { kind: "registry", registryId: "svc", authMode: "header" },
@@ -368,7 +368,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     const h = harness([]);
     await h.manager.addCustom("T1", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
     await h.manager.setRouting("t1", ["agent-x"]);
-    expect(h.integrationStore.get("t1")?.routing).toEqual(["agent-x"]);
+    expect(h.configs.get("t1")?.routing).toEqual(["agent-x"]);
   });
 
   it("a custom-stdio command line is parsed quote-aware, never stored as one executable string", async () => {
@@ -378,7 +378,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       { kind: "custom-stdio", command: 'npx some-server --root "/tmp/my dir"', args: [], env: {} },
       "auto",
     );
-    const stored = h.integrationStore.get("srv")!;
+    const stored = h.configs.get("srv")!;
     expect(stored.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
@@ -397,7 +397,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       "auto",
     );
     // config record carries no env at all
-    expect("env" in (h.integrationStore.get("keyed")!.source as object)).toBe(false);
+    expect("env" in (h.configs.get("keyed")!.source as object)).toBe(false);
     // the value round-trips through the secret store...
     expect(await h.envStore.get("keyed")).toEqual({ SRV_API_KEY: "sk-secret" });
     // ...and reaches the agent's spawn config at attach time
@@ -415,16 +415,16 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       { kind: "custom-stdio", command: 'npx "broken', args: [], env: {} },
       "auto",
     );
-    expect(h.integrationStore.get("bad")).toBeUndefined();
+    expect(h.configs.get("bad")).toBeUndefined();
     expect(
       h.events.some(
-        (e) => e.kind === "integrationConnectFailed" && e.registryId === "bad" && /quote/.test(e.reason),
+        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "bad" && /quote/.test(e.reason),
       ),
     ).toBe(true);
   });
 });
 
-describe("IntegrationsManager — http passthrough (prompt.image mechanics)", () => {
+describe("McpServersStore — http passthrough (prompt.image mechanics)", () => {
   it("an agent declaring mcp.http gets a type:http entry with the credential in headers", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "key-9");
@@ -449,7 +449,7 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
     const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toHaveLength(1);
     expect("command" in servers[0]!).toBe(true);
-    expect(envOf(servers[0]!).ACP_PATCHBAY_INTEGRATION_ID).toBe("svc");
+    expect(envOf(servers[0]!).ACP_PATCHBAY_MCP_SERVER_ID).toBe("svc");
     // the one delivery that asks patchbay for the credential
     expect(given).toEqual([{ id: "svc", delivery: "bridge" }]);
   });
@@ -474,7 +474,7 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
   });
 });
 
-describe("IntegrationsManager — connect-time tool probe", () => {
+describe("McpServersStore — connect-time tool probe", () => {
   it("connect kicks a probe with the resolved endpoint and fresh credential", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "key-7");
@@ -511,8 +511,8 @@ describe("IntegrationsManager — connect-time tool probe", () => {
     await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
     await new Promise((r) => setTimeout(r, 0));
 
-    const failed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
-    expect(failed?.kind === "integrationsChanged" && failed.integrations[0]?.probe).toMatchObject({
+    const failed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(failed?.kind === "mcpServersChanged" && failed.servers[0]?.probe).toMatchObject({
       status: "failed",
       reason: `Connection closed (ran in ${WORKSPACE_CWD})`,
     });
@@ -529,23 +529,23 @@ describe("IntegrationsManager — connect-time tool probe", () => {
     await h.manager.connectRegistryWithKey("svc", "key-7");
     await new Promise((r) => setTimeout(r, 0));
 
-    const failed = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
-    expect(failed?.kind === "integrationsChanged" && failed.integrations[0]?.probe).toMatchObject({
+    const failed = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(failed?.kind === "mcpServersChanged" && failed.servers[0]?.probe).toMatchObject({
       status: "failed",
       reason: "boom",
     });
 
     fail = false;
     await h.manager.probe("svc");
-    const ok = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
-    expect(ok?.kind === "integrationsChanged" && ok.integrations[0]?.probe).toMatchObject({
+    const ok = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
+    expect(ok?.kind === "mcpServersChanged" && ok.servers[0]?.probe).toMatchObject({
       status: "ok",
       tools: [],
     });
   });
 });
 
-describe("IntegrationsManager — JSON import and edit (the well-known mcpServers shape)", () => {
+describe("McpServersStore — JSON import and edit (the well-known mcpServers shape)", () => {
   it("imports stdio and url entries, ids slugged from names, env straight to SecretStorage; bad entries labeled, rest unaffected", async () => {
     const h = harness([]);
     await h.manager.importJson(
@@ -557,21 +557,21 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
         },
       }),
     );
-    expect(h.integrationStore.get("my-files")?.source).toMatchObject({
+    expect(h.configs.get("my-files")?.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
       args: ["-y", "files-server"],
     });
     expect(await h.envStore.get("my-files")).toEqual({ FILES_KEY: "sk-1" });
-    expect(h.integrationStore.get("remote")?.source).toMatchObject({
+    expect(h.configs.get("remote")?.source).toMatchObject({
       kind: "custom-http",
       url: "https://example.test/mcp",
       authType: "none",
     });
-    expect(h.integrationStore.get("broken")).toBeUndefined();
+    expect(h.configs.get("broken")).toBeUndefined();
     expect(
       h.events.some(
-        (e) => e.kind === "integrationConnectFailed" && e.registryId === "import:broken",
+        (e) => e.kind === "mcpServerConnectFailed" && e.registryId === "import:broken",
       ),
     ).toBe(true);
   });
@@ -580,8 +580,8 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
     const h = harness([]);
     await h.manager.addCustom("Tool", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
     await h.manager.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
-    expect(h.integrationStore.get("tool")?.source).toMatchObject({ command: "a" });
-    expect(h.integrationStore.get("tool-2")?.source).toMatchObject({ command: "b" });
+    expect(h.configs.get("tool")?.source).toMatchObject({ command: "a" });
+    expect(h.configs.get("tool-2")?.source).toMatchObject({ command: "b" });
   });
 
   it("exportJson emits the mcpServers document Import reads back — stdio, custom-http, and curated alike (issue #11)", async () => {
@@ -618,13 +618,13 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
     // round-trip: what Copy emits, Import accepts — same id, same launch line, same env
     const fresh = harness([]);
     await fresh.manager.importJson(JSON.stringify(files));
-    expect(fresh.integrationStore.get("my-files")?.source).toMatchObject({
+    expect(fresh.configs.get("my-files")?.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
       args: ["-y", "files-server"],
     });
     expect(await fresh.envStore.get("my-files")).toEqual({ FILES_KEY: "sk-1" });
-    expect(fresh.events.some((e) => e.kind === "integrationConnectFailed")).toBe(false);
+    expect(fresh.events.some((e) => e.kind === "mcpServerConnectFailed")).toBe(false);
   });
 
   it("an OAuth-minted token never rides editJson or Copy — only what the owner typed does (issue #12)", async () => {
@@ -647,10 +647,10 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k1" },
       "auto",
     );
-    const views = h.events.filter((e) => e.kind === "integrationsChanged").at(-1);
+    const views = h.events.filter((e) => e.kind === "mcpServersChanged").at(-1);
     const editJsonOf = (id: string) =>
       JSON.parse(
-        (views?.kind === "integrationsChanged" && views.integrations.find((i) => i.id === id)?.editJson) || "null",
+        (views?.kind === "mcpServersChanged" && views.servers.find((i) => i.id === id)?.editJson) || "null",
       );
     expect(editJsonOf("editable").env).toEqual({ KEEP: "old", GONE: "bye", SWAP: "1" });
     expect(editJsonOf("keyed").token).toBe("k1");
@@ -659,7 +659,7 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
       "editable",
       JSON.stringify({ command: "srv2", args: ["--y"], env: { KEEP: "old", SWAP: "2", NEW: "n" } }),
     );
-    expect(h.integrationStore.get("editable")?.source).toMatchObject({ command: "srv2", args: ["--y"] });
+    expect(h.configs.get("editable")?.source).toMatchObject({ command: "srv2", args: ["--y"] });
     expect(await h.envStore.get("editable")).toEqual({ KEEP: "old", SWAP: "2", NEW: "n" });
 
     // a header key removed from the box is removed from the store — the card reads disconnected
@@ -676,15 +676,15 @@ describe("IntegrationsManager — JSON import and edit (the well-known mcpServer
   });
 });
 
-describe("IntegrationsManager — cancelling a browser flow", () => {
+describe("McpServersStore — cancelling a browser flow", () => {
   it("cancel clears the pending state without inventing a failure; nothing is stored", async () => {
     const events: SettingsEvent[] = [];
-    const integrationStore = new IntegrationConfigStore(new MemoryKV());
+    const configs = new McpServerConfigStore(new MemoryKV());
     const secrets = new MemorySecrets();
-    const tokens = new IntegrationTokenStore(secrets);
-    const manager = new IntegrationsManager(
+    const tokens = new McpServerTokenStore(secrets);
+    const manager = new McpServersStore(
       [entry()],
-      integrationStore,
+      configs,
       tokens,
       new SecretEnvStore(secrets, "acpPatchbay.integration"),
       { emit: (...evs) => events.push(...evs) },
@@ -697,20 +697,20 @@ describe("IntegrationsManager — cancelling a browser flow", () => {
 
     const inFlight = manager.connectRegistryOAuth("svc");
     // wait until the flow is actually pending, then abandon it
-    for (let i = 0; i < 200 && !events.some((e) => e.kind === "integrationConnectStarted"); i++) {
+    for (let i = 0; i < 200 && !events.some((e) => e.kind === "mcpServerConnectStarted"); i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
     manager.cancelConnect("svc");
     await inFlight;
 
-    expect(events.some((e) => e.kind === "integrationConnectResolved" && e.registryId === "svc")).toBe(true);
-    expect(events.some((e) => e.kind === "integrationConnectFailed")).toBe(false);
+    expect(events.some((e) => e.kind === "mcpServerConnectResolved" && e.registryId === "svc")).toBe(true);
+    expect(events.some((e) => e.kind === "mcpServerConnectFailed")).toBe(false);
     expect(await tokens.get("svc")).toBeNull();
-    expect(integrationStore.list()).toEqual([]);
+    expect(configs.list()).toEqual([]);
   });
 });
 
-describe("IntegrationsManager — a bridge's credential", () => {
+describe("McpServersStore — a bridge's credential", () => {
   it("refreshes a near-expiry OAuth token with the captured context", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryOAuth("svc");
@@ -729,7 +729,7 @@ describe("IntegrationsManager — a bridge's credential", () => {
     expect((await h.manager.credentialFor("svc", "agent-a"))?.accessToken).toBe("static-key");
   });
 
-  it("returns null for a disconnected integration", async () => {
+  it("returns null for a disconnected server", async () => {
     const h = harness([entry()]);
     expect(await h.manager.credentialFor("svc", "agent-a")).toBeNull();
   });

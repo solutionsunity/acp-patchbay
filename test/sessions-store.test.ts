@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
-import type { AttachedServer } from "../src/orchestrator/integrations";
+import type { AttachedServer } from "../src/orchestrator/mcp-servers-store";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { SessionGates } from "../src/orchestrator/session-gates";
 import { harnessEnvelopeTag, SessionsStore } from "../src/orchestrator/sessions-store";

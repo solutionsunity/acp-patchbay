@@ -37,28 +37,31 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Declared / used** — the two capability states: claimed at `initialize` vs.
   observed firing on the wire.
 - **Brokered** — routed through the permission broker.
-- **Integration** — the *record*: a configured MCP-server connection (curated or
-  custom) with its credential, env, routing, and active state. The UI calls the
-  surface "MCP Servers" (that's what they are); the internal type keeps the name
-  `integration` because the ACP SDK owns `McpServer` for the *wire config* an
-  integration produces into a session — two different things, two names, held.
-  Lifecycle is two-state: active/inactive (the mute switch — everything kept,
+- **MCP server** — the *record*: a configured MCP-server connection (curated or
+  custom) with its credential, env, routing, and active state — a row of the
+  MCP-servers store (`McpServerConfig` stored, `McpServerView` on screen). Not
+  the ACP SDK's `McpServer`, which is the *wire entry* an attach composes from
+  a record into a session's `mcpServers` — two different things, told apart by
+  their type names. *(Supersedes 2026-10-05 the internal name `integration`
+  for the record, which kept clear of the SDK's type while the UI already
+  said "MCP Servers": one thing had two names, and the record's types now
+  carry their own.)* Lifecycle is two-state: active/inactive (the mute switch — everything kept,
   nothing routed) and disconnect = full clear (credential + env + config; a
   curated entry reverts to the catalog). Nothing is stored until it can work —
   a cancelled OAuth consent adds nothing.
 - **Branch** — the user-level concept: continue an alternate path from a session.
   Out of the current release (§ Branching); "fork" only ever names the protocol
   method `session/fork`, which remains a capability-matrix row.
-- **Routing** — the user's per-agent selection of which integrations that agent
+- **Routing** — the user's per-agent selection of which MCP servers that agent
   receives.
 
 ## Core principle
 
 **ACP answers where the agent lives** — sessions, prompts, permissions, file
 operations, terminal. **MCP answers what the agent reaches** — tools, resources,
-context. Everything ACP doesn't model (live editor state, integrations) is exposed as
-a **local MCP server the orchestrator owns**, passed into `session/new` via
-`mcpServers`. This is the generic version of the pattern vendor extensions build
+context. Everything ACP doesn't model (live editor state, the user's MCP servers)
+reaches the agent through `mcpServers` on `session/new` — chiefly a **local MCP
+server the orchestrator owns**. This is the generic version of the pattern vendor extensions build
 privately — it works for any ACP agent by construction, with zero per-vendor code.
 
 ## Architecture
@@ -72,7 +75,7 @@ flowchart TD
         STATE["State & stores<br/><small>capability tables,<br/>decision audit, config</small>"]
         POOL["ACP client pool<br/><small>stdio JSON-RPC per agent process</small>"]
         BROKER["Permission broker<br/><small>one rule set, one surface</small>"]
-        MCP["Local MCP server<br/><small>editor state, integrations, adapters</small>"]
+        MCP["Local MCP server<br/><small>editor state, adapters</small>"]
     end
 
     AGENTS["ACP agent processes"]
@@ -99,7 +102,7 @@ Two webviews and one near-empty native settings page:
    only its current snapshot + patch stream, and can only emit actions. Anything the
    layout wants to show must arrive through that pipe — which is the whole
    rehydration guarantee.
-2. **Settings** — agents and launch config, capability matrix, integrations,
+2. **Settings** — agents and launch config, capability matrix, MCP servers,
    routing, permission rules. Structured data, low frequency, same render-only
    contract.
 3. **VS Code native settings** — flat scalars only, deliberately near-empty.
@@ -153,12 +156,12 @@ each with different truth semantics, so each gets different placement:
 | Last-active pointer | The one session the Agent View returns to on the next activate — its agent and the agent's own id for it, what the next window can find it by (patchbay's ids live with a window) | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
 | Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
 | Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
-| Agent + integration configs | Agents (launch config, defaults), integrations, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
+| Agent + MCP server configs | Agents (launch config, defaults), MCP servers, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
 | Saved roots | Folders every new session starts with | `workspaceState` (this workspace, the default) + machine store (every workspace) | A preference read at session birth only; per-user either way, never repo-shipped |
 | Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + machine store (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
-| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); config records carry no env. Values are read at the moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself) — and shown back to their owner: the Settings channel carries them (that webview exists only while Settings is open), the forms show what is stored and save what is in the box. User-typed is readable — env values, a header API key; an OAuth token, flow-minted, never reaches a webview. *(Supersedes 2026-09-19 the write-only forms: key names only, blank meant keep.)* HTTP integration credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
+| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); config records carry no env. Values are read at the moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself) — and shown back to their owner: the Settings channel carries them (that webview exists only while Settings is open), the forms show what is stored and save what is in the box. User-typed is readable — env values, a header API key; an OAuth token, flow-minted, never reaches a webview. *(Supersedes 2026-09-19 the write-only forms: key names only, blank meant keep.)* HTTP MCP-server credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
 
-Agents and integrations are deliberately global-only. The MCP incident behind
+Agents and MCP servers are deliberately global-only. The MCP incident behind
 this — a production-access MCP server silently following a user between repos —
 is guarded where the risk actually lives: a config never rides a repo, so nothing
 attaches by opening a folder — it moves only by its owner's explicit Copy and
@@ -1044,16 +1047,16 @@ with it.
   duration, and upstream closed the request for webview drop events as out
   of scope. `@` in the prompt covers open editors and workspace files.
 
-## Integrations
+## MCP servers
 
 The auth mechanisms, the curated set, and the transport-selection rules are the
-[MCP Integrations Architecture doc](mcp-architecture.md); this section is how a
-configured integration reaches an agent. Curated and custom are the same
+[MCP Servers Architecture doc](mcp-architecture.md); this section is how a
+configured MCP server reaches an agent. Curated and custom are the same
 mechanism — MCP servers routed to agents:
 
 - **The catalog is shipped data from day one** (`data/mcp-catalog.json`). The
   PRD decides this: GitHub ships "proving the catalog pattern," and a hardcoded
-  integration proves no pattern. One data file of vendor facts, plus one
+  server proves no pattern. One data file of vendor facts, plus one
   reviewable mark per entry beside it (`data/icons/<id>.svg`, folded into the
   catalog at build behind a gate); every field earned by what a real vendor
   demonstrably needs — nothing speculative. Adding a curated server is a data
@@ -1082,7 +1085,7 @@ mechanism — MCP servers routed to agents:
   client connects, upstream-maintained transport, the declared path actually
   exercised. Everything else rides the stdio-to-HTTP bridge, a pipe between two
   `@modelcontextprotocol/sdk` transports: the guaranteed floor for non-declaring
-  agents, plus the per-integration `transport: "bridge"` escape hatch for an
+  agents, plus the per-server `transport: "bridge"` escape hatch for an
   agent whose declared http support is broken in practice. Routing around an
   agent's declared capability would never let the claim be tested, so a declaring
   agent exercises it. Passthrough traffic is agent↔provider direct (dark to
@@ -1144,7 +1147,7 @@ supplies each agent in its own standard — and ACP carries no channel for it
   ACP gives an execute request no command field a rule could match, so it always
   asks, and command rules apply where the command actually runs
   (`terminal/create`).
-- **Rules never ride the repo.** Agent and integration configs are global,
+- **Rules never ride the repo.** Agent and MCP server configs are global,
   developer-owned stores — nothing config-shaped lives in the repo at all, so
   no repo-authored launch command exists to adopt.
 - **No aggregate fidelity verdict.** The per-row matrix carries the honest
@@ -1195,9 +1198,8 @@ Atoms first; each directory is one responsibility:
 ```
 src/
   extension.ts    activation entry
-  orchestrator/   agents store, queue, gates, sessions store, client pool, broker, stores, extensions
-  mcp/            local MCP server + its client-capability adapters
-  integrations/   the stdio-to-HTTP bridge for remote MCP servers
+  orchestrator/   agents store, sessions store, MCP-servers store, queue, gates, client pool, broker, stores, extensions
+  mcp/            local MCP server + its client-capability adapters, and the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only
   shared/         protocol.ts (actions, snapshots, patches), types
 ```

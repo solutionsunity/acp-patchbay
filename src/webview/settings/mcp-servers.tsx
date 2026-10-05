@@ -5,9 +5,9 @@
 // agent; a copied config carries what its owner typed, never an OAuth token.
 import { useState } from "react";
 import type {
-  IntegrationProbeView,
-  IntegrationRoutingView,
-  IntegrationSourceView,
+  McpServerProbeView,
+  McpServerRoutingView,
+  McpServerSourceView,
   SettingsState,
 } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
@@ -87,8 +87,8 @@ function MechanismToggle(props: { mechanism: Mechanism; pressed: boolean; onTogg
  *   except  — every agent minus the ticked ones. */
 function RoutingEditor(props: {
   agents: SettingsState["agents"];
-  routing: IntegrationRoutingView;
-  onChange(routing: IntegrationRoutingView): void;
+  routing: McpServerRoutingView;
+  onChange(routing: McpServerRoutingView): void;
 }) {
   const mode: "auto" | "only" | "except" =
     props.routing === "auto" ? "auto" : Array.isArray(props.routing) ? "only" : "except";
@@ -151,13 +151,13 @@ function RoutingEditor(props: {
   );
 }
 
-/** The connect-time probe read-out (protocol.ts IntegrationProbeView) —
+/** The connect-time probe read-out (protocol.ts McpServerProbeView) —
  * provider-side truth, always timestamped: "reachable, N tools", never
  * "working in your sessions". The count expands to the tool list; failed
  * shows the reason inline (the state that used to be invisible: a card
  * looking connected while its server 400s on every handshake). */
 function ProbeStrip(props: {
-  probe: IntegrationProbeView | undefined;
+  probe: McpServerProbeView | undefined;
   /** Probing needs something to reach — no endpoint/credential, no button. */
   probeable: boolean;
   expanded: boolean;
@@ -250,7 +250,7 @@ function firstLine(text: string): string {
  * as the alternatives they are — key paste `— or —` OAuth — never an
  * undifferentiated run of inputs. */
 function CatalogRow(props: {
-  entry: SettingsState["integrationRegistry"][number];
+  entry: SettingsState["mcpCatalog"][number];
   flow: SettingsState["connectFlow"][string] | undefined;
   expanded: boolean;
   onToggle(): void;
@@ -412,20 +412,20 @@ function CatalogRow(props: {
 }
 
 
-export function IntegrationsSection(props: {
+export function McpServersSection(props: {
   state: SettingsState;
   onConnectKey(registryId: string, token: string, url?: string): void;
   onConnectOAuth(registryId: string, url?: string): void;
-  onAddCustom(name: string, source: IntegrationSourceView, routing: IntegrationRoutingView): void;
+  onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): void;
   onImportJson(json: string): void;
-  onUpdateJson(integrationId: string, json: string): void;
-  onCancelConnect(integrationId: string): void;
-  onSetActive(integrationId: string, active: boolean): void;
-  onRemove(integrationId: string): void;
-  onSetRouting(integrationId: string, routing: IntegrationRoutingView): void;
-  onSetTransport(integrationId: string, transport: "auto" | "bridge"): void;
-  onProbe(integrationId: string): void;
-  onCopy(integrationId: string): void;
+  onUpdateJson(serverId: string, json: string): void;
+  onCancelConnect(serverId: string): void;
+  onSetActive(serverId: string, active: boolean): void;
+  onRemove(serverId: string): void;
+  onSetRouting(serverId: string, routing: McpServerRoutingView): void;
+  onSetTransport(serverId: string, transport: "auto" | "bridge"): void;
+  onProbe(serverId: string): void;
+  onCopy(serverId: string): void;
   onReorder(ids: string[]): void;
 }) {
   const { state } = props;
@@ -480,7 +480,7 @@ export function IntegrationsSection(props: {
   /** Prefill from a curated entry's verified local server — the user
    * completes what's theirs (env values / a running desktop app) and
    * clicks Add; nothing runs before that. */
-  const useLocal = (entryName: string, local: NonNullable<SettingsState["integrationRegistry"][number]["local"]>) => {
+  const useLocal = (entryName: string, local: NonNullable<SettingsState["mcpCatalog"][number]["local"]>) => {
     resetCustomForm();
     setName(`${entryName} (local)`);
     if (local.kind === "stdio") {
@@ -500,7 +500,7 @@ export function IntegrationsSection(props: {
     // "Bearer " prefix only makes sense on an Authorization header; a
     // custom header name (X-Goog-Api-Key style) carries the raw key.
     const isAuthorization = headerName.trim().toLowerCase() === "authorization";
-    const source: IntegrationSourceView =
+    const source: McpServerSourceView =
       adding === "stdio"
         ? {
             kind: "custom-stdio",
@@ -530,8 +530,8 @@ export function IntegrationsSection(props: {
   };
 
   // Connected entries live in the list above, not the catalog.
-  const available = state.integrationRegistry.filter(
-    (entry) => !state.integrations.some((i) => i.registryId === entry.id),
+  const available = state.mcpCatalog.filter(
+    (entry) => !state.mcpServers.some((i) => i.registryId === entry.id),
   );
   const narrowed = catalogQuery.trim() !== "" || catalogMechanisms.size > 0;
   const shown = filterCatalog(available, catalogQuery, catalogMechanisms);
@@ -544,7 +544,7 @@ export function IntegrationsSection(props: {
         machine, never repo-committed; a copied config carries what you typed, never an OAuth token.
       </div>
 
-      {state.integrations.length === 0 && (
+      {state.mcpServers.length === 0 && (
         <div className="card">
           <div className="note m-0">
             No servers connected yet — pick one from the catalog below, or add your own.
@@ -552,57 +552,57 @@ export function IntegrationsSection(props: {
         </div>
       )}
       <SortableList
-        ids={state.integrations.map((i) => i.id)}
+        ids={state.mcpServers.map((i) => i.id)}
         onReorder={props.onReorder}
       >
-        {state.integrations.map((integration) => {
+        {state.mcpServers.map((server) => {
           // Editing JSON forces the body open — the form lives there.
-          const detailsOpen = openDetails[integration.id] === true || editingJsonId === integration.id;
+          const detailsOpen = openDetails[server.id] === true || editingJsonId === server.id;
           // A connected curated server keeps its catalog icon (the catalog
           // entry is still the id's source of truth; custom servers have none).
-          const catalogEntry = state.integrationRegistry.find((r) => r.id === integration.registryId);
+          const catalogEntry = state.mcpCatalog.find((r) => r.id === server.registryId);
           return (
-            <SortableItem key={integration.id} id={integration.id}>
+            <SortableItem key={server.id} id={server.id}>
               {(handle) => (
                 <div className="card">
                   <div className="row flex-wrap">
                     {handle}
-                    <span className={`dot ${integration.connected && integration.active ? "running" : "stopped"}`} />
+                    <span className={`dot ${server.connected && server.active ? "running" : "stopped"}`} />
                     {catalogEntry !== undefined && <EntryIcon glyph={catalogEntry.brandIcon} />}
-                    <span className="nm min-w-0">{integration.name}</span>
-                    <Badge className={integration.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
-                      {integration.sourceKind === "registry" ? "curated" : integration.sourceKind}
+                    <span className="nm min-w-0">{server.name}</span>
+                    <Badge className={server.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
+                      {server.sourceKind === "registry" ? "curated" : server.sourceKind}
                     </Badge>
                     <span className="flex-1" />
                     {/* on/off is a state, not an act — a switch says so (a power
                         *button* read as "do something", not "currently on") */}
                     <Switch
-                      checked={integration.active}
+                      checked={server.active}
                       title={
-                        integration.active
+                        server.active
                           ? "on — switching off keeps the credential but the server reaches no agent until switched back"
                           : "off — switch on to route this server again"
                       }
-                      aria-label={integration.active ? "Switch off" : "Switch on"}
-                      onCheckedChange={(checked) => props.onSetActive(integration.id, checked === true)}
+                      aria-label={server.active ? "Switch off" : "Switch on"}
+                      onCheckedChange={(checked) => props.onSetActive(server.id, checked === true)}
                     />
                     <Button
                       variant="outline" size="icon" className="size-8"
                       title="Copy config as an mcpServers entry"
                       aria-label="Copy config"
-                      onClick={() => props.onCopy(integration.id)}
+                      onClick={() => props.onCopy(server.id)}
                     >
                       <Icon name="copy" />
                     </Button>
                     <ConfirmButton
-                      label={integration.sourceKind === "registry" ? "Disconnect" : "Remove"}
-                      icon={integration.sourceKind === "registry" ? "debug-disconnect" : "trash"}
+                      label={server.sourceKind === "registry" ? "Disconnect" : "Remove"}
+                      icon={server.sourceKind === "registry" ? "debug-disconnect" : "trash"}
                       title={
-                        integration.sourceKind === "registry"
+                        server.sourceKind === "registry"
                           ? "full clear — credential and config; the catalog entry stays, ready for a fresh connect"
                           : "full clear — credential, env, and config"
                       }
-                      onConfirm={() => props.onRemove(integration.id)}
+                      onConfirm={() => props.onRemove(server.id)}
                     />
                     <Button
                       variant="outline" size="icon" className="size-8"
@@ -610,33 +610,33 @@ export function IntegrationsSection(props: {
                       aria-label={detailsOpen ? "Hide settings" : "Settings"}
                       aria-expanded={detailsOpen}
                       onClick={() => {
-                        if (editingJsonId === integration.id) setEditingJsonId(null);
-                        setOpenDetails({ ...openDetails, [integration.id]: !detailsOpen });
+                        if (editingJsonId === server.id) setEditingJsonId(null);
+                        setOpenDetails({ ...openDetails, [server.id]: !detailsOpen });
                       }}
                     >
                       <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
                     </Button>
                   </div>
                   <ProbeStrip
-                    probe={integration.probe}
-                    probeable={integration.connected && integration.active}
-                    expanded={openTools[integration.id] === true}
+                    probe={server.probe}
+                    probeable={server.connected && server.active}
+                    expanded={openTools[server.id] === true}
                     onToggleTools={() =>
-                      setOpenTools({ ...openTools, [integration.id]: openTools[integration.id] !== true })
+                      setOpenTools({ ...openTools, [server.id]: openTools[server.id] !== true })
                     }
-                    onProbe={() => props.onProbe(integration.id)}
+                    onProbe={() => props.onProbe(server.id)}
                   />
-                  {detailsOpen && integration.command !== undefined && (
+                  {detailsOpen && server.command !== undefined && (
                     <div className="mono mt-1.5">
-                      {integration.command}
+                      {server.command}
                     </div>
                   )}
-                  {!integration.active && (
+                  {!server.active && (
                     <div className="note mt-1.5">
                       switched off — configured with its credential intact, reaching no agent
                     </div>
                   )}
-                  {!detailsOpen ? null : integration.editJson !== undefined && editingJsonId === integration.id ? (
+                  {!detailsOpen ? null : server.editJson !== undefined && editingJsonId === server.id ? (
                     <div className="connect-form">
                       <Field label="server JSON" hint="the mcpServers entry for this server — saved as written">
                         <Textarea
@@ -650,7 +650,7 @@ export function IntegrationsSection(props: {
                         <Button
                           size="sm"
                           onClick={() => {
-                            props.onUpdateJson(integration.id, jsonDraft);
+                            props.onUpdateJson(server.id, jsonDraft);
                             setEditingJsonId(null);
                           }}
                         >
@@ -661,23 +661,23 @@ export function IntegrationsSection(props: {
                         </Button>
                       </div>
                     </div>
-                  ) : integration.editJson !== undefined ? (
+                  ) : server.editJson !== undefined ? (
                     <div className="row mt-1.5">
                       <Button
                         variant="outline" size="sm"
                         onClick={() => {
-                          setJsonDraft(integration.editJson!);
-                          setEditingJsonId(integration.id);
+                          setJsonDraft(server.editJson!);
+                          setEditingJsonId(server.id);
                         }}
                       >
                         <Icon name="json" /> Edit JSON…
                       </Button>
                     </div>
                   ) : null}
-                  {state.connectFlow[integration.id]?.status === "failed" && (
+                  {state.connectFlow[server.id]?.status === "failed" && (
                     <div className="note mt-1.5">
-                      {state.connectFlow[integration.id]?.reason}{" "}
-                      <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(integration.id)} title="clear this note">
+                      {state.connectFlow[server.id]?.reason}{" "}
+                      <Button variant="outline" size="sm" onClick={() => props.onCancelConnect(server.id)} title="clear this note">
                         Dismiss
                       </Button>
                     </div>
@@ -686,20 +686,20 @@ export function IntegrationsSection(props: {
                     <div className="mt-2">
                       <RoutingEditor
                         agents={state.agents}
-                        routing={integration.routing}
-                        onChange={(routing) => props.onSetRouting(integration.id, routing)}
+                        routing={server.routing}
+                        onChange={(routing) => props.onSetRouting(server.id, routing)}
                       />
                     </div>
                   )}
-                  {detailsOpen && integration.sourceKind !== "custom-stdio" && (
+                  {detailsOpen && server.sourceKind !== "custom-stdio" && (
                     <label
                       className="row mt-2 gap-1.5 text-[12px]"
                       title="normally an agent that declares http support connects to this server itself (its own MCP client, upstream-maintained); pin the bridge when that declared support turns out broken in practice — every non-declaring agent rides the bridge either way"
                     >
                       <Checkbox
-                        checked={integration.transport === "bridge"}
+                        checked={server.transport === "bridge"}
                         onCheckedChange={(checked) =>
-                          props.onSetTransport(integration.id, checked === true ? "bridge" : "auto")
+                          props.onSetTransport(server.id, checked === true ? "bridge" : "auto")
                         }
                       />
                       always attach through patchbay's stdio bridge

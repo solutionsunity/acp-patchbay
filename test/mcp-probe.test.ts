@@ -3,14 +3,14 @@
 // probeFn: real spawn, real MCP handshake, real cwd. Both directions of the
 // one fact: where the marker is, the probe lists the tool; where it isn't,
 // the server dies before the handshake and the probe reports exactly what
-// a real session would have hit. The manager-level tests (integrations.test.ts)
+// a real session would have hit. The store-level tests (mcp-servers-store.test.ts)
 // prove the cwd handed in is the workspace's; this proves the handed-in cwd
 // is where the command actually runs.
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { probeMcpServer } from "../src/orchestrator/integration-probe";
+import { probeMcpServer } from "../src/orchestrator/mcp-probe";
 
 const SERVER = join(process.cwd(), "test", "support", "cwd-marker-server.mjs");
 

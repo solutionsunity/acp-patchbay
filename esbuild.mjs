@@ -1,7 +1,7 @@
 // Five bundles: extension host (node/cjs), agent-view webview, settings
 // webview, and two standalone agent-spawned processes with no vscode import
 // at all — the local MCP server (src/mcp/server-main.ts) and the
-// integration stdio-to-HTTP bridge (src/integrations/bridge-main.ts).
+// MCP stdio-to-HTTP bridge (src/mcp/bridge-main.ts).
 // esbuild by rule (.dotagent/rules/stack.md) — no webpack.
 import esbuild from "esbuild";
 import { copyFileSync, mkdirSync } from "node:fs";
@@ -116,10 +116,10 @@ const mcpServer = {
 };
 
 /** @type {import("esbuild").BuildOptions} */
-const integrationBridge = {
+const mcpBridge = {
   ...base,
-  entryPoints: ["src/integrations/bridge-main.ts"],
-  outfile: "out/integration-bridge.js",
+  entryPoints: ["src/mcp/bridge-main.ts"],
+  outfile: "out/mcp-bridge.js",
   platform: "node",
   format: "cjs",
   target: "node20",
@@ -143,7 +143,7 @@ const configs = [
   webview("settings"),
   mermaidBundle,
   mcpServer,
-  integrationBridge,
+  mcpBridge,
 ];
 
 // Font assets aren't JS/CSS esbuild bundles — copied straight from the

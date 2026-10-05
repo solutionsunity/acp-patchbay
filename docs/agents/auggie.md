@@ -124,7 +124,7 @@ support@augmentcode.com / Discord.
 ## Capability gaps
 
 - `mcpCapabilities` absent (no http/sse): honest — auggie takes stdio
-  servers only, so integrations ride patchbay's stdio-to-HTTP bridge. Not an
+  servers only, so remote MCP servers ride patchbay's stdio-to-HTTP bridge. Not an
   issue; recorded so nobody mistakes the bridge fallback for a patchbay
   limitation.
 - `session.resume` undeclared; `session.load` declared (replay works).

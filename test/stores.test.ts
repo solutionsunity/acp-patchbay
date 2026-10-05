@@ -1,6 +1,6 @@
 // Stores: session index over KV, permission rules defaults, decision audit
 // JSONL append/tail, the generic globalState-backed record store agents/
-// integrations/used-capabilities all share.
+// MCP servers/used-capabilities all share.
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-store";
-import { MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
+import { MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
@@ -238,11 +238,11 @@ describe("SecretEnvStore — env values live in SecretStorage, never globalState
   it("two prefixes over one SecretStorage never collide", async () => {
     const secrets = new MemorySecrets();
     const agents = new SecretEnvStore(secrets, "acpPatchbay.agent");
-    const integrations = new SecretEnvStore(secrets, "acpPatchbay.integration");
+    const mcpServers = new SecretEnvStore(secrets, "acpPatchbay.integration");
     await agents.set("x", { A: "1" });
-    await integrations.set("x", { B: "2" });
+    await mcpServers.set("x", { B: "2" });
     expect(await agents.get("x")).toEqual({ A: "1" });
-    expect(await integrations.get("x")).toEqual({ B: "2" });
+    expect(await mcpServers.get("x")).toEqual({ B: "2" });
   });
 
   it("remove purges the record; malformed stored JSON reads as empty, never throws", async () => {

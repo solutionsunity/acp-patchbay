@@ -1,4 +1,4 @@
-// Catalog data validates at the trust boundary (architecture.md § Integrations —
+// Catalog data validates at the trust boundary (architecture.md § MCP servers —
 // "the catalog is shipped data from day one"). The curated
 // entries and their auth shapes are the vendor's public docs (mcp-architecture.md
 // § The curated set) — endpoints and mechanisms as documented, never

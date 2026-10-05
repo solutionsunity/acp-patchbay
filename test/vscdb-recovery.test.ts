@@ -80,7 +80,7 @@ describe.skipIf(sqlite === null)("recoverLegacyGlobalState", () => {
     await kv.update("acpPatchbay.agents", [{ id: "readded-since" }]);
     writeVscdb(vscdbPath, { [LEGACY_EXTENSION_ID]: JSON.stringify(MEMENTO) });
     const result = await recoverLegacyGlobalState({ kv, vscdbPath });
-    expect(result.recoveredKeys).toBe(2); // integrations + preferences only
+    expect(result.recoveredKeys).toBe(2); // MCP servers + preferences only
     expect(kv.get("acpPatchbay.agents")).toEqual([{ id: "readded-since" }]);
   });
 

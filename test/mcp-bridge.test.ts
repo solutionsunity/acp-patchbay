@@ -1,7 +1,7 @@
 // P9 gate (automated half): "GitHub connect → routed agent lists issues via
 // MCP." The fake agent plays a real ACP agent AND a real MCP client (as in
 // P7's mcp-end-to-end.test.ts), spawning the *actual bundled*
-// out/integration-bridge.js as its own subprocess from the mcpServers entry
+// out/mcp-bridge.js as its own subprocess from the mcpServers entry
 // session/new gave it. The bridge forwards to a fake remote HTTP MCP server
 // standing in for a real registry/custom-http endpoint, fetching its token
 // from a fake IPC host standing in for the orchestrator's real
@@ -28,13 +28,13 @@ import { stubFsTerminalHooks } from "./support/stub-hooks";
 import { gatesFor } from "./support/session-gates";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
-const BRIDGE = join(process.cwd(), "out", "integration-bridge.js");
+const BRIDGE = join(process.cwd(), "out", "mcp-bridge.js");
 
 /** Stands in for the orchestrator's IPC host, serving only
- * `getIntegrationToken` — everything else P7 already covers. `tokens` is a
+ * `getMcpServerToken` — everything else P7 already covers. `tokens` is a
  * queue: each call to `currentToken()` in the bridge pops the next one,
  * letting a test script an expired-then-fresh sequence. */
-class FakeIntegrationTokenHost {
+class FakeMcpServerTokenHost {
   server: NetServer;
   socketPath: string;
   tokens: string[];
@@ -54,7 +54,7 @@ class FakeIntegrationTokenHost {
           const req = message as IpcRequest;
           // the bridge also subscribes to root changes at start — only
           // token fetches walk the queue
-          if (req.method !== "getIntegrationToken") {
+          if (req.method !== "getMcpServerToken") {
             socket.write(encodeLine({ id: req.id, result: {} } satisfies IpcResponse));
             continue;
           }
@@ -300,11 +300,11 @@ function harness(mcpServers: McpServer[]) {
   };
 }
 
-describe("integration bridge — real agent, real bridge subprocess, fake remote MCP server", () => {
+describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP server", () => {
   it("a routed agent lists issues via MCP through the bridge (P9 gate, automated half)", async () => {
     const remote = new FakeRemoteMcpServer();
     await remote.listen();
-    const tokenHost = new FakeIntegrationTokenHost(`${process.pid}-a`, ["gh-token-1"]);
+    const tokenHost = new FakeMcpServerTokenHost(`${process.pid}-a`, ["gh-token-1"]);
     await tokenHost.listen();
 
     const bridgeEntry: McpServer = {
@@ -313,8 +313,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
       args: [BRIDGE],
       env: [
         { name: "ACP_PATCHBAY_IPC", value: tokenHost.socketPath },
-        { name: "ACP_PATCHBAY_INTEGRATION_ID", value: "github" },
-        { name: "ACP_PATCHBAY_INTEGRATION_URL", value: remote.url },
+        { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: "github" },
+        { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: remote.url },
         { name: "ACP_PATCHBAY_AUTH_HEADER", value: "Authorization" },
         { name: "ACP_PATCHBAY_AUTH_PREFIX", value: "Bearer " },
       ],
@@ -336,7 +336,7 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
   it("retries once with a fresh token when the remote endpoint returns 401", async () => {
     const remote = new FakeRemoteMcpServer(["stale-token"]);
     await remote.listen();
-    const tokenHost = new FakeIntegrationTokenHost(`${process.pid}-b`, ["stale-token", "fresh-token"]);
+    const tokenHost = new FakeMcpServerTokenHost(`${process.pid}-b`, ["stale-token", "fresh-token"]);
     await tokenHost.listen();
 
     const bridgeEntry: McpServer = {
@@ -345,8 +345,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
       args: [BRIDGE],
       env: [
         { name: "ACP_PATCHBAY_IPC", value: tokenHost.socketPath },
-        { name: "ACP_PATCHBAY_INTEGRATION_ID", value: "github" },
-        { name: "ACP_PATCHBAY_INTEGRATION_URL", value: remote.url },
+        { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: "github" },
+        { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: remote.url },
         { name: "ACP_PATCHBAY_AUTH_HEADER", value: "Authorization" },
         { name: "ACP_PATCHBAY_AUTH_PREFIX", value: "Bearer " },
       ],
@@ -388,8 +388,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
       env: [
         { name: "ACP_PATCHBAY_IPC", value: host.socketPath },
         { name: "ACP_PATCHBAY_SESSION_ID", value: "ctx-1" },
-        { name: "ACP_PATCHBAY_INTEGRATION_ID", value: "fs-aware" },
-        { name: "ACP_PATCHBAY_INTEGRATION_URL", value: remote.url },
+        { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: "fs-aware" },
+        { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: remote.url },
       ],
     };
     const h = harness([bridgeEntry]);
@@ -425,8 +425,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
         ...process.env,
         ACP_PATCHBAY_IPC: host.socketPath,
         ACP_PATCHBAY_SESSION_ID: "ctx-2",
-        ACP_PATCHBAY_INTEGRATION_ID: "fs-aware",
-        ACP_PATCHBAY_INTEGRATION_URL: remote.url,
+        ACP_PATCHBAY_MCP_SERVER_ID: "fs-aware",
+        ACP_PATCHBAY_MCP_SERVER_URL: remote.url,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -463,8 +463,8 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
       env: {
         ...process.env,
         ACP_PATCHBAY_IPC: join(tmpdir(), "patchbay-bridge-eof-none.sock"),
-        ACP_PATCHBAY_INTEGRATION_ID: "github",
-        ACP_PATCHBAY_INTEGRATION_URL: "http://127.0.0.1:9/never",
+        ACP_PATCHBAY_MCP_SERVER_ID: "github",
+        ACP_PATCHBAY_MCP_SERVER_URL: "http://127.0.0.1:9/never",
         ACP_PATCHBAY_AUTH_HEADER: "",
         ACP_PATCHBAY_AUTH_PREFIX: "",
       },
@@ -488,7 +488,7 @@ describe("integration bridge — real agent, real bridge subprocess, fake remote
     await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 
     const client = new IpcClient(socketPath, "github");
-    const inFlight = client.request("getIntegrationToken");
+    const inFlight = client.request("getMcpServerToken");
     // Wait until the server has the connection, then drop it mid-request.
     for (let i = 0; sockets.length === 0 && i < 100; i++) await new Promise((r) => setTimeout(r, 10));
     for (const socket of sockets) socket.destroy();

@@ -225,7 +225,7 @@ export async function connectMcpOAuth(
   const metadata = await discoverAuthServerMetadata(authServer, fetchFn);
   if (metadata.registration_endpoint === undefined) {
     throw new OAuthDiscoveryError(
-      "authorization server does not offer dynamic client registration — use this integration's API-key path instead",
+      "authorization server does not offer dynamic client registration — use this server's API-key path instead",
     );
   }
   const redirectUri = await userAgent.redirectUri();

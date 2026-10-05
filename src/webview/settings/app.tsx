@@ -13,14 +13,14 @@ import { Icon } from "../shared/icon";
 import { AgentsSection } from "./agents";
 import { AuditSection } from "./audit";
 import { DataSection } from "./data";
-import { IntegrationsSection } from "./integrations";
+import { McpServersSection } from "./mcp-servers";
 import { MatrixSection } from "./matrix";
 import { PermissionsSection } from "./permissions";
 import { PreferencesSection } from "./preferences";
 import { RootsSection } from "./roots";
 
 /** Grouped by what the group *is*, not by theme: "This machine" is what's
- * global to this machine (the wiring — agents, integrations, the matrix
+ * global to this machine (the wiring — agents, MCP servers, the matrix
  * observing them — and behavior preferences; machine store/SecretStorage;
  * Saved roots also carries this workspace's list, beside the machine one),
  * "Trust" is the one trust surface. The nav teaches the placement contract
@@ -31,7 +31,7 @@ const NAV_GROUPS = [
     items: [
       { id: "agents", icon: "plug", label: "Agents" },
       { id: "matrix", icon: "table", label: "Capability matrix" },
-      { id: "integrations", icon: "server", label: "MCP Servers" },
+      { id: "mcpServers", icon: "server", label: "MCP Servers" },
       { id: "preferences", icon: "settings-gear", label: "Preferences" },
       { id: "roots", icon: "root-folder", label: "Saved roots" },
     ],
@@ -76,7 +76,7 @@ export function App({ state }: { state: SettingsState }) {
         ))}
         <ErrorsChip />
         <div className="foot">
-          agents &amp; integrations: global (this machine)
+          agents &amp; MCP servers: global (this machine)
           <br />
           never repo-committed
           <br />
@@ -124,8 +124,8 @@ export function App({ state }: { state: SettingsState }) {
             onRemove={(path, scope) => send({ kind: "unsaveRoot", path, scope })}
           />
         )}
-        {section === "integrations" && (
-          <IntegrationsSection
+        {section === "mcpServers" && (
+          <McpServersSection
             state={state}
             onConnectKey={(registryId, token, url) =>
               send({ kind: "connectRegistryKey", registryId, token, url })
@@ -134,28 +134,28 @@ export function App({ state }: { state: SettingsState }) {
               send({ kind: "connectRegistryOAuth", registryId, url })
             }
             onAddCustom={(name, source, routing) =>
-              send({ kind: "addCustomIntegration", name, source, routing })
+              send({ kind: "addCustomMcpServer", name, source, routing })
             }
-            onImportJson={(json) => send({ kind: "importIntegrationsJson", json })}
-            onUpdateJson={(integrationId, json) =>
-              send({ kind: "updateIntegrationJson", integrationId, json })
+            onImportJson={(json) => send({ kind: "importMcpServersJson", json })}
+            onUpdateJson={(serverId, json) =>
+              send({ kind: "updateMcpServerJson", serverId, json })
             }
-            onCancelConnect={(integrationId) =>
-              send({ kind: "cancelIntegrationConnect", integrationId })
+            onCancelConnect={(serverId) =>
+              send({ kind: "cancelMcpServerConnect", serverId })
             }
-            onSetActive={(integrationId, active) =>
-              send({ kind: "setIntegrationActive", integrationId, active })
+            onSetActive={(serverId, active) =>
+              send({ kind: "setMcpServerActive", serverId, active })
             }
-            onRemove={(integrationId) => send({ kind: "removeIntegration", integrationId })}
-            onSetRouting={(integrationId, routing) =>
-              send({ kind: "setIntegrationRouting", integrationId, routing })
+            onRemove={(serverId) => send({ kind: "removeMcpServer", serverId })}
+            onSetRouting={(serverId, routing) =>
+              send({ kind: "setMcpServerRouting", serverId, routing })
             }
-            onSetTransport={(integrationId, transport) =>
-              send({ kind: "setIntegrationTransport", integrationId, transport })
+            onSetTransport={(serverId, transport) =>
+              send({ kind: "setMcpServerTransport", serverId, transport })
             }
-            onProbe={(integrationId) => send({ kind: "probeIntegration", integrationId })}
-            onCopy={(integrationId) => send({ kind: "copyIntegrationJson", integrationId })}
-            onReorder={(ids) => send({ kind: "reorderIntegrations", ids })}
+            onProbe={(serverId) => send({ kind: "probeMcpServer", serverId })}
+            onCopy={(serverId) => send({ kind: "copyMcpServerJson", serverId })}
+            onReorder={(ids) => send({ kind: "reorderMcpServers", ids })}
           />
         )}
         {section === "permissions" && (

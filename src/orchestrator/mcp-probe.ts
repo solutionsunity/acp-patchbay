@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Patchbay's own MCP-client handshake with an integration server —
+// Patchbay's own MCP-client handshake with a configured MCP server —
 // initialize + tools/list, no agent, no LLM turn (the same "free read"
 // class as session/list). Provider-side truth only: a passing probe means
 // "reachable, these tools exist", never "working in an agent's session".
-// vscode-free; IntegrationsManager injects credentials and caches results.
+// vscode-free; McpServersStore injects credentials and caches results.
 // Both transports come from the MCP SDK — the one dependency that also
 // backs the stdio-to-HTTP bridge, so probe and bridge can't drift on
 // transport behavior.

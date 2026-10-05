@@ -59,7 +59,7 @@ orchestrator layer on top:
   native OS notification when the view is hidden — tells you the moment a turn
   lands. Detached panels and prompt queueing included.
 
-![Settings — the capability matrix, integrations, and permissions](https://raw.githubusercontent.com/solutionsunity/acp-patchbay/main/media/recordings/settings.gif)
+![Settings — the capability matrix, MCP servers, and permissions](https://raw.githubusercontent.com/solutionsunity/acp-patchbay/main/media/recordings/settings.gif)
 
 ## Everything you'd expect from a great client
 
@@ -67,7 +67,7 @@ orchestrator layer on top:
 - Full session history — list, resume, and fork, backed by the agent's own store
 - Faithful replay of past sessions (no "last message only" gaps)
 - A live plan and a touched-files read-out while the agent works
-- MCP integrations, including remote servers over Streamable HTTP, added and verified in-client
+- MCP servers, including remote ones over Streamable HTTP, added and verified in-client
 - Theme-native UI that follows your VS Code theme
 
 ## Getting started
@@ -80,7 +80,7 @@ orchestrator layer on top:
    the agent's own advertised commands; the context adder attaches your selection,
    current file, diagnostics, or any other file; pasting an image just works.
 
-Settings (gear icon) is where the capability matrix, integrations, permission
+Settings (gear icon) is where the capability matrix, MCP servers, permission
 rules, and agent / session management live.
 
 ## Uninstalling cleanly

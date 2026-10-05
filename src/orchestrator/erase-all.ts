@@ -25,14 +25,14 @@ interface Wipeable {
 
 export interface EraseTargets {
   agentConfigs: RecordStoreLike;
-  integrationConfigs: RecordStoreLike;
+  mcpServerConfigs: RecordStoreLike;
   usedCapabilities: RecordStoreLike;
   authLocks: RecordStoreLike;
   sessionContinuity: RecordStoreLike;
   spawnRegistry: RecordStoreLike;
   agentEnv: SecretsById;
-  integrationEnv: SecretsById;
-  integrationTokens: SecretsById;
+  mcpServerEnv: SecretsById;
+  mcpServerTokens: SecretsById;
   permissionRules: { set(rules: PermissionRules): Promise<void> };
   machineRules: { set(rules: CommandRule[]): Promise<void> };
   decisionAudit: Wipeable;
@@ -60,15 +60,15 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   for (const { id } of targets.agentConfigs.list()) {
     await targets.agentEnv.remove(id);
   }
-  for (const { id } of targets.integrationConfigs.list()) {
-    await targets.integrationEnv.remove(id);
-    await targets.integrationTokens.remove(id);
+  for (const { id } of targets.mcpServerConfigs.list()) {
+    await targets.mcpServerEnv.remove(id);
+    await targets.mcpServerTokens.remove(id);
   }
   // 2 — every record store by its own listing, so strays whose config is
   // already gone (an old version's leftovers) go too.
   const recordStores: RecordStoreLike[] = [
     targets.agentConfigs,
-    targets.integrationConfigs,
+    targets.mcpServerConfigs,
     targets.usedCapabilities,
     targets.authLocks,
     targets.sessionContinuity,

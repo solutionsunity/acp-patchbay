@@ -190,7 +190,7 @@ deliverable.
   as UX-only, never a correctness dependency. Applied at session creation; the
   session shows what actually applied, not what was requested.
 
-### MCP servers (integrations)
+### MCP servers
 
 - User can connect GitHub by pasting a token — one field, no app setup — and
   disconnect as easily. Curated entries whose registration is open connect with
@@ -208,7 +208,7 @@ deliverable.
 - Servers are global to this machine and never ride a repo — a config moves
   only by the owner's explicit Copy and paste, and nothing attaches by opening
   a folder (a production-access server must never follow a user from one repo
-  into another). Binding integrations to specific workspaces is deliberately
+  into another). Binding MCP servers to specific workspaces is deliberately
   not built until the need is demonstrated.
 
 ### Permissions
@@ -222,8 +222,8 @@ deliverable.
 
 ### Configuration placement
 
-- Configuration (agents, integrations, routing) lives in developer-owned stores,
-  global to this machine — never a repo-committed file. Sharing an integration
+- Configuration (agents, MCP servers, routing) lives in developer-owned stores,
+  global to this machine — never a repo-committed file. Sharing an MCP server
   is an explicit copy (Copy config, in the well-known `mcpServers` shape);
   agents are entered, never exported. What the owner typed — env values, a
   header API key — is readable in the edit forms and rides the copy; an OAuth

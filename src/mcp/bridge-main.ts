@@ -21,7 +21,7 @@
 // agent-visible config: it's injected here, per request, via the custom
 // fetch below. This bridge is the guaranteed-floor path for agents that
 // don't declare mcp.http — declaring agents get the URL passed through and
-// connect themselves (integrations.mcpServersFor).
+// connect themselves (mcp-servers-store.ts mcpServersFor).
 //
 // The pipe carries two things of its own on top of the agent's traffic,
 // both about what the agent cannot supply: the credential (above), and the
@@ -37,17 +37,17 @@ import { pathToFileURL } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { IpcClient } from "../mcp/ipc-client";
-import type { IntegrationTokenParams, RootsResult } from "../mcp/ipc-protocol";
+import { IpcClient } from "./ipc-client";
+import type { McpServerTokenParams, RootsResult } from "./ipc-protocol";
 
 const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
 const sessionId = process.env.ACP_PATCHBAY_SESSION_ID ?? "";
-const integrationId = process.env.ACP_PATCHBAY_INTEGRATION_ID ?? "";
-const url = process.env.ACP_PATCHBAY_INTEGRATION_URL ?? "";
-// How the credential rides the request — per-integration data, since not
+const serverId = process.env.ACP_PATCHBAY_MCP_SERVER_ID ?? "";
+const url = process.env.ACP_PATCHBAY_MCP_SERVER_URL ?? "";
+// How the credential rides the request — per-server data, since not
 // every service takes `Authorization: Bearer` (Stitch wants a raw key in
 // `X-Goog-Api-Key`). Absent header name =
-// this integration sends no credential at all (authType "none").
+// this server sends no credential at all (authType "none").
 const authHeader = process.env.ACP_PATCHBAY_AUTH_HEADER ?? "";
 const authPrefix = process.env.ACP_PATCHBAY_AUTH_PREFIX ?? "";
 
@@ -56,16 +56,16 @@ const ipc = new IpcClient(socketPath, sessionId, () => onRootsChanged());
 
 async function currentToken(): Promise<string | null> {
   if (authHeader === "") return null;
-  const params: IntegrationTokenParams = { integrationId };
-  const result = (await ipc.request("getIntegrationToken", params)) as { accessToken: string } | null;
+  const params: McpServerTokenParams = { serverId };
+  const result = (await ipc.request("getMcpServerToken", params)) as { accessToken: string } | null;
   return result?.accessToken ?? null;
 }
 
 /** The SDK transport's fetch, with the credential injected fresh per request
  * — the token never sits in a header object that outlives one call. On 401
- * the orchestrator refreshes transparently inside getIntegrationToken, so
+ * the orchestrator refreshes transparently inside getMcpServerToken, so
  * one immediate retry distinguishes "patchbay held a stale token" from "the
- * integration rejected a fresh one". */
+ * server rejected a fresh one". */
 async function authedFetch(input: string | URL, init?: RequestInit): Promise<Response> {
   const attempt = async (token: string | null) =>
     fetch(input, {

@@ -1,4 +1,4 @@
-# MCP Integrations — Architecture
+# MCP Servers — Architecture
 
 How patchbay authenticates to and routes **remote MCP servers** — the mechanisms,
 the curated catalog's policy, and the failure modes the implementation must avoid.
@@ -14,14 +14,14 @@ implementation time, since vendors move.
 - Patchbay is always the **OAuth client / credential holder** in every flow here.
   The ACP agent downstream never sees a credential and never participates in an
   auth handshake: it talks to patchbay's stdio-to-HTTP bridge
-  (`integration-bridge.js`), which fetches a current token from the orchestrator
+  (`mcp-bridge.js`), which fetches a current token from the orchestrator
   over IPC and attaches it to outbound requests. That bridge architecture is
   fixed; this document decides *how the orchestrator obtains tokens*. (The
   bridge carries one more thing of patchbay's on the agent's behalf — the
   session's roots, as MCP's client-side `roots` capability; that mechanism is
   recorded with the local server in the architecture doc.)
 - Patchbay orchestrates ACP agents; it is not itself an AI agent. MCP is the
-  attachment language agents understand, so **every curated integration is a
+  attachment language agents understand, so **every curated entry is a
   remote MCP server** — no bespoke per-service API clients, ever.
 
 ## The two mechanisms
@@ -29,10 +29,10 @@ implementation time, since vendors move.
 ### 1 · Static key in a header — `authType: "header"`
 
 The user pastes a token (PAT / API key) from the vendor's own settings page;
-patchbay stores it in `IntegrationTokenStore` (SecretStorage, per-workspace) and
+patchbay stores it in `McpServerTokenStore` (SecretStorage, per-workspace) and
 the bridge sends it on every request.
 
-- **Header name is per-integration data, not hardcoded**: most services take
+- **Header name is per-server data, not hardcoded**: most services take
   `Authorization: Bearer <key>`, but Stitch requires `X-Goog-Api-Key: <key>`. The
   bearer-token case is the default; the catalog/custom schema carries a
   `headerName` field (default `Authorization`, value template `Bearer {token}` vs
@@ -62,12 +62,12 @@ pre-provisioned credentials of any kind):
 4. Authorization Code + PKCE (RFC 7636, S256).
 5. Redirect handled via **`vscode.window.registerUriHandler` +
    `vscode.env.asExternalUri`** — never a raw loopback HTTP server (see Pitfalls §1).
-6. Tokens (access + refresh) into `IntegrationTokenStore`; the existing
-   refresh-on-expiry logic in `IntegrationsManager.getToken` carries over.
+6. Tokens (access + refresh) into `McpServerTokenStore`; the existing
+   refresh-on-expiry logic in `McpServersStore.getToken` carries over.
 
-A catalog entry for an OAuth integration needs **only a URL** — every other
+A catalog entry for an OAuth server needs **only a URL** — every other
 parameter is discovered. This is [the architecture doc](architecture.md)'s "adding
-a curated integration is a data change, not code" at its most literal.
+a curated server is a data change, not code" at its most literal.
 
 ### Why not per-service OAuth Apps (Device Flow / fixed client_id)
 
@@ -77,7 +77,7 @@ maintenance (an app owned by this project per vendor, subject to each platform's
 review/suspension policies); the services that would need it (GitHub, Figma) all
 have a static-key path that works today with no vendor dependency; and the
 static-key path is strictly more reliable (§ Pitfalls). If a vendor later opens
-DCR, that integration upgrades to mechanism 2 by changing its catalog entry —
+DCR, that server upgrades to mechanism 2 by changing its catalog entry —
 data, not code. Device Flow (RFC 8628) support returns only if some future vendor
 offers it as its *open* mechanism, which no curated vendor does.
 
@@ -147,8 +147,8 @@ restate it. Policy for what an entry is:
    specifically ([vscode#273655](https://github.com/microsoft/vscode/issues/273655)).
    It also registers servers for *VS Code's own* MCP client, not for patchbay's
    agent-facing bridge, so it's the wrong layer regardless.
-4. **`vscode.authentication.getSession('github', …)` stays unused for
-   integrations.** It would grant a GitHub token with zero setup, but the session
+4. **`vscode.authentication.getSession('github', …)` stays unused for MCP
+   servers.** It would grant a GitHub token with zero setup, but the session
    is account/profile-scoped — the same credential silently available in every
    workspace — which violates [the features doc](features.md)'s workspace-scoping
    rule (born of a real incident: a production-access MCP server following a user
@@ -161,8 +161,8 @@ restate it. Policy for what an entry is:
 
 1. Header auth generalized: `headerName` + `valuePrefix` in both the catalog
    schema (`stores/mcp-catalog.ts`) and the custom-http config shape
-   (`stores/integration-configs.ts`); the bridge reads them from
-   `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`integrations/bridge-main.ts`).
+   (`stores/mcp-server-configs.ts`); the bridge reads them from
+   `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`mcp/bridge-main.ts`).
 2. `src/orchestrator/mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
    Authorization Code + PKCE; redirect via an injected `OAuthUserAgent` — the
    orchestrator implements it with `registerUriHandler` (extension.ts) +
@@ -173,4 +173,4 @@ restate it. Policy for what an entry is:
 3. `data/mcp-catalog.json` ships the entries; `stores/mcp-catalog.ts` loads them
    through the schema (the loader is the one seam a fetched source would use).
 4. Per-account endpoints: the registry-kind source persists the pasted `url`;
-   `IntegrationsManager.resolveEndpoint` refuses labeled when missing.
+   `McpServersStore.resolveEndpoint` refuses labeled when missing.

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Integrations are developer-env, not code-env: global to this machine,
+// MCP servers are developer-env, not code-env: global to this machine,
 // same as agent-configs.ts. Deliberately global-only — the MCP incident
 // (a production-access MCP server silently following a user between repos)
 // is guarded by configs never riding a repo: a credential moves only by
 // its owner's explicit Copy and paste, never by opening a folder. Binding
 // to workspaces (not repos) may return later as an opt-in. SecretStorage
-// (integration-tokens.ts) keys credentials globally by integration id.
+// (mcp-server-tokens.ts) keys credentials globally by server id.
 import { z } from "zod";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
-export const integrationSourceSchema = z.discriminatedUnion("kind", [
+export const mcpServerSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("registry"),
     registryId: z.string().min(1),
@@ -29,7 +29,7 @@ export const integrationSourceSchema = z.discriminatedUnion("kind", [
     args: z.array(z.string()).default([]),
     // No env here on purpose: stdio MCP servers commonly take API keys via
     // env, so values live in SecretStorage (stores/secret-env.ts), read at
-    // attach time (integrations.mcpServersFor) — never in the machine store.
+    // attach time (mcp-servers-store.ts mcpServersFor) — never in the machine store.
   }),
   z.object({
     kind: z.literal("custom-http"),
@@ -42,14 +42,14 @@ export const integrationSourceSchema = z.discriminatedUnion("kind", [
     valuePrefix: z.string().default("Bearer "),
   }),
 ]);
-export type IntegrationSource = z.infer<typeof integrationSourceSchema>;
+export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
-export const integrationConfigSchema = z.object({
+export const mcpServerConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  source: integrationSourceSchema,
+  source: mcpServerSourceSchema,
   /** "auto" (default) attaches to every agent (the fidelity gate is
-   * superseded — protocol.ts IntegrationRoutingView records why); an
+   * superseded — protocol.ts McpServerRoutingView records why); an
    * explicit id list pins exactly which agents receive it; `{ except }` is
    * every agent minus the listed — the user's routing, never
    * all-or-nothing. */
@@ -61,7 +61,7 @@ export const integrationConfigSchema = z.object({
    * Disconnect is the full clear (config + credential + env); a curated
    * entry then simply reappears in the catalog, ready for a fresh connect. */
   active: z.boolean().default(true),
-  /** How an http-backed integration reaches agents that declare mcp.http:
+  /** How an http-backed server reaches agents that declare mcp.http:
    * "auto" passes the URL through and the agent's own MCP client connects
    * (prompt.image mechanics — the declared path gets exercised); "bridge"
    * pins patchbay's stdio bridge regardless — the user's escape hatch for
@@ -69,12 +69,13 @@ export const integrationConfigSchema = z.object({
    * the declaration always ride the bridge; custom-stdio ignores this. */
   transport: z.enum(["auto", "bridge"]).default("auto"),
 });
-export type IntegrationConfig = z.infer<typeof integrationConfigSchema>;
+export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
+/** Under the name the records were first stored by. */
 const KEY = "acpPatchbay.integrations";
 
-export class IntegrationConfigStore extends GlobalRecordStore<IntegrationConfig> {
+export class McpServerConfigStore extends GlobalRecordStore<McpServerConfig> {
   constructor(kv: KV) {
-    super(kv, KEY, integrationConfigSchema);
+    super(kv, KEY, mcpServerConfigSchema);
   }
 }

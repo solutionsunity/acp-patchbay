@@ -43,7 +43,7 @@ export type ConnectAgentSource =
 export type SettingsSectionId =
   | "agents"
   | "matrix"
-  | "integrations"
+  | "mcpServers"
   | "preferences"
   | "roots"
   | "permissions"
@@ -185,38 +185,38 @@ export type Action =
    * it's the storage/SecretStorage key, an internal concern the user never
    * names. */
   | {
-      kind: "addCustomIntegration";
+      kind: "addCustomMcpServer";
       name: string;
-      source: IntegrationSourceView;
-      routing: IntegrationRoutingView;
+      source: McpServerSourceView;
+      routing: McpServerRoutingView;
     }
   /** The well-known `{"mcpServers": {...}}` JSON (Claude Desktop / Cursor /
    * VS Code shape) — parsed orchestrator-side; each entry becomes a custom
    * server, failures labeled per entry. */
-  | { kind: "importIntegrationsJson"; json: string }
+  | { kind: "importMcpServersJson"; json: string }
   /** Replaces one custom server's config from its edited mcpServers entry
    * JSON — env (and a header key) stored exactly as written. */
-  | { kind: "updateIntegrationJson"; integrationId: string; json: string }
+  | { kind: "updateMcpServerJson"; serverId: string; json: string }
   /** Abandons an in-flight browser OAuth connect — the pending state clears
    * and nothing is stored (the browser tab, if still open, dies unanswered). */
-  | { kind: "cancelIntegrationConnect"; integrationId: string }
+  | { kind: "cancelMcpServerConnect"; serverId: string }
   /** Disconnect and remove are the same act — the full clear (config +
    * credential + env). A curated entry then reappears in the catalog, ready
    * for a fresh connect; a custom one is simply gone. The non-destructive
    * option is the active toggle below. */
-  | { kind: "removeIntegration"; integrationId: string }
-  | { kind: "setIntegrationActive"; integrationId: string; active: boolean }
-  | { kind: "setIntegrationRouting"; integrationId: string; routing: IntegrationRoutingView }
-  /** Pins an http-backed integration to patchbay's stdio bridge ("bridge")
+  | { kind: "removeMcpServer"; serverId: string }
+  | { kind: "setMcpServerActive"; serverId: string; active: boolean }
+  | { kind: "setMcpServerRouting"; serverId: string; routing: McpServerRoutingView }
+  /** Pins an http-backed server to patchbay's stdio bridge ("bridge")
    * or lets declaring agents connect directly ("auto") — the escape hatch
    * for an agent whose declared mcp.http support is broken in practice. */
-  | { kind: "setIntegrationTransport"; integrationId: string; transport: "auto" | "bridge" }
+  | { kind: "setMcpServerTransport"; serverId: string; transport: "auto" | "bridge" }
   /** Re-runs the connect-time tool probe (patchbay's own MCP client
    * handshake with the server) — a free read, no agent involved. */
-  | { kind: "probeIntegration"; integrationId: string }
+  | { kind: "probeMcpServer"; serverId: string }
   /** Copies the server as a `{"mcpServers": {name: entry}}` document — the
-   * shape `importIntegrationsJson` reads back and other clients take. */
-  | { kind: "copyIntegrationJson"; integrationId: string }
+   * shape `importMcpServersJson` reads back and other clients take. */
+  | { kind: "copyMcpServerJson"; serverId: string }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
   /** Open a pending write proposal — the diff card's full change — in VS
@@ -241,7 +241,7 @@ export type Action =
   /** Drag-drop reorder from Settings — `ids` is the full list order as the
    * view sees it at drop time; the store keeps unnamed records at the tail. */
   | { kind: "reorderAgentConfigs"; ids: readonly string[] }
-  | { kind: "reorderIntegrations"; ids: readonly string[] }
+  | { kind: "reorderMcpServers"; ids: readonly string[] }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
   /** Saved roots — the folders every new session starts with. `saveRoot`
@@ -360,7 +360,7 @@ export interface AgentConfigView {
   lastSeenVersion: string | null;
 }
 
-// ── integrations ────────────────────────────────────────────────────────────
+// ── MCP servers ─────────────────────────────────────────────────────────────
 
 /** Three reaches: "auto" = every agent; an id list = exactly these agents;
  * `{ except }` = every agent minus the listed ones. *(Supersedes the
@@ -369,16 +369,16 @@ export interface AgentConfigView {
  * motive was control-plane consent, which the permission broker already
  * carries for every request_permission-routing agent; the conflation
  * structurally excluded the whole SDK-CLI class from auto forever.)* */
-export type IntegrationRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
+export type McpServerRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
 
-/** Payload for `addCustomIntegration` — the "any MCP server, command or URL,
- * with auth" escape hatch. Registry-backed
- * integrations go through `connectRegistryKey`/`connectRegistryOAuth`
+/** Payload for `addCustomMcpServer` — the "any MCP server, command or URL,
+ * with auth" escape hatch. Curated servers go through
+ * `connectRegistryKey`/`connectRegistryOAuth`
  * instead, since those drive a connect flow rather than taking a source
  * directly. Auth shapes: "header" is a
  * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
  * "oauth" is the MCP-spec OAuth 2.1 flow, URL-only. */
-export type IntegrationSourceView =
+export type McpServerSourceView =
   /** `env` values go straight into SecretStorage (stores/secret-env.ts)
    * and come back to their owner in `editJson`. */
   | { kind: "custom-stdio"; command: string; args: readonly string[]; env: Readonly<Record<string, string>> }
@@ -391,10 +391,10 @@ export type IntegrationSourceView =
       token?: string;
     };
 
-/** Result of patchbay's own connect-time MCP handshake with an integration
+/** Result of patchbay's own connect-time MCP handshake with a server
  * (initialize + tools/list, no agent, no LLM turn). A point-in-time read of
  * the server — always shown with its timestamp, never as a timeless fact. */
-export type IntegrationProbeView =
+export type McpServerProbeView =
   | { status: "probing"; at: string }
   | {
       status: "ok";
@@ -405,7 +405,7 @@ export type IntegrationProbeView =
     }
   | { status: "failed"; at: string; reason: string };
 
-export interface IntegrationView {
+export interface McpServerView {
   id: string;
   name: string;
   sourceKind: "registry" | "custom-stdio" | "custom-http";
@@ -420,7 +420,7 @@ export interface IntegrationView {
   /** The mute switch: inactive keeps config + credential but the server is
    * excluded from every agent's mcpServers until toggled back. */
   active: boolean;
-  routing: IntegrationRoutingView;
+  routing: McpServerRoutingView;
   /** "auto" = agents declaring mcp.http connect directly (URL passed
    * through); "bridge" = pinned to patchbay's stdio bridge. Absent meaning
    * for custom-stdio (always handed through as-is). */
@@ -428,7 +428,7 @@ export interface IntegrationView {
   /** Last tool probe — patchbay's own MCP handshake with this server
    * (provider-side truth: "reachable, N tools", never "working in your
    * sessions"). Absent = never probed this session. */
-  probe?: IntegrationProbeView;
+  probe?: McpServerProbeView;
   /** Present for custom servers only: the editable mcpServers entry JSON,
    * env values and a header key included — the owner typed them and reads
    * them back. OAuth tokens (flow-minted) never appear. */
@@ -472,7 +472,7 @@ export interface RegistryEntryView {
 
 /** Connect-in-flight state per registryId — "pending" while the browser
  * authorization is out, "failed" with the labeled reason; cleared by
- * `integrationsChanged` once connected. */
+ * `mcpServersChanged` once connected. */
 export interface ConnectFlowView {
   status: "pending" | "failed";
   reason?: string;
@@ -2334,10 +2334,10 @@ export interface SettingsState {
   machineCommandRules: readonly CommandRuleView[];
   fileWriteScope: FileWriteScopeView;
   auditTail: readonly AuditEntryView[];
-  integrationRegistry: readonly RegistryEntryView[];
-  integrations: readonly IntegrationView[];
-  /** Keyed by registryId (or custom integration id) while a connect is in
-   * flight or just failed; cleared once `integrationsChanged` reports it
+  mcpCatalog: readonly RegistryEntryView[];
+  mcpServers: readonly McpServerView[];
+  /** Keyed by registryId (or a custom server's id) while a connect is in
+   * flight or just failed; cleared once `mcpServersChanged` reports it
    * connected. */
   connectFlow: Readonly<Record<string, ConnectFlowView>>;
   /** Agents (global, developer-env — never repo-committed): addable,
@@ -2390,8 +2390,8 @@ export const initialSettingsState: SettingsState = {
   machineCommandRules: [],
   fileWriteScope: "workspace",
   auditTail: [],
-  integrationRegistry: [],
-  integrations: [],
+  mcpCatalog: [],
+  mcpServers: [],
   connectFlow: {},
   agentConfigs: [],
   sessionsActiveToday: 0,
@@ -2413,14 +2413,14 @@ export type SettingsEvent =
       fileWriteScope: FileWriteScopeView;
     }
   | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
-  | { kind: "integrationRegistryLoaded"; entries: readonly RegistryEntryView[] }
-  | { kind: "integrationsChanged"; integrations: readonly IntegrationView[] }
+  | { kind: "mcpCatalogLoaded"; entries: readonly RegistryEntryView[] }
+  | { kind: "mcpServersChanged"; servers: readonly McpServerView[] }
   /** A browser-authorization connect is out — the card shows waiting state. */
-  | { kind: "integrationConnectStarted"; registryId: string }
-  | { kind: "integrationConnectFailed"; registryId: string; reason: string }
+  | { kind: "mcpServerConnectStarted"; registryId: string }
+  | { kind: "mcpServerConnectFailed"; registryId: string; reason: string }
   /** In-flight/failed connect state cleared without an outcome — the
    * user cancelled a browser flow that will never answer. */
-  | { kind: "integrationConnectResolved"; registryId: string }
+  | { kind: "mcpServerConnectResolved"; registryId: string }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
   | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
@@ -2465,30 +2465,30 @@ export function reduceSettings(
       };
     case "auditTailChanged":
       return { ...state, auditTail: event.entries };
-    case "integrationRegistryLoaded":
-      return { ...state, integrationRegistry: event.entries };
-    case "integrationsChanged": {
-      // A connected integration retires its in-flight/failed connect card
-      // (keyed by registryId for curated entries, by the integration's own
+    case "mcpCatalogLoaded":
+      return { ...state, mcpCatalog: event.entries };
+    case "mcpServersChanged": {
+      // A connected server retires its in-flight/failed connect card
+      // (keyed by registryId for curated entries, by the server's own
       // id for custom-http OAuth — currentViews reports both as connected).
       const connectedIds = new Set(
-        event.integrations.filter((i) => i.connected).flatMap((i) => [i.id, i.registryId ?? i.id]),
+        event.servers.filter((i) => i.connected).flatMap((i) => [i.id, i.registryId ?? i.id]),
       );
       const connectFlow = Object.fromEntries(
         Object.entries(state.connectFlow).filter(([id]) => !connectedIds.has(id)),
       );
-      return { ...state, integrations: event.integrations, connectFlow };
+      return { ...state, mcpServers: event.servers, connectFlow };
     }
-    case "integrationConnectStarted":
+    case "mcpServerConnectStarted":
       return {
         ...state,
         connectFlow: { ...state.connectFlow, [event.registryId]: { status: "pending" } },
       };
-    case "integrationConnectResolved": {
+    case "mcpServerConnectResolved": {
       const { [event.registryId]: _cleared, ...connectFlow } = state.connectFlow;
       return { ...state, connectFlow };
     }
-    case "integrationConnectFailed":
+    case "mcpServerConnectFailed":
       return {
         ...state,
         connectFlow: {
@@ -2522,11 +2522,11 @@ export function reduceSettings(
 const SETTINGS_ONLY_KINDS = new Set([
   "permissionRulesChanged",
   "auditTailChanged",
-  "integrationRegistryLoaded",
-  "integrationsChanged",
-  "integrationConnectStarted",
-  "integrationConnectFailed",
-  "integrationConnectResolved",
+  "mcpCatalogLoaded",
+  "mcpServersChanged",
+  "mcpServerConnectStarted",
+  "mcpServerConnectFailed",
+  "mcpServerConnectResolved",
   "agentConfigsChanged",
   "sessionStatsChanged",
   "agentKnobsObserved",

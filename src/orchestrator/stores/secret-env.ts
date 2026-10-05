@@ -5,12 +5,13 @@
 // agents and stdio MCP servers commonly take API keys, and the machine store is
 // for non-sensitive config only — so config records carry no env at all.
 // One JSON record per id, one instance per record family (agents:
-// `acpPatchbay.agent.<id>.env`, integrations:
+// `acpPatchbay.agent.<id>.env`, MCP servers:
 // `acpPatchbay.integration.<id>.env` — the same key family the token store
-// uses). Values are read at the moment reality needs them — agent spawn
-// (agents-store.ts connect), MCP-server attach (integrations.mcpServersFor)
-// — and shown back to their owner in the Settings forms.
-import type { SecretsLike } from "./integration-tokens";
+// uses, under the name the values were first stored by). Values are read at
+// the moment reality needs them — agent spawn (agents-store.ts connect),
+// MCP-server attach (mcp-servers-store.ts mcpServersFor) — and shown back to
+// their owner in the Settings forms.
+import type { SecretsLike } from "./mcp-server-tokens";
 
 export class SecretEnvStore {
   constructor(

@@ -6,7 +6,7 @@
 // session's mcpServers entries with real editor state and session facts.
 // This is the only place that needs vscode.window/workspace/languages for
 // MCP purposes — the subprocesses themselves (src/mcp/server-main.ts,
-// src/integrations/bridge-main.ts) are plain Node, spawned by the agent,
+// src/mcp/bridge-main.ts) are plain Node, spawned by the agent,
 // and never touch vscode directly.
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,8 +17,8 @@ import {
   parseLines,
   type CurrentFileInfo,
   type DiagnosticInfo,
-  type IntegrationTokenParams,
-  type IntegrationTokenResult,
+  type McpServerTokenParams,
+  type McpServerTokenResult,
   type IpcNotification,
   type IpcRequest,
   type IpcResponse,
@@ -54,7 +54,7 @@ export interface EditorStateHostHooks {
    * that isn't editor state: a currently-valid credential for an MCP
    * server — only for a bridge the server was given to under this token,
    * refreshed transparently if needed. */
-  getIntegrationToken(contextToken: string, integrationId: string): Promise<IntegrationTokenResult | null>;
+  getMcpServerToken(contextToken: string, serverId: string): Promise<McpServerTokenResult | null>;
 }
 
 function severityName(sev: vscode.DiagnosticSeverity): DiagnosticInfo["severity"] {
@@ -179,10 +179,10 @@ export class EditorStateHost {
           request.sessionId,
           request.params as RequestUserInputParams,
         );
-      case "getIntegrationToken":
-        return this.hooks.getIntegrationToken(
+      case "getMcpServerToken":
+        return this.hooks.getMcpServerToken(
           request.sessionId,
-          (request.params as IntegrationTokenParams).integrationId,
+          (request.params as McpServerTokenParams).serverId,
         );
     }
   }

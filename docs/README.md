@@ -44,5 +44,5 @@ Deep dives:
 
 - **[acp-compliance.md](acp-compliance.md)** — patchbay's own conformance to the
   ACP protocol, as facts checked against a pinned SDK version.
-- **[mcp-architecture.md](mcp-architecture.md)** — the remote-MCP-integration
+- **[mcp-architecture.md](mcp-architecture.md)** — the remote-MCP-server
   architecture: how patchbay authenticates to and routes remote MCP servers.

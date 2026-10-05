@@ -70,8 +70,8 @@ product does not hide that; displaying it *is* bet #2.
 - **Concurrent sessions** — multiple sessions at once, same agent or different
   agents, side by side. Also the only guaranteed context-reset lever, so it is
   load-bearing, not a luxury.
-- **Integrations: one curated + open escape hatch.** GitHub ships as the single
-  curated one-click integration, proving the registry pattern. "Add any MCP server"
+- **MCP servers: one curated + open escape hatch.** GitHub ships as the single
+  curated one-click server, proving the registry pattern. "Add any MCP server"
   covers everything else.
 - **One permission surface** with per-agent honesty about what can actually be
   brokered (an agent that acts outside the permission flow is labeled as such, not
@@ -79,10 +79,10 @@ product does not hide that; displaying it *is* bet #2.
 
 Deliberate scope decisions, not limitations:
 
-- **Curated integrations stay narrow by design.** GitHub ships as the one curated
-  one-click integration; "add any MCP server" already reaches every other service,
+- **Curated MCP servers stay narrow by design.** GitHub ships as the one curated
+  one-click server; "add any MCP server" already reaches every other service,
   so breadth is covered today — a wider curated catalog isn't future work, it's
-  coverage MCP gives for free. Curating a one-click integration (OAuth flows,
+  coverage MCP gives for free. Curating a one-click server (OAuth flows,
   service churn) is a different muscle than editor depth, spent only where
   one-click depth genuinely pays. Deep and narrow beats wide and late.
 - **No agent routing or orchestration.** Patchbay never picks the agent for you.

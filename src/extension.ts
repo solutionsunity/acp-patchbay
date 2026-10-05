@@ -78,7 +78,7 @@ export function activate(context: vscode.ExtensionContext): {
       orchestrator.addSelectionToContextCommand(),
     ),
     vscode.commands.registerCommand("acpPatchbay.wireLog", () => orchestrator.wireLogCommand()),
-    // OAuth redirect target: integrations'
+    // OAuth redirect target: MCP servers'
     // browser flows come back as vscode://solutionsunity.acp-patchbay/...
     // URIs — resolved correctly in every environment by asExternalUri,
     // unlike a loopback HTTP server.

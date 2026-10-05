@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eraseAllData } from "../src/orchestrator/erase-all";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
-import { IntegrationConfigStore } from "../src/orchestrator/stores/integration-configs";
-import { IntegrationTokenStore, MemorySecrets } from "../src/orchestrator/stores/integration-tokens";
+import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
+import { McpServerTokenStore, MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
@@ -41,13 +41,13 @@ describe("eraseAllData", () => {
     const secrets = new MemorySecrets();
 
     const agentConfigs = new AgentConfigStore(globalKv);
-    const integrationConfigs = new IntegrationConfigStore(globalKv);
+    const mcpServerConfigs = new McpServerConfigStore(globalKv);
     const usedCapabilities = new UsedCapabilityStore(globalKv);
     const authLocks = new AuthLockStore(globalKv);
     const spawnRegistry = new SpawnRegistryStore(globalKv);
     const agentEnv = new SecretEnvStore(secrets, "acpPatchbay.agent");
-    const integrationEnv = new SecretEnvStore(secrets, "acpPatchbay.integration");
-    const integrationTokens = new IntegrationTokenStore(secrets);
+    const mcpServerEnv = new SecretEnvStore(secrets, "acpPatchbay.integration");
+    const mcpServerTokens = new McpServerTokenStore(secrets);
     const permissionRules = new PermissionRulesStore(workspaceKv);
     const machineRules = new MachineRulesStore(globalKv);
     const decisionAudit = new DecisionAuditStore(dir);
@@ -62,9 +62,9 @@ describe("eraseAllData", () => {
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
-    await integrationConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
-    await integrationEnv.set("github", { GITHUB_PAT: "ghp-secret" });
-    await integrationTokens.set("github", { accessToken: "gho-secret" });
+    await mcpServerConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
+    await mcpServerEnv.set("github", { GITHUB_PAT: "ghp-secret" });
+    await mcpServerTokens.set("github", { accessToken: "gho-secret" });
     await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // A stray from a removed agent — no config left, must still go.
     await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
@@ -83,9 +83,9 @@ describe("eraseAllData", () => {
     let stashWiped = false;
 
     await eraseAllData({
-      agentConfigs, integrationConfigs, usedCapabilities,
-      authLocks, spawnRegistry, agentEnv, integrationEnv,
-      integrationTokens, permissionRules, machineRules: machineRules,
+      agentConfigs, mcpServerConfigs, usedCapabilities,
+      authLocks, spawnRegistry, agentEnv, mcpServerEnv,
+      mcpServerTokens, permissionRules, machineRules: machineRules,
       decisionAudit, lastConnected, lastActiveSession,
       preferences, composerKnobs, sessionContinuity,
       workspaceSavedRoots, machineSavedRoots,
@@ -93,15 +93,15 @@ describe("eraseAllData", () => {
     });
 
     expect(agentConfigs.list()).toEqual([]);
-    expect(integrationConfigs.list()).toEqual([]);
+    expect(mcpServerConfigs.list()).toEqual([]);
     expect(usedCapabilities.list()).toEqual([]); // ghost gone too
     expect(authLocks.list()).toEqual([]);
     expect(sessionContinuity.list()).toEqual([]);
     expect(stashWiped).toBe(true);
     expect(spawnRegistry.list()).toEqual([]);
     expect(await agentEnv.get("claude")).toEqual({});
-    expect(await integrationEnv.get("github")).toEqual({});
-    expect(await integrationTokens.get("github")).toBeNull();
+    expect(await mcpServerEnv.get("github")).toEqual({});
+    expect(await mcpServerTokens.get("github")).toBeNull();
     expect(permissionRules.get()).toEqual(DEFAULT_PERMISSION_RULES);
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(await decisionAudit.tail(5)).toEqual([]);

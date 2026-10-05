@@ -52,7 +52,7 @@ import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted, untilGivenUp } from "./abort";
-import type { AttachedServer } from "./integrations";
+import type { AttachedServer } from "./mcp-servers-store";
 import type { AgentPool } from "./pool";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";

@@ -14,7 +14,7 @@ import { AcpRegistryStore } from "../../src/orchestrator/stores/acp-registry";
 import { AgentConfigStore } from "../../src/orchestrator/stores/agent-configs";
 import { AuthLockStore } from "../../src/orchestrator/stores/auth-locks";
 import { ComposerKnobsStore } from "../../src/orchestrator/stores/composer-knobs";
-import { MemorySecrets } from "../../src/orchestrator/stores/integration-tokens";
+import { MemorySecrets } from "../../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../../src/orchestrator/stores/kv";
 import { LastConnectedStore } from "../../src/orchestrator/stores/last-connected";
 import { SecretEnvStore } from "../../src/orchestrator/stores/secret-env";
