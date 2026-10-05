@@ -198,9 +198,11 @@ deliverable.
 - User can add any MCP server — command or URL, with auth — as a custom entry.
 - Two-state lifecycle: **active/inactive** toggles routing without touching the
   credential (the mute switch); **disconnect is the full clear** — credential,
-  env, and config — identical to removing a custom server, with a curated entry
-  simply returning to the catalog ready for a fresh connect. Nothing is stored
-  until it can actually work: a cancelled OAuth consent means nothing was added.
+  env, and config — identical to removing a custom server; the catalog entry
+  stays, ready to connect again. Nothing is stored until it can actually work: a
+  cancelled OAuth consent means nothing was added.
+- A curated service can be connected more than once — two GitHub accounts are
+  two servers, each under its own name (a second connection gets a number).
 - User owns the routing: which servers each agent receives is the user's
   choice, per agent, not all-or-nothing. Default ("auto"): a new server
   attaches to every agent; "only" pins an explicit list; "except" attaches to

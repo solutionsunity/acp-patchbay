@@ -762,6 +762,7 @@ export class Orchestrator {
         runLoginTask: (name, recipe) => runLoginTask(name, recipe),
         removed: (agentId) => {
           this.sessions.forgetAgentSessions(agentId);
+          void this.mcpServers.forgetAgent(agentId).catch(this.logCatch(`forget ${agentId} in MCP reach`));
           // A chat pane on the agent — still starting, or failed with a
           // Retry — has nothing left to wait for or retry.
           if (this.agentView.current.chatConnect?.agentId === agentId) {

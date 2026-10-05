@@ -181,9 +181,9 @@ export type Action =
   | { kind: "setSessionKnob"; sessionId: string; knobId: string; value: string | boolean }
   | { kind: "connectRegistryKey"; registryId: string; token: string; url?: string }
   | { kind: "connectRegistryOAuth"; registryId: string; url?: string }
-  /** `id` is generated orchestrator-side from the name (slug, uniquified) —
-   * it's the storage/SecretStorage key, an internal concern the user never
-   * names. */
+  /** The id is minted orchestrator-side — the storage/SecretStorage key,
+   * an internal concern the user never names; a name another server holds
+   * gets a number. */
   | {
       kind: "addCustomMcpServer";
       name: string;
@@ -202,9 +202,9 @@ export type Action =
    * the store's own, read off the published connect, never built here. */
   | { kind: "cancelMcpServerConnect"; key: string }
   /** Disconnect and remove are the same act — the full clear (config +
-   * credential + env). A curated entry then reappears in the catalog, ready
-   * for a fresh connect; a custom one is simply gone. The non-destructive
-   * option is the active toggle below. */
+   * credential + env): the server is gone, curated or custom; its catalog
+   * entry stays, ready to connect again. The non-destructive option is the
+   * active toggle below. */
   | { kind: "removeMcpServer"; serverId: string }
   | { kind: "setMcpServerActive"; serverId: string; active: boolean }
   | { kind: "setMcpServerRouting"; serverId: string; routing: McpServerRoutingView }

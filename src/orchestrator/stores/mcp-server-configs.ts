@@ -78,4 +78,31 @@ export class McpServerConfigStore extends GlobalRecordStore<McpServerConfig> {
   constructor(kv: KV) {
     super(kv, KEY, mcpServerConfigSchema);
   }
+
+  /** Adds a record under a display name no other record holds — picked in
+   * the same write, so two adds can't both take it: the name rides the
+   * wire as the server's name, and two of one name would collide in an
+   * agent. A taken name gets a number. Returns the name it got. */
+  async add(value: McpServerConfig): Promise<string> {
+    let name = value.name;
+    await this.rewrite((current) => {
+      const taken = new Set(current.map((v) => v.name));
+      for (let n = 2; taken.has(name); n++) name = `${value.name} ${n}`;
+      current.push({ ...value, name });
+      return current;
+    });
+    return name;
+  }
+
+  /** A removed agent leaves every reach list that names it, in one write —
+   * an "only" list it alone was on then reaches no one, as chosen. */
+  async forgetAgent(agentId: string): Promise<void> {
+    await this.rewrite((current) =>
+      current.map((v) => {
+        if (v.routing === "auto") return v;
+        if (Array.isArray(v.routing)) return { ...v, routing: v.routing.filter((id) => id !== agentId) };
+        return { ...v, routing: { except: v.routing.except.filter((id) => id !== agentId) } };
+      }),
+    );
+  }
 }

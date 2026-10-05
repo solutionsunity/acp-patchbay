@@ -526,10 +526,9 @@ export function McpServersSection(props: {
     setHeaderName("Authorization");
   };
 
-  // Connected entries live in the list above, not the catalog.
-  const available = state.mcpCatalog.filter(
-    (entry) => !state.mcpServers.some((i) => i.registryId === entry.id),
-  );
+  // Every entry stays in the catalog: one service can be connected more
+  // than once (two accounts), each connection a server of its own.
+  const available = state.mcpCatalog;
   const narrowed = catalogQuery.trim() !== "" || catalogMechanisms.size > 0;
   const shown = filterCatalog(available, catalogQuery, catalogMechanisms);
 
@@ -596,7 +595,7 @@ export function McpServersSection(props: {
                       icon={server.sourceKind === "registry" ? "debug-disconnect" : "trash"}
                       title={
                         server.sourceKind === "registry"
-                          ? "full clear — credential and config; the catalog entry stays, ready for a fresh connect"
+                          ? "full clear — credential and config; the catalog entry stays, ready to connect again"
                           : "full clear — credential, env, and config"
                       }
                       onConfirm={() => props.onRemove(server.id)}
@@ -889,7 +888,7 @@ export function McpServersSection(props: {
         <h2 className="mt-0">Curated catalog</h2>
         <div className="sub mb-1">
           Each entry offers exactly the mechanisms its vendor opens — key paste, MCP-spec OAuth, or
-          both. Connecting moves it to the list above.
+          both. Each connect adds a server to the list above; connect one twice for two accounts.
         </div>
         {available.length > 0 && (
           <div className="cat-filter">
@@ -940,9 +939,7 @@ export function McpServersSection(props: {
             />
           );
         })}
-        {available.length === 0 ? (
-          <div className="note m-0">Everything curated is already connected.</div>
-        ) : shown.length === 0 ? (
+        {shown.length === 0 && available.length > 0 ? (
           <div className="note m-0">
             No curated entry matches.{" "}
             <Button

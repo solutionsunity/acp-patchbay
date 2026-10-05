@@ -46,9 +46,12 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   for the record, which kept clear of the SDK's type while the UI already
   said "MCP Servers": one thing had two names, and the record's types now
   carry their own.)* Lifecycle is two-state: active/inactive (the mute switch — everything kept,
-  nothing routed) and disconnect = full clear (credential + env + config; a
-  curated entry reverts to the catalog). Nothing is stored until it can work —
-  a cancelled OAuth consent adds nothing.
+  nothing routed) and disconnect = full clear (credential + env + config; the
+  catalog entry stays). One catalog entry can be connected more than once —
+  two accounts, two servers, each with a minted id and a name of its own: the
+  name rides the wire as the server's name, so no two servers share one.
+  Nothing is stored until it can work — a cancelled OAuth consent adds
+  nothing.
 - **Branch** — the user-level concept: continue an alternate path from a session.
   Out of the current release (§ Branching); "fork" only ever names the protocol
   method `session/fork`, which remains a capability-matrix row.

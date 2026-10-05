@@ -121,6 +121,13 @@
   refresh it once. Before, each refreshed it on its own, and a server that
   rotates refresh tokens could treat the repeats as theft and revoke the
   sign-in. A refresh that fails is now logged.
+- A curated MCP server can be connected more than once — two GitHub
+  accounts, say. Each connection is a server of its own; the catalog keeps
+  every entry, and a second connection of one takes a number after its
+  name. A name another server already holds always does now, custom ones
+  included: two servers of one name would collide in an agent. (#58)
+- Removing an agent also takes it off every MCP server's list of agents
+  it reaches.
 
 ## 0.84.1 — 2026-09-29
 

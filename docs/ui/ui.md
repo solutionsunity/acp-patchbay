@@ -238,7 +238,8 @@ curated / `Remove` for custom · mono command/URL · routing · `Edit JSON…` f
 custom entries — the mcpServers entry, env values and a header key shown as
 stored and saved as written; an OAuth token never appears), then **Add custom** (structured fields:
 display name, command, args one-per-line, env `KEY=value` lines — the id is
-generated, a slug of the name, never user-typed; or `Import JSON…` accepting the
+minted, never user-typed, and a name another server holds gets a number; or
+`Import JSON…` accepting the
 well-known `{"mcpServers": {...}}` shape, per-entry failures labeled), then the
 **Curated catalog** last: a filter toolbar (search over name and description —
 what the row shows, never the caveat note · the `key`/`OAuth`/`local` chips as
@@ -251,14 +252,16 @@ paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— 
 locally —` (verified official local stdio servers — GitHub, Stripe, Sentry,
 Supabase, Augment — prefill the custom form; nothing runs until the user adds it).
 Per-account services label the URL field as what it is: the account's MCP endpoint,
-used by both connect paths. A pending browser flow shows `Cancel` (an abandoned tab
+used by both connect paths. Every entry stays in the catalog: connecting one again
+adds a second server (two accounts), named with a number. A pending browser flow
+shows `Cancel` (an abandoned tab
 must not mean forever-pending — cancel clears with no outcome invented, and a
 10-minute timeout backstops it); failed notes carry `Dismiss`.
 
 Lifecycle, two-state: **active/inactive** is the mute switch (config and credential
 intact, the server reaches no agent until toggled back); **Disconnect is the full
-clear** (credential + env + config — identical to removing a custom server; a
-curated entry simply reappears in the catalog, ready for a fresh connect). No third
+clear** (credential + env + config — identical to removing a custom server; the
+catalog entry stays, ready to connect again). No third
 state: a custom OAuth add runs the browser flow *before* storing anything, so
 cancelled consent means nothing was added — never a stranded credential-less
 record.

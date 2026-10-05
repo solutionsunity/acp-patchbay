@@ -10,6 +10,7 @@
 // injected OAuthUserAgent, so everything is unit-testable against a fake
 // OAuth provider and a fake remote MCP endpoint — the same fixture
 // philosophy as the fake ACP agent.
+import { randomUUID } from "node:crypto";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type {
@@ -83,12 +84,6 @@ const CLIENT_INFO = {
 };
 
 const BROWSER_FLOW_TIMEOUT_MS = 10 * 60_000;
-
-/** Ids are generated, never user-typed — they're the storage/SecretStorage
- * key, an internal concern. */
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "server";
-}
 
 /** One entry of the well-known `mcpServers` JSON (Claude Desktop / Cursor /
  * VS Code shape) — the interchange format users already have on disk.
@@ -354,8 +349,8 @@ export class McpServersStore {
   }
 
   /** Copy config: the server as a `{"mcpServers": {name: entry}}`
-   * document — the well-known shape importJson reads and other clients
-   * take. Keyed by display name so a re-import slugs back to the same id.
+   * document — the well-known shape an import reads and other clients
+   * take. Keyed by display name — the name a re-import gives the server.
    * A curated entry copies as its resolved endpoint plus auth shape (what
    * a re-import would create as a custom-http server). Undefined when there
    * is no endpoint to name. */
@@ -415,10 +410,10 @@ export class McpServersStore {
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
       if (token.trim() === "") throw new Error("key is empty");
-      await this.tokens.set(registryId, { accessToken: token.trim() });
-      this.log.info(`${registryId}: connected with key (endpoint ${loggableUrl(endpoint.url)})`);
-      await this.configs.upsert({
-        id: registryId,
+      const id = randomUUID();
+      await this.tokens.set(id, { accessToken: token.trim() });
+      const name = await this.configs.add({
+        id,
         name: entry.name,
         source: {
           kind: "registry",
@@ -430,7 +425,8 @@ export class McpServersStore {
         active: true,
         transport: "auto",
       });
-      return registryId;
+      this.log.info(`${id}: ${name} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
+      return id;
     });
   }
 
@@ -447,15 +443,16 @@ export class McpServersStore {
       if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
       this.log.info(`${registryId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
       const result = await this.browserFlow(connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent), signal);
-      await this.tokens.set(registryId, {
+      const id = randomUUID();
+      await this.tokens.set(id, {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
         expiresAt: expiresAtFrom(result.expiresIn),
         tokenEndpoint: result.tokenEndpoint,
         clientId: result.clientId,
       });
-      await this.configs.upsert({
-        id: registryId,
+      const name = await this.configs.add({
+        id,
         name: entry.name,
         source: {
           kind: "registry",
@@ -467,26 +464,16 @@ export class McpServersStore {
         active: true,
         transport: "auto",
       });
-      this.log.info(`${registryId}: connected via OAuth`);
-      return registryId;
+      this.log.info(`${id}: ${name} connected via OAuth`);
+      return id;
     });
-  }
-
-  /** A free id derived from the display name — slug, uniquified against
-   * what's stored. The id is patchbay's storage key, never user-typed. */
-  private uniqueId(name: string): string {
-    const base = slugify(name);
-    if (this.configs.get(base) === undefined) return base;
-    let n = 2;
-    while (this.configs.get(`${base}-${n}`) !== undefined) n++;
-    return `${base}-${n}`;
   }
 
   /** The escape hatch: any MCP server, command or URL, with auth. Nothing
    * is stored until it can actually work: a custom OAuth connect runs the
    * browser flow *first* and stores only on success — cancelling consent
-   * means nothing was added, never a stranded credential-less record.
-   * Returns the generated id (slug of `name`, uniquified). */
+   * means nothing was added, never a stranded credential-less record. The
+   * id is minted; a name already taken gets a number. Returns the id. */
   addCustom(
     name: string,
     source: McpServerSourceView,
@@ -494,7 +481,7 @@ export class McpServersStore {
     signal?: AbortSignal,
   ): Promise<string> {
     return this.attempt(connectKey.custom(name), signal, async () => {
-      const id = this.uniqueId(name);
+      const id = randomUUID();
       let configSource: McpServerSource;
       if (source.kind === "custom-stdio") {
         // `args` arrive structured (form lines / imported JSON) and are never
@@ -535,7 +522,7 @@ export class McpServersStore {
           });
         }
       }
-      await this.configs.upsert({
+      const given = await this.configs.add({
         id,
         name,
         source: configSource,
@@ -543,7 +530,7 @@ export class McpServersStore {
         active: true,
         transport: "auto",
       });
-      this.log.info(`${id}: custom ${configSource.kind} added`);
+      this.log.info(`${id}: custom ${configSource.kind} ${given} added`);
       return id;
     });
   }
@@ -642,10 +629,10 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  /** Disconnect *is* remove — the full clear (credential + env + config).
-   * A curated entry then reappears in the catalog ready for a fresh
-   * connect; a custom one is simply gone. The non-destructive option is
-   * `setActive(false)`, which keeps everything and only unroutes. */
+  /** Disconnect *is* remove — the full clear (credential + env + config):
+   * the server is gone, curated or custom; its catalog entry stays there to
+   * connect again. The non-destructive option is `setActive(false)`, which
+   * keeps everything and only unroutes. */
   async remove(id: string): Promise<void> {
     this.probes.delete(id);
     this.failures.delete(connectKey.server(id));
@@ -653,6 +640,12 @@ export class McpServersStore {
     await this.envStore.remove(id);
     await this.configs.remove(id);
     this.log.info(`${id}: removed — credential, env, and config cleared`);
+  }
+
+  /** An agent removed: no server's reach names it any more. */
+  async forgetAgent(agentId: string): Promise<void> {
+    await this.configs.forgetAgent(agentId);
+    await this.refresh();
   }
 
   async setActive(id: string, active: boolean): Promise<void> {

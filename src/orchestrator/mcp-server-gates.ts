@@ -25,25 +25,27 @@ export class McpServerGates {
     private readonly connectLine: Queue<"connect">,
   ) {}
 
-  /** A curated entry connected with a pasted key, then probed. */
-  async connectWithKey(catalogId: string, token: string, url?: string): Promise<void> {
-    await this.connected(
+  /** A curated entry connected with a pasted key, then probed. Settles
+   * with the new server's id. */
+  connectWithKey(catalogId: string, token: string, url?: string): Promise<string> {
+    return this.connected(
       this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
         this.store.connectRegistryWithKey(catalogId, token, url, signal),
       ),
     );
   }
 
-  /** A curated entry connected through its browser OAuth flow. */
-  async connectOAuth(catalogId: string, url?: string): Promise<void> {
-    await this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
+  /** A curated entry connected through its browser OAuth flow. Settles
+   * with the new server's id. */
+  connectOAuth(catalogId: string, url?: string): Promise<string> {
+    return this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
       this.store.connectRegistryOAuth(catalogId, url, signal),
     );
   }
 
-  /** A custom server added, then probed. */
-  async addCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): Promise<void> {
-    await this.connected(
+  /** A custom server added, then probed. Settles with its id. */
+  addCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): Promise<string> {
+    return this.connected(
       this.connectLine.run(connectKey.custom(name), "connect", (signal) =>
         this.store.addCustom(name, source, routing, signal),
       ),
@@ -81,7 +83,9 @@ export class McpServerGates {
   }
 
   /** A server a connect made is probed at once: the user just acted on it. */
-  private async connected(made: Promise<string>): Promise<void> {
-    await this.probe(await made);
+  private async connected(made: Promise<string>): Promise<string> {
+    const id = await made;
+    await this.probe(id);
+    return id;
   }
 }
