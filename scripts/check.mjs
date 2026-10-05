@@ -11,8 +11,11 @@ const run = (label, cmd) => {
 
 run("typecheck", "tsc --noEmit");
 run("lint (correctness classes)", "eslint src test scripts");
+// Built before the unit tests, which spawn the bundles — the local MCP
+// server, the bridge, the fake agent: a test runs what the source says, never
+// a build left over from an earlier run.
+run("build", "node esbuild.mjs && node scripts/build-fake-agent.mjs");
 run("vitest", "vitest run");
-run("build", "node esbuild.mjs");
 run("ui-gate", "node scripts/ui-gate/shots.mjs");
 
 // the electron suite needs a VS Code download + display; skip LOUDLY when
