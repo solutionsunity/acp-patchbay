@@ -46,3 +46,6 @@ Deep dives:
   ACP protocol, as facts checked against a pinned SDK version.
 - **[mcp-architecture.md](mcp-architecture.md)** — the remote-MCP-server
   architecture: how patchbay authenticates to and routes remote MCP servers.
+- **[store-architecture.md](store-architecture.md)** — how patchbay holds what
+  it knows: the stores, where each fact's truth is, and the queue and gates
+  that order the work on them.

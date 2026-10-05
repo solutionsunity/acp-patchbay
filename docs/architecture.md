@@ -14,22 +14,15 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Orchestrator** — the Node process in the extension host. Single source of truth
   for sessions, capability tables, permission rules, secrets, configuration.
 - **Agent View** — the one blended webview: agents + sessions + chat. Not three panels.
-- **Known sessions** — the sessions store's routing index of the agent's
-  own `session/list` (session id → owning agent and the agent's own id
-  for the session), repopulated every connect. The session id is patchbay's, minted when the session
-  enters and kept for the window's life — the id the views, actions,
-  events, the broker and the context tokens use. The agent's own id is the
-  handle every wire call carries and the one inbound traffic (updates,
-  permission asks, elicitations, file writes, terminals) names the session
-  by; with its agent it finds the one row it means, since an agent's ids
-  are only unique per agent — traffic naming a session patchbay doesn't
-  hold is answered cancelled or refused, never shown. A zero-turn re-mint
-  gives the session a new agent id and nothing else. Patchbay persists no
-  session index: the durable continuity row is per-session state keyed by
-  its agent and the agent's own id, never a list source. Nothing the view
-  shows lives here — title, activity stamp, liveness, the unseen mark have
-  one home, the Agent View's canonical row; the store reads such a fact
-  through a hook when it needs one, never a copy.
+- **Known sessions** — the sessions store's index of the sessions this
+  window knows, repopulated from the agent's own `session/list` every
+  connect: patchbay's id for each, its agent, and the agent's own id for it
+  — the handle ([session ids](store-architecture.md#sessions)). Patchbay
+  persists no session index: the durable continuity row is per-session
+  state, never a list source. Nothing the view shows lives here — title,
+  activity stamp, liveness, the unseen mark have one home, the Agent View's
+  canonical row; the store reads such a fact through a hook when it needs
+  one, never a copy.
 - **Decision audit** — append-only record of events that happened *in patchbay*:
   permissions granted, tools approved, routing chosen.
 - **Render cache** — disposable render state, rebuilt wholesale from `session/load`
@@ -147,30 +140,16 @@ import. No diffing library, no CRDT, no partial hydration:
 One mechanism sized to the actual problem: webviews die and must resurrect
 cheaply.
 
-## State — three honest stores, no co-equal copy
+## State
 
-The agent owns the conversation (features §1). Patchbay holds exactly three things,
-each with different truth semantics, so each gets different placement:
-
-| Store | Contents | Placement | Why |
-|---|---|---|---|
-| Known sessions | The routing index over the agent's own `session/list` (+ this window's creates): patchbay's id → agent, the agent's own id | Memory only — repopulated from the wire every connect | The agent is the source of truth for sessions; patchbay persists no session index and no transcripts (the continuity row below is per-session state, never a list source). Agents without `session/list` show only currently-open sessions; nothing survives a reload (deliberate scope decision), and the Sessions drawer names each such agent so the gap is never unexplained. |
-| Last-connected stamp | Agent ids still running at shutdown, plus write time | `workspaceState` | Reload continuation: consumed (read + cleared, spent either way) by the next activate and honored only while fresh (~60s) — deactivate fires identically for reload and quit, so the stamp's age is the discriminator; stale or absent means only auto-connect-flagged agents start |
-| Last-active pointer | The one session the Agent View returns to on the next activate — its agent and the agent's own id for it, what the next window can find it by (patchbay's ids live with a window) | `workspaceState` | Reload continuity's third rung (flag → list → pointer). One rule at restore, found or not: looked up in what the startup connects' own `session/list` syncs brought back — found activates, not found lands on the default screen, regardless of why. A miss never clears the pointer (not-found ≠ gone: a failed connect must not erase where a later window could return) |
-| Decision audit | Permission/routing events | JSONL in workspace storage | Append-only, grows, belongs to patchbay |
-| Render cache | Current render state | Memory; rebuilt from `session/load` replay | Disposable — replay always wins |
-| Agent + MCP server configs | Agents (launch config, defaults), MCP servers, routing | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically, drained once out of `globalState` (the editor-owned shared `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it) | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever |
-| Saved roots | Folders every new session starts with | `workspaceState` (this workspace, the default) + machine store (every workspace) | A preference read at session birth only; per-user either way, never repo-shipped |
-| Permission rules | Command allowlists, file-write scopes | `workspaceState` (workspace layer) + machine store (machine-layer command rules) + built-in defaults | Workspace rules evaluated first, machine rules the fallback floor, then ask. Per-user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
-| Secrets | OAuth tokens, API keys, env values (agents *and* custom-stdio MCP servers) | `SecretStorage` | The only place. Never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); config records carry no env. Values are read at the moment reality needs them — agent spawn, or MCP attach (where the handoff to the agent is inherent: the agent spawns stdio servers itself) — and shown back to their owner: the Settings channel carries them (that webview exists only while Settings is open), the forms show what is stored and save what is in the box. User-typed is readable — env values, a header API key; an OAuth token, flow-minted, never reaches a webview. *(Supersedes 2026-09-19 the write-only forms: key names only, blank meant keep.)* HTTP MCP-server credentials cross to the agent only on the mcp.http passthrough path (a fresh token in the session-open headers — ephemeral per session, exactly a CLI-added server's profile, and better than at-rest plaintext); on the bridge path the credential never touches agent-visible config — the bridge IPC-fetches its token per request |
-
-Agents and MCP servers are deliberately global-only. The MCP incident behind
-this — a production-access MCP server silently following a user between repos —
-is guarded where the risk actually lives: a config never rides a repo, so nothing
-attaches by opening a folder — it moves only by its owner's explicit Copy and
-paste (carrying what the owner typed, never an OAuth token). Binding configs to
-workspaces (workspaces, not repos) may return later
-as an opt-in; the extension point is visible, deliberately unfilled.
+The agent owns the conversation (features §1): patchbay persists no session
+index and no transcript — the known sessions are repopulated from the agent's
+own `session/list` every connect. Agents without `session/list` show only the
+sessions open now; nothing of theirs survives a reload (deliberate scope
+decision), and the Sessions drawer names each such agent so the gap is never
+unexplained. Everything else patchbay holds — the stores, where each fact's
+truth is, the queue and gates that order work on them, and where every saved
+fact lives — is [the stores architecture](store-architecture.md).
 
 ## ACP client pool & process model
 
@@ -322,94 +301,12 @@ flowchart TD
   anything stops, so a registry that no longer lists the agent leaves it
   running — and asks before a stop that would disconnect open
   conversations.
-- **Agent operations take turns.** A store is a store only: the agents
-  store's operations are plain. When one runs is the orchestrator's call,
-  made with two tools it owns: the queue (queue.ts — what each row holds,
-  the running operation first) and the gates (agent-gates.ts — one table
-  over every operation on an agent's connection, the one way any door
-  reaches them). The orchestrator's handle on the store carries no
-  connection operations, so no door can go around the gates. Connect,
-  restart, upgrade, log in (per method), log out and verify wait their
-  turn: a request for one the row already holds, running or waiting, joins
-  it and gets its outcome — a chat started while the agent auto-connects
-  shares that connect, a second Upgrade shares the first's question and
-  restart; any other waits in arrival order, and agents never wait on each
-  other. A connect whose turn finds the agent running is already done.
-  Stop and Remove cut in — the escape hatch is never queued behind a hung
-  launch: the agent's process goes down at once, the running operation is
-  told to stop (its abort signal) and the waiting ones are dropped, each
-  settling as `Cancelled` at once, and the cut-in runs once what it cut has
-  unwound, so a Remove never purges under an upgrade still saving. A cut-in
-  is never cut itself — a Remove asked for during a Stop runs after it. A
-  launch still in its launch phase (download, runtime check, launcher
-  warmup) is told to stop through its connect's signal — the pool marks it
-  stopped, kills a warmup, and never spawns; a download it started goes on
-  into the shared cache, where the next launch finds it — and a terminal
-  login is no longer waited on: its terminal stays the user's to finish,
-  use or close, and its return code, the login's only word, still counts
-  by the same rules when it comes; only the probe and restart that follow
-  a login, which need the process the stop ended, don't run. The window's end and erase cut every agent's
-  work at once, the same way (`stopAll`). The operations that end the
-  connection — Stop, Upgrade, Remove, Log out — follow one rule, the
-  gates': nothing in hand, it runs; work in hand — open conversations,
-  running turns, counted at that moment — one question with the counts,
-  asked at the operation so every door gets the same one. Remove always
-  asks, since it also forgets the agent. Stop and Remove ask before they
-  cut in (nothing is cut while the question is open), Log out when its
-  turn comes, Upgrade when it would stop a running agent — once the
-  registry has shown it can upgrade at all. Every way a connection ends
-  detaches the sessions that rode it, as a crash does: they reopen (load,
-  then resume) keeping what they hold — knobs, roots, held prompts, chips
-  (the sessions store's `agentStatusChanged`, the one rule). Remove also
-  lets go of the agent's live state: the pool's entry, the tracker's
-  marks, a chat pane on it. Saves never meet the gates. Add and startup are the
-  orchestrator's features: the store saves (or reads what to open), the
-  connect and the free check pass the gates. Gates decide policy only; the
-  store keeps its facts valid at its one writer whatever the gates admit.
-  What the queue holds is the row's `busy`, read by the store, never kept —
-  the views' one busy state: the Settings card dims the controls that
-  would only wait (never Stop) and spins Verify, Stop or Remove while its
-  own operation runs, the upgrade chip reads `upgrading to x.y.z…`, and the
-  chat pane says what the agent is busy with while a chat waits on it — a
-  chat whose connect a Stop or Remove ended simply closes its pane. Live
-  only — it ends with the window.
-- **Session operations take turns too**, with the same two tools: two
-  lines per session in the queue, and the session gates (session-gates.ts —
-  the one way any door reaches an operation on a session's connection; the
-  orchestrator's handle on the sessions store carries none of them). The
-  attachment line orders what binds the session to its connection or rides
-  it between turns: an open's attach (the ladder above, the zero-turn
-  re-mint with it), a reload, a roots re-apply, a knob set, an idle
-  release, a close. The turn line holds the session's turn, one at a time
-  as ACP has it; held words wait on the continuity row and enter the line
-  one by one. A turn starts once the attachment line is idle, so nothing
-  re-binds a session under its turn and no prompt fires into a replay. A
-  knob set waits for the attachment line only — a mode or option change
-  may land mid-turn. A root change made during a turn is re-applied when
-  the turn ends, however it ends, ahead of the next held words. A repeat joins: a second
-  open of a session still attaching, a second Reload, the same knob value
-  set again. Three doors end a turn. Stop ends it and drops the held words
-  — Stop means stop; words sent after it go once the stopped turn has
-  wound down. Reload ends it (words that never reached the wire go
-  back to the front of the held ones), reads the session again, then lets
-  the held words go. Close ends the turn and drops the attach work, then
-  the session leaves. A turn told to stop while on the wire sends
-  `session/cancel`, answers the asks it leaves open as cancelled, and gives
-  the agent 3 s to end it before ending it here — an agent that ignores
-  the cancel never holds a session; one still attaching just ends. The
-  prompt whose turn was ended settles as `Cancelled` at once.
-  Sessions never wait on each other, but every session's work except a
-  close enters behind what its agent's row holds at that moment — a
-  restart, an upgrade, a login — so nothing binds a session to a
-  connection being replaced. A close waits on nothing: a hung restart
-  never keeps a session open. Gates decide policy only; the store
-  keeps its facts valid at its writer whatever the gates admit — one turn
-  at a time, never under a standing auth lock. What the two lines hold is
-  the session's `busy`, read by the views, never kept: a turn on the line
-  is a turn underway (the running mark, the composer's Stop), an open or a
-  reload is the session attaching (the loading page, Reload's wait). A
-  turn is live only once it is on the wire — a turn still waiting for its
-  attach streams nothing. Never persisted — it ends with the window.
+- **Agent operations take turns** — one line per agent, a repeat joining,
+  Stop and Remove cutting in, and one question before a connection ends:
+  [the stores architecture](store-architecture.md#agents).
+- **Session operations take turns too** — two lines per session, each
+  session's work behind its agent's, Stop, Reload and Close ending a turn:
+  [the stores architecture](store-architecture.md#sessions).
 
 ## Agent capability matrix
 
@@ -1123,28 +1020,9 @@ flowchart TD
   is reach, not consent: which servers an agent receives is separate from whether
   a given tool call is allowed — consent rides the permission broker per call,
   for every request_permission-routing agent.
-- **MCP-server operations take turns too**, with the same two tools: lines
-  the queue keeps and the MCP gates (mcp-server-gates.ts — the one way any
-  door reaches an operation that takes time; the orchestrator's handle on
-  the MCP-servers store carries none of them). A server's line holds its
-  probe and its remove; the connect line holds the connects under way, one
-  line per curated entry and one per custom name. A repeat joins: a second
-  Connect on a card while its browser flow is out is that flow, a second
-  probe of a server is the one running. Remove cuts in: a probe still
-  running is told to stop and keeps no outcome, and the remove runs once it
-  has unwound. Saves — an edit, reach, transport, order, mute — never wait.
-  What the lines hold is the side's busy state, read by the store when it
-  publishes and never kept: a server's `busy`, and the connects under way.
-  The failure of the last attempt under a connect key — a connect's, an
-  add's, an import entry's, a server's save — is the store's live fact,
-  held until dismissed or tried again; the view keeps no copy. A credential
-  refresh is the credential's own rule, held at its writer, not a line's:
-  one refresh per credential at a time, shared by whoever asks meanwhile — a
-  bridge, an attach, a probe — since a refresh token spent twice can cost
-  the grant (every connect here is an OAuth public client, whose refresh
-  tokens the server rotates or binds); an answer that lands after the
-  credential was removed or replaced stores nothing, and a failed refresh is
-  logged and leaves the old token for the server's own 401 to speak.
+- **MCP-server operations take turns too** — a line per server, a connect
+  line, and the credential's own refresh rule:
+  [the stores architecture](store-architecture.md#mcp-servers).
 
 ## Rules, skills, commands
 
