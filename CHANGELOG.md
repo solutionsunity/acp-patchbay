@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Two agents that number their sessions the same way no longer take each
+  other's capability check: the check session of the second could hide the
+  first's, so options the first sent late (a model or mode list) were
+  dropped from its settings.
 - Adding a second custom agent that starts with the same executable (two
   `npx …` agents, two `hermes --profile …` agents) no longer replaces the
   first. Each added agent gets an id of its own and a name no other agent

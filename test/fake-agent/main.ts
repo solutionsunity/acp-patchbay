@@ -75,6 +75,10 @@ export type TurnStep =
 
 export interface FakeAgentScript {
   name?: string;
+  /** The prefix of the session ids this agent mints — by default
+   * `fake-<pid>`, one per process. A fixed one models two agents whose ids
+   * collide, which ACP allows: a session id is unique within its agent. */
+  sessionIdPrefix?: string;
   /** agentInfo.version returned from initialize — default "0.0.0"; tests
    * that need a version bump (the persisted used-capability cache
    * resetting) set this explicitly. */
@@ -645,7 +649,7 @@ const app = acp
     // and a *reused* id would silently merge an emulated continuation's
     // transcript into its dead parent's (P8) — real agents hand out
     // collision-resistant ids (uuids); this fixture must too.
-    const id = `fake-${process.pid}-${++sessionCounter}`;
+    const id = `${script.sessionIdPrefix ?? `fake-${process.pid}`}-${++sessionCounter}`;
     sessions.set(id, {
       id,
       cwd: ctx.params.cwd,

@@ -78,12 +78,15 @@ export class CapabilityTracker {
    * session (extensions/first-session-mcp-latch) — armed per connect,
    * spent by noteRealSessionOpened. */
   private deferredProbes = new Set<string>();
-  /** Probe sessionId → patchbayAgentId — lets the orchestrator route an agent's
-   * late config_option_update notifications for a throwaway probe session
-   * into the offerings instead of dropping them (some agents deliver the
-   * option surface only after session/new returns). Pruned per agent at
-   * each new probe, so it never holds more than the latest probe session. */
-  private probeSessions = new Map<string, string>();
+  /** Each agent's probe sessions, by the agent's own id for them — lets the
+   * orchestrator route an agent's late config_option_update notifications
+   * for a throwaway probe session into the offerings instead of dropping
+   * them (some agents deliver the option surface only after session/new
+   * returns). Per agent: session ids are only unique within one agent, so
+   * keyed by the bare id, a second agent's probe minting the same one would
+   * take the first's entry. Pruned per agent at each new probe, so it holds
+   * only the latest probe's sessions. */
+  private probeSessions = new Map<PatchbayAgentId, Set<string>>();
 
   constructor(
     private readonly pool: AgentPool,
@@ -164,9 +167,7 @@ export class CapabilityTracker {
   forget(patchbayAgentId: PatchbayAgentId): void {
     this.unversionedMarks.delete(patchbayAgentId);
     this.deferredProbes.delete(patchbayAgentId);
-    for (const [sessionId, owner] of this.probeSessions) {
-      if (owner === patchbayAgentId) this.probeSessions.delete(sessionId);
-    }
+    this.probeSessions.delete(patchbayAgentId);
   }
 
   /** A real session opened on this agent's connection (the sessions store's
@@ -179,7 +180,7 @@ export class CapabilityTracker {
    * it belongs, so the probe can run — once per connect; onDeclared
    * re-arms the deferral on reconnect. */
   noteRealSessionOpened(patchbayAgentId: PatchbayAgentId, sessionId: string): void {
-    if (this.probeSessions.get(sessionId) === patchbayAgentId) this.probeSessions.delete(sessionId);
+    this.probeSessions.get(patchbayAgentId)?.delete(sessionId);
     if (!this.deferredProbes.delete(patchbayAgentId)) return;
     this.log.debug(`${patchbayAgentId}: deferred probe starting (first real session opened)`);
     void this.probe(patchbayAgentId);
@@ -191,7 +192,7 @@ export class CapabilityTracker {
    * lingering probe entry capture another agent's real session whose id
    * happens to match. */
   isProbeSession(patchbayAgentId: PatchbayAgentId, sessionId: string): boolean {
-    return this.probeSessions.get(sessionId) === patchbayAgentId;
+    return this.probeSessions.get(patchbayAgentId)?.has(sessionId) ?? false;
   }
 
   /** Whether this agent's first-session privilege is still unspent — any
@@ -215,15 +216,14 @@ export class CapabilityTracker {
   private async probe(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
     const declared = this.pool.get(patchbayAgentId)?.declared;
     if (declared === undefined || declared === null) return "skipped";
-    for (const [sessionId, owner] of this.probeSessions) {
-      if (owner === patchbayAgentId) this.probeSessions.delete(sessionId);
-    }
+    const probes = new Set<string>();
+    this.probeSessions.set(patchbayAgentId, probes);
     const dir = await this.hooks.probeRoot(patchbayAgentId);
     const probeSessionIds: string[] = [];
     try {
       const response = await this.pool.newSession(patchbayAgentId, dir);
       probeSessionIds.push(response.sessionId);
-      this.probeSessions.set(response.sessionId, patchbayAgentId);
+      probes.add(response.sessionId);
       this.hooks.onProbeSession?.(patchbayAgentId, response);
       // Deliberately NO auth-state write here: session/new succeeding is
       // non-bearing evidence on lazy-auth agents (Claude passes it while
@@ -252,13 +252,13 @@ export class CapabilityTracker {
       if (declared.sessionClose) {
         for (const id of probeSessionIds) {
           await this.pool.closeSession(patchbayAgentId, id);
-          this.probeSessions.delete(id);
+          probes.delete(id);
         }
       }
       if (declared.sessionDelete) {
         for (const id of probeSessionIds) {
           await this.pool.deleteSession(patchbayAgentId, id);
-          this.probeSessions.delete(id);
+          probes.delete(id);
         }
       }
       return "ok";

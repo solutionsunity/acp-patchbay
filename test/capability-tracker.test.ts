@@ -166,6 +166,25 @@ describe("CapabilityTracker", () => {
     await pool.stop("reconn" as PatchbayAgentId);
   });
 
+  it("two agents' probe sessions under one id are each its own agent's — neither takes the other's entry", async () => {
+    const { pool, tracker, probes } = harness();
+    // Both agents mint their first session as the same id, as two agents
+    // counting from one may.
+    await pool.connect(spec({ sessionIdPrefix: "shared" }, "pa" as PatchbayAgentId));
+    await pool.connect(spec({ sessionIdPrefix: "shared" }, "pb" as PatchbayAgentId));
+    await waitFor(() => (probes.length >= 2 ? true : undefined));
+    const idOf = (agent: string) => probes.find((p) => p.patchbayAgentId === agent)!.sessionId;
+    expect(idOf("pa")).toBe(idOf("pb"));
+    expect(tracker.isProbeSession("pa" as PatchbayAgentId, idOf("pa"))).toBe(true);
+    expect(tracker.isProbeSession("pb" as PatchbayAgentId, idOf("pb"))).toBe(true);
+    // a real session opened under that id on one agent leaves the other's probe alone
+    tracker.noteRealSessionOpened("pa" as PatchbayAgentId, idOf("pa"));
+    expect(tracker.isProbeSession("pa" as PatchbayAgentId, idOf("pa"))).toBe(false);
+    expect(tracker.isProbeSession("pb" as PatchbayAgentId, idOf("pb"))).toBe(true);
+    await pool.stop("pa" as PatchbayAgentId);
+    await pool.stop("pb" as PatchbayAgentId);
+  });
+
   it("a latched agent's probe waits for the first real session, and the trigger spends once (first-session-mcp-latch)", async () => {
     const { pool, tracker, probes, seedAgent } = harness();
     // The latch's curated entry names the registry entry "auggie"; the agent
