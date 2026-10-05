@@ -35,8 +35,7 @@ import type {
 
 /** The synthetic knob id for the modes-fallback surface. Collision-free by
  * construction: the surfaces are exclusive, so on "modes" no agent option
- * ids exist at all. Also the fold target for legacy stored `mode`/`modeId`
- * selections (foldSeed). */
+ * ids exist at all. */
 export const MODE_KNOB_ID = "mode";
 
 /** What an extension route receives at execute time — performKnobSet
@@ -492,24 +491,6 @@ export async function applySeedToFixedPoint(
  * store records on a user set. */
 export function confirmedFromKnobs(current: NormalizedKnobs): KnobSeed {
   return Object.fromEntries(current.knobs.map((k) => [k.id, k.currentValue]));
-}
-
-/** Folds the legacy two-track stored shapes ({mode?/modeId?, options?})
- * into one id-keyed seed. Explicit option entries win over the legacy mode
- * field. The fold target MODE_KNOB_ID is exact for the modes surface, and
- * lands on the agent's own option id where it happens to be "mode"
- * (claude-agent-acp); anywhere else the entry is skipped at apply time like
- * any other no-longer-offered knob. */
-export function foldSeed(seed: {
-  mode?: string;
-  modeId?: string;
-  options?: Readonly<Record<string, string | boolean>>;
-}): KnobSeed {
-  const mode = seed.mode ?? seed.modeId;
-  return {
-    ...(mode !== undefined && mode !== "" ? { [MODE_KNOB_ID]: mode } : {}),
-    ...seed.options,
-  };
 }
 
 /** The Settings offerings projection (AgentKnobsView) — offered ids and

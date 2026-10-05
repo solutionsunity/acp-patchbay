@@ -10,7 +10,6 @@ import {
   applyModeUpdate,
   applySeedToFixedPoint,
   confirmedFromKnobs,
-  foldSeed,
   MODE_KNOB_ID,
   NO_KNOBS,
   normalizeKnobs,
@@ -395,13 +394,6 @@ describe("applySeedToFixedPoint — a surface conditioned on its own selections"
 });
 
 describe("seeds and projections", () => {
-  it("foldSeed: legacy mode/modeId land under MODE_KNOB_ID, explicit options win", () => {
-    expect(foldSeed({ mode: "plan", options: { model: "opus" } })).toEqual({ mode: "plan", model: "opus" });
-    expect(foldSeed({ modeId: "plan" })).toEqual({ mode: "plan" });
-    expect(foldSeed({ mode: "plan", options: { [MODE_KNOB_ID]: "code" } })).toEqual({ mode: "code" });
-    expect(foldSeed({})).toEqual({});
-  });
-
   it("confirmedFromKnobs records the whole combination id-keyed", () => {
     expect(confirmedFromKnobs(normalizeKnobs(MODES, [MODEL_OPTION]))).toEqual({ model: "sonnet" });
     expect(confirmedFromKnobs(normalizeKnobs(MODES, null))).toEqual({ [MODE_KNOB_ID]: "ask" });

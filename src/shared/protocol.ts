@@ -347,9 +347,7 @@ export interface AgentConfigView {
   autoConnect: boolean;
   /** Per-agent session defaults, keyed by knob id (the agent's own
    * config-option id, or knobs.ts's MODE_KNOB_ID on the modes-fallback
-   * surface) — never by semantic category, which ACP defines as UX-only.
-   * Always the folded shape here; the store's legacy {mode, options} split
-   * is folded at the orchestrator boundary (knobs.ts foldSeed). */
+   * surface) — never by semantic category, which ACP defines as UX-only. */
   defaults: KnobSeed;
   /** Present only for agents added from the official ACP registry — links
    * the card to its registry row. The update comparison reads the store's
@@ -843,9 +841,8 @@ export type SessionKnobView = SessionKnobBase &
     | { type: "boolean"; currentValue: boolean }
   );
 
-/** A stored knob selection set — knob id → value. The persisted stores keep
- * a legacy {mode, options} split for old data; everything in memory and
- * every view uses this folded shape (knobs.ts foldSeed is the one door). */
+/** A stored knob selection set — knob id → value, in memory, in every view
+ * and on disk alike. */
 export type KnobSeed = Readonly<Record<string, string | boolean>>;
 
 // ── chat / transcript (render cache — rebuilt wholesale, never merged) ──────

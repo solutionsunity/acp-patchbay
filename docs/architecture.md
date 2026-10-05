@@ -617,8 +617,8 @@ else).
   never a standing heuristic at a UI leaf.
 - **Selections are knob-id-keyed everywhere** (defaults, confirmed
   combinations): one flat record, the modes-fallback knob under `MODE_KNOB_ID`.
-  The stores keep their legacy `{mode, options}` / `modeId` fields as
-  read-only history, folded on read (`foldSeed`) and never written again.
+  An agent's defaults saved before that, with a `mode` field of its own, are
+  rewritten under `MODE_KNOB_ID` once, when the config store is built.
 
 **Offerings are read, never stored; selections are stored, never inferred.**
 ACP has no session-independent "list the knobs" call — `initialize` carries

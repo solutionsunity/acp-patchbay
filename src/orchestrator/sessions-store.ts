@@ -71,8 +71,8 @@ export interface SessionsStoreHooks {
    * state — the replay lands as a single swap, never a patch flood. */
   resyncView?(): void;
   /** The knob seed a session starts from on *entry* — a fresh session, or a
-   * history session attached with no live combination in hand (folded,
-   * knob-id-keyed — knobs.ts foldSeed). Which seed that is — the agent
+   * history session attached with no live combination in hand
+   * (knob-id-keyed). Which seed that is — the agent
    * config's defaults or the composer's per-agent combination — is the
    * orchestrator's policy (Preferences knobSource), not knowledge held here. */
   seedFor?(patchbayAgentId: PatchbayAgentId): KnobSeed | undefined;

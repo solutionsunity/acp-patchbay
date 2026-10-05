@@ -8,6 +8,7 @@
 // opt-in (workspaces, not repos), but until then one visibility rule, no
 // scope machinery.
 import { z } from "zod";
+import { MODE_KNOB_ID } from "../knobs";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { savedId } from "./saved-id";
 import { NamedRecordStore } from "./global-record-store";
@@ -16,12 +17,9 @@ import type { KV } from "./kv";
 /** `options` is keyed by knob id (the agent's own config-option id, or
  * knobs.ts's MODE_KNOB_ID on the modes-fallback surface), never by semantic
  * category — ACP defines category as UX-only, forbidden as a correctness
- * dependency. `mode` is legacy-read-only: folded into the seed on read
- * (knobs.ts foldSeed), never written again — new saves carry `options`
- * alone. (Supersedes the earlier {model, mode, effort} triple, which
+ * dependency. (Supersedes the earlier {model, mode, effort} triple, which
  * required categories to map back to options.) */
 const agentDefaultsSchema = z.object({
-  mode: z.string().optional(),
   // boolean covers boolean-typed options (a thinking toggle); the wire call
   // (session/set_config_option) carries both shapes natively.
   options: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
@@ -91,6 +89,30 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           if (!hasPolicy(r)) return r;
           const { processPolicy: _retired, ...rest } = r;
           return rest;
+        }),
+      );
+    }
+    // Once, at construction: defaults saved before every knob was keyed by
+    // its id carry a mode as a field of its own, `defaults.mode` — rewritten
+    // under the mode knob's id in `options`, where an option set explicitly
+    // for that id still wins. Read as it was, the mode would be dropped.
+    const current = kv.get<unknown>(KEY);
+    const withMode = (r: unknown): r is { defaults: { mode: string; options?: Record<string, unknown> } } =>
+      typeof r === "object" &&
+      r !== null &&
+      "defaults" in r &&
+      typeof r.defaults === "object" &&
+      r.defaults !== null &&
+      "mode" in r.defaults &&
+      typeof r.defaults.mode === "string";
+    if (Array.isArray(current) && current.some(withMode)) {
+      void kv.update(
+        KEY,
+        current.map((r: unknown) => {
+          if (!withMode(r)) return r;
+          const { mode, ...defaults } = r.defaults;
+          const options = mode === "" ? defaults.options : { [MODE_KNOB_ID]: mode, ...defaults.options };
+          return { ...r, defaults: { ...defaults, ...(options === undefined ? {} : { options }) } };
         }),
       );
     }

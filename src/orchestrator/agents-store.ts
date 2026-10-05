@@ -38,7 +38,6 @@ import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { terminalAuthOf, type TerminalAuth } from "./capabilities";
 import type { CapabilityTracker, ProbeOutcome } from "./capability-tracker";
-import { foldSeed } from "./knobs";
 import { checkPathDivergence } from "./launcher-health";
 import { nullLogger, type Logger } from "./logger";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
@@ -228,7 +227,7 @@ export class AgentsStore implements ConnectionOperations {
         args: c.args,
         env: await this.deps.env.get(c.id),
         autoConnect: c.autoConnect,
-        defaults: foldSeed(c.defaults),
+        defaults: c.defaults.options ?? {},
         registrySource: c.registrySource,
         lastSeenVersion: c.lastSeenVersion,
       })),
@@ -514,8 +513,7 @@ export class AgentsStore implements ConnectionOperations {
       command,
       args,
       autoConnect: config.autoConnect,
-      // The view's folded seed is stored under `options` alone — the legacy
-      // `mode` field is read (foldSeed) but never written again.
+      // The view's seed is stored as the defaults' `options`.
       defaults: { options: { ...config.defaults } },
       registrySource: prior?.registrySource ?? config.registrySource,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
@@ -713,7 +711,7 @@ export class AgentsStore implements ConnectionOperations {
       args: agent.args,
       env: {},
       cwd: this.deps.workspaceCwd,
-      defaults: foldSeed(agent.defaults),
+      defaults: agent.defaults.options ?? {},
       ...(source?.distributionKind === "binary" && source.binary !== undefined
         ? { binary: { ...source.binary, distribution: source.registryId, version: source.pinnedVersion } }
         : {}),

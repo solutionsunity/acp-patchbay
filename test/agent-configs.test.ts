@@ -93,3 +93,26 @@ describe("agent config store — the retired process policy", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("agent config store — a mode saved as its own field", () => {
+  const KEY = "acpPatchbay.agents";
+  const record = (id: string, defaults: unknown) => ({ id, name: id, command: "agent", args: [], defaults });
+
+  it("is rewritten under the mode knob's id at load — an option set for that id still wins, nothing else moves", async () => {
+    const kv = new MemoryKV();
+    await kv.update(KEY, [
+      record("a", { mode: "plan", options: { model: "opus" } }),
+      record("b", { mode: "plan", options: { mode: "code" } }),
+      record("c", { options: { model: "sonnet" } }),
+      record("d", { mode: "" }),
+    ]);
+    const store = new AgentConfigStore(kv);
+    const defaults = (id: string) => store.get(id as PatchbayAgentId)?.defaults;
+    expect(defaults("a")).toEqual({ options: { mode: "plan", model: "opus" } });
+    expect(defaults("b")).toEqual({ options: { mode: "code" } });
+    expect(defaults("c")).toEqual({ options: { model: "sonnet" } });
+    expect(defaults("d")).toEqual({});
+    // rewritten on disk: the next load has nothing left to fold
+    expect((kv.get(KEY) as { defaults: object }[]).some((r) => "mode" in r.defaults)).toBe(false);
+  });
+});

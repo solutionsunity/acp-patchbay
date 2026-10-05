@@ -329,7 +329,7 @@ when it takes facts only a later moment has (the startup lists), at that
 moment. Every migration consumes what triggers it: the rewrite itself, or
 a record that it ran where the old value can't be rewritten (an
 unregistered setting), so none runs twice and none undoes what the user
-did since.
+did since. Live code reads only the current shape.
 
 Agents and MCP servers are deliberately global-only. The risk this guards —
 a production-access MCP server silently following a user between repos — is
