@@ -172,7 +172,8 @@ and the last-open pointer.
 
 **The row.**
 
-- live — the attachment and its stream state, and the running turn. The
+- live — the attachment and its stream state (`session-stream.ts` turns the
+  session's updates into transcript events), and the running turn. The
   transcript and the title have one holder, the Agent View's canonical state,
   which the store reads through a hook and never copies;
 - saved — the continuity row (`stores/session-continuity.ts`, machine store):

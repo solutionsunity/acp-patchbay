@@ -241,7 +241,7 @@ Rules for appending vs. updating:
   merging: no boundary on the wire means no guessed split (live they're stream
   deltas; replayed they may lawfully be the recorded chunk log). User chunks are
   stricter — id-less never merges (whole-message-per-chunk, wire-verified). One
-  gate owns this rule: `runBlockFor`, sessions-store.ts. This merges "stream /
+  gate owns this rule: `runBlockFor`, session-stream.ts. This merges "stream /
   stream" into one continuous flowing paragraph instead of fragmenting every chunk
   into its own component — a common bug in other ACP clients — without fusing what
   the wire proves separate.

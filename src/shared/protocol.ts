@@ -937,7 +937,7 @@ export interface UserBlock {
    * echoes). A real
    * transcript fact, but not something the human typed: rendered as a dim
    * collapsed line, never a prompt bubble, and never counted as a prompt.
-   * Classified orchestrator-side (sessions-store harnessEnvelopeTag) —
+   * Classified orchestrator-side (session-stream harnessEnvelopeTag) —
    * the webview only reads the flag. */
   injected?: boolean;
 }

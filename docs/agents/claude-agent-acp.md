@@ -90,7 +90,7 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   echoes (`<command-name>`/`<local-command-stdout>` sequences). They replay
   as ordinary `user_message_chunk`s, indistinguishable by role from what the
   human typed. Consumed (graduated to mechanism):
-  `sessions-store.harnessEnvelopeTag` classifies whole-message XML-ish
+  `session-stream.harnessEnvelopeTag` classifies whole-message XML-ish
   envelopes at the chunk chokepoint and renders them dim/collapsed, never
   counted as a prompt. Conservative on purpose: any text a human plausibly
   typed stays a normal user bubble. Likely generic across bridge-based

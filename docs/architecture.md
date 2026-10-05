@@ -361,7 +361,7 @@ Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
 carries every hit, called synchronously and never awaited so it can't block
 the RPC it's reporting on. `capability-tracker.ts` only decides *when* to run
 the synthetic probe below and persists whatever pool.ts reports — it does not
-mark anything itself. sessions-store.ts, which decodes `session/update` payloads for
+mark anything itself. session-stream.ts, which decodes `session/update` payloads for
 rendering, marks nothing either; the wire-level fact and the render-level
 interpretation are two different concerns living at two different layers.
 
@@ -532,8 +532,8 @@ The spec-pure-core rule, generalizing meta.ts's discipline from the `_meta`
 site to every out-of-spec adoption (extra response fields, undeclared
 methods, removed-draft surfaces, behavioral quirk workarounds):
 
-- **Core stays spec-pure.** No core file (pool, sessions-store, knobs,
-  capability-tracker, orchestrator) may contain a deviation's shape, wire
+- **Core stays spec-pure.** No core file (pool, sessions-store,
+  session-stream, knobs, capability-tracker, orchestrator) may contain a deviation's shape, wire
   method name, or display policy — and never a vendor name; adoption is
   always shape-gated, like everything else in patchbay.
 - **One deviation = one module** under `orchestrator/extensions/`, owning:
@@ -1107,7 +1107,7 @@ Atoms first; each directory is one responsibility:
 ```
 src/
   extension.ts    activation entry
-  orchestrator/   agents store, sessions store, MCP-servers store, queue, gates, client pool, broker, stores, extensions
+  orchestrator/   agents store, sessions store and its transcript stream, MCP-servers store, queue, gates, client pool, broker, stores, extensions
   mcp/            local MCP server + its client-capability adapters, and the stdio-to-HTTP bridge for remote MCP servers
   webview/        agent-view/, settings/ — render only
   shared/         protocol.ts (actions, snapshots, patches), types
