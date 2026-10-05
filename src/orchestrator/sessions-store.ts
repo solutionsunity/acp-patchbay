@@ -232,6 +232,8 @@ function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
  * source of truth for sessions, repopulated every connect (patchbay
  * stores no transcripts, no index). */
 interface KnownSession {
+  /** Also the connection an attached session's requests ride: an agent has
+   * one process per window, holding every session opened with it. */
   patchbayAgentId: PatchbayAgentId;
   /** The agent's own id for the session — what every wire call carries,
    * and what inbound traffic names it by. Ids are only unique per agent,
@@ -255,9 +257,6 @@ interface KnownSession {
 }
 
 interface LiveSession extends StreamState {
-  /** Also the connection its requests ride: an agent has one process per
-   * window, holding every session opened with it. */
-  patchbayAgentId: PatchbayAgentId;
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
   knobs: NormalizedKnobs;
@@ -273,9 +272,8 @@ interface LiveSession extends StreamState {
   userModeSetPending: boolean;
 }
 
-function liveSession(patchbayAgentId: PatchbayAgentId): LiveSession {
+function liveSession(): LiveSession {
   return {
-    patchbayAgentId,
     openRun: null,
     knobs: NO_KNOBS,
     inFlight: false,
@@ -368,7 +366,14 @@ export class SessionsStore {
   }
 
   agentFor(sessionId: string): PatchbayAgentId | undefined {
-    return this.sessions.get(sessionId)?.patchbayAgentId ?? this.known.get(sessionId)?.patchbayAgentId;
+    return this.known.get(sessionId)?.patchbayAgentId;
+  }
+
+  /** The agent a live session rides. A session is bound into the index
+   * before it attaches and leaves it with its attachment, so a live one
+   * always has its row. */
+  private agentOfLive(sessionId: string): PatchbayAgentId {
+    return this.known.get(sessionId)!.patchbayAgentId;
   }
 
   /** The session an agent means by its own id for it — what every request
@@ -449,7 +454,7 @@ export class SessionsStore {
 
   /** The sessions attached to an agent's connection. */
   sessionsOn(patchbayAgentId: PatchbayAgentId): readonly string[] {
-    return [...this.sessions].filter(([, session]) => session.patchbayAgentId === patchbayAgentId).map(([sessionId]) => sessionId);
+    return [...this.sessions.keys()].filter((sessionId) => this.agentOfLive(sessionId) === patchbayAgentId);
   }
 
   /** What stopping this agent's connection would disconnect: the
@@ -460,7 +465,7 @@ export class SessionsStore {
     let conversations = 0;
     let turns = 0;
     for (const [sessionId, session] of this.sessions) {
-      if (session.patchbayAgentId !== patchbayAgentId) continue;
+      if (this.agentOfLive(sessionId) !== patchbayAgentId) continue;
       if (session.inFlight) turns++;
       if (session.inFlight || this.hasTurns(sessionId)) conversations++;
     }
@@ -483,7 +488,8 @@ export class SessionsStore {
   async release(sessionId: string, reason: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined || session.inFlight) return;
-    const agent = this.pool.get(session.patchbayAgentId);
+    const patchbayAgentId = this.agentOfLive(sessionId);
+    const agent = this.pool.get(patchbayAgentId);
     if (agent?.status !== "running") return; // nothing attached to free
     const declared = agent.declared;
     if (declared?.sessionClose !== true) return;
@@ -492,7 +498,7 @@ export class SessionsStore {
     if (handle === undefined) return;
     this.dropLiveSession(sessionId, session);
     try {
-      await this.pool.closeSession(session.patchbayAgentId, handle);
+      await this.pool.closeSession(patchbayAgentId, handle);
       this.log.info(`session ${sessionId}: released (${reason})`);
     } catch (err) {
       // Failure means the agent still holds it — the next open re-attaches
@@ -694,7 +700,7 @@ export class SessionsStore {
     this.bind(sessionId, { patchbayAgentId, handle, titled: false, everPrompted: false });
     this.bindToken(contextToken, sessionId);
     const seeded = saved.filter((p) => !missing.includes(p));
-    this.sessions.set(sessionId, liveSession(patchbayAgentId));
+    this.sessions.set(sessionId, liveSession());
     const now = new Date().toISOString();
     const title = `${agentName} session`;
     const summary: SessionSummary = {
@@ -849,7 +855,7 @@ export class SessionsStore {
    * it. */
   invalidateAgent(patchbayAgentId: PatchbayAgentId): void {
     for (const [sessionId, session] of this.sessions) {
-      if (session.patchbayAgentId !== patchbayAgentId) continue;
+      if (this.agentOfLive(sessionId) !== patchbayAgentId) continue;
       this.dropLiveSession(sessionId, session);
     }
     for (const [token, grant] of this.tokens) {
@@ -1102,7 +1108,7 @@ export class SessionsStore {
         `session ${sessionId} is no longer live and ${patchbayAgentId} does not support session/load`,
       );
     }
-    this.sessions.set(sessionId, liveSession(patchbayAgentId));
+    this.sessions.set(sessionId, liveSession());
     let knobs: NormalizedKnobs;
     try {
       knobs = await this.loadSilently(sessionId, patchbayAgentId, signal);
@@ -1211,7 +1217,7 @@ export class SessionsStore {
    * where it ends and the agent's unreplayed memory continues. Never merged
    * with replay — there is none. */
   private async resumeReattach(sessionId: string, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<void> {
-    this.sessions.set(sessionId, liveSession(patchbayAgentId));
+    this.sessions.set(sessionId, liveSession());
     const { knobs } = await this.attachSession({ via: "resume", sessionId }, patchbayAgentId, {}, signal);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
@@ -1243,7 +1249,7 @@ export class SessionsStore {
     if (route.via === "setMode") session.userModeSetPending = true;
     let next: NormalizedKnobs | null;
     try {
-      next = await performKnobSet(this.knobWire(session.patchbayAgentId), handle, () => session.knobs, route, value, this.knobDropLog);
+      next = await performKnobSet(this.knobWire(this.agentOfLive(sessionId)), handle, () => session.knobs, route, value, this.knobDropLog);
     } catch (err) {
       if (route.via === "setMode") session.userModeSetPending = false;
       throw err;
@@ -1253,7 +1259,7 @@ export class SessionsStore {
     // A user set, agent-confirmed: this — and only this — is what the
     // composer's per-agent combination records. Attach-time publishes never
     // do (they carry agent-reset state).
-    this.hooks.onKnobsConfirmed?.(session.patchbayAgentId, confirmedFromKnobs(next));
+    this.hooks.onKnobsConfirmed?.(this.agentOfLive(sessionId), confirmedFromKnobs(next));
   }
 
   /** The wire one routed set needs, bound to this session's connection —
@@ -1337,7 +1343,7 @@ export class SessionsStore {
         const handle = this.known.get(sessionId)?.handle;
         if (!session || handle === undefined || signal?.aborted === true) return;
         try {
-          const next = await performKnobSet(this.knobWire(session.patchbayAgentId), handle, () => session.knobs, route, value, this.knobDropLog);
+          const next = await performKnobSet(this.knobWire(this.agentOfLive(sessionId)), handle, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(sessionId, next);
         } catch {
           // rejected seed entry — the agent's state stands, nothing to repair
@@ -1483,7 +1489,7 @@ export class SessionsStore {
   async reapplyRoots(sessionId: string, signal: AbortSignal): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return; // not attached — next attach picks the list up
-    const declared = this.pool.get(session.patchbayAgentId)?.declared;
+    const declared = this.pool.get(this.agentOfLive(sessionId))?.declared;
     // An agent that never advertised the field gets no field on any
     // request — a re-attach would carry nothing, so none is made.
     if (declared?.sessionAdditionalDirectories !== true) return;
@@ -1505,7 +1511,7 @@ export class SessionsStore {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.patchbayAgentId, {}, signal);
+      const { knobs } = await this.attachSession({ via: "resume", sessionId }, this.agentOfLive(sessionId), {}, signal);
       this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed, signal);
       this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
@@ -1559,7 +1565,7 @@ export class SessionsStore {
     // Same shield as close(): an in-flight session/list walk's stale page
     // must not resurrect the retired shell.
     this.entomb({ patchbayAgentId, handle: was });
-    this.sessions.set(sessionId, liveSession(patchbayAgentId));
+    this.sessions.set(sessionId, liveSession());
     this.hooks.handleChanged?.(sessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
@@ -1640,7 +1646,7 @@ export class SessionsStore {
     const attached = this.sessions.get(sessionId);
     const known = this.known.get(sessionId);
     if (attached === undefined || known === undefined) throw new Error(this.notAttached(sessionId));
-    if (this.locked(sessionId)) throw new Error(`${attached.patchbayAgentId} is signed out`);
+    if (this.locked(sessionId)) throw new Error(`${known.patchbayAgentId} is signed out`);
     if (attached.inFlight) throw new Error(`session ${sessionId} has a turn running`);
     const session = attached;
     const { text, parts } = words;
@@ -1720,7 +1726,7 @@ export class SessionsStore {
     // every agent MUST accept. mimeTypes come with the chip or not at all —
     // the ingress that produced the bytes was the last honest source, so
     // nothing here ever defaults one.
-    const declared = this.pool.get(session.patchbayAgentId)?.declared;
+    const declared = this.pool.get(known.patchbayAgentId)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
     const prompt: ContentBlock[] = [];
@@ -1807,14 +1813,14 @@ export class SessionsStore {
       return;
     }
     const cancel = () => {
-      void this.pool.cancel(session.patchbayAgentId, handle).catch(() => {}); // a dead connection stops nothing
+      void this.pool.cancel(known.patchbayAgentId, handle).catch(() => {}); // a dead connection stops nothing
       // The cancel goes out first, then the asks it leaves are answered —
       // the agent hears the turn is ending before it hears why its ask was.
       this.hooks.cancelAsks?.(sessionId);
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      const response = await untilGivenUp(this.pool.prompt(session.patchbayAgentId, handle, prompt), signal, CANCEL_SETTLE_MS);
+      const response = await untilGivenUp(this.pool.prompt(known.patchbayAgentId, handle, prompt), signal, CANCEL_SETTLE_MS);
       if (response === null) {
         this.log.info(
           `session ${sessionId}: turn told to stop, still unanswered after ${CANCEL_SETTLE_MS} ms — ended here`,
@@ -1989,7 +1995,7 @@ export class SessionsStore {
           // notification, never from set_mode's stateless response.
           if (session.userModeSetPending) {
             session.userModeSetPending = false;
-            this.hooks.onKnobsConfirmed?.(session.patchbayAgentId, confirmedFromKnobs(next));
+            this.hooks.onKnobsConfirmed?.(this.agentOfLive(sessionId), confirmedFromKnobs(next));
           }
         } else {
           this.log.debug(`session ${sessionId}: current_mode_update dropped (config surface owns the knob state)`);
