@@ -835,8 +835,8 @@ The differentiator (the PRD's current-release scope), shipped complete:
 - **Context roots**: a session's roots are the workspace folders plus user-added
   external folders (multi-repo work). Delivered protocol-native: the first
   workspace folder is the session `cwd`; every other folder and every user-added
-  root rides as `additionalDirectories` — one composition in the session
-  manager feeds `session/new` and every re-apply, and the roots chip counts the
+  root rides as `additionalDirectories` — one composition in the sessions
+  store feeds `session/new` and every re-apply, and the roots chip counts the
   same two facts, so display and wire cannot disagree. The list has two
   readers. The agent reads it through the protocol, and the field crosses the
   wire **only when the agent advertises

@@ -37,8 +37,8 @@ export interface EditorStateHostHooks {
     sessionId: string,
     params: RequestUserInputParams,
   ): Promise<ElicitationAnswer>;
-  /** The session's complete root list, cwd first — what the session
-   * manager composes for the wire, read fresh per call so a subprocess
+  /** The session's complete root list, cwd first — what the sessions
+   * store composes for the wire, read fresh per call so a subprocess
    * never holds a copy the user has since changed. Empty for a session
    * that is gone (tokens are minted at attach and retired at close). */
   sessionRoots(sessionId: string): readonly string[];

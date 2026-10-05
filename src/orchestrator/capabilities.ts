@@ -263,7 +263,7 @@ export const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly Capabi
   // MCP-side: observable only in the local MCP server's handshake with the
   // agent's own MCP client, not on the ACP wire.
   "resources.subscribe": [],
-  // Session-manager only sends these block types where declared (the
+  // The sessions store only sends these block types where declared (the
   // resource-link fallback otherwise), so a mark can't outrun the claim.
   "prompt.image": [
     { via: "agentRequest", method: methods.agent.session.prompt, when: promptCarries("image") },
