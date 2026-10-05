@@ -1639,7 +1639,7 @@ describe("SessionsStore", () => {
     const patchbaySessionId = await h.sessions.createSession("sm32" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/odoo", "/src/lib"]);
-    expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, "sm32" as PatchbayAgentId)?.roots).toEqual(["/src/odoo", "/src/lib"]);
+    expect(store.read("sm32" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)?.roots).toEqual(["/src/odoo", "/src/lib"]);
     // servers spawned during session/new could only ask before the id was
     // known — they are told once the session and its list exist
     expect(h.rootsChanged).toEqual([patchbaySessionId]);
@@ -1746,7 +1746,7 @@ describe("SessionsStore", () => {
       await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
       await h1.gates.addRoot(patchbaySessionId, "/repo/extra");
       const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
-      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
+      expect(store.read("c33" as PatchbayAgentId, sessionId)?.roots).toEqual(["/repo/extra"]);
       await h1.pool.stop("c33" as PatchbayAgentId);
 
       // another client set the roots while no window was open: first sight
@@ -1756,7 +1756,7 @@ describe("SessionsStore", () => {
       await h2.sessions.syncAgentSessions("c33" as PatchbayAgentId);
       const listed = h2.sessions.rowFor("c33" as PatchbayAgentId, sessionId)!;
       expect(h2.state().contextRoots[listed]).toEqual(["/other/root"]);
-      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toEqual(["/other/root"]);
+      expect(store.read("c33" as PatchbayAgentId, sessionId)?.roots).toEqual(["/other/root"]);
 
       // a known session, still not open here: the next walk's report wins again
       await report(["/other/root", "/third"]);
@@ -1767,7 +1767,7 @@ describe("SessionsStore", () => {
       await report([]);
       await h2.sessions.syncAgentSessions("c33" as PatchbayAgentId);
       expect(h2.state().contextRoots[listed]).toEqual([]);
-      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toBeUndefined(); // the row carries no empty list
+      expect(store.read("c33" as PatchbayAgentId, sessionId)?.roots).toBeUndefined(); // the row carries no empty list
       await h2.pool.stop("c33" as PatchbayAgentId);
     });
 
@@ -1808,7 +1808,7 @@ describe("SessionsStore", () => {
       await h2.sessions.syncAgentSessions("c33w" as PatchbayAgentId);
       const listed = h2.sessions.rowFor("c33w" as PatchbayAgentId, sessionId)!;
       expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
-      expect(store.read(sessionId, "c33w" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
+      expect(store.read("c33w" as PatchbayAgentId, sessionId)?.roots).toEqual(["/repo/extra"]);
       await h2.gates.prompt(listed, { text: "roots?" });
       const echoed = h2.state().transcripts[listed]!.filter((b) => b.kind === "text").at(-1);
       expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/repo/extra"]);
@@ -1953,7 +1953,7 @@ describe("SessionsStore", () => {
     // the durable row keys on the agent's own id — what names the session
     // again after a reload
     const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
-    expect(store.read(sessionId, "smk1" as PatchbayAgentId)?.knobs).toMatchObject({ model: "sonnet" });
+    expect(store.read("smk1" as PatchbayAgentId, sessionId)?.knobs).toMatchObject({ model: "sonnet" });
     await h1.pool.stop("smk1" as PatchbayAgentId);
 
     // window 2: fresh processes, fresh memory — only the durable copy survives
@@ -2084,7 +2084,7 @@ describe("SessionsStore", () => {
       for (const [patchbayAgentId, list] of [["c29-nolist" as PatchbayAgentId, false], ["c29-list" as PatchbayAgentId, true]] as const) {
         await h.pool.connect(spec(script(list), patchbayAgentId));
         const patchbaySessionId = await stage(patchbayAgentId);
-        expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, patchbayAgentId)).toMatchObject({
+        expect(store.read(patchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)).toMatchObject({
           knobs: { model: "sonnet" },
           roots: ["/repo/extra"],
           chips: [{ id: `${patchbayAgentId}-chip` }],
@@ -2101,19 +2101,19 @@ describe("SessionsStore", () => {
     it("an agent that cannot list drops, at its connect, the rows of this workspace no session here holds — older builds' included; this window's stay", async () => {
       const kv = new MemoryKV();
       const store = new SessionContinuityStore(kv);
-      await store.patch("stale", "c29-load" as PatchbayAgentId, cwd, { draft: "old words" });
-      await store.patch("stale-elsewhere", "c29-load" as PatchbayAgentId, "/elsewhere", { draft: "old words" });
-      await store.patch("other", "c29-other" as PatchbayAgentId, cwd, { draft: "stays" });
+      await store.patch("c29-load" as PatchbayAgentId, "stale", cwd, { draft: "old words" });
+      await store.patch("c29-load" as PatchbayAgentId, "stale-elsewhere", "/elsewhere", { draft: "old words" });
+      await store.patch("c29-other" as PatchbayAgentId, "other", cwd, { draft: "stays" });
       await kv.update(CONTINUITY_KEY, [
         ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
-        { id: "c29-load\u0000legacy", agentId: "c29-load", draft: "no cwd" },
+        { patchbayAgentId: "c29-load", sessionId: "legacy", draft: "no cwd" },
       ]);
       const h = harness({ continuityStore: store });
       // load without list: a rung, but nothing will ever name an earlier
       // window's sessions again
       await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
       await h.sessions.syncAgentSessions("c29-load" as PatchbayAgentId);
-      expect(store.list().map((r) => r.id).sort()).toEqual(["c29-load\u0000stale-elsewhere", "c29-other\u0000other"]);
+      expect(store.list().map((r) => `${r.patchbayAgentId}:${r.sessionId}`).sort()).toEqual(["c29-load:stale-elsewhere", "c29-other:other"]);
 
       // a session of this window keeps its row across the agent's reconnect
       const patchbaySessionId = await h.sessions.createSession("c29-load" as PatchbayAgentId, "Fake Agent", cwd);
@@ -2121,7 +2121,7 @@ describe("SessionsStore", () => {
       await h.pool.stop("c29-load" as PatchbayAgentId);
       await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
       await h.sessions.syncAgentSessions("c29-load" as PatchbayAgentId);
-      expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, "c29-load" as PatchbayAgentId)).toEqual({ draft: "half a thought" });
+      expect(store.read("c29-load" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)).toEqual({ draft: "half a thought" });
       await h.pool.stop("c29-load" as PatchbayAgentId);
     });
 
@@ -2141,20 +2141,20 @@ describe("SessionsStore", () => {
 
       // while patchbay was closed: one session deleted in the agent's own
       // store, one row from a build that recorded no cwd
-      await store.patch("deleted-while-closed", "c29-walk" as PatchbayAgentId, cwd, { draft: "gone" });
-      await store.patch("other-ws", "c29-walk" as PatchbayAgentId, "/elsewhere", { draft: "stays" });
+      await store.patch("c29-walk" as PatchbayAgentId, "deleted-while-closed", cwd, { draft: "gone" });
+      await store.patch("c29-walk" as PatchbayAgentId, "other-ws", "/elsewhere", { draft: "stays" });
       await kv.update(CONTINUITY_KEY, [
         ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
-        { id: `c29-walk\u0000${sessionId}`, agentId: "c29-walk", draft: "legacy draft" },
+        { patchbayAgentId: "c29-walk", sessionId, draft: "legacy draft" },
       ]);
 
       const h2 = harness({ continuityStore: store });
       await h2.pool.connect(spec(script, "c29-walk"));
       await h2.sessions.syncAgentSessions("c29-walk" as PatchbayAgentId);
-      expect(store.read("deleted-while-closed", "c29-walk" as PatchbayAgentId)).toBeUndefined();
-      expect(store.read("other-ws", "c29-walk" as PatchbayAgentId)).toEqual({ draft: "stays" });
-      expect(store.read(sessionId, "c29-walk" as PatchbayAgentId)).toEqual({ draft: "legacy draft" });
-      expect(store.list().find((r) => r.id === `c29-walk\u0000${sessionId}`)?.cwd).toBe(cwd);
+      expect(store.read("c29-walk" as PatchbayAgentId, "deleted-while-closed")).toBeUndefined();
+      expect(store.read("c29-walk" as PatchbayAgentId, "other-ws")).toEqual({ draft: "stays" });
+      expect(store.read("c29-walk" as PatchbayAgentId, sessionId)).toEqual({ draft: "legacy draft" });
+      expect(store.list().find((r) => r.patchbayAgentId === "c29-walk" && r.sessionId === sessionId)?.cwd).toBe(cwd);
       expect(h2.state().drafts[h2.sessions.rowFor("c29-walk" as PatchbayAgentId, sessionId)!]).toBe("legacy draft");
       await h2.pool.stop("c29-walk" as PatchbayAgentId);
     });
@@ -2168,19 +2168,19 @@ describe("SessionsStore", () => {
       const patchbaySessionId = await h.sessions.createSession("c29-live" as PatchbayAgentId, "Fake Agent", cwd);
       await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
       const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
-      expect(store.read(sessionId, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
+      expect(store.read("c29-live" as PatchbayAgentId, sessionId)?.knobs).toEqual({ model: "sonnet" });
       await h.sessions.syncRunningAgents(); // the agent persists nothing until the first turn
-      expect(store.read(sessionId, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
+      expect(store.read("c29-live" as PatchbayAgentId, sessionId)?.knobs).toEqual({ model: "sonnet" });
       await h.pool.stop("c29-live" as PatchbayAgentId);
     });
 
     it("agent removal drops rows the index never saw, in every workspace", async () => {
       const store = new SessionContinuityStore(new MemoryKV());
-      await store.patch("never-indexed", "c29-rm" as PatchbayAgentId, "/elsewhere", { draft: "x" });
-      await store.patch("keep", "c29-keep" as PatchbayAgentId, cwd, { draft: "y" });
+      await store.patch("c29-rm" as PatchbayAgentId, "never-indexed", "/elsewhere", { draft: "x" });
+      await store.patch("c29-keep" as PatchbayAgentId, "keep", cwd, { draft: "y" });
       const h = harness({ continuityStore: store });
       h.sessions.forgetAgentSessions("c29-rm" as PatchbayAgentId);
-      expect(store.list().map((r) => r.agentId)).toEqual(["c29-keep"]);
+      expect(store.list().map((r) => r.patchbayAgentId)).toEqual(["c29-keep"]);
     });
 
     it("a zero-turn re-mint keeps the composer draft — an agent that writes no row still keeps the words, on the same session", async () => {
@@ -2490,7 +2490,7 @@ describe("session history (list / resume / delete)", () => {
     await expect(h.gates.prompt(lost, { text: "continue please", draft: "{editor}" })).rejects.toThrow();
 
     expect(h.state().promptQueue[lost]).toMatchObject([{ text: "continue please", draft: "{editor}" }]);
-    expect(continuityStore.read("lost-2", "sh2d" as PatchbayAgentId)?.queue).toMatchObject([{ text: "continue please" }]);
+    expect(continuityStore.read("sh2d" as PatchbayAgentId, "lost-2")?.queue).toMatchObject([{ text: "continue please" }]);
     // nothing reached the transcript — no user message for a turn that never was
     expect(h.state().transcripts[lost]).toEqual([]);
 
@@ -2503,7 +2503,7 @@ describe("session history (list / resume / delete)", () => {
     await writeFile(join(cwd, ".fake-agent-sessions", "lost-3.jsonl"), "", "utf8");
     // words held in an earlier window, waiting on the session's row
     const continuityStore = new SessionContinuityStore(new MemoryKV());
-    await continuityStore.patch("lost-3", "sh2e" as PatchbayAgentId, cwd, { queue: [{ id: "q-earlier", text: "first" }] });
+    await continuityStore.patch("sh2e" as PatchbayAgentId, "lost-3", cwd, { queue: [{ id: "q-earlier", text: "first" }] });
     const h = harness({ continuityStore });
     await h.pool.connect(
       spec({ declare: { ...LIST_CAPS, loadSession: true }, failLoad: true }, "sh2e"),
@@ -2518,7 +2518,7 @@ describe("session history (list / resume / delete)", () => {
     );
 
     expect(h.state().promptQueue[lost]?.map((q) => q.text)).toEqual(["first", "second"]);
-    expect(continuityStore.read("lost-3", "sh2e" as PatchbayAgentId)?.queue?.map((q) => q.text)).toEqual(["first", "second"]);
+    expect(continuityStore.read("sh2e" as PatchbayAgentId, "lost-3")?.queue?.map((q) => q.text)).toEqual(["first", "second"]);
 
     await h.pool.stop("sh2e" as PatchbayAgentId);
   });

@@ -10,9 +10,10 @@
 // unit-testable without vscode; the orchestrator supplies its real stores.
 import { DEFAULT_PERMISSION_RULES, type CommandRule, type PermissionRules } from "./stores/permission-rules";
 
-interface RecordStoreLike {
+/** A record store whose ids key secrets that go with it. */
+interface IdKeyedRecords {
   list(): { id: string }[];
-  remove(id: string): Promise<void>;
+  wipe(): Promise<void>;
 }
 
 interface SecretsById {
@@ -24,12 +25,12 @@ interface Wipeable {
 }
 
 export interface EraseTargets {
-  agentConfigs: RecordStoreLike;
-  mcpServerConfigs: RecordStoreLike;
-  usedCapabilities: RecordStoreLike;
-  authLocks: RecordStoreLike;
-  sessionContinuity: RecordStoreLike;
-  spawnRegistry: RecordStoreLike;
+  agentConfigs: IdKeyedRecords;
+  mcpServerConfigs: IdKeyedRecords;
+  usedCapabilities: Wipeable;
+  authLocks: Wipeable;
+  sessionContinuity: Wipeable;
+  spawnRegistry: Wipeable;
   agentEnv: SecretsById;
   mcpServerEnv: SecretsById;
   mcpServerTokens: SecretsById;
@@ -64,9 +65,10 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     await targets.mcpServerEnv.remove(id);
     await targets.mcpServerTokens.remove(id);
   }
-  // 2 — every record store by its own listing, so strays whose config is
-  // already gone (an old version's leftovers) go too.
-  const recordStores: RecordStoreLike[] = [
+  // 2 — every record store whole, so strays whose config is already gone
+  // (an old version's leftovers), and records that no longer read as
+  // records, go too.
+  const recordStores: Wipeable[] = [
     targets.agentConfigs,
     targets.mcpServerConfigs,
     targets.usedCapabilities,
@@ -74,9 +76,7 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
     targets.sessionContinuity,
     targets.spawnRegistry,
   ];
-  for (const store of recordStores) {
-    for (const record of store.list()) await store.remove(record.id);
-  }
+  for (const store of recordStores) await store.wipe();
   // 3 — rules back to built-ins, file stores gone.
   await targets.permissionRules.set(DEFAULT_PERMISSION_RULES);
   await targets.machineRules.set([]);

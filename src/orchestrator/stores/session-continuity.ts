@@ -22,7 +22,7 @@
 // them again. A zero-turn re-mint moves the row to the session's new id.
 import { z } from "zod";
 import type { SessionContinuity } from "../../shared/protocol";
-import { GlobalRecordStore } from "./global-record-store";
+import { RecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { savedId } from "./saved-id";
@@ -68,9 +68,13 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** Row identity is the PAIR — the agent and its own id for the session:
+ * that is what names the session again after a reload, and two agents
+ * minting the same string are two different sessions — a sessionId-only
+ * key would let one agent's row destroy the other's. */
 const sessionContinuityEntrySchema = z.object({
-  id: z.string().min(1), // rowId: the agent, and the agent's own id for the session
-  agentId: savedId<PatchbayAgentId>(),
+  patchbayAgentId: savedId<PatchbayAgentId>(),
+  sessionId: z.string().min(1),
   // The workspace the session belongs to: session/list is read per cwd, so
   // a reconcile can only judge the rows of the workspace it walked. Absent
   // only on rows written before the field existed — the first walk that
@@ -88,14 +92,6 @@ const KEY = "acpPatchbay.sessionContinuity";
 
 const FIELDS = ["knobs", "roots", "queue", "chips", "draft"] as const;
 
-/** Row identity is the PAIR — the agent and its own id for the session:
- * that is what names the session again after a reload, and two agents
- * minting the same string are two different sessions — a sessionId-only
- * key would let one agent's row destroy the other's. */
-function rowId(patchbayAgentId: PatchbayAgentId, sessionId: string): string {
-  return `${patchbayAgentId}\u0000${sessionId}`;
-}
-
 /** True when a field value carries nothing worth a row: absorbing these as
  * deletions keeps drained queues, sent chips, and cleared drafts from
  * leaving husk fields behind. */
@@ -105,15 +101,42 @@ function isEmpty(value: SessionContinuity[keyof SessionContinuity]): boolean {
   return typeof value === "object" && Object.keys(value).length === 0;
 }
 
-export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityEntry> {
+const isRow = (row: SessionContinuityEntry, patchbayAgentId: PatchbayAgentId, sessionId: string) =>
+  row.patchbayAgentId === patchbayAgentId && row.sessionId === sessionId;
+
+export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> {
   constructor(kv: KV) {
     super(kv, KEY, sessionContinuityEntrySchema);
+    // Once, at construction: a row stored before the pair had fields of its
+    // own carries it as one composite `id` — the agent, a NUL, the agent's
+    // id for the session — next to an `agentId`. Rewritten as
+    // `patchbayAgentId` and `sessionId`, every other field as stored. Read
+    // as it was, the row would fail its schema and be dropped.
+    const stored = kv.get<unknown>(KEY);
+    const composite = (r: unknown): r is { id: string; agentId: string } =>
+      typeof r === "object" &&
+      r !== null &&
+      "id" in r &&
+      "agentId" in r &&
+      typeof r.id === "string" &&
+      typeof r.agentId === "string" &&
+      r.id.startsWith(`${r.agentId}\u0000`);
+    if (Array.isArray(stored) && stored.some(composite)) {
+      void kv.update(
+        KEY,
+        stored.map((r: unknown) => {
+          if (!composite(r)) return r;
+          const { id, agentId, ...rest } = r;
+          return { patchbayAgentId: agentId, sessionId: id.slice(agentId.length + 1), ...rest };
+        }),
+      );
+    }
   }
 
-  read(sessionId: string, patchbayAgentId: PatchbayAgentId): SessionContinuity | undefined {
-    const entry = this.get(rowId(patchbayAgentId, sessionId));
+  read(patchbayAgentId: PatchbayAgentId, sessionId: string): SessionContinuity | undefined {
+    const entry = this.list().find((row) => isRow(row, patchbayAgentId, sessionId));
     if (entry === undefined) return undefined;
-    const { id: _i, agentId: _a, cwd: _c, ...fields } = entry;
+    const { patchbayAgentId: _a, sessionId: _s, cwd: _c, ...fields } = entry;
     return fields;
   }
 
@@ -122,22 +145,25 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
    * row with no fields left is removed entirely. Synchronous up to the KV
    * write (FileKV swaps memory before returning), so interleaved patches
    * never read each other mid-merge — a contract an async KV would break. */
-  patch(sessionId: string, patchbayAgentId: PatchbayAgentId, cwd: string, fields: SessionContinuity): Promise<void> {
-    const id = rowId(patchbayAgentId, sessionId);
-    const existing = this.get(id);
-    const base: SessionContinuityEntry = existing !== undefined ? { ...existing, cwd } : { id, agentId: patchbayAgentId, cwd };
-    for (const key of FIELDS) {
-      if (!(key in fields)) continue;
-      const value = fields[key];
-      if (isEmpty(value)) delete base[key];
-      else (base as Record<string, unknown>)[key] = value;
-    }
-    const hasFields = FIELDS.some((k) => base[k] !== undefined);
-    return hasFields ? this.upsert(base) : this.remove(id);
+  patch(patchbayAgentId: PatchbayAgentId, sessionId: string, cwd: string, fields: SessionContinuity): Promise<void> {
+    return this.rewrite((current) => {
+      const index = current.findIndex((row) => isRow(row, patchbayAgentId, sessionId));
+      const base: SessionContinuityEntry = index !== -1 ? { ...current[index]!, cwd } : { patchbayAgentId, sessionId, cwd };
+      for (const key of FIELDS) {
+        if (!(key in fields)) continue;
+        const value = fields[key];
+        if (isEmpty(value)) delete base[key];
+        else (base as Record<string, unknown>)[key] = value;
+      }
+      const rest = current.filter((_, i) => i !== index);
+      if (!FIELDS.some((k) => base[k] !== undefined)) return rest;
+      if (index === -1) return [...rest, base];
+      return current.map((row, i) => (i === index ? base : row));
+    });
   }
 
-  forget(sessionId: string, patchbayAgentId: PatchbayAgentId): Promise<void> {
-    return this.remove(rowId(patchbayAgentId, sessionId));
+  forget(patchbayAgentId: PatchbayAgentId, sessionId: string): Promise<void> {
+    return this.rewrite((current) => current.filter((row) => !isRow(row, patchbayAgentId, sessionId)));
   }
 
   /** The agent's rows for one workspace against what its complete list
@@ -148,8 +174,8 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
   reconcile(patchbayAgentId: PatchbayAgentId, cwd: string, keep: (sessionId: string) => boolean): Promise<void> {
     return this.rewrite((current) =>
       current.flatMap((row) => {
-        if (row.agentId !== patchbayAgentId || (row.cwd !== undefined && row.cwd !== cwd)) return [row];
-        if (!keep(row.id.slice(patchbayAgentId.length + 1))) return [];
+        if (row.patchbayAgentId !== patchbayAgentId || (row.cwd !== undefined && row.cwd !== cwd)) return [row];
+        if (!keep(row.sessionId)) return [];
         return [row.cwd === undefined ? { ...row, cwd } : row];
       }),
     );
@@ -157,6 +183,6 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
 
   /** Every row of the agent, every workspace: the agent is gone. */
   forgetAgent(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    return this.rewrite((current) => current.filter((row) => row.agentId !== patchbayAgentId));
+    return this.rewrite((current) => current.filter((row) => row.patchbayAgentId !== patchbayAgentId));
   }
 }

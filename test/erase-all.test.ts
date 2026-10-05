@@ -79,7 +79,7 @@ describe("eraseAllData", () => {
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
     await composerKnobs.record("claude" as PatchbayAgentId, { mode: "code" });
     await authLocks.upsert({ id: "claude" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
-    await sessionContinuity.patch("s1", "claude" as PatchbayAgentId, "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
+    await sessionContinuity.patch("claude" as PatchbayAgentId, "s1", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
     await workspaceSavedRoots.add("/src/lib");
     await machineSavedRoots.add("/src/odoo");
     let stashWiped = false;

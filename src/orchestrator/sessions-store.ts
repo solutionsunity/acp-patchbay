@@ -282,9 +282,8 @@ function liveSession(): LiveSession {
 }
 
 /** An agent's id for a session, with its agent — ids are only unique per
- * agent, so this is what names one row. (The continuity store keys its
- * rows the same way on disk; that key is a storage format, this one an
- * index in memory — each may change without the other.) */
+ * agent, so the pair is what names one row; this is the pair as a key of
+ * the in-memory index. */
 function pairKey(patchbayAgentId: PatchbayAgentId, sessionId: string): string {
   return `${patchbayAgentId}\u0000${sessionId}`;
 }
@@ -418,7 +417,7 @@ export class SessionsStore {
   private saved(patchbaySessionId: PatchbaySessionId): SessionContinuity {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) return {};
-    return this.continuity.read(row.sessionId, row.patchbayAgentId) ?? {};
+    return this.continuity.read(row.patchbayAgentId, row.sessionId) ?? {};
   }
 
   /** Writes fields of the session's continuity row — an empty value
@@ -432,8 +431,8 @@ export class SessionsStore {
    * agent's id names; null forgets the row. */
   private write(row: { patchbayAgentId: PatchbayAgentId; sessionId: string }, fields: SessionContinuity | null): void {
     void (fields === null
-      ? this.continuity.forget(row.sessionId, row.patchbayAgentId)
-      : this.continuity.patch(row.sessionId, row.patchbayAgentId, this.cwd(), fields)
+      ? this.continuity.forget(row.patchbayAgentId, row.sessionId)
+      : this.continuity.patch(row.patchbayAgentId, row.sessionId, this.cwd(), fields)
     ).catch((err: Error) => this.log.error(`session continuity ${row.sessionId} — ${err.message}`));
   }
 

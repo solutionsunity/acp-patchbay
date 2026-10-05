@@ -403,61 +403,73 @@ describe("UsedCapabilityStore.seed — the fresh claim outranks the cache", () =
 });
 
 describe("SessionContinuityStore", () => {
+  it("a row stored under one composite id reads by its pair — nothing dropped, nothing left to fold", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.sessionContinuity", [
+      { id: "claude\u0000s1", agentId: "claude", cwd: "/ws", draft: "kept words" },
+      { patchbayAgentId: "auggie", sessionId: "s2", draft: "already paired" },
+    ]);
+    const store = new SessionContinuityStore(kv);
+    expect(store.read("claude" as PatchbayAgentId, "s1")).toEqual({ draft: "kept words" });
+    expect(store.read("auggie" as PatchbayAgentId, "s2")).toEqual({ draft: "already paired" });
+    expect(JSON.stringify(kv.get("acpPatchbay.sessionContinuity"))).not.toContain("agentId\"");
+  });
+
   const ws = "/ws/a";
 
-  it("reads are agentId-checked — a colliding session id under another agent reads absent", async () => {
+  it("reads are checked by agent — a colliding session id under another agent reads absent", async () => {
     const store = new SessionContinuityStore(new MemoryKV());
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { knobs: { model: "sonnet", thinking: true } });
-    expect(store.read("s1", "claude" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet", thinking: true });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { knobs: { model: "sonnet", thinking: true } });
+    expect(store.read("claude" as PatchbayAgentId, "s1")?.knobs).toEqual({ model: "sonnet", thinking: true });
     // session ids are agent-minted: the same string under a different agent
     // is a different session, never the other agent's state
-    expect(store.read("s1", "auggie" as PatchbayAgentId)).toBeUndefined();
-    expect(store.read("s2", "claude" as PatchbayAgentId)).toBeUndefined();
-    await store.forget("s1", "claude" as PatchbayAgentId);
-    expect(store.read("s1", "claude" as PatchbayAgentId)).toBeUndefined();
+    expect(store.read("auggie" as PatchbayAgentId, "s1")).toBeUndefined();
+    expect(store.read("claude" as PatchbayAgentId, "s2")).toBeUndefined();
+    await store.forget("claude" as PatchbayAgentId, "s1");
+    expect(store.read("claude" as PatchbayAgentId, "s1")).toBeUndefined();
   });
 
   it("patch merges fields; empty values delete them; a fieldless row leaves the store", async () => {
     const kv = new MemoryKV();
     const store = new SessionContinuityStore(kv);
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { knobs: { model: "sonnet" } });
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, {
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { knobs: { model: "sonnet" } });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, {
       queue: [{ id: "q1", text: "held", draft: '{"editor":"held"}' }],
       draft: "typing…",
     });
-    expect(store.read("s1", "claude" as PatchbayAgentId)).toEqual({
+    expect(store.read("claude" as PatchbayAgentId, "s1")).toEqual({
       knobs: { model: "sonnet" },
       queue: [{ id: "q1", text: "held", draft: '{"editor":"held"}' }],
       draft: "typing…",
     });
     // a held row's editor state survives the next window's load — the
     // schema must carry it, not strip it as an unknown key
-    expect(new SessionContinuityStore(kv).read("s1", "claude" as PatchbayAgentId)?.queue).toEqual([
+    expect(new SessionContinuityStore(kv).read("claude" as PatchbayAgentId, "s1")?.queue).toEqual([
       { id: "q1", text: "held", draft: '{"editor":"held"}' },
     ]);
     // drained queue and cleared draft drop their fields, knobs stand
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { queue: [], draft: "" });
-    expect(store.read("s1", "claude" as PatchbayAgentId)).toEqual({ knobs: { model: "sonnet" } });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { queue: [], draft: "" });
+    expect(store.read("claude" as PatchbayAgentId, "s1")).toEqual({ knobs: { model: "sonnet" } });
     // last field emptied → the row itself leaves
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { knobs: undefined });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { knobs: undefined });
     expect(store.list()).toEqual([]);
   });
 
   it("two agents' colliding session ids keep separate rows — one can never destroy the other's", async () => {
     const store = new SessionContinuityStore(new MemoryKV());
-    await store.patch("1", "claude" as PatchbayAgentId, ws, { knobs: { model: "sonnet" } });
-    await store.patch("1", "auggie" as PatchbayAgentId, ws, { draft: "other agent, same id" });
-    expect(store.read("1", "claude" as PatchbayAgentId)).toEqual({ knobs: { model: "sonnet" } });
-    expect(store.read("1", "auggie" as PatchbayAgentId)).toEqual({ draft: "other agent, same id" });
+    await store.patch("claude" as PatchbayAgentId, "1", ws, { knobs: { model: "sonnet" } });
+    await store.patch("auggie" as PatchbayAgentId, "1", ws, { draft: "other agent, same id" });
+    expect(store.read("claude" as PatchbayAgentId, "1")).toEqual({ knobs: { model: "sonnet" } });
+    expect(store.read("auggie" as PatchbayAgentId, "1")).toEqual({ draft: "other agent, same id" });
     // an empty-draft save under one agent removes only that agent's row
-    await store.patch("1", "auggie" as PatchbayAgentId, ws, { draft: "" });
-    expect(store.read("1", "auggie" as PatchbayAgentId)).toBeUndefined();
-    expect(store.read("1", "claude" as PatchbayAgentId)).toEqual({ knobs: { model: "sonnet" } });
+    await store.patch("auggie" as PatchbayAgentId, "1", ws, { draft: "" });
+    expect(store.read("auggie" as PatchbayAgentId, "1")).toBeUndefined();
+    expect(store.read("claude" as PatchbayAgentId, "1")).toEqual({ knobs: { model: "sonnet" } });
   });
 
   it("an empty knobs object is a deletion, not a husk field", async () => {
     const store = new SessionContinuityStore(new MemoryKV());
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { knobs: {} });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { knobs: {} });
     expect(store.list()).toEqual([]);
   });
 
@@ -469,33 +481,33 @@ describe("SessionContinuityStore", () => {
   it("reconcile: this workspace's unreported rows leave, rows without a cwd are stamped when reported and dropped otherwise, other workspaces untouched", async () => {
     const kv = new MemoryKV();
     const store = new SessionContinuityStore(kv);
-    await store.patch("kept", "claude" as PatchbayAgentId, ws, { draft: "a" });
-    await store.patch("gone", "claude" as PatchbayAgentId, ws, { draft: "b" });
-    await store.patch("elsewhere", "claude" as PatchbayAgentId, "/ws/b", { draft: "c" });
-    await store.patch("other-agent", "auggie" as PatchbayAgentId, ws, { draft: "d" });
+    await store.patch("claude" as PatchbayAgentId, "kept", ws, { draft: "a" });
+    await store.patch("claude" as PatchbayAgentId, "gone", ws, { draft: "b" });
+    await store.patch("claude" as PatchbayAgentId, "elsewhere", "/ws/b", { draft: "c" });
+    await store.patch("auggie" as PatchbayAgentId, "other-agent", ws, { draft: "d" });
     // rows written before the cwd field existed
     const raw = kv.get<unknown[]>("acpPatchbay.sessionContinuity") ?? [];
     await kv.update("acpPatchbay.sessionContinuity", [
       ...raw,
-      { id: "claude\u0000legacy-kept", agentId: "claude", draft: "e" },
-      { id: "claude\u0000legacy-gone", agentId: "claude", draft: "f" },
+      { patchbayAgentId: "claude", sessionId: "legacy-kept", draft: "e" },
+      { patchbayAgentId: "claude", sessionId: "legacy-gone", draft: "f" },
     ]);
     await store.reconcile("claude" as PatchbayAgentId, ws, (id) => id === "kept" || id === "legacy-kept");
-    expect(store.read("kept", "claude" as PatchbayAgentId)).toEqual({ draft: "a" });
-    expect(store.read("gone", "claude" as PatchbayAgentId)).toBeUndefined();
-    expect(store.read("elsewhere", "claude" as PatchbayAgentId)).toEqual({ draft: "c" });
-    expect(store.read("other-agent", "auggie" as PatchbayAgentId)).toEqual({ draft: "d" });
-    expect(store.read("legacy-kept", "claude" as PatchbayAgentId)).toEqual({ draft: "e" });
-    expect(store.list().find((r) => r.id === "claude\u0000legacy-kept")?.cwd).toBe(ws);
-    expect(store.read("legacy-gone", "claude" as PatchbayAgentId)).toBeUndefined();
+    expect(store.read("claude" as PatchbayAgentId, "kept")).toEqual({ draft: "a" });
+    expect(store.read("claude" as PatchbayAgentId, "gone")).toBeUndefined();
+    expect(store.read("claude" as PatchbayAgentId, "elsewhere")).toEqual({ draft: "c" });
+    expect(store.read("auggie" as PatchbayAgentId, "other-agent")).toEqual({ draft: "d" });
+    expect(store.read("claude" as PatchbayAgentId, "legacy-kept")).toEqual({ draft: "e" });
+    expect(store.list().find((r) => r.patchbayAgentId === "claude" && r.sessionId === "legacy-kept")?.cwd).toBe(ws);
+    expect(store.read("claude" as PatchbayAgentId, "legacy-gone")).toBeUndefined();
   });
 
   it("forgetAgent drops the agent's rows in every workspace — no index required", async () => {
     const store = new SessionContinuityStore(new MemoryKV());
-    await store.patch("s1", "claude" as PatchbayAgentId, ws, { draft: "a" });
-    await store.patch("s2", "claude" as PatchbayAgentId, "/ws/b", { draft: "b" });
-    await store.patch("s1", "auggie" as PatchbayAgentId, ws, { draft: "c" });
+    await store.patch("claude" as PatchbayAgentId, "s1", ws, { draft: "a" });
+    await store.patch("claude" as PatchbayAgentId, "s2", "/ws/b", { draft: "b" });
+    await store.patch("auggie" as PatchbayAgentId, "s1", ws, { draft: "c" });
     await store.forgetAgent("claude" as PatchbayAgentId);
-    expect(store.list().map((r) => r.agentId)).toEqual(["auggie"]);
+    expect(store.list().map((r) => r.patchbayAgentId)).toEqual(["auggie"]);
   });
 });
