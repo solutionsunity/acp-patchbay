@@ -10,7 +10,7 @@ import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import type { AgentViewEvent } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 let dir: string;
 let workspaceRoot: string;
@@ -127,34 +127,34 @@ describe("PermissionBroker.evaluateCommand", () => {
 describe("PermissionBroker.evaluateFileWrites", () => {
   it("allows paths under the workspace root", async () => {
     const { broker } = harness();
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "src", "a.ts")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "src", "a.ts")])).toBe("allow");
   });
 
   it("asks for paths outside the workspace by default", async () => {
     const { broker } = harness();
-    expect(await broker.evaluateFileWrites("s1", ["/etc/passwd"])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, ["/etc/passwd"])).toBe("ask");
   });
 
   it("workspace+temp also allows the system temp dir", async () => {
     const { broker, rules } = harness();
     await rules.set({ commandRules: [], fileWriteScope: "workspace+temp" });
-    expect(await broker.evaluateFileWrites("s1", [join(tmpdir(), "scratch.txt")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(tmpdir(), "scratch.txt")])).toBe("allow");
   });
 
   it("always-ask overrides everything, even inside the workspace", async () => {
     const { broker, rules } = harness();
     await rules.set({ commandRules: [], fileWriteScope: "always-ask" });
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts")])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "a.ts")])).toBe("ask");
   });
 
   // Judged where the write lands, never by the text the agent sent
   // (issue #56).
   it("a `..` that climbs out of the workspace asks — through existing folders and ones the write would create", async () => {
     const { broker } = harness();
-    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/../escaped.txt`])).toBe("ask");
-    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/new/../../escaped.txt`])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [`${workspaceRoot}/../escaped.txt`])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [`${workspaceRoot}/new/../../escaped.txt`])).toBe("ask");
     // a `..` that stays inside is still inside
-    expect(await broker.evaluateFileWrites("s1", [`${workspaceRoot}/new/../a.ts`])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [`${workspaceRoot}/new/../a.ts`])).toBe("allow");
   });
 
   it("a symlink inside the workspace that points outside asks — and so does a link to nowhere", async () => {
@@ -162,27 +162,27 @@ describe("PermissionBroker.evaluateFileWrites", () => {
     await mkdir(join(dir, "elsewhere"));
     await symlink(join(dir, "elsewhere"), join(workspaceRoot, "link"));
     await symlink(join(dir, "nowhere.txt"), join(workspaceRoot, "dangling"));
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "link", "x.txt")])).toBe("ask");
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "dangling")])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "link", "x.txt")])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "dangling")])).toBe("ask");
   });
 
   it("a workspace opened through a symlink is its real folder, whichever spelling the agent uses", async () => {
     const { broker } = harness();
     await symlink(workspaceRoot, join(dir, "ws-link"));
     granted = [join(dir, "ws-link")];
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts")])).toBe("allow");
-    expect(await broker.evaluateFileWrites("s1", [join(dir, "ws-link", "a.ts")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "a.ts")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(dir, "ws-link", "a.ts")])).toBe("allow");
   });
 
   it("a relative path names no location — it asks", async () => {
     const { broker } = harness();
-    expect(await broker.evaluateFileWrites("s1", ["a.ts"])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, ["a.ts"])).toBe("ask");
   });
 
   it("every path must land inside: one outside, or none named, asks", async () => {
     const { broker } = harness();
-    expect(await broker.evaluateFileWrites("s1", [join(workspaceRoot, "a.ts"), "/etc/passwd"])).toBe("ask");
-    expect(await broker.evaluateFileWrites("s1", [])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(workspaceRoot, "a.ts"), "/etc/passwd"])).toBe("ask");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [])).toBe("ask");
   });
 
   it("every root the session was granted counts — not only the first", async () => {
@@ -190,7 +190,7 @@ describe("PermissionBroker.evaluateFileWrites", () => {
     const second = join(dir, "second");
     await mkdir(second);
     granted = [workspaceRoot, second];
-    expect(await broker.evaluateFileWrites("s1", [join(second, "b.ts")])).toBe("allow");
+    expect(await broker.evaluateFileWrites("s1" as PatchbaySessionId, [join(second, "b.ts")])).toBe("allow");
   });
 });
 
@@ -203,7 +203,7 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
   it("auto-allows only when every location lands inside", async () => {
     const { broker, events } = harness();
     const inside = [join(workspaceRoot, "a.ts"), join(workspaceRoot, "b.ts")];
-    await expect(broker.resolveAgentPermissionRequest("s1", "Edit", "edit", inside, options)).resolves.toEqual({
+    await expect(broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", inside, options)).resolves.toEqual({
       optionId: "y",
     });
     expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
@@ -211,7 +211,7 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
 
   it("only an edit is judged by its locations — any other kind asks, even when every one is inside", async () => {
     const { broker, events } = harness();
-    const pending = broker.resolveAgentPermissionRequest("s1", "Delete", "delete", [join(workspaceRoot, "a.ts")], options);
+    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Delete", "delete", [join(workspaceRoot, "a.ts")], options);
     await new Promise((r) => setTimeout(r, 20));
     const asked = events.find((e) => e.kind === "permissionRequested");
     if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
@@ -223,7 +223,7 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
   it("a first location inside never carries a later one outside — it asks, naming both", async () => {
     const { broker, events } = harness();
     const mixed = [join(workspaceRoot, "a.ts"), `${workspaceRoot}/../escaped.txt`];
-    const pending = broker.resolveAgentPermissionRequest("s1", "Edit", "edit", mixed, options);
+    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", mixed, options);
     await new Promise((r) => setTimeout(r, 20));
     const asked = events.find((e) => e.kind === "permissionRequested");
     if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
@@ -240,7 +240,7 @@ describe("PermissionBroker audit trail", () => {
       commandRules: [{ pattern: "npm run *", verdict: "allow" }],
       fileWriteScope: "workspace",
     });
-    const result = await broker.gateCommand("s1", run("npm run build"));
+    const result = await broker.gateCommand("s1" as PatchbaySessionId, run("npm run build"));
     expect(result).toBe("accepted");
     expect(refreshCount()).toBe(1);
     const tail = await audit.tail(10);
@@ -254,7 +254,7 @@ describe("PermissionBroker audit trail", () => {
       commandRules: [{ pattern: "rm -rf *", verdict: "deny" }],
       fileWriteScope: "workspace",
     });
-    const result = await broker.gateCommand("s1", run("rm -rf /"));
+    const result = await broker.gateCommand("s1" as PatchbaySessionId, run("rm -rf /"));
     expect(result).toBe("rejected");
     const tail = await audit.tail(10);
     expect(tail[0]).toMatchObject({ kind: "auto-deny", command: "rm -rf /" });
@@ -262,7 +262,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("an ask that the user resolves also writes an audit entry", async () => {
     const { broker, events, audit } = harness();
-    const pending = broker.gateCommand("s1", run("curl example.com"));
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
     // the permission card was emitted with a blockId — resolve it
     const requested = events.find((e) => e.kind === "permissionRequested");
     expect(requested).toBeDefined();
@@ -276,7 +276,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("a command the user rejects on its card settles rejected", async () => {
     const { broker, events, audit } = harness();
-    const pending = broker.gateCommand("s1", run("curl example.com"));
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
     const requested = events.find((e) => e.kind === "permissionRequested");
     if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(requested.blockId, "reject_once");
@@ -289,18 +289,18 @@ describe("PermissionBroker audit trail", () => {
     const { broker, events, audit } = harness();
     // an agent permission request and a command gate, both pending on s1;
     // an unrelated session's request must survive the sweep
-    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit file", "edit", [], [
+    const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit file", "edit", [], [
       { optionId: "y", label: "Allow", kind: "allow_once" },
       { optionId: "n", label: "Reject", kind: "reject_once" },
     ]);
-    const commandGate = broker.gateCommand("s1", run("curl example.com"));
-    const otherSession = broker.gateCommand("s2", run("npm run lint"));
+    const commandGate = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
+    const otherSession = broker.gateCommand("s2" as PatchbaySessionId, run("npm run lint"));
     // the agent's request is judged before its card shows
     for (let i = 0; i < 50 && events.filter((e) => e.kind === "permissionRequested").length < 3; i++) {
       await new Promise((r) => setTimeout(r, 5));
     }
 
-    broker.cancelPending("s1");
+    broker.cancelPending("s1" as PatchbaySessionId);
     await expect(agentReq).resolves.toEqual({ cancelled: true });
     // the user never decided — cancelled, never passed off as a reject
     await expect(commandGate).resolves.toBe("cancelled");
@@ -314,7 +314,7 @@ describe("PermissionBroker audit trail", () => {
 
     // s2 is untouched and still answerable
     const requested = events.filter((e) => e.kind === "permissionRequested");
-    const s2Req = requested.find((e) => e.kind === "permissionRequested" && e.sessionId === "s2");
+    const s2Req = requested.find((e) => e.kind === "permissionRequested" && e.patchbaySessionId === "s2");
     if (s2Req?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(s2Req.blockId, "allow_once");
     await expect(otherSession).resolves.toBe("accepted");
@@ -323,9 +323,9 @@ describe("PermissionBroker audit trail", () => {
   it("a turn stopped while a request is still being judged answers it cancelled — no card, never a dangling request", async () => {
     const { broker, events, audit } = harness();
     const options = [{ optionId: "y", label: "Allow", kind: "allow_once" as const }];
-    const agentReq = broker.resolveAgentPermissionRequest("s1", "Edit", "edit", [join(workspaceRoot, "a.ts")], options);
-    const write = broker.gateFileWrite("s1", join(workspaceRoot, "b.ts"), "x");
-    broker.cancelPending("s1"); // before either judge has read the disk
+    const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", [join(workspaceRoot, "a.ts")], options);
+    const write = broker.gateFileWrite("s1" as PatchbaySessionId, join(workspaceRoot, "b.ts"), "x");
+    broker.cancelPending("s1" as PatchbaySessionId); // before either judge has read the disk
     await expect(agentReq).resolves.toEqual({ cancelled: true });
     await expect(write).resolves.toBe("cancelled");
     expect(events).toEqual([]);
@@ -335,7 +335,7 @@ describe("PermissionBroker audit trail", () => {
 
   it("allow_always persists a new rule so the next call auto-allows", async () => {
     const { broker, events, rules } = harness();
-    const pending = broker.gateCommand("s1", run("npm run lint"));
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run("npm run lint"));
     const requested = events.find((e) => e.kind === "permissionRequested");
     if (requested?.kind !== "permissionRequested") throw new Error("unreachable");
     broker.resolve(requested.blockId, "allow_always");
@@ -344,7 +344,7 @@ describe("PermissionBroker audit trail", () => {
 
     // second call for the same command now auto-allows, no card
     const events2Before = events.length;
-    const second = await broker.gateCommand("s1", run("npm run lint"));
+    const second = await broker.gateCommand("s1" as PatchbaySessionId, run("npm run lint"));
     expect(second).toBe("accepted");
     expect(events.slice(events2Before).some((e) => e.kind === "permissionRequested")).toBe(false);
   });
@@ -360,7 +360,7 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
   it("lists the directory and every variable the agent sets, a handed-out value masked", async () => {
     const { broker, events } = harness();
     const gated = broker.gateCommand(
-      "s1",
+      "s1" as PatchbaySessionId,
       run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js", API_KEY: HANDED_OUT } }),
     );
     expect(card(events)).toMatchObject({
@@ -371,7 +371,7 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
         { label: "env", value: "API_KEY=•••" },
       ],
     });
-    broker.cancelPending("s1");
+    broker.cancelPending("s1" as PatchbaySessionId);
     // The cancel is audited into the test's directory: it lands before the
     // directory goes.
     await gated;
@@ -379,7 +379,7 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
 
   it("keeps argument boundaries: `rm \"a b\"` is never `rm a b`, on the card or to a rule", async () => {
     const { broker, events, rules } = harness();
-    const pending = broker.gateCommand("s1", run('rm "a b"'));
+    const pending = broker.gateCommand("s1" as PatchbaySessionId, run('rm "a b"'));
     expect(card(events).detail).toBe('rm "a b"');
     broker.resolve(card(events).blockId, "allow_always");
     await pending;
@@ -392,14 +392,14 @@ describe("PermissionBroker.gateCommand — the card shows what will run (issue #
     const { broker, rules, events } = harness();
     await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], fileWriteScope: "workspace" });
     const other = run("npm test", { cwd: "/elsewhere", env: { NODE_OPTIONS: "--require ./x.js" } });
-    await expect(broker.gateCommand("s1", other)).resolves.toBe("accepted");
+    await expect(broker.gateCommand("s1" as PatchbaySessionId, other)).resolves.toBe("accepted");
     expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
   });
 
   it("the audit names the variables, never their values", async () => {
     const { broker, rules, audit } = harness();
     await rules.set({ commandRules: [{ pattern: "npm test", verdict: "allow" }], fileWriteScope: "workspace" });
-    await broker.gateCommand("s1", run("npm test", { env: { API_KEY: HANDED_OUT } }));
+    await broker.gateCommand("s1" as PatchbaySessionId, run("npm test", { env: { API_KEY: HANDED_OUT } }));
     const [entry] = await audit.tail(1);
     expect(entry).toMatchObject({ kind: "auto-allow", command: "npm test", cwd: workspaceRoot, env: ["API_KEY"] });
     expect(JSON.stringify(entry)).not.toContain(HANDED_OUT);
@@ -482,7 +482,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
   it("holds old and new text while the proposal is pending, and drops them on resolution", async () => {
     const { broker, events } = harness();
     const path = join(dir, "outside.txt"); // outside the workspace → asks
-    const pending = broker.gateFileWrite("s1", path, "new content\n");
+    const pending = broker.gateFileWrite("s1" as PatchbaySessionId, path, "new content\n");
     const proposed = await proposedEvent(events);
     expect(broker.proposedDiff(proposed.blockId)).toEqual({ path, oldText: "", newText: "new content\n" });
     broker.resolve(proposed.blockId, "accept");
@@ -492,9 +492,9 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
 
   it("a cancelled turn drops them too; an unknown id is null, never a throw", async () => {
     const { broker, events } = harness();
-    const pending = broker.gateFileWrite("s1", join(dir, "outside.txt"), "x");
+    const pending = broker.gateFileWrite("s1" as PatchbaySessionId, join(dir, "outside.txt"), "x");
     const proposed = await proposedEvent(events);
-    broker.cancelPending("s1");
+    broker.cancelPending("s1" as PatchbaySessionId);
     await expect(pending).resolves.toBe("cancelled");
     expect(broker.proposedDiff(proposed.blockId)).toBeNull();
     expect(broker.proposedDiff("never-existed")).toBeNull();
@@ -502,7 +502,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
 
   it("an auto-allowed write never holds anything — there is no decision to inform", async () => {
     const { broker, events } = harness();
-    await broker.gateFileWrite("s1", join(workspaceRoot, "inside.txt"), "x");
+    await broker.gateFileWrite("s1" as PatchbaySessionId, join(workspaceRoot, "inside.txt"), "x");
     const proposed = events.find((e) => e.kind === "diffProposed");
     if (proposed?.kind !== "diffProposed") throw new Error("unreachable");
     expect(broker.proposedDiff(proposed.blockId)).toBeNull();
@@ -521,9 +521,9 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("emits the card and answers with what the user typed", async () => {
     const { broker, events } = harness();
-    const answer = broker.askElicitation("s1", form);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, form);
     const asked = events.find((e) => e.kind === "elicitationRequested");
-    expect(asked).toMatchObject({ sessionId: "s1", message: "Which database?" });
+    expect(asked).toMatchObject({ patchbaySessionId: "s1", message: "Which database?" });
     const blockId = (asked as { blockId: string }).blockId;
 
     broker.resolveElicitation(blockId, { action: "accept", content: { db: "prod" } });
@@ -537,12 +537,12 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("declining and cancelling are different answers — the agent learns which", async () => {
     const { broker, events } = harness();
-    const declined = broker.askElicitation("s1", form);
+    const declined = broker.askElicitation("s1" as PatchbaySessionId, form);
     broker.resolveElicitation((events.at(-1) as { blockId: string }).blockId, { action: "decline" });
     expect(await declined).toEqual({ action: "decline" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "declined" });
 
-    const cancelled = broker.askElicitation("s1", form);
+    const cancelled = broker.askElicitation("s1" as PatchbaySessionId, form);
     broker.resolveElicitation(
       (events.filter((e) => e.kind === "elicitationRequested").at(-1) as { blockId: string }).blockId,
       { action: "cancel" },
@@ -553,24 +553,24 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("a stopped turn answers every elicitation it left open — never a dangling request", async () => {
     const { broker, events } = harness();
-    const answer = broker.askElicitation("s1", form);
-    const other = broker.askElicitation("s2", form);
-    broker.cancelPending("s1");
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, form);
+    const other = broker.askElicitation("s2" as PatchbaySessionId, form);
+    broker.cancelPending("s1" as PatchbaySessionId);
     expect(await answer).toEqual({ action: "cancel" });
-    expect(events.some((e) => e.kind === "elicitationResolved" && e.sessionId === "s1")).toBe(true);
+    expect(events.some((e) => e.kind === "elicitationResolved" && e.patchbaySessionId === "s1")).toBe(true);
     // s2's ask belongs to another session's turn and stays open
     let settled = false;
     void other.then(() => (settled = true));
     await Promise.resolve();
     expect(settled).toBe(false);
-    broker.cancelPending("s2");
+    broker.cancelPending("s2" as PatchbaySessionId);
     await other;
   });
 
   it("a question the agent withdraws settles as withdrawn and answers cancel", async () => {
     const { broker, events } = harness();
     const withdraw = new AbortController();
-    const answer = broker.askElicitation("s1", form, withdraw.signal);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, form, withdraw.signal);
     withdraw.abort();
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "withdrawn" });
@@ -591,7 +591,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("opens only on accept, re-opens while the agent waits, and stops once the agent completes it", async () => {
     const { broker, events, opened } = harness();
-    const answer = broker.askElicitation("s1", signIn);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     const blockId = blockOf(events);
     expect(opened).toEqual([]);
     broker.reopenLink(blockId); // not accepted yet — nothing to re-open
@@ -604,14 +604,14 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     expect(opened).toHaveLength(2);
 
     broker.completeLink("a1" as PatchbayAgentId, "e1");
-    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", sessionId: "s1", blockId, state: "completed" });
+    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", patchbaySessionId: "s1", blockId, state: "completed" });
     broker.reopenLink(blockId);
     expect(opened).toHaveLength(2);
   });
 
   it("a declined link never opens", async () => {
     const { broker, events, opened } = harness();
-    const answer = broker.askElicitation("s1", signIn);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     broker.resolveElicitation(blockOf(events), { action: "decline" });
     expect(await answer).toEqual({ action: "decline" });
     expect(opened).toEqual([]);
@@ -619,7 +619,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("completion ids are matched per agent; an unknown or repeated one is ignored", async () => {
     const { broker, events } = harness();
-    void broker.askElicitation("s1", signIn);
+    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
     broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
     const before = events.length;
     broker.completeLink("a2" as PatchbayAgentId, "e1"); // another agent's id space
@@ -632,7 +632,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a completion before the user answers settles the card as completed and answers cancel — the user chose nothing", async () => {
     const { broker, events, opened } = harness();
-    const answer = broker.askElicitation("s1", signIn);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "completed" });
@@ -643,7 +643,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker, events, opened } = harness();
     broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events).toEqual([]);
-    const answer = broker.askElicitation("s1", signIn);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.map((e) => e.kind)).toEqual(["elicitationRequested", "elicitationResolved"]);
     expect(events.at(-1)).toMatchObject({ outcome: "completed" });
@@ -652,11 +652,11 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a repeated completion is never held — a later question may reuse a finished id", async () => {
     const { broker, events } = harness();
-    void broker.askElicitation("s1", signIn);
+    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
     broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
     broker.completeLink("a1" as PatchbayAgentId, "e1");
     broker.completeLink("a1" as PatchbayAgentId, "e1"); // a repeat, after the link finished
-    const reused = broker.askElicitation("s1", signIn);
+    const reused = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     let settled = false;
     void reused.then(() => (settled = true));
     await Promise.resolve();
@@ -666,7 +666,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
   it("a withdrawal that overtakes the completion still ends as completed — the finished flow is the fact that stands", async () => {
     const { broker, events } = harness();
     const withdraw = new AbortController();
-    const answer = broker.askElicitation("s1", signIn, withdraw.signal);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn, withdraw.signal);
     withdraw.abort();
     expect(await answer).toEqual({ action: "cancel" });
     broker.completeLink("a1" as PatchbayAgentId, "e1");
@@ -677,7 +677,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a declined link the agent later finishes keeps the user's answer and is marked done", async () => {
     const { broker, events } = harness();
-    void broker.askElicitation("s1", signIn);
+    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
     broker.resolveElicitation(blockOf(events), { action: "decline" });
     broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.at(-1)).toMatchObject({ kind: "elicitationLinkSettled", state: "completed" });
@@ -688,7 +688,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker } = harness();
     broker.completeLink("a1" as PatchbayAgentId, "e1");
     broker.forgetAgent("a1" as PatchbayAgentId);
-    const answer = broker.askElicitation("s1", signIn);
+    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
     let settled = false;
     void answer.then(() => (settled = true));
     await Promise.resolve();
@@ -697,7 +697,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("the address alone decides what opens — a link nobody will report done still opens and re-opens", async () => {
     const { broker, events, opened } = harness();
-    void broker.askElicitation("s1", { message: signIn.message, ask: signIn.ask });
+    void broker.askElicitation("s1" as PatchbaySessionId, { message: signIn.message, ask: signIn.ask });
     const blockId = blockOf(events);
     broker.resolveElicitation(blockId, { action: "accept", content: {} });
     broker.reopenLink(blockId);
@@ -706,11 +706,11 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a stopped turn ends the wait on an opened page", async () => {
     const { broker, events, opened } = harness();
-    void broker.askElicitation("s1", signIn);
+    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
     const blockId = blockOf(events);
     broker.resolveElicitation(blockId, { action: "accept", content: {} });
-    broker.cancelPending("s1");
-    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", sessionId: "s1", blockId, state: "ended" });
+    broker.cancelPending("s1" as PatchbaySessionId);
+    expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", patchbaySessionId: "s1", blockId, state: "ended" });
     broker.reopenLink(blockId);
     expect(opened).toHaveLength(1);
   });

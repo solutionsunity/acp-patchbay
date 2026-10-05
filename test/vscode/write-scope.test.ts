@@ -33,19 +33,19 @@ suite("write scope (issue #56)", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      await pb.addRoot(sessionId, root);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      await pb.addRoot(patchbaySessionId, root);
 
-      const turnDone = pb.prompt(sessionId, "go");
-      const escape = await pb.openCard(sessionId, "diff");
-      const diffs = () => (pb.view.transcripts[sessionId] ?? []).filter((b) => b.kind === "diff");
+      const turnDone = pb.prompt(patchbaySessionId, "go");
+      const escape = await pb.openCard(patchbaySessionId, "diff");
+      const diffs = () => (pb.view.transcripts[patchbaySessionId] ?? []).filter((b) => b.kind === "diff");
       assert.deepStrictEqual(diffs()[0]!.resolution, { accepted: true, auto: true }, "inside the root: no card to click");
       assert.strictEqual(escape.id, diffs()[1]!.id, "the `..` escape waits on the user");
-      await pb.answerDiff(sessionId, escape, false);
+      await pb.answerDiff(patchbaySessionId, escape, false);
 
-      const fallback = await pb.openCard(sessionId, "diff");
+      const fallback = await pb.openCard(patchbaySessionId, "diff");
       assert.strictEqual(fallback.id, diffs()[2]!.id, "no folder open: the process cwd was never handed to the agent");
-      await pb.answerDiff(sessionId, fallback, false);
+      await pb.answerDiff(patchbaySessionId, fallback, false);
       await turnDone;
 
       assert.strictEqual(await readFile(inside, "utf8"), "in\n");

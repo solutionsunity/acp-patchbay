@@ -17,7 +17,7 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
 - **Known sessions** — the sessions store's index of the sessions this
   window knows, repopulated from the agent's own `session/list` every
   connect: patchbay's id for each, its agent, and the agent's own id for it
-  — the handle ([session ids](store-architecture.md#sessions)). Patchbay
+  — its `sessionId` ([session ids](store-architecture.md#sessions)). Patchbay
   persists no session index: the durable continuity row is per-session
   state, never a list source. Nothing the view shows lives here — title,
   activity stamp, liveness, the unseen mark have one home, the Agent View's

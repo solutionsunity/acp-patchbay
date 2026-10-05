@@ -16,7 +16,7 @@ import {
   type AgentViewState,
   type SettingsEvent,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const claude: AgentSummary = { id: "claude" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
 const gemini: AgentSummary = { id: "gemini" as PatchbayAgentId, name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
@@ -127,11 +127,11 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", patchbayAgentId: "claude" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
-    expect(succeeded.activeSessionId).toBe("s1");
+    expect(succeeded.activePatchbaySessionId).toBe("s1");
   });
 
   // Closing the active session must land on home, never silently activate a
@@ -141,19 +141,19 @@ describe("reducers", () => {
     const two = replay(initialAgentViewState, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", patchbayAgentId: "claude" as PatchbayAgentId, title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
       {
         kind: "sessionCreated",
-        session: { id: "s2", patchbayAgentId: "claude" as PatchbayAgentId, title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
+        session: { id: "s2" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
       },
     ]);
-    expect(two.activeSessionId).toBe("s2");
-    const closed = replay(two, [{ kind: "sessionClosed", sessionId: "s2" }]);
-    expect(closed.activeSessionId).toBeNull();
+    expect(two.activePatchbaySessionId).toBe("s2");
+    const closed = replay(two, [{ kind: "sessionClosed", patchbaySessionId: "s2" as PatchbaySessionId }]);
+    expect(closed.activePatchbaySessionId).toBeNull();
     // Closing a background session leaves the active one alone.
-    const other = replay(two, [{ kind: "sessionClosed", sessionId: "s1" }]);
-    expect(other.activeSessionId).toBe("s2");
+    const other = replay(two, [{ kind: "sessionClosed", patchbaySessionId: "s1" as PatchbaySessionId }]);
+    expect(other.activePatchbaySessionId).toBe("s2");
   });
 
   // The pane is one place: a request still owns it only while it shows that
@@ -166,21 +166,21 @@ describe("reducers", () => {
     expect(chatPaneShows({ ...newChat, reason: "spawn failed" }, "claude" as PatchbayAgentId, undefined)).toBe(false);
     expect(chatPaneShows(newChat, "gemini" as PatchbayAgentId, undefined)).toBe(false);
     // a new chat and a session open on one agent are two requests
-    expect(chatPaneShows(newChat, "claude" as PatchbayAgentId, "s1")).toBe(false);
-    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s1" }, "claude" as PatchbayAgentId, undefined)).toBe(false);
-    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s1" }, "claude" as PatchbayAgentId, "s1")).toBe(true);
-    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s2" }, "claude" as PatchbayAgentId, "s1")).toBe(false);
+    expect(chatPaneShows(newChat, "claude" as PatchbayAgentId, "s1" as PatchbaySessionId)).toBe(false);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forPatchbaySessionId: "s1" as PatchbaySessionId }, "claude" as PatchbayAgentId, undefined)).toBe(false);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forPatchbaySessionId: "s1" as PatchbaySessionId }, "claude" as PatchbayAgentId, "s1" as PatchbaySessionId)).toBe(true);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forPatchbaySessionId: "s2" as PatchbaySessionId }, "claude" as PatchbayAgentId, "s1" as PatchbaySessionId)).toBe(false);
   });
 
   it("chatConnect carries forSessionId through progress and failure — the Retry-as-same-click hook", () => {
     const connecting = replay(initialAgentViewState, [
-      { kind: "chatConnectStarted", patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s9" },
+      { kind: "chatConnectStarted", patchbayAgentId: "claude" as PatchbayAgentId, forPatchbaySessionId: "s9" as PatchbaySessionId },
     ]);
-    expect(connecting.chatConnect?.forSessionId).toBe("s9");
+    expect(connecting.chatConnect?.forPatchbaySessionId).toBe("s9");
     const failed = replay(connecting, [
-      { kind: "chatConnectFailed", patchbayAgentId: "claude" as PatchbayAgentId, reason: "spawn failed", forSessionId: "s9" },
+      { kind: "chatConnectFailed", patchbayAgentId: "claude" as PatchbayAgentId, reason: "spawn failed", forPatchbaySessionId: "s9" as PatchbaySessionId },
     ]);
-    expect(failed.chatConnect?.forSessionId).toBe("s9");
+    expect(failed.chatConnect?.forPatchbaySessionId).toBe("s9");
   });
 
   // Startup restore hold: seeded true by the orchestrator when a
@@ -225,10 +225,10 @@ describe("plan strip mirrors only what the agent reports", () => {
     const s = replay(initialAgentViewState, [
       {
         kind: "planUpdated",
-        sessionId: "s1",
+        patchbaySessionId: "s1" as PatchbaySessionId,
         entries: [{ content: "step", status: "in_progress" }],
       },
-      { kind: "transcriptReset", sessionId: "s1" },
+      { kind: "transcriptReset", patchbaySessionId: "s1" as PatchbaySessionId },
     ]);
     expect(s.activePlan.s1).toBeNull();
     expect(s.transcripts.s1).toEqual([]);
@@ -320,24 +320,24 @@ describe("applyHostMessage", () => {
 describe("session activity + unseen (drawer ordering / dots)", () => {
   const mk = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, patchbayAgentId: "claude" as PatchbayAgentId, title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+    session: { id: id as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
   });
 
   it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
       mk("b"),
-      { kind: "sessionActivated", sessionId: "b" },
-      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
+      { kind: "sessionActivated", patchbaySessionId: "b" as PatchbaySessionId },
+      { kind: "turnStarted", patchbaySessionId: "a" as PatchbaySessionId, at: "2026-07-09T10:00:00Z" },
     ]);
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
     expect(s.sessions.find((x) => x.id === "b")!.updatedAt).toBe("2026-07-09T00:00:00Z");
   });
 
-  const end = (sessionId: string): AgentViewEvent => ({
+  const end = (patchbaySessionId: PatchbaySessionId): AgentViewEvent => ({
     kind: "turnEnded",
-    sessionId,
-    blockId: `t-${sessionId}`,
+    patchbaySessionId,
+    blockId: `t-${patchbaySessionId}`,
     startedAt: "2026-07-09T10:00:00Z",
     at: "2026-07-09T10:00:05Z",
     stopReason: "end_turn",
@@ -347,19 +347,19 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   const unseenOf = (s: AgentViewState, id: string) => s.sessions.find((x) => x.id === id)!.unseen;
 
   it("a turn ending on a non-active session marks it unseen; activation on a visible view clears it", () => {
-    const unseen = replay(initialAgentViewState, [mk("a"), mk("b"), viewShown, { kind: "sessionActivated", sessionId: "b" }, end("a")]);
+    const unseen = replay(initialAgentViewState, [mk("a"), mk("b"), viewShown, { kind: "sessionActivated", patchbaySessionId: "b" as PatchbaySessionId }, end("a" as PatchbaySessionId)]);
     expect(unseenOf(unseen, "a")).toBe(true);
 
-    const seen = replay(unseen, [{ kind: "sessionActivated", sessionId: "a" }]);
+    const seen = replay(unseen, [{ kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId }]);
     expect(unseenOf(seen, "a")).toBeUndefined();
   });
 
   it("the active session finishing while the view is hidden is news too — seen only once the view shows it", () => {
-    const hidden = replay(initialAgentViewState, [mk("a"), { kind: "sessionActivated", sessionId: "a" }, end("a")]);
+    const hidden = replay(initialAgentViewState, [mk("a"), { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId }, end("a" as PatchbaySessionId)]);
     expect(unseenOf(hidden, "a")).toBe(true);
 
     // activating it again while hidden is not seeing it
-    const stillHidden = replay(hidden, [{ kind: "sessionActivated", sessionId: "a" }]);
+    const stillHidden = replay(hidden, [{ kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId }]);
     expect(unseenOf(stillHidden, "a")).toBe(true);
 
     const shown = replay(stillHidden, [viewShown]);
@@ -368,10 +368,10 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
 
   it("a visible pinned panel is seeing its session — no dot, and showing one clears it", () => {
     const pinnedVisible: AgentViewEvent = { kind: "screenChanged", pointer: false, pinned: ["b"] };
-    const s = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", sessionId: "a" }, pinnedVisible, end("b")]);
+    const s = replay(initialAgentViewState, [mk("a"), mk("b"), { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId }, pinnedVisible, end("b" as PatchbaySessionId)]);
     expect(unseenOf(s, "b")).toBeUndefined();
 
-    const later = replay(s, [{ kind: "screenChanged", pointer: false, pinned: [] }, end("b")]);
+    const later = replay(s, [{ kind: "screenChanged", pointer: false, pinned: [] }, end("b" as PatchbaySessionId)]);
     expect(unseenOf(later, "b")).toBe(true);
     expect(unseenOf(replay(later, [pinnedVisible]), "b")).toBeUndefined();
   });
@@ -380,8 +380,8 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
       mk("b"),
-      { kind: "sessionActivated", sessionId: "b" },
-      { kind: "turnEnded", sessionId: "a", blockId: "t1", startedAt: null, at: null, stopReason: null, usage: null },
+      { kind: "sessionActivated", patchbaySessionId: "b" as PatchbaySessionId },
+      { kind: "turnEnded", patchbaySessionId: "a" as PatchbaySessionId, blockId: "t1", startedAt: null, at: null, stopReason: null, usage: null },
     ]);
     expect(s.transcripts["a"]![0]).toMatchObject({ kind: "turnEnd", startedAt: null, endedAt: null, stopReason: null });
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T00:00:00Z");
@@ -392,8 +392,8 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
       viewShown,
-      { kind: "sessionActivated", sessionId: "a" },
-      { kind: "turnEnded", sessionId: "a", blockId: "t1", startedAt: "x", at: "2026-07-09T10:00:05Z", stopReason: "end_turn", usage: null },
+      { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId },
+      { kind: "turnEnded", patchbaySessionId: "a" as PatchbaySessionId, blockId: "t1", startedAt: "x", at: "2026-07-09T10:00:05Z", stopReason: "end_turn", usage: null },
     ]);
     expect(s.sessions.find((x) => x.id === "a")!.unseen).toBeUndefined();
   });
@@ -401,8 +401,8 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   it("sessionRefreshed keeps the newer activity stamp — the wire may trail a local prompt", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
-      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
-      { kind: "sessionRefreshed", sessionId: "a", title: "a", updatedAt: "2026-07-09T09:00:00Z" },
+      { kind: "turnStarted", patchbaySessionId: "a" as PatchbaySessionId, at: "2026-07-09T10:00:00Z" },
+      { kind: "sessionRefreshed", patchbaySessionId: "a" as PatchbaySessionId, title: "a", updatedAt: "2026-07-09T09:00:00Z" },
     ]);
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
   });
@@ -410,8 +410,8 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   it("sessionRefreshed without a stamp is the wire saying nothing — the row keeps its own", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
-      { kind: "turnStarted", sessionId: "a", at: "2026-07-09T10:00:00Z" },
-      { kind: "sessionRefreshed", sessionId: "a", title: "renamed" },
+      { kind: "turnStarted", patchbaySessionId: "a" as PatchbaySessionId, at: "2026-07-09T10:00:00Z" },
+      { kind: "sessionRefreshed", patchbaySessionId: "a" as PatchbaySessionId, title: "renamed" },
     ]);
     expect(s.sessions.find((x) => x.id === "a")).toMatchObject({
       title: "renamed",
@@ -422,8 +422,8 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
   it("sessionRefreshed without a title is silence too — the row keeps what it shows", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),
-      { kind: "sessionRefreshed", sessionId: "a", title: "derived from the first prompt" },
-      { kind: "sessionRefreshed", sessionId: "a", updatedAt: "2026-07-09T11:00:00Z" },
+      { kind: "sessionRefreshed", patchbaySessionId: "a" as PatchbaySessionId, title: "derived from the first prompt" },
+      { kind: "sessionRefreshed", patchbaySessionId: "a" as PatchbaySessionId, updatedAt: "2026-07-09T11:00:00Z" },
     ]);
     expect(s.sessions.find((x) => x.id === "a")).toMatchObject({
       title: "derived from the first prompt",
@@ -436,27 +436,27 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
 describe("sessionBusyChanged (what a session's lines hold — its busy state)", () => {
   const created = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
+    session: { id: id as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
   });
 
   it("a prompt on the turn line is a turn underway; an open or a reload is an attach; other work is neither", () => {
     let s = replay(initialAgentViewState, [created("s1")]);
     const read = () => [turnUnderway(s.sessions[0]!), attaching(s.sessions[0]!)];
     expect(read()).toEqual([false, false]);
-    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["open", "prompt"] });
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", patchbaySessionId: "s1" as PatchbaySessionId, busy: ["open", "prompt"] });
     expect(s.sessions[0]!.busy).toEqual(["open", "prompt"]);
     expect(read()).toEqual([true, true]);
-    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["knob"] });
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", patchbaySessionId: "s1" as PatchbaySessionId, busy: ["knob"] });
     expect(read()).toEqual([false, false]);
-    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["reload"] });
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", patchbaySessionId: "s1" as PatchbaySessionId, busy: ["reload"] });
     expect(read()).toEqual([false, true]);
-    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: [] });
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", patchbaySessionId: "s1" as PatchbaySessionId, busy: [] });
     expect(s.sessions[0]!.busy).toEqual([]);
   });
 
   it("busy for a session the view no longer holds changes no session", () => {
     const s = replay(initialAgentViewState, [created("s1")]);
-    const after = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "gone", busy: ["reload"] });
+    const after = reduceAgentView(s, { kind: "sessionBusyChanged", patchbaySessionId: "gone" as PatchbaySessionId, busy: ["reload"] });
     expect(after.sessions).toEqual(s.sessions);
   });
 });
@@ -464,17 +464,17 @@ describe("sessionBusyChanged (what a session's lines hold — its busy state)", 
 describe("state-truth regressions — weak evidence never overwrites strong", () => {
   it("usageReported coalesce: a plain tick never erases a standing plan reading", () => {
     const withPlan: AgentViewEvent = {
-      kind: "usageReported", sessionId: "s1", used: 10, size: 100, cost: undefined,
+      kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 10, size: 100, cost: undefined,
       plan: { status: "limited", window: "five_hour", utilization: 0.9, resetsAt: undefined },
     };
     const plainTick: AgentViewEvent = {
-      kind: "usageReported", sessionId: "s1", used: 12, size: 100, cost: undefined, plan: undefined,
+      kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 12, size: 100, cost: undefined, plan: undefined,
     };
     const merged = coalesceAgentViewEvent(withPlan, plainTick);
     expect(merged).toMatchObject({ used: 12, plan: { window: "five_hour" } });
     // Different windows are parallel axes — both must reach the reducer.
     const otherWindow: AgentViewEvent = {
-      kind: "usageReported", sessionId: "s1", used: 13, size: 100, cost: undefined,
+      kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 13, size: 100, cost: undefined,
       plan: { status: "ok", window: "weekly", utilization: 0.2, resetsAt: undefined },
     };
     expect(coalesceAgentViewEvent(withPlan, otherWindow)).toBeNull();
@@ -496,7 +496,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
   it("a resolved card says which of the three answers the user gave", () => {
     const asked: AgentViewEvent = {
       kind: "elicitationRequested",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       blockId: "e1",
       message: "Which database?",
       mode: "form",
@@ -505,7 +505,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
     for (const outcome of ["accepted", "declined", "cancelled", "withdrawn", "completed"] as const) {
       const state = replay(initialAgentViewState, [
         asked,
-        { kind: "elicitationResolved", sessionId: "s1", blockId: "e1", outcome },
+        { kind: "elicitationResolved", patchbaySessionId: "s1" as PatchbaySessionId, blockId: "e1", outcome },
       ]);
       const block = state.transcripts.s1!.find((b) => b.kind === "elicitation");
       expect(block?.kind === "elicitation" && block.resolution).toEqual({ outcome });
@@ -515,7 +515,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
   it("a link card waits once opened, and its follow-up lands whether or not it was answered", () => {
     const asked: AgentViewEvent = {
       kind: "elicitationRequested",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       blockId: "e1",
       message: "Sign in",
       mode: "url",
@@ -525,13 +525,13 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
       replay(initialAgentViewState, [asked, ...events]).transcripts.s1!.find((b) => b.kind === "elicitation");
     const resolved = (outcome: "accepted" | "declined" | "completed"): AgentViewEvent => ({
       kind: "elicitationResolved",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       blockId: "e1",
       outcome,
     });
     const settled = (state: "completed" | "ended"): AgentViewEvent => ({
       kind: "elicitationLinkSettled",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       blockId: "e1",
       state,
     });

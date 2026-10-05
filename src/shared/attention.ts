@@ -58,7 +58,7 @@ export function elsewhere(state: AgentViewState): Elsewhere {
   const shown = onScreen(state);
   const groups: Record<SessionMark, SessionSummary[]> = { waiting: [], running: [], unseen: [] };
   for (const session of state.sessions) {
-    if (session.id === state.activeSessionId || shown.has(session.id)) continue;
+    if (session.id === state.activePatchbaySessionId || shown.has(session.id)) continue;
     const mark = sessionMark(state, session);
     if (mark !== null) groups[mark].push(session);
   }

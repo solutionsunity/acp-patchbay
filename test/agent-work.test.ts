@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSummary } from "../src/shared/protocol";
 import { chatPaneProgress, upgradeOffer } from "../src/webview/shared/agent-work";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const agent = (over: Partial<AgentSummary> = {}): AgentSummary => ({
   id: "a1" as PatchbayAgentId,
@@ -63,7 +63,7 @@ describe("chatPaneProgress", () => {
   it("once the agent runs, says the chat itself is opening — whatever else the agent is busy with", () => {
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, agent())).toBe("Starting a chat with Claude…");
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, agent({ busy: [{ kind: "verify" }] }))).toBe("Starting a chat with Claude…");
-    expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId, forSessionId: "s1" }, agent())).toBe("Opening the session…");
+    expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId, forPatchbaySessionId: "s1" as PatchbaySessionId }, agent())).toBe("Opening the session…");
     // The row gone mid-start (removed in Settings): the id stands in.
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, undefined)).toBe("Starting a chat with a1…");
   });

@@ -19,8 +19,7 @@ import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import type { McpServerConnectView, McpServerWork, SettingsEvent } from "../src/shared/protocol";
 import type { OAuthUserAgent } from "../src/orchestrator/mcp-oauth";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
-import type { PatchbayAgentId } from "../src/shared/ids";
-import type { PatchbayMcpServerId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
 
 let provider: FakeOAuthProvider;
 
@@ -543,7 +542,7 @@ describe("McpServersStore — one composition of a session's set", () => {
       args: ["/mcp-server.js"],
       env: [
         { name: "ACP_PATCHBAY_IPC", value: "/sock" },
-        { name: "ACP_PATCHBAY_SESSION_ID", value: "ctx-7" },
+        { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: "ctx-7" },
       ],
     });
     expect(given).toEqual([

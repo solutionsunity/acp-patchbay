@@ -10,13 +10,13 @@ import { IpcClient } from "./ipc-client";
 import { callTool, TOOL_DEFS } from "./tools";
 
 const socketPath = process.env.ACP_PATCHBAY_IPC;
-const sessionId = process.env.ACP_PATCHBAY_SESSION_ID;
-if (socketPath === undefined || sessionId === undefined) {
-  process.stderr.write("acp-patchbay MCP server: missing ACP_PATCHBAY_IPC/ACP_PATCHBAY_SESSION_ID\n");
+const contextToken = process.env.ACP_PATCHBAY_CONTEXT_TOKEN;
+if (socketPath === undefined || contextToken === undefined) {
+  process.stderr.write("acp-patchbay MCP server: missing ACP_PATCHBAY_IPC/ACP_PATCHBAY_CONTEXT_TOKEN\n");
   process.exit(1);
 }
 
-const ipc = new IpcClient(socketPath, sessionId);
+const ipc = new IpcClient(socketPath, contextToken);
 
 interface JsonRpcMessage {
   jsonrpc: "2.0";

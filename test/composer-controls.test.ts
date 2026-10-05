@@ -6,10 +6,10 @@
 import { describe, expect, it } from "vitest";
 import { composerControls, newChatInFlight } from "../src/webview/agent-view/composer/composer-controls";
 import type { AgentSummary, SessionSummary } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const session: SessionSummary = {
-  id: "s1",
+  id: "s1" as PatchbaySessionId,
   patchbayAgentId: "a1" as PatchbayAgentId,
   title: "T",
   busy: [],
@@ -107,7 +107,7 @@ describe("newChatInFlight", () => {
   it("a New-chat connect (connecting or failed, not yet dismissed) is in flight; a session-click connect is not", () => {
     expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId })).toBe(true);
     expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId, reason: "boom" })).toBe(true);
-    expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId, forSessionId: "s1" })).toBe(false);
+    expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId, forPatchbaySessionId: "s1" as PatchbaySessionId })).toBe(false);
     expect(newChatInFlight(null)).toBe(false);
     expect(newChatInFlight(undefined)).toBe(false); // snapshots minted before the field existed
   });

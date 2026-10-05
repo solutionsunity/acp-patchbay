@@ -24,15 +24,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { rootHolders, rootSaving, type RootsControls } from "./roots-controls";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 export function RootsChip({
-  sessionId,
+  patchbaySessionId,
   roots,
   workspaceRoots,
   savedRoots,
   controls,
 }: {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   roots: readonly string[];
   workspaceRoots: readonly string[];
   savedRoots: SavedRootsView;
@@ -68,7 +69,7 @@ export function RootsChip({
               className="h-5 px-1 text-destructive hover:text-destructive"
               title="Remove root"
               aria-label={`Remove root ${r}`}
-              onClick={() => send({ kind: "removeContextRoot", sessionId, path: r })}
+              onClick={() => send({ kind: "removeContextRoot", patchbaySessionId, path: r })}
             >
               <Icon name="trash" />
             </Button>
@@ -78,7 +79,7 @@ export function RootsChip({
           variant="ghost"
           size="sm"
           className="w-full justify-start"
-          onClick={() => send({ kind: "addContextRoot", sessionId })}
+          onClick={() => send({ kind: "addContextRoot", patchbaySessionId })}
         >
           <b>+ Add folder…</b>
         </Button>
@@ -98,7 +99,7 @@ export function RootsChip({
                 variant="ghost"
                 size="sm"
                 className="h-5 px-1"
-                onClick={() => send({ kind: "reloadSession", sessionId })}
+                onClick={() => send({ kind: "reloadSession", patchbaySessionId })}
               >
                 Reopen now
               </Button>

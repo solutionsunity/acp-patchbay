@@ -13,7 +13,7 @@ export interface StatusBarContent {
 }
 
 export function statusBarContent(state: AgentViewState): StatusBarContent {
-  const session = state.sessions.find((s) => s.id === state.activeSessionId);
+  const session = state.sessions.find((s) => s.id === state.activePatchbaySessionId);
   if (session === undefined) {
     return { text: "$(plug) Patchbay", tooltip: "No active session — click to open the Agent View" };
   }

@@ -24,8 +24,8 @@ suite("waiting-on-user notice", () => {
 
     // Answers the session's open question the way its card would, and lets
     // the turn finish.
-    const answer = async (sessionId: string, turn: Promise<void>) => {
-      const card = await pb.openCard(sessionId, "elicitation");
+    const answer = async (patchbaySessionId: string, turn: Promise<void>) => {
+      const card = await pb.openCard(patchbaySessionId, "elicitation");
       pb.act({ kind: "resolveElicitation", requestId: card.id, answer: { action: "cancel" } });
       await turn;
     };
@@ -51,7 +51,7 @@ suite("waiting-on-user notice", () => {
       const asking = await pb.newSession(patchbayAgentId);
       pb.switchTo(first);
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
-      await waitFor(() => (pb.view.screen.pointer && pb.view.activeSessionId === first ? true : undefined));
+      await waitFor(() => (pb.view.screen.pointer && pb.view.activePatchbaySessionId === first ? true : undefined));
       const askingTurn = pb.prompt(asking, "go");
       await waitFor(() => noticeFor("Which branch?"));
       await answer(asking, askingTurn);
@@ -77,13 +77,13 @@ suite("waiting-on-user notice", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      void pb.prompt(sessionId, "go").catch(() => {});
-      const card = await pb.openCard(sessionId, "permission");
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      void pb.prompt(patchbaySessionId, "go").catch(() => {});
+      const card = await pb.openCard(patchbaySessionId, "permission");
 
       await pb.stop(patchbayAgentId);
       await waitFor(() =>
-        pb.view.transcripts[sessionId]?.find((b) => b.id === card.id)?.resolution != null ? true : undefined,
+        pb.view.transcripts[patchbaySessionId]?.find((b) => b.id === card.id)?.resolution != null ? true : undefined,
       );
     } finally {
       await pb.removeAdded();

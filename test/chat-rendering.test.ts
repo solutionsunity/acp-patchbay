@@ -21,9 +21,9 @@ import {
   type ChatBlock,
   type ToolCallBlock,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
-const S = "sess";
+const S = "sess" as PatchbaySessionId;
 
 function tool(id: string, over: Partial<ToolCallBlock> = {}): ToolCallBlock {
   return {
@@ -96,16 +96,16 @@ describe("deriveTranscript: the live-block contract (stream/end)", () => {
   it("a turn waiting for its session to attach is underway, not live — the replay meanwhile is history", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "sessionBusyChanged", sessionId: S, busy: ["open", "prompt"] },
-      { kind: "agentTextDelta", sessionId: S, blockId: "replayed", text: "an old answer" },
+      { kind: "sessionBusyChanged", patchbaySessionId: S, busy: ["open", "prompt"] },
+      { kind: "agentTextDelta", patchbaySessionId: S, blockId: "replayed", text: "an old answer" },
     ];
     let state = events.reduce(reduceAgentView, initialAgentViewState);
     expect(turnLive(state, S)).toBe(false);
-    state = reduceAgentView(state, { kind: "turnStarted", sessionId: S, at: "2026-07-09T00:00:01Z" });
+    state = reduceAgentView(state, { kind: "turnStarted", patchbaySessionId: S, at: "2026-07-09T00:00:01Z" });
     expect(turnLive(state, S)).toBe(true);
     state = reduceAgentView(state, {
       kind: "turnEnded",
-      sessionId: S,
+      patchbaySessionId: S,
       blockId: "end",
       startedAt: "2026-07-09T00:00:01Z",
       at: "2026-07-09T00:00:02Z",
@@ -120,9 +120,9 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   it("marks the block denied in place; a later failed status keeps the denied fact", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "rm -rf", status: "in_progress", toolKind: "execute" },
-      { kind: "toolCallDenied", sessionId: S, blockId: "t1" },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "failed" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "rm -rf", status: "in_progress", toolKind: "execute" },
+      { kind: "toolCallDenied", patchbaySessionId: S, blockId: "t1" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "failed" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     const block = state.transcripts[S]![0];
@@ -138,7 +138,7 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   it("denied for an unknown block is a no-op, never a crash", () => {
     const state = reduceAgentView(initialAgentViewState, {
       kind: "toolCallDenied",
-      sessionId: S,
+      patchbaySessionId: S,
       blockId: "ghost",
     });
     expect(state.transcripts[S]).toBeUndefined();
@@ -149,9 +149,9 @@ describe("userPartAppended injected flag (harness envelopes on the user role)", 
   it("an injected envelope lands as its own flagged block; the real prompt around it stays a clean bubble", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "userPartAppended", sessionId: S, blockId: "u1", part: { kind: "text", text: "fix the bug" } },
-      { kind: "userPartAppended", sessionId: S, blockId: "u2", part: { kind: "text", text: "<system-reminder>x</system-reminder>" }, injected: true },
-      { kind: "userPartAppended", sessionId: S, blockId: "u3", part: { kind: "text", text: "and add a test" } },
+      { kind: "userPartAppended", patchbaySessionId: S, blockId: "u1", part: { kind: "text", text: "fix the bug" } },
+      { kind: "userPartAppended", patchbaySessionId: S, blockId: "u2", part: { kind: "text", text: "<system-reminder>x</system-reminder>" }, injected: true },
+      { kind: "userPartAppended", patchbaySessionId: S, blockId: "u3", part: { kind: "text", text: "and add a test" } },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     expect(state.transcripts[S]).toEqual([
@@ -166,8 +166,8 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
   it("reducer: absent fields keep what a prior event established", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Read", status: "in_progress", toolKind: "read", input: "{ path }" },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed", output: "contents" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Read", status: "in_progress", toolKind: "read", input: "{ path }" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "completed", output: "contents" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     expect(state.transcripts[S]![0]).toMatchObject({
@@ -181,11 +181,11 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
 
   it("coalescer: same merge rule when events collapse in the bus", () => {
     const prev: AgentViewEvent = {
-      kind: "toolCallUpserted", sessionId: S, blockId: "t1",
+      kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1",
       title: "Read", status: "in_progress", toolKind: "read", input: "{ path }",
     };
     const next: AgentViewEvent = {
-      kind: "toolCallUpserted", sessionId: S, blockId: "t1",
+      kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1",
       title: "", status: "completed", output: "contents",
     };
     expect(coalesceAgentViewEvent(prev, next)).toMatchObject({
@@ -316,13 +316,13 @@ describe("turn lifecycle reducer (P13c)", () => {
   it("turnStarted sets the ticker basis; turnEnded clears it and appends the block", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
-      { kind: "turnStarted", sessionId: S, at: "2026-07-07T10:00:00Z" },
+      { kind: "turnStarted", patchbaySessionId: S, at: "2026-07-07T10:00:00Z" },
     ];
     const mid = events.reduce(reduceAgentView, initialAgentViewState);
     expect(mid.activeTurn[S]).toBe("2026-07-07T10:00:00Z");
 
     const done = reduceAgentView(mid, {
-      kind: "turnEnded", sessionId: S, blockId: "e1",
+      kind: "turnEnded", patchbaySessionId: S, blockId: "e1",
       startedAt: "2026-07-07T10:00:00Z", at: "2026-07-07T10:00:05Z",
       stopReason: "cancelled", usage: null,
     });
@@ -342,17 +342,17 @@ describe("turn lifecycle reducer (P13c)", () => {
     // must not touch it.
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-11T00:00:00Z" } },
-      { kind: "turnStarted", sessionId: S, at: "2026-07-11T10:00:00Z" },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
+      { kind: "turnStarted", patchbaySessionId: S, at: "2026-07-11T10:00:00Z" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
       // The orchestrator's turn-end sweep fires before turnEnded lands.
-      { kind: "toolCallInterrupted", sessionId: S, blockId: "t1" },
+      { kind: "toolCallInterrupted", patchbaySessionId: S, blockId: "t1" },
       {
-        kind: "turnEnded", sessionId: S, blockId: "e1",
+        kind: "turnEnded", patchbaySessionId: S, blockId: "e1",
         startedAt: "2026-07-11T10:00:00Z", at: "2026-07-11T10:00:12Z",
         stopReason: "cancelled", usage: null,
       },
       // A new turn begins in the same session — must not resurrect t1.
-      { kind: "turnStarted", sessionId: S, at: "2026-07-11T10:00:20Z" },
+      { kind: "turnStarted", patchbaySessionId: S, at: "2026-07-11T10:00:20Z" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     const t1 = assertKind(state.transcripts[S]!.find((b) => b.id === "t1")!, "toolCall");
@@ -364,9 +364,9 @@ describe("turn lifecycle reducer (P13c)", () => {
   it("a trailing tool_call_update still wins over a stale interrupted flag", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-11T00:00:00Z" } },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
-      { kind: "toolCallInterrupted", sessionId: S, blockId: "t1" },
-      { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
+      { kind: "toolCallInterrupted", patchbaySessionId: S, blockId: "t1" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "completed" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     const t1 = assertKind(state.transcripts[S]!.find((b) => b.id === "t1")!, "toolCall");
@@ -380,7 +380,7 @@ describe("transcriptSeeded normalization", () => {
     const legacy = { kind: "toolCall", id: "t1", title: "Read", status: "completed" } as unknown as ChatBlock;
     const state = reduceAgentView(initialAgentViewState, {
       kind: "transcriptSeeded",
-      sessionId: S,
+      patchbaySessionId: S,
       blocks: [legacy],
     });
     expect(state.transcripts[S]![0]).toEqual({
@@ -394,7 +394,7 @@ describe("transcriptSeeded normalization", () => {
     const legacy = { kind: "toolCall", id: "t1", title: "Write", status: "in_progress" } as unknown as ChatBlock;
     const state = reduceAgentView(initialAgentViewState, {
       kind: "transcriptSeeded",
-      sessionId: S,
+      patchbaySessionId: S,
       blocks: [legacy],
     });
     expect(state.transcripts[S]![0]).toMatchObject({ status: "in_progress", interrupted: true });
@@ -466,7 +466,7 @@ describe("deriveTranscript: embedded terminals", () => {
 // leaves it alone — through the reducer and the bus coalescer alike (#44).
 describe("tool-call content merge", () => {
   const upsert = (content?: ToolCallBlock["content"]): AgentViewEvent => ({
-    kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "in_progress",
+    kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "in_progress",
     ...(content !== undefined ? { content } : {}),
   });
   const first: ToolCallBlock["content"] = [{ kind: "text", text: "a" }];

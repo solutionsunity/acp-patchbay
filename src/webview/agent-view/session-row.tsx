@@ -51,22 +51,22 @@ export function SessionActions({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {detach && (
-          <DropdownMenuItem onSelect={() => send({ kind: "detachSession", sessionId: session.id })}>
+          <DropdownMenuItem onSelect={() => send({ kind: "detachSession", patchbaySessionId: session.id })}>
             Open in new window
           </DropdownMenuItem>
         )}
         <DropdownMenuItem
           disabled={reloading}
-          onSelect={() => send({ kind: "reloadSession", sessionId: session.id })}
+          onSelect={() => send({ kind: "reloadSession", patchbaySessionId: session.id })}
         >
           {reloading ? "Reloading…" : "Reload from agent"}
         </DropdownMenuItem>
         {/* The agent's own id for the session — the host holds it and
             writes it; the view knows the session only by patchbay's id. */}
-        <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", sessionId: session.id })}>
+        <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", patchbaySessionId: session.id })}>
           Copy session ID
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => send({ kind: "closeSession", sessionId: session.id })}>
+        <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
           Close
         </DropdownMenuItem>
       </DropdownMenuContent>

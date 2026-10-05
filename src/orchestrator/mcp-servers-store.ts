@@ -200,7 +200,7 @@ function headerShapeOf(
 
 /** A new server's id — patchbay's own, never the catalog's or one made
  * from a name. */
-function mintMcpServerId(): PatchbayMcpServerId {
+function mintPatchbayMcpServerId(): PatchbayMcpServerId {
   return randomUUID() as PatchbayMcpServerId;
 }
 
@@ -435,7 +435,7 @@ export class McpServersStore {
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
       if (token.trim() === "") throw new Error("key is empty");
-      const patchbayMcpServerId = mintMcpServerId();
+      const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.tokens.set(patchbayMcpServerId, { accessToken: token.trim() });
       const name = await this.configs.add({
         id: patchbayMcpServerId,
@@ -468,7 +468,7 @@ export class McpServersStore {
       if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
       this.log.info(`${catalogId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
       const result = await this.browserFlow(connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent), signal);
-      const patchbayMcpServerId = mintMcpServerId();
+      const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.tokens.set(patchbayMcpServerId, {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
@@ -506,7 +506,7 @@ export class McpServersStore {
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.custom(name), signal, async () => {
-      const patchbayMcpServerId = mintMcpServerId();
+      const patchbayMcpServerId = mintPatchbayMcpServerId();
       let configSource: McpServerSource;
       if (source.kind === "custom-stdio") {
         // `args` arrive structured (form lines / imported JSON) and are never
@@ -856,7 +856,7 @@ export class McpServersStore {
         args: [this.wire.editorServerScript],
         env: [
           { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
-          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+          { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
         ],
       },
     ];
@@ -914,7 +914,7 @@ export class McpServersStore {
         args: [this.wire.bridgeScript],
         env: [
           { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
-          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+          { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
           { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: config.id },
           { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: url },
           ...(header !== null

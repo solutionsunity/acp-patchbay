@@ -20,7 +20,7 @@ import {
   type AuthMethodView,
   type DeclaredCapabilities,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const noDeclared: DeclaredCapabilities = {
   loadSession: false,
@@ -340,7 +340,7 @@ describe("reducer: usage", () => {
   it("usageReported populates sessionUsage", () => {
     const state = reduceAgentView(initialAgentViewState, {
       kind: "usageReported",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       used: 100,
       size: 200,
     });
@@ -351,24 +351,24 @@ describe("reducer: usage", () => {
     const opusWarning = { status: "warning" as const, window: "seven_day_opus", utilization: 0.79 };
     let state = reduceAgentView(initialAgentViewState, {
       kind: "usageReported",
-      sessionId: "s1",
+      patchbaySessionId: "s1" as PatchbaySessionId,
       used: 100,
       size: 200,
       plan: opusWarning,
     });
     // A plain usage_update (no _meta reading) must not erase anything —
     // agents emit plan info only when it changes.
-    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 150, size: 200 });
+    state = reduceAgentView(state, { kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 150, size: 200 });
     expect(state.sessionUsage.s1).toMatchObject({ used: 150, plan: { seven_day_opus: opusWarning } });
     // A calm reading for a DIFFERENT window lands beside the warning, not
     // over it (the wire-observed case: five_hour allowed arriving after a
     // seven_day_opus warning).
     const fiveHourOk = { status: "ok" as const, window: "five_hour" };
-    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 160, size: 200, plan: fiveHourOk });
+    state = reduceAgentView(state, { kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 160, size: 200, plan: fiveHourOk });
     expect(state.sessionUsage.s1!.plan).toEqual({ seven_day_opus: opusWarning, five_hour: fiveHourOk });
     // A fresh reading for the SAME window replaces it.
     const opusLimited = { status: "limited" as const, window: "seven_day_opus" };
-    state = reduceAgentView(state, { kind: "usageReported", sessionId: "s1", used: 170, size: 200, plan: opusLimited });
+    state = reduceAgentView(state, { kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 170, size: 200, plan: opusLimited });
     expect(state.sessionUsage.s1!.plan).toEqual({ seven_day_opus: opusLimited, five_hour: fiveHourOk });
   });
 });

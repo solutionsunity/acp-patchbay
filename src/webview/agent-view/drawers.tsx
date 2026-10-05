@@ -17,6 +17,7 @@ import { unlistedAgents } from "./drawer-notes";
 import { Dot } from "./header";
 import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
+import type { PatchbaySessionId } from "../../shared/ids";
 
 /** Drawer title row with the explicit way out — clicking the scrim still
  * works, but the affordance must be visible. */
@@ -94,7 +95,7 @@ export function AgentsDrawer(props: {
 export function SessionsDrawer(props: {
   sessions: readonly SessionSummary[];
   agents: readonly AgentSummary[];
-  activeSessionId: string | null;
+  activePatchbaySessionId: PatchbaySessionId | null;
   markOf(session: SessionSummary): SessionMark | null;
   /** detachWindows preference — off hides "Open in new window". */
   detach: boolean;
@@ -119,14 +120,14 @@ export function SessionsDrawer(props: {
       )}
       {ordered.map((s) => {
         const agent = props.agents.find((a) => a.id === s.patchbayAgentId);
-        const isActive = s.id === props.activeSessionId;
+        const isActive = s.id === props.activePatchbaySessionId;
         return (
           <div
             className={`s-row relative${isActive ? " active" : ""}`}
             key={s.id}
             aria-current={isActive ? "true" : undefined}
             onClick={() => {
-              send({ kind: "switchSession", sessionId: s.id });
+              send({ kind: "switchSession", patchbaySessionId: s.id });
               props.onDone();
             }}
           >

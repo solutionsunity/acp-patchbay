@@ -26,6 +26,7 @@ import { TerminalView } from "./cards";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
 import { diffTotal, toolFileRows } from "./view-model";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
  * `[@name](file://… | zed://…)`. Structured mentions arrive as their own
@@ -337,11 +338,11 @@ function stopThen(act: () => void) {
  * the header, always visible. */
 export function ToolCallCard({
   block,
-  sessionId,
+  patchbaySessionId,
   roots,
 }: {
   block: ToolCallBlock;
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   /** Workspace roots — file rows read relative to them. */
   roots: readonly string[];
 }) {
@@ -361,7 +362,7 @@ export function ToolCallCard({
   const expandable = listFiles || shown.length > 0 || hasRaw;
   const openAt = (path: string, line: number | undefined) =>
     send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
-  const openDiff = (path: string) => send({ kind: "openToolCallDiff", sessionId, toolCallId: block.id, path });
+  const openDiff = (path: string) => send({ kind: "openToolCallDiff", patchbaySessionId, toolCallId: block.id, path });
   return (
     <div className="card">
       {/* The header is a mouse target for the whole row; the keyboard's is
@@ -549,11 +550,11 @@ function EmbeddedTerminal({ terminalId }: { terminalId: string }) {
  * summary so a live run never reads as a stall. */
 export function ToolRunCard({
   calls,
-  sessionId,
+  patchbaySessionId,
   roots,
 }: {
   calls: readonly ToolCallBlock[];
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   roots: readonly string[];
 }) {
   const [open, setOpen] = useState(false);
@@ -574,7 +575,7 @@ export function ToolRunCard({
           <Disclosure open={true} onToggle={() => setOpen(false)} label="Collapse the tool calls" />
         </div>
         {calls.map((c) => (
-          <ToolCallCard key={c.id} block={c} sessionId={sessionId} roots={roots} />
+          <ToolCallCard key={c.id} block={c} patchbaySessionId={patchbaySessionId} roots={roots} />
         ))}
       </>
     );

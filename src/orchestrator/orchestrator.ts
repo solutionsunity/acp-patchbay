@@ -88,8 +88,7 @@ import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
-import type { PatchbayAgentId } from "../shared/ids";
-import type { PatchbayMcpServerId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 
 /** Context-chip id mint. The timestamp alone collided once a multi-file
  * drop started dispatching several adds in the same millisecond (duplicate
@@ -448,13 +447,13 @@ export class Orchestrator {
           return { action: "cancel" };
         }
         // So is a session patchbay doesn't hold: no transcript to ask in.
-        const sessionId = this.sessions.rowFor(patchbayAgentId, reading.sessionId);
-        if (sessionId === undefined) {
+        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, reading.sessionId);
+        if (patchbaySessionId === undefined) {
           this.log.info(`${patchbayAgentId}: cancelled an elicitation on session ${reading.sessionId}, which patchbay doesn't hold`);
           return { action: "cancel" };
         }
         const answer = await this.broker.askElicitation(
-          sessionId,
+          patchbaySessionId,
           { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
           signal,
         );
@@ -487,13 +486,13 @@ export class Orchestrator {
         }
         // A session patchbay doesn't hold has no card to show — the request
         // is still owed an answer, and nobody saw it: cancelled.
-        const sessionId = this.sessions.rowFor(patchbayAgentId, params.sessionId);
-        if (sessionId === undefined) {
+        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, params.sessionId);
+        if (patchbaySessionId === undefined) {
           this.log.info(`${patchbayAgentId}: cancelled "${title}" on session ${params.sessionId}, which patchbay doesn't hold`);
           return { outcome: { outcome: "cancelled" } };
         }
         const result = await this.broker.resolveAgentPermissionRequest(
-          sessionId,
+          patchbaySessionId,
           title,
           params.toolCall.kind ?? "other",
           params.toolCall.locations?.map((l) => l.path) ?? [],
@@ -506,7 +505,7 @@ export class Orchestrator {
         // own permission/diff cards inline.
         const chosen = "cancelled" in result ? undefined : options.find((o) => o.optionId === result.optionId);
         if (chosen !== undefined && chosen.kind.startsWith("reject")) {
-          this.agentView.emit({ kind: "toolCallDenied", sessionId, blockId: params.toolCall.toolCallId });
+          this.agentView.emit({ kind: "toolCallDenied", patchbaySessionId, blockId: params.toolCall.toolCallId });
         }
         return "cancelled" in result
           ? { outcome: { outcome: "cancelled" } }
@@ -514,7 +513,7 @@ export class Orchestrator {
       },
       ...clientRequestHooks(
         () => this.clientHost,
-        (patchbayAgentId, agentSessionId) => this.sessions.rowFor(patchbayAgentId, agentSessionId),
+        (patchbayAgentId, sessionId) => this.sessions.rowFor(patchbayAgentId, sessionId),
       ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
@@ -528,8 +527,8 @@ export class Orchestrator {
           log: this.log,
           onPhase,
           confirmDownload: (ask) => this.confirmDownload(ask),
-          digestFor: (patchbayAgentId, version, pinned) =>
-            binaryDigestFor(this.acpRegistry.current().agents, patchbayAgentId, version, pinned),
+          digestFor: (distribution, version, pinned) =>
+            binaryDigestFor(this.acpRegistry.current().agents, distribution, version, pinned),
           refreshRegistry: async () => (await this.acpRegistry.refresh("download")).ok,
         }),
     });
@@ -541,8 +540,8 @@ export class Orchestrator {
       // Same token discipline as requestUserInput: a token whose session is
       // gone has no roots.
       sessionRoots: (contextToken) => {
-        const sessionId = this.sessions.sessionOfToken(contextToken);
-        return sessionId === undefined ? [] : this.sessions.rootsOf(sessionId);
+        const patchbaySessionId = this.sessions.sessionOfToken(contextToken);
+        return patchbaySessionId === undefined ? [] : this.sessions.rootsOf(patchbaySessionId);
       },
       getMcpServerToken: (contextToken, patchbayMcpServerId) => {
         const patchbayAgentId = this.sessions.bridgedTo(contextToken, patchbayMcpServerId);
@@ -613,10 +612,10 @@ export class Orchestrator {
         // everything here.
         seedFor: (patchbayAgentId) => this.agents.knobSeed(patchbayAgentId, this.preferences.get().knobSource),
         onKnobsConfirmed: (patchbayAgentId, seed) => this.agents.recordKnobs(patchbayAgentId, seed),
-        rootsChanged: (sessionId) => {
+        rootsChanged: (patchbaySessionId) => {
           // Every subprocess of the session was spawned with one of its
           // tokens (one per attach; a re-attach mints a fresh one).
-          for (const token of this.sessions.tokensOf(sessionId)) this.editorStateHost.notifyRootsChanged(token);
+          for (const token of this.sessions.tokensOf(patchbaySessionId)) this.editorStateHost.notifyRootsChanged(token);
         },
         workspaceRoots: workspaceRootsView,
         savedRoots: () => {
@@ -627,18 +626,18 @@ export class Orchestrator {
         // a skipped saved root earns its mark in Settings now, not at the
         // page's next unrelated refresh
         rootsMissing: () => this.publishSavedRoots(),
-        currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
+        currentTranscript: (patchbaySessionId) => this.agentView.current.transcripts[patchbaySessionId] ?? [],
         isDeleteUsed: (patchbayAgentId) => this.agents.matrix(patchbayAgentId)?.["session.delete"]?.used ?? false,
-        isActiveSession: (sessionId) =>
-          this.agentView.current.activeSessionId === sessionId ||
-          this.pinnedSessions().includes(sessionId),
-        isUnseen: (sessionId) =>
-          this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
-        cancelAsks: (sessionId) => this.broker.cancelPending(sessionId),
+        isActiveSession: (patchbaySessionId) =>
+          this.agentView.current.activePatchbaySessionId === patchbaySessionId ||
+          this.pinnedSessions().includes(patchbaySessionId),
+        isUnseen: (patchbaySessionId) =>
+          this.agentView.current.sessions.find((s) => s.id === patchbaySessionId)?.unseen === true,
+        cancelAsks: (patchbaySessionId) => this.broker.cancelPending(patchbaySessionId),
         authLocked: (patchbayAgentId) => this.agents.authLocked(patchbayAgentId),
         // the pointer names the session the agent's way, which a re-mint moves
-        handleChanged: (sessionId) => {
-          if (this.pointerRow === sessionId) this.recordPointer(sessionId);
+        sessionIdChanged: (patchbaySessionId) => {
+          if (this.pointerRow === patchbaySessionId) this.recordPointer(patchbaySessionId);
         },
       },
       this.sessionContinuity,
@@ -660,15 +659,15 @@ export class Orchestrator {
     // its attachment work and its turn — and the gates, the one way any
     // door reaches an operation on a session's connection. What the lines
     // hold is the session's busy state, so every move re-sends it.
-    const publishBusy = (sessionId: string) =>
-      this.agentView.emit({ kind: "sessionBusyChanged", sessionId, busy: this.sessionGates.busy(sessionId) });
+    const publishBusy = (patchbaySessionId: PatchbaySessionId) =>
+      this.agentView.emit({ kind: "sessionBusyChanged", patchbaySessionId, busy: this.sessionGates.busy(patchbaySessionId) });
     this.sessions = sessions;
     this.sessionGates = new SessionGates(
       sessions,
-      new Queue<AttachWork>(publishBusy),
-      new Queue<"prompt">(publishBusy),
+      new Queue<AttachWork, PatchbaySessionId>(publishBusy),
+      new Queue<"prompt", PatchbaySessionId>(publishBusy),
       {
-        connect: (sessionId) => void this.connectForSession(sessionId),
+        connect: (patchbaySessionId) => void this.connectForSession(patchbaySessionId),
         failed: (context, err) => this.logCatch(context)(err),
         agentSettled: (patchbayAgentId) => this.gates.settled(patchbayAgentId),
       },
@@ -769,7 +768,7 @@ export class Orchestrator {
         redact: (text) => this.wireLog.redact(text),
         openLink: (href) => void openInBrowser(href),
       },
-      (sessionId) => this.sessions.grantedRoots(sessionId),
+      (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
       undefined, // default NodeTerminalRunner
       this.machinePermissionRules,
     );
@@ -883,7 +882,7 @@ export class Orchestrator {
     });
 
     for (const session of this.agentView.current.sessions) {
-      this.agentView.emit({ kind: "sessionClosed", sessionId: session.id });
+      this.agentView.emit({ kind: "sessionClosed", patchbaySessionId: session.id });
     }
     await this.agents.erased(this.agentView.current.agents.map((a) => a.id));
     this.agentView.emit({ kind: "chatConnectResolved" });
@@ -948,10 +947,10 @@ export class Orchestrator {
     const pointer = this.lastActiveSession.get();
     if (pointer === undefined) return;
     await Promise.allSettled([...this.pendingSyncs.values()]);
-    if (this.agentView.current.activeSessionId !== null) return;
-    const sessionId = this.sessions.rowFor(pointer.agentId, pointer.sessionId);
-    if (sessionId === undefined) return;
-    this.sessionGates.activate(sessionId);
+    if (this.agentView.current.activePatchbaySessionId !== null) return;
+    const patchbaySessionId = this.sessions.rowFor(pointer.agentId, pointer.sessionId);
+    if (patchbaySessionId === undefined) return;
+    this.sessionGates.activate(patchbaySessionId);
   }
 
   /** Mirrors the detachWindows preference into a when-clause context key —
@@ -1007,12 +1006,12 @@ export class Orchestrator {
    * answers must not hold the palette hostage (pool requests carry no
    * deadline). */
   async switchSessionCommand(): Promise<void> {
-    type Item = vscode.QuickPickItem & { sessionId: string };
+    type Item = vscode.QuickPickItem & { patchbaySessionId: PatchbaySessionId };
     const items = (): Item[] =>
       this.agentView.current.sessions.map((s) => ({
         label: s.title,
         description: this.agents.name(s.patchbayAgentId) ?? s.patchbayAgentId,
-        sessionId: s.id,
+        patchbaySessionId: s.id,
       }));
     const pick = vscode.window.createQuickPick<Item>();
     pick.placeholder = "Switch to session…";
@@ -1038,7 +1037,7 @@ export class Orchestrator {
     });
     pick.dispose();
     if (picked === undefined) return;
-    await this.revealSession(picked.sessionId);
+    await this.revealSession(picked.patchbaySessionId);
   }
 
   /** "Connect agent" — the palette shortcut, through the same `connectFrom`
@@ -1071,34 +1070,34 @@ export class Orchestrator {
    * alike; focusing the Agent View afterward is what lets the user ask
    * about it, the same composer flow either way. */
   async addSelectionToContextCommand(): Promise<void> {
-    const sessionId = this.agentView.current.activeSessionId;
-    if (sessionId === null) {
+    const patchbaySessionId = this.agentView.current.activePatchbaySessionId;
+    if (patchbaySessionId === null) {
       void vscode.window.showInformationMessage("Start a Patchbay session first, then add a selection.");
       return;
     }
-    this.handleAction({ kind: "addSelectionContext", sessionId });
+    this.handleAction({ kind: "addSelectionContext", patchbaySessionId });
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
   /** The local MCP server's `request_user_input` tool — the fallback for an
    * agent that asks through MCP instead of ACP's own elicitation request.
    * `contextToken` is what the MCP server subprocess was spawned with —
-   * translated back to the real sessionId so the form lands in the right
-   * transcript. */
+   * translated back to the session it was minted for, so the form lands in
+   * the right transcript. */
   private requestUserInput(
     contextToken: string,
     params: RequestUserInputParams,
   ): Promise<ElicitationAnswer> {
     // A token whose session is gone has no transcript to ask in, so the
     // user never saw the question — a cancel, never a guessed session.
-    const sessionId = this.sessions.sessionOfToken(contextToken);
-    if (sessionId === undefined) return Promise.resolve({ action: "cancel" });
+    const patchbaySessionId = this.sessions.sessionOfToken(contextToken);
+    if (patchbaySessionId === undefined) return Promise.resolve({ action: "cancel" });
     // Same parser as the agent's own elicitation request. A field it cannot
     // present fails the tool call with the reason, rather than rendering a
     // guessed control.
     const fields = params.requestedSchema === undefined ? [] : formFieldsOf(params.requestedSchema);
     if (fields === null) return Promise.reject(new Error("the form has a field patchbay cannot present"));
-    return this.broker.askElicitation(sessionId, { message: params.message, ask: { mode: "form", fields } });
+    return this.broker.askElicitation(patchbaySessionId, { message: params.message, ask: { mode: "form", fields } });
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).
@@ -1107,8 +1106,8 @@ export class Orchestrator {
    * clears it only while it still points there. */
   private recordLastActive(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
-      if (event.kind === "sessionActivated") this.recordPointer(event.sessionId);
-      else if (event.kind === "sessionClosed" && event.sessionId === this.pointerRow) {
+      if (event.kind === "sessionActivated") this.recordPointer(event.patchbaySessionId);
+      else if (event.kind === "sessionClosed" && event.patchbaySessionId === this.pointerRow) {
         this.pointerRow = null;
         void this.lastActiveSession.wipe();
       }
@@ -1117,12 +1116,12 @@ export class Orchestrator {
 
   /** The pointer names the session the way the next window can find it:
    * its agent, and the agent's own id for it. */
-  private recordPointer(sessionId: string): void {
-    const patchbayAgentId = this.sessions.agentFor(sessionId);
-    const handle = this.sessions.handleOf(sessionId);
-    if (patchbayAgentId === undefined || handle === undefined) return;
-    this.pointerRow = sessionId;
-    void this.lastActiveSession.set({ agentId: patchbayAgentId, sessionId: handle });
+  private recordPointer(patchbaySessionId: PatchbaySessionId): void {
+    const patchbayAgentId = this.sessions.agentFor(patchbaySessionId);
+    const sessionId = this.sessions.sessionIdOf(patchbaySessionId);
+    if (patchbayAgentId === undefined || sessionId === undefined) return;
+    this.pointerRow = patchbaySessionId;
+    void this.lastActiveSession.set({ agentId: patchbayAgentId, sessionId });
   }
 
   /** Done-sound (Preferences): the system chime as a turn resolves —
@@ -1311,8 +1310,8 @@ export class Orchestrator {
 
   /** Agent-reported tool-call diffs — the texts come back from the
    * sessions store's stash; both sides are snapshots, so both ride temp files. */
-  private async openToolCallDiff(sessionId: string, toolCallId: string, path: string): Promise<void> {
-    const diff = this.sessions.toolCallDiff(sessionId, toolCallId, path);
+  private async openToolCallDiff(patchbaySessionId: PatchbaySessionId, toolCallId: string, path: string): Promise<void> {
+    const diff = this.sessions.toolCallDiff(patchbaySessionId, toolCallId, path);
     if (diff === null) return; // stale id after a close — nothing to show
     const name = basename(path);
     await vscode.commands.executeCommand(
@@ -1343,7 +1342,7 @@ export class Orchestrator {
    * so no card, and no "waiting" mark, outlives the process it was asked
    * on. Read before the sessions are invalidated. */
   private settleAsksOn(patchbayAgentId: PatchbayAgentId): void {
-    for (const sessionId of this.sessions.sessionsOn(patchbayAgentId)) this.broker.cancelPending(sessionId);
+    for (const patchbaySessionId of this.sessions.sessionsOn(patchbayAgentId)) this.broker.cancelPending(patchbaySessionId);
   }
 
   /** The native notification is raised from the waiting fact, not by a
@@ -1371,7 +1370,7 @@ export class Orchestrator {
    * (the same actions the card sends, so whichever surface the user acts
    * on first wins — a second answer is a no-op), and Open, which brings
    * the session up. A question is answered only in its card. */
-  private notifyAsk(sessionId: string, title: string, ask: OpenAsk): void {
+  private notifyAsk(patchbaySessionId: PatchbaySessionId, title: string, ask: OpenAsk): void {
     const answers: { label: string; action: Action }[] =
       ask.kind === "permission"
         ? ask.options.map((o) => ({
@@ -1388,7 +1387,7 @@ export class Orchestrator {
       ask.kind === "permission" ? `${ask.title}: ${ask.detail}` : ask.kind === "diff" ? `File write: ${ask.file}` : ask.message;
     const labels = [...answers.map((a) => a.label), "Open"];
     void vscode.window.showWarningMessage(`${title} — ${what}`, ...labels).then((picked) => {
-      if (picked === "Open") void this.revealSession(sessionId);
+      if (picked === "Open") void this.revealSession(patchbaySessionId);
       else {
         const answer = answers.find((a) => a.label === picked);
         if (answer !== undefined) this.handleAction(answer.action);
@@ -1398,8 +1397,8 @@ export class Orchestrator {
 
   /** Brings a session up in the Agent View — the one path for every
    * "take me there" (the switch-session command, a notification's Open). */
-  private async revealSession(sessionId: string): Promise<void> {
-    this.sessionGates.open(sessionId);
+  private async revealSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    this.sessionGates.open(patchbaySessionId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -1661,29 +1660,29 @@ export class Orchestrator {
         // Switching NEVER closes the session being left — open sessions
         // stay attached until the idle reaper's full predicate says
         // otherwise (sessions-store `idle`).
-        this.sessionGates.open(action.sessionId);
+        this.sessionGates.open(action.patchbaySessionId);
         break;
       case "closeSession":
-        void this.sessionGates.close(action.sessionId).catch(this.logCatch(`close ${action.sessionId}`));
+        void this.sessionGates.close(action.patchbaySessionId).catch(this.logCatch(`close ${action.patchbaySessionId}`));
         break;
       case "copySessionId": {
-        const handle = this.sessions.handleOf(action.sessionId);
-        if (handle !== undefined) void vscode.env.clipboard.writeText(handle);
+        const sessionId = this.sessions.sessionIdOf(action.patchbaySessionId);
+        if (sessionId !== undefined) void vscode.env.clipboard.writeText(sessionId);
         break;
       }
       case "reloadSession":
-        void this.sessionGates.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
+        void this.sessionGates.reload(action.patchbaySessionId).catch(this.logCatch(`reload ${action.patchbaySessionId}`));
         break;
       // A rejected set leaves authoritative state unchanged — republish it
       // (fresh identity) so the pill's pending spinner settles back to truth.
       case "setSessionKnob":
         void this.sessionGates
-          .setKnob(action.sessionId, action.knobId, action.value)
+          .setKnob(action.patchbaySessionId, action.knobId, action.value)
           .catch((err) => {
-            this.logCatch(`setKnob ${action.sessionId}`)(err);
-            const knobs = this.agentView.current.sessionKnobs[action.sessionId];
+            this.logCatch(`setKnob ${action.patchbaySessionId}`)(err);
+            const knobs = this.agentView.current.sessionKnobs[action.patchbaySessionId];
             if (knobs !== undefined) {
-              this.agentView.emit({ kind: "sessionKnobsSet", sessionId: action.sessionId, knobs: [...knobs] });
+              this.agentView.emit({ kind: "sessionKnobsSet", patchbaySessionId: action.patchbaySessionId, knobs: [...knobs] });
             }
           });
         break;
@@ -1693,12 +1692,12 @@ export class Orchestrator {
         // A failure leaves the turn's end, or the words held, with no reply
         // channel by design.
         void this.sessionGates
-          .prompt(action.sessionId, {
+          .prompt(action.patchbaySessionId, {
             text: action.text,
             ...(action.parts !== undefined ? { parts: action.parts } : {}),
             ...(action.draft !== undefined ? { draft: action.draft } : {}),
           })
-          .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
+          .catch(this.logCatch(`sendPrompt ${action.patchbaySessionId}`));
         break;
       case "detachSession":
         // Preference-gated at the source of truth, not only in the menu
@@ -1707,21 +1706,21 @@ export class Orchestrator {
         // The panel host lives in extension.ts (like Settings) — reach it by
         // command. Then the one open ceremony, pinned: the panel renders
         // this session by id, so the active pointer stays where it is.
-        void vscode.commands.executeCommand("acpPatchbay.detachSession", action.sessionId);
-        this.sessionGates.open(action.sessionId, { pin: true });
+        void vscode.commands.executeCommand("acpPatchbay.detachSession", action.patchbaySessionId);
+        this.sessionGates.open(action.patchbaySessionId, { pin: true });
         break;
       case "removeQueuedPrompt":
-        this.sessions.removeQueuedPrompt(action.sessionId, action.promptId);
+        this.sessions.removeQueuedPrompt(action.patchbaySessionId, action.promptId);
         break;
       case "reclaimQueuedPrompt":
-        this.sessions.takeBack(action.sessionId, action.promptId);
+        this.sessions.takeBack(action.patchbaySessionId, action.promptId);
         break;
       case "setSessionDraft":
         // The composer's debounced durable save.
-        this.sessions.saveDraft(action.sessionId, action.draft);
+        this.sessions.saveDraft(action.patchbaySessionId, action.draft);
         break;
       case "stopTurn":
-        void this.sessionGates.stop(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
+        void this.sessionGates.stop(action.patchbaySessionId).catch(this.logCatch(`stop turn ${action.patchbaySessionId}`));
         break;
       case "verifyAgent":
         void this.gates.verify(action.patchbayAgentId).catch(this.logCatch(`verify ${action.patchbayAgentId}`));
@@ -1815,14 +1814,14 @@ export class Orchestrator {
           break;
         }
         void this.sessions
-          .addContext(action.sessionId, {
+          .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "selection",
             label: `Selection: ${selection.file}:${selection.startLine}-${selection.endLine}`,
             content: selection.text,
             sourceUri: `${vscode.Uri.file(selection.file)}#L${selection.startLine}-${selection.endLine}`,
           })
-          .catch(this.logCatch(`add context ${action.sessionId}`));
+          .catch(this.logCatch(`add context ${action.patchbaySessionId}`));
         break;
       }
       case "addFileContext": {
@@ -1832,31 +1831,31 @@ export class Orchestrator {
           break;
         }
         void this.sessions
-          .addContext(action.sessionId, {
+          .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "file",
             label: `File: ${file.file}`,
             content: file.content,
             sourceUri: vscode.Uri.file(file.file).toString(),
           })
-          .catch(this.logCatch(`add context ${action.sessionId}`));
+          .catch(this.logCatch(`add context ${action.patchbaySessionId}`));
         break;
       }
       case "addDiagnosticsContext": {
         const diagnostics = this.editorStateHost.getDiagnostics();
         if (diagnostics.length === 0) break;
         void this.sessions
-          .addContext(action.sessionId, {
+          .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "diagnostics",
             label: `Problems (${diagnostics.length})`,
             content: diagnostics.map((d) => `${d.file}:${d.line} [${d.severity}] ${d.message}`).join("\n"),
           })
-          .catch(this.logCatch(`add context ${action.sessionId}`));
+          .catch(this.logCatch(`add context ${action.patchbaySessionId}`));
         break;
       }
       case "removeContextChip":
-        this.sessions.removeContext(action.sessionId, action.chipId);
+        this.sessions.removeContext(action.patchbaySessionId, action.chipId);
         break;
       // A connect's failure is the store's to hold and show; the log has it
       // already.
@@ -1904,7 +1903,7 @@ export class Orchestrator {
         void this.openProposedDiff(action.blockId).catch(this.logCatch(`openProposedDiff ${action.blockId}`));
         break;
       case "openToolCallDiff":
-        void this.openToolCallDiff(action.sessionId, action.toolCallId, action.path).catch(
+        void this.openToolCallDiff(action.patchbaySessionId, action.toolCallId, action.path).catch(
           this.logCatch(`openToolCallDiff ${action.path}`),
         );
         break;
@@ -1933,7 +1932,7 @@ export class Orchestrator {
         void this.mcpServers.reorder(action.patchbayMcpServerIds);
         break;
       case "addContextRoot":
-        void this.addContextRoot(action.sessionId);
+        void this.addContextRoot(action.patchbaySessionId);
         break;
       case "saveRoot":
         void this.saveRoot(action.scope, action.path).catch(this.logCatch("saveRoot"));
@@ -1948,19 +1947,19 @@ export class Orchestrator {
         break;
       case "removeContextRoot":
         void this.sessionGates
-          .removeRoot(action.sessionId, action.path)
-          .catch(this.logCatch(`removeRoot ${action.sessionId}`));
+          .removeRoot(action.patchbaySessionId, action.path)
+          .catch(this.logCatch(`removeRoot ${action.patchbaySessionId}`));
         break;
       case "addImageContext":
         void this.sessions
-          .addContext(action.sessionId, {
+          .addContext(action.patchbaySessionId, {
             id: chipId(),
             kind: "image",
             label: action.label,
             content: action.base64,
             mimeType: action.mimeType,
           })
-          .catch(this.logCatch(`add context ${action.sessionId}`));
+          .catch(this.logCatch(`add context ${action.patchbaySessionId}`));
         break;
       case "addDroppedFileContext":
         void this.addDroppedFileContext(action).catch(
@@ -1968,7 +1967,7 @@ export class Orchestrator {
         );
         break;
       case "addFilePickerContext":
-        void this.addFilePickerContext(action.sessionId);
+        void this.addFilePickerContext(action.patchbaySessionId);
         break;
       case "queryWorkspaceFiles":
         void this.queryWorkspaceFiles(action.query).catch(
@@ -2022,7 +2021,7 @@ export class Orchestrator {
    * a native folder picker, since only the extension host can browse the
    * real filesystem; the result is just another context-root path,
    * patchbay never indexes what's inside it. */
-  private async addContextRoot(sessionId: string): Promise<void> {
+  private async addContextRoot(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: true,
       canSelectFiles: false,
@@ -2031,7 +2030,7 @@ export class Orchestrator {
     });
     const uri = picked?.[0];
     if (uri === undefined) return;
-    await this.sessionGates.addRoot(sessionId, uri.fsPath);
+    await this.sessionGates.addRoot(patchbaySessionId, uri.fsPath);
   }
 
   /** The saved roots as both channels show them: this workspace's list
@@ -2098,7 +2097,7 @@ export class Orchestrator {
    * resource_link to it (the sessions store's attachment arm). The ingress
    * processor already validated and size-capped the bytes webview-side. */
   private async addDroppedFileContext(action: {
-    sessionId: string;
+    patchbaySessionId: PatchbaySessionId;
     name: string;
     mimeType: string;
     base64: string;
@@ -2113,7 +2112,7 @@ export class Orchestrator {
     const safe = action.name.replace(/[^\w.-]+/g, "_");
     const path = join(dir, `${chipId()}-${safe}`);
     await writeFile(path, Buffer.from(action.base64, "base64"));
-    await this.sessions.addContext(action.sessionId, {
+    await this.sessions.addContext(action.patchbaySessionId, {
       id: chipId(),
       kind: "attachment",
       label: `File: ${action.name}`,
@@ -2131,7 +2130,7 @@ export class Orchestrator {
    * fallback is strictly honest, so nothing picked is ever refused. A
    * picked file is at rest on disk, hence a link, not a text snapshot: the
    * inline `file` chip is for the editor buffer, which may be dirty. */
-  private async addFilePickerContext(sessionId: string): Promise<void> {
+  private async addFilePickerContext(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: false,
       canSelectFiles: true,
@@ -2145,7 +2144,7 @@ export class Orchestrator {
     const form = pickedFileForm(name, size, this.preferences.get().attachmentMaxMB * 1024 * 1024);
     if (form.kind === "image") {
       const bytes = await vscode.workspace.fs.readFile(uri);
-      await this.sessions.addContext(sessionId, {
+      await this.sessions.addContext(patchbaySessionId, {
         id: chipId(),
         kind: "image",
         label: `Image: ${name}`,
@@ -2153,7 +2152,7 @@ export class Orchestrator {
         mimeType: form.mimeType,
       });
     } else {
-      await this.sessions.addContext(sessionId, {
+      await this.sessions.addContext(patchbaySessionId, {
         id: chipId(),
         kind: "attachment",
         label: `File: ${name}`,
@@ -2243,30 +2242,30 @@ export class Orchestrator {
    * `connect` ask): opening a session whose configured agent is off spawns
    * it, through the same in-pane chatConnect states startChat uses — but
    * no session is minted: on success the status-running hook re-syncs and
-   * attaches whatever is on view, and `forSessionId` makes
+   * attaches whatever is on view, and `forPatchbaySessionId` makes
    * the failure pane's Retry re-open this session instead of starting a
    * new chat. Unconfigured agents stay untouched — the row is a readable
    * record, nothing more to offer. */
-  private async connectForSession(sessionId: string): Promise<void> {
-    const patchbayAgentId = this.sessions.agentFor(sessionId);
+  private async connectForSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    const patchbayAgentId = this.sessions.agentFor(patchbaySessionId);
     if (patchbayAgentId === undefined) return;
     const row = this.agents.row(patchbayAgentId);
     if (row === undefined || row.status === "running") return;
-    this.agentView.emit({ kind: "chatConnectStarted", patchbayAgentId, forSessionId: sessionId });
+    this.agentView.emit({ kind: "chatConnectStarted", patchbayAgentId, forPatchbaySessionId: patchbaySessionId });
     try {
       await this.gates.connect(patchbayAgentId);
-      if (this.paneShows(patchbayAgentId, sessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
+      if (this.paneShows(patchbayAgentId, patchbaySessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
-      this.logCatch(`connect for session ${sessionId} (${patchbayAgentId})`)(err);
-      this.chatPaneFailed(patchbayAgentId, err, sessionId);
+      this.logCatch(`connect for session ${patchbaySessionId} (${patchbayAgentId})`)(err);
+      this.chatPaneFailed(patchbayAgentId, err, patchbaySessionId);
     }
   }
 
   /** A chat that didn't land on its agent: the pane says why, with a Retry
    * — unless the user's own Stop or Remove ended it, and the pane just
    * goes. A pane taken by a later request is not this one's to touch. */
-  private chatPaneFailed(patchbayAgentId: PatchbayAgentId, err: unknown, forSessionId?: string): void {
-    if (!this.paneShows(patchbayAgentId, forSessionId)) return;
+  private chatPaneFailed(patchbayAgentId: PatchbayAgentId, err: unknown, forPatchbaySessionId?: PatchbaySessionId): void {
+    if (!this.paneShows(patchbayAgentId, forPatchbaySessionId)) return;
     if (err instanceof Cancelled) {
       this.agentView.emit({ kind: "chatConnectResolved" });
       return;
@@ -2276,7 +2275,7 @@ export class Orchestrator {
       kind: "chatConnectFailed",
       patchbayAgentId,
       reason: this.connectFailureReason(patchbayAgentId, err, raw),
-      forSessionId,
+      forPatchbaySessionId,
     });
   }
 
@@ -2285,8 +2284,8 @@ export class Orchestrator {
    * comes up, but its chat neither lands nor fails over the later one. A
    * repeat of the same request shows the same pane and shares its work —
    * the connect it joined, the new session it asked for. */
-  private paneShows(patchbayAgentId: PatchbayAgentId, forSessionId?: string): boolean {
-    return chatPaneShows(this.agentView.current.chatConnect, patchbayAgentId, forSessionId);
+  private paneShows(patchbayAgentId: PatchbayAgentId, forPatchbaySessionId?: PatchbaySessionId): boolean {
+    return chatPaneShows(this.agentView.current.chatConnect, patchbayAgentId, forPatchbaySessionId);
   }
 
   /** Prefer the pool's own crash detail (spawn failed / initialize failed)

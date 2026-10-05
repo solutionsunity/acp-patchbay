@@ -87,13 +87,13 @@ export class EditorStateHost {
   private readonly rootWatchers = new Map<Socket, string>();
 
   constructor(
-    workspaceId: string,
+    pid: string,
     private readonly hooks: EditorStateHostHooks,
   ) {
     this.socketPath =
       process.platform === "win32"
-        ? `\\\\.\\pipe\\acp-patchbay-${workspaceId}`
-        : join(tmpdir(), `acp-patchbay-${workspaceId}.sock`);
+        ? `\\\\.\\pipe\\acp-patchbay-${pid}`
+        : join(tmpdir(), `acp-patchbay-${pid}.sock`);
   }
 
   start(): void {
@@ -156,7 +156,7 @@ export class EditorStateHost {
   }
 
   private async dispatch(socket: Socket, request: IpcRequest): Promise<unknown> {
-    if (!this.hooks.admits(request.sessionId)) throw new Error("unknown session token");
+    if (!this.hooks.admits(request.contextToken)) throw new Error("unknown session token");
     switch (request.method) {
       case "getSelection":
         return this.getSelection();
@@ -169,20 +169,20 @@ export class EditorStateHost {
       case "getWorkspaceState":
         return this.getWorkspaceState();
       case "getRoots": {
-        const result: RootsResult = { roots: [...this.hooks.sessionRoots(request.sessionId)] };
+        const result: RootsResult = { roots: [...this.hooks.sessionRoots(request.contextToken)] };
         return result;
       }
       case "watchRoots":
-        this.rootWatchers.set(socket, request.sessionId);
+        this.rootWatchers.set(socket, request.contextToken);
         return {};
       case "requestUserInput":
         return this.hooks.requestUserInput(
-          request.sessionId,
+          request.contextToken,
           request.params as RequestUserInputParams,
         );
       case "getMcpServerToken":
         return this.hooks.getMcpServerToken(
-          request.sessionId,
+          request.contextToken,
           (request.params as McpServerTokenParams).patchbayMcpServerId,
         );
     }

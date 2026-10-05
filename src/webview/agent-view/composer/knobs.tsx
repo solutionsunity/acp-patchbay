@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 const KNOB_TRIGGER = "h-5 border-0 px-1 text-[10.5px] shadow-none";
 
@@ -30,7 +31,7 @@ function glyphFor(category: string | undefined): string {
 }
 
 export function Knobs(props: {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   knobs: readonly SessionKnobView[];
 }) {
   const send = useActions();
@@ -44,7 +45,7 @@ export function Knobs(props: {
 
   const set = (knobId: string, value: string | boolean) => {
     setPending((cur) => ({ ...cur, [knobId]: true }));
-    send({ kind: "setSessionKnob", sessionId: props.sessionId, knobId, value });
+    send({ kind: "setSessionKnob", patchbaySessionId: props.patchbaySessionId, knobId, value });
   };
 
   return (

@@ -26,6 +26,7 @@ import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
 import { Button } from "@/components/ui/button";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** THE turn line — one component, live and settled: while the turn runs it is
  * the ticker (accent spinner + climbing elapsed + counts as they happen);
@@ -112,13 +113,13 @@ function TurnLine({
 function Block({
   block,
   live,
-  sessionId,
+  patchbaySessionId,
   agentName,
   roots,
 }: {
   block: ChatBlock;
   live: boolean;
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   /** Workspace roots — tool-call file rows read relative to them. */
   roots: readonly string[];
   /** Who is speaking in this session — the elicitation card must name the
@@ -149,7 +150,7 @@ function Block({
         </div>
       );
     case "toolCall":
-      return <ToolCallCard block={block} sessionId={sessionId} roots={roots} />;
+      return <ToolCallCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
     case "turnEnd":
       return null; // rendered by Chat as TurnLine, with its rollup
     case "permission":
@@ -177,7 +178,7 @@ const MemoBlock = memo(Block);
 const MemoToolRun = memo(
   ToolRunCard,
   (a, b) =>
-    a.sessionId === b.sessionId &&
+    a.patchbaySessionId === b.patchbaySessionId &&
     a.roots === b.roots &&
     a.calls.length === b.calls.length &&
     a.calls.every((c, i) => c === b.calls[i]),
@@ -214,7 +215,7 @@ export function Chat(props: {
   const active = props.activeSession;
   const agentName =
     props.state.agents.find((a) => a.id === active?.patchbayAgentId)?.name ?? active?.patchbayAgentId ?? "The agent";
-  const activeId = active?.id;
+  const activePatchbaySessionId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
   const terminalBlocks = useMemo(
@@ -269,7 +270,7 @@ export function Chat(props: {
     setPin(true);
     lastScrollTop.current = 0;
     stick();
-  }, [activeId, setPin, stick]);
+  }, [activePatchbaySessionId, setPin, stick]);
 
   // Prepend anchoring + teleport chunk-fill.
   useLayoutEffect(() => {
@@ -352,8 +353,8 @@ export function Chat(props: {
             send(
               // a session-click connect retries as the same click —
               // never minting a new session for it
-              connect.forSessionId !== undefined
-                ? { kind: "switchSession", sessionId: connect.forSessionId }
+              connect.forPatchbaySessionId !== undefined
+                ? { kind: "switchSession", patchbaySessionId: connect.forPatchbaySessionId }
                 : { kind: "startChat", patchbayAgentId: connect.patchbayAgentId },
             )
           }
@@ -441,7 +442,7 @@ export function Chat(props: {
       )}
       {visible.map((item) =>
         item.kind === "toolRun" ? (
-          <MemoToolRun key={item.id} calls={item.calls} sessionId={active.id} roots={props.state.workspaceRoots} />
+          <MemoToolRun key={item.id} calls={item.calls} patchbaySessionId={active.id} roots={props.state.workspaceRoots} />
         ) : item.block.kind === "turnEnd" ? (
           <TurnLine
             key={item.block.id}
@@ -457,7 +458,7 @@ export function Chat(props: {
             key={item.block.id}
             block={item.block}
             live={item.block.id === liveBlockId}
-            sessionId={active.id}
+            patchbaySessionId={active.id}
             agentName={agentName}
             roots={props.state.workspaceRoots}
           />

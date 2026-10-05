@@ -25,6 +25,7 @@ import { createProseRewriter, type ProseRewriter } from "./extensions";
 import type { Logger } from "./logger";
 import { planUsageOf } from "./meta";
 import { toolLocationsOf } from "./tool-locations";
+import type { PatchbaySessionId } from "../shared/ids";
 
 /** Joins several changed regions of one file into one openable diff — the
  * same line on both sides, so it reads as a boundary and never as a change. */
@@ -128,10 +129,10 @@ export class SessionStream {
 
   /** A session/load's replay window opens: the transcript resets, its diff
    * texts with it, and every event until closeReplay reduces silently. */
-  openReplay(sessionId: string): void {
-    this.replaying.add(sessionId);
-    this.emitter(sessionId)({ kind: "transcriptReset", sessionId });
-    this.forget(sessionId);
+  openReplay(patchbaySessionId: PatchbaySessionId): void {
+    this.replaying.add(patchbaySessionId);
+    this.emitter(patchbaySessionId)({ kind: "transcriptReset", patchbaySessionId });
+    this.forget(patchbaySessionId);
   }
 
   /** The replay has landed. A finished replay is the same quiet point as a
@@ -146,23 +147,23 @@ export class SessionStream {
    * genuinely in flight (mid-turn reload): that turn's real turnEnded is
    * still coming, and one honest line beats two — the flag is dropped
    * instead, never leaking past the window. */
-  finishReplay(sessionId: string, session: StreamState): void {
-    this.sweep(sessionId, session);
-    this.seal(sessionId, session);
+  finishReplay(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
+    this.sweep(patchbaySessionId, session);
+    this.seal(patchbaySessionId, session);
     if (session.inFlight) session.replayTurnDirty = false;
-    else this.flushReplayBoundary(sessionId, session, this.emitter(sessionId));
+    else this.flushReplayBoundary(patchbaySessionId, session, this.emitter(patchbaySessionId));
   }
 
   /** The replay window closes — on failure too. */
-  closeReplay(sessionId: string): void {
-    this.replaying.delete(sessionId);
+  closeReplay(patchbaySessionId: PatchbaySessionId): void {
+    this.replaying.delete(patchbaySessionId);
   }
 
   /** Replay-window channel pick: inside a session's replay window events reduce silently into
    * canonical state — the closing resync delivers them wholesale; everywhere
    * else they patch the webview live. */
-  emitter(sessionId: string): (...events: AgentViewEvent[]) => void {
-    return this.replaying.has(sessionId) && this.hooks.emitSilent !== undefined
+  emitter(patchbaySessionId: PatchbaySessionId): (...events: AgentViewEvent[]) => void {
+    return this.replaying.has(patchbaySessionId) && this.hooks.emitSilent !== undefined
       ? this.hooks.emitSilent.bind(this.hooks)
       : this.hooks.emit.bind(this.hooks);
   }
@@ -172,7 +173,7 @@ export class SessionStream {
    * is only ever set inside a replay window, so this can never fire on a
    * live turn. */
   private flushReplayBoundary(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     session: StreamState,
     emit: (...events: AgentViewEvent[]) => void,
   ): void {
@@ -180,7 +181,7 @@ export class SessionStream {
     session.replayTurnDirty = false;
     emit({
       kind: "turnEnded",
-      sessionId,
+      patchbaySessionId,
       blockId: newBlockId("turn"),
       startedAt: null,
       at: null,
@@ -191,8 +192,8 @@ export class SessionStream {
 
   /** One update into the session's transcript — live and replayed alike
    * (same notification shape). */
-  apply(sessionId: string, session: StreamState, update: TranscriptUpdate): void {
-    const emit = this.emitter(sessionId);
+  apply(patchbaySessionId: PatchbaySessionId, session: StreamState, update: TranscriptUpdate): void {
+    const emit = this.emitter(patchbaySessionId);
 
     // Replay boundary tracking: the replay wire carries no turn-resolution
     // events, so turn structure is reconstructed here — agent activity marks
@@ -200,7 +201,7 @@ export class SessionStream {
     // in loadSilently) flushes it as a synthesized TurnEndBlock. Only ever
     // set inside the window: live turns get their real turnEnded (runTurn).
     if (
-      this.replaying.has(sessionId) &&
+      this.replaying.has(patchbaySessionId) &&
       (update.sessionUpdate === "agent_message_chunk" ||
         update.sessionUpdate === "agent_thought_chunk" ||
         update.sessionUpdate === "tool_call" ||
@@ -232,12 +233,12 @@ export class SessionStream {
           update.content.type === "text" &&
           /^\[Request interrupted by user( for tool use)?\]$/.test(update.content.text.trim())
         ) {
-          this.seal(sessionId, session);
-          if (this.replaying.has(sessionId)) {
+          this.seal(patchbaySessionId, session);
+          if (this.replaying.has(patchbaySessionId)) {
             session.replayTurnDirty = false;
             emit({
               kind: "turnEnded",
-              sessionId,
+              patchbaySessionId,
               blockId: newBlockId("turn"),
               startedAt: null,
               at: null,
@@ -250,17 +251,17 @@ export class SessionStream {
         // A replayed user message with agent activity pending = the previous
         // turn just ended structurally — its boundary lands first, so the
         // rollup derivation sees the same shape a live turn left behind.
-        this.flushReplayBoundary(sessionId, session, emit);
+        this.flushReplayBoundary(patchbaySessionId, session, emit);
         const messageId = update.messageId ?? null;
         if (update.content.type === "text" && harnessEnvelopeTag(update.content.text) !== null) {
           // Harness-injected envelope riding the user role: its own closed,
           // flagged block — never merged into the prose run (an injection
           // between two real messages must not fuse them into one bubble,
           // and the injection itself is not the user's prompt).
-          this.seal(sessionId, session);
+          this.seal(patchbaySessionId, session);
           emit({
             kind: "userPartAppended",
-            sessionId,
+            patchbaySessionId,
             blockId: newBlockId("user"),
             part: { kind: "text", text: update.content.text },
             injected: true,
@@ -271,12 +272,12 @@ export class SessionStream {
         // prose run (userPartOf) — one wire message, one bubble: mentions,
         // images and context render in place instead of severing the prompt
         // into bubble + placeholder + bubble.
-        const part = this.userPartOf(sessionId, update.content);
+        const part = this.userPartOf(patchbaySessionId, update.content);
         // Non-text parts pass their non-empty flat preview, so the
         // whitespace-only guard in runBlockFor can never swallow them.
-        const blockId = this.runBlockFor(sessionId, session, "user", messageId, userPartsText([part]));
+        const blockId = this.runBlockFor(patchbaySessionId, session, "user", messageId, userPartsText([part]));
         if (blockId === null) break;
-        emit({ kind: "userPartAppended", sessionId, blockId, part });
+        emit({ kind: "userPartAppended", patchbaySessionId, blockId, part });
         break;
       }
       case "agent_message_chunk": {
@@ -287,7 +288,7 @@ export class SessionStream {
           // through the run's rewriter like any prose delta: a bypass would
           // reorder it ahead of text the rewriter is still withholding.
           this.emitAgentProse(
-            sessionId,
+            patchbaySessionId,
             session,
             messageId,
             `[${update.content.name}](${update.content.uri})`,
@@ -296,35 +297,35 @@ export class SessionStream {
           break;
         }
         if (update.content.type !== "text") {
-          this.emitAgentPart(sessionId, session, update.content, false, emit);
+          this.emitAgentPart(patchbaySessionId, session, update.content, false, emit);
           break;
         }
-        this.emitAgentProse(sessionId, session, messageId, update.content.text, emit);
+        this.emitAgentProse(patchbaySessionId, session, messageId, update.content.text, emit);
         break;
       }
       case "agent_thought_chunk": {
         if (update.content.type !== "text") {
-          this.emitAgentPart(sessionId, session, update.content, true, emit);
+          this.emitAgentPart(patchbaySessionId, session, update.content, true, emit);
           break;
         }
         const blockId = this.runBlockFor(
-          sessionId,
+          patchbaySessionId,
           session,
           "thought",
           update.messageId ?? null,
           update.content.text,
         );
         if (blockId === null) break;
-        emit({ kind: "agentThoughtDelta", sessionId, blockId, text: update.content.text });
+        emit({ kind: "agentThoughtDelta", patchbaySessionId, blockId, text: update.content.text });
         break;
       }
       case "tool_call": {
-        this.seal(sessionId, session); // the agent paused to act
+        this.seal(patchbaySessionId, session); // the agent paused to act
         const status = update.status ?? "pending";
         this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
           kind: "toolCallUpserted",
-          sessionId,
+          patchbaySessionId,
           blockId: update.toolCallId,
           title: update.title,
           status,
@@ -335,9 +336,9 @@ export class SessionStream {
             ? { locations: toolLocationsOf(update.locations) }
             : {}),
           ...(update.content != null
-            ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
+            ? { content: toolContentOf(update.content, this.imageStash(patchbaySessionId, "tool")) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
+          ...this.stashToolDiffs(patchbaySessionId, update.toolCallId, update.content),
         });
         break;
       }
@@ -346,7 +347,7 @@ export class SessionStream {
         this.trackOpenToolCall(session, update.toolCallId, status);
         emit({
           kind: "toolCallUpserted",
-          sessionId,
+          patchbaySessionId,
           blockId: update.toolCallId,
           title: update.title ?? "",
           status,
@@ -357,9 +358,9 @@ export class SessionStream {
             ? { locations: toolLocationsOf(update.locations) }
             : {}),
           ...(update.content != null
-            ? { content: toolContentOf(update.content, this.imageStash(sessionId, "tool")) }
+            ? { content: toolContentOf(update.content, this.imageStash(patchbaySessionId, "tool")) }
             : {}),
-          ...this.stashToolDiffs(sessionId, update.toolCallId, update.content),
+          ...this.stashToolDiffs(patchbaySessionId, update.toolCallId, update.content),
         });
         break;
       }
@@ -368,14 +369,14 @@ export class SessionStream {
         // widget's snapshot; it neither appends a block nor interrupts a run.
         emit({
           kind: "planUpdated",
-          sessionId,
+          patchbaySessionId,
           entries: toPlanEntries(update.entries),
         });
         break;
       case "available_commands_update":
         emit({
           kind: "commandsAdvertised",
-          sessionId,
+          patchbaySessionId,
           commands: update.availableCommands.map((c) => ({
             name: c.name,
             description: c.description,
@@ -393,7 +394,7 @@ export class SessionStream {
         // else degrades to absent.
         emit({
           kind: "usageReported",
-          sessionId,
+          patchbaySessionId,
           used: update.used,
           size: update.size,
           cost: update.cost ?? undefined,
@@ -438,7 +439,7 @@ export class SessionStream {
    * Several regions of one file sum, and open as one diff, joined by a
    * marker line both sides share. */
   private stashToolDiffs(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     toolCallId: string,
     content: readonly { type: string; path?: string; oldText?: string | null; newText?: string }[] | null | undefined,
   ): { diffs: Readonly<Record<string, DiffStat>> } | Record<string, never> {
@@ -461,10 +462,10 @@ export class SessionStream {
       texts.set(path, { oldText: r.olds.join(REGION_MARKER), newText: r.news.join(REGION_MARKER) });
       diffs[path] = { additions: r.additions, deletions: r.deletions };
     }
-    let perSession = this.toolDiffs.get(sessionId);
+    let perSession = this.toolDiffs.get(patchbaySessionId);
     if (perSession === undefined) {
       perSession = new Map();
-      this.toolDiffs.set(sessionId, perSession);
+      this.toolDiffs.set(patchbaySessionId, perSession);
     }
     if (texts.size === 0) perSession.delete(toolCallId);
     else perSession.set(toolCallId, texts);
@@ -485,27 +486,27 @@ export class SessionStream {
    * turn in the same session must not resurrect an old turn's stalled
    * call). A trailing tool_call_update still wins — any fresh upsert clears
    * the mark. */
-  sweep(sessionId: string, session: StreamState): void {
+  sweep(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
     if (session.openToolCalls.size === 0) return;
-    const emit = this.emitter(sessionId);
+    const emit = this.emitter(patchbaySessionId);
     const ids = [...session.openToolCalls];
     session.openToolCalls.clear();
     for (const blockId of ids) {
-      emit({ kind: "toolCallInterrupted", sessionId, blockId });
+      emit({ kind: "toolCallInterrupted", patchbaySessionId, blockId });
     }
   }
 
   /** The stashed texts for one openToolCallDiff action — null when unknown
    * (stale id after a close; the action is simply a no-op then). */
-  toolCallDiff(sessionId: string, toolCallId: string, path: string): { oldText: string; newText: string } | null {
-    return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
+  toolCallDiff(patchbaySessionId: PatchbaySessionId, toolCallId: string, path: string): { oldText: string; newText: string } | null {
+    return this.toolDiffs.get(patchbaySessionId)?.get(toolCallId)?.get(path) ?? null;
   }
 
   /** Replay counterpart of runTurn's part building: one wire content
    * block of a replayed user message → its part, through the one content
    * mapping every chat surface shares. */
-  private userPartOf(sessionId: string, content: ContentBlock): UserPart {
-    return contentPartOf(content, this.imageStash(sessionId, "replay"));
+  private userPartOf(patchbaySessionId: PatchbaySessionId, content: ContentBlock): UserPart {
+    return contentPartOf(content, this.imageStash(patchbaySessionId, "replay"));
   }
 
   /** A non-text chunk of an agent's message or thought: its own block
@@ -513,28 +514,28 @@ export class SessionStream {
    * content mapping every chat surface shares — never a placeholder for
    * content the chat can show. */
   private emitAgentPart(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     session: StreamState,
     content: ContentBlock,
     thought: boolean,
     emit: (...events: AgentViewEvent[]) => void,
   ): void {
-    this.seal(sessionId, session);
+    this.seal(patchbaySessionId, session);
     emit({
       kind: "agentPartAppended",
-      sessionId,
+      patchbaySessionId,
       blockId: newBlockId("part"),
-      part: contentPartOf(content, this.imageStash(sessionId, "agent")),
+      part: contentPartOf(content, this.imageStash(patchbaySessionId, "agent")),
       thought,
     });
   }
 
   /** Images arriving in content are copied to the attachments stash for
    * preview, fire-and-forget; a failed write only costs the preview. */
-  private imageStash(sessionId: string, source: string): ImageStash {
+  private imageStash(patchbaySessionId: PatchbaySessionId, source: string): ImageStash {
     return {
       id: () => `${source}-${++blockCounter}`,
-      onError: (err) => this.log.info(`session ${sessionId}: ${source} image stash failed — ${err.message}`),
+      onError: (err) => this.log.info(`session ${patchbaySessionId}: ${source} image stash failed — ${err.message}`),
     };
   }
 
@@ -567,7 +568,7 @@ export class SessionStream {
    *   wire capture proves its replay granularity (auggie's agent-chunk
    *   side is uncaptured — dossier note when it lands). */
   private runBlockFor(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     session: StreamState,
     channel: RunChannel,
     messageId: string | null,
@@ -587,7 +588,7 @@ export class SessionStream {
       }
     }
     if (text.trim() === "") return null;
-    this.seal(sessionId, session);
+    this.seal(patchbaySessionId, session);
     session.openRun = { channel, blockId: newBlockId(channel), messageId };
     return session.openRun.blockId;
   }
@@ -599,16 +600,16 @@ export class SessionStream {
    * the pre-replay reset (the sessions store's reapplyRoots puts a fresh
    * attachment in place), where the transcript is about to be rebuilt
    * wholesale and the replay re-delivers the same text. */
-  seal(sessionId: string, session: StreamState): void {
+  seal(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
     const run = session.openRun;
     session.openRun = null;
     if (run === null) return;
     const tail = run.rewriter?.flush() ?? "";
     if (tail === "") return;
     // rewriter rides only agent-text runs (the one arm that attaches it)
-    this.emitter(sessionId)({
+    this.emitter(patchbaySessionId)({
       kind: "agentTextDelta",
-      sessionId,
+      patchbaySessionId,
       blockId: run.blockId,
       text: tail,
     });
@@ -619,25 +620,25 @@ export class SessionStream {
    * emit nothing when the rewriter withholds the whole delta mid-shape —
    * sealRun flushes the tail wherever the run ends. */
   private emitAgentProse(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     session: StreamState,
     messageId: string | null,
     raw: string,
     emit: (...events: AgentViewEvent[]) => void,
   ): void {
-    const blockId = this.runBlockFor(sessionId, session, "text", messageId, raw);
+    const blockId = this.runBlockFor(patchbaySessionId, session, "text", messageId, raw);
     if (blockId === null) return;
     const run = session.openRun!; // runBlockFor just returned this run's id
     run.rewriter ??= createProseRewriter();
     const text = run.rewriter.push(raw);
-    if (text !== "") emit({ kind: "agentTextDelta", sessionId, blockId, text });
+    if (text !== "") emit({ kind: "agentTextDelta", patchbaySessionId, blockId, text });
   }
 
   /** The session left, or its transcript reset: the diff texts behind its
    * tool cards go. A replay re-sends every tool call's content, and
    * stashToolDiffs re-stashes it. */
-  forget(sessionId: string): void {
-    this.toolDiffs.delete(sessionId);
+  forget(patchbaySessionId: PatchbaySessionId): void {
+    this.toolDiffs.delete(patchbaySessionId);
   }
 
   /** "Disconnect & erase all data": every session's diff texts. */

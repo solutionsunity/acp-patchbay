@@ -81,9 +81,9 @@ class McpTestClient {
   private nextId = 1;
   private waiters = new Map<number, (msg: { result?: unknown; error?: { message: string } }) => void>();
 
-  constructor(socketPath: string, sessionId: string) {
+  constructor(socketPath: string, contextToken: string) {
     this.child = spawn(process.execPath, [MCP_SERVER], {
-      env: { ...process.env, ACP_PATCHBAY_IPC: socketPath, ACP_PATCHBAY_SESSION_ID: sessionId },
+      env: { ...process.env, ACP_PATCHBAY_IPC: socketPath, ACP_PATCHBAY_CONTEXT_TOKEN: contextToken },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stdout.setEncoding("utf8");
@@ -184,14 +184,14 @@ describe("local MCP server (real bundled subprocess)", () => {
     await client.initialize();
     const roots = JSON.parse(await toolText(client, "get_roots"));
     expect(roots).toEqual(["/ws", "/ws/backend"]);
-    expect(host.requests.some((r) => r.method === "getRoots" && r.sessionId === "session-1")).toBe(true);
+    expect(host.requests.some((r) => r.method === "getRoots" && r.contextToken === "session-1")).toBe(true);
   });
 
   it("get_selection forwards over IPC and returns real-shaped data", async () => {
     await client.initialize();
     const parsed = JSON.parse(await toolText(client, "get_selection"));
     expect(parsed).toEqual({ file: "/ws/a.ts", startLine: 1, endLine: 2, text: "const x = 1;" });
-    expect(host.requests.some((r) => r.method === "getSelection" && r.sessionId === "session-1")).toBe(true);
+    expect(host.requests.some((r) => r.method === "getSelection" && r.contextToken === "session-1")).toBe(true);
   });
 
   it("get_current_file, get_diagnostics, get_open_editors, get_workspace_state all round-trip", async () => {

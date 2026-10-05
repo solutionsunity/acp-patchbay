@@ -29,7 +29,7 @@ export function chatPaneProgress(connect: ChatConnectView, agent: AgentSummary |
   const name = agent?.name ?? connect.patchbayAgentId;
   const work = agent?.busy[0];
   if (agent?.status === "running" || work === undefined) {
-    return connect.forSessionId !== undefined ? "Opening the session…" : `Starting a chat with ${name}…`;
+    return connect.forPatchbaySessionId !== undefined ? "Opening the session…" : `Starting a chat with ${name}…`;
   }
   // The pool's phase label rides the row's detail while a launch is
   // genuinely in flight ("downloading the agent package…") — the

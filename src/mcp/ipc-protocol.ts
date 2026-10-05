@@ -16,7 +16,7 @@ export interface IpcRequest {
   /** The context token the calling subprocess was spawned with — what the
    * socket admits a request by, and how the orchestrator finds the session
    * it serves. */
-  sessionId: string;
+  contextToken: string;
   method:
     | "getSelection"
     | "getCurrentFile"

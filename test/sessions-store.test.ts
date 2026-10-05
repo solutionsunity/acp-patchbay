@@ -31,7 +31,7 @@ import {
 import type { FakeAgentScript } from "./fake-agent/main";
 import { gatesFor } from "./support/session-gates";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
-import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -60,7 +60,7 @@ function harness(opts?: {
   /** Idle reaper period — default null (disabled) so tests opt in. */
   idleCloseMs?: number;
   /** Stand-in for the reducer-derived unseen (blue) mark. */
-  isUnseen?(sessionId: string): boolean;
+  isUnseen?(patchbaySessionId: PatchbaySessionId): boolean;
   /** Stand-in for the orchestrator's auth-lock read — the turn-start door
    * consults it before any transcript write or wire call. */
   authLocked?(patchbayAgentId: PatchbayAgentId): boolean;
@@ -71,7 +71,7 @@ function harness(opts?: {
    * in their own window, active-pointer or not. */
   pinned?: ReadonlySet<string>;
   /** Stand-in for the orchestrator's connect-on-demand — records the asks. */
-  onConnectForSession?(sessionId: string): void;
+  onConnectForSession?(patchbaySessionId: PatchbaySessionId): void;
   /** Stand-in for the open workspace's folders (reality read, never stored)
    * — the first is the cwd; the rest must reach the agent as additional
    * directories. Mutable through the returned array to simulate a folder
@@ -151,14 +151,14 @@ function harness(opts?: {
       savedRoots: () => opts?.savedRoots ?? [],
       rootExists: (path) => !missingRoots.includes(path),
       rootsMissing: (paths) => rootsMissing.push([...paths]),
-      rootsChanged: (sessionId) => rootsChanged.push(sessionId),
-      currentTranscript: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).transcripts[sessionId] ?? [],
+      rootsChanged: (patchbaySessionId) => rootsChanged.push(patchbaySessionId),
+      currentTranscript: (patchbaySessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).transcripts[patchbaySessionId] ?? [],
       isDeleteUsed: (patchbayAgentId) => capabilityTracker.matrix(patchbayAgentId)?.["session.delete"]?.used ?? false,
-      isActiveSession: (sessionId) =>
-        events.reduce(reduceAgentView, initialAgentViewState).activeSessionId === sessionId ||
-        (opts?.pinned?.has(sessionId) ?? false),
-      isUnseen: (sessionId) => opts?.isUnseen?.(sessionId) ?? false,
+      isActiveSession: (patchbaySessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).activePatchbaySessionId === patchbaySessionId ||
+        (opts?.pinned?.has(patchbaySessionId) ?? false),
+      isUnseen: (patchbaySessionId) => opts?.isUnseen?.(patchbaySessionId) ?? false,
       authLocked: (patchbayAgentId) => opts?.authLocked?.(patchbayAgentId) ?? false,
     },
     continuity,
@@ -167,7 +167,7 @@ function harness(opts?: {
   );
   const gates = gatesFor(sessions, (event) => events.push(event), {
     idleCloseMs: opts?.idleCloseMs ?? null,
-    connect: (sessionId) => opts?.onConnectForSession?.(sessionId),
+    connect: (patchbaySessionId) => opts?.onConnectForSession?.(patchbaySessionId),
     ...(opts?.agentSettled !== undefined ? { agentSettled: opts.agentSettled } : {}),
   });
   return {
@@ -201,17 +201,17 @@ describe("SessionsStore", () => {
   it("streams a full turn into the transcript and clears live on completion", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi " }, { type: "chunk", text: "there" }] }, "sm1"));
-    const sessionId = await h.sessions.createSession("sm1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm1" as PatchbayAgentId, "Fake Agent", cwd);
 
     const state1 = h.state();
     expect(state1.sessions).toHaveLength(1);
-    expect(state1.activeSessionId).toBe(sessionId);
-    expect(state1.transcripts[sessionId]).toEqual([]);
+    expect(state1.activePatchbaySessionId).toBe(patchbaySessionId);
+    expect(state1.transcripts[patchbaySessionId]).toEqual([]);
 
-    await h.gates.prompt(sessionId, { text: "go go go" });
+    await h.gates.prompt(patchbaySessionId, { text: "go go go" });
 
     const state2 = h.state();
-    const blocks = state2.transcripts[sessionId]!;
+    const blocks = state2.transcripts[patchbaySessionId]!;
     expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "go go go" }] });
     expect(textOf(blocks[1])).toBe("hi there");
     expect(state2.sessions[0]?.busy).toEqual([]);
@@ -252,21 +252,21 @@ describe("SessionsStore", () => {
         "sm2",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm2" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "do the thing" });
+    const patchbaySessionId = await h.sessions.createSession("sm2" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "do the thing" });
 
     const state = h.state();
-    const blocks = state.transcripts[sessionId]!;
+    const blocks = state.transcripts[patchbaySessionId]!;
     const toolBlock = blocks.find((b) => b.kind === "toolCall");
     expect(toolBlock).toMatchObject({ title: "Reading file", status: "completed" });
 
     // A plan is session-level state (ui-rendering-strategy § Plans): it
     // updates the pinned widget's snapshot and never enters the transcript.
-    expect(state.activePlan[sessionId]).toEqual([
+    expect(state.activePlan[patchbaySessionId]).toEqual([
       { content: "step one", status: "completed" },
       { content: "step two", status: "in_progress" },
     ]);
-    expect(state.commandsBySession[sessionId]).toEqual([
+    expect(state.commandsBySession[patchbaySessionId]).toEqual([
       { name: "review", description: "fake review" },
       { name: "deploy", description: "fake deploy" },
     ]);
@@ -282,11 +282,11 @@ describe("SessionsStore", () => {
         "sm3",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm3" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "long turn" }).catch((err: unknown) => err);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.stop(sessionId);
+    await h.gates.stop(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "stop" });
 
     expect(h.state().sessions[0]?.busy).toEqual([]);
@@ -303,18 +303,18 @@ describe("SessionsStore", () => {
         "smq1",
       ),
     );
-    const sessionId = await h.sessions.createSession("smq1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("smq1" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "first" });
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.prompt(sessionId, { text: "second" }); // resolves immediately: queued
-    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "second" }]);
+    await h.gates.prompt(patchbaySessionId, { text: "second" }); // resolves immediately: queued
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "second" }]);
     await promptDone;
 
     // the drain fired the queued prompt as a real turn
     await new Promise((r) => setTimeout(r, 500));
-    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
-    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "user");
     expect(users.map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual(["first", "second"]);
     await h.pool.stop("smq1" as PatchbayAgentId);
   });
@@ -327,14 +327,14 @@ describe("SessionsStore", () => {
         "smq4",
       ),
     );
-    const sessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "first" });
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.prompt(sessionId, { text: "second", draft: '{"editor":"second"}' });
-    await h.gates.prompt(sessionId, { text: "third" }); // held before the composer sent drafts
-    await h.gates.prompt(sessionId, { text: "fourth", draft: '{"editor":"fourth"}' });
-    const [a, b, c] = h.state().promptQueue[sessionId]!;
+    await h.gates.prompt(patchbaySessionId, { text: "second", draft: '{"editor":"second"}' });
+    await h.gates.prompt(patchbaySessionId, { text: "third" }); // held before the composer sent drafts
+    await h.gates.prompt(patchbaySessionId, { text: "fourth", draft: '{"editor":"fourth"}' });
+    const [a, b, c] = h.state().promptQueue[patchbaySessionId]!;
     expect([a, b, c]).toMatchObject([
       { text: "second", draft: '{"editor":"second"}' },
       { text: "third" },
@@ -342,26 +342,26 @@ describe("SessionsStore", () => {
     ]);
 
     // not the tail — refused, nothing moves
-    h.sessions.takeBack(sessionId, a!.id);
-    expect(h.state().promptQueue[sessionId]).toHaveLength(3);
+    h.sessions.takeBack(patchbaySessionId, a!.id);
+    expect(h.state().promptQueue[patchbaySessionId]).toHaveLength(3);
     // the tail, into a composer already holding words — refused: merging
     // two messages is the user's call, made with Copy
-    h.sessions.saveDraft(sessionId, '{"editor":"typing"}');
-    h.sessions.takeBack(sessionId, c!.id);
-    expect(h.state().promptQueue[sessionId]).toHaveLength(3);
+    h.sessions.saveDraft(patchbaySessionId, '{"editor":"typing"}');
+    h.sessions.takeBack(patchbaySessionId, c!.id);
+    expect(h.state().promptQueue[patchbaySessionId]).toHaveLength(3);
     // into an empty one — it comes back as the draft, the rest keep their order
-    h.sessions.saveDraft(sessionId, "");
-    h.sessions.takeBack(sessionId, c!.id);
-    expect(h.state().drafts[sessionId]).toBe('{"editor":"fourth"}');
-    expect(h.state().promptQueue[sessionId]!.map((q) => q.text)).toEqual(["second", "third"]);
+    h.sessions.saveDraft(patchbaySessionId, "");
+    h.sessions.takeBack(patchbaySessionId, c!.id);
+    expect(h.state().drafts[patchbaySessionId]).toBe('{"editor":"fourth"}');
+    expect(h.state().promptQueue[patchbaySessionId]!.map((q) => q.text)).toEqual(["second", "third"]);
     // the new tail has nothing to come back as — refused, it copies and fires
-    h.sessions.saveDraft(sessionId, "");
-    h.sessions.takeBack(sessionId, b!.id);
-    expect(h.state().promptQueue[sessionId]).toHaveLength(2);
+    h.sessions.saveDraft(patchbaySessionId, "");
+    h.sessions.takeBack(patchbaySessionId, b!.id);
+    expect(h.state().promptQueue[patchbaySessionId]).toHaveLength(2);
 
     await promptDone;
     await new Promise((r) => setTimeout(r, 900));
-    const users = h.state().transcripts[sessionId]!.filter((x) => x.kind === "user");
+    const users = h.state().transcripts[patchbaySessionId]!.filter((x) => x.kind === "user");
     expect(users.map((x) => x.kind === "user" && userPartsText(x.parts))).toEqual(["first", "second", "third"]);
     await h.pool.stop("smq4" as PatchbayAgentId);
   });
@@ -374,17 +374,17 @@ describe("SessionsStore", () => {
         "smq2",
       ),
     );
-    const sessionId = await h.sessions.createSession("smq2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("smq2" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "first" }).catch((err: unknown) => err);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.prompt(sessionId, { text: "second" });
-    await h.gates.stop(sessionId);
+    await h.gates.prompt(patchbaySessionId, { text: "second" });
+    await h.gates.stop(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "stop" });
 
     await new Promise((r) => setTimeout(r, 200));
-    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
-    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "user");
     expect(users).toHaveLength(1); // "second" never fired
     await h.pool.stop("smq2" as PatchbayAgentId);
   });
@@ -398,18 +398,18 @@ describe("SessionsStore", () => {
     let locked = true;
     const h = harness({ authLocked: () => locked });
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "served" }] }, "smq3"));
-    const sessionId = await h.sessions.createSession("smq3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("smq3" as PatchbayAgentId, "Fake Agent", cwd);
 
-    await h.gates.prompt(sessionId, { text: "held words" }); // resolves immediately: held
-    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+    await h.gates.prompt(patchbaySessionId, { text: "held words" }); // resolves immediately: held
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "held words" }]);
     // nothing fabricated: no user message, no turn
-    expect(h.state().transcripts[sessionId]).toEqual([]);
+    expect(h.state().transcripts[patchbaySessionId]).toEqual([]);
 
     locked = false;
     h.gates.lockCleared("smq3" as PatchbayAgentId);
     await new Promise((r) => setTimeout(r, 500));
-    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
-    const users = h.state().transcripts[sessionId]!.filter((b) => b.kind === "user");
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    const users = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "user");
     expect(users.map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual(["held words"]);
     await h.pool.stop("smq3" as PatchbayAgentId);
   });
@@ -423,25 +423,25 @@ describe("SessionsStore", () => {
         "smq4",
       ),
     );
-    const sessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "first" });
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.prompt(sessionId, { text: "second" }); // queued mid-turn
+    await h.gates.prompt(patchbaySessionId, { text: "second" }); // queued mid-turn
     locked = true; // logout witnessed while the turn streamed
     await promptDone;
     await new Promise((r) => setTimeout(r, 300));
 
     // held, not fired — and not dropped
-    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "second" }]);
-    expect(h.state().transcripts[sessionId]!.filter((b) => b.kind === "user")).toHaveLength(1);
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "second" }]);
+    expect(h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "user")).toHaveLength(1);
 
     // login clears the lock: the release valve fires the held words
     locked = false;
     h.gates.lockCleared("smq4" as PatchbayAgentId);
     await new Promise((r) => setTimeout(r, 600));
-    expect(h.state().promptQueue[sessionId] ?? []).toEqual([]);
-    expect(h.state().transcripts[sessionId]!.filter((b) => b.kind === "user")).toHaveLength(2);
+    expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
+    expect(h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "user")).toHaveLength(2);
     await h.pool.stop("smq4" as PatchbayAgentId);
   });
 
@@ -456,11 +456,11 @@ describe("SessionsStore", () => {
         "sm3c",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm3c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm3c" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "long turn" }).catch((err: unknown) => err);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.close(sessionId);
+    await h.gates.close(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "close" });
 
     const kinds = h.events.map((e) => e.kind);
@@ -481,11 +481,11 @@ describe("SessionsStore", () => {
         "sm3d",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm3d" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm3d" as PatchbayAgentId, "Fake Agent", cwd);
 
-    const promptDone = h.gates.prompt(sessionId, { text: "long turn" }).catch((err: unknown) => err);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 80));
-    await h.gates.reload(sessionId);
+    await h.gates.reload(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "reload" });
 
     // The cancelled turn ended before the replay's transcriptReset — nothing
@@ -509,18 +509,18 @@ describe("SessionsStore", () => {
         "sm3b",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm3b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm3b" as PatchbayAgentId, "Fake Agent", cwd);
 
     // Each step sleeps stepDelayMs *before* acting, so the wait here must
     // clear the first step's own delay (the toolCall landing) but not the
     // second's — otherwise there's nothing yet to strand.
-    const promptDone = h.gates.prompt(sessionId, { text: "long turn" }).catch((err: unknown) => err);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 220));
-    await h.gates.stop(sessionId);
+    await h.gates.stop(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "stop" });
 
     const toolBlock = assertKind(
-      h.state().transcripts[sessionId]!.find((b) => b.id === "t1")!,
+      h.state().transcripts[patchbaySessionId]!.find((b) => b.id === "t1")!,
       "toolCall",
     );
     expect(toolBlock.interrupted).toBe(true);
@@ -532,13 +532,13 @@ describe("SessionsStore", () => {
   it("closes sessions — row and transcript leave the view", async () => {
     const h = harness();
     await h.pool.connect(spec({}, "sm4"));
-    const sessionId = await h.sessions.createSession("sm4" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "some words" });
+    const patchbaySessionId = await h.sessions.createSession("sm4" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "some words" });
 
-    await h.gates.close(sessionId);
+    await h.gates.close(patchbaySessionId);
     expect(h.state().sessions).toHaveLength(0);
-    expect(h.state().transcripts[sessionId]).toBeUndefined();
-    expect(h.sessions.handleOf(sessionId)).toBeUndefined();
+    expect(h.state().transcripts[patchbaySessionId]).toBeUndefined();
+    expect(h.sessions.sessionIdOf(patchbaySessionId)).toBeUndefined();
 
     await h.pool.stop("sm4" as PatchbayAgentId);
   });
@@ -565,9 +565,9 @@ describe("SessionsStore", () => {
         "sm48a",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm48a" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "edit" });
-    const tools = h.state().transcripts[sessionId]!.filter((b) => b.kind === "toolCall");
+    const patchbaySessionId = await h.sessions.createSession("sm48a" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "edit" });
+    const tools = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "toolCall");
     expect(tools.map((t) => assertKind(t, "toolCall").diffs)).toEqual([
       { [target]: { additions: 1, deletions: 1 } },
       { [target]: { additions: 1, deletions: 1 } },
@@ -597,15 +597,15 @@ describe("SessionsStore", () => {
         "sm48b",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm48b" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "edit" });
-    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    const patchbaySessionId = await h.sessions.createSession("sm48b" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "edit" });
+    const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.diffs).toEqual({
       [target]: { additions: 1, deletions: 2 },
       "/ws/other.ts": { additions: 1, deletions: 0 },
     });
     // no region is keyed away — both open, side by side, marker on each side
-    expect(h.sessions.toolCallDiff(sessionId, "m1", target)).toEqual({
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "m1", target)).toEqual({
       oldText: "a\nb\n⋯\nx\ny\nz",
       newText: "a\nB\n⋯\nx\nz",
     });
@@ -637,9 +637,9 @@ describe("SessionsStore", () => {
         "sm48d",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm48d" as PatchbayAgentId, "Fake Agent", cwd);
-    const turn = h.gates.prompt(sessionId, { text: "overwrite" });
-    const card = () => h.state().transcripts[sessionId]?.find((b) => b.kind === "toolCall");
+    const patchbaySessionId = await h.sessions.createSession("sm48d" as PatchbayAgentId, "Fake Agent", cwd);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "overwrite" });
+    const card = () => h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "toolCall");
     const start = Date.now();
     while (card() === undefined) {
       if (Date.now() - start > 2000) throw new Error("tool call never announced");
@@ -650,7 +650,7 @@ describe("SessionsStore", () => {
     await turn;
     // corrected: the update's hunk, and the texts the ± opens follow it
     expect(assertKind(card(), "toolCall").diffs).toEqual({ [target]: { additions: 2, deletions: 3 } });
-    expect(h.sessions.toolCallDiff(sessionId, "o1", target)).toEqual({ oldText: "a\nb\nc", newText: "hello\nworld" });
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "o1", target)).toEqual({ oldText: "a\nb\nc", newText: "hello\nworld" });
     await h.pool.stop("sm48d" as PatchbayAgentId);
   });
 
@@ -683,9 +683,9 @@ describe("SessionsStore", () => {
         "sm48e",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm48e" as PatchbayAgentId, "Fake Agent", cwd);
-    const turn = h.gates.prompt(sessionId, { text: "edit" });
-    const card = () => h.state().transcripts[sessionId]?.find((b) => b.kind === "toolCall");
+    const patchbaySessionId = await h.sessions.createSession("sm48e" as PatchbayAgentId, "Fake Agent", cwd);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "edit" });
+    const card = () => h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "toolCall");
     const start = Date.now();
     while (card() === undefined) {
       if (Date.now() - start > 2000) throw new Error("tool call never announced");
@@ -694,7 +694,7 @@ describe("SessionsStore", () => {
     expect(assertKind(card(), "toolCall").diffs).toEqual({ [target]: { additions: 1, deletions: 1 } });
     await turn;
     expect(assertKind(card(), "toolCall").diffs).toEqual({});
-    expect(h.sessions.toolCallDiff(sessionId, "f1", target)).toBeNull();
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "f1", target)).toBeNull();
     await h.pool.stop("sm48e" as PatchbayAgentId);
   });
 
@@ -712,11 +712,11 @@ describe("SessionsStore", () => {
         "sm48c",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm48c" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "write" });
-    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    const patchbaySessionId = await h.sessions.createSession("sm48c" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "write" });
+    const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.diffs).toEqual({ [target]: { additions: 3, deletions: 0 } });
-    expect(h.sessions.toolCallDiff(sessionId, "w1", target)).toEqual({ oldText: "", newText: "one\ntwo\nthree" });
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "w1", target)).toEqual({ oldText: "", newText: "one\ntwo\nthree" });
     await h.pool.stop("sm48c" as PatchbayAgentId);
   });
 
@@ -734,30 +734,30 @@ describe("SessionsStore", () => {
       turn: [{ type: "chunk", text: "ok" }],
     };
     await h.pool.connect(spec(dying, "smc1"));
-    const sessionId = await h.sessions.createSession("smc1" as PatchbayAgentId, "Fake Agent", cwd);
-    const promptDone = h.gates.prompt(sessionId, { text: "first" }).catch(() => {});
+    const patchbaySessionId = await h.sessions.createSession("smc1" as PatchbayAgentId, "Fake Agent", cwd);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch(() => {});
     await new Promise((r) => setTimeout(r, 100));
-    await h.gates.prompt(sessionId, { text: "held words" }); // queued mid-turn
+    await h.gates.prompt(patchbaySessionId, { text: "held words" }); // queued mid-turn
     await promptDone; // the crash step kills the process under the live turn
     await new Promise((r) => setTimeout(r, 250)); // exit handler + deferred drain settle
 
     // the crash dropped the live session — but the words held, visibly
-    expect(h.sessions.isLive(sessionId)).toBe(false);
-    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "held words" }]);
 
     // reconnect: the next prompt joins BEHIND the held words, which fire first
     await h.pool.connect(spec(healthy, "smc1"));
-    await h.gates.prompt(sessionId, { text: "after reconnect" });
+    await h.gates.prompt(patchbaySessionId, { text: "after reconnect" });
     const start = Date.now();
     let users: string[] = [];
     for (;;) {
-      users = (h.state().transcripts[sessionId] ?? [])
+      users = (h.state().transcripts[patchbaySessionId] ?? [])
         .filter((b) => b.kind === "user")
         .map((b) => (b.kind === "user" ? userPartsText(b.parts) : ""));
-      if ((h.state().promptQueue[sessionId]?.length ?? 0) === 0 && users.length >= 2) break;
+      if ((h.state().promptQueue[patchbaySessionId]?.length ?? 0) === 0 && users.length >= 2) break;
       if (Date.now() - start > 3500) {
         throw new Error(
-          `held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[sessionId])} live: ${h.sessions.isLive(sessionId)} status: ${h.pool.get("smc1" as PatchbayAgentId)?.status}`,
+          `held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[patchbaySessionId])} live: ${h.sessions.isLive(patchbaySessionId)} status: ${h.pool.get("smc1" as PatchbayAgentId)?.status}`,
         );
       }
       await new Promise((r) => setTimeout(r, 30));
@@ -791,36 +791,36 @@ describe("SessionsStore", () => {
       ],
     };
     await h.pool.connect(spec(script, "sms1"));
-    const sessionId = await h.sessions.createSession("sms1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.setKnob(sessionId, "model", "sonnet");
-    await h.gates.addRoot(sessionId, "/repo/extra");
-    const promptDone = h.gates.prompt(sessionId, { text: "first" }).catch(() => {});
+    const patchbaySessionId = await h.sessions.createSession("sms1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
+    await h.gates.addRoot(patchbaySessionId, "/repo/extra");
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch(() => {});
     await new Promise((r) => setTimeout(r, 100));
-    await h.gates.prompt(sessionId, { text: "held words" }); // queued mid-turn
+    await h.gates.prompt(patchbaySessionId, { text: "held words" }); // queued mid-turn
     await h.pool.stop("sms1" as PatchbayAgentId); // the agent's Stop, under the live turn
     await promptDone;
 
-    expect(h.sessions.isLive(sessionId)).toBe(false);
-    expect(h.state().promptQueue[sessionId]).toMatchObject([{ text: "held words" }]);
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
+    expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "held words" }]);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/extra"]);
 
     await h.pool.connect(spec({ ...script, stepDelayMs: 0 }, "sms1"));
-    await h.gates.prompt(sessionId, { text: "after reconnect" });
+    await h.gates.prompt(patchbaySessionId, { text: "after reconnect" });
     const start = Date.now();
     let users: string[] = [];
     for (;;) {
-      users = (h.state().transcripts[sessionId] ?? [])
+      users = (h.state().transcripts[patchbaySessionId] ?? [])
         .filter((b) => b.kind === "user")
         .map((b) => (b.kind === "user" ? userPartsText(b.parts) : ""));
-      if ((h.state().promptQueue[sessionId]?.length ?? 0) === 0 && users.length >= 3) break;
+      if ((h.state().promptQueue[patchbaySessionId]?.length ?? 0) === 0 && users.length >= 3) break;
       if (Date.now() - start > 3500) {
-        throw new Error(`held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[sessionId])}`);
+        throw new Error(`held words never fired — users: ${JSON.stringify(users)} queue: ${JSON.stringify(h.state().promptQueue[patchbaySessionId])}`);
       }
       await new Promise((r) => setTimeout(r, 30));
     }
     expect(users.slice(-2)).toEqual(["held words", "after reconnect"]);
-    expect(h.state().sessionKnobs[sessionId]?.find((k) => k.id === "model")?.currentValue).toBe("sonnet");
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+    expect(h.state().sessionKnobs[patchbaySessionId]?.find((k) => k.id === "model")?.currentValue).toBe("sonnet");
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/extra"]);
     await h.pool.stop("sms1" as PatchbayAgentId);
   }, 15000);
 
@@ -835,18 +835,18 @@ describe("SessionsStore", () => {
         "sm5",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm5" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first turn" });
-    expect(textOf(h.state().transcripts[sessionId]?.[1])).toBe("before crash");
+    const patchbaySessionId = await h.sessions.createSession("sm5" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
+    expect(textOf(h.state().transcripts[patchbaySessionId]?.[1])).toBe("before crash");
 
     // simulate the agent process dying and being restarted
     await h.pool.restart("sm5" as PatchbayAgentId);
     expect(h.pool.get("sm5" as PatchbayAgentId)?.declared?.loadSession).toBe(true);
 
     // sending a prompt on the old sessionId must reopen via session/load first
-    await h.gates.prompt(sessionId, { text: "second turn" });
+    await h.gates.prompt(patchbaySessionId, { text: "second turn" });
 
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     // replay rebuilt the whole first turn — user message included (the spec
     // replays the *entire* conversation) — then the new user message, then
     // the new turn's text — never merged, always reset
@@ -873,13 +873,13 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hello" }] }, "sm5s"),
     );
-    const sessionId = await h.sessions.createSession("sm5s" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first turn" });
+    const patchbaySessionId = await h.sessions.createSession("sm5s" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
     expect(h.silentEvents).toHaveLength(0); // live streaming patches normally
     expect(h.resyncCount()).toBe(0);
 
     await h.pool.restart("sm5s" as PatchbayAgentId);
-    await h.gates.prompt(sessionId, { text: "second turn" });
+    await h.gates.prompt(patchbaySessionId, { text: "second turn" });
 
     // The replay window went silent — reset + the whole replayed first turn,
     // closed by its synthesized boundary — and one wholesale resync; the
@@ -892,7 +892,7 @@ describe("SessionsStore", () => {
     ]);
     expect(h.resyncCount()).toBe(1);
     // canonical state is complete regardless of delivery path
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "first turn" }] });
     expect(textOf(blocks[1])).toBe("hello");
     expect(blocks[2]).toMatchObject({ kind: "turnEnd", startedAt: null });
@@ -905,16 +905,16 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "reply" }] }, "sm5m"),
     );
-    const sessionId = await h.sessions.createSession("sm5m" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "one" });
-    await h.gates.prompt(sessionId, { text: "two" });
+    const patchbaySessionId = await h.sessions.createSession("sm5m" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "one" });
+    await h.gates.prompt(patchbaySessionId, { text: "two" });
 
     await h.pool.restart("sm5m" as PatchbayAgentId);
-    await h.gates.prompt(sessionId, { text: "three" });
+    await h.gates.prompt(patchbaySessionId, { text: "three" });
 
     // two replayed turns, each closed by a synthesized boundary (nullable
     // timing), then the live third turn closed by its real one
-    const shape = h.state().transcripts[sessionId]!.map((b) =>
+    const shape = h.state().transcripts[patchbaySessionId]!.map((b) =>
       b.kind === "turnEnd" ? `turnEnd:${b.startedAt === null ? "synthesized" : "real"}` : b.kind,
     );
     expect(shape).toEqual([
@@ -938,19 +938,19 @@ describe("SessionsStore", () => {
         "sm5i",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm5i" as PatchbayAgentId, "Fake Agent", cwd);
-    const promptDone = h.gates.prompt(sessionId, { text: "long turn" }).catch((err: unknown) => err);
+    const patchbaySessionId = await h.sessions.createSession("sm5i" as PatchbayAgentId, "Fake Agent", cwd);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 220));
-    await h.gates.stop(sessionId);
+    await h.gates.stop(patchbaySessionId);
     expect(await promptDone).toMatchObject({ by: "stop" });
 
     // Reload: the recorded history replays and ends on the never-completed
     // call — no turn end follows, so only the replay-end sweep can mark it.
     await h.pool.restart("sm5i" as PatchbayAgentId);
-    await h.gates.revive(sessionId);
+    await h.gates.revive(patchbaySessionId);
 
     const t1 = assertKind(
-      h.state().transcripts[sessionId]!.find((b) => b.id === "t1")!,
+      h.state().transcripts[patchbaySessionId]!.find((b) => b.id === "t1")!,
       "toolCall",
     );
     expect(t1.interrupted).toBe(true);
@@ -968,9 +968,9 @@ describe("SessionsStore", () => {
         "sm5e",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm5e" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "/cmd" });
-    const blocks = h.state().transcripts[sessionId]!;
+    const patchbaySessionId = await h.sessions.createSession("sm5e" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "/cmd" });
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     expect(blocks.filter((b) => b.kind === "user")).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "/cmd" }] });
     expect(textOf(blocks[1])).toBe("ok");
@@ -984,22 +984,22 @@ describe("SessionsStore", () => {
     // rejects, the transcript stands untouched, no sibling appears.
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "only turn" }] }, "sm6"));
-    const deadSessionId = await h.sessions.createSession("sm6" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(deadSessionId, { text: "hello" });
-    const before = h.state().transcripts[deadSessionId]!;
+    const deadPatchbaySessionId = await h.sessions.createSession("sm6" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(deadPatchbaySessionId, { text: "hello" });
+    const before = h.state().transcripts[deadPatchbaySessionId]!;
     expect(before.length).toBeGreaterThan(0);
 
     await h.pool.restart("sm6" as PatchbayAgentId);
     expect(h.pool.get("sm6" as PatchbayAgentId)?.declared?.loadSession).toBe(false);
 
-    await expect(h.gates.prompt(deadSessionId, { text: "after restart" })).rejects.toThrow(
+    await expect(h.gates.prompt(deadPatchbaySessionId, { text: "after restart" })).rejects.toThrow(
       /neither session\/load nor session\/resume/,
     );
 
-    expect(h.state().transcripts[deadSessionId]).toEqual(before);
-    expect(h.state().sessions.map((s) => s.id)).toEqual([deadSessionId]);
+    expect(h.state().transcripts[deadPatchbaySessionId]).toEqual(before);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([deadPatchbaySessionId]);
     // the words that never reached a turn are still the user's
-    expect(h.state().promptQueue[deadSessionId]).toMatchObject([{ text: "after restart" }]);
+    expect(h.state().promptQueue[deadPatchbaySessionId]).toMatchObject([{ text: "after restart" }]);
 
     await h.pool.stop("sm6" as PatchbayAgentId);
   });
@@ -1023,10 +1023,10 @@ describe("SessionsStore", () => {
         "sm13b",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm13b" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "find foo" });
+    const patchbaySessionId = await h.sessions.createSession("sm13b" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "find foo" });
 
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     // Literal arrival order, chunks merged per run, interruptions split runs:
     // user · text · thought · text · one tool block · text — never re-bucketed
     // — then the turn's own metadata block (P13c) closing it.
@@ -1063,11 +1063,11 @@ describe("SessionsStore", () => {
         "sm13c",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm13c" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "read it" });
+    const patchbaySessionId = await h.sessions.createSession("sm13c" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "read it" });
 
     const tool = assertKind(
-      h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"),
+      h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"),
       "toolCall",
     );
     expect(tool.output).not.toBeNull();
@@ -1092,17 +1092,17 @@ describe("SessionsStore", () => {
         "sm13d",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm13d" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "edit it" });
+    const patchbaySessionId = await h.sessions.createSession("sm13d" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "edit it" });
 
     const state = h.state();
-    const blocks = state.transcripts[sessionId]!;
+    const blocks = state.transcripts[patchbaySessionId]!;
     const end = assertKind(blocks[blocks.length - 1], "turnEnd");
     expect(end.stopReason).toBe("end_turn");
     expect(Date.parse(end.endedAt!)).toBeGreaterThanOrEqual(Date.parse(end.startedAt!));
     expect(end.usage).toEqual({ total: 1200, input: 1000, output: 200, cached: 800 });
     // the ticker's basis is cleared the moment the turn resolves
-    expect(state.activeTurn[sessionId]).toBeUndefined();
+    expect(state.activeTurn[patchbaySessionId]).toBeUndefined();
     // locations rode in for the rollup's distinct-files count
     const tool = assertKind(blocks.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.locations).toEqual([{ path: "/ws/a.ts", line: null }]);
@@ -1126,10 +1126,10 @@ describe("SessionsStore", () => {
         "sm45",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm45" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "show me" });
+    const patchbaySessionId = await h.sessions.createSession("sm45" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "show me" });
 
-    const blocks = h.state().transcripts[sessionId]!.filter((b) => b.kind !== "user" && b.kind !== "turnEnd");
+    const blocks = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind !== "user" && b.kind !== "turnEnd");
     const shape = blocks.map((b) =>
       b.kind === "text" ? `text:${b.text}` : b.kind === "agentPart" ? `part:${b.part.kind}:${b.thought}` : b.kind,
     );
@@ -1173,10 +1173,10 @@ describe("SessionsStore", () => {
         "sm44",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm44" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "build" });
+    const patchbaySessionId = await h.sessions.createSession("sm44" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "build" });
 
-    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.content.slice(0, 5)).toEqual([
       { kind: "text", text: "```console\nok\n```" },
       { kind: "terminal", terminalId: "term-7" },
@@ -1211,10 +1211,10 @@ describe("SessionsStore", () => {
         "sm41",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm41" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "read it" });
+    const patchbaySessionId = await h.sessions.createSession("sm41" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "read it" });
 
-    const tool = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
+    const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.locations).toEqual([
       { path: "/ws/a.ts", line: 42 },
       { path: "/ws/b.ts", line: 1 },
@@ -1236,20 +1236,20 @@ describe("SessionsStore", () => {
         "sm13f",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm13f" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "edit" });
+    const patchbaySessionId = await h.sessions.createSession("sm13f" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "edit" });
 
     const tool = assertKind(
-      h.state().transcripts[sessionId]!.find((b) => b.kind === "toolCall"),
+      h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"),
       "toolCall",
     );
     expect(tool.diffs).toEqual({ "/ws/a.ts": { additions: 1, deletions: 1 } });
     // texts never enter webview state — they come back through the stash
-    expect(h.sessions.toolCallDiff(sessionId, "d1", "/ws/a.ts")).toEqual({
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "d1", "/ws/a.ts")).toEqual({
       oldText: "old\n",
       newText: "new\n",
     });
-    expect(h.sessions.toolCallDiff(sessionId, "d1", "/nope")).toBeNull();
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "d1", "/nope")).toBeNull();
 
     await h.pool.stop("sm13f" as PatchbayAgentId);
   });
@@ -1257,10 +1257,10 @@ describe("SessionsStore", () => {
   it("a turn without reported usage gets usage: null — absence over fake (P13c)", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sm13e"));
-    const sessionId = await h.sessions.createSession("sm13e" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("sm13e" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     const end = assertKind(blocks[blocks.length - 1], "turnEnd");
     expect(end.usage).toBeNull();
 
@@ -1274,10 +1274,10 @@ describe("SessionsStore", () => {
     );
     expect(h.capabilityTracker.matrix("sm7" as PatchbayAgentId)!.usage).toEqual({ declared: false, used: false });
 
-    const sessionId = await h.sessions.createSession("sm7" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("sm7" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    expect(h.state().sessionUsage[sessionId]).toEqual({ used: 42, size: 200, cost: undefined });
+    expect(h.state().sessionUsage[patchbaySessionId]).toEqual({ used: 42, size: 200, cost: undefined });
     expect(h.capabilityTracker.matrix("sm7" as PatchbayAgentId)!.usage).toEqual({ declared: true, used: true });
 
     await h.pool.stop("sm7" as PatchbayAgentId);
@@ -1288,12 +1288,12 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sm8"),
     );
-    const sessionId = await h.sessions.createSession("sm8" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
+    const patchbaySessionId = await h.sessions.createSession("sm8" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
     expect(h.capabilityTracker.matrix("sm8" as PatchbayAgentId)!["session.load"]).toEqual({ declared: true, used: false });
 
     await h.pool.restart("sm8" as PatchbayAgentId);
-    await h.gates.prompt(sessionId, { text: "second" });
+    await h.gates.prompt(patchbaySessionId, { text: "second" });
 
     expect(h.capabilityTracker.matrix("sm8" as PatchbayAgentId)!["session.load"]).toEqual({ declared: true, used: true });
     await h.pool.stop("sm8" as PatchbayAgentId);
@@ -1302,26 +1302,26 @@ describe("SessionsStore", () => {
   it("attached context rides in as its own labeled blocks, ahead of the user's words, then clears (P7)", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm9"));
-    const sessionId = await h.sessions.createSession("sm9" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm9" as PatchbayAgentId, "Fake Agent", cwd);
 
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-1",
       kind: "selection",
       label: "Selection: a.ts:1-2",
       content: "const x = 1;",
     });
-    expect(h.state().contextChips[sessionId]).toEqual([
+    expect(h.state().contextChips[patchbaySessionId]).toEqual([
       { id: "chip-1", kind: "selection", label: "Selection: a.ts:1-2", content: "const x = 1;" },
     ]);
 
-    await h.gates.prompt(sessionId, { text: "what does this do?" });
+    await h.gates.prompt(patchbaySessionId, { text: "what does this do?" });
 
     // chip cleared from state after being consumed by the prompt
-    expect(h.state().contextChips[sessionId]).toEqual([]);
+    expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
 
     const echoed = h
       .state()
-      .transcripts[sessionId]!.find((b) => b.kind === "text");
+      .transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(echoed?.kind === "text" && echoed.text.split("\n---BLOCK---\n")).toEqual([
       "[Selection: a.ts:1-2]\nconst x = 1;",
       "what does this do?",
@@ -1338,17 +1338,17 @@ describe("SessionsStore", () => {
         "img1",
       ),
     );
-    const sessionId = await h.sessions.createSession("img1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.sessions.addContext(sessionId, {
+    const patchbaySessionId = await h.sessions.createSession("img1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-img",
       kind: "image",
       label: "Image (image/png)",
       content: Buffer.from("fake-png-bytes").toString("base64"),
       mimeType: "image/png",
     });
-    await h.gates.prompt(sessionId, { text: "what is this?" });
+    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
 
-    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
     expect(kinds).toEqual([{ type: "image", mimeType: "image/png" }, { type: "text" }]);
     await h.pool.stop("img1" as PatchbayAgentId);
@@ -1362,24 +1362,24 @@ describe("SessionsStore", () => {
         "emb1",
       ),
     );
-    const sessionId = await h.sessions.createSession("emb1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.sessions.addContext(sessionId, {
+    const patchbaySessionId = await h.sessions.createSession("emb1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-sel",
       kind: "selection",
       label: "Selection: a.ts:1-2",
       content: "const x = 1;",
       sourceUri: "file:///ws/a.ts#L1-2",
     });
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-diag",
       kind: "diagnostics",
       label: "Problems (1)",
       content: "a.ts:3 [error] boom",
       // no single source — the chip itself is named (uri is wire-required)
     });
-    await h.gates.prompt(sessionId, { text: "context please" });
+    await h.gates.prompt(patchbaySessionId, { text: "context please" });
 
-    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
     expect(kinds).toEqual([
       { type: "resource", uri: "file:///ws/a.ts#L1-2" },
@@ -1392,18 +1392,18 @@ describe("SessionsStore", () => {
   it("image chips fall back to a temp-file ResourceLink when image support is undeclared — paste is never disabled", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "img2"));
-    const sessionId = await h.sessions.createSession("img2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("img2" as PatchbayAgentId, "Fake Agent", cwd);
     const bytes = Buffer.from("fake-jpeg-bytes");
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-img-fb",
       kind: "image",
       label: "Image (image/jpeg)",
       content: bytes.toString("base64"),
       mimeType: "image/jpeg",
     });
-    await h.gates.prompt(sessionId, { text: "and this?" });
+    await h.gates.prompt(patchbaySessionId, { text: "and this?" });
 
-    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
     expect(kinds).toHaveLength(2);
     expect(kinds[0]).toMatchObject({ type: "resource_link", mimeType: "image/jpeg" });
@@ -1418,24 +1418,24 @@ describe("SessionsStore", () => {
   it("attachment chips ride as resource_link to their real path — baseline, no capability consulted", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "att1"));
-    const sessionId = await h.sessions.createSession("att1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.sessions.addContext(sessionId, {
+    const patchbaySessionId = await h.sessions.createSession("att1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-att",
       kind: "attachment",
       label: "File: report.pdf",
       path: "/ws/docs/report.pdf",
       mimeType: "application/pdf",
     });
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-att-2",
       kind: "attachment",
       label: "File: blob.bin",
       path: "/ws/blob.bin",
       // no mimeType: the producer didn't know one — absent stays absent
     });
-    await h.gates.prompt(sessionId, { text: "what are these?" });
+    await h.gates.prompt(patchbaySessionId, { text: "what are these?" });
 
-    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     const kinds = JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
     expect(kinds).toEqual([
       { type: "resource_link", uri: "file:///ws/docs/report.pdf", name: "report.pdf", mimeType: "application/pdf" },
@@ -1451,38 +1451,38 @@ describe("SessionsStore", () => {
     const h = harness();
     const script: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "echoBlocks" }] };
     await h.pool.connect(spec(script, "sm-late-chip"));
-    const sessionId = await h.sessions.createSession("sm-late-chip" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" }); // prompted: the load rung reopens it
+    const patchbaySessionId = await h.sessions.createSession("sm-late-chip" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" }); // prompted: the load rung reopens it
     await h.pool.stop("sm-late-chip" as PatchbayAgentId);
-    expect(h.sessions.isLive(sessionId)).toBe(false);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
 
-    await h.sessions.addContext(sessionId, { kind: "selection", id: "late-chip", label: "a.ts:1", content: "const late = 1;" });
-    expect(h.state().contextChips[sessionId]).toMatchObject([{ id: "late-chip" }]);
+    await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: "late-chip", label: "a.ts:1", content: "const late = 1;" });
+    expect(h.state().contextChips[patchbaySessionId]).toMatchObject([{ id: "late-chip" }]);
 
     await h.pool.connect(spec(script, "sm-late-chip"));
-    await h.gates.prompt(sessionId, { text: "with the chip" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.prompt(patchbaySessionId, { text: "with the chip" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(textOf(echoed)).toContain("const late = 1;");
-    expect(h.state().contextChips[sessionId]).toEqual([]);
+    expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
     await h.pool.stop("sm-late-chip" as PatchbayAgentId);
   });
 
   it("removeContext drops a chip before it's ever sent", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
-    const sessionId = await h.sessions.createSession("sm10" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm10" as PatchbayAgentId, "Fake Agent", cwd);
 
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "chip-1",
       kind: "file",
       label: "File: a.ts",
       content: "export const a = 1;",
     });
-    h.sessions.removeContext(sessionId, "chip-1");
-    expect(h.state().contextChips[sessionId]).toEqual([]);
+    h.sessions.removeContext(patchbaySessionId, "chip-1");
+    expect(h.state().contextChips[patchbaySessionId]).toEqual([]);
 
-    await h.gates.prompt(sessionId, { text: "hello" });
-    const echoed = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    await h.gates.prompt(patchbaySessionId, { text: "hello" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(echoed?.kind === "text" && echoed.text).toBe("hello"); // the removed chip never appears
     await h.pool.stop("sm10" as PatchbayAgentId);
   });
@@ -1491,21 +1491,21 @@ describe("SessionsStore", () => {
     const h = harness();
     // Deliberately no load/resume declared: the zero-turn rung is session/new.
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm11"));
-    const sessionId = await h.sessions.createSession("sm11" as PatchbayAgentId, "Fake Agent", cwd);
-    const before = h.sessions.handleOf(sessionId);
+    const patchbaySessionId = await h.sessions.createSession("sm11" as PatchbayAgentId, "Fake Agent", cwd);
+    const before = h.sessions.sessionIdOf(patchbaySessionId);
 
-    await h.gates.addRoot(sessionId, "/repo/backend/"); // trailing slash normalized away
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend/"); // trailing slash normalized away
     // a fresh id on the agent's side; on patchbay's, the same session
-    expect(h.sessions.handleOf(sessionId)).not.toBe(before);
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
-    expect(h.state().activeSessionId).toBe(sessionId);
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    expect(h.sessions.sessionIdOf(patchbaySessionId)).not.toBe(before);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
+    expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]);
     // each birth tells its servers once the session exists: at creation,
     // on the add, and at the re-mint
-    expect(h.rootsChanged).toEqual([sessionId, sessionId, sessionId]);
+    expect(h.rootsChanged).toEqual([patchbaySessionId, patchbaySessionId, patchbaySessionId]);
 
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
 
     await h.pool.stop("sm11" as PatchbayAgentId);
@@ -1523,25 +1523,25 @@ describe("SessionsStore", () => {
         "sm11l",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm11l" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first turn" });
+    const patchbaySessionId = await h.sessions.createSession("sm11l" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
 
     // load would replay the whole session for one root — never used for a
     // re-apply; without resume the agent's copy waits, but the list is the
     // session's and the servers read it now
-    await h.gates.addRoot(sessionId, "/repo/backend");
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
-    expect(h.rootsChanged).toEqual([sessionId, sessionId]); // birth, then the add
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd, "/repo/backend"]);
-    expect(h.state().activeSessionId).toBe(sessionId);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const before = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]);
+    expect(h.rootsChanged).toEqual([patchbaySessionId, patchbaySessionId]); // birth, then the add
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/repo/backend"]);
+    expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const before = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(before?.kind === "text" && JSON.parse(before.text)).toEqual([]);
 
     // the next open — the reload the chip's note offers — carries the whole list
-    await h.gates.reload(sessionId);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const after = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.reload(patchbaySessionId);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const after = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(after?.kind === "text" && JSON.parse(after.text)).toEqual(["/repo/backend"]);
 
     await h.pool.stop("sm11l" as PatchbayAgentId);
@@ -1552,17 +1552,17 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm28"),
     );
-    const sessionId = await h.sessions.createSession("sm28" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm28" as PatchbayAgentId, "Fake Agent", cwd);
     const wireRoots = async () => {
-      await h.gates.prompt(sessionId, { text: "roots?" });
-      const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+      await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+      const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
       return echoed?.kind === "text" ? (JSON.parse(echoed.text) as string[]) : null;
     };
     // session/new: the folders the chip already counts — minus the cwd,
     // which travels as cwd — reached the agent
     expect(await wireRoots()).toEqual(["/repo/second", "/repo/third"]);
     // a user-added external root joins the same list, never replaces it
-    await h.gates.addRoot(sessionId, "/repo/backend");
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
     expect(await wireRoots()).toEqual(["/repo/second", "/repo/third", "/repo/backend"]);
     // a workspace folder removed at runtime: the chip would update — the
     // wire must too, or the two lists diverge again by a rarer path
@@ -1571,7 +1571,7 @@ describe("SessionsStore", () => {
     expect(await wireRoots()).toEqual(["/repo/second", "/repo/backend"]);
     // the durable row carries only the user-added root — folders are read
     // from reality, never stored
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]);
     await h.pool.stop("sm28" as PatchbayAgentId);
   });
 
@@ -1580,21 +1580,21 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm28n"),
     );
-    const sessionId = await h.sessions.createSession("sm28n" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const patchbaySessionId = await h.sessions.createSession("sm28n" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
     // an add is recorded for the servers (issue #34) and never re-applied
     // on the agent: no field to send, so no re-attach is made for it
-    await h.gates.addRoot(sessionId, "/repo/backend");
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]);
-    expect(h.rootsChanged).toEqual([sessionId, sessionId]); // birth, then the add
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd, "/repo/second", "/repo/backend"]);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const again = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]);
+    expect(h.rootsChanged).toEqual([patchbaySessionId, patchbaySessionId]); // birth, then the add
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/repo/second", "/repo/backend"]);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const again = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(again?.kind === "text" && JSON.parse(again.text)).toEqual([]);
     // one session/new, one prompt, one prompt: nothing re-attached
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
     await h.pool.stop("sm28n" as PatchbayAgentId);
   });
 
@@ -1603,9 +1603,9 @@ describe("SessionsStore", () => {
   it("granted roots: every workspace folder and the session's own roots — a cwd no folder backs is not one", async () => {
     const h = harness({ workspaceRoots: [cwd, "/repo/second"] });
     await h.pool.connect(spec({ declare: ROOTS_CAPS }, "sm56"));
-    const sessionId = await h.sessions.createSession("sm56" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.addRoot(sessionId, "/repo/backend");
-    const current = h.state().activeSessionId!;
+    const patchbaySessionId = await h.sessions.createSession("sm56" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+    const current = h.state().activePatchbaySessionId!;
     expect(h.sessions.grantedRoots(current)).toEqual([cwd, "/repo/second", "/repo/backend"]);
 
     // no folder open: the session still runs somewhere, but nobody handed
@@ -1636,22 +1636,22 @@ describe("SessionsStore", () => {
         "sm32",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm32" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm32" as PatchbayAgentId, "Fake Agent", cwd);
 
-    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo", "/src/lib"]);
-    expect(store.read(h.sessions.handleOf(sessionId)!, "sm32" as PatchbayAgentId)?.roots).toEqual(["/src/odoo", "/src/lib"]);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/odoo", "/src/lib"]);
+    expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, "sm32" as PatchbayAgentId)?.roots).toEqual(["/src/odoo", "/src/lib"]);
     // servers spawned during session/new could only ask before the id was
     // known — they are told once the session and its list exist
-    expect(h.rootsChanged).toEqual([sessionId]);
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd, "/repo/second", "/src/odoo", "/src/lib"]);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(h.rootsChanged).toEqual([patchbaySessionId]);
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/repo/second", "/src/odoo", "/src/lib"]);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/src/odoo", "/src/lib"]);
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]); // no re-attach
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]); // no re-attach
 
     // the session's own act from here: removing one leaves the others
-    await h.gates.removeRoot(sessionId, "/src/odoo");
-    expect(h.state().contextRoots[sessionId]).toEqual(["/src/lib"]);
+    await h.gates.removeRoot(patchbaySessionId, "/src/odoo");
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/lib"]);
     await h.pool.stop("sm32" as PatchbayAgentId);
   });
 
@@ -1660,11 +1660,11 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm32n"),
     );
-    const sessionId = await h.sessions.createSession("sm32n" as PatchbayAgentId, "Fake Agent", cwd);
-    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo"]);
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd, "/src/odoo"]);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const patchbaySessionId = await h.sessions.createSession("sm32n" as PatchbayAgentId, "Fake Agent", cwd);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/odoo"]);
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/src/odoo"]);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
     await h.pool.stop("sm32n" as PatchbayAgentId);
   });
@@ -1674,15 +1674,15 @@ describe("SessionsStore", () => {
   it("a saved root gone from disk: not seeded, not sent, not served — the session says which, and the saved list is told (issue #32)", async () => {
     const h = harness({ savedRoots: ["/src/odoo", "/src/gone"], missingRoots: ["/src/gone"] });
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm32m"));
-    const sessionId = await h.sessions.createSession("sm32m" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm32m" as PatchbayAgentId, "Fake Agent", cwd);
 
-    expect(h.state().contextRoots[sessionId]).toEqual(["/src/odoo"]);
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd, "/src/odoo"]);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/odoo"]);
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/src/odoo"]);
     expect(h.rootsMissing).toEqual([["/src/gone"]]);
-    const notice = h.state().transcripts[sessionId]!.find((b) => b.kind === "notice");
+    const notice = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "notice");
     expect(notice?.kind === "notice" && notice.text).toContain("/src/gone");
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/src/odoo"]);
     await h.pool.stop("sm32m" as PatchbayAgentId);
   });
@@ -1700,18 +1700,18 @@ describe("SessionsStore", () => {
     );
     const firstId = await h.sessions.createSession("sm32g" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.addRoot(firstId, "/repo/backend"); // zero-turn: re-minted
-    const sessionId = h.state().activeSessionId!;
-    await h.gates.prompt(sessionId, { text: "first turn" });
+    const patchbaySessionId = h.state().activePatchbaySessionId!;
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
 
     h.missingRoots.push("/repo/backend");
-    expect(h.sessions.rootsOf(sessionId)).toEqual([cwd]);
-    await h.gates.reload(sessionId);
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]); // the user's list, untouched
+    expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd]);
+    await h.gates.reload(patchbaySessionId);
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]); // the user's list, untouched
     expect(h.rootsMissing).toEqual([["/repo/backend"]]);
-    const notice = h.state().transcripts[sessionId]!.filter((b) => b.kind === "notice").at(-1);
+    const notice = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "notice").at(-1);
     expect(notice?.kind === "notice" && notice.text).toContain("/repo/backend");
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
     await h.pool.stop("sm32g" as PatchbayAgentId);
   });
@@ -1742,11 +1742,11 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ continuityStore: store });
       await h1.pool.connect(spec(script, "c33"));
-      const sessionId = await h1.sessions.createSession("c33" as PatchbayAgentId, "Fake Agent", cwd);
-      await h1.gates.prompt(sessionId, { text: "first turn" });
-      await h1.gates.addRoot(sessionId, "/repo/extra");
-      const handle = h1.sessions.handleOf(sessionId)!;
-      expect(store.read(handle, "c33" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
+      const patchbaySessionId = await h1.sessions.createSession("c33" as PatchbayAgentId, "Fake Agent", cwd);
+      await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
+      await h1.gates.addRoot(patchbaySessionId, "/repo/extra");
+      const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
+      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
       await h1.pool.stop("c33" as PatchbayAgentId);
 
       // another client set the roots while no window was open: first sight
@@ -1754,9 +1754,9 @@ describe("SessionsStore", () => {
       const h2 = harness({ continuityStore: store });
       await h2.pool.connect(spec(script, "c33"));
       await h2.sessions.syncAgentSessions("c33" as PatchbayAgentId);
-      const listed = h2.sessions.rowFor("c33" as PatchbayAgentId, handle)!;
+      const listed = h2.sessions.rowFor("c33" as PatchbayAgentId, sessionId)!;
       expect(h2.state().contextRoots[listed]).toEqual(["/other/root"]);
-      expect(store.read(handle, "c33" as PatchbayAgentId)?.roots).toEqual(["/other/root"]);
+      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toEqual(["/other/root"]);
 
       // a known session, still not open here: the next walk's report wins again
       await report(["/other/root", "/third"]);
@@ -1767,7 +1767,7 @@ describe("SessionsStore", () => {
       await report([]);
       await h2.sessions.syncAgentSessions("c33" as PatchbayAgentId);
       expect(h2.state().contextRoots[listed]).toEqual([]);
-      expect(store.read(handle, "c33" as PatchbayAgentId)?.roots).toBeUndefined(); // the row carries no empty list
+      expect(store.read(sessionId, "c33" as PatchbayAgentId)?.roots).toBeUndefined(); // the row carries no empty list
       await h2.pool.stop("c33" as PatchbayAgentId);
     });
 
@@ -1779,12 +1779,12 @@ describe("SessionsStore", () => {
       };
       const h = harness();
       await h.pool.connect(spec(script, "c33o"));
-      const sessionId = await h.sessions.createSession("c33o" as PatchbayAgentId, "Fake Agent", cwd);
-      await h.gates.prompt(sessionId, { text: "first turn" });
-      await h.gates.addRoot(sessionId, "/repo/extra");
+      const patchbaySessionId = await h.sessions.createSession("c33o" as PatchbayAgentId, "Fake Agent", cwd);
+      await h.gates.prompt(patchbaySessionId, { text: "first turn" });
+      await h.gates.addRoot(patchbaySessionId, "/repo/extra");
       await report(["/stale/root"]);
       await h.sessions.syncAgentSessions("c33o" as PatchbayAgentId);
-      expect(h.state().contextRoots[sessionId]).toEqual(["/repo/extra"]);
+      expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/extra"]);
       await h.pool.stop("c33o" as PatchbayAgentId);
     });
 
@@ -1797,18 +1797,18 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ continuityStore: store, workspaceRoots: [cwd, "/repo/second"] });
       await h1.pool.connect(spec(script, "c33w"));
-      const sessionId = await h1.sessions.createSession("c33w" as PatchbayAgentId, "Fake Agent", cwd);
-      await h1.gates.prompt(sessionId, { text: "first turn" });
-      const handle = h1.sessions.handleOf(sessionId)!;
+      const patchbaySessionId = await h1.sessions.createSession("c33w" as PatchbayAgentId, "Fake Agent", cwd);
+      await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
+      const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
       await h1.pool.stop("c33w" as PatchbayAgentId);
 
       await report(["/repo/second", "/repo/extra"]);
       const h2 = harness({ continuityStore: store, workspaceRoots: [cwd, "/repo/second"] });
       await h2.pool.connect(spec(script, "c33w"));
       await h2.sessions.syncAgentSessions("c33w" as PatchbayAgentId);
-      const listed = h2.sessions.rowFor("c33w" as PatchbayAgentId, handle)!;
+      const listed = h2.sessions.rowFor("c33w" as PatchbayAgentId, sessionId)!;
       expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
-      expect(store.read(handle, "c33w" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
+      expect(store.read(sessionId, "c33w" as PatchbayAgentId)?.roots).toEqual(["/repo/extra"]);
       await h2.gates.prompt(listed, { text: "roots?" });
       const echoed = h2.state().transcripts[listed]!.filter((b) => b.kind === "text").at(-1);
       expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/second", "/repo/extra"]);
@@ -1821,19 +1821,19 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: ROOTS_CAPS, stepDelayMs: 150, turn: [{ type: "echoRoots" }] }, "sm28t"),
     );
-    const sessionId = await h.sessions.createSession("sm28t" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
-    const slow = h.gates.prompt(sessionId, { text: "slow turn" });
+    const patchbaySessionId = await h.sessions.createSession("sm28t" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
+    const slow = h.gates.prompt(patchbaySessionId, { text: "slow turn" });
     await new Promise((r) => setTimeout(r, 30)); // the turn is in flight
-    await h.gates.addRoot(sessionId, "/repo/backend"); // deferred to turn end
-    const held = h.gates.prompt(sessionId, { text: "roots?" }); // held until the turn ends
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend"); // deferred to turn end
+    const held = h.gates.prompt(patchbaySessionId, { text: "roots?" }); // held until the turn ends
     await Promise.all([slow, held]);
     for (let i = 0; i < 100; i++) {
-      const texts = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text");
+      const texts = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text");
       if (texts.length >= 3) break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
     await h.pool.stop("sm28t" as PatchbayAgentId);
   });
@@ -1843,20 +1843,20 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: ROOTS_CAPS, stepDelayMs: 150, turn: [{ type: "echoRoots" }] }, "sm28s"),
     );
-    const sessionId = await h.sessions.createSession("sm28s" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
-    const slow = h.gates.prompt(sessionId, { text: "slow turn" }).catch((err: unknown) => err);
+    const patchbaySessionId = await h.sessions.createSession("sm28s" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
+    const slow = h.gates.prompt(patchbaySessionId, { text: "slow turn" }).catch((err: unknown) => err);
     await new Promise((r) => setTimeout(r, 30)); // the turn is in flight
-    await h.gates.addRoot(sessionId, "/repo/backend"); // deferred to turn end
-    const stopped = h.gates.stop(sessionId);
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend"); // deferred to turn end
+    const stopped = h.gates.stop(patchbaySessionId);
     // Asked after the Stop, while the stopped turn is still winding down:
     // held, and not among the words the Stop dropped.
-    const after = h.gates.prompt(sessionId, { text: "roots?" });
+    const after = h.gates.prompt(patchbaySessionId, { text: "roots?" });
     expect(await slow).toMatchObject({ by: "stop" });
     await Promise.all([stopped, after]);
     let echoed: ChatBlock | undefined;
     for (let i = 0; i < 100 && echoed === undefined; i++) {
-      echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text")[1];
+      echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text")[1];
       if (echoed === undefined) await new Promise((r) => setTimeout(r, 20));
     }
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
@@ -1866,18 +1866,18 @@ describe("SessionsStore", () => {
   it("a root added under a turn that fails is still applied once it ends — the failure holds words, never the roots", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm28f"));
-    const sessionId = await h.sessions.createSession("sm28f" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
+    const patchbaySessionId = await h.sessions.createSession("sm28f" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
     vi.spyOn(h.pool, "prompt").mockImplementationOnce(async () => {
       await new Promise((r) => setTimeout(r, 100));
       throw new Error("the agent failed the turn");
     });
-    const failing = h.gates.prompt(sessionId, { text: "failing turn" });
+    const failing = h.gates.prompt(patchbaySessionId, { text: "failing turn" });
     await new Promise((r) => setTimeout(r, 30)); // the turn is on the wire
-    await h.gates.addRoot(sessionId, "/repo/backend"); // deferred to turn end
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend"); // deferred to turn end
     await expect(failing).rejects.toThrow("the agent failed the turn");
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
     await h.pool.stop("sm28f" as PatchbayAgentId);
   });
@@ -1906,15 +1906,15 @@ describe("SessionsStore", () => {
         "sm11k",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm11k" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.setKnob(sessionId, "model", "sonnet");
-    await h.gates.prompt(sessionId, { text: "first turn" });
+    const patchbaySessionId = await h.sessions.createSession("sm11k" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
 
-    await h.gates.addRoot(sessionId, "/repo/backend");
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
 
     // session/resume handed back the script defaults ("default") — the
     // re-seed must have restored the user's confirmed value.
-    const model = h.state().sessionKnobs[sessionId]!.find((k) => k.id === "model");
+    const model = h.state().sessionKnobs[patchbaySessionId]!.find((k) => k.id === "model");
     expect(model?.currentValue).toBe("sonnet");
 
     await h.pool.stop("sm11k" as PatchbayAgentId);
@@ -1947,20 +1947,20 @@ describe("SessionsStore", () => {
     // window 1: the user steers the knob, then the window goes away
     const h1 = harness({ continuityStore: store });
     await h1.pool.connect(spec(script, "smk1"));
-    const sessionId = await h1.sessions.createSession("smk1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h1.gates.setKnob(sessionId, "model", "sonnet");
-    await h1.gates.prompt(sessionId, { text: "first turn" });
+    const patchbaySessionId = await h1.sessions.createSession("smk1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h1.gates.setKnob(patchbaySessionId, "model", "sonnet");
+    await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
     // the durable row keys on the agent's own id — what names the session
     // again after a reload
-    const handle = h1.sessions.handleOf(sessionId)!;
-    expect(store.read(handle, "smk1" as PatchbayAgentId)?.knobs).toMatchObject({ model: "sonnet" });
+    const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
+    expect(store.read(sessionId, "smk1" as PatchbayAgentId)?.knobs).toMatchObject({ model: "sonnet" });
     await h1.pool.stop("smk1" as PatchbayAgentId);
 
     // window 2: fresh processes, fresh memory — only the durable copy survives
     const h2 = harness({ continuityStore: store });
     await h2.pool.connect(spec(script, "smk1"));
     await h2.sessions.syncAgentSessions("smk1" as PatchbayAgentId);
-    const restored = h2.sessions.rowFor("smk1" as PatchbayAgentId, handle)!;
+    const restored = h2.sessions.rowFor("smk1" as PatchbayAgentId, sessionId)!;
     expect(restored).toBeDefined();
     h2.gates.activate(restored);
     // session/load hands back the script default; the involuntary-arm
@@ -1990,26 +1990,26 @@ describe("SessionsStore", () => {
     };
     const h1 = harness({ continuityStore: store, authLocked: () => locked });
     await h1.pool.connect(spec(script, "smq6"));
-    const sessionId = await h1.sessions.createSession("smq6" as PatchbayAgentId, "Fake Agent", cwd);
-    await h1.gates.prompt(sessionId, { text: "real turn" }); // persists agent-side
-    await h1.gates.addRoot(sessionId, "/repo/extra");
-    await h1.sessions.addContext(sessionId, {
+    const patchbaySessionId = await h1.sessions.createSession("smq6" as PatchbayAgentId, "Fake Agent", cwd);
+    await h1.gates.prompt(patchbaySessionId, { text: "real turn" }); // persists agent-side
+    await h1.gates.addRoot(patchbaySessionId, "/repo/extra");
+    await h1.sessions.addContext(patchbaySessionId, {
       kind: "selection",
       id: "chip-1",
       label: "main.ts:1-3",
       content: "const x = 1;",
     });
     locked = true; // logout witnessed
-    await h1.gates.prompt(sessionId, { text: "held words" }); // → held row
-    h1.sessions.saveDraft(sessionId, "half-typed thought"); // the composer's debounced save
-    const handle = h1.sessions.handleOf(sessionId)!;
+    await h1.gates.prompt(patchbaySessionId, { text: "held words" }); // → held row
+    h1.sessions.saveDraft(patchbaySessionId, "half-typed thought"); // the composer's debounced save
+    const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
     await h1.pool.stop("smq6" as PatchbayAgentId);
 
     // window 2: fresh memory, lock still standing — the row restores everything
     const h2 = harness({ continuityStore: store, authLocked: () => locked });
     await h2.pool.connect(spec(script, "smq6"));
     await h2.sessions.syncAgentSessions("smq6" as PatchbayAgentId);
-    const listed = h2.sessions.rowFor("smq6" as PatchbayAgentId, handle)!;
+    const listed = h2.sessions.rowFor("smq6" as PatchbayAgentId, sessionId)!;
     expect(h2.state().promptQueue[listed]).toMatchObject([{ text: "held words" }]);
     expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
     expect(h2.state().drafts[listed]).toBe("half-typed thought");
@@ -2069,22 +2069,22 @@ describe("SessionsStore", () => {
         turn: [{ type: "chunk", text: "x" }],
       });
       const stage = async (patchbayAgentId: PatchbayAgentId) => {
-        const sessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
-        await h.gates.prompt(sessionId, { text: "first turn" });
-        await h.gates.setKnob(sessionId, "model", "sonnet");
-        await h.gates.addRoot(sessionId, "/repo/extra");
-        await h.sessions.addContext(sessionId, { kind: "selection", id: `${patchbayAgentId}-chip`, label: "a.ts:1", content: "x" });
+        const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
+        await h.gates.prompt(patchbaySessionId, { text: "first turn" });
+        await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
+        await h.gates.addRoot(patchbaySessionId, "/repo/extra");
+        await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: `${patchbayAgentId}-chip`, label: "a.ts:1", content: "x" });
         locked = true;
-        await h.gates.prompt(sessionId, { text: "held words" });
+        await h.gates.prompt(patchbaySessionId, { text: "held words" });
         locked = false;
-        h.sessions.saveDraft(sessionId, "half a thought");
-        return sessionId;
+        h.sessions.saveDraft(patchbaySessionId, "half a thought");
+        return patchbaySessionId;
       };
 
       for (const [patchbayAgentId, list] of [["c29-nolist" as PatchbayAgentId, false], ["c29-list" as PatchbayAgentId, true]] as const) {
         await h.pool.connect(spec(script(list), patchbayAgentId));
-        const sessionId = await stage(patchbayAgentId);
-        expect(store.read(h.sessions.handleOf(sessionId)!, patchbayAgentId)).toMatchObject({
+        const patchbaySessionId = await stage(patchbayAgentId);
+        expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, patchbayAgentId)).toMatchObject({
           knobs: { model: "sonnet" },
           roots: ["/repo/extra"],
           chips: [{ id: `${patchbayAgentId}-chip` }],
@@ -2116,12 +2116,12 @@ describe("SessionsStore", () => {
       expect(store.list().map((r) => r.id).sort()).toEqual(["c29-load\u0000stale-elsewhere", "c29-other\u0000other"]);
 
       // a session of this window keeps its row across the agent's reconnect
-      const sessionId = await h.sessions.createSession("c29-load" as PatchbayAgentId, "Fake Agent", cwd);
-      h.sessions.saveDraft(sessionId, "half a thought");
+      const patchbaySessionId = await h.sessions.createSession("c29-load" as PatchbayAgentId, "Fake Agent", cwd);
+      h.sessions.saveDraft(patchbaySessionId, "half a thought");
       await h.pool.stop("c29-load" as PatchbayAgentId);
       await h.pool.connect(spec({ declare: { loadSession: true } }, "c29-load"));
       await h.sessions.syncAgentSessions("c29-load" as PatchbayAgentId);
-      expect(store.read(h.sessions.handleOf(sessionId)!, "c29-load" as PatchbayAgentId)).toEqual({ draft: "half a thought" });
+      expect(store.read(h.sessions.sessionIdOf(patchbaySessionId)!, "c29-load" as PatchbayAgentId)).toEqual({ draft: "half a thought" });
       await h.pool.stop("c29-load" as PatchbayAgentId);
     });
 
@@ -2134,9 +2134,9 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ continuityStore: store });
       await h1.pool.connect(spec(script, "c29-walk"));
-      const sessionId = await h1.sessions.createSession("c29-walk" as PatchbayAgentId, "Fake Agent", cwd);
-      await h1.gates.prompt(sessionId, { text: "persisted agent-side" });
-      const handle = h1.sessions.handleOf(sessionId)!;
+      const patchbaySessionId = await h1.sessions.createSession("c29-walk" as PatchbayAgentId, "Fake Agent", cwd);
+      await h1.gates.prompt(patchbaySessionId, { text: "persisted agent-side" });
+      const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
       await h1.pool.stop("c29-walk" as PatchbayAgentId);
 
       // while patchbay was closed: one session deleted in the agent's own
@@ -2145,7 +2145,7 @@ describe("SessionsStore", () => {
       await store.patch("other-ws", "c29-walk" as PatchbayAgentId, "/elsewhere", { draft: "stays" });
       await kv.update(CONTINUITY_KEY, [
         ...(kv.get<unknown[]>(CONTINUITY_KEY) ?? []),
-        { id: `c29-walk\u0000${handle}`, agentId: "c29-walk", draft: "legacy draft" },
+        { id: `c29-walk\u0000${sessionId}`, agentId: "c29-walk", draft: "legacy draft" },
       ]);
 
       const h2 = harness({ continuityStore: store });
@@ -2153,9 +2153,9 @@ describe("SessionsStore", () => {
       await h2.sessions.syncAgentSessions("c29-walk" as PatchbayAgentId);
       expect(store.read("deleted-while-closed", "c29-walk" as PatchbayAgentId)).toBeUndefined();
       expect(store.read("other-ws", "c29-walk" as PatchbayAgentId)).toEqual({ draft: "stays" });
-      expect(store.read(handle, "c29-walk" as PatchbayAgentId)).toEqual({ draft: "legacy draft" });
-      expect(store.list().find((r) => r.id === `c29-walk\u0000${handle}`)?.cwd).toBe(cwd);
-      expect(h2.state().drafts[h2.sessions.rowFor("c29-walk" as PatchbayAgentId, handle)!]).toBe("legacy draft");
+      expect(store.read(sessionId, "c29-walk" as PatchbayAgentId)).toEqual({ draft: "legacy draft" });
+      expect(store.list().find((r) => r.id === `c29-walk\u0000${sessionId}`)?.cwd).toBe(cwd);
+      expect(h2.state().drafts[h2.sessions.rowFor("c29-walk" as PatchbayAgentId, sessionId)!]).toBe("legacy draft");
       await h2.pool.stop("c29-walk" as PatchbayAgentId);
     });
 
@@ -2165,12 +2165,12 @@ describe("SessionsStore", () => {
       await h.pool.connect(
         spec({ declare: { loadSession: true, sessionCapabilities: { list: {} } }, configOptions: MODEL_KNOB }, "c29-live"),
       );
-      const sessionId = await h.sessions.createSession("c29-live" as PatchbayAgentId, "Fake Agent", cwd);
-      await h.gates.setKnob(sessionId, "model", "sonnet");
-      const handle = h.sessions.handleOf(sessionId)!;
-      expect(store.read(handle, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
+      const patchbaySessionId = await h.sessions.createSession("c29-live" as PatchbayAgentId, "Fake Agent", cwd);
+      await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
+      const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
+      expect(store.read(sessionId, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
       await h.sessions.syncRunningAgents(); // the agent persists nothing until the first turn
-      expect(store.read(handle, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
+      expect(store.read(sessionId, "c29-live" as PatchbayAgentId)?.knobs).toEqual({ model: "sonnet" });
       await h.pool.stop("c29-live" as PatchbayAgentId);
     });
 
@@ -2186,13 +2186,13 @@ describe("SessionsStore", () => {
     it("a zero-turn re-mint keeps the composer draft — an agent that writes no row still keeps the words, on the same session", async () => {
       const h = harness();
       await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "c29-draft"));
-      const sessionId = await h.sessions.createSession("c29-draft" as PatchbayAgentId, "Fake Agent", cwd);
-      const before = h.sessions.handleOf(sessionId);
-      h.sessions.saveDraft(sessionId, "typed before any turn");
-      await h.gates.addRoot(sessionId, "/repo/backend");
-      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
-      expect(h.state().activeSessionId).toBe(sessionId);
-      expect(h.state().drafts[sessionId]).toBe("typed before any turn");
+      const patchbaySessionId = await h.sessions.createSession("c29-draft" as PatchbayAgentId, "Fake Agent", cwd);
+      const before = h.sessions.sessionIdOf(patchbaySessionId);
+      h.sessions.saveDraft(patchbaySessionId, "typed before any turn");
+      await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+      expect(h.sessions.sessionIdOf(patchbaySessionId)).not.toBe(before);
+      expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
+      expect(h.state().drafts[patchbaySessionId]).toBe("typed before any turn");
       await h.pool.stop("c29-draft" as PatchbayAgentId);
     });
   });
@@ -2202,13 +2202,13 @@ describe("SessionsStore", () => {
     await h.pool.connect(
       spec({ declare: ROOTS_CAPS, failResume: true, turn: [{ type: "echoRoots" }] }, "sm11f"),
     );
-    const sessionId = await h.sessions.createSession("sm11f" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first turn" });
-    expect(h.sessions.isLive(sessionId)).toBe(true);
+    const patchbaySessionId = await h.sessions.createSession("sm11f" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
 
-    await h.gates.addRoot(sessionId, "/repo/backend");
-    expect(h.state().contextRoots[sessionId]).toEqual(["/repo/backend"]); // canonical list stands
-    expect(h.sessions.isLive(sessionId)).toBe(false); // detached, not a zombie
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+    expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]); // canonical list stands
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false); // detached, not a zombie
 
     await h.pool.stop("sm11f" as PatchbayAgentId);
   });
@@ -2221,16 +2221,16 @@ describe("SessionsStore", () => {
         "sm11r",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm11r" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first turn" });
-    const before = h.state().transcripts[sessionId]!.length;
+    const patchbaySessionId = await h.sessions.createSession("sm11r" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first turn" });
+    const before = h.state().transcripts[patchbaySessionId]!.length;
 
-    await h.gates.addRoot(sessionId, "/repo/backend");
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
 
     // Resume rung: no replay, so the render cache must not have been reset.
-    expect(h.state().transcripts[sessionId]!.length).toBeGreaterThanOrEqual(before);
-    await h.gates.prompt(sessionId, { text: "roots?" });
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    expect(h.state().transcripts[patchbaySessionId]!.length).toBeGreaterThanOrEqual(before);
+    await h.gates.prompt(patchbaySessionId, { text: "roots?" });
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/repo/backend"]);
 
     await h.pool.stop("sm11r" as PatchbayAgentId);
@@ -2239,15 +2239,15 @@ describe("SessionsStore", () => {
   it("prompt parts: inline file mentions ride as resource_link blocks at their position", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "sm11p"));
-    const sessionId = await h.sessions.createSession("sm11p" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sm11p" as PatchbayAgentId, "Fake Agent", cwd);
 
-    await h.gates.prompt(sessionId, { text: "look at @app.ts please", parts: [
+    await h.gates.prompt(patchbaySessionId, { text: "look at @app.ts please", parts: [
       { kind: "text", text: "look at " },
       { kind: "fileRef", path: "/repo/src/app.ts" },
       { kind: "text", text: " please" },
     ] });
 
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([
       { type: "text" },
       { type: "resource_link", uri: "file:///repo/src/app.ts", name: "app.ts" },
@@ -2255,7 +2255,7 @@ describe("SessionsStore", () => {
     ]);
     // the transcript records the prompt in the part vocabulary — the
     // mention is a structured part, rendered as an inline @app.ts token
-    const user = h.state().transcripts[sessionId]!.find((b) => b.kind === "user");
+    const user = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user");
     expect(user?.kind === "user" && user.parts).toEqual([
       { kind: "text", text: "look at " },
       { kind: "mention", name: "app.ts", uri: "file:///repo/src/app.ts" },
@@ -2281,22 +2281,22 @@ describe("SessionsStore", () => {
     it("new-session focus still finds the row, and the first prompt mints it again — the same session, its draft in place, no sibling", async () => {
       const h = harness();
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30a"));
-      const sessionId = await h.sessions.createSession("c30a" as PatchbayAgentId, "Fake Agent", cwd);
-      const before = h.sessions.handleOf(sessionId);
-      h.events.push({ kind: "sessionDraftChanged", sessionId, draft: "typed before the crash" });
+      const patchbaySessionId = await h.sessions.createSession("c30a" as PatchbayAgentId, "Fake Agent", cwd);
+      const before = h.sessions.sessionIdOf(patchbaySessionId);
+      h.events.push({ kind: "sessionDraftChanged", patchbaySessionId, draft: "typed before the crash" });
       await untilStatus(h, "c30a" as PatchbayAgentId, "crashed");
-      expect(h.sessions.isLive(sessionId)).toBe(false);
-      expect(h.sessions.findNeverPrompted("c30a" as PatchbayAgentId)).toBe(sessionId);
+      expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
+      expect(h.sessions.findNeverPrompted("c30a" as PatchbayAgentId)).toBe(patchbaySessionId);
 
       await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "c30a"));
-      await h.gates.prompt(sessionId, { text: "first words" });
+      await h.gates.prompt(patchbaySessionId, { text: "first words" });
       const rows = h.state().sessions.filter((s) => s.patchbayAgentId === "c30a");
-      expect(rows.map((s) => s.id)).toEqual([sessionId]);
+      expect(rows.map((s) => s.id)).toEqual([patchbaySessionId]);
       // minted again on the agent's side only
-      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
-      expect(h.state().transcripts[sessionId]?.some((b) => b.kind === "user")).toBe(true);
-      expect(textOf(h.state().transcripts[sessionId]?.at(-2))).toBe("ok");
-      expect(h.state().drafts[sessionId]).toBe("typed before the crash");
+      expect(h.sessions.sessionIdOf(patchbaySessionId)).not.toBe(before);
+      expect(h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "user")).toBe(true);
+      expect(textOf(h.state().transcripts[patchbaySessionId]?.at(-2))).toBe("ok");
+      expect(h.state().drafts[patchbaySessionId]).toBe("typed before the crash");
       // the first prompt ended newness, and named it
       expect(h.sessions.findNeverPrompted("c30a" as PatchbayAgentId)).toBeUndefined();
       expect(rows[0]!.title).toBe("first words");
@@ -2306,35 +2306,35 @@ describe("SessionsStore", () => {
     it("opening the dead row mints it again — one live session, the same one, focused, chips in place", async () => {
       const h = harness();
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30b"));
-      const sessionId = await h.sessions.createSession("c30b" as PatchbayAgentId, "Fake Agent", cwd);
-      const before = h.sessions.handleOf(sessionId);
-      await h.sessions.addContext(sessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
+      const patchbaySessionId = await h.sessions.createSession("c30b" as PatchbayAgentId, "Fake Agent", cwd);
+      const before = h.sessions.sessionIdOf(patchbaySessionId);
+      await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
       await untilStatus(h, "c30b" as PatchbayAgentId, "crashed");
 
       await h.pool.connect(spec({}, "c30b"));
-      h.gates.activate(sessionId);
-      await vi.waitFor(() => expect(h.sessions.isLive(sessionId)).toBe(true), { timeout: 3000 });
-      expect(h.sessions.handleOf(sessionId)).not.toBe(before);
-      expect(h.state().sessions.filter((s) => s.patchbayAgentId === "c30b").map((s) => s.id)).toEqual([sessionId]);
-      expect(h.state().activeSessionId).toBe(sessionId);
-      expect(h.state().contextChips[sessionId]).toMatchObject([{ id: "c30-chip" }]);
+      h.gates.activate(patchbaySessionId);
+      await vi.waitFor(() => expect(h.sessions.isLive(patchbaySessionId)).toBe(true), { timeout: 3000 });
+      expect(h.sessions.sessionIdOf(patchbaySessionId)).not.toBe(before);
+      expect(h.state().sessions.filter((s) => s.patchbayAgentId === "c30b").map((s) => s.id)).toEqual([patchbaySessionId]);
+      expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
+      expect(h.state().contextChips[patchbaySessionId]).toMatchObject([{ id: "c30-chip" }]);
       await h.pool.stop("c30b" as PatchbayAgentId);
     });
 
     it("a Close while the dead row is minted again leaves it closed — the fresh session is freed, nothing comes back", async () => {
       const h = harness();
       await h.pool.connect(spec({ exitAfterMs: 150 }, "c30c"));
-      const sessionId = await h.sessions.createSession("c30c" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.sessions.createSession("c30c" as PatchbayAgentId, "Fake Agent", cwd);
       await untilStatus(h, "c30c" as PatchbayAgentId, "crashed");
 
       // the agent answers a creation late, so the Close lands mid-mint
       await h.pool.connect(spec({ newSessionReplyDelayMs: 200 }, "c30c"));
-      const prompt = h.gates.prompt(sessionId, { text: "first words" });
-      await h.gates.close(sessionId);
+      const prompt = h.gates.prompt(patchbaySessionId, { text: "first words" });
+      await h.gates.close(patchbaySessionId);
       await expect(prompt).rejects.toThrow();
 
       expect(h.state().sessions).toEqual([]);
-      expect(h.state().promptQueue[sessionId]).toBeUndefined();
+      expect(h.state().promptQueue[patchbaySessionId]).toBeUndefined();
       // the session the agent minted for it is let go
       expect(h.pool.get("c30c" as PatchbayAgentId)?.sessions).toEqual([]);
       await h.pool.stop("c30c" as PatchbayAgentId);
@@ -2344,11 +2344,11 @@ describe("SessionsStore", () => {
   it("a still-new session is findable for add-session focus; the first prompt ends that", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm14"));
-    const sessionId = await h.sessions.createSession("sm14" as PatchbayAgentId, "Fake Agent", cwd);
-    expect(h.sessions.findNeverPrompted("sm14" as PatchbayAgentId)).toBe(sessionId);
+    const patchbaySessionId = await h.sessions.createSession("sm14" as PatchbayAgentId, "Fake Agent", cwd);
+    expect(h.sessions.findNeverPrompted("sm14" as PatchbayAgentId)).toBe(patchbaySessionId);
     expect(h.sessions.findNeverPrompted("other-agent" as PatchbayAgentId)).toBeUndefined();
 
-    await h.gates.prompt(sessionId, { text: "first words" });
+    await h.gates.prompt(patchbaySessionId, { text: "first words" });
     expect(h.sessions.findNeverPrompted("sm14" as PatchbayAgentId)).toBeUndefined();
 
     await h.pool.stop("sm14" as PatchbayAgentId);
@@ -2397,7 +2397,7 @@ describe("session history (list / resume / delete)", () => {
     expect(state.sessions.map((s) => s.id)).toContain(mine);
     expect(state.sessions.find((s) => s.id === ext)).toMatchObject({ busy: [] });
     // the sync never activates anything — the user's focus is theirs
-    expect(state.activeSessionId).toBe(mine);
+    expect(state.activePatchbaySessionId).toBe(mine);
     // the wire round-trip proved the row
     expect(h.capabilityTracker.matrix("sh1" as PatchbayAgentId)?.["session.list"]).toMatchObject({ declared: true, used: true });
 
@@ -2443,7 +2443,7 @@ describe("session history (list / resume / delete)", () => {
     await h.sessions.syncAgentSessions("sh2" as PatchbayAgentId);
 
     expect(h.sessions.rowFor("sh2" as PatchbayAgentId, "gone-1")).toBeUndefined();
-    expect(h.events.some((e) => e.kind === "sessionClosed" && e.sessionId === gone)).toBe(true);
+    expect(h.events.some((e) => e.kind === "sessionClosed" && e.patchbaySessionId === gone)).toBe(true);
 
     await h.pool.stop("sh2" as PatchbayAgentId);
   });
@@ -2514,7 +2514,7 @@ describe("session history (list / resume / delete)", () => {
     const lost = h.sessions.rowFor("sh2e" as PatchbayAgentId, "lost-3")!;
     await h.gates.prompt(lost, { text: "second" });
     await vi.waitFor(() =>
-      expect(h.events.filter((e) => e.kind === "promptQueueCleared" && e.sessionId === lost)).toHaveLength(1),
+      expect(h.events.filter((e) => e.kind === "promptQueueCleared" && e.patchbaySessionId === lost)).toHaveLength(1),
     );
 
     expect(h.state().promptQueue[lost]?.map((q) => q.text)).toEqual(["first", "second"]);
@@ -2526,13 +2526,13 @@ describe("session history (list / resume / delete)", () => {
   it("the agent's title always wins — patchbay-side rename is gone", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS, listWithTitles: true }, "sh3"));
-    const sessionId = await h.sessions.createSession("sh3" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "derive me a title" });
+    const patchbaySessionId = await h.sessions.createSession("sh3" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "derive me a title" });
     expect(h.state().sessions[0]?.title).toBe("derive me a title");
 
     await h.sessions.syncAgentSessions("sh3" as PatchbayAgentId);
     // the fake agent titles a row after its own id for the session
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe(`fake:${h.sessions.handleOf(sessionId)}`);
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe(`fake:${h.sessions.sessionIdOf(patchbaySessionId)}`);
 
     await h.pool.stop("sh3" as PatchbayAgentId);
   });
@@ -2542,8 +2542,8 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(
       spec({ declare: LIST_CAPS, turn: [{ type: "infoUpdate", title: "agent named me" }] }, "sh4"),
     );
-    const sessionId = await h.sessions.createSession("sh4" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "hello" });
+    const patchbaySessionId = await h.sessions.createSession("sh4" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "hello" });
     // noteInfoUpdate is fire-and-forget off the notification — settle it
     await new Promise((r) => setTimeout(r, 50));
     expect(h.state().sessions[0]?.title).toBe("agent named me");
@@ -2559,19 +2559,19 @@ describe("session history (list / resume / delete)", () => {
         "sh5",
       ),
     );
-    const sessionId = await h.sessions.createSession("sh5" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
-    const before = h.state().transcripts[sessionId]!.length;
+    const patchbaySessionId = await h.sessions.createSession("sh5" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
+    const before = h.state().transcripts[patchbaySessionId]!.length;
     expect(before).toBeGreaterThan(0);
 
     // the connection died from patchbay's perspective; the agent still has it
     h.sessions.invalidateAgent("sh5" as PatchbayAgentId);
-    await h.gates.prompt(sessionId, { text: "second" });
+    await h.gates.prompt(patchbaySessionId, { text: "second" });
 
     const state = h.state();
     // same id — a real continuation, not an emulated sibling
-    expect(state.sessions.map((s) => s.id)).toEqual([sessionId]);
-    const blocks = state.transcripts[sessionId]!;
+    expect(state.sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
+    const blocks = state.transcripts[patchbaySessionId]!;
     // cached view kept, seam notice marks where the unreplayed memory begins
     const noticeAt = blocks.findIndex((b) => b.kind === "notice");
     expect(noticeAt).toBeGreaterThanOrEqual(before);
@@ -2589,12 +2589,12 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "remembered" }] }, "sh7"),
     );
-    const sessionId = await h.sessions.createSession("sh7" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
+    const patchbaySessionId = await h.sessions.createSession("sh7" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
     h.sessions.invalidateAgent("sh7" as PatchbayAgentId);
     const resetsBefore = h.events.filter((e) => e.kind === "transcriptReset").length;
 
-    h.gates.activate(sessionId); // a click, nothing more
+    h.gates.activate(patchbaySessionId); // a click, nothing more
     const start = Date.now();
     while (h.events.filter((e) => e.kind === "transcriptReset").length === resetsBefore) {
       if (Date.now() - start > 3000) throw new Error("hydrate never replayed");
@@ -2604,9 +2604,9 @@ describe("session history (list / resume / delete)", () => {
 
     // The fake agent's durable record replays its own updates (its store
     // holds no user_message_chunk) — the agent prose coming back is the proof.
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     expect(blocks.some((b) => b.kind === "text" && b.text.includes("remembered"))).toBe(true);
-    expect(h.sessions.isLive(sessionId)).toBe(true);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
 
     await h.pool.stop("sh7" as PatchbayAgentId);
   });
@@ -2623,7 +2623,7 @@ describe("session history (list / resume / delete)", () => {
     const dead = h.sessions.rowFor("sh8" as PatchbayAgentId, "dead-1")!;
     h.gates.activate(dead);
     const start = Date.now();
-    while (!h.events.some((e) => e.kind === "transcriptSeeded" && e.sessionId === dead)) {
+    while (!h.events.some((e) => e.kind === "transcriptSeeded" && e.patchbaySessionId === dead)) {
       if (Date.now() - start > 3000) throw new Error("notice never seeded");
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -2640,25 +2640,25 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "chunk", text: "ok" }] }, "sh9"),
     );
-    const sessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "before" });
+    const patchbaySessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "before" });
     h.sessions.invalidateAgent("sh9" as PatchbayAgentId);
 
-    h.gates.activate(sessionId); // a click
+    h.gates.activate(patchbaySessionId); // a click
     // The open's own end, not isLive: a rung claims the session before its
     // wire call, so isLive turns true while the resume is still in flight.
     const start = Date.now();
-    while (attaching(h.state().sessions.find((s) => s.id === sessionId)!)) {
+    while (attaching(h.state().sessions.find((s) => s.id === patchbaySessionId)!)) {
       if (Date.now() - start > 3000) throw new Error("open never resumed");
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(h.sessions.isLive(sessionId)).toBe(true);
-    const blocks = h.state().transcripts[sessionId]!;
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     const notice = blocks.find((b) => b.kind === "notice");
     expect(notice?.kind === "notice" && notice.text).toContain("doesn't support replaying history");
     // ready to prompt straight away — same session, context attached
-    await h.gates.prompt(sessionId, { text: "after" });
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
+    await h.gates.prompt(patchbaySessionId, { text: "after" });
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
 
     await h.pool.stop("sh9" as PatchbayAgentId);
   });
@@ -2671,18 +2671,18 @@ describe("session history (list / resume / delete)", () => {
         "sh10",
       ),
     );
-    const sessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "work" });
+    const patchbaySessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "work" });
 
-    await h.sessions.release(sessionId, "idle");
-    expect(h.sessions.isLive(sessionId)).toBe(false);
+    await h.sessions.release(patchbaySessionId, "idle");
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
     expect(h.capabilityTracker.matrix("sh10" as PatchbayAgentId)?.["session.close"]).toMatchObject({ declared: true, used: true });
     // the row survives — release frees resources, it never closes the chat
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
 
-    h.gates.activate(sessionId);
+    h.gates.activate(patchbaySessionId);
     const start = Date.now();
-    while (!h.sessions.isLive(sessionId)) {
+    while (!h.sessions.isLive(patchbaySessionId)) {
       if (Date.now() - start > 3000) throw new Error("re-open never re-attached");
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -2695,13 +2695,13 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.connect(
       spec({ declare: { sessionCapabilities: { close: {}, resume: {} } } }, "sh11"),
     );
-    const sessionId = await h.sessions.createSession("sh11" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "irreplaceable transcript" });
+    const patchbaySessionId = await h.sessions.createSession("sh11" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "irreplaceable transcript" });
 
     // resume would bring back the context but not the visible history —
     // and patchbay persists none, so closing would destroy the only copy.
-    await h.sessions.release(sessionId, "idle");
-    expect(h.sessions.isLive(sessionId)).toBe(true);
+    await h.sessions.release(patchbaySessionId, "idle");
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
 
     await h.pool.stop("sh11" as PatchbayAgentId);
   });
@@ -2718,7 +2718,7 @@ describe("session history (list / resume / delete)", () => {
     await h.gates.prompt(idle, { text: "then silence" });
     const active = await h.sessions.createSession("sh12" as PatchbayAgentId, "Fake Agent", cwd); // activates itself
     await h.gates.prompt(active, { text: "also silent, but visible" });
-    expect(h.state().activeSessionId).toBe(active);
+    expect(h.state().activePatchbaySessionId).toBe(active);
 
     const start = Date.now();
     while (h.sessions.isLive(idle)) {
@@ -2777,7 +2777,7 @@ describe("session history (list / resume / delete)", () => {
     const fresh = await h.sessions.createSession("sh13" as PatchbayAgentId, "Fake Agent", cwd);
     const active = await h.sessions.createSession("sh13" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(active, { text: "make this one the visible, prompted one" });
-    expect(h.state().activeSessionId).toBe(active);
+    expect(h.state().activePatchbaySessionId).toBe(active);
 
     // well past the idle threshold: the never-prompted session is untouched
     await new Promise((r) => setTimeout(r, 400));
@@ -2823,16 +2823,16 @@ describe("session history (list / resume / delete)", () => {
     await h.capabilityTracker.verify("sh6" as PatchbayAgentId);
     expect(h.capabilityTracker.matrix("sh6" as PatchbayAgentId)?.["session.delete"]).toMatchObject({ declared: true, used: true });
 
-    const sessionId = await h.sessions.createSession("sh6" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "leave a durable record" });
-    await h.gates.close(sessionId);
+    const patchbaySessionId = await h.sessions.createSession("sh6" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "leave a durable record" });
+    await h.gates.close(patchbaySessionId);
 
     // the agent's own list must no longer report it — else the next sync
     // would resurrect a session the user asked to remove
     const listed = await h.pool.listSessions("sh6" as PatchbayAgentId, { cwd });
-    expect(listed.sessions.map((s) => s.sessionId)).not.toContain(sessionId);
+    expect(listed.sessions.map((s) => s.sessionId)).not.toContain(patchbaySessionId);
     await h.sessions.syncAgentSessions("sh6" as PatchbayAgentId);
-    expect(h.state().sessions.map((s) => s.id)).not.toContain(sessionId);
+    expect(h.state().sessions.map((s) => s.id)).not.toContain(patchbaySessionId);
 
     await h.pool.stop("sh6" as PatchbayAgentId);
   });
@@ -2879,17 +2879,17 @@ describe("session activity stamp — one home", () => {
   it("a wire row without a stamp: the re-read says nothing, the row keeps its own", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st2"));
-    const sessionId = await h.sessions.createSession("st2" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "go" });
-    const after = h.state().sessions.find((s) => s.id === sessionId)!.updatedAt;
+    const patchbaySessionId = await h.sessions.createSession("st2" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    const after = h.state().sessions.find((s) => s.id === patchbaySessionId)!.updatedAt;
 
     const before = h.events.length;
     await h.sessions.syncAgentSessions("st2" as PatchbayAgentId);
-    expect(h.state().sessions.find((s) => s.id === sessionId)!.updatedAt).toBe(after);
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)!.updatedAt).toBe(after);
     // silence is no event at all — neither a second listing nor an empty refresh
     const during = h.events.slice(before);
-    expect(during.some((e) => e.kind === "sessionListed" && e.session.id === sessionId)).toBe(false);
-    expect(during.some((e) => e.kind === "sessionRefreshed" && e.sessionId === sessionId)).toBe(false);
+    expect(during.some((e) => e.kind === "sessionListed" && e.session.id === patchbaySessionId)).toBe(false);
+    expect(during.some((e) => e.kind === "sessionRefreshed" && e.patchbaySessionId === patchbaySessionId)).toBe(false);
 
     await h.pool.stop("st2" as PatchbayAgentId);
   });
@@ -2897,15 +2897,15 @@ describe("session activity stamp — one home", () => {
   it("session_info_update with a null title and no stamp is a clear, not a rename — nothing moves", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "st2n"));
-    const sessionId = await h.sessions.createSession("st2n" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "derive me" });
+    const patchbaySessionId = await h.sessions.createSession("st2n" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "derive me" });
     const before = h.events.length;
     await h.sessions.handleUpdate("st2n" as PatchbayAgentId, {
-      sessionId,
+      sessionId: patchbaySessionId,
       update: { sessionUpdate: "session_info_update", title: null },
     });
     expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed")).toBe(false);
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("derive me");
 
     await h.pool.stop("st2n" as PatchbayAgentId);
   });
@@ -2926,15 +2926,15 @@ describe("session activity stamp — one home", () => {
   it("a wire list without titles leaves the derived title alone — the refresh carries no title", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st4"));
-    const sessionId = await h.sessions.createSession("st4" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "derive me" });
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+    const patchbaySessionId = await h.sessions.createSession("st4" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "derive me" });
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("derive me");
 
     const before = h.events.length;
     await h.sessions.syncAgentSessions("st4" as PatchbayAgentId);
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("derive me");
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("derive me");
     // the wire said nothing about this row — no refresh rode at all
-    expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed" && e.sessionId === sessionId)).toBe(false);
+    expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed" && e.patchbaySessionId === patchbaySessionId)).toBe(false);
 
     await h.pool.stop("st4" as PatchbayAgentId);
   });
@@ -2942,20 +2942,20 @@ describe("session activity stamp — one home", () => {
   it("a zero-turn re-mint keeps the session's title — the row stays, the store keeps no copy", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "st5"));
-    const sessionId = await h.sessions.createSession("st5" as PatchbayAgentId, "Fake Agent", cwd);
-    const before = h.sessions.handleOf(sessionId);
+    const patchbaySessionId = await h.sessions.createSession("st5" as PatchbayAgentId, "Fake Agent", cwd);
+    const before = h.sessions.sessionIdOf(patchbaySessionId);
     // an agent-pushed title lands on the row only (session_info_update path)
     h.sessions.handleUpdate("st5" as PatchbayAgentId, {
       sessionId: before!,
       update: { sessionUpdate: "session_info_update", title: "agent named me" },
     });
     await vi.waitFor(() =>
-      expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("agent named me"),
+      expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("agent named me"),
     );
 
-    await h.gates.addRoot(sessionId, "/repo/backend");
-    expect(h.sessions.handleOf(sessionId)).not.toBe(before);
-    expect(h.state().sessions.find((s) => s.id === sessionId)?.title).toBe("agent named me");
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend");
+    expect(h.sessions.sessionIdOf(patchbaySessionId)).not.toBe(before);
+    expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("agent named me");
 
     await h.pool.stop("st5" as PatchbayAgentId);
   });
@@ -2995,13 +2995,13 @@ describe("session activity stamp — one home", () => {
       listedFirst = h.state().sessions[0]?.id;
       return reply;
     });
-    const sessionId = await h.sessions.createSession("st-cross" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("st-cross" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(listedFirst).toBeDefined();
-    expect(sessionId).not.toBe(listedFirst);
-    expect(h.state().sessions.map((s) => s.id)).toEqual([sessionId]);
-    expect(h.sessions.rowFor("st-cross" as PatchbayAgentId, h.sessions.handleOf(sessionId)!)).toBe(sessionId);
-    expect(h.state().activeSessionId).toBe(sessionId);
+    expect(patchbaySessionId).not.toBe(listedFirst);
+    expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
+    expect(h.sessions.rowFor("st-cross" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)).toBe(patchbaySessionId);
+    expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
     await h.pool.stop("st-cross" as PatchbayAgentId);
   });
 
@@ -3059,9 +3059,9 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     // the agent may start the session's servers before it answers
     expect(h.sessions.admits(token!)).toBe(true);
     expect(h.sessions.sessionOfToken(token!)).toBeUndefined();
-    const sessionId = await born;
-    expect(h.sessions.sessionOfToken(token!)).toBe(sessionId);
-    expect(h.sessions.tokensOf(sessionId)).toEqual([token]);
+    const patchbaySessionId = await born;
+    expect(h.sessions.sessionOfToken(token!)).toBe(patchbaySessionId);
+    expect(h.sessions.tokensOf(patchbaySessionId)).toEqual([token]);
     expect(h.sessions.admits("ctx-1")).toBe(false);
     await h.pool.stop("ct1" as PatchbayAgentId);
   });
@@ -3083,9 +3083,9 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     const c = composer();
     const h = harness({ mcpServersFor: c.mcpServersFor });
     await h.pool.connect(spec({}, "ct3"));
-    const sessionId = await h.sessions.createSession("ct3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("ct3" as PatchbayAgentId, "Fake Agent", cwd);
     const [token] = c.minted;
-    await h.gates.close(sessionId);
+    await h.gates.close(patchbaySessionId);
     // an agent that keeps one server for all its sessions still calls with
     // it — but the closed session has no roots or transcript to answer from
     expect(h.sessions.admits(token!)).toBe(true);
@@ -3098,12 +3098,12 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     const c = composer();
     const h = harness({ mcpServersFor: c.mcpServersFor });
     await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "ct4"));
-    const sessionId = await h.sessions.createSession("ct4" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
-    await h.gates.reload(sessionId);
+    const patchbaySessionId = await h.sessions.createSession("ct4" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
+    await h.gates.reload(patchbaySessionId);
     expect(c.minted).toHaveLength(2);
     expect(new Set(c.minted).size).toBe(2);
-    expect(h.sessions.tokensOf(sessionId).sort()).toEqual([...c.minted].sort());
+    expect(h.sessions.tokensOf(patchbaySessionId).sort()).toEqual([...c.minted].sort());
     h.sessions.reset();
     expect(c.minted.some((t) => h.sessions.admits(t))).toBe(false);
     await h.pool.stop("ct4" as PatchbayAgentId);
@@ -3132,10 +3132,10 @@ describe("a session's work enters behind its agent's", () => {
     const agents = agentsQueue();
     const h = harness({ agentSettled: agents.settled });
     await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw1"));
-    const sessionId = await h.sessions.createSession("sw1" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
+    const patchbaySessionId = await h.sessions.createSession("sw1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
     const restart = agents.hold("sw1" as PatchbayAgentId);
-    const reloaded = h.gates.reload(sessionId);
+    const reloaded = h.gates.reload(patchbaySessionId);
     await sleep(50);
     expect(h.events.some((e) => e.kind === "transcriptReset")).toBe(false);
     expect(h.state().sessions[0]!.busy).toEqual(["reload"]);
@@ -3150,18 +3150,18 @@ describe("a session's work enters behind its agent's", () => {
     const agents = agentsQueue();
     const h = harness({ agentSettled: agents.settled });
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sw2"));
-    const sessionId = await h.sessions.createSession("sw2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession("sw2" as PatchbayAgentId, "Fake Agent", cwd);
     const restart = agents.hold("sw2" as PatchbayAgentId);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await sleep(50);
-    expect(h.state().transcripts[sessionId]).toEqual([]);
+    expect(h.state().transcripts[patchbaySessionId]).toEqual([]);
     expect(h.state().sessions[0]!.busy).toEqual(["prompt"]);
     await restart.finish();
     await turn;
-    expect(textOf(h.state().transcripts[sessionId]![1])).toBe("hi");
+    expect(textOf(h.state().transcripts[patchbaySessionId]![1])).toBe("hi");
 
     const stuck = agents.hold("sw2" as PatchbayAgentId); // still running when the close comes
-    await h.gates.close(sessionId);
+    await h.gates.close(patchbaySessionId);
     expect(h.state().sessions).toEqual([]);
     await stuck.finish();
     await h.pool.stop("sw2" as PatchbayAgentId);
@@ -3171,17 +3171,17 @@ describe("a session's work enters behind its agent's", () => {
     const agents = agentsQueue();
     const h = harness({ agentSettled: agents.settled });
     await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw3"));
-    const sessionId = await h.sessions.createSession("sw3" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
+    const patchbaySessionId = await h.sessions.createSession("sw3" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
     h.sessions.invalidateAgent("sw3" as PatchbayAgentId); // its sessions detach, as a restart's would
     const restart = agents.hold("sw3" as PatchbayAgentId);
-    h.gates.activate(sessionId);
+    h.gates.activate(patchbaySessionId);
     await sleep(50);
-    expect(h.sessions.isLive(sessionId)).toBe(false);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
     expect(h.state().sessions[0]!.busy).toEqual(["open"]);
     await restart.finish();
-    for (let i = 0; i < 100 && !h.sessions.isLive(sessionId); i++) await sleep(20);
-    expect(h.sessions.isLive(sessionId)).toBe(true);
+    for (let i = 0; i < 100 && !h.sessions.isLive(patchbaySessionId); i++) await sleep(20);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
     await h.pool.stop("sw3" as PatchbayAgentId);
   });
 });
@@ -3189,10 +3189,10 @@ describe("a session's work enters behind its agent's", () => {
 describe("open — one ceremony for every entrance", () => {
   const LOAD: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "chunk", text: "remembered" }] };
 
-  async function untilLive(h: ReturnType<typeof harness>, sessionId: string): Promise<void> {
+  async function untilLive(h: ReturnType<typeof harness>, patchbaySessionId: PatchbaySessionId): Promise<void> {
     const start = Date.now();
-    while (!h.sessions.isLive(sessionId)) {
-      if (Date.now() - start > 3000) throw new Error(`${sessionId} never attached`);
+    while (!h.sessions.isLive(patchbaySessionId)) {
+      if (Date.now() - start > 3000) throw new Error(`${patchbaySessionId} never attached`);
       await new Promise((r) => setTimeout(r, 20));
     }
   }
@@ -3205,13 +3205,13 @@ describe("open — one ceremony for every entrance", () => {
     const older = await h.sessions.createSession("op1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(older, { text: "first" });
     const current = await h.sessions.createSession("op1" as PatchbayAgentId, "Fake Agent", cwd);
-    expect(h.state().activeSessionId).toBe(current);
+    expect(h.state().activePatchbaySessionId).toBe(current);
     h.sessions.invalidateAgent("op1" as PatchbayAgentId);
 
     pinned.add(older);
     h.gates.open(older, { pin: true }); // "Open in new window"
     await untilLive(h, older);
-    expect(h.state().activeSessionId).toBe(current); // the sidebar didn't move
+    expect(h.state().activePatchbaySessionId).toBe(current); // the sidebar didn't move
     expect(asked).toEqual([older]);
 
     await h.pool.stop("op1" as PatchbayAgentId);
@@ -3221,14 +3221,14 @@ describe("open — one ceremony for every entrance", () => {
     const asked: string[] = [];
     const h = harness({ onConnectForSession: (id) => asked.push(id) });
     await h.pool.connect(spec(LOAD, "op2"));
-    const sessionId = await h.sessions.createSession("op2" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "first" });
+    const patchbaySessionId = await h.sessions.createSession("op2" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
     h.sessions.invalidateAgent("op2" as PatchbayAgentId);
 
-    h.gates.open(sessionId); // the palette pick, the drawer click
-    await untilLive(h, sessionId);
-    expect(h.state().activeSessionId).toBe(sessionId);
-    expect(asked).toEqual([sessionId]);
+    h.gates.open(patchbaySessionId); // the palette pick, the drawer click
+    await untilLive(h, patchbaySessionId);
+    expect(h.state().activePatchbaySessionId).toBe(patchbaySessionId);
+    expect(asked).toEqual([patchbaySessionId]);
 
     await h.pool.stop("op2" as PatchbayAgentId);
   });
@@ -3241,7 +3241,7 @@ describe("open — one ceremony for every entrance", () => {
     await h.gates.prompt(shown, { text: "first" });
     const other = await h.sessions.createSession("op3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(other, { text: "second" });
-    expect(h.state().activeSessionId).toBe(other);
+    expect(h.state().activePatchbaySessionId).toBe(other);
     // The agent goes down; the pinned window opens while it's off — nothing
     // to attach to yet, so open can only ask for the connect.
     await h.pool.stop("op3" as PatchbayAgentId);
@@ -3254,7 +3254,7 @@ describe("open — one ceremony for every entrance", () => {
     await h.gates.reattachViewed("op3" as PatchbayAgentId); // what the status-running hook runs after its list sync
     expect(h.sessions.isLive(shown)).toBe(true); // pinned
     expect(h.sessions.isLive(other)).toBe(true); // the pointer
-    expect(h.state().activeSessionId).toBe(other);
+    expect(h.state().activePatchbaySessionId).toBe(other);
 
     await h.pool.stop("op3" as PatchbayAgentId);
   });
@@ -3264,25 +3264,25 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   async function chunkHarness(patchbayAgentId: PatchbayAgentId) {
     const h = harness();
     await h.pool.connect(spec({ declare: {}, turn: [] }, patchbayAgentId));
-    const sessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
     // the agent names its session its own way on the wire
-    const handle = h.sessions.handleOf(sessionId)!;
+    const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
     const push = (update: Record<string, unknown>) =>
       h.sessions.handleUpdate(patchbayAgentId, {
-        sessionId: handle,
+        sessionId,
         update,
       } as Parameters<typeof h.sessions.handleUpdate>[1]);
-    return { h, sessionId, handle, push, blocks: () => h.state().transcripts[sessionId] ?? [] };
+    return { h, patchbaySessionId, handle: sessionId, push, blocks: () => h.state().transcripts[patchbaySessionId] ?? [] };
   }
 
   it("an update from a different agent under the same session id is dropped — ids are only unique per connection", async () => {
-    const { h, handle, push, blocks } = await chunkHarness("ch-owner" as PatchbayAgentId);
+    const { h, handle: sessionId, push, blocks } = await chunkHarness("ch-owner" as PatchbayAgentId);
     push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "mine" } });
     expect(blocks()).toHaveLength(1);
     // Same agent id string, different agent: spec-legal collision — must
     // never write into this transcript.
     h.sessions.handleUpdate("intruder" as PatchbayAgentId, {
-      sessionId: handle,
+      sessionId,
       update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not mine" } },
     } as Parameters<typeof h.sessions.handleUpdate>[1]);
     expect(blocks()).toHaveLength(1);
@@ -3315,28 +3315,28 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   it("live chips ride the sent bubble as parts — image, attachment, context, then prose", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm-parts"));
-    const sessionId = await h.sessions.createSession("sm-parts" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.sessions.addContext(sessionId, {
+    const patchbaySessionId = await h.sessions.createSession("sm-parts" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, {
       id: "img-1",
       kind: "image",
       label: "pasted image",
       content: Buffer.from("89504e470d0a1a0a", "hex").toString("base64"),
       mimeType: "image/png",
     });
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "att-1",
       kind: "attachment",
       label: "notes.md",
       path: "/ws/notes.md",
     });
-    await h.sessions.addContext(sessionId, {
+    await h.sessions.addContext(patchbaySessionId, {
       id: "sel-1",
       kind: "selection",
       label: "Selection: a.ts:1-2",
       content: "const x = 1;",
     });
-    await h.gates.prompt(sessionId, { text: "what is this?" });
-    const user = h.state().transcripts[sessionId]!.find((b) => b.kind === "user");
+    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
+    const user = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "user");
     expect(user?.kind === "user" && user.parts).toEqual([
       { kind: "image", mimeType: "image/png", file: "img-1.png" },
       { kind: "attachment", name: "notes.md", path: "/ws/notes.md" },
@@ -3450,13 +3450,13 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
         "sm-int",
       ),
     );
-    const sessionId = await h.sessions.createSession("sm-int" as PatchbayAgentId, "Fake Agent", cwd);
-    await h.gates.prompt(sessionId, { text: "do the thing" });
+    const patchbaySessionId = await h.sessions.createSession("sm-int" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "do the thing" });
 
     await h.pool.restart("sm-int" as PatchbayAgentId);
-    await h.gates.reload(sessionId);
+    await h.gates.reload(patchbaySessionId);
 
-    const blocks = h.state().transcripts[sessionId]!;
+    const blocks = h.state().transcripts[patchbaySessionId]!;
     // prompt bubble, then the cancelled boundary — the marker text nowhere
     expect(blocks[0]).toMatchObject({ kind: "user", parts: [{ kind: "text", text: "do the thing" }] });
     expect(blocks[1]).toMatchObject({ kind: "turnEnd", stopReason: "cancelled", startedAt: null });

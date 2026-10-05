@@ -27,6 +27,7 @@ import { count } from "../shared/count";
 import type { ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
 import type { ChannelEndpoint } from "./channel";
+import type { PatchbaySessionId } from "../shared/ids";
 
 type Bundle = "agent-view" | "settings";
 
@@ -47,7 +48,7 @@ function webviewHtml(
   bundle: Bundle,
   /** Pins the agent-view bundle to one session (detached session panel) —
    * rides in as a meta tag, URI-encoded (session ids are agent-authored). */
-  pinSessionId?: string,
+  pinPatchbaySessionId?: PatchbaySessionId,
 ): string {
   const script = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "out", `${bundle}.js`),
@@ -77,8 +78,8 @@ function webviewHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="patchbay-out-base" content="${outBase}/">
   <meta name="patchbay-attachments-base" content="${attachmentsBase}/">${
-    pinSessionId !== undefined
-      ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinSessionId)}">`
+    pinPatchbaySessionId !== undefined
+      ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinPatchbaySessionId)}">`
       : ""
   }
   <link rel="stylesheet" href="${codiconStyle}">
@@ -98,7 +99,7 @@ function bind(
   extensionUri: vscode.Uri,
   bundle: Bundle,
   disposables: vscode.Disposable[],
-  pinSessionId?: string,
+  pinPatchbaySessionId?: PatchbaySessionId,
 ): void {
   webview.options = {
     enableScripts: true,
@@ -110,7 +111,7 @@ function bind(
       vscode.Uri.file(ATTACHMENTS_DIR),
     ],
   };
-  webview.html = webviewHtml(webview, extensionUri, bundle, pinSessionId);
+  webview.html = webviewHtml(webview, extensionUri, bundle, pinPatchbaySessionId);
   channel.attach(webview);
   disposables.push(
     webview.onDidReceiveMessage((msg: ViewToHost) =>
@@ -172,14 +173,14 @@ function boundPanel(
   channel: ChannelEndpoint,
   extensionUri: vscode.Uri,
   bundle: Bundle,
-  pinSessionId?: string,
+  pinPatchbaySessionId?: PatchbaySessionId,
 ): vscode.WebviewPanel {
   const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, {
     enableScripts: true,
   });
   const disposables: vscode.Disposable[] = [];
   const webview = panel.webview; // .webview throws once disposed — capture now
-  bind(webview, channel, extensionUri, bundle, disposables, pinSessionId);
+  bind(webview, channel, extensionUri, bundle, disposables, pinPatchbaySessionId);
   panel.onDidDispose(() => {
     channel.detach(webview);
     for (const d of disposables) d.dispose();
@@ -195,7 +196,7 @@ function boundPanel(
  * the shared active-session pointer. */
 export class AgentPanelHost {
   private main: vscode.WebviewPanel | null = null;
-  private pinned = new Map<string, vscode.WebviewPanel>();
+  private pinned = new Map<PatchbaySessionId, vscode.WebviewPanel>();
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -205,7 +206,7 @@ export class AgentPanelHost {
 
   /** The reaper-exemption surface: a session shown in its own window is
    * being looked at, active-pointer or not. */
-  pinnedSessionIds(): readonly string[] {
+  pinnedPatchbaySessionIds(): readonly string[] {
     return [...this.pinned.keys()];
   }
 
@@ -221,16 +222,16 @@ export class AgentPanelHost {
   }
 
   /** One session in its own window; a second open reveals the existing one. */
-  async openPinned(sessionId: string, title: string): Promise<void> {
-    const existing = this.pinned.get(sessionId);
+  async openPinned(patchbaySessionId: PatchbaySessionId, title: string): Promise<void> {
+    const existing = this.pinned.get(patchbaySessionId);
     if (existing !== undefined) {
       existing.reveal();
       return;
     }
-    const panel = this.createPanel(title, sessionId);
-    this.pinned.set(sessionId, panel);
+    const panel = this.createPanel(title, patchbaySessionId);
+    this.pinned.set(patchbaySessionId, panel);
     panel.onDidDispose(() => {
-      if (this.pinned.get(sessionId) === panel) this.pinned.delete(sessionId);
+      if (this.pinned.get(patchbaySessionId) === panel) this.pinned.delete(patchbaySessionId);
     });
     await this.floatActiveEditor();
   }
@@ -238,17 +239,17 @@ export class AgentPanelHost {
   /** Mirror of the sessions list (wired to channel.onChange in extension.ts):
    * a pinned panel whose session closed disposes — nothing to render, and
    * agent-truth says the session is gone; titles follow renames. */
-  syncSessions(sessions: ReadonlyArray<{ id: string; title: string }>): void {
-    for (const [sessionId, panel] of [...this.pinned]) {
-      const session = sessions.find((s) => s.id === sessionId);
+  syncSessions(sessions: ReadonlyArray<{ id: PatchbaySessionId; title: string }>): void {
+    for (const [patchbaySessionId, panel] of [...this.pinned]) {
+      const session = sessions.find((s) => s.id === patchbaySessionId);
       if (session === undefined) panel.dispose();
       else if (panel.title !== session.title) panel.title = session.title;
     }
   }
 
-  private createPanel(title: string, pinSessionId: string | undefined): vscode.WebviewPanel {
-    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinSessionId);
-    const pinned = pinSessionId ?? null;
+  private createPanel(title: string, pinPatchbaySessionId: PatchbaySessionId | undefined): vscode.WebviewPanel {
+    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinPatchbaySessionId);
+    const pinned = pinPatchbaySessionId ?? null;
     this.reportSurface(panel, panel.visible, pinned);
     panel.onDidChangeViewState(() => this.reportSurface(panel, panel.visible, pinned));
     panel.onDidDispose(() => this.reportSurface(panel, false, pinned));

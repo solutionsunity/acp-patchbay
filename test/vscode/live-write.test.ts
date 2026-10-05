@@ -36,10 +36,10 @@ suite("live-buffer write (W1)", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      const turnDone = pb.prompt(sessionId, "go");
-      const diff = await pb.openCard(sessionId, "diff");
-      await pb.answerDiff(sessionId, diff, true);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      const turnDone = pb.prompt(patchbaySessionId, "go");
+      const diff = await pb.openCard(patchbaySessionId, "diff");
+      await pb.answerDiff(patchbaySessionId, diff, true);
       await turnDone;
 
       // buffer, dirty flag, and disk all tell the same story
@@ -67,9 +67,9 @@ suite("live-buffer write (W1)", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      await pb.prompt(sessionId, "go");
-      assert.strictEqual(pb.text(sessionId), `read: failed (-32002 Resource not found: ${missing})`);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      await pb.prompt(patchbaySessionId, "go");
+      assert.strictEqual(pb.text(patchbaySessionId), `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
       await pb.removeAdded();
       await rm(dir, { recursive: true, force: true });

@@ -28,7 +28,7 @@ export class IpcClient {
    */
   constructor(
     private readonly socketPath: string,
-    private readonly sessionId: string,
+    private readonly contextToken: string,
     private readonly onNotification: (notification: IpcNotification) => void = () => {},
   ) {}
 
@@ -82,7 +82,7 @@ export class IpcClient {
     const socket = this.socket;
     if (socket === null) throw new Error("ipc socket closed");
     const id = this.nextId++;
-    const request: IpcRequest = { id, sessionId: this.sessionId, method, params };
+    const request: IpcRequest = { id, contextToken: this.contextToken, method, params };
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       socket.write(encodeLine(request));

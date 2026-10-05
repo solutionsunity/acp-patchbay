@@ -41,8 +41,8 @@ suite("upgrade guard", () => {
         ),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      await pb.prompt(sessionId, "go");
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      await pb.prompt(patchbaySessionId, "go");
 
       window.showWarningMessage = (...args: unknown[]) => {
         asked.push(args);

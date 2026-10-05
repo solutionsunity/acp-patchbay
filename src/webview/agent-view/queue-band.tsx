@@ -13,13 +13,14 @@ import type { QueuedPrompt } from "../../shared/protocol";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { useCopy } from "../shared/use-copy";
+import type { PatchbaySessionId } from "../../shared/ids";
 
 export function QueueBand({
-  sessionId,
+  patchbaySessionId,
   queued,
   composerEmpty,
 }: {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   queued: readonly QueuedPrompt[];
   /** The durable draft is empty — the only state a take-back lands in. */
   composerEmpty: boolean;
@@ -30,7 +31,7 @@ export function QueueBand({
       {queued.map((q, i) => (
         <QueueRow
           key={q.id}
-          sessionId={sessionId}
+          patchbaySessionId={patchbaySessionId}
           prompt={q}
           reclaimable={i === queued.length - 1 && q.draft !== undefined}
           composerEmpty={composerEmpty}
@@ -41,12 +42,12 @@ export function QueueBand({
 }
 
 function QueueRow({
-  sessionId,
+  patchbaySessionId,
   prompt,
   reclaimable,
   composerEmpty,
 }: {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   prompt: QueuedPrompt;
   reclaimable: boolean;
   composerEmpty: boolean;
@@ -72,7 +73,7 @@ function QueueRow({
           aria-disabled={!composerEmpty}
           title={composerEmpty ? "Edit — take it back into the composer" : "Composer has text — send or clear it first, or Copy"}
           onClick={() => {
-            if (composerEmpty) send({ kind: "reclaimQueuedPrompt", sessionId, promptId: prompt.id });
+            if (composerEmpty) send({ kind: "reclaimQueuedPrompt", patchbaySessionId, promptId: prompt.id });
           }}
         >
           <Icon name="edit" />
@@ -81,7 +82,7 @@ function QueueRow({
       <span
         className="x"
         title="Remove from queue"
-        onClick={() => send({ kind: "removeQueuedPrompt", sessionId, promptId: prompt.id })}
+        onClick={() => send({ kind: "removeQueuedPrompt", patchbaySessionId, promptId: prompt.id })}
       >
         ×
       </span>

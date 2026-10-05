@@ -62,7 +62,7 @@ class FakeEditorStateHost {
           const req = message as IpcRequest;
           this.requests.push(req);
           const response: IpcResponse =
-            this.sessions?.admits(req.sessionId) === true
+            this.sessions?.admits(req.contextToken) === true
               ? { id: req.id, result: this.answer(req) }
               : { id: req.id, error: "unknown session token" };
           socket.write(encodeLine(response));
@@ -78,8 +78,8 @@ class FakeEditorStateHost {
       case "getDiagnostics":
         return [{ file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" }];
       case "requestUserInput": {
-        const realSessionId = this.sessions?.sessionOfToken(req.sessionId);
-        return { action: "accept", content: { resolvedFor: realSessionId } };
+        const realPatchbaySessionId = this.sessions?.sessionOfToken(req.contextToken);
+        return { action: "accept", content: { resolvedFor: realPatchbaySessionId } };
       }
       default:
         return null;
@@ -129,7 +129,7 @@ async function mcpServersFor(contextToken: string): Promise<{ servers: McpServer
         args: [MCP_SERVER],
         env: [
           { name: "ACP_PATCHBAY_IPC", value: host.socketPath },
-          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+          { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
         ],
       },
     ],
@@ -168,10 +168,10 @@ describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads the live selection via the local MCP server", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "what's selected?" });
+    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "what's selected?" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({
       file: "/ws/pool.ts",
       startLine: 42,
@@ -184,10 +184,10 @@ describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads diagnostics via the local MCP server — opportunistically verifiable data", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "any problems?" });
+    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "any problems?" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual([
       { file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" },
     ]);
@@ -199,14 +199,14 @@ describe("local MCP server, end to end through a real agent process", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
-    expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({ resolvedFor: sessionId });
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
+    expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({ resolvedFor: patchbaySessionId });
     // and the IPC request itself carried the raw token, confirming the
     // fake host's translation (mirroring Orchestrator's) is what did the work
-    expect(host.requests.some((r) => r.method === "requestUserInput" && r.sessionId !== sessionId)).toBe(
+    expect(host.requests.some((r) => r.method === "requestUserInput" && r.contextToken !== patchbaySessionId)).toBe(
       true,
     );
     await h.pool.stop("e3" as PatchbayAgentId);

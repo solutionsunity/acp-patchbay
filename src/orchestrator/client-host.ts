@@ -15,7 +15,7 @@ import { type PermissionBroker, sliceTextFileRead } from "./broker";
 import { gateRefusal, readFailure, relativeCwd, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
 import type { CreateTerminalParams, TerminalHandle } from "./terminal-runner";
-import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 export interface ClientHostDeps {
   broker: PermissionBroker;
@@ -44,14 +44,14 @@ export class ClientHost {
     return { content: sliceTextFileRead(content, params.line, params.limit) };
   }
 
-  /** `sessionId` is patchbay's id for the session the agent named —
+  /** `patchbaySessionId` is patchbay's id for the session the agent named —
    * undefined when patchbay holds no such session, which asks no one. */
   async writeTextFile(
-    sessionId: string | undefined,
+    patchbaySessionId: PatchbaySessionId | undefined,
     params: acp.WriteTextFileRequest,
   ): Promise<acp.WriteTextFileResponse> {
-    if (sessionId === undefined) throw unknownSession(params.sessionId);
-    const outcome = await this.deps.broker.gateFileWrite(sessionId, params.path, params.content);
+    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
+    const outcome = await this.deps.broker.gateFileWrite(patchbaySessionId, params.path, params.content);
     if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${params.path}`);
     await this.deps.writeLive(params.path, params.content);
     return {};
@@ -63,7 +63,7 @@ export class ClientHost {
    * when the connection never opened it. */
   async createTerminal(
     params: acp.CreateTerminalRequest,
-    session: { id: string; cwd: string } | null,
+    session: { id: PatchbaySessionId; cwd: string } | null,
   ): Promise<acp.CreateTerminalResponse> {
     if (session === null) throw unknownSession(params.sessionId);
     if (params.cwd != null && !isAbsolute(params.cwd)) throw relativeCwd(params.cwd);
@@ -85,11 +85,11 @@ export class ClientHost {
     this.terminals.set(terminalId, handle);
     this.deps.trackProcess(handle);
     const blockId = terminalBlockId(terminalId);
-    const sessionId = session.id;
-    this.deps.emit({ kind: "terminalStarted", sessionId, blockId, command });
-    handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", sessionId, blockId, chunk }));
+    const patchbaySessionId = session.id;
+    this.deps.emit({ kind: "terminalStarted", patchbaySessionId, blockId, command });
+    handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", patchbaySessionId, blockId, chunk }));
     handle.onExit((status) =>
-      this.deps.emit({ kind: "terminalExited", sessionId, blockId, exitCode: status.exitCode }),
+      this.deps.emit({ kind: "terminalExited", patchbaySessionId, blockId, exitCode: status.exitCode }),
     );
     return { terminalId };
   }
@@ -148,7 +148,7 @@ export class ClientHost {
  * session the agent's way finds patchbay's. */
 export function clientRequestHooks(
   host: () => ClientHost,
-  sessionFor: (patchbayAgentId: PatchbayAgentId, agentSessionId: string) => string | undefined,
+  sessionFor: (patchbayAgentId: PatchbayAgentId, sessionId: string) => PatchbaySessionId | undefined,
 ): Pick<
   PoolHooks,
   | "onReadTextFile"
@@ -163,8 +163,8 @@ export function clientRequestHooks(
     onReadTextFile: (_patchbayAgentId, params) => host().readTextFile(params),
     onWriteTextFile: (patchbayAgentId, params) => host().writeTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
     onCreateTerminal: (patchbayAgentId, params, sessionCwd) => {
-      const id = sessionFor(patchbayAgentId, params.sessionId);
-      return host().createTerminal(params, id === undefined || sessionCwd === null ? null : { id, cwd: sessionCwd });
+      const patchbaySessionId = sessionFor(patchbayAgentId, params.sessionId);
+      return host().createTerminal(params, patchbaySessionId === undefined || sessionCwd === null ? null : { id: patchbaySessionId, cwd: sessionCwd });
     },
     onTerminalOutput: (_patchbayAgentId, params) => host().terminalOutput(params),
     onWaitForTerminalExit: (_patchbayAgentId, params) => host().waitForTerminalExit(params),

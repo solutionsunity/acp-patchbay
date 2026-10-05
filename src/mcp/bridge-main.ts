@@ -42,7 +42,7 @@ import type { McpServerTokenParams, RootsResult } from "./ipc-protocol";
 import type { PatchbayMcpServerId } from "../shared/ids";
 
 const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
-const sessionId = process.env.ACP_PATCHBAY_SESSION_ID ?? "";
+const contextToken = process.env.ACP_PATCHBAY_CONTEXT_TOKEN ?? "";
 const patchbayMcpServerId = (process.env.ACP_PATCHBAY_MCP_SERVER_ID ?? "") as PatchbayMcpServerId;
 const url = process.env.ACP_PATCHBAY_MCP_SERVER_URL ?? "";
 // How the credential rides the request — per-server data, since not
@@ -53,7 +53,7 @@ const authHeader = process.env.ACP_PATCHBAY_AUTH_HEADER ?? "";
 const authPrefix = process.env.ACP_PATCHBAY_AUTH_PREFIX ?? "";
 
 let onRootsChanged: () => void = () => {};
-const ipc = new IpcClient(socketPath, sessionId, () => onRootsChanged());
+const ipc = new IpcClient(socketPath, contextToken, () => onRootsChanged());
 
 async function currentToken(): Promise<string | null> {
   if (authHeader === "") return null;

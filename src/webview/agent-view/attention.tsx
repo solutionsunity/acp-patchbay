@@ -75,7 +75,7 @@ export function AttentionIndicators(props: {
                 key={s.id}
                 className="s-row w-full text-left"
                 onClick={() => {
-                  send({ kind: "switchSession", sessionId: s.id });
+                  send({ kind: "switchSession", patchbaySessionId: s.id });
                   setOpen(false);
                 }}
               >

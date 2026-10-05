@@ -13,6 +13,7 @@ import { mount } from "../shared/mount";
 import { installErrorCollector } from "../shared/error-collector";
 import { syncDarkClass } from "../shared/theme-dark-sync";
 import { App } from "./app";
+import type { PatchbaySessionId } from "../../shared/ids";
 import "../shared/theme.css";
 import "streamdown/styles.css";
 import "katex/dist/katex.min.css";
@@ -30,8 +31,8 @@ syncDarkClass();
 const pinMeta = document
   .querySelector('meta[name="patchbay-pin-session"]')
   ?.getAttribute("content");
-const pinnedSessionId = pinMeta != null ? decodeURIComponent(pinMeta) : undefined;
+const pinnedPatchbaySessionId = pinMeta != null ? (decodeURIComponent(pinMeta) as PatchbaySessionId) : undefined;
 const PinnableApp = ({ state }: { state: AgentViewState }) => (
-  <App state={state} pinnedSessionId={pinnedSessionId} />
+  <App state={state} pinnedPatchbaySessionId={pinnedPatchbaySessionId} />
 );
 mount(channel, PinnableApp, document.getElementById("root")!);

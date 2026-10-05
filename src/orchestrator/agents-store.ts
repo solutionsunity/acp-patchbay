@@ -116,7 +116,7 @@ export interface ConnectionOperations {
 
 /** A new agent's id — patchbay's own, never borrowed from a registry entry
  * or an executable. */
-function mintAgentId(): PatchbayAgentId {
+function mintPatchbayAgentId(): PatchbayAgentId {
   return randomUUID() as PatchbayAgentId;
 }
 
@@ -453,7 +453,7 @@ export class AgentsStore implements ConnectionOperations {
    * happens on it as a connect phase. */
   async saveFrom(source: ConnectAgentSource): Promise<PatchbayAgentId | undefined> {
     if ("patchbayAgentId" in source) return this.config(source.patchbayAgentId)?.id;
-    const patchbayAgentId = mintAgentId();
+    const patchbayAgentId = mintPatchbayAgentId();
     let spec: LaunchSpec;
     let registrySource: AgentConfig["registrySource"] = null;
     if ("registryId" in source) {
@@ -500,7 +500,7 @@ export class AgentsStore implements ConnectionOperations {
       args = parsed.args;
     }
     const prior = this.config(config.id);
-    const patchbayAgentId = prior?.id ?? mintAgentId();
+    const patchbayAgentId = prior?.id ?? mintPatchbayAgentId();
     await this.deps.env.set(patchbayAgentId, { ...config.env });
     // Identity/wire facts never round-trip through the form: the webview's
     // copies of `lastSeenVersion` and `registrySource` are patch-lag stale

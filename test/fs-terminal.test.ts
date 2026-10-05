@@ -24,7 +24,7 @@ import {
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { gatesFor } from "./support/session-gates";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -66,7 +66,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     rules,
     audit,
     { emit: (...evs) => events.push(...evs), onAuditWritten: () => {}, redact: (text) => text },
-    (sessionId) => sessions.grantedRoots(sessionId),
+    (patchbaySessionId) => sessions.grantedRoots(patchbaySessionId),
   );
 
   let sessions!: SessionsStore;
@@ -79,14 +79,14 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     onCapabilityEvidence: (_patchbayAgentId, row, ev) => evidence.push(`${row}:${ev}`),
     ...clientRequestHooks(
       () => host,
-      (patchbayAgentId, agentSessionId) => sessions.rowFor(patchbayAgentId, agentSessionId),
+      (patchbayAgentId, sessionId) => sessions.rowFor(patchbayAgentId, sessionId),
     ),
     onPermissionRequest: async (patchbayAgentId, params) => {
       // the session the agent names its own way, as patchbay holds it
-      const sessionId = sessions.rowFor(patchbayAgentId, params.sessionId);
-      if (sessionId === undefined) return { outcome: { outcome: "cancelled" } };
+      const patchbaySessionId = sessions.rowFor(patchbayAgentId, params.sessionId);
+      if (patchbaySessionId === undefined) return { outcome: { outcome: "cancelled" } };
       const result = await broker.resolveAgentPermissionRequest(
-        sessionId,
+        patchbaySessionId,
         params.toolCall.title ?? "Permission request",
         params.toolCall.kind ?? "other",
         params.toolCall.locations?.map((l) => l.path) ?? [],
@@ -103,7 +103,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     {
       emit: (...evs) => events.push(...evs),
       workspaceRoots: () => [workspaceRoot],
-      cancelAsks: (sessionId) => broker.cancelPending(sessionId),
+      cancelAsks: (patchbaySessionId) => broker.cancelPending(patchbaySessionId),
     },
     new SessionContinuityStore(new MemoryKV()),
     () => workspaceRoot,
@@ -132,11 +132,11 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   };
 }
 
-function textOf(sessionId: string, events: AgentViewEvent[]): string[] {
+function textOf(patchbaySessionId: PatchbaySessionId, events: AgentViewEvent[]): string[] {
   return events
     .filter(
       (e): e is Extract<AgentViewEvent, { kind: "agentTextDelta" }> =>
-        e.kind === "agentTextDelta" && e.sessionId === sessionId,
+        e.kind === "agentTextDelta" && e.patchbaySessionId === patchbaySessionId,
     )
     .map((e) => e.text);
 }
@@ -147,14 +147,14 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "writeFile", path: join(workspaceRoot, "a.txt"), content: "hello\n" }] }, "w1" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("w1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("w1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    expect(textOf(sessionId, h.events)).toContain("write: ok");
+    expect(textOf(patchbaySessionId, h.events)).toContain("write: ok");
     expect(await readFile(join(workspaceRoot, "a.txt"), "utf8")).toBe("hello\n");
 
     const diff = assertKind(
-      h.state().transcripts[sessionId]!.find((b) => b.kind === "diff"),
+      h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff"),
       "diff",
     );
     // "hello\n" is one line — its newline ends it (diff.test.ts holds the
@@ -168,21 +168,21 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness();
     const outside = join(dir, "outside.txt");
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: outside, content: "malicious\n" }] }, "w2" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("w2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const patchbaySessionId = await h.sessions.createSession("w2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
 
-    const turn = h.gates.prompt(sessionId, { text: "go" });
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     // resolve the diff card as a reject once it appears
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
-    const diffBlock = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "diff"));
+    const diffBlock = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff")!;
     h.broker.resolve(diffBlock.id, "reject");
     await turn;
 
     // the agent hears the rejection — never a success for a write that didn't land
-    expect(textOf(sessionId, h.events)).toContain(`write: rejected (-32803 The user rejected the write to ${outside})`);
+    expect(textOf(patchbaySessionId, h.events)).toContain(`write: rejected (-32803 The user rejected the write to ${outside})`);
     await expect(readFile(outside, "utf8")).rejects.toThrow(); // and disk was never touched
     // a rejection is the gate working — the brokered path fired
     expect(h.evidence).toContain("fs.writeTextFile:used");
-    const resolvedDiff = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
+    const resolvedDiff = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff")!;
     expect(resolvedDiff.kind === "diff" && resolvedDiff.resolution).toEqual({
       accepted: false,
       auto: false,
@@ -194,11 +194,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness();
     const escaping = `${workspaceRoot}/../escaped.txt`;
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: escaping, content: "x\n" }] }, "w2e" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("w2e" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const patchbaySessionId = await h.sessions.createSession("w2e" as PatchbayAgentId, "Fake Agent", workspaceRoot);
 
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
-    const diffBlock = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "diff"));
+    const diffBlock = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff")!;
     expect(diffBlock.kind === "diff" && diffBlock.resolution).toBeNull(); // waiting on the user, not auto-accepted
     h.broker.resolve(diffBlock.id, "reject");
     await turn;
@@ -210,14 +210,14 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness();
     const outside = join(dir, "outside.txt");
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: outside, content: "x\n" }] }, "w3" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("w3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const patchbaySessionId = await h.sessions.createSession("w3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
 
-    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
-    await h.gates.stop(sessionId);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" }).catch((err: unknown) => err);
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "diff"));
+    await h.gates.stop(patchbaySessionId);
     expect(await turn).toMatchObject({ by: "stop" });
 
-    expect(textOf(sessionId, h.events)).toContain(
+    expect(textOf(patchbaySessionId, h.events)).toContain(
       `write: rejected (-32800 Request cancelled: the turn was stopped before the user decided on the write to ${outside})`,
     );
     await expect(readFile(outside, "utf8")).rejects.toThrow();
@@ -228,9 +228,9 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness();
     const missing = join(workspaceRoot, "missing.txt");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: missing }] }, "r2" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("r2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
-    expect(textOf(sessionId, h.events)).toContain(`read: failed (-32002 Resource not found: ${missing})`);
+    const patchbaySessionId = await h.sessions.createSession("r2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    expect(textOf(patchbaySessionId, h.events)).toContain(`read: failed (-32002 Resource not found: ${missing})`);
     // fs answered truthfully — the path fired
     expect(h.evidence).toContain("fs.readTextFile:used");
     await h.pool.stop("r2" as PatchbayAgentId);
@@ -244,10 +244,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness({ writeLive: () => Promise.reject(new Error("apply failed")) });
     const target = join(workspaceRoot, "c.txt");
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: target, content: "x\n" }] }, "w4" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("w4" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("w4" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    expect(textOf(sessionId, h.events)).toContain("write: rejected (-32603 Internal error)");
+    expect(textOf(patchbaySessionId, h.events)).toContain("write: rejected (-32603 Internal error)");
     expect(h.evidence).not.toContain("fs.writeTextFile:used");
     expect(h.evidence).not.toContain("fs.writeTextFile:suspect");
     await h.pool.stop("w4" as PatchbayAgentId);
@@ -257,10 +257,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const h = harness({ readLive: () => Promise.reject(Object.assign(new Error("device busy"), { code: "EBUSY" })) });
     const file = join(workspaceRoot, "d.txt");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: file }] }, "r3" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("r3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("r3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    expect(textOf(sessionId, h.events)).toContain("read: failed (-32603 Internal error)");
+    expect(textOf(patchbaySessionId, h.events)).toContain("read: failed (-32603 Internal error)");
     expect(h.evidence).not.toContain("fs.readTextFile:used");
     expect(h.evidence).not.toContain("fs.readTextFile:suspect");
     await h.pool.stop("r3" as PatchbayAgentId);
@@ -271,9 +271,9 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const file = join(workspaceRoot, "b.txt");
     await applyFileWrite(file, "existing content\n");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: file }] }, "r1" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("r1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
-    expect(textOf(sessionId, h.events)).toContain("read: existing content\n");
+    const patchbaySessionId = await h.sessions.createSession("r1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    expect(textOf(patchbaySessionId, h.events)).toContain("read: existing content\n");
     await h.pool.stop("r1" as PatchbayAgentId);
   });
 
@@ -287,10 +287,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "console.log('hi from child')"] }] }, "c1" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("c1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("c1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    const texts = textOf(sessionId, h.events);
+    const texts = textOf(patchbaySessionId, h.events);
     expect(texts.some((t) => t.includes("exit=0"))).toBe(true);
     expect(texts.some((t) => t.includes("hi from child"))).toBe(true);
     await h.pool.stop("c1" as PatchbayAgentId);
@@ -305,10 +305,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
         "c57" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("c57" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
+    const patchbaySessionId = await h.sessions.createSession("c57" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission"), "permission");
     expect(card.detail).toBe(`${process.execPath} -e "${probe}"`);
     expect(card.facts).toEqual([
       { label: "cwd", value: dir },
@@ -316,7 +316,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     ]);
     h.broker.resolve(card.id, "allow_once");
     await turn;
-    expect(textOf(sessionId, h.events).some((t) => t.includes(`${dir}|set by agent`))).toBe(true);
+    expect(textOf(patchbaySessionId, h.events).some((t) => t.includes(`${dir}|set by agent`))).toBe(true);
     await h.pool.stop("c57" as PatchbayAgentId);
   });
 
@@ -325,14 +325,14 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] }] }, "c64" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("c64" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
+    const patchbaySessionId = await h.sessions.createSession("c64" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission"), "permission");
     expect(card.facts).toEqual([{ label: "cwd", value: workspaceRoot }]);
     h.broker.resolve(card.id, "allow_once");
     await turn;
-    expect(textOf(sessionId, h.events).some((t) => t.includes(`cwd=${workspaceRoot}`))).toBe(true);
+    expect(textOf(patchbaySessionId, h.events).some((t) => t.includes(`cwd=${workspaceRoot}`))).toBe(true);
     await h.pool.stop("c64" as PatchbayAgentId);
   });
 
@@ -346,17 +346,17 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       const probe = { type: "runCommand" as const, command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] };
       const patchbayAgentId = `c64-${via.slice(8)}` as PatchbayAgentId;
       await h.pool.connect(spec({ declare, turn: [probe] }, patchbayAgentId));
-      const sessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", workspaceRoot);
-      await h.gates.prompt(sessionId, { text: "first turn" }); // prompted: re-attached, never re-minted
+      const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", workspaceRoot);
+      await h.gates.prompt(patchbaySessionId, { text: "first turn" }); // prompted: re-attached, never re-minted
 
       // a fresh process: its connection has opened nothing until the re-attach
       await h.pool.restart(patchbayAgentId);
       expect(h.pool.get(patchbayAgentId)?.sessions).toEqual([]);
-      await h.gates.prompt(sessionId, { text: "second turn" });
+      await h.gates.prompt(patchbaySessionId, { text: "second turn" });
 
       // the connection names it the agent's way
-      expect(h.pool.get(patchbayAgentId)?.sessions).toEqual([h.sessions.handleOf(sessionId)]);
-      const texts = textOf(sessionId, h.events);
+      expect(h.pool.get(patchbayAgentId)?.sessions).toEqual([h.sessions.sessionIdOf(patchbaySessionId)]);
+      const texts = textOf(patchbaySessionId, h.events);
       expect(texts.some((t) => t.includes("-32602"))).toBe(false); // never refused as unknown
       // load replays the first turn's output before the second runs; resume restores without replay
       const outputs = texts.filter((t) => t.includes("cwd="));
@@ -375,9 +375,9 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "1"] }] }, "c2" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("c2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
-    expect(textOf(sessionId, h.events)).toContain(
+    const patchbaySessionId = await h.sessions.createSession("c2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    expect(textOf(patchbaySessionId, h.events)).toContain(
       `command: rejected (-32803 The user rejected the command \`${process.execPath} -e 1\`)`,
     );
     expect(h.evidence).toContain("terminal:used");
@@ -396,11 +396,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
         "p1" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("p1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    await h.gates.prompt(sessionId, { text: "go" });
-    expect(textOf(sessionId, h.events)).toContain("permission: allow_once");
+    const patchbaySessionId = await h.sessions.createSession("p1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: allow_once");
     // auto-resolved — no card should have been shown
-    expect(h.state().transcripts[sessionId]!.some((b) => b.kind === "permission")).toBe(false);
+    expect(h.state().transcripts[patchbaySessionId]!.some((b) => b.kind === "permission")).toBe(false);
     await h.pool.stop("p1" as PatchbayAgentId);
   });
 
@@ -410,13 +410,13 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "askPermission", title: "Edit two", kind: "edit", subject: locations }] }, "p1m" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("p1m" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    const card = h.state().transcripts[sessionId]!.find((b) => b.kind === "permission")!;
+    const patchbaySessionId = await h.sessions.createSession("p1m" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
     h.broker.resolve(card.id, "reject_once");
     await turn;
-    expect(textOf(sessionId, h.events)).toContain("permission: reject_once");
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: reject_once");
     await h.pool.stop("p1m" as PatchbayAgentId);
   });
 
@@ -428,13 +428,13 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
         "p2" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("p2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    const card = h.state().transcripts[sessionId]!.find((b) => b.kind === "permission")!;
+    const patchbaySessionId = await h.sessions.createSession("p2" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
     h.broker.resolve(card.id, "allow_once");
     await turn;
-    expect(textOf(sessionId, h.events)).toContain("permission: allow_once");
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: allow_once");
     await h.pool.stop("p2" as PatchbayAgentId);
   });
 
@@ -452,11 +452,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
         "p3" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("p3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    await h.gates.reload(sessionId);
-    expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
+    const patchbaySessionId = await h.sessions.createSession("p3" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" }).catch((err: unknown) => err);
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    await h.gates.reload(patchbaySessionId);
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: cancelled");
     expect(await turn).toMatchObject({ by: "reload" });
     await h.pool.stop("p3" as PatchbayAgentId);
   });
@@ -466,11 +466,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }] }, "p4" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("p4" as PatchbayAgentId, "Fake Agent", workspaceRoot);
-    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
-    await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    await h.gates.close(sessionId);
-    expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
+    const patchbaySessionId = await h.sessions.createSession("p4" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" }).catch((err: unknown) => err);
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    await h.gates.close(patchbaySessionId);
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: cancelled");
     expect(await turn).toMatchObject({ by: "close" });
     await h.pool.stop("p4" as PatchbayAgentId);
   });
@@ -510,7 +510,7 @@ describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
   it("a relative cwd is the agent's bad params — the spec requires an absolute path", async () => {
     const { host, events } = harness();
     await expect(
-      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, { id: "s", cwd: workspaceRoot }),
+      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, { id: "s" as PatchbaySessionId, cwd: workspaceRoot }),
     ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("sub/dir") });
     expect(events).toEqual([]);
   });

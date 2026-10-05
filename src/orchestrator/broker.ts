@@ -32,7 +32,7 @@ import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import { NodeTerminalRunner, type CreateTerminalParams, type TerminalRunner } from "./terminal-runner";
-import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
@@ -95,7 +95,7 @@ async function landingOf(path: string): Promise<string | null> {
 }
 
 interface Pending {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   resolve(optionId: string): void;
 }
 
@@ -110,14 +110,14 @@ interface LinkCompletion {
 /** A page the agent asked the user to open. The address alone decides
  * what opens; a link nobody will report done simply never completes. */
 interface LinkAsk {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   href: string;
 }
 
 /** One link id's card: whether its completion already landed, and whether
  * the agent withdrew the question before it did. */
 interface LinkRecord {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   blockId: string;
   completed: boolean;
   withdrawn: boolean;
@@ -132,7 +132,7 @@ interface AgentLinks {
  * waiting caller is owed. Same bookkeeping as a permission ask — a
  * question on the wire is always owed an answer. */
 interface PendingAsk {
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   link: LinkAsk | null;
   answer(answer: ElicitationAnswer, outcome?: ElicitationOutcome): void;
 }
@@ -173,7 +173,7 @@ export class PermissionBroker {
     private readonly hooks: BrokerHooks,
     /** The roots a session was given — where its writes may land
      * without asking under the `workspace` scope. */
-    private readonly grantedRoots: (sessionId: string) => readonly string[],
+    private readonly grantedRoots: (patchbaySessionId: PatchbaySessionId) => readonly string[],
     private readonly terminals: TerminalRunner = new NodeTerminalRunner(),
     /** Machine-layer command rules — absent in tests that don't exercise
      * layering; the workspace layer alone then behaves as before. */
@@ -198,10 +198,10 @@ export class PermissionBroker {
   /** Allows only when every path lands inside a root the session was
    * given (or the temp dir, under `workspace+temp`) — judged where the
    * write lands, never by the text the agent sent. None named asks. */
-  async evaluateFileWrites(sessionId: string, paths: readonly string[]): Promise<RuleVerdict> {
+  async evaluateFileWrites(patchbaySessionId: PatchbaySessionId, paths: readonly string[]): Promise<RuleVerdict> {
     const { fileWriteScope } = this.rules.get();
     if (fileWriteScope === "always-ask" || paths.length === 0) return "ask";
-    const scope = [...this.grantedRoots(sessionId), ...(fileWriteScope === "workspace+temp" ? [tmpdir()] : [])];
+    const scope = [...this.grantedRoots(patchbaySessionId), ...(fileWriteScope === "workspace+temp" ? [tmpdir()] : [])];
     const roots = (await Promise.all(scope.map(landingOf))).filter((r) => r !== null);
     const landings = await Promise.all(paths.map(landingOf));
     return landings.every((l) => l !== null && roots.some((r) => isUnder(l, r))) ? "allow" : "ask";
@@ -223,19 +223,19 @@ export class PermissionBroker {
    * card as withdrawn and answers cancel, which the caller turns into the
    * request-cancelled error. */
   askElicitation(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     question: { message: string; ask: ElicitationAsk; completion?: LinkCompletion },
     signal?: AbortSignal,
   ): Promise<ElicitationAnswer> {
     const blockId = newBlockId("elicit");
-    this.hooks.emit({ kind: "elicitationRequested", sessionId, blockId, message: question.message, ...question.ask });
-    const link = question.ask.mode === "url" ? { sessionId, href: question.ask.link.href } : null;
+    this.hooks.emit({ kind: "elicitationRequested", patchbaySessionId, blockId, message: question.message, ...question.ask });
+    const link = question.ask.mode === "url" ? { patchbaySessionId, href: question.ask.link.href } : null;
     return new Promise((resolve) => {
       this.asks.set(blockId, {
-        sessionId,
+        patchbaySessionId,
         link,
         answer: (answer, outcome = OUTCOME_OF[answer.action]) => {
-          this.hooks.emit({ kind: "elicitationResolved", sessionId, blockId, outcome });
+          this.hooks.emit({ kind: "elicitationResolved", patchbaySessionId, blockId, outcome });
           resolve(answer);
         },
       });
@@ -244,7 +244,7 @@ export class PermissionBroker {
         const { patchbayAgentId, elicitationId } = question.completion;
         const links = this.linksOf(patchbayAgentId);
         // A reused id starts fresh: ids are unique only among open questions.
-        record = { sessionId, blockId, completed: false, withdrawn: false };
+        record = { patchbaySessionId, blockId, completed: false, withdrawn: false };
         links.ids.set(elicitationId, record);
         if (links.early.includes(elicitationId)) {
           links.early = links.early.filter((id) => id !== elicitationId);
@@ -300,11 +300,11 @@ export class PermissionBroker {
     record.completed = true;
     this.openLinks.delete(record.blockId);
     if (this.settleAsk(record.blockId, { action: "cancel" }, "completed")) return;
-    const { sessionId, blockId } = record;
+    const { patchbaySessionId, blockId } = record;
     this.hooks.emit(
       record.withdrawn
-        ? { kind: "elicitationResolved", sessionId, blockId, outcome: "completed" }
-        : { kind: "elicitationLinkSettled", sessionId, blockId, state: "completed" },
+        ? { kind: "elicitationResolved", patchbaySessionId, blockId, outcome: "completed" }
+        : { kind: "elicitationLinkSettled", patchbaySessionId, blockId, state: "completed" },
     );
   }
 
@@ -344,29 +344,29 @@ export class PermissionBroker {
    * outcome, and every open elicitation is cancelled — the agent is never
    * left hanging on a stopped turn. Same duty when the session is closed
    * under an in-flight turn. */
-  cancelPending(sessionId: string): void {
+  cancelPending(patchbaySessionId: PatchbaySessionId): void {
     for (const [requestId, p] of [...this.pending]) {
-      if (p.sessionId !== sessionId) continue;
+      if (p.patchbaySessionId !== patchbaySessionId) continue;
       this.pending.delete(requestId);
       p.resolve(TURN_CANCELLED);
     }
     // An elicitation the stopped turn left open is owed an answer too —
     // the user dismissed it by stopping, which is exactly `cancel`.
     for (const [blockId] of [...this.asks]) {
-      if (this.asks.get(blockId)?.sessionId !== sessionId) continue;
+      if (this.asks.get(blockId)?.patchbaySessionId !== patchbaySessionId) continue;
       this.settleAsk(blockId, { action: "cancel" });
     }
     // An opened page the stopped turn was waiting on: the agent's flow is
     // gone, so the card stops offering to open it again.
     for (const [blockId, link] of [...this.openLinks]) {
-      if (link.sessionId !== sessionId) continue;
+      if (link.patchbaySessionId !== patchbaySessionId) continue;
       this.openLinks.delete(blockId);
-      this.hooks.emit({ kind: "elicitationLinkSettled", sessionId, blockId, state: "ended" });
+      this.hooks.emit({ kind: "elicitationLinkSettled", patchbaySessionId, blockId, state: "ended" });
     }
   }
 
-  private awaitOption(requestId: string, sessionId: string): Promise<string> {
-    return new Promise((resolve) => this.pending.set(requestId, { sessionId, resolve }));
+  private awaitOption(requestId: string, patchbaySessionId: PatchbaySessionId): Promise<string> {
+    return new Promise((resolve) => this.pending.set(requestId, { patchbaySessionId, resolve }));
   }
 
   private async writeAudit(entry: Record<string, unknown>): Promise<void> {
@@ -399,7 +399,7 @@ export class PermissionBroker {
    * all of them; any other kind carries nothing a rule can judge, so it
    * asks. */
   async resolveAgentPermissionRequest(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     toolTitle: string,
     toolKind: string,
     locations: readonly string[],
@@ -409,19 +409,19 @@ export class PermissionBroker {
     const blockId = newBlockId("perm");
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
-    const decided = this.awaitOption(blockId, sessionId);
-    const verdict = await this.evaluateFileWrites(sessionId, files);
+    const decided = this.awaitOption(blockId, patchbaySessionId);
+    const verdict = await this.evaluateFileWrites(patchbaySessionId, files);
     const shown = this.pending.has(blockId);
     if (shown) {
       const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
       if (auto !== undefined) {
         this.pending.delete(blockId);
-        await this.writeAudit({ kind: "auto-allow", sessionId, tool: toolTitle, files });
+        await this.writeAudit({ kind: "auto-allow", patchbaySessionId, tool: toolTitle, files });
         return { optionId: auto.optionId };
       }
       this.hooks.emit({
         kind: "permissionRequested",
-        sessionId,
+        patchbaySessionId,
         blockId,
         title: toolTitle,
         detail: files.length > 0 ? files.join(", ") : toolTitle,
@@ -436,27 +436,27 @@ export class PermissionBroker {
       if (shown) {
         this.hooks.emit({
           kind: "permissionResolved",
-          sessionId,
+          patchbaySessionId,
           blockId,
           label: "Cancelled — turn stopped",
           auto: true,
         });
       }
-      await this.writeAudit({ kind: "turn-cancelled", sessionId, tool: toolTitle, files });
+      await this.writeAudit({ kind: "turn-cancelled", patchbaySessionId, tool: toolTitle, files });
       return { cancelled: true };
     }
     const chosen = options.find((o) => o.optionId === optionId);
     if (chosen === undefined) return { cancelled: true };
     this.hooks.emit({
       kind: "permissionResolved",
-      sessionId,
+      patchbaySessionId,
       blockId,
       label: chosen.label,
       auto: false,
     });
     await this.writeAudit({
       kind: `user-${chosen.kind}`,
-      sessionId,
+      patchbaySessionId,
       tool: toolTitle,
       files,
     });
@@ -473,30 +473,30 @@ export class PermissionBroker {
   /** Patchbay's own mandatory gate on fs/write_text_file. Always produces a
    * diff card — auto-accept changes who clicks, never what is visible. */
   async gateFileWrite(
-    sessionId: string,
+    patchbaySessionId: PatchbaySessionId,
     path: string,
     newContent: string,
   ): Promise<GateOutcome> {
     const blockId = newBlockId("diff");
     // The place is held before the gate reads the disk: a turn stopped
     // meanwhile answers this write too, before any card was shown.
-    const decided = this.awaitOption(blockId, sessionId);
+    const decided = this.awaitOption(blockId, patchbaySessionId);
     let oldContent = "";
     try {
       oldContent = await readFile(path, "utf8");
     } catch {
       // new file — diff against empty, honestly showing an all-additions diff
     }
-    const verdict = await this.evaluateFileWrites(sessionId, [path]);
+    const verdict = await this.evaluateFileWrites(patchbaySessionId, [path]);
     if (!this.pending.has(blockId)) {
-      await this.writeAudit({ kind: "turn-cancelled", sessionId, file: path });
+      await this.writeAudit({ kind: "turn-cancelled", patchbaySessionId, file: path });
       return "cancelled";
     }
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
 
     this.hooks.emit({
       kind: "diffProposed",
-      sessionId,
+      patchbaySessionId,
       blockId,
       file: path,
       additions,
@@ -506,8 +506,8 @@ export class PermissionBroker {
 
     if (verdict === "allow") {
       this.pending.delete(blockId);
-      this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted: true, auto: true });
-      await this.writeAudit({ kind: "auto-allow", sessionId, file: path });
+      this.hooks.emit({ kind: "diffResolved", patchbaySessionId, blockId, accepted: true, auto: true });
+      await this.writeAudit({ kind: "auto-allow", patchbaySessionId, file: path });
       return "accepted";
     }
 
@@ -516,10 +516,10 @@ export class PermissionBroker {
     this.proposals.delete(blockId);
     const cancelled = optionId === TURN_CANCELLED;
     const accepted = optionId === "accept";
-    this.hooks.emit({ kind: "diffResolved", sessionId, blockId, accepted, auto: cancelled });
+    this.hooks.emit({ kind: "diffResolved", patchbaySessionId, blockId, accepted, auto: cancelled });
     await this.writeAudit({
       kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
-      sessionId,
+      patchbaySessionId,
       file: path,
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
@@ -533,23 +533,23 @@ export class PermissionBroker {
    * line alone — trusting a command trusts it under whatever directory and
    * environment the agent runs it with. The audit names the variables,
    * never their values. */
-  async gateCommand(sessionId: string, run: CreateTerminalParams): Promise<GateOutcome> {
+  async gateCommand(patchbaySessionId: PatchbaySessionId, run: CreateTerminalParams): Promise<GateOutcome> {
     const command = formatCommandLine(run.command, run.args);
     const subject = { command, cwd: run.cwd, env: Object.keys(run.env) };
     const verdict = this.evaluateCommand(command);
     if (verdict === "deny") {
-      await this.writeAudit({ kind: "auto-deny", sessionId, ...subject });
+      await this.writeAudit({ kind: "auto-deny", patchbaySessionId, ...subject });
       return "rejected";
     }
     if (verdict === "allow") {
-      await this.writeAudit({ kind: "auto-allow", sessionId, ...subject });
+      await this.writeAudit({ kind: "auto-allow", patchbaySessionId, ...subject });
       return "accepted";
     }
 
     const blockId = newBlockId("perm");
     this.hooks.emit({
       kind: "permissionRequested",
-      sessionId,
+      patchbaySessionId,
       blockId,
       title: "Terminal",
       detail: command,
@@ -559,21 +559,21 @@ export class PermissionBroker {
       ],
       options: STANDARD_OPTIONS,
     });
-    const optionId = await this.awaitOption(blockId, sessionId);
+    const optionId = await this.awaitOption(blockId, patchbaySessionId);
     const cancelled = optionId === TURN_CANCELLED;
     const chosen = STANDARD_OPTIONS.find((o) => o.optionId === optionId);
     const accepted = chosen?.kind === "allow_once" || chosen?.kind === "allow_always";
     if (chosen?.kind === "allow_always") await this.persistAllowRule(command);
     this.hooks.emit({
       kind: "permissionResolved",
-      sessionId,
+      patchbaySessionId,
       blockId,
       label: cancelled ? "Cancelled — turn stopped" : (chosen?.label ?? "Rejected"),
       auto: cancelled,
     });
     await this.writeAudit({
       kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
-      sessionId,
+      patchbaySessionId,
       ...subject,
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";

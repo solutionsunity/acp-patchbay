@@ -6,7 +6,7 @@
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
-import type { PatchbayAgentId, PatchbayMcpServerId } from "./ids";
+import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
 
 // ── envelope ─────────────────────────────────────────────────────────────────
 
@@ -107,15 +107,15 @@ export type Action =
    * every running agent's own `session/list` so activity from another
    * window is on the rows — reality at the moment of need, never polled. */
   | { kind: "syncSessions" }
-  | { kind: "switchSession"; sessionId: string }
+  | { kind: "switchSession"; patchbaySessionId: PatchbaySessionId }
   /** Open the session in its own editor panel, floated to a new (auxiliary)
    * window — detached from the sidebar, multi-screen usable. Does not touch
    * the shared active-session pointer. */
-  | { kind: "detachSession"; sessionId: string }
-  | { kind: "closeSession"; sessionId: string }
+  | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "closeSession"; patchbaySessionId: PatchbaySessionId }
   /** Copy the agent's own id for the session — the one its own tools know
    * it by. The host holds that id; the view never does. */
-  | { kind: "copySessionId"; sessionId: string }
+  | { kind: "copySessionId"; patchbaySessionId: PatchbaySessionId }
   /** `text` is the readable form (transcript + title derivation). `parts`,
    * when present, is the same content with inline file mentions kept
    * positional — the orchestrator turns each `fileRef` into a
@@ -124,17 +124,17 @@ export type Action =
    * `draft` is the composer's serialized editor state for these words —
    * kept only while they are held (QueuedPrompt.draft): queued at the
    * door, or back among the held ones after a turn that never started. */
-  | { kind: "sendPrompt"; sessionId: string; text: string; parts?: readonly PromptPart[]; draft?: string }
-  | { kind: "stopTurn"; sessionId: string }
+  | { kind: "sendPrompt"; patchbaySessionId: PatchbaySessionId; text: string; parts?: readonly PromptPart[]; draft?: string }
+  | { kind: "stopTurn"; patchbaySessionId: PatchbaySessionId }
   /** Remove one still-queued prompt (see QueuedPrompt) before it fires. */
-  | { kind: "removeQueuedPrompt"; sessionId: string; promptId: string }
+  | { kind: "removeQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Take the tail of the queue back into the composer: the row leaves the
    * queue and its editor state becomes the session draft. Tail only — the
    * one row whose place a resend keeps — and only into an empty composer;
    * anything else is a no-op (Copy is the way to merge by hand). */
-  | { kind: "reclaimQueuedPrompt"; sessionId: string; promptId: string }
+  | { kind: "reclaimQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Debounced durable save of the composer's per-session draft. */
-  | { kind: "setSessionDraft"; sessionId: string; draft: string }
+  | { kind: "setSessionDraft"; patchbaySessionId: PatchbaySessionId; draft: string }
   | { kind: "verifyAgent"; patchbayAgentId: PatchbayAgentId }
   /** A Settings card's knob editor expanded (open) or collapsed — the
    * orchestrator's defaults editor opens/ends the throwaway session that
@@ -170,15 +170,15 @@ export type Action =
   /** Open an accepted link's page again (the tab was closed mid-flow).
    * Names the card, never the address: the host opens the link it holds. */
   | { kind: "reopenElicitationLink"; requestId: string }
-  | { kind: "addSelectionContext"; sessionId: string }
-  | { kind: "addFileContext"; sessionId: string }
-  | { kind: "addDiagnosticsContext"; sessionId: string }
-  | { kind: "removeContextChip"; sessionId: string; chipId: string }
-  | { kind: "reloadSession"; sessionId: string }
+  | { kind: "addSelectionContext"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "addFileContext"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "addDiagnosticsContext"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "removeContextChip"; patchbaySessionId: PatchbaySessionId; chipId: string }
+  | { kind: "reloadSession"; patchbaySessionId: PatchbaySessionId }
   /** One action for every knob — the UI never knows
    * whether a knob rides ACP's config-option surface or the legacy modes
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
-  | { kind: "setSessionKnob"; sessionId: string; knobId: string; value: string | boolean }
+  | { kind: "setSessionKnob"; patchbaySessionId: PatchbaySessionId; knobId: string; value: string | boolean }
   | { kind: "connectCatalogKey"; catalogId: string; token: string; url?: string }
   | { kind: "connectCatalogOAuth"; catalogId: string; url?: string }
   /** The id is minted orchestrator-side — the storage/SecretStorage key,
@@ -219,7 +219,7 @@ export type Action =
    * shape `importMcpServersJson` reads back and other clients take. */
   | { kind: "copyMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
-  | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
+  | { kind: "openToolCallDiff"; patchbaySessionId: PatchbaySessionId; toolCallId: string; path: string }
   /** Open a pending write proposal — the diff card's full change — in VS
    * Code's native diff editor; a no-op once the proposal has resolved. */
   | { kind: "openProposedDiff"; blockId: string }
@@ -243,8 +243,8 @@ export type Action =
    * view sees it at drop time; the store keeps unnamed records at the tail. */
   | { kind: "reorderAgentConfigs"; patchbayAgentIds: readonly PatchbayAgentId[] }
   | { kind: "reorderMcpServers"; patchbayMcpServerIds: readonly PatchbayMcpServerId[] }
-  | { kind: "addContextRoot"; sessionId: string }
-  | { kind: "removeContextRoot"; sessionId: string; path: string }
+  | { kind: "addContextRoot"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "removeContextRoot"; patchbaySessionId: PatchbaySessionId; path: string }
   /** Saved roots — the folders every new session starts with. `saveRoot`
    * is the roots chip's shortcut for a root already on the session;
    * `pickSavedRoot` is Settings' add — or, with `replacing`, its edit of
@@ -257,14 +257,14 @@ export type Action =
    * ingress processor (composer/ingress.ts) — validated, size-capped, and
    * (for images) normalized there, so the orchestrator never receives bytes
    * it would have to guess about. `base64` is always the raw payload. */
-  | { kind: "addImageContext"; sessionId: string; base64: string; mimeType: string; label: string }
+  | { kind: "addImageContext"; patchbaySessionId: PatchbaySessionId; base64: string; mimeType: string; label: string }
   /** An externally-dropped non-image file: bytes with no host path (browsers
    * hide dropped files' paths, and a client-side path means nothing to a
    * remote host anyway) — the orchestrator stages them to a temp file and
    * the chip rides the prompt as a resource_link to it. Empty mimeType =
    * the platform didn't know; it stays unknown, never guessed. */
-  | { kind: "addDroppedFileContext"; sessionId: string; name: string; mimeType: string; base64: string }
-  | { kind: "addFilePickerContext"; sessionId: string }
+  | { kind: "addDroppedFileContext"; patchbaySessionId: PatchbaySessionId; name: string; mimeType: string; base64: string }
+  | { kind: "addFilePickerContext"; patchbaySessionId: PatchbaySessionId }
   /** The `@` mention picker's workspace tier: the webview never touches the
    * filesystem — it asks, the orchestrator runs
    * `workspace.findFiles` and answers with workspaceFilesListed. */
@@ -768,7 +768,7 @@ export function hasUnusedProbe(matrix: CapabilityMatrix): boolean {
 }
 
 export interface SessionSummary {
-  id: string;
+  id: PatchbaySessionId;
   patchbayAgentId: PatchbayAgentId;
   title: string;
   /** What the session's two lines hold: the attachment line's work, then
@@ -1244,7 +1244,7 @@ export interface ChatConnectView {
    * (every open — click, palette, own window — is a connect trigger: the
    * running agent is the session's prerequisite). Retry then re-opens that
    * session instead of minting a new one via startChat. */
-  forSessionId?: string;
+  forPatchbaySessionId?: PatchbaySessionId;
 }
 
 /** True while the pane still shows this request in progress — a new chat
@@ -1254,9 +1254,9 @@ export interface ChatConnectView {
 export function chatPaneShows(
   pane: ChatConnectView | null,
   patchbayAgentId: PatchbayAgentId,
-  forSessionId: string | undefined,
+  forPatchbaySessionId: PatchbaySessionId | undefined,
 ): boolean {
-  return pane !== null && pane.patchbayAgentId === patchbayAgentId && pane.forSessionId === forSessionId && pane.reason === undefined;
+  return pane !== null && pane.patchbayAgentId === patchbayAgentId && pane.forPatchbaySessionId === forPatchbaySessionId && pane.reason === undefined;
 }
 
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
@@ -1316,7 +1316,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
 export interface AgentViewState {
   agents: readonly AgentSummary[];
   sessions: readonly SessionSummary[];
-  activeSessionId: string | null;
+  activePatchbaySessionId: PatchbaySessionId | null;
   /** Non-null while a connect on demand — a new chat, or the open of a
    * session whose agent is off — is in progress or has failed; cleared by
    * success (the session activates), retry, or dismissal. */
@@ -1388,7 +1388,7 @@ export interface AgentViewState {
   preferences: PreferencesView;
   /** What the visible surfaces are rendering right now — the one input to
    * "on screen" (onScreen). `pointer`: a visible surface follows
-   * activeSessionId (the sidebar, the full agent-view panel); `pinned`:
+   * activePatchbaySessionId (the sidebar, the full agent-view panel); `pinned`:
    * sessions shown by visible panels of their own. Reported by the view
    * hosts as visibility flips; nothing is visible until one says so. */
   screen: ScreenView;
@@ -1404,7 +1404,7 @@ export interface ScreenView {
  * notification alike. */
 export function onScreen(state: AgentViewState): ReadonlySet<string> {
   const shown = new Set(state.screen.pinned);
-  if (state.screen.pointer && state.activeSessionId !== null) shown.add(state.activeSessionId);
+  if (state.screen.pointer && state.activePatchbaySessionId !== null) shown.add(state.activePatchbaySessionId);
   return shown;
 }
 
@@ -1481,7 +1481,7 @@ export type ContextChip =
 export const initialAgentViewState: AgentViewState = {
   agents: [],
   sessions: [],
-  activeSessionId: null,
+  activePatchbaySessionId: null,
   chatConnect: null,
   restoring: false,
   registryAgents: [],
@@ -1510,8 +1510,8 @@ export type AgentViewEvent =
    * channels. */
   | { kind: "agentUpserted"; agent: AgentSummary }
   | { kind: "agentRemoved"; patchbayAgentId: PatchbayAgentId }
-  | { kind: "chatConnectStarted"; patchbayAgentId: PatchbayAgentId; forSessionId?: string }
-  | { kind: "chatConnectFailed"; patchbayAgentId: PatchbayAgentId; reason: string; forSessionId?: string }
+  | { kind: "chatConnectStarted"; patchbayAgentId: PatchbayAgentId; forPatchbaySessionId?: PatchbaySessionId }
+  | { kind: "chatConnectFailed"; patchbayAgentId: PatchbayAgentId; reason: string; forPatchbaySessionId?: PatchbaySessionId }
   | { kind: "chatConnectResolved" }
   /** The startup restore settled — restored, or found nothing to restore
    * (stale pointer, failed connects); either way `restoring` clears and the
@@ -1531,28 +1531,28 @@ export type AgentViewEvent =
    * first-prompt title. Each field rides only when its witness said
    * something: an absent title or stamp is silence, never a clear. The
    * agent's title wins; the stamp only moves forward. */
-  | { kind: "sessionRefreshed"; sessionId: string; title?: string; updatedAt?: string }
-  | { kind: "sessionActivated"; sessionId: string }
+  | { kind: "sessionRefreshed"; patchbaySessionId: PatchbaySessionId; title?: string; updatedAt?: string }
+  | { kind: "sessionActivated"; patchbaySessionId: PatchbaySessionId }
   /** The visible surfaces changed — shown, hidden, opened, or closed. */
   | ({ kind: "screenChanged" } & ScreenView)
-  | { kind: "sessionClosed"; sessionId: string }
+  | { kind: "sessionClosed"; patchbaySessionId: PatchbaySessionId }
   /** What the session's lines hold moved — the gates' queue reports every
    * move. */
-  | { kind: "sessionBusyChanged"; sessionId: string; busy: readonly SessionWork[] }
+  | { kind: "sessionBusyChanged"; patchbaySessionId: PatchbaySessionId; busy: readonly SessionWork[] }
   /** Replay always wins — the transcript is discarded, never merged. */
-  | { kind: "transcriptReset"; sessionId: string }
-  | { kind: "userMessageAppended"; sessionId: string; blockId: string; parts: readonly UserPart[] }
+  | { kind: "transcriptReset"; patchbaySessionId: PatchbaySessionId }
+  | { kind: "userMessageAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; parts: readonly UserPart[] }
   /** One replayed user content part (session/load `user_message_chunk`) —
    * delta semantics like the agent chunks, unlike `userMessageAppended`
    * (the live send, which is whole by construction). Consecutive text
    * parts on one block merge in the reducer. */
-  | { kind: "userPartAppended"; sessionId: string; blockId: string; part: UserPart; injected?: boolean }
-  | { kind: "agentTextDelta"; sessionId: string; blockId: string; text: string }
-  | { kind: "agentThoughtDelta"; sessionId: string; blockId: string; text: string }
-  | { kind: "agentPartAppended"; sessionId: string; blockId: string; part: ContentPart; thought: boolean }
+  | { kind: "userPartAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: UserPart; injected?: boolean }
+  | { kind: "agentTextDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
+  | { kind: "agentThoughtDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
+  | { kind: "agentPartAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart; thought: boolean }
   | {
       kind: "toolCallUpserted";
-      sessionId: string;
+      patchbaySessionId: PatchbaySessionId;
       blockId: string;
       /** Empty string = unspecified; reducer keeps the existing title. */
       title: string;
@@ -1569,80 +1569,80 @@ export type AgentViewEvent =
       diffs?: Readonly<Record<string, DiffStat>>;
     }
   /** The broker rejected this tool call's session/request_permission. */
-  | { kind: "toolCallDenied"; sessionId: string; blockId: string }
+  | { kind: "toolCallDenied"; patchbaySessionId: PatchbaySessionId; blockId: string }
   /** The owning turn ended (non-end_turn stop reason, or error) while this
    * call was still open — the sessions store's turn-end sweep, the tool-call
    * analogue of broker.cancelPending for permission requests. */
-  | { kind: "toolCallInterrupted"; sessionId: string; blockId: string }
+  | { kind: "toolCallInterrupted"; patchbaySessionId: PatchbaySessionId; blockId: string }
   /** Replaces the session's pinned plan snapshot — never a transcript block. */
-  | { kind: "planUpdated"; sessionId: string; entries: readonly PlanEntry[] }
+  | { kind: "planUpdated"; patchbaySessionId: PatchbaySessionId; entries: readonly PlanEntry[] }
   /** A prompt turn began (send time) / resolved — the turnEnd block carries
    * both timestamps so the reducer never has to reconstruct them. The
    * nullable trio is the replay-synthesized boundary (see TurnEndBlock):
    * `at: null` also tells the reducer this is history landing, not news —
    * no updatedAt bump, no unseen dot. */
-  | { kind: "turnStarted"; sessionId: string; at: string }
+  | { kind: "turnStarted"; patchbaySessionId: PatchbaySessionId; at: string }
   | {
       kind: "turnEnded";
-      sessionId: string;
+      patchbaySessionId: PatchbaySessionId;
       blockId: string;
       startedAt: string | null;
       at: string | null;
       stopReason: string | null;
       usage: TurnUsage | null;
     }
-  | { kind: "commandsAdvertised"; sessionId: string; commands: readonly AvailableCommand[] }
+  | { kind: "commandsAdvertised"; patchbaySessionId: PatchbaySessionId; commands: readonly AvailableCommand[] }
   | {
       kind: "permissionRequested";
-      sessionId: string;
+      patchbaySessionId: PatchbaySessionId;
       blockId: string;
       title: string;
       detail: string;
       facts: readonly PermissionFact[];
       options: readonly PermissionOptionView[];
     }
-  | { kind: "permissionResolved"; sessionId: string; blockId: string; label: string; auto: boolean }
+  | { kind: "permissionResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; label: string; auto: boolean }
   | {
       kind: "diffProposed";
-      sessionId: string;
+      patchbaySessionId: PatchbaySessionId;
       blockId: string;
       file: string;
       additions: number;
       deletions: number;
       lines: readonly { kind: DiffLineKind; text: string }[];
     }
-  | { kind: "diffResolved"; sessionId: string; blockId: string; accepted: boolean; auto: boolean }
-  | { kind: "terminalStarted"; sessionId: string; blockId: string; command: string }
-  | { kind: "terminalOutputAppended"; sessionId: string; blockId: string; chunk: string }
-  | { kind: "terminalExited"; sessionId: string; blockId: string; exitCode: number | null }
-  | ({ kind: "elicitationRequested"; sessionId: string; blockId: string; message: string } & ElicitationAsk)
-  | { kind: "elicitationResolved"; sessionId: string; blockId: string; outcome: ElicitationOutcome }
+  | { kind: "diffResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; accepted: boolean; auto: boolean }
+  | { kind: "terminalStarted"; patchbaySessionId: PatchbaySessionId; blockId: string; command: string }
+  | { kind: "terminalOutputAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; chunk: string }
+  | { kind: "terminalExited"; patchbaySessionId: PatchbaySessionId; blockId: string; exitCode: number | null }
+  | ({ kind: "elicitationRequested"; patchbaySessionId: PatchbaySessionId; blockId: string; message: string } & ElicitationAsk)
+  | { kind: "elicitationResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; outcome: ElicitationOutcome }
   /** An opened link's follow-up moved: the agent reported the page done,
    * or the session stopped waiting on it. */
-  | { kind: "elicitationLinkSettled"; sessionId: string; blockId: string; state: "completed" | "ended" }
-  | { kind: "contextChipAdded"; sessionId: string; chip: ContextChip }
-  | { kind: "contextChipRemoved"; sessionId: string; chipId: string }
+  | { kind: "elicitationLinkSettled"; patchbaySessionId: PatchbaySessionId; blockId: string; state: "completed" | "ended" }
+  | { kind: "contextChipAdded"; patchbaySessionId: PatchbaySessionId; chip: ContextChip }
+  | { kind: "contextChipRemoved"; patchbaySessionId: PatchbaySessionId; chipId: string }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
    * other held words) — or rehydrated from the continuity row after a
    * reload, or re-emitted in a drain-failure resync. Queued, not refused. */
-  | { kind: "promptQueued"; sessionId: string; prompt: QueuedPrompt }
+  | { kind: "promptQueued"; patchbaySessionId: PatchbaySessionId; prompt: QueuedPrompt }
   /** One queued prompt left the queue — fired (drain) or removed by hand. */
-  | { kind: "promptUnqueued"; sessionId: string; promptId: string }
-  | { kind: "sessionDraftChanged"; sessionId: string; draft: string }
+  | { kind: "promptUnqueued"; patchbaySessionId: PatchbaySessionId; promptId: string }
+  | { kind: "sessionDraftChanged"; patchbaySessionId: PatchbaySessionId; draft: string }
   /** The queue's rows leave at once — a deliberate Stop discarding them,
    * or the prelude of a drain-failure resync (immediately re-emitted as
    * promptQueued rows in firing order; nothing discarded). */
-  | { kind: "promptQueueCleared"; sessionId: string }
+  | { kind: "promptQueueCleared"; patchbaySessionId: PatchbaySessionId }
   /** Full replace, always — every knob-bearing wire fact (a create/load/fork
    * response, a config_option_update or current_mode_update notification, a
    * set_config_option response) lands here already normalized by knobs.ts. */
-  | { kind: "sessionKnobsSet"; sessionId: string; knobs: readonly SessionKnobView[] }
+  | { kind: "sessionKnobsSet"; patchbaySessionId: PatchbaySessionId; knobs: readonly SessionKnobView[] }
   /** The resume rung's seed (cached view + seam notice) or a cannot-reopen
    * notice — the transcript is replaced wholesale, never merged: same
    * "replay always wins" rule as transcriptReset. */
-  | { kind: "transcriptSeeded"; sessionId: string; blocks: readonly ChatBlock[] }
+  | { kind: "transcriptSeeded"; patchbaySessionId: PatchbaySessionId; blocks: readonly ChatBlock[] }
   /** Full replace — the current external-root list for a session. */
-  | { kind: "contextRootsChanged"; sessionId: string; roots: readonly string[] }
+  | { kind: "contextRootsChanged"; patchbaySessionId: PatchbaySessionId; roots: readonly string[] }
   | { kind: "workspaceRootsChanged"; roots: readonly string[] }
   /** Full replace — live selection + open editors, coalesced to the latest. */
   | {
@@ -1654,7 +1654,7 @@ export type AgentViewEvent =
   | { kind: "workspaceFilesListed"; query: string; files: readonly string[]; dirs: readonly string[] }
   | {
       kind: "usageReported";
-      sessionId: string;
+      patchbaySessionId: PatchbaySessionId;
       used: number;
       size: number;
       cost?: { amount: number; currency: string };
@@ -1691,10 +1691,10 @@ function reduceAgents(
 
 function withTranscript(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   blocks: readonly ChatBlock[],
 ): AgentViewState {
-  return { ...state, transcripts: { ...state.transcripts, [sessionId]: blocks } };
+  return { ...state, transcripts: { ...state.transcripts, [patchbaySessionId]: blocks } };
 }
 
 /** Seeing is what clears the blue dot: every unseen session a visible
@@ -1710,30 +1710,30 @@ function markSeen(state: AgentViewState): AgentViewState {
 
 function appendBlock(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   block: ChatBlock,
 ): AgentViewState {
-  const blocks = state.transcripts[sessionId] ?? [];
-  return withTranscript(state, sessionId, [...blocks, block]);
+  const blocks = state.transcripts[patchbaySessionId] ?? [];
+  return withTranscript(state, patchbaySessionId, [...blocks, block]);
 }
 
 function upsertTextBlock(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   blockId: string,
   kind: "text" | "thought",
   delta: string,
 ): AgentViewState {
-  const blocks = state.transcripts[sessionId] ?? [];
+  const blocks = state.transcripts[patchbaySessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === blockId);
   if (i === -1) {
-    return appendBlock(state, sessionId, { kind, id: blockId, text: delta });
+    return appendBlock(state, patchbaySessionId, { kind, id: blockId, text: delta });
   }
   const existing = blocks[i] as TextBlock | ThoughtBlock;
   const updated = { ...existing, text: existing.text + delta };
   return withTranscript(
     state,
-    sessionId,
+    patchbaySessionId,
     blocks.map((b, j) => (j === i ? updated : b)),
   );
 }
@@ -1743,15 +1743,15 @@ function upsertTextBlock(
  * span); any other part appends as its own piece. */
 function upsertUserBlock(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   blockId: string,
   part: UserPart,
   injected?: boolean,
 ): AgentViewState {
-  const blocks = state.transcripts[sessionId] ?? [];
+  const blocks = state.transcripts[patchbaySessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === blockId);
   if (i === -1) {
-    return appendBlock(state, sessionId, {
+    return appendBlock(state, patchbaySessionId, {
       kind: "user",
       id: blockId,
       parts: [part],
@@ -1766,20 +1766,20 @@ function upsertUserBlock(
       : [...existing.parts, part];
   return withTranscript(
     state,
-    sessionId,
+    patchbaySessionId,
     blocks.map((b, j) => (j === i ? { ...existing, parts } : b)),
   );
 }
 
 function upsertToolCall(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   event: Extract<AgentViewEvent, { kind: "toolCallUpserted" }>,
 ): AgentViewState {
-  const blocks = state.transcripts[sessionId] ?? [];
+  const blocks = state.transcripts[patchbaySessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === event.blockId);
   if (i === -1) {
-    return appendBlock(state, sessionId, {
+    return appendBlock(state, patchbaySessionId, {
       kind: "toolCall",
       id: event.blockId,
       title: event.title,
@@ -1814,7 +1814,7 @@ function upsertToolCall(
   };
   return withTranscript(
     state,
-    sessionId,
+    patchbaySessionId,
     blocks.map((b, j) => (j === i ? updated : b)),
   );
 }
@@ -1824,17 +1824,17 @@ function upsertToolCall(
  * reset). Used by every block that's created once and updated in place. */
 function patchBlock<B extends ChatBlock>(
   state: AgentViewState,
-  sessionId: string,
+  patchbaySessionId: PatchbaySessionId,
   blockId: string,
   patch: (existing: B) => B,
 ): AgentViewState {
-  const blocks = state.transcripts[sessionId] ?? [];
+  const blocks = state.transcripts[patchbaySessionId] ?? [];
   const i = blocks.findIndex((b) => b.id === blockId);
   if (i === -1) return state;
   const updated = patch(blocks[i] as B);
   return withTranscript(
     state,
-    sessionId,
+    patchbaySessionId,
     blocks.map((b, j) => (j === i ? updated : b)),
   );
 }
@@ -1852,9 +1852,9 @@ export function reduceAgentView(
       // the snapshot's fetchedAt for the Add Agent card's freshness line.
       return { ...state, registryAgents: event.agents };
     case "chatConnectStarted":
-      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, forPatchbaySessionId: event.forPatchbaySessionId } };
     case "chatConnectFailed":
-      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, reason: event.reason, forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, reason: event.reason, forPatchbaySessionId: event.forPatchbaySessionId } };
     case "chatConnectResolved":
       return { ...state, chatConnect: null };
     case "startupSettled":
@@ -1870,7 +1870,7 @@ export function reduceAgentView(
         contextChips: { ...state.contextChips, [event.session.id]: [] },
         sessionKnobs: { ...state.sessionKnobs, [event.session.id]: [] },
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
-        activeSessionId: event.session.id,
+        activePatchbaySessionId: event.session.id,
         // A session arriving ends any in-pane connect, success or stale
         // failure alike — cleared here so it can't desync.
         chatConnect: null,
@@ -1881,7 +1881,7 @@ export function reduceAgentView(
       return {
         ...state,
         sessions: state.sessions.map((s) =>
-          s.id === event.sessionId
+          s.id === event.patchbaySessionId
             ? {
                 ...s,
                 title: event.title ?? s.title,
@@ -1906,28 +1906,28 @@ export function reduceAgentView(
         contextRoots: { ...state.contextRoots, [event.session.id]: [] },
       };
     case "sessionActivated":
-      return state.sessions.some((s) => s.id === event.sessionId)
-        ? markSeen({ ...state, activeSessionId: event.sessionId })
+      return state.sessions.some((s) => s.id === event.patchbaySessionId)
+        ? markSeen({ ...state, activePatchbaySessionId: event.patchbaySessionId })
         : state;
     case "screenChanged":
       return markSeen({ ...state, screen: { pointer: event.pointer, pinned: event.pinned } });
     case "sessionClosed": {
-      const { [event.sessionId]: _t, ...transcripts } = state.transcripts;
-      const { [event.sessionId]: _c, ...commandsBySession } = state.commandsBySession;
-      const { [event.sessionId]: _p, ...activePlan } = state.activePlan;
-      const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
-      const { [event.sessionId]: _x, ...contextChips } = state.contextChips;
-      const { [event.sessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
-      const { [event.sessionId]: _r, ...contextRoots } = state.contextRoots;
-      const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
-      const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
-      const { [event.sessionId]: _d, ...drafts } = state.drafts;
-      const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
+      const { [event.patchbaySessionId]: _t, ...transcripts } = state.transcripts;
+      const { [event.patchbaySessionId]: _c, ...commandsBySession } = state.commandsBySession;
+      const { [event.patchbaySessionId]: _p, ...activePlan } = state.activePlan;
+      const { [event.patchbaySessionId]: _a, ...activeTurn } = state.activeTurn;
+      const { [event.patchbaySessionId]: _x, ...contextChips } = state.contextChips;
+      const { [event.patchbaySessionId]: _k, ...sessionKnobs } = state.sessionKnobs;
+      const { [event.patchbaySessionId]: _r, ...contextRoots } = state.contextRoots;
+      const { [event.patchbaySessionId]: _u, ...sessionUsage } = state.sessionUsage;
+      const { [event.patchbaySessionId]: _q, ...promptQueue } = state.promptQueue;
+      const { [event.patchbaySessionId]: _d, ...drafts } = state.drafts;
+      const sessions = state.sessions.filter((s) => s.id !== event.patchbaySessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
       // sibling: opening a session is the one hydrate/connect trigger, so a
       // silently auto-activated row would render its title over an empty pane.
-      const activeSessionId =
-        state.activeSessionId === event.sessionId ? null : state.activeSessionId;
+      const activePatchbaySessionId =
+        state.activePatchbaySessionId === event.patchbaySessionId ? null : state.activePatchbaySessionId;
       return {
         ...state,
         sessions,
@@ -1941,71 +1941,71 @@ export function reduceAgentView(
         sessionUsage,
         promptQueue,
         drafts,
-        activeSessionId,
+        activePatchbaySessionId,
       };
     }
     case "sessionBusyChanged":
       return {
         ...state,
-        sessions: state.sessions.map((s) => (s.id === event.sessionId ? { ...s, busy: event.busy } : s)),
+        sessions: state.sessions.map((s) => (s.id === event.patchbaySessionId ? { ...s, busy: event.busy } : s)),
       };
     case "transcriptReset": {
       // The strip mirrors only what the agent reports: a reset means replay
       // is about to rebuild the transcript, and the live plan rebuilds from
       // the same replay — a stale strip must not outlive its source. Same
       // for a stale ticker: no turn survives a transcript rebuild.
-      const { [event.sessionId]: _a, ...activeTurn } = state.activeTurn;
+      const { [event.patchbaySessionId]: _a, ...activeTurn } = state.activeTurn;
       return {
-        ...withTranscript(state, event.sessionId, []),
-        activePlan: { ...state.activePlan, [event.sessionId]: null },
+        ...withTranscript(state, event.patchbaySessionId, []),
+        activePlan: { ...state.activePlan, [event.patchbaySessionId]: null },
         activeTurn,
       };
     }
     case "userMessageAppended":
-      return appendBlock(state, event.sessionId, {
+      return appendBlock(state, event.patchbaySessionId, {
         kind: "user",
         id: event.blockId,
         parts: event.parts,
       });
     case "userPartAppended":
-      return upsertUserBlock(state, event.sessionId, event.blockId, event.part, event.injected);
+      return upsertUserBlock(state, event.patchbaySessionId, event.blockId, event.part, event.injected);
     case "agentTextDelta":
-      return upsertTextBlock(state, event.sessionId, event.blockId, "text", event.text);
+      return upsertTextBlock(state, event.patchbaySessionId, event.blockId, "text", event.text);
     case "agentThoughtDelta":
-      return upsertTextBlock(state, event.sessionId, event.blockId, "thought", event.text);
+      return upsertTextBlock(state, event.patchbaySessionId, event.blockId, "thought", event.text);
     case "agentPartAppended":
-      return appendBlock(state, event.sessionId, {
+      return appendBlock(state, event.patchbaySessionId, {
         kind: "agentPart",
         id: event.blockId,
         part: event.part,
         thought: event.thought,
       });
     case "toolCallUpserted":
-      return upsertToolCall(state, event.sessionId, event);
+      return upsertToolCall(state, event.patchbaySessionId, event);
     case "toolCallDenied":
-      return patchBlock<ToolCallBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<ToolCallBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         denied: true,
       }));
     case "toolCallInterrupted":
-      return patchBlock<ToolCallBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<ToolCallBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         interrupted: true,
       }));
     case "planUpdated":
-      return { ...state, activePlan: { ...state.activePlan, [event.sessionId]: event.entries } };
+      return { ...state, activePlan: { ...state.activePlan, [event.patchbaySessionId]: event.entries } };
     case "turnStarted":
       return {
         ...state,
-        activeTurn: { ...state.activeTurn, [event.sessionId]: event.at },
+        activeTurn: { ...state.activeTurn, [event.patchbaySessionId]: event.at },
         // "latest" = last activity: a prompt send is the freshest fact there is
         sessions: state.sessions.map((s) =>
-          s.id === event.sessionId ? { ...s, updatedAt: event.at } : s,
+          s.id === event.patchbaySessionId ? { ...s, updatedAt: event.at } : s,
         ),
       };
     case "turnEnded": {
-      const { [event.sessionId]: _t, ...activeTurn } = state.activeTurn;
-      const appended = appendBlock(state, event.sessionId, {
+      const { [event.patchbaySessionId]: _t, ...activeTurn } = state.activeTurn;
+      const appended = appendBlock(state, event.patchbaySessionId, {
         kind: "turnEnd",
         id: event.blockId,
         startedAt: event.startedAt,
@@ -2024,8 +2024,8 @@ export function reduceAgentView(
         // A turn finished while no visible surface showed it → the blue dot
         // (unseen) until one does. Watching it complete counts as seen.
         sessions: state.sessions.map((s) =>
-          s.id === event.sessionId
-            ? { ...s, updatedAt: at, unseen: !onScreen(state).has(event.sessionId) || undefined }
+          s.id === event.patchbaySessionId
+            ? { ...s, updatedAt: at, unseen: !onScreen(state).has(event.patchbaySessionId) || undefined }
             : s,
         ),
       };
@@ -2033,13 +2033,13 @@ export function reduceAgentView(
     case "commandsAdvertised":
       return {
         ...state,
-        commandsBySession: { ...state.commandsBySession, [event.sessionId]: event.commands },
+        commandsBySession: { ...state.commandsBySession, [event.patchbaySessionId]: event.commands },
       };
     case "usageReported": {
       // A fresh reading lands under its own window key; every other
       // window's standing reading survives (parallel axes), and a plain
       // usage update (no reading) erases nothing.
-      const priorPlan = state.sessionUsage[event.sessionId]?.plan;
+      const priorPlan = state.sessionUsage[event.patchbaySessionId]?.plan;
       const plan =
         event.plan === undefined
           ? priorPlan
@@ -2048,12 +2048,12 @@ export function reduceAgentView(
         ...state,
         sessionUsage: {
           ...state.sessionUsage,
-          [event.sessionId]: { used: event.used, size: event.size, cost: event.cost, plan },
+          [event.patchbaySessionId]: { used: event.used, size: event.size, cost: event.cost, plan },
         },
       };
     }
     case "permissionRequested":
-      return appendBlock(state, event.sessionId, {
+      return appendBlock(state, event.patchbaySessionId, {
         kind: "permission",
         id: event.blockId,
         title: event.title,
@@ -2063,12 +2063,12 @@ export function reduceAgentView(
         resolution: null,
       });
     case "permissionResolved":
-      return patchBlock<PermissionBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<PermissionBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         resolution: { label: event.label, auto: event.auto },
       }));
     case "diffProposed":
-      return appendBlock(state, event.sessionId, {
+      return appendBlock(state, event.patchbaySessionId, {
         kind: "diff",
         id: event.blockId,
         file: event.file,
@@ -2078,12 +2078,12 @@ export function reduceAgentView(
         resolution: null,
       });
     case "diffResolved":
-      return patchBlock<DiffBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<DiffBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         resolution: { accepted: event.accepted, auto: event.auto },
       }));
     case "terminalStarted":
-      return appendBlock(state, event.sessionId, {
+      return appendBlock(state, event.patchbaySessionId, {
         kind: "terminal",
         id: event.blockId,
         command: event.command,
@@ -2092,22 +2092,22 @@ export function reduceAgentView(
         exitCode: null,
       });
     case "terminalOutputAppended":
-      return patchBlock<TerminalBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<TerminalBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         output: b.output + event.chunk,
       }));
     case "terminalExited":
-      return patchBlock<TerminalBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<TerminalBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         running: false,
         exitCode: event.exitCode,
       }));
     case "elicitationRequested": {
-      const { kind: _kind, sessionId, blockId, ...asked } = event;
-      return appendBlock(state, sessionId, { kind: "elicitation", id: blockId, ...asked, resolution: null });
+      const { kind: _kind, patchbaySessionId, blockId, ...asked } = event;
+      return appendBlock(state, patchbaySessionId, { kind: "elicitation", id: blockId, ...asked, resolution: null });
     }
     case "elicitationResolved":
-      return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) => ({
+      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
         resolution: { outcome: event.outcome },
         // An accepted link opened in the browser; the agent's page is now
@@ -2117,7 +2117,7 @@ export function reduceAgentView(
         ...(b.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
       }));
     case "elicitationLinkSettled":
-      return patchBlock<ElicitationBlock>(state, event.sessionId, event.blockId, (b) =>
+      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.blockId, (b) =>
         b.mode === "url" ? { ...b, linkState: event.state } : b,
       );
     case "contextChipAdded":
@@ -2125,7 +2125,7 @@ export function reduceAgentView(
         ...state,
         contextChips: {
           ...state.contextChips,
-          [event.sessionId]: [...(state.contextChips[event.sessionId] ?? []), event.chip],
+          [event.patchbaySessionId]: [...(state.contextChips[event.patchbaySessionId] ?? []), event.chip],
         },
       };
     case "contextChipRemoved":
@@ -2133,7 +2133,7 @@ export function reduceAgentView(
         ...state,
         contextChips: {
           ...state.contextChips,
-          [event.sessionId]: (state.contextChips[event.sessionId] ?? []).filter(
+          [event.patchbaySessionId]: (state.contextChips[event.patchbaySessionId] ?? []).filter(
             (c) => c.id !== event.chipId,
           ),
         },
@@ -2143,7 +2143,7 @@ export function reduceAgentView(
         ...state,
         promptQueue: {
           ...state.promptQueue,
-          [event.sessionId]: [...(state.promptQueue[event.sessionId] ?? []), event.prompt],
+          [event.patchbaySessionId]: [...(state.promptQueue[event.patchbaySessionId] ?? []), event.prompt],
         },
       };
     case "promptUnqueued":
@@ -2151,24 +2151,24 @@ export function reduceAgentView(
         ...state,
         promptQueue: {
           ...state.promptQueue,
-          [event.sessionId]: (state.promptQueue[event.sessionId] ?? []).filter(
+          [event.patchbaySessionId]: (state.promptQueue[event.patchbaySessionId] ?? []).filter(
             (q) => q.id !== event.promptId,
           ),
         },
       };
     case "promptQueueCleared": {
-      const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
+      const { [event.patchbaySessionId]: _q, ...promptQueue } = state.promptQueue;
       return { ...state, promptQueue };
     }
     case "sessionDraftChanged": {
       if (event.draft === "") {
-        const { [event.sessionId]: _d, ...drafts } = state.drafts;
+        const { [event.patchbaySessionId]: _d, ...drafts } = state.drafts;
         return { ...state, drafts };
       }
-      return { ...state, drafts: { ...state.drafts, [event.sessionId]: event.draft } };
+      return { ...state, drafts: { ...state.drafts, [event.patchbaySessionId]: event.draft } };
     }
     case "sessionKnobsSet":
-      return { ...state, sessionKnobs: { ...state.sessionKnobs, [event.sessionId]: event.knobs } };
+      return { ...state, sessionKnobs: { ...state.sessionKnobs, [event.patchbaySessionId]: event.knobs } };
     case "transcriptSeeded":
       // Seeded blocks come from the persisted last-known view, which may
       // predate fields the live block model has since grown — normalize
@@ -2176,7 +2176,7 @@ export function reduceAgentView(
       // meets a partial block.
       return withTranscript(
         state,
-        event.sessionId,
+        event.patchbaySessionId,
         event.blocks.map((b) =>
           b.kind === "toolCall"
             ? {
@@ -2199,7 +2199,7 @@ export function reduceAgentView(
         ),
       );
     case "contextRootsChanged":
-      return { ...state, contextRoots: { ...state.contextRoots, [event.sessionId]: event.roots } };
+      return { ...state, contextRoots: { ...state.contextRoots, [event.patchbaySessionId]: event.roots } };
     case "workspaceRootsChanged":
       return { ...state, workspaceRoots: event.roots };
     case "editorContextChanged":
@@ -2221,7 +2221,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
     (prev.kind === "agentTextDelta" && next.kind === "agentTextDelta") ||
     (prev.kind === "agentThoughtDelta" && next.kind === "agentThoughtDelta")
   ) {
-    if (prev.sessionId === next.sessionId && prev.blockId === next.blockId) {
+    if (prev.patchbaySessionId === next.patchbaySessionId && prev.blockId === next.blockId) {
       return { ...next, text: prev.text + next.text } as AgentViewEvent;
     }
   }
@@ -2230,7 +2230,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   if (
     prev.kind === "userPartAppended" &&
     next.kind === "userPartAppended" &&
-    prev.sessionId === next.sessionId &&
+    prev.patchbaySessionId === next.patchbaySessionId &&
     prev.blockId === next.blockId &&
     prev.part.kind === "text" &&
     next.part.kind === "text"
@@ -2242,7 +2242,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   if (
     prev.kind === "toolCallUpserted" &&
     next.kind === "toolCallUpserted" &&
-    prev.sessionId === next.sessionId &&
+    prev.patchbaySessionId === next.patchbaySessionId &&
     prev.blockId === next.blockId
   ) {
     return {
@@ -2263,7 +2263,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   if (
     prev.kind === "usageReported" &&
     next.kind === "usageReported" &&
-    prev.sessionId === next.sessionId
+    prev.patchbaySessionId === next.patchbaySessionId
   ) {
     if (next.plan === undefined) {
       return prev.plan === undefined ? next : { ...next, plan: prev.plan };
@@ -2285,7 +2285,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   if (
     prev.kind === "terminalOutputAppended" &&
     next.kind === "terminalOutputAppended" &&
-    prev.sessionId === next.sessionId &&
+    prev.patchbaySessionId === next.patchbaySessionId &&
     prev.blockId === next.blockId
   ) {
     return { ...next, chunk: prev.chunk + next.chunk };

@@ -30,7 +30,7 @@ export interface AgentRow {
 export interface AgentViewState {
   agents: AgentRow[];
   sessions: Array<{ id: string; busy: readonly string[] }>;
-  activeSessionId: string | null;
+  activePatchbaySessionId: string | null;
   screen: { pointer: boolean };
   transcripts: Record<string, Block[]>;
   contextRoots: Record<string, readonly string[]>;
@@ -158,7 +158,7 @@ export class Patchbay {
     this.act({ kind: "startChat", patchbayAgentId });
     return waitFor(
       () => {
-        const id = this.view.activeSessionId;
+        const id = this.view.activePatchbaySessionId;
         return id !== null && !known.has(id) ? id : undefined;
       },
       15000,
@@ -168,70 +168,70 @@ export class Patchbay {
 
   /** The words sent from the composer, at once; settles once their turn
    * has ended and left the session's line. */
-  async prompt(sessionId: string, text: string): Promise<void> {
-    const before = this.turnsEnded(sessionId);
-    this.act({ kind: "sendPrompt", sessionId, text });
+  async prompt(patchbaySessionId: string, text: string): Promise<void> {
+    const before = this.turnsEnded(patchbaySessionId);
+    this.act({ kind: "sendPrompt", patchbaySessionId, text });
     await waitFor(
-      () => (this.turnsEnded(sessionId) > before && !this.busy(sessionId).includes("prompt") ? true : undefined),
+      () => (this.turnsEnded(patchbaySessionId) > before && !this.busy(patchbaySessionId).includes("prompt") ? true : undefined),
       15000,
-      `a turn ended in ${sessionId}`,
+      `a turn ended in ${patchbaySessionId}`,
     );
   }
 
-  busy(sessionId: string): readonly string[] {
-    return this.view.sessions.find((s) => s.id === sessionId)?.busy ?? [];
+  busy(patchbaySessionId: string): readonly string[] {
+    return this.view.sessions.find((s) => s.id === patchbaySessionId)?.busy ?? [];
   }
 
-  switchTo(sessionId: string): void {
-    this.act({ kind: "switchSession", sessionId });
+  switchTo(patchbaySessionId: string): void {
+    this.act({ kind: "switchSession", patchbaySessionId });
   }
 
   /** The roots chip's Add, its folder picked in the dialog. */
-  async addRoot(sessionId: string, path: string): Promise<void> {
+  async addRoot(patchbaySessionId: string, path: string): Promise<void> {
     const window = vscode.window as { showOpenDialog: (...args: unknown[]) => Thenable<vscode.Uri[] | undefined> };
     const original = window.showOpenDialog;
     window.showOpenDialog = async () => [vscode.Uri.file(path)];
     try {
-      this.act({ kind: "addContextRoot", sessionId });
-      await waitFor(() => (this.view.contextRoots[sessionId]?.includes(path) ? true : undefined), 8000, `root ${path}`);
+      this.act({ kind: "addContextRoot", patchbaySessionId });
+      await waitFor(() => (this.view.contextRoots[patchbaySessionId]?.includes(path) ? true : undefined), 8000, `root ${path}`);
     } finally {
       window.showOpenDialog = original;
     }
   }
 
   /** The `index`-th block of `kind` in a session's transcript, once there. */
-  block(sessionId: string, kind: string, index = 0): Promise<Block> {
+  block(patchbaySessionId: string, kind: string, index = 0): Promise<Block> {
     return waitFor(
-      () => (this.view.transcripts[sessionId] ?? []).filter((b) => b.kind === kind)[index],
+      () => (this.view.transcripts[patchbaySessionId] ?? []).filter((b) => b.kind === kind)[index],
       15000,
-      `${kind} block ${index} in ${sessionId}`,
+      `${kind} block ${index} in ${patchbaySessionId}`,
     );
   }
 
   /** The session's open card of `kind` — asked, not yet answered — once
    * there. */
-  openCard(sessionId: string, kind: string): Promise<Block> {
+  openCard(patchbaySessionId: string, kind: string): Promise<Block> {
     return waitFor(
-      () => (this.view.transcripts[sessionId] ?? []).find((b) => b.kind === kind && b.resolution === null),
+      () => (this.view.transcripts[patchbaySessionId] ?? []).find((b) => b.kind === kind && b.resolution === null),
       15000,
-      `an open ${kind} card in ${sessionId}`,
+      `an open ${kind} card in ${patchbaySessionId}`,
     );
   }
 
   /** A proposed write answered on its card; settles once the card shows
    * the answer. */
-  async answerDiff(sessionId: string, card: Block, accept: boolean): Promise<void> {
+  async answerDiff(patchbaySessionId: string, card: Block, accept: boolean): Promise<void> {
     this.act({ kind: "resolveDiff", requestId: card.id, accept });
     await waitFor(
-      () => ((this.view.transcripts[sessionId] ?? []).find((b) => b.id === card.id)?.resolution != null ? true : undefined),
+      () => ((this.view.transcripts[patchbaySessionId] ?? []).find((b) => b.id === card.id)?.resolution != null ? true : undefined),
       8000,
       `diff ${card.id} answered`,
     );
   }
 
   /** The text the agent has written in a session so far. */
-  text(sessionId: string): string {
-    return (this.view.transcripts[sessionId] ?? [])
+  text(patchbaySessionId: string): string {
+    return (this.view.transcripts[patchbaySessionId] ?? [])
       .filter((b) => b.kind === "text")
       .map((b) => b.text ?? "")
       .join("");
@@ -268,8 +268,8 @@ export class Patchbay {
     }
   }
 
-  private turnsEnded(sessionId: string): number {
-    return (this.view.transcripts[sessionId] ?? []).filter((b) => b.kind === "turnEnd").length;
+  private turnsEnded(patchbaySessionId: string): number {
+    return (this.view.transcripts[patchbaySessionId] ?? []).filter((b) => b.kind === "turnEnd").length;
   }
 
   private hasMachineRule(pattern: string): boolean {

@@ -2,7 +2,7 @@ import { Queue } from "../../src/orchestrator/queue";
 import { type AttachWork, SessionGates } from "../../src/orchestrator/session-gates";
 import type { SessionsStore } from "../../src/orchestrator/sessions-store";
 import type { AgentViewEvent } from "../../src/shared/protocol";
-import type { PatchbayAgentId } from "../../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../../src/shared/ids";
 
 /** The session gates over a store, built the way the orchestrator builds
  * them: two lines per session, every move of their holdings emitted as the
@@ -13,17 +13,17 @@ export function gatesFor(
   emit: (event: AgentViewEvent) => void,
   opts: {
     idleCloseMs?: number | null;
-    connect?(sessionId: string): void;
+    connect?(patchbaySessionId: PatchbaySessionId): void;
     agentSettled?(patchbayAgentId: PatchbayAgentId): Promise<void>;
   } = {},
 ): SessionGates {
-  const publish = (sessionId: string) => emit({ kind: "sessionBusyChanged", sessionId, busy: gates.busy(sessionId) });
+  const publish = (patchbaySessionId: PatchbaySessionId) => emit({ kind: "sessionBusyChanged", patchbaySessionId, busy: gates.busy(patchbaySessionId) });
   const gates: SessionGates = new SessionGates(
     sessions,
-    new Queue<AttachWork>(publish),
-    new Queue<"prompt">(publish),
+    new Queue<AttachWork, PatchbaySessionId>(publish),
+    new Queue<"prompt", PatchbaySessionId>(publish),
     {
-      connect: (sessionId) => opts.connect?.(sessionId),
+      connect: (patchbaySessionId) => opts.connect?.(patchbaySessionId),
       failed: () => {},
       agentSettled: (patchbayAgentId) => opts.agentSettled?.(patchbayAgentId) ?? Promise.resolve(),
     },

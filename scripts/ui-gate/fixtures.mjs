@@ -156,7 +156,7 @@ export function agentViewState({ live }) {
       { id: "s3", patchbayAgentId: "fake", title: "migrate the schema", busy: ["prompt"], updatedAt: "2026-07-09T09:00:00Z" },
       { id: "s4", patchbayAgentId: "fake", title: "write the release notes", busy: ["prompt"], updatedAt: "2026-07-09T08:00:00Z" },
     ],
-    activeSessionId: "s1",
+    activePatchbaySessionId: "s1",
     chatConnect: null,
     registryAgents: [],
     transcripts: {

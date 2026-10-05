@@ -41,10 +41,10 @@ suite("opportunistic fs/terminal verification", () => {
       assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["terminal"], { declared: true, used: false });
 
-      const sessionId = await pb.newSession(patchbayAgentId);
-      const turnDone = pb.prompt(sessionId, "go");
-      const diff = await pb.openCard(sessionId, "diff");
-      await pb.answerDiff(sessionId, diff, true);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      const turnDone = pb.prompt(patchbaySessionId, "go");
+      const diff = await pb.openCard(patchbaySessionId, "diff");
+      await pb.answerDiff(patchbaySessionId, diff, true);
       await turnDone;
 
       assert.strictEqual(matrix()["fs.readTextFile"].used, true, "read gets used");

@@ -22,6 +22,7 @@ import {
   type ToolCallBlock,
   type ToolCallKind,
 } from "../../../shared/protocol";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
@@ -133,8 +134,8 @@ const FILE_TOUCHING: ReadonlySet<ToolCallKind> = new Set(["edit", "delete", "mov
  * ended: the only time a block can be receiving deltas. A turn still
  * waiting for its session to attach is underway, not live — what lands
  * meanwhile is the replay, history. */
-export function turnLive(state: Pick<AgentViewState, "activeTurn">, sessionId: string): boolean {
-  return state.activeTurn[sessionId] !== undefined;
+export function turnLive(state: Pick<AgentViewState, "activeTurn">, patchbaySessionId: PatchbaySessionId): boolean {
+  return state.activeTurn[patchbaySessionId] !== undefined;
 }
 
 export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): TranscriptView {

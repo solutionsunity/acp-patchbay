@@ -4,10 +4,10 @@
 import { describe, expect, it } from "vitest";
 import type { SessionSummary } from "../src/shared/protocol";
 import { sessionsActiveToday } from "../src/orchestrator/session-stats";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 function row(id: string, updatedAt: string): SessionSummary {
-  return { id, patchbayAgentId: "a" as PatchbayAgentId, title: id, busy: [], updatedAt };
+  return { id: id as PatchbaySessionId, patchbayAgentId: "a" as PatchbayAgentId, title: id, busy: [], updatedAt };
 }
 
 describe("sessionsActiveToday", () => {

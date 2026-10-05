@@ -24,6 +24,12 @@ file is the model they share.
 - **Stores point at each other by id**, and a fact is read through the
   relation, never copied: a session names its agent, an MCP server's reach
   list names agents, a context token names the attach it was minted at.
+- **An id says whose it is.** A row's own id is its `id`; anywhere else one
+  of patchbay's ids is named for its store — `patchbayAgentId`,
+  `patchbaySessionId`, `patchbayMcpServerId` — and has that store's own type
+  (`src/shared/ids.ts`), so one store's id can't stand in for another's, nor
+  a string from elsewhere for one of ours. An id an agent mints keeps ACP's
+  name and the SDK's type — `sessionId`, `toolCallId`: it is the agent's.
 - **Features compose operations across stores** and live in the orchestrator:
   Add saves an agent, connects it and runs the free check; startup connects
   what the window opens with, then returns to the last open session. The
@@ -88,7 +94,7 @@ behind itself; operations compose by calling each other directly.
 one set per store (`agent-gates.ts`, `session-gates.ts`,
 `mcp-server-gates.ts`), each deciding how every such operation meets the
 queue: whether it waits or cuts in, what makes a repeat the same operation,
-what it waits for elsewhere. The orchestrator's handle on each store leaves
+what it waits for elsewhere. The orchestrator's reference to each store leaves
 those operations out, so a door that goes around the gates does not
 typecheck. Saves never meet the gates. **Gates decide policy; a store's
 invariants stay at its one writer** — one turn at a time, never under a
@@ -170,16 +176,17 @@ ends that chat's connect.
 ## Sessions
 
 **Ids are patchbay's.** A session's id is minted by patchbay when the session
-enters — created here, or first named by its agent's `session/list` — and
-kept for the window's life; the views, actions, events, the broker and the
-context tokens use it. The agent's own id for the session is a fact on the
-row: the handle every wire call carries, and the one inbound traffic names the
-session by. Agent and handle together find the one row meant, since an
-agent's ids are unique only per agent; traffic naming a session patchbay
-doesn't hold is answered cancelled or refused at once. A never-prompted
-session its agent must create again keeps its id and gets a new handle. What
-crosses a reload keys on the pair, agent and handle: the session's saved row,
-and the last-open pointer.
+enters — created here, or first named by its agent's `session/list` — and kept
+for the window's life; the views, actions, events, the broker and the context
+tokens use it. Anywhere but its own row it is a `patchbaySessionId`, of its
+own type (`PatchbaySessionId`). The agent's own id for the session is a fact
+on the row under ACP's name, `sessionId`: what every wire call carries, and
+what inbound traffic names the session by. The agent and its `sessionId`
+together — the pair — find the one row meant, since an agent's ids are unique
+only per agent; traffic naming a session patchbay doesn't hold is answered
+cancelled or refused at once. A never-prompted session its agent must create
+again keeps its id and gets a new `sessionId`. What crosses a reload keys on
+the pair: the session's saved row, and the last-open pointer.
 
 **The row.**
 

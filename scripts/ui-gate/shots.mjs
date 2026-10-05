@@ -163,7 +163,7 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] the card header counts the call's own diff ("${headerCount}")`, headerCount === "+3 −1");
   await toolCard.locator(".tool-hd .diff-count").click();
   const opened = await p.evaluate(() => window.__actions.at(-1));
-  check(`[${theme}] the header ± opens that edit's diff`, JSON.stringify(opened) === JSON.stringify({ kind: "openToolCallDiff", sessionId: "s1", toolCallId: "t0", path: "/ws/src/a.ts" }));
+  check(`[${theme}] the header ± opens that edit's diff`, JSON.stringify(opened) === JSON.stringify({ kind: "openToolCallDiff", patchbaySessionId: "s1", toolCallId: "t0", path: "/ws/src/a.ts" }));
   check(`[${theme}] the ± opens, never toggles the card`, (await toolCard.locator(".tool-files").count()) === 0);
   await toolCard.locator(".tool-loc-more").click();
   const fileRows = toolCard.locator(".tool-files > div");
@@ -261,9 +261,9 @@ for (const theme of Object.keys(THEMES)) {
   const planOf = (n) => Array.from({ length: n }, (_, i) => ({ content: `step ${i + 1}`, status: i === 0 ? "in_progress" : "pending", priority: "medium" }));
   await p.click(".readout-strip .chip.plan");
   await p.waitForSelector(".plan-panel", { timeout: 3000 });
-  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", sessionId: "s1", entries }]), planOf(1));
+  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", patchbaySessionId: "s1", entries }]), planOf(1));
   await p.waitForSelector(".readout-strip .chip.plan", { state: "detached", timeout: 3000 });
-  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", sessionId: "s1", entries }]), planOf(3));
+  await p.evaluate((entries) => window.__patch([{ kind: "planUpdated", patchbaySessionId: "s1", entries }]), planOf(3));
   await p.waitForSelector(".readout-strip .chip.plan", { timeout: 3000 });
   await p.waitForTimeout(250);
   check(`[${theme}] a returning plan arrives collapsed`, (await p.$(".plan-panel")) === null);
@@ -295,7 +295,7 @@ for (const theme of Object.keys(THEMES)) {
   // control and no switch reaches it ──
   await p.evaluate(() =>
     window.__patch([
-      { kind: "usageReported", sessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
+      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
     ]),
   );
   // patches land asynchronously (postMessage) — wait for the wanted shape
@@ -376,13 +376,13 @@ for (const theme of Object.keys(THEMES)) {
   await p.evaluate(() =>
     window.__patch([
       {
-        kind: "toolCallUpserted", sessionId: "s1", blockId: "m2", title: "Edit two files", status: "completed", toolKind: "edit",
+        kind: "toolCallUpserted", patchbaySessionId: "s1", blockId: "m2", title: "Edit two files", status: "completed", toolKind: "edit",
         locations: [{ path: "/ws/src/x.ts", line: 3 }],
         diffs: { "/ws/src/x.ts": { additions: 2, deletions: 1 }, "/ws/src/y.ts": { additions: 0, deletions: 4 } },
       },
-      { kind: "agentTextDelta", sessionId: "s1", blockId: "sep1", text: "and one more" },
+      { kind: "agentTextDelta", patchbaySessionId: "s1", blockId: "sep1", text: "and one more" },
       {
-        kind: "toolCallUpserted", sessionId: "s1", blockId: "z0", title: "Touch z", status: "completed", toolKind: "edit",
+        kind: "toolCallUpserted", patchbaySessionId: "s1", blockId: "z0", title: "Touch z", status: "completed", toolKind: "edit",
         locations: [{ path: "/ws/src/z.ts", line: 1 }], diffs: { "/ws/src/z.ts": { additions: 0, deletions: 0 } },
       },
     ]),
@@ -398,7 +398,7 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] each file row carries its own ± (${JSON.stringify(rowCounts)})`, JSON.stringify(rowCounts.map((t) => t.replace(/\s+/g, " "))) === JSON.stringify(["+2 −1", "−4"]));
   await multi.locator(".tool-files .diff-count").nth(1).click();
   const rowOpened = await p.evaluate(() => window.__actions.at(-1));
-  check(`[${theme}] a row's ± opens that file's diff`, JSON.stringify(rowOpened) === JSON.stringify({ kind: "openToolCallDiff", sessionId: "s1", toolCallId: "m2", path: "/ws/src/y.ts" }));
+  check(`[${theme}] a row's ± opens that file's diff`, JSON.stringify(rowOpened) === JSON.stringify({ kind: "openToolCallDiff", patchbaySessionId: "s1", toolCallId: "m2", path: "/ws/src/y.ts" }));
   await p.mouse.move(0, 0);
   await multi.screenshot({ path: `${OUT}/tool-card-multi-diff-${theme}.png` });
   const zero = p.locator(".card", { hasText: "Touch z" });
@@ -465,7 +465,7 @@ for (const theme of Object.keys(THEMES)) {
   const drafts = await p.evaluate(() =>
     window.__actions
       .filter((a) => a.kind === "setSessionDraft")
-      .map((a) => ({ id: a.sessionId, newWords: a.draft.includes("new words"), oldWords: a.draft.includes("old words") })),
+      .map((a) => ({ id: a.patchbaySessionId, newWords: a.draft.includes("new words"), oldWords: a.draft.includes("old words") })),
   );
   check(`[${theme}] previous session's draft keeps only its own words`, drafts.some((d) => d.id === "s1") && drafts.every((d) => d.id === "s1" && d.oldWords && !d.newWords));
 

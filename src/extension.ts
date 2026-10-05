@@ -11,6 +11,7 @@ import {
   type SurfaceReporter,
 } from "./orchestrator/webview-host";
 import { waitingCount } from "./shared/attention";
+import type { PatchbaySessionId } from "./shared/ids";
 
 export interface ExtensionInternal {
   orchestrator: Orchestrator;
@@ -45,7 +46,7 @@ export function activate(context: vscode.ExtensionContext): {
   const reportSurface: SurfaceReporter = (surface, visible, pinned) =>
     orchestrator.noteSurface(surface, visible, pinned);
   const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface);
-  orchestrator.pinnedSessions = () => agentPanelHost.pinnedSessionIds();
+  orchestrator.pinnedSessions = () => agentPanelHost.pinnedPatchbaySessionIds();
   const agentViewProvider = new AgentViewProvider(context.extensionUri, orchestrator.agentView, reportSurface);
   const unsubscribeViewSync = orchestrator.agentView.onChange(() => {
     agentPanelHost.syncSessions(orchestrator.agentView.current.sessions);
@@ -65,9 +66,9 @@ export function activate(context: vscode.ExtensionContext): {
       if (!orchestrator.preferences.get().detachWindows) return;
       void agentPanelHost.openMain();
     }),
-    vscode.commands.registerCommand("acpPatchbay.detachSession", (sessionId: string) => {
+    vscode.commands.registerCommand("acpPatchbay.detachSession", (patchbaySessionId: PatchbaySessionId) => {
       if (!orchestrator.preferences.get().detachWindows) return;
-      const session = orchestrator.agentView.current.sessions.find((s) => s.id === sessionId);
+      const session = orchestrator.agentView.current.sessions.find((s) => s.id === patchbaySessionId);
       if (session === undefined) return;
       void agentPanelHost.openPinned(session.id, session.title);
     }),

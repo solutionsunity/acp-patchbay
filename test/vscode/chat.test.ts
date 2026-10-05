@@ -25,18 +25,18 @@ suite("chat vertical slice", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
 
       // mount the real webview and let it hydrate at the session-created snapshot
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
       await pb.agentView.waitForApplied(pb.agentView.revision);
 
       // send without waiting for the end — we want to interrupt mid-stream
-      const turnDone = pb.prompt(sessionId, "go");
+      const turnDone = pb.prompt(patchbaySessionId, "go");
 
       // wait for the first chunk to land, then kill the webview mid-turn
-      await waitFor(() => (pb.text(sessionId).length > 0 ? true : undefined));
-      assert.ok(pb.busy(sessionId).includes("prompt"), "turn should still be underway");
+      await waitFor(() => (pb.text(patchbaySessionId).length > 0 ? true : undefined));
+      assert.ok(pb.busy(patchbaySessionId).includes("prompt"), "turn should still be underway");
 
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
       await waitFor(() => (pb.view.screen.pointer ? undefined : true));
@@ -51,8 +51,8 @@ suite("chat vertical slice", () => {
 
       // let the turn finish, then verify the complete, correctly-ordered transcript
       await turnDone;
-      assert.strictEqual(pb.text(sessionId), "part one part two part three");
-      assert.deepStrictEqual(pb.busy(sessionId), []);
+      assert.strictEqual(pb.text(patchbaySessionId), "part one part two part three");
+      assert.deepStrictEqual(pb.busy(patchbaySessionId), []);
 
       // and the final state reached the webview too
       await pb.agentView.waitForApplied(pb.agentView.revision);

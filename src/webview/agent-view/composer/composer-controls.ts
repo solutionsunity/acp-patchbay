@@ -33,7 +33,7 @@ export interface ComposerControls {
  * is locked, saying the chat is starting, so nothing typed can land in the
  * session that was open before the click. */
 export function newChatInFlight(connect: ChatConnectView | null | undefined): boolean {
-  return connect !== null && connect !== undefined && connect.forSessionId === undefined;
+  return connect !== null && connect !== undefined && connect.forPatchbaySessionId === undefined;
 }
 
 export function composerControls(

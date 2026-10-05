@@ -23,7 +23,7 @@ import type { QueuedPrompt, SessionWork } from "../shared/protocol";
 import { unlessAborted } from "./abort";
 import { Cancelled, type Queue } from "./queue";
 import type { SessionsStore } from "./sessions-store";
-import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 /** The attachment line's work — everything a session's lines hold but its
  * turn. */
@@ -39,7 +39,7 @@ export interface SessionGateAsks {
    * it — the orchestrator's agent lifecycle, with its in-pane connect
    * states; a running agent makes it a no-op. When the agent comes up, its
    * sessions on view attach (`reattachViewed`). */
-  connect(sessionId: string): void;
+  connect(patchbaySessionId: PatchbaySessionId): void;
   /** A failure no door hears — a background attach, a held prompt's turn,
    * an idle release — for the log. */
   failed(context: string, err: unknown): void;
@@ -56,8 +56,8 @@ export class SessionGates {
 
   constructor(
     private readonly sessions: SessionsStore,
-    private readonly attachLine: Queue<AttachWork>,
-    private readonly turnLine: Queue<"prompt">,
+    private readonly attachLine: Queue<AttachWork, PatchbaySessionId>,
+    private readonly turnLine: Queue<"prompt", PatchbaySessionId>,
     private readonly asks: SessionGateAsks,
     /** `idleCloseMs`: attached sessions idle past this are released
      * (session/close) by the reaper — null disables it entirely. A getter
@@ -81,8 +81,8 @@ export class SessionGates {
   }
 
   /** What the session's lines hold — its busy state for the views. */
-  busy(sessionId: string): SessionWork[] {
-    return [...this.attachLine.held(sessionId), ...this.turnLine.held(sessionId)];
+  busy(patchbaySessionId: PatchbaySessionId): SessionWork[] {
+    return [...this.attachLine.held(patchbaySessionId), ...this.turnLine.held(patchbaySessionId)];
   }
 
   /** The user opened a session — drawer click, palette pick, "Open in new
@@ -90,34 +90,34 @@ export class SessionGates {
    * the pointer moves (unless the session is pinned to its own window,
    * which renders it without the pointer), the session attaches, and an
    * off agent is asked for. */
-  open(sessionId: string, opts: { pin?: boolean } = {}): void {
-    if (opts.pin !== true) this.sessions.point(sessionId);
-    void this.attachToView(sessionId);
-    this.asks.connect(sessionId);
+  open(patchbaySessionId: PatchbaySessionId, opts: { pin?: boolean } = {}): void {
+    if (opts.pin !== true) this.sessions.point(patchbaySessionId);
+    void this.attachToView(patchbaySessionId);
+    this.asks.connect(patchbaySessionId);
   }
 
   /** Points the view at a session and attaches it — no connect: the two
    * entrances that must never spawn a process (the startup restore, "+"
    * focusing a live never-prompted session) come here. */
-  activate(sessionId: string): void {
-    this.sessions.point(sessionId);
-    void this.attachToView(sessionId);
+  activate(patchbaySessionId: PatchbaySessionId): void {
+    this.sessions.point(patchbaySessionId);
+    void this.attachToView(patchbaySessionId);
   }
 
   /** An agent came up: each of its sessions on view sat blank, with nothing
    * to attach to — each attaches now (one already attached costs nothing).
    * Settles once they all have. */
   async reattachViewed(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    await Promise.all(this.sessions.viewed(patchbayAgentId).map((sessionId) => this.attachToView(sessionId)));
+    await Promise.all(this.sessions.viewed(patchbayAgentId).map((patchbaySessionId) => this.attachToView(patchbaySessionId)));
   }
 
   /** "New session" for an agent whose never-prompted session lost its
    * connection: the row is still the new session — attached again (the
    * zero-turn rung mints it again, carrying what the user staged) and
    * pointed at. Throws, so the caller's connect pane can say why. */
-  async revive(sessionId: string): Promise<void> {
-    if (!(await this.attach(sessionId))) throw new Error(`session ${sessionId} could not be attached`);
-    this.sessions.point(sessionId);
+  async revive(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    if (!(await this.attach(patchbaySessionId))) throw new Error(`session ${patchbaySessionId} could not be attached`);
+    this.sessions.point(patchbaySessionId);
   }
 
   /** A prompt: a turn now, or its words held. The turn-start door — the
@@ -129,88 +129,88 @@ export class SessionGates {
    * lock would fabricate a user message the wire is already witnessed to
    * refuse); words already held ahead keep their order — this prompt joins
    * the back. */
-  prompt(sessionId: string, words: Omit<QueuedPrompt, "id">): Promise<void> {
-    const running = this.turnLine.held(sessionId).length > 0;
-    const locked = this.sessions.locked(sessionId);
-    if (running || locked || this.sessions.hasHeld(sessionId)) {
-      this.sessions.hold(sessionId, words);
+  prompt(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id">): Promise<void> {
+    const running = this.turnLine.held(patchbaySessionId).length > 0;
+    const locked = this.sessions.locked(patchbaySessionId);
+    if (running || locked || this.sessions.hasHeld(patchbaySessionId)) {
+      this.sessions.hold(patchbaySessionId, words);
       // Held only by order — words whose release died with an earlier
       // window: the front goes now; this prompt fires after them, one per
       // turn end.
-      if (!running && !locked) this.drain(sessionId);
+      if (!running && !locked) this.drain(patchbaySessionId);
       return Promise.resolve();
     }
-    return this.turn(sessionId, words);
+    return this.turn(patchbaySessionId, words);
   }
 
   /** Stop: the session's turn ends, and its held words go with it — Stop
    * means stop; draining them after a deliberate stop would restart what
    * the user just ended. Words asked after the Stop go once the stopped
    * turn has wound down. */
-  stop(sessionId: string): Promise<void> {
-    this.sessions.clearHeld(sessionId);
-    return this.turnLine.end(sessionId, "stop");
+  stop(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    this.sessions.clearHeld(patchbaySessionId);
+    return this.turnLine.end(patchbaySessionId, "stop");
   }
 
   /** Reload: the running turn ends — its words kept, if they never reached
    * the wire — and the session is read again from its agent; held words go
    * once it is back. A repeat joins. */
-  async reload(sessionId: string): Promise<void> {
+  async reload(patchbaySessionId: PatchbaySessionId): Promise<void> {
     await this.attachLine.run(
-      sessionId,
+      patchbaySessionId,
       "reload",
       async (signal) => {
-        await this.turnLine.end(sessionId, "reload");
+        await this.turnLine.end(patchbaySessionId, "reload");
         // The re-attach sends the whole root list: a change the turn held
         // back goes with it.
-        this.rootsWaiting.delete(sessionId);
-        await this.sessions.reload(sessionId, signal);
+        this.rootsWaiting.delete(patchbaySessionId);
+        await this.sessions.reload(patchbaySessionId, signal);
       },
       "reload",
-      this.agentWork(sessionId),
+      this.agentWork(patchbaySessionId),
     );
-    this.drain(sessionId);
+    this.drain(patchbaySessionId);
   }
 
   /** Close: everything the session's lines hold ends — its turn told to
    * stop, its attach work dropped — then the session leaves for good. It
    * waits on nothing its agent does: a hung restart never keeps a session
    * open. */
-  close(sessionId: string): Promise<void> {
-    this.rootsWaiting.delete(sessionId);
-    return this.attachLine.cut(sessionId, "close", async () => {
-      await this.turnLine.end(sessionId, "close");
-      await this.sessions.close(sessionId);
+  close(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    this.rootsWaiting.delete(patchbaySessionId);
+    return this.attachLine.cut(patchbaySessionId, "close", async () => {
+      await this.turnLine.end(patchbaySessionId, "close");
+      await this.sessions.close(patchbaySessionId);
     });
   }
 
   /** A knob set rides the attachment, not the turn: it waits for an
    * attach in flight — never for a turn. A repeat of the same set joins. */
-  setKnob(sessionId: string, knobId: string, value: string | boolean): Promise<void> {
+  setKnob(patchbaySessionId: PatchbaySessionId, knobId: string, value: string | boolean): Promise<void> {
     return this.attachLine.run(
-      sessionId,
+      patchbaySessionId,
       "knob",
-      () => this.sessions.setKnob(sessionId, knobId, value),
+      () => this.sessions.setKnob(patchbaySessionId, knobId, value),
       `knob:${knobId}:${String(value)}`,
-      this.agentWork(sessionId),
+      this.agentWork(patchbaySessionId),
     );
   }
 
-  async addRoot(sessionId: string, path: string): Promise<void> {
-    if (this.sessions.addRoot(sessionId, path)) await this.reapplyRoots(sessionId);
+  async addRoot(patchbaySessionId: PatchbaySessionId, path: string): Promise<void> {
+    if (this.sessions.addRoot(patchbaySessionId, path)) await this.reapplyRoots(patchbaySessionId);
   }
 
-  async removeRoot(sessionId: string, path: string): Promise<void> {
-    if (this.sessions.removeRoot(sessionId, path)) await this.reapplyRoots(sessionId);
+  async removeRoot(patchbaySessionId: PatchbaySessionId, path: string): Promise<void> {
+    if (this.sessions.removeRoot(patchbaySessionId, path)) await this.reapplyRoots(patchbaySessionId);
   }
 
   /** A workspace folder came or went: every attached session's list moved
    * — its servers told, the agent's copy re-applied, the same rung a
    * user-added root takes. */
   async reapplyWorkspaceRoots(): Promise<void> {
-    for (const sessionId of this.sessions.attached()) {
-      this.sessions.tellRoots(sessionId);
-      await this.reapplyRoots(sessionId);
+    for (const patchbaySessionId of this.sessions.attached()) {
+      this.sessions.tellRoots(patchbaySessionId);
+      await this.reapplyRoots(patchbaySessionId);
     }
   }
 
@@ -218,7 +218,7 @@ export class SessionGates {
    * go. An idle session has no coming turn end to release them — without
    * this, they would wait forever behind a login that already happened. */
   lockCleared(patchbayAgentId: PatchbayAgentId): void {
-    for (const sessionId of this.sessions.ofAgent(patchbayAgentId)) this.drain(sessionId);
+    for (const patchbaySessionId of this.sessions.ofAgent(patchbayAgentId)) this.drain(patchbaySessionId);
   }
 
   /** Ends every session's work — erase, the window's end. */
@@ -230,25 +230,25 @@ export class SessionGates {
   /** An open's attach: held words go once the session is attached — opening
    * is their release. A failure is logged: a blank pane and a working
    * Reload are the honest degraded state, never an error at a click. */
-  private attachToView(sessionId: string): Promise<void> {
-    return this.attach(sessionId).then(
+  private attachToView(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    return this.attach(patchbaySessionId).then(
       (attached) => {
-        if (attached) this.drain(sessionId);
+        if (attached) this.drain(patchbaySessionId);
       },
-      (err: unknown) => this.asks.failed(`attach ${sessionId}`, err),
+      (err: unknown) => this.asks.failed(`attach ${patchbaySessionId}`, err),
     );
   }
 
   /** The session attached, if it can be — in the attachment line, an open
    * already there joined; at once when it already is and nothing waits. */
-  private attach(sessionId: string): Promise<boolean> {
-    if (this.sessions.isLive(sessionId) && this.attachLine.held(sessionId).length === 0) return Promise.resolve(true);
+  private attach(patchbaySessionId: PatchbaySessionId): Promise<boolean> {
+    if (this.sessions.isLive(patchbaySessionId) && this.attachLine.held(patchbaySessionId).length === 0) return Promise.resolve(true);
     return this.attachLine.run(
-      sessionId,
+      patchbaySessionId,
       "open",
-      (signal) => this.sessions.hydrate(sessionId, signal),
+      (signal) => this.sessions.hydrate(patchbaySessionId, signal),
       "open",
-      this.agentWork(sessionId),
+      this.agentWork(patchbaySessionId),
     );
   }
 
@@ -260,40 +260,40 @@ export class SessionGates {
    * the words (firing them into whatever just failed would retry a
    * deterministic rejection forever), a stopped one releases only what was
    * asked after the Stop, and a reload or a close takes care of its own. */
-  private async turn(sessionId: string, words: Omit<QueuedPrompt, "id"> & { id?: string }): Promise<void> {
+  private async turn(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id"> & { id?: string }): Promise<void> {
     let spent = false;
     try {
       await this.turnLine.run(
-        sessionId,
+        patchbaySessionId,
         "prompt",
         async (signal) => {
-          await unlessAborted(this.attach(sessionId), signal);
-          await this.sessions.runTurn(sessionId, words, signal, () => (spent = true));
+          await unlessAborted(this.attach(patchbaySessionId), signal);
+          await this.sessions.runTurn(patchbaySessionId, words, signal, () => (spent = true));
         },
         // never joined: each prompt is its own turn
         `prompt:${words.id ?? randomUUID()}`,
-        Promise.all([this.attachLine.settled(sessionId), this.agentWork(sessionId)]),
+        Promise.all([this.attachLine.settled(patchbaySessionId), this.agentWork(patchbaySessionId)]),
       );
     } catch (err) {
       const by = err instanceof Cancelled ? err.by : null;
-      if (!spent && (by === null || by === "reload")) this.sessions.reHold(sessionId, words);
+      if (!spent && (by === null || by === "reload")) this.sessions.reHold(patchbaySessionId, words);
       // A cut outcome settles at once, ahead of the turn winding down.
-      if (by === null) await this.afterTurn(sessionId, false);
-      else if (by === "stop") void this.afterTurn(sessionId, true);
+      if (by === null) await this.afterTurn(patchbaySessionId, false);
+      else if (by === "stop") void this.afterTurn(patchbaySessionId, true);
       throw err;
     }
-    await this.afterTurn(sessionId, true);
+    await this.afterTurn(patchbaySessionId, true);
   }
 
   /** What waited on a turn, once it has left the line: a root change made
    * under it first (the next prompt runs on the new list), then — `drain`
    * — the next held words. */
-  private async afterTurn(sessionId: string, drain: boolean): Promise<void> {
-    await this.turnLine.settled(sessionId);
-    if (this.rootsWaiting.delete(sessionId)) {
-      await this.reapplyRoots(sessionId).catch((err: unknown) => this.asks.failed(`roots ${sessionId}`, err));
+  private async afterTurn(patchbaySessionId: PatchbaySessionId, drain: boolean): Promise<void> {
+    await this.turnLine.settled(patchbaySessionId);
+    if (this.rootsWaiting.delete(patchbaySessionId)) {
+      await this.reapplyRoots(patchbaySessionId).catch((err: unknown) => this.asks.failed(`roots ${patchbaySessionId}`, err));
     }
-    if (drain) this.drain(sessionId);
+    if (drain) this.drain(patchbaySessionId);
   }
 
   /** The next held words start their turn, if the session can start one —
@@ -303,36 +303,36 @@ export class SessionGates {
    * turn that ended in an error holds them too (nothing calls this after
    * one) — auto-firing into whatever just failed would retry a
    * deterministic rejection forever. */
-  private drain(sessionId: string): void {
-    if (this.turnLine.held(sessionId).length > 0) return;
-    if (!this.sessions.turnAllowed(sessionId)) return;
-    const next = this.sessions.takeHeld(sessionId);
+  private drain(patchbaySessionId: PatchbaySessionId): void {
+    if (this.turnLine.held(patchbaySessionId).length > 0) return;
+    if (!this.sessions.turnAllowed(patchbaySessionId)) return;
+    const next = this.sessions.takeHeld(patchbaySessionId);
     if (next === undefined) return;
-    this.turn(sessionId, next).catch((err: unknown) => this.asks.failed(`held prompt ${sessionId}`, err));
+    this.turn(patchbaySessionId, next).catch((err: unknown) => this.asks.failed(`held prompt ${patchbaySessionId}`, err));
   }
 
   /** The agent's copy of a session's root list, re-applied in the
    * attachment line — or, under a turn, once that turn has ended. Each
    * change its own: one still waiting reads the list as it stands when it
    * runs, but one already running read it before the change. */
-  private reapplyRoots(sessionId: string): Promise<void> {
-    if (this.turnLine.held(sessionId).length > 0) {
-      this.rootsWaiting.add(sessionId);
+  private reapplyRoots(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    if (this.turnLine.held(patchbaySessionId).length > 0) {
+      this.rootsWaiting.add(patchbaySessionId);
       return Promise.resolve();
     }
     return this.attachLine.run(
-      sessionId,
+      patchbaySessionId,
       "roots",
-      (signal) => this.sessions.reapplyRoots(sessionId, signal),
+      (signal) => this.sessions.reapplyRoots(patchbaySessionId, signal),
       `roots:${randomUUID()}`,
-      this.agentWork(sessionId),
+      this.agentWork(patchbaySessionId),
     );
   }
 
   /** Settles once the work its agent's row holds right now has left it —
    * what a session's work enters behind. */
-  private agentWork(sessionId: string): Promise<void> | undefined {
-    const patchbayAgentId = this.sessions.agentFor(sessionId);
+  private agentWork(patchbaySessionId: PatchbaySessionId): Promise<void> | undefined {
+    const patchbayAgentId = this.sessions.agentFor(patchbaySessionId);
     return patchbayAgentId === undefined ? undefined : this.asks.agentSettled(patchbayAgentId);
   }
 
@@ -342,11 +342,11 @@ export class SessionGates {
   private reap(): void {
     const idleCloseMs = this.idleCloseMs();
     if (idleCloseMs === null) return;
-    for (const sessionId of this.sessions.idle(idleCloseMs)) {
-      if (this.busy(sessionId).length > 0) continue;
+    for (const patchbaySessionId of this.sessions.idle(idleCloseMs)) {
+      if (this.busy(patchbaySessionId).length > 0) continue;
       this.attachLine
-        .run(sessionId, "release", () => this.sessions.release(sessionId, "idle"), "release", this.agentWork(sessionId))
-        .catch((err: unknown) => this.asks.failed(`release ${sessionId}`, err));
+        .run(patchbaySessionId, "release", () => this.sessions.release(patchbaySessionId, "idle"), "release", this.agentWork(patchbaySessionId))
+        .catch((err: unknown) => this.asks.failed(`release ${patchbaySessionId}`, err));
     }
   }
 }

@@ -46,7 +46,7 @@ suite("IPC admission (issue #72)", () => {
       { method: "getMcpServerToken", params: { patchbayMcpServerId: "github" } },
     ];
     for (const [i, request] of requests.entries()) {
-      const answer = await ask(orchestrator.editorStateHost.socketPath, { id: i + 1, sessionId: "ctx-1", ...request });
+      const answer = await ask(orchestrator.editorStateHost.socketPath, { id: i + 1, patchbaySessionId: "ctx-1", ...request });
       assert.strictEqual(answer.result, undefined, `${request.method} answered a forged token`);
       assert.match(answer.error ?? "", /unknown session token/, request.method);
     }
@@ -62,9 +62,9 @@ suite("IPC admission (issue #72)", () => {
         }),
       );
       await pb.connect(patchbayAgentId);
-      const sessionId = await pb.newSession(patchbayAgentId);
-      await pb.prompt(sessionId, "go");
-      const text = await waitFor(() => pb.text(sessionId) || undefined);
+      const patchbaySessionId = await pb.newSession(patchbayAgentId);
+      await pb.prompt(patchbaySessionId, "go");
+      const text = await waitFor(() => pb.text(patchbaySessionId) || undefined);
       assert.ok(!text.startsWith("mcp: rejected"), text);
       assert.ok(Array.isArray(JSON.parse(text)), `open editors answered as a list: ${text}`);
     } finally {

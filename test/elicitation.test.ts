@@ -295,10 +295,10 @@ function wireHarness() {
       if (reading.kind !== "ask") return { action: "decline" };
       const { message, ask, elicitationId } = reading;
       // the session the agent names its own way, as patchbay holds it
-      const sessionId = sessions.rowFor(patchbayAgentId, reading.sessionId);
-      if (sessionId === undefined) return { action: "cancel" };
+      const patchbaySessionId = sessions.rowFor(patchbayAgentId, reading.sessionId);
+      if (patchbaySessionId === undefined) return { action: "cancel" };
       const answer = await broker.askElicitation(
-        sessionId,
+        patchbaySessionId,
         { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
         signal,
       );
@@ -350,11 +350,11 @@ describe("elicitation on the wire", () => {
         "e1" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
+    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
 
-    const card = elicitationCard(h.state().transcripts[sessionId])!;
+    const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(card.kind === "elicitation" && card.message).toBe("Which database?");
     expect(card.kind === "elicitation" && card.mode === "form" && card.fields).toEqual([
       { name: "db", type: "select", required: true, options: [{ value: "prod", label: "Production" }] },
@@ -362,9 +362,9 @@ describe("elicitation on the wire", () => {
     h.broker.resolveElicitation(card.id, { action: "accept", content: { db: "prod" } });
     await turn;
 
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe('elicitation: accept {"db":"prod"}');
-    const resolved = elicitationCard(h.state().transcripts[sessionId])!;
+    const resolved = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(resolved.kind === "elicitation" && resolved.resolution).toEqual({ outcome: "accepted" });
     await h.pool.stop("e1" as PatchbayAgentId);
   });
@@ -372,12 +372,12 @@ describe("elicitation on the wire", () => {
   it("a declined question reaches the agent as a decline, not as silence", async () => {
     const h = wireHarness();
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
-    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "decline" });
+    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
+    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "decline" });
     await turn;
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: decline null");
     await h.pool.stop("e2" as PatchbayAgentId);
   });
@@ -387,13 +387,13 @@ describe("elicitation on the wire", () => {
     // The fake agent refuses to ask when the client declared nothing — the
     // spec's own rule. Its answer here proves the declaration went out.
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
-    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "cancel" });
+    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
+    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "cancel" });
     await turn;
     expect(
-      h.state().transcripts[sessionId]!.some(
+      h.state().transcripts[patchbaySessionId]!.some(
         (b) => b.kind === "text" && b.text.includes("client declares no form mode"),
       ),
     ).toBe(false);
@@ -412,21 +412,21 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u1" as PatchbayAgentId, "Fake Agent", dir);
-    const turn = h.gates.prompt(sessionId, { text: "go" });
-    await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
+    const patchbaySessionId = await h.sessions.createSession("u1" as PatchbayAgentId, "Fake Agent", dir);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
 
-    const card = elicitationCard(h.state().transcripts[sessionId])!;
+    const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(card.kind === "elicitation" && card.mode === "url" && card.link.href).toBe(SIGN_IN);
     expect(h.opened).toEqual([]); // shown, never fetched or opened before consent
     h.broker.resolveElicitation(card.id, { action: "accept", content: {} });
     expect(h.opened).toEqual([SIGN_IN]);
     await turn;
 
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: accept null");
     await waitFor(() => {
-      const settled = elicitationCard(h.state().transcripts[sessionId]);
+      const settled = elicitationCard(h.state().transcripts[patchbaySessionId]);
       return settled?.kind === "elicitation" && settled.linkState === "completed";
     });
     // A completed link no longer re-opens.
@@ -440,10 +440,10 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u2" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("u2" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    const card = elicitationCard(h.state().transcripts[sessionId])!;
+    const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(card.kind === "elicitation" && card.linkState).toBe("completed");
     expect(card.resolution).toEqual({ outcome: "completed" });
     expect(h.opened).toEqual([]);
@@ -455,13 +455,13 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u3" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "go" });
+    const patchbaySessionId = await h.sessions.createSession("u3" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
 
-    const card = elicitationCard(h.state().transcripts[sessionId])!;
+    const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(card.resolution).toEqual({ outcome: "withdrawn" });
     expect(card.kind === "elicitation" && card.linkState).toBeFalsy();
-    const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
+    const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: withdrawn -32800");
     // the user's late click is a no-op: nothing opens for a withdrawn question
     h.broker.resolveElicitation(card.id, { action: "accept", content: {} });

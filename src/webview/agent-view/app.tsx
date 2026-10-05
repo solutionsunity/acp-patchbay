@@ -23,24 +23,25 @@ import { QueueBand } from "./queue-band";
 import { ReadoutStrip } from "./readout-strip";
 import { SessionRow } from "./session-row";
 import { Button } from "@/components/ui/button";
+import type { PatchbaySessionId } from "../../shared/ids";
 
 type Drawer = "agents" | "sessions" | null;
 
 export function App({
   state,
-  pinnedSessionId,
+  pinnedPatchbaySessionId,
 }: {
   state: AgentViewState;
   /** Detached session panel: render exactly this session, ignore the shared
    * active-session pointer, and drop the shell furniture (header, drawers,
    * new-chat) — those belong to the full view. */
-  pinnedSessionId?: string;
+  pinnedPatchbaySessionId?: PatchbaySessionId;
 }) {
   const send = useActions();
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [toast, setToast] = useState<{ msg: string; kind: "info" | "warning" } | null>(null);
 
-  const pinned = pinnedSessionId !== undefined;
+  const pinned = pinnedPatchbaySessionId !== undefined;
   // A new chat in flight leaves no session active: the pane is the connect
   // state and the composer locks with it — nothing typed can land in the
   // session that was open before the click. The agent is the one being
@@ -48,7 +49,7 @@ export function App({
   const incoming = !pinned && newChatInFlight(state.chatConnect);
   const active = incoming
     ? null
-    : (state.sessions.find((s) => s.id === (pinned ? pinnedSessionId : state.activeSessionId)) ??
+    : (state.sessions.find((s) => s.id === (pinned ? pinnedPatchbaySessionId : state.activePatchbaySessionId)) ??
       null);
   const activePatchbayAgentId = active?.patchbayAgentId ?? (incoming ? state.chatConnect?.patchbayAgentId : undefined);
   const activeAgent = state.agents.find((a) => a.id === activePatchbayAgentId) ?? null;
@@ -161,7 +162,7 @@ export function App({
       )}
       {active !== null && (
         <QueueBand
-          sessionId={active.id}
+          patchbaySessionId={active.id}
           queued={state.promptQueue[active.id] ?? []}
           composerEmpty={(state.drafts[active.id] ?? "") === ""}
         />
@@ -199,7 +200,7 @@ export function App({
         <SessionsDrawer
           sessions={state.sessions}
           agents={state.agents}
-          activeSessionId={state.activeSessionId}
+          activePatchbaySessionId={state.activePatchbaySessionId}
           markOf={(s) => sessionMark(state, s)}
           detach={detach}
           onNew={newChat}

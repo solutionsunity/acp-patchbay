@@ -322,10 +322,10 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e1" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "any open issues?" });
+    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && text.text).toBe("issue #1: fix the thing");
     expect(remote.authHeadersSeen).toContain("Bearer gh-token-1");
 
@@ -354,10 +354,10 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e2" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "any open issues?" });
+    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && text.text).toBe("issue #1: fix the thing");
     // the stale token was tried and rejected at least once, and every
     // request eventually got through on the fresh one — including the
@@ -388,17 +388,17 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
       args: [BRIDGE],
       env: [
         { name: "ACP_PATCHBAY_IPC", value: host.socketPath },
-        { name: "ACP_PATCHBAY_SESSION_ID", value: "ctx-1" },
+        { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: "ctx-1" },
         { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: "fs-aware" },
         { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: remote.url },
       ],
     };
     const h = harness([bridgeEntry]);
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_roots" }] }, "e3" as PatchbayAgentId));
-    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
-    await h.gates.prompt(sessionId, { text: "what can you see?" });
+    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
+    await h.gates.prompt(patchbaySessionId, { text: "what can you see?" });
 
-    const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
+    const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({
       roots: [
         { uri: "file:///repo/frontend", name: "frontend" },
@@ -408,8 +408,8 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     // declared on top of the agent's own (empty) capabilities
     expect(remote.clientCapabilities).toEqual({ roots: { listChanged: true } });
     // read for the session the bridge was spawned with, and subscribed
-    expect(host.requests.some((r) => r.method === "getRoots" && r.sessionId === "ctx-1")).toBe(true);
-    expect(host.requests.some((r) => r.method === "watchRoots" && r.sessionId === "ctx-1")).toBe(true);
+    expect(host.requests.some((r) => r.method === "getRoots" && r.contextToken === "ctx-1")).toBe(true);
+    expect(host.requests.some((r) => r.method === "watchRoots" && r.contextToken === "ctx-1")).toBe(true);
 
     await h.pool.stop("e3" as PatchbayAgentId);
     host.close();
@@ -425,7 +425,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
       env: {
         ...process.env,
         ACP_PATCHBAY_IPC: host.socketPath,
-        ACP_PATCHBAY_SESSION_ID: "ctx-2",
+        ACP_PATCHBAY_CONTEXT_TOKEN: "ctx-2",
         ACP_PATCHBAY_MCP_SERVER_ID: "fs-aware",
         ACP_PATCHBAY_MCP_SERVER_URL: remote.url,
       },

@@ -51,6 +51,7 @@ import {
   CommandNode,
   MentionNode,
 } from "./nodes";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 interface Trigger {
   kind: "slash" | "mention";
@@ -63,7 +64,7 @@ export interface PromptEditorProps {
   placeholder: string;
   /** The session this editor currently serves — "" when none. Switching
    * saves the outgoing session's draft and loads the incoming one's. */
-  sessionId: string;
+  patchbaySessionId: PatchbaySessionId;
   /** The durable draft copy (state.drafts). Read ONLY at session switch or
    * mount — the editor owns the live buffer, so patch echoes of our own
    * debounced saves never fight the keyboard. */
@@ -177,7 +178,7 @@ function EditorCore(props: PromptEditorProps) {
   // the incoming draft (those updates are ours, not the user's), else the
   // session the buffer belongs to — which is what the debounced save
   // stamps, so a save can never land on the wrong session.
-  const loadedFor = useRef<string | null>(null);
+  const loadedFor = useRef<PatchbaySessionId | null>(null);
   const saveTimer = useRef<number | null>(null);
   const serialize = () =>
     editor.getEditorState().read(() => $getRoot().getTextContent().trim() === "")
@@ -187,7 +188,7 @@ function EditorCore(props: PromptEditorProps) {
    * to — a no-op while no session is bound. */
   const saveDraft = (draft: string) => {
     if (loadedFor.current !== null && loadedFor.current !== "") {
-      send({ kind: "setSessionDraft", sessionId: loadedFor.current, draft });
+      send({ kind: "setSessionDraft", patchbaySessionId: loadedFor.current, draft });
     }
   };
   /** Save the live buffer NOW for the session that owns it — the debounce
@@ -235,7 +236,7 @@ function EditorCore(props: PromptEditorProps) {
     [editor],
   );
   useEffect(() => {
-    if (loadedFor.current === props.sessionId) return;
+    if (loadedFor.current === props.patchbaySessionId) return;
     flushDraft(); // the outgoing session's unsaved keystrokes
     loadedFor.current = null;
     const draft = props.draft;
@@ -255,10 +256,10 @@ function EditorCore(props: PromptEditorProps) {
       }
     }
     editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
-    loadedFor.current = props.sessionId;
+    loadedFor.current = props.patchbaySessionId;
     // props.draft deliberately absent: it is read only at the moment of a
     // session switch — reacting to it live would fight the keyboard.
-  }, [editor, props.sessionId]);
+  }, [editor, props.patchbaySessionId]);
 
   // The sibling-view seam (a session open in the sidebar AND a detached
   // panel): each composer owns its live buffer, so an incoming durable
@@ -266,7 +267,7 @@ function EditorCore(props: PromptEditorProps) {
   // pending — and actually differs. A focused editor keeps the keyboard's
   // truth; its own next save wins.
   useEffect(() => {
-    if (loadedFor.current !== props.sessionId || props.sessionId === "") return;
+    if (loadedFor.current !== props.patchbaySessionId || props.patchbaySessionId === "") return;
     if (saveTimer.current !== null) return;
     const root = editor.getRootElement();
     if (root !== null && root.contains(document.activeElement)) return;
@@ -286,8 +287,8 @@ function EditorCore(props: PromptEditorProps) {
       }
     }
     editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
-    loadedFor.current = props.sessionId;
-  }, [editor, props.draft, props.sessionId]);
+    loadedFor.current = props.patchbaySessionId;
+  }, [editor, props.draft, props.patchbaySessionId]);
 
   // Trigger tracking: recomputed on every state/selection change.
   useEffect(

@@ -32,6 +32,7 @@ import { RootsChip } from "./roots-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { AvailableCommand, SavedRootsView } from "../../../shared/protocol";
+import type { PatchbaySessionId } from "../../../shared/ids";
 
 export function Composer(props: {
   agent: AgentSummary | null;
@@ -78,23 +79,25 @@ export function Composer(props: {
   const submitRef = useRef<(() => void) | null>(null);
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
   const { enabled, stop, placeholder } = composerControls(props.session, props.agent, props.incoming);
-  const sessionId = props.session?.id ?? "";
+  // Without a session every control is disabled; an empty id sent anyway
+  // names nothing the host holds, and it ignores it.
+  const patchbaySessionId = props.session?.id ?? ("" as PatchbaySessionId);
   const underway = props.session !== null && turnUnderway(props.session);
 
   const sendOrStop = () => {
-    if (underway) send({ kind: "stopTurn", sessionId });
+    if (underway) send({ kind: "stopTurn", patchbaySessionId });
     else submitRef.current?.();
   };
   // Enter during a turn underway queues (the orchestrator holds it until the
   // turn ends); the Stop button is the only stop — Enter-as-stop would be
   // too easy to trip once sending mid-turn is legal.
   const onSubmit = (text: string, parts: readonly PromptPart[] | undefined, draft: string): void =>
-    send({ kind: "sendPrompt", sessionId, text, parts, draft });
+    send({ kind: "sendPrompt", patchbaySessionId, text, parts, draft });
 
   /** The adder's entries — also reused by the `@` mention picker's fixed rows. */
-  const addSelection = () => send({ kind: "addSelectionContext", sessionId });
-  const addDiagnostics = () => send({ kind: "addDiagnosticsContext", sessionId });
-  const addFilePicker = () => send({ kind: "addFilePickerContext", sessionId });
+  const addSelection = () => send({ kind: "addSelectionContext", patchbaySessionId });
+  const addDiagnostics = () => send({ kind: "addDiagnosticsContext", patchbaySessionId });
+  const addFilePicker = () => send({ kind: "addFilePickerContext", patchbaySessionId });
 
   /** Byte-carrying attachments (paste, external drop) → the one ingress
    * processor; admitted images/files go up as actions, refusals surface as
@@ -102,10 +105,10 @@ export function Composer(props: {
   const ingest = (files: File[]) => {
     void ingestFiles(files, props.preferences.attachmentMaxMB * 1024 * 1024).then((out) => {
       for (const img of out.images) {
-        send({ kind: "addImageContext", sessionId, base64: img.base64, mimeType: img.mimeType, label: img.label });
+        send({ kind: "addImageContext", patchbaySessionId, base64: img.base64, mimeType: img.mimeType, label: img.label });
       }
       for (const f of out.files) {
-        send({ kind: "addDroppedFileContext", sessionId, name: f.name, mimeType: f.mimeType, base64: f.base64 });
+        send({ kind: "addDroppedFileContext", patchbaySessionId, name: f.name, mimeType: f.mimeType, base64: f.base64 });
       }
       for (const r of out.refusals) props.onNotice(r);
     });
@@ -175,7 +178,7 @@ export function Composer(props: {
         <div className="ctx-row">
           {enabled && (
             <RootsChip
-              sessionId={sessionId}
+              patchbaySessionId={patchbaySessionId}
               roots={props.contextRoots}
               workspaceRoots={props.workspaceRoots}
               savedRoots={props.savedRoots}
@@ -216,7 +219,7 @@ export function Composer(props: {
                 }
               />
               <span className="label">{c.label}</span>
-              <span className="x" onClick={() => send({ kind: "removeContextChip", sessionId, chipId: c.id })}>
+              <span className="x" onClick={() => send({ kind: "removeContextChip", patchbaySessionId, chipId: c.id })}>
                 ×
               </span>
             </span>
@@ -234,7 +237,7 @@ export function Composer(props: {
                 {(
                   [
                     { icon: "target", label: "Selection", hint: "current editor selection", run: addSelection },
-                    { icon: "file", label: "Current file", hint: "active editor", run: () => send({ kind: "addFileContext", sessionId }) },
+                    { icon: "file", label: "Current file", hint: "active editor", run: () => send({ kind: "addFileContext", patchbaySessionId }) },
                     { icon: "warning", label: "Problems", hint: "workspace diagnostics", run: addDiagnostics },
                     { icon: "attach", label: "Attach file…", hint: "pick any file", run: addFilePicker },
                   ] as const
@@ -264,7 +267,7 @@ export function Composer(props: {
         <PromptEditor
           enabled={enabled}
           placeholder={placeholder}
-          sessionId={sessionId}
+          patchbaySessionId={patchbaySessionId}
           draft={props.draft}
           commands={props.commands}
           openEditors={props.openEditors}
@@ -281,7 +284,7 @@ export function Composer(props: {
       {/* Outside the input-shell on purpose: the foot sits on the composer's
           elevated surface (--card); only the prompt box keeps --pb-panel. */}
       <div className="input-foot">
-        <Knobs sessionId={sessionId} knobs={props.knobs} />
+        <Knobs patchbaySessionId={patchbaySessionId} knobs={props.knobs} />
         <span className="flex-1" />
         {props.session !== null && (
           <ComposerStats totals={props.totals} usage={props.usage} show={props.preferences} />

@@ -9,7 +9,7 @@ import {
   type AgentViewEvent,
   type AgentViewState,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewState): AgentViewState {
   return evs.reduce(reduceAgentView, state);
@@ -17,12 +17,12 @@ function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewS
 
 const created = (id: string): AgentViewEvent => ({
   kind: "sessionCreated",
-  session: { id, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
+  session: { id: id as PatchbaySessionId, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
 });
 
-const permission = (sessionId: string, blockId: string): AgentViewEvent => ({
+const permission = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
   kind: "permissionRequested",
-  sessionId,
+  patchbaySessionId,
   blockId,
   title: "Terminal",
   detail: "npm test",
@@ -30,9 +30,9 @@ const permission = (sessionId: string, blockId: string): AgentViewEvent => ({
   options: [{ optionId: "allow_once", label: "Allow once", kind: "allow_once" }],
 });
 
-const diff = (sessionId: string, blockId: string): AgentViewEvent => ({
+const diff = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
   kind: "diffProposed",
-  sessionId,
+  patchbaySessionId,
   blockId,
   file: "/w/a.ts",
   additions: 1,
@@ -40,18 +40,18 @@ const diff = (sessionId: string, blockId: string): AgentViewEvent => ({
   lines: [],
 });
 
-const question = (sessionId: string, blockId: string): AgentViewEvent => ({
+const question = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
   kind: "elicitationRequested",
-  sessionId,
+  patchbaySessionId,
   blockId,
   message: "Which branch?",
   mode: "form",
   fields: [],
 });
 
-const link = (sessionId: string, blockId: string): AgentViewEvent => ({
+const link = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
   kind: "elicitationRequested",
-  sessionId,
+  patchbaySessionId,
   blockId,
   message: "Sign in",
   mode: "url",
@@ -62,20 +62,20 @@ describe("open asks — what a session is blocked on", () => {
   it("every ask kind counts while unanswered, and none once answered", () => {
     const s = replay([
       created("a"),
-      permission("a", "p1"),
-      diff("a", "d1"),
-      question("a", "q1"),
-      link("a", "l1"),
+      permission("a" as PatchbaySessionId, "p1"),
+      diff("a" as PatchbaySessionId, "d1"),
+      question("a" as PatchbaySessionId, "q1"),
+      link("a" as PatchbaySessionId, "l1"),
     ]);
     expect(openAsks(s.transcripts["a"]!).map((b) => b.id)).toEqual(["p1", "d1", "q1", "l1"]);
 
     const answered = replay(
       [
-        { kind: "permissionResolved", sessionId: "a", blockId: "p1", label: "Allow once", auto: false },
-        { kind: "diffResolved", sessionId: "a", blockId: "d1", accepted: true, auto: false },
-        { kind: "elicitationResolved", sessionId: "a", blockId: "q1", outcome: "declined" },
+        { kind: "permissionResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "p1", label: "Allow once", auto: false },
+        { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "d1", accepted: true, auto: false },
+        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "q1", outcome: "declined" },
         // an accepted link waits on the page, not on patchbay
-        { kind: "elicitationResolved", sessionId: "a", blockId: "l1", outcome: "accepted" },
+        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "l1", outcome: "accepted" },
       ],
       s,
     );
@@ -85,14 +85,14 @@ describe("open asks — what a session is blocked on", () => {
   it("a rule-accepted write never waits", () => {
     const s = replay([
       created("a"),
-      diff("a", "d1"),
-      { kind: "diffResolved", sessionId: "a", blockId: "d1", accepted: true, auto: true },
+      diff("a" as PatchbaySessionId, "d1"),
+      { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "d1", accepted: true, auto: true },
     ]);
     expect(waitingCount(s)).toBe(0);
   });
 
   it("names what the session waits on", () => {
-    const s = replay([created("a"), created("b"), created("c"), permission("a", "p1"), diff("b", "d1"), question("c", "q1")]);
+    const s = replay([created("a"), created("b"), created("c"), permission("a" as PatchbaySessionId, "p1"), diff("b" as PatchbaySessionId, "d1"), question("c" as PatchbaySessionId, "q1")]);
     const on = (id: string) => waitingOn(s, s.sessions.find((x) => x.id === id)!);
     expect([on("a"), on("b"), on("c")]).toEqual(["Terminal", "File write", "Question"]);
   });
@@ -102,12 +102,12 @@ describe("session marks — most urgent first", () => {
   it("waiting outranks running outranks unseen", () => {
     const s = replay([
       created("a"),
-      { kind: "sessionBusyChanged", sessionId: "a", busy: ["prompt"] },
-      question("a", "q1"),
+      { kind: "sessionBusyChanged", patchbaySessionId: "a" as PatchbaySessionId, busy: ["prompt"] },
+      question("a" as PatchbaySessionId, "q1"),
     ]);
     const mark = () => sessionMark(s, s.sessions[0]!);
     expect(mark()).toBe("waiting");
-    const running = replay([{ kind: "elicitationResolved", sessionId: "a", blockId: "q1", outcome: "accepted" }], s);
+    const running = replay([{ kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "q1", outcome: "accepted" }], s);
     expect(sessionMark(running, running.sessions[0]!)).toBe("running");
   });
 });
@@ -120,11 +120,11 @@ describe("elsewhere — what the header reports", () => {
       created("c"),
       created("d"),
       { kind: "screenChanged", pointer: true, pinned: ["c"] },
-      { kind: "sessionActivated", sessionId: "a" },
-      question("a", "q1"),
-      permission("b", "p1"),
-      question("c", "q2"),
-      { kind: "sessionBusyChanged", sessionId: "d", busy: ["prompt"] },
+      { kind: "sessionActivated", patchbaySessionId: "a" as PatchbaySessionId },
+      question("a" as PatchbaySessionId, "q1"),
+      permission("b" as PatchbaySessionId, "p1"),
+      question("c" as PatchbaySessionId, "q2"),
+      { kind: "sessionBusyChanged", patchbaySessionId: "d" as PatchbaySessionId, busy: ["prompt"] },
     ]);
     const e = elsewhere(s);
     expect(e.waiting.map((x) => x.id)).toEqual(["b"]);
