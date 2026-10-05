@@ -245,15 +245,27 @@ describe("SecretEnvStore — env values live in SecretStorage, never globalState
     expect(await mcpServers.get("x")).toEqual({ B: "2" });
   });
 
-  it("remove purges the record; malformed stored JSON reads as empty, never throws", async () => {
+  it("remove purges the record", async () => {
     const secrets = new MemorySecrets();
     const store = new SecretEnvStore(secrets, "acpPatchbay.agent");
     await store.set("a1", { K: "v" });
     await store.remove("a1");
     expect(await store.get("a1")).toEqual({});
+  });
 
-    await secrets.store("acpPatchbay.agent.bad.env", "{not json");
+  it("a malformed stored record reads as empty and is logged by its id — never with its value", async () => {
+    const secrets = new MemorySecrets();
+    const logged: string[] = [];
+    const store = new SecretEnvStore(secrets, "acpPatchbay.agent", (message) => logged.push(message));
+    await secrets.store("acpPatchbay.agent.bad.env", "{not json sk-secret");
+    await secrets.store("acpPatchbay.agent.list.env", '["sk-secret"]');
+    await secrets.store("acpPatchbay.agent.num.env", '{"K": 1}');
     expect(await store.get("bad")).toEqual({});
+    expect(await store.get("list")).toEqual({});
+    expect(await store.get("num")).toEqual({});
+    expect(logged).toHaveLength(3);
+    expect(logged.join("\n")).toContain("bad");
+    expect(logged.join("\n")).not.toContain("sk-secret");
   });
 });
 

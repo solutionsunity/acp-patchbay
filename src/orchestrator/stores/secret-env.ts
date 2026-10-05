@@ -11,13 +11,20 @@
 // the moment reality needs them — agent spawn (agents-store.ts connect),
 // MCP-server attach (mcp-servers-store.ts mcpServersFor) — and shown back to
 // their owner in the Settings forms.
+import { z } from "zod";
 import type { SecretsLike } from "./mcp-server-tokens";
+
+/** A stored record: names to string values — anything else is malformed. */
+const envRecordSchema = z.record(z.string(), z.string());
 
 export class SecretEnvStore {
   constructor(
     private readonly secrets: SecretsLike,
     /** Key-family prefix, e.g. "acpPatchbay.agent". */
     private readonly prefix: string,
+    /** Where a malformed stored record is reported — by its id, never its
+     * value. */
+    private readonly log: (message: string) => void = () => {},
   ) {}
 
   private key(id: string): string {
@@ -27,11 +34,18 @@ export class SecretEnvStore {
   async get(id: string): Promise<Record<string, string>> {
     const raw = await this.secrets.get(this.key(id));
     if (raw === undefined) return {};
+    let parsed: unknown;
     try {
-      return JSON.parse(raw) as Record<string, string>;
+      parsed = JSON.parse(raw);
     } catch {
-      return {}; // malformed stored record — dropped rather than trusted blind
+      parsed = undefined;
     }
+    const env = envRecordSchema.safeParse(parsed);
+    if (env.success) return env.data;
+    // Never trusted blind, never gone in silence: reported by its id, since
+    // the value is a secret.
+    this.log(`the stored env for ${id} is malformed — read as empty`);
+    return {};
   }
 
   async set(id: string, env: Record<string, string>): Promise<void> {

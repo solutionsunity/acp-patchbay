@@ -258,8 +258,10 @@ export class Orchestrator {
     this.usedCapabilities = new UsedCapabilityStore(machineKV);
     this.authLocks = new AuthLockStore(machineKV);
     this.spawnRegistry = new SpawnRegistryStore(machineKV);
-    this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent");
-    this.mcpServerEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration");
+    this.agentEnv = new SecretEnvStore(context.secrets, "acpPatchbay.agent", (m) => log.warn(`agent env: ${m}`));
+    this.mcpServerEnv = new SecretEnvStore(context.secrets, "acpPatchbay.integration", (m) =>
+      log.warn(`MCP server env: ${m}`),
+    );
     this.mcpServerTokens = new McpServerTokenStore(context.secrets);
     // OAuth browser/redirect step:
     // the redirect target is this extension's own vscode:// URI, passed

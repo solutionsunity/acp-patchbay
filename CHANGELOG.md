@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- If the file where patchbay keeps its agents, MCP servers and preferences
+  is there but can't be read (a permissions problem, say), patchbay now
+  stops with an error naming the file. Before, it started as if nothing
+  were saved, and its next save replaced the real file. A saved env record
+  that can't be read is now reported in the log by its agent or server, and
+  read as empty, instead of being dropped in silence.
 - **Security:** patchbay's local socket now answers only the processes an
   agent was started with for a session. Before, any program running as
   the same user could ask it for the credential of any connected MCP

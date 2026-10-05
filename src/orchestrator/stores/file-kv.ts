@@ -20,6 +20,10 @@
 // First load (no file yet) drains the old Memento home into the file and
 // deletes the keys there — one truth; a stale shadow left in state.vscdb
 // would resurrect on downgrade and diverge forever after.
+//
+// Only a missing file is absence. One that is there but can't be read — a
+// permission error, a lock — stops the store at open and is never written
+// over after: read as empty, the next write would replace it.
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { KV } from "./kv";
@@ -75,9 +79,16 @@ export class FileKV implements KV {
   update(key: string, value: unknown): Thenable<void> {
     // Merge over the freshest disk truth so another window's keys survive;
     // only this key is ours to win. A corrupt or missing file at this point
-    // falls back to the in-memory map — the best remaining truth.
-    const disk = this.readDisk() ?? this.map;
-    const next = { ...disk };
+    // falls back to the in-memory map — the best remaining truth. One that
+    // can't be read fails the write: nothing is written over it.
+    let disk: Record<string, unknown> | null;
+    try {
+      disk = this.readDisk();
+    } catch (error) {
+      this.log(`write refused: ${(error as Error).message}`);
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const next = { ...(disk ?? this.map) };
     if (value === undefined) delete next[key];
     else next[key] = value;
     this.map = next;
@@ -97,11 +108,17 @@ export class FileKV implements KV {
    * Every write renames a new file into place, so another window's save
    * changes the stamp. The stamp is taken before the read: a write landing
    * in between leaves an older stamp, and the next read goes to disk again.
-   * A missing or unreadable file keeps the last good map, as update() does. */
+   * A missing or corrupt file keeps the last good map, as update() does;
+   * so does one that can't be read for now, and the next read tries again. */
   private readIfChanged(): void {
     const stamp = this.fileStamp();
     if (stamp === this.parsedFrom) return;
-    const disk = this.readDisk();
+    let disk: Record<string, unknown> | null;
+    try {
+      disk = this.readDisk();
+    } catch {
+      return;
+    }
     if (disk !== null) this.map = disk;
     this.parsedFrom = stamp;
   }
@@ -117,13 +134,16 @@ export class FileKV implements KV {
     }
   }
 
-  /** null = nothing usable on disk (absent, or quarantined as corrupt). */
+  /** null = nothing usable on disk (absent, or quarantined as corrupt).
+   * Throws when the file is there but can't be read. */
   private readDisk(): Record<string, unknown> | null {
     let text: string;
     try {
       text = readFileSync(this.filePath, "utf8");
-    } catch {
-      return null;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw new Error(`${this.filePath} can't be read (${code ?? String(error)})`);
     }
     try {
       const parsed: unknown = JSON.parse(text);
