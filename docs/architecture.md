@@ -1071,10 +1071,16 @@ supplies each agent in its own standard — and ACP carries no channel for it
   approval surface, wherever the user is looking.
 - "Waiting on the user" is one derived fact: the open asks (permission, write,
   terminal, question cards not yet answered) in the canonical transcripts. The
-  native notification is a projection of it — every ask that starts off screen
-  raises one, whatever its kind — never a call each ask site remembers to make
-  (questions once went silent that way). The view badge, the header read-out of
-  the other sessions and the drawer's marks read the same derivation. An ask
+  view badge, the header read-out of the other sessions and the drawer's marks
+  read it, so an answer anywhere clears them all. The native notification is
+  raised from it — every ask that starts off screen raises one, whatever its
+  kind — never by a call each ask site remembers to make. It cannot follow the
+  fact back: VS Code gives an extension no way to close its own notification,
+  so one whose ask is answered elsewhere stays until dismissed, and its
+  buttons check the ask when pressed — an answer to a settled ask does
+  nothing, Open still brings the session up. A deliberate scope decision: the
+  one notification an extension can close, a progress notification, carries
+  no buttons, so it would drop Open and the inline answers. An ask
   never outlives its connection: when the process it was asked on stops,
   crashes or reconnects, every ask still open on it settles as cancelled —
   otherwise a dead card would pin its session as waiting forever. "On

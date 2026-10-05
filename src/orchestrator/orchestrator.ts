@@ -1339,11 +1339,14 @@ export class Orchestrator {
     for (const sessionId of this.sessions.sessionsOn(agentId)) this.broker.cancelPending(sessionId);
   }
 
-  /** The native notification is a projection of the waiting fact, not a
+  /** The native notification is raised from the waiting fact, not by a
    * call each ask remembers to make: every ask that starts while its
    * session is off screen raises one — whatever kind it is. An ask that
    * arrived on screen never does, even if the user looks away before
-   * answering (the badge and header still count it). */
+   * answering (the badge and header still count it). It can't follow the
+   * fact back — VS Code gives no way to close a notification — so one
+   * answered elsewhere stays until dismissed; its buttons check the ask
+   * when pressed. */
   private notifyNewAsks(): void {
     const state = this.agentView.current;
     const shown = onScreen(state);
