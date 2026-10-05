@@ -26,7 +26,7 @@ suite("waiting-on-user notice", () => {
     // the turn finish.
     const answer = async (patchbaySessionId: string, turn: Promise<void>) => {
       const card = await pb.openCard(patchbaySessionId, "elicitation");
-      pb.act({ kind: "resolveElicitation", requestId: card.id, answer: { action: "cancel" } });
+      pb.act({ kind: "resolveElicitation", blockId: card.id, answer: { action: "cancel" } });
       await turn;
     };
     const noticeFor = (question: string) => shown.find((args) => String(args[0]).includes(question));

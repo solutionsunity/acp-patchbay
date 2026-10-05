@@ -140,8 +140,8 @@ export type Action =
    * orchestrator's defaults editor opens/ends the throwaway session that
    * reads the agent's surface for the defaults being edited. */
   | { kind: "editAgentDefaults"; patchbayAgentId: PatchbayAgentId; open: boolean }
-  | { kind: "resolvePermission"; requestId: string; optionId: string }
-  | { kind: "resolveDiff"; requestId: string; accept: boolean }
+  | { kind: "resolvePermission"; blockId: string; optionId: string }
+  | { kind: "resolveDiff"; blockId: string; accept: boolean }
   | { kind: "authenticateAgent"; patchbayAgentId: PatchbayAgentId; methodId: string }
   /** Only ever offered when the agent declared `auth.logout` — the spec's
    * "Clients MUST NOT call it" otherwise holds by construction. */
@@ -166,10 +166,10 @@ export type Action =
    * vocabulary: accept carries what they typed (reviewed and editable
    * until they press it), decline is a refusal, cancel is a dismissal.
    * Decline and cancel are different answers and the agent is told which. */
-  | { kind: "resolveElicitation"; requestId: string; answer: ElicitationAnswer }
+  | { kind: "resolveElicitation"; blockId: string; answer: ElicitationAnswer }
   /** Open an accepted link's page again (the tab was closed mid-flow).
    * Names the card, never the address: the host opens the link it holds. */
-  | { kind: "reopenElicitationLink"; requestId: string }
+  | { kind: "reopenElicitationLink"; blockId: string }
   | { kind: "addSelectionContext"; patchbaySessionId: PatchbaySessionId }
   | { kind: "addFileContext"; patchbaySessionId: PatchbaySessionId }
   | { kind: "addDiagnosticsContext"; patchbaySessionId: PatchbaySessionId }

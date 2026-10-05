@@ -1375,12 +1375,12 @@ export class Orchestrator {
       ask.kind === "permission"
         ? ask.options.map((o) => ({
             label: o.label,
-            action: { kind: "resolvePermission", requestId: ask.id, optionId: o.optionId },
+            action: { kind: "resolvePermission", blockId: ask.id, optionId: o.optionId },
           }))
         : ask.kind === "diff"
           ? [
-              { label: "Accept", action: { kind: "resolveDiff", requestId: ask.id, accept: true } },
-              { label: "Reject", action: { kind: "resolveDiff", requestId: ask.id, accept: false } },
+              { label: "Accept", action: { kind: "resolveDiff", blockId: ask.id, accept: true } },
+              { label: "Reject", action: { kind: "resolveDiff", blockId: ask.id, accept: false } },
             ]
           : [];
     const what =
@@ -1729,10 +1729,10 @@ export class Orchestrator {
         void (action.open ? this.defaultsEditor.open(action.patchbayAgentId) : this.defaultsEditor.close(action.patchbayAgentId));
         break;
       case "resolvePermission":
-        this.broker.resolve(action.requestId, action.optionId);
+        this.broker.resolve(action.blockId, action.optionId);
         break;
       case "resolveDiff":
-        this.broker.resolve(action.requestId, action.accept ? "accept" : "reject");
+        this.broker.resolve(action.blockId, action.accept ? "accept" : "reject");
         break;
       case "authenticateAgent":
         // failure leaves needsAuth set — the honest signal, no separate reply channel
@@ -1802,10 +1802,10 @@ export class Orchestrator {
         playDoneSound(this.log, action.sound);
         break;
       case "resolveElicitation":
-        this.broker.resolveElicitation(action.requestId, action.answer);
+        this.broker.resolveElicitation(action.blockId, action.answer);
         break;
       case "reopenElicitationLink":
-        this.broker.reopenLink(action.requestId);
+        this.broker.reopenLink(action.blockId);
         break;
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();

@@ -3,7 +3,7 @@
 
 // The broker-surface cards: permission, diff, terminal, elicitation — one
 // broker path, one card language.
-// Each resolves itself through useActions (requestId = its own block id).
+// Each resolves itself through useActions, naming its own block id.
 import { useState } from "react";
 import type { ChatBlock, LinkWarning } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -55,7 +55,7 @@ export function PermissionCard({ block }: { block: Extract<ChatBlock, { kind: "p
               key={o.optionId}
               size="sm"
               variant={o.kind === "allow_once" ? "default" : o.kind.startsWith("reject") ? "destructive" : "outline"}
-              onClick={() => send({ kind: "resolvePermission", requestId: block.id, optionId: o.optionId })}
+              onClick={() => send({ kind: "resolvePermission", blockId: block.id, optionId: o.optionId })}
             >
               {o.label}
             </Button>
@@ -122,13 +122,13 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
       </div>
       {block.resolution === null && (
         <div className="acts">
-          <Button size="sm" onClick={() => send({ kind: "resolveDiff", requestId: block.id, accept: true })}>
+          <Button size="sm" onClick={() => send({ kind: "resolveDiff", blockId: block.id, accept: true })}>
             Accept
           </Button>
           <Button
             variant="destructive"
             size="sm"
-            onClick={() => send({ kind: "resolveDiff", requestId: block.id, accept: false })}
+            onClick={() => send({ kind: "resolveDiff", blockId: block.id, accept: false })}
           >
             Reject
           </Button>
@@ -197,7 +197,7 @@ export function ElicitationCard({ block, agentName }: { block: ElicitationBlock;
 function NotAnswering({ blockId }: { blockId: string }) {
   const send = useActions();
   const answer = (action: "decline" | "cancel") =>
-    send({ kind: "resolveElicitation", requestId: blockId, answer: { action } });
+    send({ kind: "resolveElicitation", blockId, answer: { action } });
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => answer("decline")}>
@@ -250,7 +250,7 @@ function LinkQuestion({
           <Button
             size="sm"
             onClick={() =>
-              send({ kind: "resolveElicitation", requestId: block.id, answer: { action: "accept", content: {} } })
+              send({ kind: "resolveElicitation", blockId: block.id, answer: { action: "accept", content: {} } })
             }
           >
             Open in browser
@@ -278,7 +278,7 @@ function LinkQuestion({
       </div>
       {phase === "waiting" && (
         <div className="acts">
-          <Button variant="outline" size="sm" onClick={() => send({ kind: "reopenElicitationLink", requestId: block.id })}>
+          <Button variant="outline" size="sm" onClick={() => send({ kind: "reopenElicitationLink", blockId: block.id })}>
             Open again
           </Button>
         </div>
@@ -396,7 +396,7 @@ function FormQuestion({
           size="sm"
           disabled={blocked}
           title={blocked ? `Not ready: ${Object.keys(problems).length} field(s) need an answer that fits` : undefined}
-          onClick={() => send({ kind: "resolveElicitation", requestId: block.id, answer: { action: "accept", content } })}
+          onClick={() => send({ kind: "resolveElicitation", blockId: block.id, answer: { action: "accept", content } })}
         >
           Send
         </Button>

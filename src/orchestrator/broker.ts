@@ -330,9 +330,9 @@ export class PermissionBroker {
   }
 
   /** Resolves a user's click on a permission or diff card. */
-  resolve(requestId: string, optionId: string): void {
-    this.pending.get(requestId)?.resolve(optionId);
-    this.pending.delete(requestId);
+  resolve(blockId: string, optionId: string): void {
+    this.pending.get(blockId)?.resolve(optionId);
+    this.pending.delete(blockId);
   }
 
   /** Turn cancellation duty (an ACP MUST): every pending
@@ -341,9 +341,9 @@ export class PermissionBroker {
    * left hanging on a stopped turn. Same duty when the session is closed
    * under an in-flight turn. */
   cancelPending(patchbaySessionId: PatchbaySessionId): void {
-    for (const [requestId, p] of [...this.pending]) {
+    for (const [blockId, p] of [...this.pending]) {
       if (p.patchbaySessionId !== patchbaySessionId) continue;
-      this.pending.delete(requestId);
+      this.pending.delete(blockId);
       p.resolve(TURN_CANCELLED);
     }
     // An elicitation the stopped turn left open is owed an answer too —
@@ -361,8 +361,8 @@ export class PermissionBroker {
     }
   }
 
-  private awaitOption(requestId: string, patchbaySessionId: PatchbaySessionId): Promise<string> {
-    return new Promise((resolve) => this.pending.set(requestId, { patchbaySessionId, resolve }));
+  private awaitOption(blockId: string, patchbaySessionId: PatchbaySessionId): Promise<string> {
+    return new Promise((resolve) => this.pending.set(blockId, { patchbaySessionId, resolve }));
   }
 
   private async writeAudit(entry: Record<string, unknown>): Promise<void> {
