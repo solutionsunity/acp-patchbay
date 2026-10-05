@@ -121,6 +121,35 @@ describe("LastActiveSessionStore — the last-open-session pointer", () => {
     await kv.update("acpPatchbay.lastActiveSession", "s1");
     expect(new LastActiveSessionStore(kv).get()).toBeUndefined();
   });
+
+  describe("the bare id 0.84.1 stored, folded once the startup lists are in", () => {
+    const pair = (agent: string, sessionId: string) => ({ patchbayAgentId: agent as PatchbayAgentId, sessionId });
+
+    it("one session answering to it becomes the pointer, kept as the pair", async () => {
+      const kv = new MemoryKV();
+      await kv.update("acpPatchbay.lastActiveSession", "s1");
+      const store = new LastActiveSessionStore(kv);
+      expect(store.stored()).toBe(true);
+      expect(await store.resolve(() => [pair("claude", "s1")])).toEqual(pair("claude", "s1"));
+      expect(kv.get("acpPatchbay.lastActiveSession")).toEqual({ patchbayAgentId: "claude", sessionId: "s1" });
+    });
+
+    it("several are ambiguous for good — the pointer goes", async () => {
+      const kv = new MemoryKV();
+      await kv.update("acpPatchbay.lastActiveSession", "s1");
+      const store = new LastActiveSessionStore(kv);
+      expect(await store.resolve(() => [pair("claude", "s1"), pair("auggie", "s1")])).toBeUndefined();
+      expect(store.stored()).toBe(false);
+    });
+
+    it("none may be an agent that hasn't connected yet — the id stays for a later window", async () => {
+      const kv = new MemoryKV();
+      await kv.update("acpPatchbay.lastActiveSession", "s1");
+      const store = new LastActiveSessionStore(kv);
+      expect(await store.resolve(() => [])).toBeUndefined();
+      expect(kv.get("acpPatchbay.lastActiveSession")).toBe("s1");
+    });
+  });
 });
 
 describe("PermissionRulesStore", () => {

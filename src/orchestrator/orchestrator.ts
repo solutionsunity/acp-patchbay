@@ -321,7 +321,7 @@ export class Orchestrator {
         // list — the startup connects repopulate the drawer from the wire.
         // Hold the loading page only when there is actually a last open
         // session to come back to — startupSettled clears it either way.
-        restoring: this.lastActiveSession.get() !== undefined,
+        restoring: this.lastActiveSession.stored(),
         workspaceRoots: workspaceRootsView(),
         savedRoots: this.savedRootsView(),
         preferences: this.preferences.get(),
@@ -943,12 +943,14 @@ export class Orchestrator {
    * lands on the default screen, regardless of why (agent removed, session
    * deleted externally, agent that can't list). The pointer itself is left
    * alone on a miss: not-found ≠ gone — a failed connect this window must
-   * not erase where a later window could still return. Never spawns a
-   * process the startup rules didn't start. */
+   * not erase where a later window could still return. A bare id an older
+   * version stored is folded into its pair against the same lists. Never
+   * spawns a process the startup rules didn't start. */
   private async restoreLastActiveSession(): Promise<void> {
-    const pointer = this.lastActiveSession.get();
-    if (pointer === undefined) return;
+    if (!this.lastActiveSession.stored()) return;
     await Promise.allSettled([...this.pendingSyncs.values()]);
+    const pointer = await this.lastActiveSession.resolve((sessionId) => this.sessions.pairsNamed(sessionId));
+    if (pointer === undefined) return;
     if (this.agentView.current.activePatchbaySessionId !== null) return;
     const patchbaySessionId = this.sessions.rowFor(pointer.patchbayAgentId, pointer.sessionId);
     if (patchbaySessionId === undefined) return;

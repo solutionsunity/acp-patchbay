@@ -391,6 +391,14 @@ export class SessionsStore {
     return this.known.get(patchbaySessionId)?.sessionId;
   }
 
+  /** The sessions the index holds under this id of their agent's — one per
+   * agent at most, since an agent's ids are unique only to it. */
+  pairsNamed(sessionId: string): { patchbayAgentId: PatchbayAgentId; sessionId: string }[] {
+    return [...this.known.values()]
+      .filter((row) => row.sessionId === sessionId)
+      .map((row) => ({ patchbayAgentId: row.patchbayAgentId, sessionId }));
+  }
+
   /** The session as a later window can name it: its agent, and the agent's
    * own id for it. Undefined for a session patchbay no longer holds. */
   pairOf(patchbaySessionId: PatchbaySessionId): { patchbayAgentId: PatchbayAgentId; sessionId: string } | undefined {

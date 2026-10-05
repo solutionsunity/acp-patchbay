@@ -11,7 +11,8 @@
 // per-entry flag invites the two-entries-true drift bug.
 // It names the session the way the next window can find it again: by its
 // agent and the agent's own id for it — patchbay's ids live with a window.
-// A value of any other shape is no pointer.
+// The bare id 0.84.1 stored is folded into that pair by `resolve`; a value
+// of any other shape is no pointer.
 // workspaceState: sessions are cwd-bound, machine-local, non-sensitive.
 import type { KV } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
@@ -46,6 +47,29 @@ export class LastActiveSessionStore {
   get(): SessionPointer | undefined {
     const value = this.kv.get<unknown>(KEY);
     return isPointer(value) ? value : undefined;
+  }
+
+  /** Whether there is anything to return to — a pointer, or a bare id
+   * still to fold. */
+  stored(): boolean {
+    return this.get() !== undefined || typeof this.kv.get<unknown>(KEY) === "string";
+  }
+
+  /** The pointer as the pair it names. 0.84.1 stored a bare id: the agent's
+   * own id for a session, with no agent. Once the startup lists are in,
+   * `named` gives the sessions answering to it — one becomes the pointer;
+   * several are ambiguous for good, so the pointer goes; none may be an
+   * agent that hasn't connected yet, so the id stays for a later window. */
+  async resolve(named: (sessionId: string) => readonly SessionPointer[]): Promise<SessionPointer | undefined> {
+    const pointer = this.get();
+    if (pointer !== undefined) return pointer;
+    const bare = this.kv.get<unknown>(KEY);
+    if (typeof bare !== "string") return undefined;
+    const matches = named(bare);
+    if (matches.length > 1) await this.wipe();
+    if (matches.length !== 1) return undefined;
+    await this.set(matches[0]!);
+    return matches[0];
   }
 
   async set(pointer: SessionPointer): Promise<void> {
