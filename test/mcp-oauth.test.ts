@@ -11,6 +11,7 @@ import {
   generatePkce,
   OAuthDiscoveryError,
   refreshMcpOAuth,
+  registerClient,
 } from "../src/orchestrator/mcp-oauth";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 
@@ -113,6 +114,30 @@ describe("discovery — a dead connection is not an absence (issue #54)", () => 
     const notFound: typeof fetch = async () => new Response("", { status: 404 });
     expect((await discoverAuthorizationServer("https://mcp.example.test/mcp", notFound)).origin).toBe(
       "https://mcp.example.test",
+    );
+  });
+});
+
+describe("the two POSTs — registration and the token endpoint — fail with their reason", () => {
+  const dead: typeof fetch = async () =>
+    Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) }));
+
+  it("a registration whose connection drops names the host and the network failure", async () => {
+    await expect(
+      registerClient("https://auth.example.test/register", CLIENT_INFO, "vscode://x/cb", dead),
+    ).rejects.toThrow(/couldn't register with auth\.example\.test — network error — fetch failed \(ECONNRESET\)/);
+  });
+
+  it("a token request whose connection drops names the host and the network failure", async () => {
+    await expect(refreshMcpOAuth("https://auth.example.test/token", "client", "refresh", dead)).rejects.toThrow(
+      /couldn't get a token from auth\.example\.test — network error — fetch failed \(ECONNRESET\)/,
+    );
+  });
+
+  it("a token answer that isn't JSON is named as an unreadable response", async () => {
+    const html: typeof fetch = async () => new Response("<html>bad gateway</html>", { status: 502 });
+    await expect(refreshMcpOAuth("https://auth.example.test/token", "client", "refresh", html)).rejects.toThrow(
+      /couldn't get a token from auth\.example\.test — unreadable response/,
     );
   });
 });

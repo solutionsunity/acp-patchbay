@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- An MCP server's browser sign-in that fails on the network now names the
+  server and the reason (for example "couldn't get a token from
+  auth.example.com — network error — fetch failed (ECONNRESET)"), instead
+  of a bare "fetch failed".
 - If the file where patchbay keeps its agents, MCP servers and preferences
   is there but can't be read (a permissions problem, say), patchbay now
   stops with an error naming the file. Before, it started as if nothing

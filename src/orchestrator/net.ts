@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The one way patchbay reads a resource over the network. Every read ends
-// in one vocabulary — the body, "unchanged" (a conditional read's 304), or
-// a failure that says which kind — and every failure is logged here, once,
-// with the host only. A failure is never an absence: a caller that treats
-// some status as "not there" (a 404 on a well-known URL) says so by
-// status, never by receiving a null it can't tell apart from a dead
-// connection.
+// The one way patchbay calls the network: a read, or a request to an
+// endpoint that answers in its body. Every call ends in one vocabulary —
+// the answer, "unchanged" (a conditional read's 304), or a failure that
+// says which kind — and every failure is logged here, once, with the host
+// only. A failure is never an absence: a caller that treats some status as
+// "not there" (a 404 on a well-known URL) says so by status, never by
+// receiving a null it can't tell apart from a dead connection.
 //
 // No timeout of our own: how long a transfer takes is the network's
 // business, and a slow link is not a broken one. A connection that truly
@@ -35,6 +35,10 @@ export function describeNetFailure(failure: NetFailure): string {
   }
 }
 
+/** The network call itself — injectable, so tests can stand in for the
+ * network; every real call goes to the platform's fetch, here. */
+export type FetchFn = typeof fetch;
+
 export interface NetReadOptions {
   log: Logger;
   /** What the read is for, in the log line ("ACP registry", "download of X"). */
@@ -42,20 +46,21 @@ export interface NetReadOptions {
   /** Statuses that are an answer to this caller, not a failure worth a
    * warning — logged at debug. */
   answerStatuses?: readonly number[];
-  fetchFn?: typeof fetch;
+  fetchFn?: FetchFn;
   headers?: Record<string, string>;
 }
 
 type Read<T> = { ok: true; value: T } | { ok: false; failure: NetFailure };
 
-/** `conditional`: the read asked "only if changed" — the one case where a
- * 304 is an answer rather than a failure. */
-async function read<T>(
+/** One request through the one door. `answers` says which statuses are
+ * the caller's answer; any other is a status failure, its body unread. */
+async function request<T>(
   url: string,
+  init: RequestInit,
   opts: NetReadOptions,
+  answers: (res: Response) => boolean,
   decode: (res: Response) => Promise<T>,
-  conditional = false,
-): Promise<Read<T | "unchanged">> {
+): Promise<Read<T>> {
   const fail = (failure: NetFailure): Read<never> => {
     const line = `${opts.what}: ${loggableUrl(url)} — ${describeNetFailure(failure)}`;
     if (failure.kind === "status" && opts.answerStatuses?.includes(failure.status)) opts.log.debug(line);
@@ -64,12 +69,11 @@ async function read<T>(
   };
   let res: Response;
   try {
-    res = await (opts.fetchFn ?? fetch)(url, { headers: opts.headers });
+    res = await (opts.fetchFn ?? fetch)(url, init);
   } catch (err) {
     return fail({ kind: "network", detail: errorDetail(err) });
   }
-  if (res.status === 304 && conditional) return { ok: true, value: "unchanged" };
-  if (!res.ok) {
+  if (!answers(res)) {
     await res.body?.cancel().catch(() => {});
     return fail({ kind: "status", status: res.status });
   }
@@ -78,6 +82,23 @@ async function read<T>(
   } catch (err) {
     return fail({ kind: "body", detail: errorDetail(err) });
   }
+}
+
+/** `conditional`: the read asked "only if changed" — the one case where a
+ * 304 is an answer rather than a failure. */
+function read<T>(
+  url: string,
+  opts: NetReadOptions,
+  decode: (res: Response) => Promise<T>,
+  conditional = false,
+): Promise<Read<T | "unchanged">> {
+  return request<T | "unchanged">(
+    url,
+    { headers: opts.headers },
+    opts,
+    (res) => res.ok || (conditional && res.status === 304),
+    async (res) => (res.status === 304 ? "unchanged" : decode(res)),
+  );
 }
 
 /** The stack's reason, with its cause when it has one — undici reports
@@ -116,4 +137,17 @@ export async function readBytes(
     }
     return { bytes, contentType: res.headers.get("content-type") ?? "" };
   }) as Promise<Read<{ bytes: Buffer; contentType: string }>>; // unconditional: never "unchanged"
+}
+
+/** A request to an endpoint that answers in its body whatever the status —
+ * OAuth's registration and token endpoints report their own errors there.
+ * Only the connection and the decoding can fail; `decode` reads the
+ * status. */
+export function exchange<T>(
+  url: string,
+  init: RequestInit,
+  opts: NetReadOptions,
+  decode: (res: Response) => Promise<T>,
+): Promise<Read<T>> {
+  return request(url, init, opts, () => true, decode);
 }

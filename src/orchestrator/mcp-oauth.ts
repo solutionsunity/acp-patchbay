@@ -13,7 +13,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { nullLogger } from "./logger";
-import { describeNetFailure, readJson } from "./net";
+import { describeNetFailure, exchange, type FetchFn, readJson } from "./net";
 
 /** DCR rejected: some vendors allowlist client registration
  * (Figma 403s unknown client_name with no explanation). This must surface
@@ -94,7 +94,7 @@ const tokenResponseSchema = z.object({
  * fails, or a body that isn't JSON, is not an answer: it throws with its
  * reason, never passing for "no metadata" (which would send the flow to a
  * fallback server on the strength of a dropped packet). */
-async function fetchJson(url: string, fetchFn: typeof fetch): Promise<unknown | null> {
+async function fetchJson(url: string, fetchFn?: FetchFn): Promise<unknown | null> {
   const read = await readJson(url, { log: nullLogger, what: "OAuth discovery", fetchFn });
   if (read.ok) return read.value === "unchanged" ? null : read.value.json;
   if (read.failure.kind === "status") return null;
@@ -118,7 +118,7 @@ function wellKnownUrls(base: URL, suffix: string): string[] {
  * documented legacy behavior for servers that are their own AS. */
 export async function discoverAuthorizationServer(
   mcpServerUrl: string,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: FetchFn,
 ): Promise<URL> {
   const base = new URL(mcpServerUrl);
   for (const url of wellKnownUrls(base, "oauth-protected-resource")) {
@@ -137,7 +137,7 @@ export async function discoverAuthorizationServer(
  * path-aware before bare-origin. */
 export async function discoverAuthServerMetadata(
   authServer: URL,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: FetchFn,
 ): Promise<AuthServerMetadata> {
   const candidates = [
     ...wellKnownUrls(authServer, "oauth-authorization-server"),
@@ -160,26 +160,40 @@ export async function registerClient(
   registrationEndpoint: string,
   clientInfo: ClientInfo,
   redirectUri: string,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: FetchFn,
 ): Promise<{ clientId: string; clientSecret?: string }> {
-  const response = await fetchFn(registrationEndpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({
-      client_name: clientInfo.clientName,
-      client_uri: clientInfo.clientUri,
-      redirect_uris: [redirectUri],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none", // public client — PKCE carries the proof
-    }),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new DcrRejectedError(response.status, detail.slice(0, 200) || response.statusText);
+  const sent = await exchange(
+    registrationEndpoint,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        client_name: clientInfo.clientName,
+        client_uri: clientInfo.clientUri,
+        redirect_uris: [redirectUri],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none", // public client — PKCE carries the proof
+      }),
+    },
+    { log: nullLogger, what: "OAuth client registration", fetchFn },
+    async (res) =>
+      res.ok
+        ? { kind: "registered" as const, client: registrationResponseSchema.parse(await res.json()) }
+        : {
+            kind: "rejected" as const,
+            status: res.status,
+            detail: (await res.text().catch(() => "")).slice(0, 200) || res.statusText,
+          },
+  );
+  if (!sent.ok) {
+    throw new Error(
+      `couldn't register with ${new URL(registrationEndpoint).host} — ${describeNetFailure(sent.failure)}`,
+    );
   }
-  const parsed = registrationResponseSchema.parse(await response.json());
-  return { clientId: parsed.client_id, clientSecret: parsed.client_secret };
+  if (sent.value.kind === "rejected") throw new DcrRejectedError(sent.value.status, sent.value.detail);
+  const { client } = sent.value;
+  return { clientId: client.client_id, clientSecret: client.client_secret };
 }
 
 // ── PKCE (RFC 7636, S256) ────────────────────────────────────────────────────
@@ -192,17 +206,27 @@ export function generatePkce(): { verifier: string; challenge: string } {
 
 // ── token endpoint ───────────────────────────────────────────────────────────
 
-async function postForm(
-  url: string,
-  params: Record<string, string>,
-  fetchFn: typeof fetch,
-): Promise<unknown> {
-  const response = await fetchFn(url, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams(params).toString(),
-  });
-  const body = (await response.json()) as Record<string, unknown>;
+/** A token request: the endpoint answers in JSON whatever the status — an
+ * error is its `error` field (RFC 6749, section 5.2). */
+async function postForm(url: string, params: Record<string, string>, fetchFn?: FetchFn): Promise<unknown> {
+  const sent = await exchange(
+    url,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams(params).toString(),
+    },
+    { log: nullLogger, what: "OAuth token request", fetchFn },
+    async (res) => {
+      const json: unknown = await res.json();
+      if (json === null || typeof json !== "object" || Array.isArray(json)) throw new Error("not a JSON object");
+      return json as Record<string, unknown>;
+    },
+  );
+  if (!sent.ok) {
+    throw new Error(`couldn't get a token from ${new URL(url).host} — ${describeNetFailure(sent.failure)}`);
+  }
+  const body = sent.value;
   if (typeof body.error === "string") {
     throw new Error(`token endpoint error: ${body.error}${body.error_description ? ` (${String(body.error_description)})` : ""}`);
   }
@@ -219,7 +243,7 @@ export async function connectMcpOAuth(
   mcpServerUrl: string,
   clientInfo: ClientInfo,
   userAgent: OAuthUserAgent,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: FetchFn,
 ): Promise<McpOAuthTokens> {
   const authServer = await discoverAuthorizationServer(mcpServerUrl, fetchFn);
   const metadata = await discoverAuthServerMetadata(authServer, fetchFn);
@@ -286,7 +310,7 @@ export async function refreshMcpOAuth(
   tokenEndpoint: string,
   clientId: string,
   refreshTokenValue: string,
-  fetchFn: typeof fetch = fetch,
+  fetchFn?: FetchFn,
 ): Promise<{ accessToken: string; refreshToken?: string; expiresIn?: number }> {
   const body = tokenResponseSchema.parse(
     await postForm(

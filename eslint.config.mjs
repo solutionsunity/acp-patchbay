@@ -64,6 +64,25 @@ export default tseslint.config(
     },
   },
   {
+    // Every network call goes through net.ts, which classifies and logs its
+    // failures and takes no timeout of its own. The OAuth POSTs once went
+    // around it, so a dropped connection surfaced as a bare "fetch failed".
+    // The stdio-to-HTTP bridge is the named exception: its fetch is the MCP
+    // SDK transport's, piped through, not a read of patchbay's.
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    ignores: ["src/orchestrator/net.ts", "src/mcp/bridge-main.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "network calls go through net.ts (readJson, readBytes, exchange)" },
+      ],
+      "no-restricted-properties": [
+        "error",
+        { object: "AbortSignal", property: "timeout", message: "no timeouts of our own — net.ts holds the network's rules" },
+      ],
+    },
+  },
+  {
     // every file the gate lints
     files: ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "scripts/**/*.mjs"],
     ignores: ["test/vscode/**"],
