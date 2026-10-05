@@ -489,10 +489,48 @@ describe("ClientHost — replies for a terminal id it never issued", () => {
   it("is the agent's bad params (-32602), never the client breaking (-32603)", async () => {
     const { host } = harness();
     for (const call of [
-      () => host.terminalOutput({ sessionId: "s", terminalId: "term-404" }),
-      () => host.waitForTerminalExit({ sessionId: "s", terminalId: "term-404" }),
+      () => host.terminalOutput("s" as PatchbaySessionId, { sessionId: "s", terminalId: "term-404" }),
+      () => host.waitForTerminalExit("s" as PatchbaySessionId, { sessionId: "s", terminalId: "term-404" }),
     ]) {
       await expect(call()).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("term-404") });
+    }
+  });
+});
+
+describe("ClientHost — a terminal answers only the session that made it (#76)", () => {
+  const A = "s-a" as PatchbaySessionId;
+  const B = "s-b" as PatchbaySessionId;
+
+  it("another session — its agent's or another's — finds no such terminal: no output, no wait, no kill, no release", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ pattern: `${process.execPath} *`, verdict: "allow" }], fileWriteScope: "workspace" });
+    const { terminalId } = await h.host.createTerminal(
+      { sessionId: "agent-a", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"] },
+      { id: A, cwd: workspaceRoot },
+    );
+    const fromB = { sessionId: "agent-b", terminalId };
+    await expect(h.host.terminalOutput(B, fromB)).rejects.toMatchObject({ code: -32602, message: expect.stringContaining(terminalId) });
+    await expect(h.host.waitForTerminalExit(B, fromB)).rejects.toMatchObject({ code: -32602 });
+    await h.host.killTerminal(B, fromB);
+    await h.host.releaseTerminal(B, fromB);
+    // still its own session's, still running
+    const fromA = { sessionId: "agent-a", terminalId };
+    expect((await h.host.terminalOutput(A, fromA)).exitStatus).toBeNull();
+    await h.host.releaseTerminal(A, fromA); // its own release kills it
+    await expect(h.host.terminalOutput(A, fromA)).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it("a request naming a session patchbay doesn't hold is refused — a read, and every terminal call", async () => {
+    const h = harness();
+    const ghost = { sessionId: "ghost", terminalId: "term-1" };
+    for (const call of [
+      () => h.host.readTextFile(undefined, { sessionId: "ghost", path: join(workspaceRoot, "x.txt") }),
+      () => h.host.terminalOutput(undefined, ghost),
+      () => h.host.waitForTerminalExit(undefined, ghost),
+      () => h.host.killTerminal(undefined, ghost),
+      () => h.host.releaseTerminal(undefined, ghost),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("ghost") });
     }
   });
 });

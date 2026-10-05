@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Security:** a terminal now answers only the session that started it.
+  Before, any connected agent could read the output of a command another
+  agent's session ran, wait on it, or kill and release it, by naming its
+  id — and the ids were a counter. A file read naming a session patchbay
+  doesn't hold is refused, like every other request naming one. (#76)
 - Two agents that number their sessions the same way no longer take each
   other's capability check: the check session of the second could hide the
   first's, so options the first sent late (a model or mode list) were

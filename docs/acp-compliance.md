@@ -187,6 +187,7 @@ consumed: the card names the call by its `title`, which every agent sends.
 |---|---|---|
 | `fs/read_text_file` returns live editor state | ✅ | `orchestrator.ts:readTextFileLive` — open (possibly dirty) buffer wins over disk; "the agent sees what the user sees". |
 | `fs/read_text_file` `line`/`limit` params | ✅ | `sliceTextFileRead` applies the 1-based line and max-line-count limit after the live-buffer read. |
+| A read names a session patchbay holds | ✅ | `client-host.ts:readTextFile` — a session it doesn't hold is refused (-32602), as every request naming one is. |
 | `fs/write_text_file` creates file (MUST) | ✅ | `broker.ts:applyFileWrite` — `mkdir -p` + write. |
 | Write vs. open dirty editor | ✅ | `orchestrator.ts:writeTextFileLive` — the mirror of `readTextFileLive`. An open editor gets the write via `WorkspaceEdit` + save: visible, undoable, buffer and disk agree at once. No editor → plain disk write. A failed apply throws to the agent — a silent disk fallback would recreate the buffer/disk divergence this exists to prevent. Covered end-to-end in `test/vscode/live-write.test.ts`. |
 | Permission gating | ✅ | Writes gate through the broker; reads are free by design (recorded stance: read = editor state the user already shows the agent). |
@@ -197,6 +198,7 @@ consumed: the card names the call by its `title`, which every agent sends.
 | Duty | Verdict | Notes |
 |---|---|---|
 | All five methods | ✅ | `client-host.ts` handlers → `terminal-runner.ts`; create hands the broker the run itself — command, args, env, cwd, the same params the runner spawns — and a refused command is answered like a refused write (§12). |
+| A terminal answers the session that started it | ✅ | `client-host.ts:owned` — output, wait, kill and release resolve the session the request names; another session's terminal, the same agent's or another's, reads as unknown (-32602) and is never killed or released, and a session patchbay doesn't hold is refused. |
 | `cwd` absolute; omitted → the client's choice | ✅ | An omitted `cwd` runs in the session's own — the one the pool sent at that session's open on this connection (`client-host.ts:createTerminal`). A relative `cwd` or a session the connection never opened is `-32602`, before the gate. |
 | Kill ends the whole tree | ✅ | Process-group spawn (`treeSpawnOptions`) — ACP's contract is "the command stops", not "its top process stops". |
 | Truncate from the beginning when over `outputByteLimit` | ✅ | `tailBytes` counts real bytes and cuts at a UTF-8 code-point boundary — surrogate pairs stay whole by construction. |

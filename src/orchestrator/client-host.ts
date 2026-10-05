@@ -32,12 +32,21 @@ export interface ClientHostDeps {
 }
 
 export class ClientHost {
-  private readonly terminals = new Map<string, TerminalHandle>();
+  /** Each terminal with the session that made it — the one session it
+   * answers: another session's request, or another agent's, finds no such
+   * terminal. */
+  private readonly terminals = new Map<string, { handle: TerminalHandle; owner: PatchbaySessionId }>();
   private terminalCounter = 0;
 
   constructor(private readonly deps: ClientHostDeps) {}
 
-  async readTextFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
+  /** `patchbaySessionId` is patchbay's id for the session the agent named —
+   * undefined when patchbay holds no such session, which reads nothing. */
+  async readTextFile(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: acp.ReadTextFileRequest,
+  ): Promise<acp.ReadTextFileResponse> {
+    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
     const content = await this.deps.readLive(params.path).catch((err: unknown) => {
       throw readFailure(err, params.path);
     });
@@ -82,7 +91,7 @@ export class ClientHost {
 
     const handle = this.deps.broker.runner.create(run);
     const terminalId = `term-${++this.terminalCounter}`;
-    this.terminals.set(terminalId, handle);
+    this.terminals.set(terminalId, { handle, owner: session.id });
     this.deps.trackProcess(handle);
     const blockId = terminalBlockId(terminalId);
     const patchbaySessionId = session.id;
@@ -94,8 +103,11 @@ export class ClientHost {
     return { terminalId };
   }
 
-  async terminalOutput(params: acp.TerminalOutputRequest): Promise<acp.TerminalOutputResponse> {
-    const handle = this.terminal(params.terminalId);
+  async terminalOutput(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: acp.TerminalOutputRequest,
+  ): Promise<acp.TerminalOutputResponse> {
+    const handle = this.terminal(patchbaySessionId, params);
     const { output, truncated } = handle.currentOutput();
     const exit = handle.exitStatus();
     return {
@@ -105,21 +117,31 @@ export class ClientHost {
     };
   }
 
-  async waitForTerminalExit(params: acp.WaitForTerminalExitRequest): Promise<acp.WaitForTerminalExitResponse> {
-    return this.terminal(params.terminalId).waitForExit();
+  async waitForTerminalExit(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: acp.WaitForTerminalExitRequest,
+  ): Promise<acp.WaitForTerminalExitResponse> {
+    return this.terminal(patchbaySessionId, params).waitForExit();
   }
 
-  async killTerminal(params: acp.KillTerminalRequest): Promise<acp.KillTerminalResponse> {
-    this.terminals.get(params.terminalId)?.kill();
+  async killTerminal(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: acp.KillTerminalRequest,
+  ): Promise<acp.KillTerminalResponse> {
+    this.owned(patchbaySessionId, params)?.kill();
     return {};
   }
 
-  async releaseTerminal(params: acp.ReleaseTerminalRequest): Promise<acp.ReleaseTerminalResponse> {
+  async releaseTerminal(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: acp.ReleaseTerminalRequest,
+  ): Promise<acp.ReleaseTerminalResponse> {
     // ACP release semantics: a still-running command is killed — before
     // this, releasing dropped the handle and left the process running
     // with nothing pointing at it.
-    const handle = this.terminals.get(params.terminalId);
-    if (handle !== undefined && handle.exitStatus() === null) handle.kill();
+    const handle = this.owned(patchbaySessionId, params);
+    if (handle === undefined) return {};
+    if (handle.exitStatus() === null) handle.kill();
     this.terminals.delete(params.terminalId);
     return {};
   }
@@ -127,7 +149,7 @@ export class ClientHost {
   /** Every command still running, for teardown paths that must stop
    * reality before anything else. */
   runningPids(): number[] {
-    return [...this.terminals.values()].flatMap((h) => (h.pid !== null && h.exitStatus() === null ? [h.pid] : []));
+    return [...this.terminals.values()].flatMap(({ handle: h }) => (h.pid !== null && h.exitStatus() === null ? [h.pid] : []));
   }
 
   /** Forget every terminal — after the teardown killed them. */
@@ -135,9 +157,24 @@ export class ClientHost {
     this.terminals.clear();
   }
 
-  private terminal(terminalId: string): TerminalHandle {
-    const handle = this.terminals.get(terminalId);
-    if (!handle) throw unknownTerminal(terminalId);
+  /** The terminal a request names, when the session it names made it. A
+   * session patchbay doesn't hold is refused; another session's terminal
+   * reads as none, so its existence isn't told either. */
+  private owned(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: { sessionId: string; terminalId: string },
+  ): TerminalHandle | undefined {
+    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
+    const terminal = this.terminals.get(params.terminalId);
+    return terminal?.owner === patchbaySessionId ? terminal.handle : undefined;
+  }
+
+  private terminal(
+    patchbaySessionId: PatchbaySessionId | undefined,
+    params: { sessionId: string; terminalId: string },
+  ): TerminalHandle {
+    const handle = this.owned(patchbaySessionId, params);
+    if (handle === undefined) throw unknownTerminal(params.terminalId);
     return handle;
   }
 }
@@ -160,15 +197,16 @@ export function clientRequestHooks(
   | "onReleaseTerminal"
 > {
   return {
-    onReadTextFile: (_patchbayAgentId, params) => host().readTextFile(params),
+    onReadTextFile: (patchbayAgentId, params) => host().readTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
     onWriteTextFile: (patchbayAgentId, params) => host().writeTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
     onCreateTerminal: (patchbayAgentId, params, sessionCwd) => {
       const patchbaySessionId = sessionFor(patchbayAgentId, params.sessionId);
       return host().createTerminal(params, patchbaySessionId === undefined || sessionCwd === null ? null : { id: patchbaySessionId, cwd: sessionCwd });
     },
-    onTerminalOutput: (_patchbayAgentId, params) => host().terminalOutput(params),
-    onWaitForTerminalExit: (_patchbayAgentId, params) => host().waitForTerminalExit(params),
-    onKillTerminal: (_patchbayAgentId, params) => host().killTerminal(params),
-    onReleaseTerminal: (_patchbayAgentId, params) => host().releaseTerminal(params),
+    onTerminalOutput: (patchbayAgentId, params) => host().terminalOutput(sessionFor(patchbayAgentId, params.sessionId), params),
+    onWaitForTerminalExit: (patchbayAgentId, params) =>
+      host().waitForTerminalExit(sessionFor(patchbayAgentId, params.sessionId), params),
+    onKillTerminal: (patchbayAgentId, params) => host().killTerminal(sessionFor(patchbayAgentId, params.sessionId), params),
+    onReleaseTerminal: (patchbayAgentId, params) => host().releaseTerminal(sessionFor(patchbayAgentId, params.sessionId), params),
   };
 }
