@@ -15,6 +15,7 @@ import { type PermissionBroker, sliceTextFileRead } from "./broker";
 import { gateRefusal, readFailure, relativeCwd, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
 import type { CreateTerminalParams, TerminalHandle } from "./terminal-runner";
+import type { PatchbayAgentId } from "../shared/ids";
 
 export interface ClientHostDeps {
   broker: PermissionBroker;
@@ -147,7 +148,7 @@ export class ClientHost {
  * session the agent's way finds patchbay's. */
 export function clientRequestHooks(
   host: () => ClientHost,
-  sessionFor: (agentId: string, agentSessionId: string) => string | undefined,
+  sessionFor: (patchbayAgentId: PatchbayAgentId, agentSessionId: string) => string | undefined,
 ): Pick<
   PoolHooks,
   | "onReadTextFile"
@@ -159,15 +160,15 @@ export function clientRequestHooks(
   | "onReleaseTerminal"
 > {
   return {
-    onReadTextFile: (_agentId, params) => host().readTextFile(params),
-    onWriteTextFile: (agentId, params) => host().writeTextFile(sessionFor(agentId, params.sessionId), params),
-    onCreateTerminal: (agentId, params, sessionCwd) => {
-      const id = sessionFor(agentId, params.sessionId);
+    onReadTextFile: (_patchbayAgentId, params) => host().readTextFile(params),
+    onWriteTextFile: (patchbayAgentId, params) => host().writeTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
+    onCreateTerminal: (patchbayAgentId, params, sessionCwd) => {
+      const id = sessionFor(patchbayAgentId, params.sessionId);
       return host().createTerminal(params, id === undefined || sessionCwd === null ? null : { id, cwd: sessionCwd });
     },
-    onTerminalOutput: (_agentId, params) => host().terminalOutput(params),
-    onWaitForTerminalExit: (_agentId, params) => host().waitForTerminalExit(params),
-    onKillTerminal: (_agentId, params) => host().killTerminal(params),
-    onReleaseTerminal: (_agentId, params) => host().releaseTerminal(params),
+    onTerminalOutput: (_patchbayAgentId, params) => host().terminalOutput(params),
+    onWaitForTerminalExit: (_patchbayAgentId, params) => host().waitForTerminalExit(params),
+    onKillTerminal: (_patchbayAgentId, params) => host().killTerminal(params),
+    onReleaseTerminal: (_patchbayAgentId, params) => host().releaseTerminal(params),
   };
 }

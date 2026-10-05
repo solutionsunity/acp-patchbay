@@ -6,9 +6,10 @@
 // chip, the startup notice), so no surface re-derives it from its own copy
 // of the registry and the configs.
 import type { AgentUpdate } from "../shared/protocol";
+import type { PatchbayAgentId } from "../shared/ids";
 
 interface ConfigFacts {
-  id: string;
+  id: PatchbayAgentId;
   registrySource: { registryId: string; pinnedVersion: string } | null;
   lastSeenVersion: string | null;
 }
@@ -20,8 +21,8 @@ interface ConfigFacts {
 export function agentUpdates(
   registry: readonly { id: string; version: string }[],
   configs: readonly ConfigFacts[],
-): Readonly<Record<string, AgentUpdate>> {
-  const updates: Record<string, AgentUpdate> = {};
+): ReadonlyMap<PatchbayAgentId, AgentUpdate> {
+  const updates = new Map<PatchbayAgentId, AgentUpdate>();
   for (const config of configs) {
     const source = config.registrySource;
     if (source === null) continue;
@@ -32,7 +33,7 @@ export function agentUpdates(
     // the pin) has no upgrade to offer — offering one would let the pin lie
     // about reality.
     if (config.lastSeenVersion === latest) continue;
-    updates[config.id] = { from: source.pinnedVersion, to: latest };
+    updates.set(config.id, { from: source.pinnedVersion, to: latest });
   }
   return updates;
 }

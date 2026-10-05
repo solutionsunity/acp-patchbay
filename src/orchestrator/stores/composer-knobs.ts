@@ -14,6 +14,7 @@
 // no-longer-offered configured default — no validation needed here.
 import type { KnobSeed } from "../../shared/protocol";
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 // Historical key (this store began as "last-used knobs") — kept so existing
 // installs carry their combinations across the rename.
@@ -24,22 +25,22 @@ type ComposerKnobsRecord = Readonly<Record<string, KnobSeed>>;
 export class ComposerKnobsStore {
   constructor(private readonly kv: KV) {}
 
-  get(agentId: string): KnobSeed | undefined {
-    return this.kv.get<ComposerKnobsRecord>(KEY)?.[agentId];
+  get(patchbayAgentId: PatchbayAgentId): KnobSeed | undefined {
+    return this.kv.get<ComposerKnobsRecord>(KEY)?.[patchbayAgentId];
   }
 
-  async record(agentId: string, seed: KnobSeed): Promise<void> {
+  async record(patchbayAgentId: PatchbayAgentId, seed: KnobSeed): Promise<void> {
     const all = this.kv.get<ComposerKnobsRecord>(KEY) ?? {};
-    await this.kv.update(KEY, { ...all, [agentId]: seed });
+    await this.kv.update(KEY, { ...all, [patchbayAgentId]: seed });
   }
 
   /** Agent removal: the combination is a fact about *that* agent, and the
    * id is user-chosen and reusable — a lingering record would seed a
    * future re-add under the same id with the old agent's knobs. */
-  async remove(agentId: string): Promise<void> {
+  async remove(patchbayAgentId: PatchbayAgentId): Promise<void> {
     const all = this.kv.get<ComposerKnobsRecord>(KEY);
-    if (all === undefined || !(agentId in all)) return;
-    const { [agentId]: _, ...rest } = all;
+    if (all === undefined || !(patchbayAgentId in all)) return;
+    const { [patchbayAgentId]: _, ...rest } = all;
     await this.kv.update(KEY, Object.keys(rest).length > 0 ? rest : undefined);
   }
 

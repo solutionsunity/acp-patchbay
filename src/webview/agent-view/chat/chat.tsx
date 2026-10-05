@@ -213,7 +213,7 @@ export function Chat(props: {
   const { agents } = props.state;
   const active = props.activeSession;
   const agentName =
-    props.state.agents.find((a) => a.id === active?.agentId)?.name ?? active?.agentId ?? "The agent";
+    props.state.agents.find((a) => a.id === active?.patchbayAgentId)?.name ?? active?.patchbayAgentId ?? "The agent";
   const activeId = active?.id;
   const chatRef = useRef<HTMLDivElement>(null);
   const { blocks, derived } = props;
@@ -332,8 +332,8 @@ export function Chat(props: {
   // existed (persisted last-known views survive extension upgrades).
   const connect = props.state.chatConnect ?? null;
   if (connect !== null) {
-    const agent = agents.find((a) => a.id === connect.agentId);
-    const name = agent?.name ?? connect.agentId;
+    const agent = agents.find((a) => a.id === connect.patchbayAgentId);
+    const name = agent?.name ?? connect.patchbayAgentId;
     if (connect.reason === undefined) {
       return <StatePage icon="loading" spin tag={chatPaneProgress(connect, agent)} />;
     }
@@ -354,7 +354,7 @@ export function Chat(props: {
               // never minting a new session for it
               connect.forSessionId !== undefined
                 ? { kind: "switchSession", sessionId: connect.forSessionId }
-                : { kind: "startChat", agentId: connect.agentId },
+                : { kind: "startChat", patchbayAgentId: connect.patchbayAgentId },
             )
           }
         >

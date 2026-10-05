@@ -9,6 +9,7 @@ import {
   type AgentViewEvent,
   type AgentViewState,
 } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewState): AgentViewState {
   return evs.reduce(reduceAgentView, state);
@@ -16,7 +17,7 @@ function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewS
 
 const created = (id: string): AgentViewEvent => ({
   kind: "sessionCreated",
-  session: { id, agentId: "fake", title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
+  session: { id, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
 });
 
 const permission = (sessionId: string, blockId: string): AgentViewEvent => ({

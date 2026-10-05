@@ -57,7 +57,7 @@ export function AgentsDrawer(props: {
             className="a-row"
             key={a.id}
             onClick={() => {
-              send({ kind: "startChat", agentId: a.id });
+              send({ kind: "startChat", patchbayAgentId: a.id });
               props.onDone();
             }}
           >
@@ -118,7 +118,7 @@ export function SessionsDrawer(props: {
         </div>
       )}
       {ordered.map((s) => {
-        const agent = props.agents.find((a) => a.id === s.agentId);
+        const agent = props.agents.find((a) => a.id === s.patchbayAgentId);
         const isActive = s.id === props.activeSessionId;
         return (
           <div
@@ -134,7 +134,7 @@ export function SessionsDrawer(props: {
             <div>
               <div className="nm">{s.title}</div>
               <div className="sub">
-                {agent?.name ?? s.agentId} · {timeAgo(s.updatedAt)}
+                {agent?.name ?? s.patchbayAgentId} · {timeAgo(s.updatedAt)}
               </div>
             </div>
             <div className="badges" onClick={(e) => e.stopPropagation()}>

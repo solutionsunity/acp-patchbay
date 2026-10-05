@@ -436,7 +436,7 @@ for (const theme of Object.keys(THEMES)) {
     update: { from: "1.0.0", to: "1.2.0" }, ...over,
   });
   await p.evaluate(
-    (row) => window.__patch([{ kind: "chatConnectStarted", agentId: "fake" }, { kind: "agentUpserted", agent: row }]),
+    (row) => window.__patch([{ kind: "chatConnectStarted", patchbayAgentId: "fake" }, { kind: "agentUpserted", agent: row }]),
     fakeRow({ status: "reconnecting", busy: [{ kind: "connect" }] }),
   );
   await p.waitForSelector("text=Connecting Claude Code");
@@ -455,7 +455,7 @@ for (const theme of Object.keys(THEMES)) {
     window.__patch([
       {
         kind: "sessionCreated",
-        session: { id: "s3", agentId: "fake", title: "fresh", busy: [], updatedAt: "2026-09-18T00:00:00Z" },
+        session: { id: "s3", patchbayAgentId: "fake", title: "fresh", busy: [], updatedAt: "2026-09-18T00:00:00Z" },
       },
     ]),
   );

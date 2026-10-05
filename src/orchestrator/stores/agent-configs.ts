@@ -8,6 +8,8 @@
 // opt-in (workspaces, not repos), but until then one visibility rule, no
 // scope machinery.
 import { z } from "zod";
+import type { PatchbayAgentId } from "../../shared/ids";
+import { savedId } from "./saved-id";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
@@ -46,7 +48,7 @@ const agentRegistrySourceSchema = z.object({
 });
 
 export const agentConfigSchema = z.object({
-  id: z.string().min(1),
+  id: savedId<PatchbayAgentId>(),
   name: z.string().min(1),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),

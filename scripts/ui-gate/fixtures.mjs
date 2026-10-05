@@ -151,10 +151,10 @@ export function agentViewState({ live }) {
     // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
     // with s2 they fill the header's read-out of the other sessions.
     sessions: [
-      { id: "s1", agentId: "fake", title: "find foo", busy: live ? ["prompt"] : [], updatedAt: "2026-07-09T10:00:00Z" },
-      { id: "s2", agentId: "fake", title: "refactor bar", busy: [], updatedAt: "2026-07-09T11:00:00Z", unseen: true },
-      { id: "s3", agentId: "fake", title: "migrate the schema", busy: ["prompt"], updatedAt: "2026-07-09T09:00:00Z" },
-      { id: "s4", agentId: "fake", title: "write the release notes", busy: ["prompt"], updatedAt: "2026-07-09T08:00:00Z" },
+      { id: "s1", patchbayAgentId: "fake", title: "find foo", busy: live ? ["prompt"] : [], updatedAt: "2026-07-09T10:00:00Z" },
+      { id: "s2", patchbayAgentId: "fake", title: "refactor bar", busy: [], updatedAt: "2026-07-09T11:00:00Z", unseen: true },
+      { id: "s3", patchbayAgentId: "fake", title: "migrate the schema", busy: ["prompt"], updatedAt: "2026-07-09T09:00:00Z" },
+      { id: "s4", patchbayAgentId: "fake", title: "write the release notes", busy: ["prompt"], updatedAt: "2026-07-09T08:00:00Z" },
     ],
     activeSessionId: "s1",
     chatConnect: null,

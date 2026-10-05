@@ -7,8 +7,8 @@ import { join } from "node:path";
 
 /** Where a fake agent keeps its sessions' records: the suite's window has
  * no folder, and its cwd is the repo — not the agent's to write in. */
-export function fakeAgentStore(agentId: string): string {
-  return join(tmpdir(), "patchbay-fake-agent", agentId);
+export function fakeAgentStore(patchbayAgentId: string): string {
+  return join(tmpdir(), "patchbay-fake-agent", patchbayAgentId);
 }
 
 export interface AgentConfig {

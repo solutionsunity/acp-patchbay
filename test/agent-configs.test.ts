@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const base = {
   name: "Kimi CLI",
@@ -21,7 +22,7 @@ describe("agent config store — registry binary facts", () => {
   it("archive facts round-trip through a second store over the same KV", async () => {
     const kv = new MemoryKV();
     await new AgentConfigStore(kv).upsert({
-      id: "kimi",
+      id: "kimi" as PatchbayAgentId,
       ...base,
       registrySource: {
         registryId: "kimi",
@@ -42,7 +43,7 @@ describe("agent config store — registry binary facts", () => {
   it("a record without archive facts (written before the field) parses and carries none", async () => {
     const kv = new MemoryKV();
     await new AgentConfigStore(kv).upsert({
-      id: "legacy",
+      id: "legacy" as PatchbayAgentId,
       ...base,
       registrySource: { registryId: "legacy", distributionKind: "binary", pinnedVersion: "0.9.0" },
     });
@@ -54,7 +55,7 @@ describe("agent config store — registry binary facts", () => {
   it("npx records carry no archive facts either way", async () => {
     const kv = new MemoryKV();
     await new AgentConfigStore(kv).upsert({
-      id: "kilo",
+      id: "kilo" as PatchbayAgentId,
       ...base,
       command: "npx",
       registrySource: { registryId: "kilo", distributionKind: "npx", pinnedVersion: "2.0.0" },

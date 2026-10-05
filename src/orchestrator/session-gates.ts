@@ -23,6 +23,7 @@ import type { QueuedPrompt, SessionWork } from "../shared/protocol";
 import { unlessAborted } from "./abort";
 import { Cancelled, type Queue } from "./queue";
 import type { SessionsStore } from "./sessions-store";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** The attachment line's work — everything a session's lines hold but its
  * turn. */
@@ -43,7 +44,7 @@ export interface SessionGateAsks {
    * an idle release — for the log. */
   failed(context: string, err: unknown): void;
   /** Settles once the work the agent's row holds now has left it. */
-  agentSettled(agentId: string): Promise<void>;
+  agentSettled(patchbayAgentId: PatchbayAgentId): Promise<void>;
 }
 
 export class SessionGates {
@@ -106,8 +107,8 @@ export class SessionGates {
   /** An agent came up: each of its sessions on view sat blank, with nothing
    * to attach to — each attaches now (one already attached costs nothing).
    * Settles once they all have. */
-  async reattachViewed(agentId: string): Promise<void> {
-    await Promise.all(this.sessions.viewed(agentId).map((sessionId) => this.attachToView(sessionId)));
+  async reattachViewed(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    await Promise.all(this.sessions.viewed(patchbayAgentId).map((sessionId) => this.attachToView(sessionId)));
   }
 
   /** "New session" for an agent whose never-prompted session lost its
@@ -216,8 +217,8 @@ export class SessionGates {
   /** A login cleared the agent's lock: each of its sessions' held words
    * go. An idle session has no coming turn end to release them — without
    * this, they would wait forever behind a login that already happened. */
-  lockCleared(agentId: string): void {
-    for (const sessionId of this.sessions.ofAgent(agentId)) this.drain(sessionId);
+  lockCleared(patchbayAgentId: PatchbayAgentId): void {
+    for (const sessionId of this.sessions.ofAgent(patchbayAgentId)) this.drain(sessionId);
   }
 
   /** Ends every session's work — erase, the window's end. */
@@ -331,8 +332,8 @@ export class SessionGates {
   /** Settles once the work its agent's row holds right now has left it —
    * what a session's work enters behind. */
   private agentWork(sessionId: string): Promise<void> | undefined {
-    const agentId = this.sessions.agentFor(sessionId);
-    return agentId === undefined ? undefined : this.asks.agentSettled(agentId);
+    const patchbayAgentId = this.sessions.agentFor(sessionId);
+    return patchbayAgentId === undefined ? undefined : this.asks.agentSettled(patchbayAgentId);
   }
 
   /** The resource timer's sweep: a session the store calls idle is

@@ -10,6 +10,7 @@ import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import type { AgentViewEvent } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 let dir: string;
 let workspaceRoot: string;
@@ -583,7 +584,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
   const signIn = {
     message: "Sign in",
     ask: { mode: "url" as const, link: { href: "https://auth.example.com/", host: "auth.example.com", warnings: [] } },
-    completion: { agentId: "a1", elicitationId: "e1" },
+    completion: { patchbayAgentId: "a1" as PatchbayAgentId, elicitationId: "e1" },
   };
   const blockOf = (events: AgentViewEvent[]) =>
     (events.find((e) => e.kind === "elicitationRequested") as { blockId: string }).blockId;
@@ -602,7 +603,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     broker.reopenLink(blockId);
     expect(opened).toHaveLength(2);
 
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.at(-1)).toEqual({ kind: "elicitationLinkSettled", sessionId: "s1", blockId, state: "completed" });
     broker.reopenLink(blockId);
     expect(opened).toHaveLength(2);
@@ -621,18 +622,18 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     void broker.askElicitation("s1", signIn);
     broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
     const before = events.length;
-    broker.completeLink("a2", "e1"); // another agent's id space
-    broker.completeLink("a1", "nope");
+    broker.completeLink("a2" as PatchbayAgentId, "e1"); // another agent's id space
+    broker.completeLink("a1" as PatchbayAgentId, "nope");
     expect(events).toHaveLength(before);
-    broker.completeLink("a1", "e1");
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.filter((e) => e.kind === "elicitationLinkSettled")).toHaveLength(1);
   });
 
   it("a completion before the user answers settles the card as completed and answers cancel — the user chose nothing", async () => {
     const { broker, events, opened } = harness();
     const answer = broker.askElicitation("s1", signIn);
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "completed" });
     expect(opened).toEqual([]);
@@ -640,7 +641,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a completion that overtakes its question is held, and the question settles completed the moment it arrives", async () => {
     const { broker, events, opened } = harness();
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events).toEqual([]);
     const answer = broker.askElicitation("s1", signIn);
     expect(await answer).toEqual({ action: "cancel" });
@@ -653,8 +654,8 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker, events } = harness();
     void broker.askElicitation("s1", signIn);
     broker.resolveElicitation(blockOf(events), { action: "accept", content: {} });
-    broker.completeLink("a1", "e1");
-    broker.completeLink("a1", "e1"); // a repeat, after the link finished
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1"); // a repeat, after the link finished
     const reused = broker.askElicitation("s1", signIn);
     let settled = false;
     void reused.then(() => (settled = true));
@@ -668,7 +669,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const answer = broker.askElicitation("s1", signIn, withdraw.signal);
     withdraw.abort();
     expect(await answer).toEqual({ action: "cancel" });
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.filter((e) => e.kind === "elicitationResolved").map((e) => (e as { outcome: string }).outcome)).toEqual(
       ["withdrawn", "completed"],
     );
@@ -678,15 +679,15 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker, events } = harness();
     void broker.askElicitation("s1", signIn);
     broker.resolveElicitation(blockOf(events), { action: "decline" });
-    broker.completeLink("a1", "e1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.at(-1)).toMatchObject({ kind: "elicitationLinkSettled", state: "completed" });
     expect(events.filter((e) => e.kind === "elicitationResolved")).toHaveLength(1);
   });
 
   it("held completions die with the agent's connection", async () => {
     const { broker } = harness();
-    broker.completeLink("a1", "e1");
-    broker.forgetAgent("a1");
+    broker.completeLink("a1" as PatchbayAgentId, "e1");
+    broker.forgetAgent("a1" as PatchbayAgentId);
     const answer = broker.askElicitation("s1", signIn);
     let settled = false;
     void answer.then(() => (settled = true));

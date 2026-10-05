@@ -9,6 +9,7 @@ import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { AgentStatus } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -36,9 +37,9 @@ function makePool(): { pool: AgentPool; rec: Recorded } {
   return { pool, rec };
 }
 
-function spec(script: FakeAgentScript, agentId = "fake"): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId = "fake"): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId: patchbayAgentId as PatchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -83,11 +84,11 @@ describe("AgentPool", () => {
     expect(declared.sessionFork).toBe(true);
     expect(declared.sessionResume).toBe(false);
     expect(rec.declared).toHaveLength(1);
-    expect(pool.get("fake")?.status).toBe("running");
+    expect(pool.get("fake" as PatchbayAgentId)?.status).toBe("running");
     expect(rec.statuses.map((s) => s.status)).toEqual(["reconnecting", "running"]);
 
-    await pool.stop("fake");
-    expect(pool.get("fake")?.status).toBe("stopped");
+    await pool.stop("fake" as PatchbayAgentId);
+    expect(pool.get("fake" as PatchbayAgentId)?.status).toBe("stopped");
   });
 
   it("streams a scripted turn and completes with end_turn", async () => {
@@ -100,8 +101,8 @@ describe("AgentPool", () => {
         ],
       }),
     );
-    const { sessionId } = await pool.newSession("fake", cwd);
-    const response = await pool.prompt("fake", sessionId, [
+    const { sessionId } = await pool.newSession("fake" as PatchbayAgentId, cwd);
+    const response = await pool.prompt("fake" as PatchbayAgentId, sessionId, [
       { type: "text", text: "go" },
     ]);
 
@@ -115,37 +116,37 @@ describe("AgentPool", () => {
           : "",
       );
     expect(texts.join("")).toBe("part one part two");
-    await pool.stop("fake");
+    await pool.stop("fake" as PatchbayAgentId);
   });
 
   it("crash is visible the moment it happens; restart is one action", async () => {
     const { pool, rec } = makePool();
     await pool.connect(spec({}, "crashy"));
-    const { sessionId } = await pool.newSession("crashy", cwd);
+    const { sessionId } = await pool.newSession("crashy" as PatchbayAgentId, cwd);
 
     await expect(
-      pool.prompt("crashy", sessionId, [{ type: "text", text: "__crash__" }]),
+      pool.prompt("crashy" as PatchbayAgentId, sessionId, [{ type: "text", text: "__crash__" }]),
     ).rejects.toThrow();
 
     const crashed = await waitFor(() =>
-      pool.get("crashy")?.status === "crashed" ? pool.get("crashy") : undefined,
+      pool.get("crashy" as PatchbayAgentId)?.status === "crashed" ? pool.get("crashy" as PatchbayAgentId) : undefined,
     );
     expect(crashed.detail).toMatch(/exited 1/);
     expect(rec.statuses.some((s) => s.status === "crashed")).toBe(true);
 
     // one action: restart reconnects and re-captures declared
-    const declared = await pool.restart("crashy");
+    const declared = await pool.restart("crashy" as PatchbayAgentId);
     expect(declared).toBeTruthy();
-    expect(pool.get("crashy")?.status).toBe("running");
+    expect(pool.get("crashy" as PatchbayAgentId)?.status).toBe("running");
     expect(rec.declared).toHaveLength(2);
-    await pool.stop("crashy");
+    await pool.stop("crashy" as PatchbayAgentId);
   });
 
   it("intentional stop reads as stopped, never crashed", async () => {
     const { pool, rec } = makePool();
     await pool.connect(spec({}, "stoppy"));
-    await pool.stop("stoppy");
-    expect(pool.get("stoppy")?.status).toBe("stopped");
+    await pool.stop("stoppy" as PatchbayAgentId);
+    expect(pool.get("stoppy" as PatchbayAgentId)?.status).toBe("stopped");
     expect(rec.statuses.every((s) => s.status !== "crashed")).toBe(true);
   });
 
@@ -165,15 +166,15 @@ describe("AgentPool", () => {
     );
 
     const [a, b] = await Promise.all([
-      pool.newSession("multi", cwd),
-      pool.newSession("multi", cwd),
+      pool.newSession("multi" as PatchbayAgentId, cwd),
+      pool.newSession("multi" as PatchbayAgentId, cwd),
     ]);
     expect(a.sessionId).not.toBe(b.sessionId);
-    expect(pool.get("multi")?.sessions).toHaveLength(2);
+    expect(pool.get("multi" as PatchbayAgentId)?.sessions).toHaveLength(2);
 
     const [ra, rb] = await Promise.all([
-      pool.prompt("multi", a.sessionId, [{ type: "text", text: "A" }]),
-      pool.prompt("multi", b.sessionId, [{ type: "text", text: "B" }]),
+      pool.prompt("multi" as PatchbayAgentId, a.sessionId, [{ type: "text", text: "A" }]),
+      pool.prompt("multi" as PatchbayAgentId, b.sessionId, [{ type: "text", text: "B" }]),
     ]);
     expect(ra.stopReason).toBe("end_turn");
     expect(rb.stopReason).toBe("end_turn");
@@ -190,7 +191,7 @@ describe("AgentPool", () => {
         .join("");
       expect(text).toBe("tick tock");
     }
-    await pool.stop("multi");
+    await pool.stop("multi" as PatchbayAgentId);
   });
 
   it("cancel mid-turn yields stopReason cancelled", async () => {
@@ -208,13 +209,13 @@ describe("AgentPool", () => {
         "cancelly",
       ),
     );
-    const { sessionId } = await pool.newSession("cancelly", cwd);
-    const turn = pool.prompt("cancelly", sessionId, [{ type: "text", text: "go" }]);
+    const { sessionId } = await pool.newSession("cancelly" as PatchbayAgentId, cwd);
+    const turn = pool.prompt("cancelly" as PatchbayAgentId, sessionId, [{ type: "text", text: "go" }]);
     await new Promise((r) => setTimeout(r, 120));
-    await pool.cancel("cancelly", sessionId);
+    await pool.cancel("cancelly" as PatchbayAgentId, sessionId);
     const response = await turn;
     expect(response.stopReason).toBe("cancelled");
-    await pool.stop("cancelly");
+    await pool.stop("cancelly" as PatchbayAgentId);
   });
 
   // P16: a failure's reason is readable inline — the crashed entry keeps the
@@ -229,7 +230,7 @@ describe("AgentPool", () => {
     });
     await expect(
       pool.connect({
-        agentId: "doomed",
+        patchbayAgentId: "doomed" as PatchbayAgentId,
         name: "Doomed",
         command: process.execPath,
         // write-callback → exit: the last words are flushed before death,
@@ -240,7 +241,7 @@ describe("AgentPool", () => {
       }),
     ).rejects.toThrow();
     expect(recorded).toContain("crashed");
-    expect(pool.get("doomed")?.stderrTail.join("\n")).toContain("boom: config missing");
+    expect(pool.get("doomed" as PatchbayAgentId)?.stderrTail.join("\n")).toContain("boom: config missing");
   });
 
   // P16: the classic silent hang — a CLI doing first-run setup against a
@@ -261,7 +262,7 @@ describe("AgentPool", () => {
     );
     await expect(
       pool.connect({
-        agentId: "mute",
+        patchbayAgentId: "mute" as PatchbayAgentId,
         name: "Mute",
         command: process.execPath,
         args: ["-e", "process.stdin.resume(); setInterval(() => {}, 1 << 30);"],
@@ -285,10 +286,10 @@ describe("AgentPool", () => {
         ...stubFsTerminalHooks(),
       },
       undefined,
-      { resolveLaunch: async (s) => spec({}, s.agentId) },
+      { resolveLaunch: async (s) => spec({}, s.patchbayAgentId) },
     );
     const declared = await pool.connect({
-      agentId: "resolved",
+      patchbayAgentId: "resolved" as PatchbayAgentId,
       name: "Resolved",
       command: "patchbay-no-such-launcher",
       args: [],
@@ -296,10 +297,10 @@ describe("AgentPool", () => {
       cwd,
     });
     expect(declared).toBeDefined();
-    expect(pool.get("resolved")?.status).toBe("running");
+    expect(pool.get("resolved" as PatchbayAgentId)?.status).toBe("running");
     // The entry snapshot holds the resolved spec — what actually ran.
-    expect(pool.get("resolved")?.spec.command).toBe(process.execPath);
-    await pool.stop("resolved");
+    expect(pool.get("resolved" as PatchbayAgentId)?.spec.command).toBe(process.execPath);
+    await pool.stop("resolved" as PatchbayAgentId);
   });
 
   it("a resolver throw is the connect failure, honestly labeled", async () => {
@@ -328,11 +329,11 @@ describe("AgentPool — stopping", () => {
   it("a process stops once: a stop asked for while it goes down gets that same stop", async () => {
     const { pool, rec } = makePool();
     await pool.connect(spec({}, "twice"));
-    const first = pool.stop("twice");
-    expect(pool.stop("twice")).toBe(first);
+    const first = pool.stop("twice" as PatchbayAgentId);
+    expect(pool.stop("twice" as PatchbayAgentId)).toBe(first);
     await first;
     const reported = rec.statuses.length;
-    await pool.stop("twice");
+    await pool.stop("twice" as PatchbayAgentId);
     expect(rec.statuses).toHaveLength(reported);
   });
 
@@ -341,7 +342,7 @@ describe("AgentPool — stopping", () => {
     const controller = new AbortController();
     controller.abort(new Error("stopped by test"));
     await expect(pool.connect(spec({}, "never"), { signal: controller.signal })).rejects.toThrow("stopped by test");
-    expect(pool.get("never")).toBeUndefined();
+    expect(pool.get("never" as PatchbayAgentId)).toBeUndefined();
     expect(rec.statuses).toEqual([]);
   });
 
@@ -361,7 +362,7 @@ describe("AgentPool — stopping", () => {
         resolveLaunch: (s, onPhase) => {
           phase = onPhase;
           onPhase("downloading Fake 1.0…");
-          return new Promise((resolve) => (release = () => resolve(spec({}, s.agentId))));
+          return new Promise((resolve) => (release = () => resolve(spec({}, s.patchbayAgentId))));
         },
       },
     );
@@ -369,14 +370,14 @@ describe("AgentPool — stopping", () => {
     const connecting = pool.connect(spec({}, "mid-download"), { signal: controller.signal });
     controller.abort(new Error("stopped by test"));
     await expect(connecting).rejects.toThrow("stopped by test");
-    expect(pool.get("mid-download")?.status).toBe("stopped");
+    expect(pool.get("mid-download" as PatchbayAgentId)?.status).toBe("stopped");
     // The resolver runs on unwatched — its download is the cache's — and
     // neither its late label nor its spec moves the stopped launch.
     phase("downloading Fake 1.0… 90%");
     release();
     await new Promise((r) => setTimeout(r, 300));
-    expect(pool.get("mid-download")?.status).toBe("stopped");
-    expect(pool.get("mid-download")?.detail).toBeUndefined();
+    expect(pool.get("mid-download" as PatchbayAgentId)?.status).toBe("stopped");
+    expect(pool.get("mid-download" as PatchbayAgentId)?.detail).toBeUndefined();
     expect(statuses.map((s) => s.status)).toEqual(["reconnecting", "reconnecting", "stopped"]);
   });
 
@@ -398,14 +399,14 @@ describe("AgentPool — stopping", () => {
       const connecting = pool.connect(
         // PATH holds only the stand-in, so the cache repair a killed
         // warmup runs finds no npm to ask and touches nothing.
-        { agentId: "warm", name: "Warm", command: join(bin, "npx"), args: ["-y", "fake-pkg@1.0.0"], env: { PATH: bin }, cwd },
+        { patchbayAgentId: "warm" as PatchbayAgentId, name: "Warm", command: join(bin, "npx"), args: ["-y", "fake-pkg@1.0.0"], env: { PATH: bin }, cwd },
         { signal: controller.signal },
       );
       const pid = Number(await waitFor(() => readFile(pidFile, "utf8").then((t) => t || undefined, () => undefined)));
       controller.abort(new Error("stopped by test"));
       await expect(connecting).rejects.toThrow("stopped by test");
       expect(() => process.kill(pid, 0)).toThrow();
-      expect(pool.get("warm")?.status).toBe("stopped");
+      expect(pool.get("warm" as PatchbayAgentId)?.status).toBe("stopped");
       expect(rec.statuses.map((s) => s.status)).not.toContain("running");
       await rm(bin, { recursive: true, force: true });
     },
@@ -426,11 +427,11 @@ describe("AgentPool — stopping", () => {
         "cut-off",
       ),
     );
-    const { sessionId } = await pool.newSession("cut-off", cwd);
-    const turn = pool.prompt("cut-off", sessionId, [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
+    const { sessionId } = await pool.newSession("cut-off" as PatchbayAgentId, cwd);
+    const turn = pool.prompt("cut-off" as PatchbayAgentId, sessionId, [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
     const cut = expect(turn).rejects.toThrow();
     await new Promise((r) => setTimeout(r, 100));
-    await pool.stop("cut-off");
+    await pool.stop("cut-off" as PatchbayAgentId);
     await cut;
     expect(evidence.filter((e) => e.startsWith("prompt.image"))).toEqual([]);
   });

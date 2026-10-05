@@ -14,11 +14,12 @@
 // A value of any other shape is no pointer.
 // workspaceState: sessions are cwd-bound, machine-local, non-sensitive.
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 const KEY = "acpPatchbay.lastActiveSession";
 
 export interface SessionPointer {
-  agentId: string;
+  agentId: PatchbayAgentId;
   /** The agent's own id for the session. */
   sessionId: string;
 }

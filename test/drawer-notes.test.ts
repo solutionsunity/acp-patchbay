@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { AgentSummary, DeclaredCapabilities } from "../src/shared/protocol";
 import { unlistedAgents } from "../src/webview/agent-view/drawer-notes";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const DECLARED: DeclaredCapabilities = {
   loadSession: true,
@@ -28,7 +29,7 @@ function agent(
   status: AgentSummary["status"],
   capabilities?: AgentSummary["capabilities"],
 ): AgentSummary {
-  return { id, name: id, status, needsAuth: false, authMethods: [], busy: [], capabilities };
+  return { id: id as PatchbayAgentId, name: id, status, needsAuth: false, authMethods: [], busy: [], capabilities };
 }
 
 describe("sessions drawer — agents whose history cannot be shown", () => {

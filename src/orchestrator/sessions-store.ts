@@ -58,6 +58,7 @@ import type { AgentPool } from "./pool";
 import { newBlockId, SessionStream, type StreamState } from "./session-stream";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { boundedText } from "./content-parts";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** A `sessionId` is patchbay's own id for a session — the row's — wherever
  * it isn't named the agent's. */
@@ -75,20 +76,20 @@ export interface SessionsStoreHooks {
    * knob-id-keyed — knobs.ts foldSeed). Which seed that is — the agent
    * config's defaults or the composer's per-agent combination — is the
    * orchestrator's policy (Preferences knobSource), not knowledge held here. */
-  seedFor?(agentId: string): KnobSeed | undefined;
+  seedFor?(patchbayAgentId: PatchbayAgentId): KnobSeed | undefined;
   /** Fires when the *user* sets a knob and the agent confirms it — the
    * composer-knobs record behind the last-session knobSource preference
    * (stores/composer-knobs.ts). Deliberately not wired to publishKnobs:
    * attach-time publishes carry agent-reset state, and recording those made
    * "last used" mean "last attached". */
-  onKnobsConfirmed?(agentId: string, seed: KnobSeed): void;
+  onKnobsConfirmed?(patchbayAgentId: PatchbayAgentId, seed: KnobSeed): void;
   /** Fires when a real session attaches on an agent (new/load/resume, at
    * the one attach ceremony) — the deferred-probe trigger for latched
    * agents (capability-tracker.noteRealSessionOpened via the orchestrator;
    * extensions/first-session-mcp-latch). Probe sessions never pass through
    * here, which is exactly what makes this the honest "real session" fact.
    * The id is the agent's: probe sessions are known by it. */
-  onRealSessionAttached?(agentId: string, agentSessionId: string): void;
+  onRealSessionAttached?(patchbayAgentId: PatchbayAgentId, agentSessionId: string): void;
   /** The session's root list moved (a root added or removed, a workspace
    * folder came or went) — the orchestrator tells the session's MCP
    * subprocesses, which re-read `rootsOf`. Fired for attached sessions
@@ -117,7 +118,7 @@ export interface SessionsStoreHooks {
   currentTranscript?(sessionId: string): readonly ChatBlock[];
   /** Whether `session.delete` is declared *and used* — gates the agent-side
    * delete on close (features gate on used). */
-  isDeleteUsed?(agentId: string): boolean;
+  isDeleteUsed?(patchbayAgentId: PatchbayAgentId): boolean;
   /** Whether this session is on view — the sidebar's active one or a
    * pinned window's. The idle sweep exempts it (the visible chat's state
    * never changes under the user, and the composer, whose draft must block
@@ -138,7 +139,7 @@ export interface SessionsStoreHooks {
    * turn-start door queues the words instead of firing them into a wire
    * already witnessed to refuse — and the drain holds until the lock's
    * clearing releases it. */
-  authLocked?(agentId: string): boolean;
+  authLocked?(patchbayAgentId: PatchbayAgentId): boolean;
   /** A zero-turn re-mint gave the session a new id on the agent's side —
    * what keys on that id outside this store (the last-open pointer)
    * follows it. */
@@ -230,7 +231,7 @@ function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
  * source of truth for sessions, repopulated every connect (patchbay
  * stores no transcripts, no index). */
 interface KnownSession {
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   /** The agent's own id for the session — what every wire call carries,
    * and what inbound traffic names it by. Ids are only unique per agent,
    * so the pair names the row. The zero-turn re-mint replaces it; the
@@ -255,7 +256,7 @@ interface KnownSession {
 interface LiveSession extends StreamState {
   /** Also the connection its requests ride: an agent has one process per
    * window, holding every session opened with it. */
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   /** Normalized knob state (knobs.ts) — carries the wire surface that
    * drives set routing; the view side only ever sees the knob list. */
   knobs: NormalizedKnobs;
@@ -271,9 +272,9 @@ interface LiveSession extends StreamState {
   userModeSetPending: boolean;
 }
 
-function liveSession(agentId: string): LiveSession {
+function liveSession(patchbayAgentId: PatchbayAgentId): LiveSession {
   return {
-    agentId,
+    patchbayAgentId,
     openRun: null,
     knobs: NO_KNOBS,
     inFlight: false,
@@ -288,8 +289,8 @@ function liveSession(agentId: string): LiveSession {
  * agent, so this is what names one row. (The continuity store keys its
  * rows the same way on disk; that key is a storage format, this one an
  * index in memory — each may change without the other.) */
-function handleKey(agentId: string, handle: string): string {
-  return `${agentId}\u0000${handle}`;
+function handleKey(patchbayAgentId: PatchbayAgentId, handle: string): string {
+  return `${patchbayAgentId}\u0000${handle}`;
 }
 
 /** The work riding an agent's connection: its conversations, and the
@@ -322,7 +323,7 @@ export class SessionsStore {
    * the servers before it answers) until the agent's connection ends, which
    * ends them too: an agent that keeps one server for all its sessions
    * keeps using the first session's token after that session closed. */
-  private tokens = new Map<string, { agentId: string; sessionId?: string; given: readonly AttachedServer[] }>();
+  private tokens = new Map<string, { patchbayAgentId: PatchbayAgentId; sessionId?: string; given: readonly AttachedServer[] }>();
   /** Per agent: the agent's ids of sessions that left (closed, or re-minted
    * away from) while a session/list walk may be in flight — a page fetched
    * before that would otherwise resurrect the row with an empty
@@ -353,7 +354,7 @@ export class SessionsStore {
      * default) when no MCP server is wired — tests mostly don't need one. */
     private readonly mcpServersFor: (
       contextToken: string,
-      agentId: string,
+      patchbayAgentId: PatchbayAgentId,
     ) => Promise<{ servers: McpServer[]; given: readonly AttachedServer[] }> = async () => ({ servers: [], given: [] }),
     /** Output-channel seam (logger.ts). */
     private readonly log: Logger = nullLogger,
@@ -365,14 +366,14 @@ export class SessionsStore {
     return this.sessions.has(sessionId);
   }
 
-  agentFor(sessionId: string): string | undefined {
-    return this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
+  agentFor(sessionId: string): PatchbayAgentId | undefined {
+    return this.sessions.get(sessionId)?.patchbayAgentId ?? this.known.get(sessionId)?.patchbayAgentId;
   }
 
   /** The session an agent means by its own id for it — what every request
    * and notification from the agent names. */
-  rowFor(agentId: string, agentSessionId: string): string | undefined {
-    return this.byHandle.get(handleKey(agentId, agentSessionId));
+  rowFor(patchbayAgentId: PatchbayAgentId, agentSessionId: string): string | undefined {
+    return this.byHandle.get(handleKey(patchbayAgentId, agentSessionId));
   }
 
   /** The agent's own id for a session — what it answers to on the wire, and
@@ -385,7 +386,7 @@ export class SessionsStore {
    * list that crossed this session's creation may have named it first, as
    * a row of its own — that row is this session, and leaves. */
   private bind(sessionId: string, row: KnownSession): void {
-    const key = handleKey(row.agentId, row.handle);
+    const key = handleKey(row.patchbayAgentId, row.handle);
     const crossed = this.byHandle.get(key);
     if (crossed !== undefined && crossed !== sessionId) this.forget(crossed);
     this.known.set(sessionId, row);
@@ -397,7 +398,7 @@ export class SessionsStore {
     const row = this.known.get(sessionId);
     if (row === undefined) return;
     this.known.delete(sessionId);
-    const key = handleKey(row.agentId, row.handle);
+    const key = handleKey(row.patchbayAgentId, row.handle);
     if (this.byHandle.get(key) === sessionId) this.byHandle.delete(key);
   }
 
@@ -408,7 +409,7 @@ export class SessionsStore {
   private saved(sessionId: string): SessionContinuity {
     const row = this.known.get(sessionId);
     if (row === undefined) return {};
-    return this.continuity.read(row.handle, row.agentId) ?? {};
+    return this.continuity.read(row.handle, row.patchbayAgentId) ?? {};
   }
 
   /** Writes fields of the session's continuity row — an empty value
@@ -420,10 +421,10 @@ export class SessionsStore {
 
   /** The one continuity write: a patch merges its fields into the row the
    * agent's id names; null forgets the row. */
-  private write(row: { agentId: string; handle: string }, fields: SessionContinuity | null): void {
+  private write(row: { patchbayAgentId: PatchbayAgentId; handle: string }, fields: SessionContinuity | null): void {
     void (fields === null
-      ? this.continuity.forget(row.handle, row.agentId)
-      : this.continuity.patch(row.handle, row.agentId, this.cwd(), fields)
+      ? this.continuity.forget(row.handle, row.patchbayAgentId)
+      : this.continuity.patch(row.handle, row.patchbayAgentId, this.cwd(), fields)
     ).catch((err: Error) => this.log.error(`session continuity ${row.handle} — ${err.message}`));
   }
 
@@ -433,32 +434,32 @@ export class SessionsStore {
    * attachments: a never-prompted session whose connection died is still
    * the agent's new session, and its next use re-mints it (the ladder's
    * zero-turn rung). */
-  findNeverPrompted(agentId: string): string | undefined {
+  findNeverPrompted(patchbayAgentId: PatchbayAgentId): string | undefined {
     for (const [sessionId, row] of this.known) {
-      if (row.agentId === agentId && !row.everPrompted) return sessionId;
+      if (row.patchbayAgentId === patchbayAgentId && !row.everPrompted) return sessionId;
     }
     return undefined;
   }
 
   /** Every session of an agent patchbay knows, attached or not. */
-  ofAgent(agentId: string): string[] {
-    return [...this.known].filter(([, row]) => row.agentId === agentId).map(([sessionId]) => sessionId);
+  ofAgent(patchbayAgentId: PatchbayAgentId): string[] {
+    return [...this.known].filter(([, row]) => row.patchbayAgentId === patchbayAgentId).map(([sessionId]) => sessionId);
   }
 
   /** The sessions attached to an agent's connection. */
-  sessionsOn(agentId: string): readonly string[] {
-    return [...this.sessions].filter(([, session]) => session.agentId === agentId).map(([sessionId]) => sessionId);
+  sessionsOn(patchbayAgentId: PatchbayAgentId): readonly string[] {
+    return [...this.sessions].filter(([, session]) => session.patchbayAgentId === patchbayAgentId).map(([sessionId]) => sessionId);
   }
 
   /** What stopping this agent's connection would disconnect: the
    * conversations on it, and the turns among them still running (those are
    * cut off). A never-prompted session doesn't count — it has nothing to
    * lose and is minted again from its row on next use. */
-  openWork(agentId: string): OpenWork {
+  openWork(patchbayAgentId: PatchbayAgentId): OpenWork {
     let conversations = 0;
     let turns = 0;
     for (const [sessionId, session] of this.sessions) {
-      if (session.agentId !== agentId) continue;
+      if (session.patchbayAgentId !== patchbayAgentId) continue;
       if (session.inFlight) turns++;
       if (session.inFlight || this.hasTurns(sessionId)) conversations++;
     }
@@ -481,7 +482,7 @@ export class SessionsStore {
   async release(sessionId: string, reason: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined || session.inFlight) return;
-    const agent = this.pool.get(session.agentId);
+    const agent = this.pool.get(session.patchbayAgentId);
     if (agent?.status !== "running") return; // nothing attached to free
     const declared = agent.declared;
     if (declared?.sessionClose !== true) return;
@@ -490,7 +491,7 @@ export class SessionsStore {
     if (handle === undefined) return;
     this.dropLiveSession(sessionId, session);
     try {
-      await this.pool.closeSession(session.agentId, handle);
+      await this.pool.closeSession(session.patchbayAgentId, handle);
       this.log.info(`session ${sessionId}: released (${reason})`);
     } catch (err) {
       // Failure means the agent still holds it — the next open re-attaches
@@ -545,15 +546,15 @@ export class SessionsStore {
    * the agent's id it returns, then binds the token. */
   private async attachSession(
     target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     opts: { cwd?: string; roots?: readonly string[] } = {},
     signal?: AbortSignal,
   ): Promise<{ handle: string; contextToken: string; knobs: NormalizedKnobs; missing: string[] }> {
     // Unguessable: the token is what the IPC socket admits a request by.
     const contextToken = randomUUID();
-    const { servers: mcpServers, given } = await unlessAborted(this.mcpServersFor(contextToken, agentId), signal);
+    const { servers: mcpServers, given } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId), signal);
     this.tokens.set(contextToken, {
-      agentId,
+      patchbayAgentId,
       given,
       ...(target.via !== "new" ? { sessionId: target.sessionId } : {}),
     });
@@ -568,8 +569,8 @@ export class SessionsStore {
     const roots = composed.filter((p) => !missing.includes(p));
     if (missing.length > 0) this.hooks.rootsMissing?.(missing);
     if (target.via === "new") {
-      const r = await unlessAborted(this.pool.newSession(agentId, cwd, mcpServers, roots), signal);
-      this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
+      const r = await unlessAborted(this.pool.newSession(patchbayAgentId, cwd, mcpServers, roots), signal);
+      this.hooks.onRealSessionAttached?.(patchbayAgentId, r.sessionId);
       // the session isn't in the view yet — its caller says what was skipped
       return {
         handle: r.sessionId,
@@ -584,11 +585,11 @@ export class SessionsStore {
     // no attachment to land in.
     const r = await unlessAborted(
       target.via === "load"
-        ? this.pool.loadSession(agentId, handle, cwd, mcpServers, roots)
-        : this.pool.resumeSession(agentId, handle, cwd, mcpServers, roots),
+        ? this.pool.loadSession(patchbayAgentId, handle, cwd, mcpServers, roots)
+        : this.pool.resumeSession(patchbayAgentId, handle, cwd, mcpServers, roots),
       signal,
     );
-    this.hooks.onRealSessionAttached?.(agentId, handle);
+    this.hooks.onRealSessionAttached?.(patchbayAgentId, handle);
     this.noticeMissingRoots(target.sessionId, missing);
     return {
       handle,
@@ -619,9 +620,9 @@ export class SessionsStore {
 
   /** The agent a server was given to under a token through the bridge —
    * the one delivery that asks patchbay for the server's credential. */
-  bridgedTo(token: string, serverId: string): string | undefined {
+  bridgedTo(token: string, serverId: string): PatchbayAgentId | undefined {
     const grant = this.tokens.get(token);
-    return grant?.given.some((s) => s.id === serverId && s.delivery === "bridge") === true ? grant.agentId : undefined;
+    return grant?.given.some((s) => s.id === serverId && s.delivery === "bridge") === true ? grant.patchbayAgentId : undefined;
   }
 
   /** Every token a session's attaches were given — what its subprocesses
@@ -656,10 +657,10 @@ export class SessionsStore {
    * blank flash, no patch flood) until the closing resync swaps the webview
    * wholesale. The window closes on failure too: canonical was reset, and
    * the webview must not keep showing blocks canonical no longer holds. */
-  private async loadSilently(sessionId: string, agentId: string, signal: AbortSignal): Promise<NormalizedKnobs> {
+  private async loadSilently(sessionId: string, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<NormalizedKnobs> {
     this.stream.openReplay(sessionId);
     try {
-      const { knobs } = await this.attachSession({ via: "load", sessionId }, agentId, {}, signal);
+      const { knobs } = await this.attachSession({ via: "load", sessionId }, patchbayAgentId, {}, signal);
       const session = this.sessions.get(sessionId);
       if (session !== undefined) this.stream.finishReplay(sessionId, session);
       return knobs;
@@ -672,32 +673,32 @@ export class SessionsStore {
   /** An agent's new session — one at a time: an agent has one new session
    * (findNeverPrompted), and a second ask while the first is still on the
    * wire gets the same one, not a sibling blank shell. */
-  createSession(agentId: string, agentName: string, cwd: string): Promise<string> {
-    const inFlight = this.creating.get(agentId);
+  createSession(patchbayAgentId: PatchbayAgentId, agentName: string, cwd: string): Promise<string> {
+    const inFlight = this.creating.get(patchbayAgentId);
     if (inFlight !== undefined) return inFlight;
-    const run = this.mintSession(agentId, agentName, cwd).finally(() => {
-      if (this.creating.get(agentId) === run) this.creating.delete(agentId);
+    const run = this.mintSession(patchbayAgentId, agentName, cwd).finally(() => {
+      if (this.creating.get(patchbayAgentId) === run) this.creating.delete(patchbayAgentId);
     });
-    this.creating.set(agentId, run);
+    this.creating.set(patchbayAgentId, run);
     return run;
   }
 
-  private async mintSession(agentId: string, agentName: string, cwd: string): Promise<string> {
+  private async mintSession(patchbayAgentId: PatchbayAgentId, agentName: string, cwd: string): Promise<string> {
     const saved = this.savedRootsFor(cwd);
-    const { handle, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
+    const { handle, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, patchbayAgentId, {
       cwd,
       roots: [...this.rootsFor(null, cwd), ...saved],
     });
     const sessionId = randomUUID();
-    this.bind(sessionId, { agentId, handle, titled: false, everPrompted: false });
+    this.bind(sessionId, { patchbayAgentId, handle, titled: false, everPrompted: false });
     this.bindToken(contextToken, sessionId);
     const seeded = saved.filter((p) => !missing.includes(p));
-    this.sessions.set(sessionId, liveSession(agentId));
+    this.sessions.set(sessionId, liveSession(patchbayAgentId));
     const now = new Date().toISOString();
     const title = `${agentName} session`;
     const summary: SessionSummary = {
       id: sessionId,
-      agentId,
+      patchbayAgentId,
       title,
       busy: [],
       updatedAt: now,
@@ -711,9 +712,9 @@ export class SessionsStore {
     }
     this.noticeMissingRoots(sessionId, missing);
     this.hooks.rootsChanged?.(sessionId);
-    this.log.info(`session ${sessionId} created with ${agentId}`);
+    this.log.info(`session ${sessionId} created with ${patchbayAgentId}`);
     this.publishKnobs(sessionId, knobs);
-    await this.applySeedFor(agentId, sessionId);
+    await this.applySeedFor(patchbayAgentId, sessionId);
     return sessionId;
   }
 
@@ -726,9 +727,9 @@ export class SessionsStore {
   /** An agent's sessions on view right now — active or pinned, the reaper's
    * exemption set, read through the same hook. When the agent comes up,
    * these attach again: they sat blank, with nothing to attach to. */
-  viewed(agentId: string): string[] {
+  viewed(patchbayAgentId: PatchbayAgentId): string[] {
     return [...this.known]
-      .filter(([sessionId, k]) => k.agentId === agentId && this.hooks.isActiveSession?.(sessionId) === true)
+      .filter(([sessionId, k]) => k.patchbayAgentId === patchbayAgentId && this.hooks.isActiveSession?.(sessionId) === true)
       .map(([sessionId]) => sessionId);
   }
 
@@ -742,10 +743,10 @@ export class SessionsStore {
    * coming up attaches what is on view. */
   async hydrate(sessionId: string, signal: AbortSignal): Promise<boolean> {
     if (this.sessions.has(sessionId)) return true;
-    const agentId = this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) return false;
-    if (this.pool.get(agentId)?.status !== "running") return false;
-    const outcome = await this.attach(sessionId, agentId, signal);
+    const patchbayAgentId = this.known.get(sessionId)?.patchbayAgentId;
+    if (patchbayAgentId === undefined) return false;
+    if (this.pool.get(patchbayAgentId)?.status !== "running") return false;
+    const outcome = await this.attach(sessionId, patchbayAgentId, signal);
     if (outcome.attached) return true;
     if (outcome.reason === "failed") return false;
     // No rung declared: this session cannot be reopened. Reachable only
@@ -779,8 +780,8 @@ export class SessionsStore {
     // agent keeps it would just resurrect it on the next session/list sync.
     // Gated on used, not declared; spec makes delete idempotent, and a
     // failure only means the agent still has it — the sync stays truthful.
-    if (row !== undefined && (this.hooks.isDeleteUsed?.(row.agentId) ?? false)) {
-      await this.pool.deleteSession(row.agentId, row.handle).catch((err: Error) => {
+    if (row !== undefined && (this.hooks.isDeleteUsed?.(row.patchbayAgentId) ?? false)) {
+      await this.pool.deleteSession(row.patchbayAgentId, row.handle).catch((err: Error) => {
         this.log.info(`session ${sessionId}: agent-side delete failed — ${err.message}`);
       });
     }
@@ -799,9 +800,9 @@ export class SessionsStore {
 
   /** Shield against a session/list walk already in flight: its earlier
    * pages predate this session's leaving and must not bring it back. */
-  private entomb(row: { agentId: string; handle: string }): void {
-    let tombs = this.closedDuringSync.get(row.agentId);
-    if (tombs === undefined) this.closedDuringSync.set(row.agentId, (tombs = new Set()));
+  private entomb(row: { patchbayAgentId: PatchbayAgentId; handle: string }): void {
+    let tombs = this.closedDuringSync.get(row.patchbayAgentId);
+    if (tombs === undefined) this.closedDuringSync.set(row.patchbayAgentId, (tombs = new Set()));
     tombs.add(row.handle);
   }
 
@@ -821,37 +822,37 @@ export class SessionsStore {
    * stored anywhere (agent removal removes only patchbay's config; the
    * sessions live on in the agent and reappear via `session/list` on a
    * re-add). No agent-side delete: the process is already gone. */
-  forgetAgentSessions(agentId: string): void {
+  forgetAgentSessions(patchbayAgentId: PatchbayAgentId): void {
     for (const [sessionId, entry] of [...this.known]) {
-      if (entry.agentId === agentId) this.forget(sessionId);
+      if (entry.patchbayAgentId === patchbayAgentId) this.forget(sessionId);
     }
-    this.closedDuringSync.delete(agentId);
+    this.closedDuringSync.delete(patchbayAgentId);
     // Same contract as the auth lock: cleared with the agent's config — a
     // removed agent's rows have no walk left to reconcile them. By agent,
     // not by index: rows of other workspaces were never indexed here.
     void this.continuity
-      .forgetAgent(agentId)
-      .catch((err: Error) => this.log.error(`session continuity drop ${agentId} — ${err.message}`));
+      .forgetAgent(patchbayAgentId)
+      .catch((err: Error) => this.log.error(`session continuity drop ${patchbayAgentId} — ${err.message}`));
   }
 
   /** Sessions ride their agent's connection: any status but running — a
    * Stop, a crash, a fresh connection starting — means the one they rode
    * has ended, and they detach. */
-  agentStatusChanged(agentId: string, status: AgentStatus): void {
-    if (status !== "running") this.invalidateAgent(agentId);
+  agentStatusChanged(patchbayAgentId: PatchbayAgentId, status: AgentStatus): void {
+    if (status !== "running") this.invalidateAgent(patchbayAgentId);
   }
 
   /** Drops bookkeeping for sessions whose connection just died — a stale
    * sessionId cannot be used on a new connection until reopened — and the
    * tokens its attaches minted: the subprocesses holding them ended with
    * it. */
-  invalidateAgent(agentId: string): void {
+  invalidateAgent(patchbayAgentId: PatchbayAgentId): void {
     for (const [sessionId, session] of this.sessions) {
-      if (session.agentId !== agentId) continue;
+      if (session.patchbayAgentId !== patchbayAgentId) continue;
       this.dropLiveSession(sessionId, session);
     }
     for (const [token, grant] of this.tokens) {
-      if (grant.agentId === agentId) this.tokens.delete(token);
+      if (grant.patchbayAgentId === patchbayAgentId) this.tokens.delete(token);
     }
   }
 
@@ -881,23 +882,23 @@ export class SessionsStore {
    * currently-open sessions — a deliberate scope decision. Pruning —
    * dropping known rows the agent no longer reports — only happens after a
    * *complete* pagination walk: a truncated read must never erase. */
-  async syncAgentSessions(agentId: string): Promise<void> {
-    if (this.pool.get(agentId)?.declared?.sessionList !== true) {
+  async syncAgentSessions(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    if (this.pool.get(patchbayAgentId)?.declared?.sessionList !== true) {
       // No list will ever name a session of this agent again, so a row of
       // this workspace that no session of this window holds has no reader
       // left — an earlier window's go; this window's stay with its sessions.
-      this.reconcile(agentId, (handle) => this.rowFor(agentId, handle) !== undefined);
+      this.reconcile(patchbayAgentId, (handle) => this.rowFor(patchbayAgentId, handle) !== undefined);
       return;
     }
-    await this.walkAgentSessions(agentId);
+    await this.walkAgentSessions(patchbayAgentId);
   }
 
   /** The agent's continuity rows for this workspace, held against what
    * names them: `keep` false, the row leaves. */
-  private reconcile(agentId: string, keep: (agentSessionId: string) => boolean): void {
+  private reconcile(patchbayAgentId: PatchbayAgentId, keep: (agentSessionId: string) => boolean): void {
     void this.continuity
-      .reconcile(agentId, this.cwd(), keep)
-      .catch((err: Error) => this.log.error(`session continuity reconcile ${agentId} — ${err.message}`));
+      .reconcile(patchbayAgentId, this.cwd(), keep)
+      .catch((err: Error) => this.log.error(`session continuity reconcile ${patchbayAgentId} — ${err.message}`));
   }
 
   /** The user is about to read the list (drawer opening, palette pick):
@@ -911,8 +912,8 @@ export class SessionsStore {
         .list()
         .filter((agent) => agent.status === "running" && agent.declared?.sessionList === true)
         .map((agent) =>
-          this.walkAgentSessions(agent.spec.agentId).catch((err: Error) => {
-            this.log.info(`${agent.spec.agentId}: session/list re-read failed — ${err.message}`);
+          this.walkAgentSessions(agent.spec.patchbayAgentId).catch((err: Error) => {
+            this.log.info(`${agent.spec.patchbayAgentId}: session/list re-read failed — ${err.message}`);
           }),
         ),
     );
@@ -920,26 +921,26 @@ export class SessionsStore {
 
   /** Shared by the connect-time sync and the on-demand re-read; capability
    * gating is the callers' business. Coalesced per agent (see `walks`). */
-  private walkAgentSessions(agentId: string): Promise<void> {
-    const inFlight = this.walks.get(agentId);
+  private walkAgentSessions(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    const inFlight = this.walks.get(patchbayAgentId);
     if (inFlight !== undefined) return inFlight;
-    const walk = this.readAgentSessions(agentId).finally(() => {
-      if (this.walks.get(agentId) === walk) this.walks.delete(agentId);
+    const walk = this.readAgentSessions(patchbayAgentId).finally(() => {
+      if (this.walks.get(patchbayAgentId) === walk) this.walks.delete(patchbayAgentId);
     });
-    this.walks.set(agentId, walk);
+    this.walks.set(patchbayAgentId, walk);
     return walk;
   }
 
   /** The walk itself — every page merged row by row, the prune only after a
    * complete read. */
-  private async readAgentSessions(agentId: string): Promise<void> {
-    this.closedDuringSync.delete(agentId);
+  private async readAgentSessions(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    this.closedDuringSync.delete(patchbayAgentId);
     const cwd = this.cwd();
     const seen = new Set<string>();
     let cursor: string | undefined;
     let complete = false;
     for (let page = 0; page < MAX_LIST_PAGES; page++) {
-      const response = await this.pool.listSessions(agentId, {
+      const response = await this.pool.listSessions(patchbayAgentId, {
         cwd,
         ...(cursor !== undefined ? { cursor } : {}),
       });
@@ -949,7 +950,7 @@ export class SessionsStore {
         // Re-filter defensively: the cwd param is a request, not a contract.
         if (info.cwd !== cwd) continue;
         seen.add(info.sessionId);
-        this.noteListedSession(agentId, info);
+        this.noteListedSession(patchbayAgentId, info);
       }
       if (response.nextCursor == null) {
         complete = true;
@@ -961,40 +962,40 @@ export class SessionsStore {
         // Deliberately judged here, not at the response boundary: degrading
         // the cursor to absent there would read as "complete" and license a
         // wrongful prune — pagination policy is this walk's, not the wire's.
-        this.log.info(`${agentId}: session/list nextCursor is malformed — sync merged, prune skipped`);
+        this.log.info(`${patchbayAgentId}: session/list nextCursor is malformed — sync merged, prune skipped`);
         return;
       }
       cursor = response.nextCursor;
     }
     if (!complete) {
-      this.log.info(`${agentId}: session/list still paging after ${MAX_LIST_PAGES} pages — sync merged, prune skipped`);
+      this.log.info(`${patchbayAgentId}: session/list still paging after ${MAX_LIST_PAGES} pages — sync merged, prune skipped`);
       return;
     }
     for (const [sessionId, entry] of [...this.known]) {
-      if (entry.agentId !== agentId || seen.has(entry.handle) || this.sessions.has(sessionId)) continue;
+      if (entry.patchbayAgentId !== patchbayAgentId || seen.has(entry.handle) || this.sessions.has(sessionId)) continue;
       // The wire is the truth for who exists — a session the agent no
       // longer reports (deleted externally, or a zero-turn shell it never
       // persisted) is gone; live sessions are exempt (a just-created id may
       // trail the agent's own list).
       this.forget(sessionId);
-      this.log.info(`session ${sessionId}: gone from ${agentId}'s own list — dropped`);
+      this.log.info(`session ${sessionId}: gone from ${patchbayAgentId}'s own list — dropped`);
     }
     // The durable rows by the same truth, index or not: a session deleted
     // while no window was open never entered `known`, and its row would
     // otherwise outlive it. Same live exemption as above.
     const attached = new Set(
-      this.sessionsOn(agentId).flatMap((sessionId) => this.known.get(sessionId)?.handle ?? []),
+      this.sessionsOn(patchbayAgentId).flatMap((sessionId) => this.known.get(sessionId)?.handle ?? []),
     );
-    this.reconcile(agentId, (handle) => seen.has(handle) || attached.has(handle));
+    this.reconcile(patchbayAgentId, (handle) => seen.has(handle) || attached.has(handle));
   }
 
   /** One listed session into the view. Title rule: the agent's title wins
    * (patchbay-side rename is gone — ACP has no rename request; in-chat
    * agent commands like /rename round-trip through the agent's own list
    * and session_info_update). */
-  private noteListedSession(agentId: string, info: SessionInfo): void {
-    if (this.closedDuringSync.get(agentId)?.has(info.sessionId) === true) return;
-    const existing = this.rowFor(agentId, info.sessionId);
+  private noteListedSession(patchbayAgentId: PatchbayAgentId, info: SessionInfo): void {
+    if (this.closedDuringSync.get(patchbayAgentId)?.has(info.sessionId) === true) return;
+    const existing = this.rowFor(patchbayAgentId, info.sessionId);
     const now = new Date().toISOString();
     if (existing === undefined) {
       // A session patchbay never saw — created externally (CLI, another
@@ -1009,7 +1010,7 @@ export class SessionsStore {
       // their image bytes are read back from the stash (rehydrateChips).
       const sessionId = randomUUID();
       this.bind(sessionId, {
-        agentId,
+        patchbayAgentId,
         handle: info.sessionId,
         titled: true,
         everPrompted: true, // listed = persisted agent-side = prior turns
@@ -1017,7 +1018,7 @@ export class SessionsStore {
       const saved = this.saved(sessionId);
       this.hooks.emit({
         kind: "sessionListed",
-        session: { id: sessionId, agentId, title, busy: [], updatedAt: at },
+        session: { id: sessionId, patchbayAgentId, title, busy: [], updatedAt: at },
       });
       if (info.additionalDirectories !== undefined) {
         // the view has no list for this session yet; the row may
@@ -1092,18 +1093,18 @@ export class SessionsStore {
    * merged with what patchbay had. A sessionId is connection-scoped: without
    * replay there is no protocol-legal way to resume it on the new
    * connection. */
-  private async reopen(sessionId: string, agentId: string, signal: AbortSignal): Promise<void> {
+  private async reopen(sessionId: string, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<void> {
     if (this.sessions.has(sessionId)) return;
-    const declared = this.pool.get(agentId)?.declared;
+    const declared = this.pool.get(patchbayAgentId)?.declared;
     if (!declared?.loadSession) {
       throw new Error(
-        `session ${sessionId} is no longer live and ${agentId} does not support session/load`,
+        `session ${sessionId} is no longer live and ${patchbayAgentId} does not support session/load`,
       );
     }
-    this.sessions.set(sessionId, liveSession(agentId));
+    this.sessions.set(sessionId, liveSession(patchbayAgentId));
     let knobs: NormalizedKnobs;
     try {
-      knobs = await this.loadSilently(sessionId, agentId, signal);
+      knobs = await this.loadSilently(sessionId, patchbayAgentId, signal);
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
@@ -1113,7 +1114,7 @@ export class SessionsStore {
     }
     // pool.ts's loadSession already marked "session.load" used the instant
     // the RPC succeeded — this only has to update the render state.
-    this.log.info(`session ${sessionId} reopened via session/load on ${agentId}`);
+    this.log.info(`session ${sessionId} reopened via session/load on ${patchbayAgentId}`);
     this.publishKnobs(sessionId, knobs);
   }
 
@@ -1134,7 +1135,7 @@ export class SessionsStore {
    * throws — a stop is no rung's failure. */
   private async attach(
     sessionId: string,
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     signal: AbortSignal,
   ): Promise<
     | { attached: true }
@@ -1146,15 +1147,15 @@ export class SessionsStore {
       await this.recreateEmpty(sessionId, undefined, signal);
       return { attached: true };
     }
-    const declared = this.pool.get(agentId)?.declared;
+    const declared = this.pool.get(patchbayAgentId)?.declared;
     // Read before any rung publishes: the attach's own publishKnobs
     // overwrites this snapshot with the agent's reset state.
     const remembered = this.saved(sessionId).knobs;
     let error: Error | undefined;
     if (declared?.loadSession) {
       try {
-        await this.reopen(sessionId, agentId, signal);
-        await this.reseedAfterAttach(sessionId, agentId, remembered, signal);
+        await this.reopen(sessionId, patchbayAgentId, signal);
+        await this.reseedAfterAttach(sessionId, patchbayAgentId, remembered, signal);
         return { attached: true };
       } catch (err) {
         if (signal.aborted) throw err;
@@ -1166,8 +1167,8 @@ export class SessionsStore {
     }
     if (declared?.sessionResume) {
       try {
-        await this.resumeReattach(sessionId, agentId, signal);
-        await this.reseedAfterAttach(sessionId, agentId, remembered, signal);
+        await this.resumeReattach(sessionId, patchbayAgentId, signal);
+        await this.reseedAfterAttach(sessionId, patchbayAgentId, remembered, signal);
         return { attached: true };
       } catch (err) {
         this.sessions.delete(sessionId);
@@ -1183,22 +1184,22 @@ export class SessionsStore {
   /** The attach a reload must land: attach or throw, so a reload with no
    * session behind it fails loudly on its caller's error channel. */
   private async ensureAttached(sessionId: string, signal: AbortSignal): Promise<void> {
-    const agentId = this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-    const outcome = await this.attach(sessionId, agentId, signal);
+    const patchbayAgentId = this.known.get(sessionId)?.patchbayAgentId;
+    if (patchbayAgentId === undefined) throw new Error(`unknown session ${sessionId}`);
+    const outcome = await this.attach(sessionId, patchbayAgentId, signal);
     if (outcome.attached) return;
     throw outcome.reason === "failed" ? outcome.error : new Error(this.notAttached(sessionId));
   }
 
   /** Why a session has no attachment, for its caller's error channel. */
   private notAttached(sessionId: string): string {
-    const agentId = this.agentFor(sessionId);
-    const agent = agentId === undefined ? undefined : this.pool.get(agentId);
-    if (agentId === undefined || agent?.status !== "running") {
-      return `session ${sessionId} is not attached: ${agentId ?? "its agent"} is not running`;
+    const patchbayAgentId = this.agentFor(sessionId);
+    const agent = patchbayAgentId === undefined ? undefined : this.pool.get(patchbayAgentId);
+    if (patchbayAgentId === undefined || agent?.status !== "running") {
+      return `session ${sessionId} is not attached: ${patchbayAgentId ?? "its agent"} is not running`;
     }
     if (agent.declared?.loadSession !== true && agent.declared?.sessionResume !== true) {
-      return `session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`;
+      return `session ${sessionId} is not live and ${patchbayAgentId} declares neither session/load nor session/resume`;
     }
     return `session ${sessionId} could not be attached`;
   }
@@ -1208,9 +1209,9 @@ export class SessionsStore {
    * (patchbay persists no transcripts), closed with a seam notice marking
    * where it ends and the agent's unreplayed memory continues. Never merged
    * with replay — there is none. */
-  private async resumeReattach(sessionId: string, agentId: string, signal: AbortSignal): Promise<void> {
-    this.sessions.set(sessionId, liveSession(agentId));
-    const { knobs } = await this.attachSession({ via: "resume", sessionId }, agentId, {}, signal);
+  private async resumeReattach(sessionId: string, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<void> {
+    this.sessions.set(sessionId, liveSession(patchbayAgentId));
+    const { knobs } = await this.attachSession({ via: "resume", sessionId }, patchbayAgentId, {}, signal);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
       kind: "notice",
@@ -1221,7 +1222,7 @@ export class SessionsStore {
           : "This agent doesn't support replaying history (session/load), so earlier turns can't be shown. The session is resumed: its context is ready and continues from here.",
     };
     this.hooks.emit({ kind: "transcriptSeeded", sessionId, blocks: [...blocks, notice] });
-    this.log.info(`session ${sessionId} resumed (no replay) on ${agentId}`);
+    this.log.info(`session ${sessionId} resumed (no replay) on ${patchbayAgentId}`);
     this.publishKnobs(sessionId, knobs);
   }
 
@@ -1241,7 +1242,7 @@ export class SessionsStore {
     if (route.via === "setMode") session.userModeSetPending = true;
     let next: NormalizedKnobs | null;
     try {
-      next = await performKnobSet(this.knobWire(session.agentId), handle, () => session.knobs, route, value, this.knobDropLog);
+      next = await performKnobSet(this.knobWire(session.patchbayAgentId), handle, () => session.knobs, route, value, this.knobDropLog);
     } catch (err) {
       if (route.via === "setMode") session.userModeSetPending = false;
       throw err;
@@ -1251,19 +1252,19 @@ export class SessionsStore {
     // A user set, agent-confirmed: this — and only this — is what the
     // composer's per-agent combination records. Attach-time publishes never
     // do (they carry agent-reset state).
-    this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
+    this.hooks.onKnobsConfirmed?.(session.patchbayAgentId, confirmedFromKnobs(next));
   }
 
   /** The wire one routed set needs, bound to this session's connection —
    * its calls name the session the agent's way. The surface a set advances
    * from travels alongside at set time, not route time — it must be the
    * state as it stands then. */
-  private knobWire(agentId: string): KnobWire {
+  private knobWire(patchbayAgentId: PatchbayAgentId): KnobWire {
     return {
-      setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),
+      setMode: (sessionId, modeId) => this.pool.setSessionMode(patchbayAgentId, sessionId, modeId),
       setConfigOption: (sessionId, configId, value) =>
-        this.pool.setSessionConfigOption(agentId, sessionId, configId, value),
-      send: (method, params) => this.pool.unstableRequest(agentId, method, params),
+        this.pool.setSessionConfigOption(patchbayAgentId, sessionId, configId, value),
+      send: (method, params) => this.pool.unstableRequest(patchbayAgentId, method, params),
     };
   }
 
@@ -1284,8 +1285,8 @@ export class SessionsStore {
   /** Entry seed: applied
    * post-create on a fresh session, and by reseedAfterAttach on a history
    * session entered with no combination in hand. */
-  private async applySeedFor(agentId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
-    const seed = this.hooks.seedFor?.(agentId);
+  private async applySeedFor(patchbayAgentId: PatchbayAgentId, sessionId: string, signal?: AbortSignal): Promise<void> {
+    const seed = this.hooks.seedFor?.(patchbayAgentId);
     if (seed === undefined) return;
     await this.applySeed(sessionId, seed, signal);
   }
@@ -1311,12 +1312,12 @@ export class SessionsStore {
    * skipped. */
   private async reseedAfterAttach(
     sessionId: string,
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     remembered: KnobSeed | undefined,
     signal: AbortSignal,
   ): Promise<void> {
     if (remembered !== undefined) await this.applySeed(sessionId, remembered, signal);
-    else await this.applySeedFor(agentId, sessionId, signal);
+    else await this.applySeedFor(patchbayAgentId, sessionId, signal);
   }
 
   /** Issues the set requests for a knob seed to a fixed point (knobs.ts
@@ -1335,7 +1336,7 @@ export class SessionsStore {
         const handle = this.known.get(sessionId)?.handle;
         if (!session || handle === undefined || signal?.aborted === true) return;
         try {
-          const next = await performKnobSet(this.knobWire(session.agentId), handle, () => session.knobs, route, value, this.knobDropLog);
+          const next = await performKnobSet(this.knobWire(session.patchbayAgentId), handle, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(sessionId, next);
         } catch {
           // rejected seed entry — the agent's state stands, nothing to repair
@@ -1481,7 +1482,7 @@ export class SessionsStore {
   async reapplyRoots(sessionId: string, signal: AbortSignal): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return; // not attached — next attach picks the list up
-    const declared = this.pool.get(session.agentId)?.declared;
+    const declared = this.pool.get(session.patchbayAgentId)?.declared;
     // An agent that never advertised the field gets no field on any
     // request — a re-attach would carry nothing, so none is made.
     if (declared?.sessionAdditionalDirectories !== true) return;
@@ -1503,7 +1504,7 @@ export class SessionsStore {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.agentId, {}, signal);
+      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.patchbayAgentId, {}, signal);
       this.publishKnobs(sessionId, knobs);
       await this.applySeed(sessionId, seed, signal);
       this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
@@ -1529,17 +1530,17 @@ export class SessionsStore {
   private async recreateEmpty(sessionId: string, old: LiveSession | undefined, signal: AbortSignal): Promise<void> {
     const row = this.known.get(sessionId);
     if (row === undefined) throw new Error(`unknown session ${sessionId}`);
-    const { agentId, handle: was } = row;
+    const { patchbayAgentId, handle: was } = row;
     const { handle, contextToken, knobs, missing } = await this.attachSession(
       { via: "new" },
-      agentId,
+      patchbayAgentId,
       { roots: this.rootsFor(sessionId, this.cwd()) },
       signal,
     );
     // Closed while the agent minted it: the fresh session serves no one,
     // and is freed like the shell it would have replaced.
     if (this.known.get(sessionId) !== row) {
-      this.retire(agentId, handle);
+      this.retire(patchbayAgentId, handle);
       throw new Error(`session ${sessionId} was closed while it was minted again`);
     }
     // Read under the old id, before it moves: the knob combination is what
@@ -1552,12 +1553,12 @@ export class SessionsStore {
     this.bind(sessionId, row);
     this.bindToken(contextToken, sessionId);
     // The continuity row follows the session to its new id.
-    this.write({ agentId, handle: was }, null);
+    this.write({ patchbayAgentId, handle: was }, null);
     if (Object.keys(carried).length > 0) this.write(row, carried);
     // Same shield as close(): an in-flight session/list walk's stale page
     // must not resurrect the retired shell.
-    this.entomb({ agentId, handle: was });
-    this.sessions.set(sessionId, liveSession(agentId));
+    this.entomb({ patchbayAgentId, handle: was });
+    this.sessions.set(sessionId, liveSession(patchbayAgentId));
     this.hooks.handleChanged?.(sessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
@@ -1565,7 +1566,7 @@ export class SessionsStore {
     this.hooks.rootsChanged?.(sessionId);
     // The empty shell, only while its process still exists — a dead
     // connection took it along.
-    if (old !== undefined) this.retire(agentId, was);
+    if (old !== undefined) this.retire(patchbayAgentId, was);
     this.publishKnobs(sessionId, knobs);
     await this.applySeed(sessionId, seed, signal);
     this.log.info(`session ${sessionId}: zero-turn — minted again (agent id ${was} → ${handle})`);
@@ -1573,11 +1574,11 @@ export class SessionsStore {
 
   /** A session the agent holds that no row uses: freed agent-side where the
    * agent can close it, forgotten by the connection either way. */
-  private retire(agentId: string, handle: string): void {
-    if (this.pool.get(agentId)?.declared?.sessionClose === true) {
-      void this.pool.closeSession(agentId, handle).catch(() => {});
+  private retire(patchbayAgentId: PatchbayAgentId, handle: string): void {
+    if (this.pool.get(patchbayAgentId)?.declared?.sessionClose === true) {
+      void this.pool.closeSession(patchbayAgentId, handle).catch(() => {});
     } else {
-      this.pool.forgetSession(agentId, handle);
+      this.pool.forgetSession(patchbayAgentId, handle);
     }
   }
 
@@ -1608,16 +1609,16 @@ export class SessionsStore {
   /** Whether the session's agent stands signed out — its turns hold, never
    * fire into a wire already witnessed to refuse. */
   locked(sessionId: string): boolean {
-    const agentId = this.agentFor(sessionId);
-    return agentId !== undefined && this.hooks.authLocked?.(agentId) === true;
+    const patchbayAgentId = this.agentFor(sessionId);
+    return patchbayAgentId !== undefined && this.hooks.authLocked?.(patchbayAgentId) === true;
   }
 
   /** Whether a turn may start on the session now, as far as its own facts
    * go: its agent running, not signed out. What already runs on the
    * session is the gates' to know. */
   turnAllowed(sessionId: string): boolean {
-    const agentId = this.agentFor(sessionId);
-    return agentId !== undefined && this.pool.get(agentId)?.status === "running" && !this.locked(sessionId);
+    const patchbayAgentId = this.agentFor(sessionId);
+    return patchbayAgentId !== undefined && this.pool.get(patchbayAgentId)?.status === "running" && !this.locked(sessionId);
   }
 
   /** One turn: the transcript write, the wire call, the turn's end. The
@@ -1638,7 +1639,7 @@ export class SessionsStore {
     const attached = this.sessions.get(sessionId);
     const known = this.known.get(sessionId);
     if (attached === undefined || known === undefined) throw new Error(this.notAttached(sessionId));
-    if (this.locked(sessionId)) throw new Error(`${attached.agentId} is signed out`);
+    if (this.locked(sessionId)) throw new Error(`${attached.patchbayAgentId} is signed out`);
     if (attached.inFlight) throw new Error(`session ${sessionId} has a turn running`);
     const session = attached;
     const { text, parts } = words;
@@ -1718,7 +1719,7 @@ export class SessionsStore {
     // every agent MUST accept. mimeTypes come with the chip or not at all —
     // the ingress that produced the bytes was the last honest source, so
     // nothing here ever defaults one.
-    const declared = this.pool.get(session.agentId)?.declared;
+    const declared = this.pool.get(session.patchbayAgentId)?.declared;
     const acceptsImages = declared?.promptImage ?? false;
     const acceptsEmbedded = declared?.promptEmbeddedContext ?? false;
     const prompt: ContentBlock[] = [];
@@ -1805,14 +1806,14 @@ export class SessionsStore {
       return;
     }
     const cancel = () => {
-      void this.pool.cancel(session.agentId, handle).catch(() => {}); // a dead connection stops nothing
+      void this.pool.cancel(session.patchbayAgentId, handle).catch(() => {}); // a dead connection stops nothing
       // The cancel goes out first, then the asks it leaves are answered —
       // the agent hears the turn is ending before it hears why its ask was.
       this.hooks.cancelAsks?.(sessionId);
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      const response = await untilGivenUp(this.pool.prompt(session.agentId, handle, prompt), signal, CANCEL_SETTLE_MS);
+      const response = await untilGivenUp(this.pool.prompt(session.patchbayAgentId, handle, prompt), signal, CANCEL_SETTLE_MS);
       if (response === null) {
         this.log.info(
           `session ${sessionId}: turn told to stop, still unanswered after ${CANCEL_SETTLE_MS} ms — ended here`,
@@ -1957,12 +1958,12 @@ export class SessionsStore {
   /** Routed from AgentPool's onSessionUpdate hook, live and replayed alike:
    * the session's own facts — its title, its knobs — are kept here; the
    * rest is its transcript's, through the stream. */
-  handleUpdate(agentId: string, notification: SessionNotification): void {
+  handleUpdate(patchbayAgentId: PatchbayAgentId, notification: SessionNotification): void {
     const { update } = notification;
     // The one door every inbound update rides through names the session the
     // agent's way; with its agent, that id finds the one row it means — two
     // agents minting one id are two rows, and nothing deeper re-checks.
-    const sessionId = this.rowFor(agentId, notification.sessionId);
+    const sessionId = this.rowFor(patchbayAgentId, notification.sessionId);
     if (sessionId === undefined) return; // a session patchbay isn't tracking
     // Session metadata, not transcript — handled before the live guard: the
     // agent may retitle any session it knows, live in patchbay or not.
@@ -1987,7 +1988,7 @@ export class SessionsStore {
           // notification, never from set_mode's stateless response.
           if (session.userModeSetPending) {
             session.userModeSetPending = false;
-            this.hooks.onKnobsConfirmed?.(session.agentId, confirmedFromKnobs(next));
+            this.hooks.onKnobsConfirmed?.(session.patchbayAgentId, confirmedFromKnobs(next));
           }
         } else {
           this.log.debug(`session ${sessionId}: current_mode_update dropped (config surface owns the knob state)`);

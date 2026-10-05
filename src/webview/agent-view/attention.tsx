@@ -83,7 +83,7 @@ export function AttentionIndicators(props: {
                 <span className="min-w-0">
                   <span className="nm block truncate">{s.title}</span>
                   <span className="sub block">
-                    {props.agents.find((a) => a.id === s.agentId)?.name ?? s.agentId}
+                    {props.agents.find((a) => a.id === s.patchbayAgentId)?.name ?? s.patchbayAgentId}
                     {m === "waiting" ? ` · ${props.waitingOn(s)}` : ""}
                   </span>
                 </span>

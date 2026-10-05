@@ -33,6 +33,7 @@ import { probeDeferredFor } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
 import { authRequiredReasonOf, type AgentPool } from "./pool";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** What the free probe actually observed — callers that need to react to
  * auth state (terminal-recipe login's restart escalation) read this instead
@@ -47,13 +48,13 @@ export type ProbeOutcome = "ok" | "auth_required" | "failed" | "skipped";
 export interface CapabilityTrackerHooks {
   /** The agent's matrix moved — a fresh connection declared, or a row was
    * marked. */
-  changed(agentId: string): void;
+  changed(patchbayAgentId: PatchbayAgentId): void;
   /** Announces each throwaway probe session as its session/new lands —
    * the raw response, so an observer (a test, a diagnostic) learns the
    * id the agent minted and what it answered. The tracker itself routes
    * the probe's later traffic via `isProbeSession`; settings offerings
    * come from the defaults editor's own session, never from here. */
-  onProbeSession?(agentId: string, response: NewSessionResponse): void;
+  onProbeSession?(patchbayAgentId: PatchbayAgentId, response: NewSessionResponse): void;
   /** The agent's standing probe workspace — a real, existing directory,
    * never the user's workspace roots. Owned by the orchestrator and deleted
    * only when the agent's config is removed: a probe session may hold this
@@ -61,7 +62,7 @@ export interface CapabilityTrackerHooks {
    * validate and index it *after* session/new returns — observed: Auggie),
    * so an ephemeral mkdtemp/rm around the RPCs was patchbay deleting a
    * directory it had just promised away. */
-  probeRoot(agentId: string): Promise<string>;
+  probeRoot(patchbayAgentId: PatchbayAgentId): Promise<string>;
 }
 
 export class CapabilityTracker {
@@ -74,7 +75,7 @@ export class CapabilityTracker {
    * session (extensions/first-session-mcp-latch) — armed per connect,
    * spent by noteRealSessionOpened. */
   private deferredProbes = new Set<string>();
-  /** Probe sessionId → agentId — lets the orchestrator route an agent's
+  /** Probe sessionId → patchbayAgentId — lets the orchestrator route an agent's
    * late config_option_update notifications for a throwaway probe session
    * into the offerings instead of dropping them (some agents deliver the
    * option surface only after session/new returns). Pruned per agent at
@@ -93,13 +94,13 @@ export class CapabilityTracker {
    * declared, with the marks earned against that connection's version —
    * from the used cache, or, for an agent that reports no version, from
    * this connection. Undefined until it has connected in this window. */
-  matrix(agentId: string): CapabilityMatrix | undefined {
-    const live = this.pool.get(agentId);
+  matrix(patchbayAgentId: PatchbayAgentId): CapabilityMatrix | undefined {
+    const live = this.pool.get(patchbayAgentId);
     if (live?.declared === undefined || live.declared === null) return undefined;
     const fresh = matrixFromDeclared(live.declared);
     const version = live.initialize?.agentInfo?.version;
-    if (version !== undefined) return this.usedCache.seed(agentId, version, fresh);
-    return { ...fresh, ...this.unversionedMarks.get(agentId) };
+    if (version !== undefined) return this.usedCache.seed(patchbayAgentId, version, fresh);
+    return { ...fresh, ...this.unversionedMarks.get(patchbayAgentId) };
   }
 
   /** A wire fact bore on a row (pool.ts's proof-table chokepoints): marks it
@@ -107,37 +108,37 @@ export class CapabilityTracker {
    * first time it rides a failed request. A row already used takes no
    * mark — suspicion never speaks over proof — and a repeat of a standing
    * mark writes nothing. */
-  noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
-    const cell = this.matrix(agentId)?.[row];
+  noteEvidence(patchbayAgentId: PatchbayAgentId, row: CapabilityRowId, evidence: "used" | "suspect"): void {
+    const cell = this.matrix(patchbayAgentId)?.[row];
     if (cell === undefined || cell.used) return;
     // Used always implies declared — which is what lets rows with no
     // initialize-time claim (usage, concurrentSessions) go straight from
     // not-declared to used — and the whole cell is written, so a success
     // drops any suspect flag: success acquits. Suspicion implies declared
     // too: the attempt is itself the claim.
-    if (evidence === "used") this.mark(agentId, row, { declared: true, used: true });
-    else if (cell.suspect !== true) this.mark(agentId, row, { declared: true, used: false, suspect: true });
+    if (evidence === "used") this.mark(patchbayAgentId, row, { declared: true, used: true });
+    else if (cell.suspect !== true) this.mark(patchbayAgentId, row, { declared: true, used: false, suspect: true });
   }
 
   /** Writes one mark where the matrix reads it back from: the used cache,
    * keyed by the connection's version — persisted so a broken bridge can't
    * look clean after a restart either — or this connection's own marks. */
-  private mark(agentId: string, row: CapabilityRowId, cell: CapabilityCell): void {
-    const matrix = this.matrix(agentId);
+  private mark(patchbayAgentId: PatchbayAgentId, row: CapabilityRowId, cell: CapabilityCell): void {
+    const matrix = this.matrix(patchbayAgentId);
     if (matrix === undefined) return;
-    const version = this.pool.get(agentId)?.initialize?.agentInfo?.version;
-    if (version !== undefined) void this.usedCache.save(agentId, version, { ...matrix, [row]: cell });
-    else this.unversionedMarks.set(agentId, { ...this.unversionedMarks.get(agentId), [row]: cell });
-    this.hooks.changed(agentId);
+    const version = this.pool.get(patchbayAgentId)?.initialize?.agentInfo?.version;
+    if (version !== undefined) void this.usedCache.save(patchbayAgentId, version, { ...matrix, [row]: cell });
+    else this.unversionedMarks.set(patchbayAgentId, { ...this.unversionedMarks.get(patchbayAgentId), [row]: cell });
+    this.hooks.changed(patchbayAgentId);
   }
 
   /** Call on every connect (including reconnects), once the fresh
    * connection's `initialize` answer is in the pool. An agent reporting no
    * `agentInfo.version` never seeds from or saves to the used cache —
    * everything still works, its marks just last as long as the connection. */
-  onDeclared(agentId: string): void {
-    this.unversionedMarks.delete(agentId);
-    this.hooks.changed(agentId);
+  onDeclared(patchbayAgentId: PatchbayAgentId): void {
+    this.unversionedMarks.delete(patchbayAgentId);
+    this.hooks.changed(patchbayAgentId);
     // Every connect probes: the session/new is the concurrency/close/
     // delete/fork proof opportunity — deliberately NOT an auth proof; its
     // success is non-bearing evidence (auth-evidence.ts). Only the fork
@@ -146,22 +147,22 @@ export class CapabilityTracker {
     // (extensions/first-session-mcp-latch — the probe must not spend the
     // process's one honored mcpServers slot); re-armed on every connect
     // because the latch is per-process.
-    if (probeDeferredFor(agentId)) {
-      this.deferredProbes.add(agentId);
-      this.log.info(`${agentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
+    if (probeDeferredFor(patchbayAgentId)) {
+      this.deferredProbes.add(patchbayAgentId);
+      this.log.info(`${patchbayAgentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
       return;
     }
-    this.log.debug(`${agentId}: connect-time probe starting (fork where still unproven)`);
-    void this.probe(agentId);
+    this.log.debug(`${patchbayAgentId}: connect-time probe starting (fork where still unproven)`);
+    void this.probe(patchbayAgentId);
   }
 
   /** A removed agent's live marks leave with it: its connection's own
    * marks, a parked probe, its probe sessions. */
-  forget(agentId: string): void {
-    this.unversionedMarks.delete(agentId);
-    this.deferredProbes.delete(agentId);
+  forget(patchbayAgentId: PatchbayAgentId): void {
+    this.unversionedMarks.delete(patchbayAgentId);
+    this.deferredProbes.delete(patchbayAgentId);
     for (const [sessionId, owner] of this.probeSessions) {
-      if (owner === agentId) this.probeSessions.delete(sessionId);
+      if (owner === patchbayAgentId) this.probeSessions.delete(sessionId);
     }
   }
 
@@ -174,11 +175,11 @@ export class CapabilityTracker {
    * deferred-probe trigger: the first-session privilege is spent where
    * it belongs, so the probe can run — once per connect; onDeclared
    * re-arms the deferral on reconnect. */
-  noteRealSessionOpened(agentId: string, sessionId: string): void {
-    if (this.probeSessions.get(sessionId) === agentId) this.probeSessions.delete(sessionId);
-    if (!this.deferredProbes.delete(agentId)) return;
-    this.log.debug(`${agentId}: deferred probe starting (first real session opened)`);
-    void this.probe(agentId);
+  noteRealSessionOpened(patchbayAgentId: PatchbayAgentId, sessionId: string): void {
+    if (this.probeSessions.get(sessionId) === patchbayAgentId) this.probeSessions.delete(sessionId);
+    if (!this.deferredProbes.delete(patchbayAgentId)) return;
+    this.log.debug(`${patchbayAgentId}: deferred probe starting (first real session opened)`);
+    void this.probe(patchbayAgentId);
   }
 
   /** Whether this session is one of the tracker's throwaway probes.
@@ -186,15 +187,15 @@ export class CapabilityTracker {
    * agent's connection, so a bare-sessionId lookup would let one agent's
    * lingering probe entry capture another agent's real session whose id
    * happens to match. */
-  isProbeSession(agentId: string, sessionId: string): boolean {
-    return this.probeSessions.get(sessionId) === agentId;
+  isProbeSession(patchbayAgentId: PatchbayAgentId, sessionId: string): boolean {
+    return this.probeSessions.get(sessionId) === patchbayAgentId;
   }
 
   /** Whether this agent's first-session privilege is still unspent — any
    * other throwaway session (the defaults editor's) must wait as the probe
    * does, or it would take the one honored mcpServers slot. */
-  isProbeDeferred(agentId: string): boolean {
-    return this.deferredProbes.has(agentId);
+  isProbeDeferred(patchbayAgentId: PatchbayAgentId): boolean {
+    return this.deferredProbes.has(patchbayAgentId);
   }
 
   /** Free RPC round-trip: session/new (+ session/fork, while still
@@ -208,28 +209,28 @@ export class CapabilityTracker {
    * not "broken" — it's the honest, expected outcome for an agent that
    * needs `authenticate` first, surfaced as its own state rather than
    * folded into "check failed". */
-  private async probe(agentId: string): Promise<ProbeOutcome> {
-    const declared = this.pool.get(agentId)?.declared;
+  private async probe(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
+    const declared = this.pool.get(patchbayAgentId)?.declared;
     if (declared === undefined || declared === null) return "skipped";
     for (const [sessionId, owner] of this.probeSessions) {
-      if (owner === agentId) this.probeSessions.delete(sessionId);
+      if (owner === patchbayAgentId) this.probeSessions.delete(sessionId);
     }
-    const dir = await this.hooks.probeRoot(agentId);
+    const dir = await this.hooks.probeRoot(patchbayAgentId);
     const probeSessionIds: string[] = [];
     try {
-      const response = await this.pool.newSession(agentId, dir);
+      const response = await this.pool.newSession(patchbayAgentId, dir);
       probeSessionIds.push(response.sessionId);
-      this.probeSessions.set(response.sessionId, agentId);
-      this.hooks.onProbeSession?.(agentId, response);
+      this.probeSessions.set(response.sessionId, patchbayAgentId);
+      this.hooks.onProbeSession?.(patchbayAgentId, response);
       // Deliberately NO auth-state write here: session/new succeeding is
       // non-bearing evidence on lazy-auth agents (Claude passes it while
       // logged out), so what it means is the authority table's call
       // (auth-evidence.ts, fed by pool's wire chokepoint) — a probe can
       // clear only a lock its own method raised, never a witnessed logout.
       const forkStillUnproven =
-        declared.sessionFork && !(this.matrix(agentId)?.["session.fork"].used ?? false);
+        declared.sessionFork && !(this.matrix(patchbayAgentId)?.["session.fork"].used ?? false);
       if (forkStillUnproven) {
-        const forked = await this.pool.fork(agentId, response.sessionId, dir);
+        const forked = await this.pool.fork(patchbayAgentId, response.sessionId, dir);
         probeSessionIds.push(forked.sessionId);
       }
       // Close, then delete, the throwaway sessions where the agent supports
@@ -247,13 +248,13 @@ export class CapabilityTracker {
       // agent-side, so late traffic on it must still be routed here).
       if (declared.sessionClose) {
         for (const id of probeSessionIds) {
-          await this.pool.closeSession(agentId, id);
+          await this.pool.closeSession(patchbayAgentId, id);
           this.probeSessions.delete(id);
         }
       }
       if (declared.sessionDelete) {
         for (const id of probeSessionIds) {
-          await this.pool.deleteSession(agentId, id);
+          await this.pool.deleteSession(patchbayAgentId, id);
           this.probeSessions.delete(id);
         }
       }
@@ -263,11 +264,11 @@ export class CapabilityTracker {
         // needsAuth itself was already raised through pool.ts's wire
         // chokepoint (onAuthWireFact → the orchestrator's one auth-state
         // writer); this only names the friendly next step in the log.
-        this.log.info(`${agentId}: probe hit auth_required — Log in to proceed`);
+        this.log.info(`${patchbayAgentId}: probe hit auth_required — Log in to proceed`);
         return "auth_required";
       }
       // declared but the round-trip failed — an honest state, not an error to surface
-      this.log.debug(`${agentId}: probe round-trip failed — ${(err as Error).message}`);
+      this.log.debug(`${patchbayAgentId}: probe round-trip failed — ${(err as Error).message}`);
       return "failed";
     } finally {
       // Probe sessions must not linger in the connection's session set:
@@ -276,7 +277,7 @@ export class CapabilityTracker {
       // patchbay's throwaway, not by real use.
       // The probe root itself is NOT cleaned here — its lifetime is the
       // agent's config, not this call (see hooks.probeRoot).
-      for (const id of probeSessionIds) this.pool.forgetSession(agentId, id);
+      for (const id of probeSessionIds) this.pool.forgetSession(patchbayAgentId, id);
     }
   }
 
@@ -286,15 +287,15 @@ export class CapabilityTracker {
    * anything honest to exercise, so running them now would spend a real
    * agent turn probing capabilities patchbay itself doesn't implement yet.
    * Re-runs the free checks only. */
-  async verify(agentId: string): Promise<ProbeOutcome> {
+  async verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
     // A latched agent's probe stays parked (first-session-mcp-latch): a
     // user-run Verify must not spend the process's one honored mcpServers
     // slot on a throwaway session — same deferral onDeclared honors.
-    if (this.deferredProbes.has(agentId)) {
-      this.log.info(`${agentId}: verify skipped — probe deferred until first real session`);
+    if (this.deferredProbes.has(patchbayAgentId)) {
+      this.log.info(`${patchbayAgentId}: verify skipped — probe deferred until first real session`);
       return "skipped";
     }
-    return await this.probe(agentId);
+    return await this.probe(patchbayAgentId);
   }
 
   /** Stable `authenticate` round trip, then retries the probe so a
@@ -304,10 +305,10 @@ export class CapabilityTracker {
    * cleared on a failed attempt. The trailing probe honors the same latch
    * deferral as verify; auth state doesn't need it (the authenticate
    * success itself is the authority's clearing evidence). */
-  async authenticate(agentId: string, methodId: string): Promise<void> {
-    await this.pool.authenticate(agentId, methodId);
-    if (this.deferredProbes.has(agentId)) return;
-    await this.probe(agentId);
+  async authenticate(patchbayAgentId: PatchbayAgentId, methodId: string): Promise<void> {
+    await this.pool.authenticate(patchbayAgentId, methodId);
+    if (this.deferredProbes.has(patchbayAgentId)) return;
+    await this.probe(patchbayAgentId);
   }
 
   /** Stable `logout` round trip — and no probe after it: probing would ask
@@ -324,7 +325,7 @@ export class CapabilityTracker {
    * live agent behavior (auggie dossier, 2026-07-14), and its logout-side
    * mirror (a process that keeps working after revocation) is a security
    * hazard. The lock's reason doubles as the stopped card's explanation. */
-  async logout(agentId: string): Promise<void> {
-    await this.pool.logout(agentId);
+  async logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    await this.pool.logout(patchbayAgentId);
   }
 }

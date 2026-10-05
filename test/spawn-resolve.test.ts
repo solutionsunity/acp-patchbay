@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveSpawn, resolveExecutableWin32 } from "../src/orchestrator/spawn-resolve";
 import { warmupSpawn, type LaunchSpec } from "../src/orchestrator/pool";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const NODE_DIR = "C:\\Program Files\\nodejs";
 const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
@@ -135,7 +136,7 @@ describe("resolveExecutableWin32", () => {
 // anything unrecognized gets no warmup.
 describe("warmupSpawn", () => {
   const spec = (command: string, args: string[]): LaunchSpec => ({
-    agentId: "a",
+    patchbayAgentId: "a" as PatchbayAgentId,
     name: "A",
     command,
     args,

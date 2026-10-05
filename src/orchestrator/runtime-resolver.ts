@@ -213,16 +213,16 @@ const RUNTIME_SHA256: Readonly<Record<string, string>> = {
 
 /** A pinned runtime archive as an install spec, its digest looked up by
  * the archive's file name. */
-function runtimeEntry(agentId: string, version: string, archiveUrl: string, cmd: string): BinaryInstallSpec {
+function runtimeEntry(distribution: string, version: string, archiveUrl: string, cmd: string): BinaryInstallSpec {
   const file = archiveUrl.slice(archiveUrl.lastIndexOf("/") + 1);
-  return { agentId, version, archiveUrl, cmd, args: [], env: {}, sha256: RUNTIME_SHA256[file] ?? null };
+  return { distribution, version, archiveUrl, cmd, args: [], env: {}, sha256: RUNTIME_SHA256[file] ?? null };
 }
 
 /** The download that backs a failed gate, as a binary-installer spec —
- * pseudo agentIds keep runtimes in the same cache with the same
- * staging/rename integrity story as agent binaries; the dot prefix
- * reserves them (no registry or user agent id starts with a dot), so a
- * real agent can never collide with a runtime's cache slot. Null when no
+ * dot-prefixed distribution names keep runtimes in the same cache with
+ * the same staging/rename integrity story as agent binaries; the dot
+ * reserves them (no registry id starts with one), so an agent's download
+ * can never collide with a runtime's cache slot. Null when no
  * managed build exists for this platform/arch (the caller surfaces that
  * honestly).
  * `cmd` names the launcher-adjacent interpreter; its dirname is the PATH
@@ -325,7 +325,7 @@ export interface LaunchResolveDeps {
    * published), given the one pinned with its version — the registry's
    * current word while it still lists that version. Absent → the pinned
    * one (tests). */
-  digestFor?: (agentId: string, version: string, pinned: string | null) => string | null;
+  digestFor?: (distribution: string, version: string, pinned: string | null) => string | null;
   /** Reads the registry now — before a download and again after a
    * mismatch — answering whether it could be read. */
   refreshRegistry?: () => Promise<boolean>;
@@ -370,12 +370,12 @@ function installOnce(
     digest?: () => Promise<Digest>;
   },
 ): Promise<InstalledBinary> {
-  const flightKey = `${catalog.agentId}@${catalog.version}@${deps.cacheRoot}`;
+  const flightKey = `${catalog.distribution}@${catalog.version}@${deps.cacheRoot}`;
   let flight = inflightInstalls.get(flightKey);
   if (flight === undefined) {
     flight = (async () => {
       const install = deps.install ?? installBinary;
-      if (await isBinaryInstalled(deps.cacheRoot, catalog.agentId, catalog.version, catalog.cmd)) {
+      if (await isBinaryInstalled(deps.cacheRoot, catalog.distribution, catalog.version, catalog.cmd)) {
         return install(deps.cacheRoot, catalog, deps.log);
       }
       const own: Digest = { sha256: catalog.sha256, check: catalog.sha256 === null ? "none-published" : "sha256" };
@@ -388,14 +388,14 @@ function installOnce(
         installed = await install(deps.cacheRoot, { ...catalog, sha256 }, deps.log);
       } catch (err) {
         if (!(err instanceof ChecksumMismatch)) throw err;
-        deps.log.info(`${catalog.agentId} ${catalog.version}: ${err.message} — reading the digest again, downloading once more`);
+        deps.log.info(`${catalog.distribution} ${catalog.version}: ${err.message} — reading the digest again, downloading once more`);
         const again = (gate.digest === undefined ? null : (await gate.digest()).sha256) ?? sha256;
         installed = await install(deps.cacheRoot, { ...catalog, sha256: again }, deps.log);
       }
-      if (sha256 !== null) deps.log.info(`${catalog.agentId} ${catalog.version}: download matched its SHA-256`);
+      if (sha256 !== null) deps.log.info(`${catalog.distribution} ${catalog.version}: download matched its SHA-256`);
       else if (check === "registry-unreachable") {
-        deps.log.warn(`${catalog.agentId} ${catalog.version}: installed unchecked — the ACP registry couldn't be read for its SHA-256`);
-      } else deps.log.info(`${catalog.agentId} ${catalog.version}: installed unchecked — no SHA-256 is published for it`);
+        deps.log.warn(`${catalog.distribution} ${catalog.version}: installed unchecked — the ACP registry couldn't be read for its SHA-256`);
+      } else deps.log.info(`${catalog.distribution} ${catalog.version}: installed unchecked — no SHA-256 is published for it`);
       return installed;
     })();
     inflightInstalls.set(flightKey, flight);
@@ -424,7 +424,7 @@ export async function resolveRuntime(
   const probes = { launcher: deps.probes?.launcher ?? spec.command, interpreter: deps.probes?.interpreter };
   const system = await gateRuntime(kind, { ...process.env, ...spec.env }, probes);
   if (system.ok) {
-    deps.log.debug(`${spec.agentId}: system runtime OK (${system.detail})`);
+    deps.log.debug(`${spec.patchbayAgentId}: system runtime OK (${system.detail})`);
     return spec;
   }
 
@@ -435,7 +435,7 @@ export async function resolveRuntime(
     );
   }
   deps.log.info(
-    `${spec.agentId}: system runtime unusable (${system.detail}) — using managed ${runtimeName(kind)} ${catalog.version}`,
+    `${spec.patchbayAgentId}: system runtime unusable (${system.detail}) — using managed ${runtimeName(kind)} ${catalog.version}`,
   );
 
   const label = `${runtimeName(kind)} ${catalog.version}`;
@@ -464,7 +464,7 @@ export async function resolveRuntime(
     const managedAtFault =
       verified.failed === "interpreter" || basename(probes.launcher) === probes.launcher;
     if (managedAtFault) {
-      await rm(join(deps.cacheRoot, catalog.agentId, catalog.version), { recursive: true, force: true });
+      await rm(join(deps.cacheRoot, catalog.distribution, catalog.version), { recursive: true, force: true });
       throw new Error(
         `managed ${runtimeName(kind)} ${catalog.version} failed its own gate (${verified.detail}) — cached copy removed; reconnect to retry, or install ${runtimeName(kind)} manually`,
       );
@@ -473,7 +473,7 @@ export async function resolveRuntime(
       `${spec.command} did not answer even with managed ${runtimeName(kind)} ${catalog.version} on PATH (${verified.detail}) — check the agent's command`,
     );
   }
-  deps.log.info(`${spec.agentId}: managed ${runtimeName(kind)} ready (${verified.detail})`);
+  deps.log.info(`${spec.patchbayAgentId}: managed ${runtimeName(kind)} ready (${verified.detail})`);
   return { ...spec, env };
 }
 
@@ -502,7 +502,7 @@ export async function resolveBinaryLaunch(
   // arrive — so the digest is today's, never a stale cache's silence.
   const digest = async (): Promise<Digest> => {
     const reachable = (await deps.refreshRegistry?.()) ?? true;
-    const raw = deps.digestFor === undefined ? pinned : deps.digestFor(spec.agentId, version, pinned);
+    const raw = deps.digestFor === undefined ? pinned : deps.digestFor(spec.patchbayAgentId, version, pinned);
     if (raw === null) return { sha256: null, check: reachable ? "none-published" : "registry-unreachable" };
     const sha256 = parseSha256(raw);
     if (sha256 === null) {
@@ -514,7 +514,7 @@ export async function resolveBinaryLaunch(
   try {
     installed = await installOnce(
       deps,
-      { agentId: spec.agentId, version, archiveUrl, cmd, args: spec.args, env: spec.env, sha256: pinned },
+      { distribution: spec.patchbayAgentId, version, archiveUrl, cmd, args: spec.args, env: spec.env, sha256: pinned },
       {
         ask: (check) => ({ kind: "agent", name: spec.name, version, archiveUrl, check }),
         phase: `downloading ${label}…`,
@@ -532,7 +532,7 @@ export async function resolveBinaryLaunch(
       "Connect again later, or add it as a custom command to run it regardless.",
     );
   }
-  deps.log.info(`${spec.agentId}: binary ${version} ready (${installed.command})`);
+  deps.log.info(`${spec.patchbayAgentId}: binary ${version} ready (${installed.command})`);
   return { ...spec, command: installed.command, cwd: installed.cwd };
 }
 

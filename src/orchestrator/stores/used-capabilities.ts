@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Persisted used-capability cache, keyed by agentId, carrying the
+// Persisted used-capability cache, keyed by agent, carrying the
 // version it was earned against (used now survives reconnect and persists
 // *across restarts* — it only resets when `agentInfo.version` actually
 // changes, not on every connect).
 // Global store: having actually fired on the wire is a fact about a specific
 // build of an agent, not about a workspace.
 import { z } from "zod";
+import { savedId } from "./saved-id";
 import type { CapabilityMatrix } from "../../shared/protocol";
 import { USED_MAY_OUTRUN_CLAIM } from "../capabilities";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 const capabilityCellSchema = z.object({
   declared: z.boolean(),
@@ -20,7 +22,7 @@ const capabilityCellSchema = z.object({
 });
 
 export const usedCacheEntrySchema = z.object({
-  id: z.string().min(1), // agentId
+  id: savedId<PatchbayAgentId>(),
   version: z.string().min(1),
   matrix: z.record(z.string(), capabilityCellSchema),
 });
@@ -47,8 +49,8 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
    * declaration: it gates nothing, and a bridge that flickers a
    * declaration off at the same version must not launder its own warning
    * — "only an actual version change resets it honestly". */
-  seed(agentId: string, version: string, freshlyDeclared: CapabilityMatrix): CapabilityMatrix {
-    const cached = this.get(agentId);
+  seed(patchbayAgentId: PatchbayAgentId, version: string, freshlyDeclared: CapabilityMatrix): CapabilityMatrix {
+    const cached = this.get(patchbayAgentId);
     if (cached === undefined || cached.version !== version) return freshlyDeclared;
     const seeded = { ...freshlyDeclared };
     for (const key of Object.keys(freshlyDeclared) as (keyof CapabilityMatrix)[]) {
@@ -64,7 +66,7 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
     return seeded;
   }
 
-  async save(agentId: string, version: string, matrix: CapabilityMatrix): Promise<void> {
-    await this.upsert({ id: agentId, version, matrix });
+  async save(patchbayAgentId: PatchbayAgentId, version: string, matrix: CapabilityMatrix): Promise<void> {
+    await this.upsert({ id: patchbayAgentId, version, matrix });
   }
 }

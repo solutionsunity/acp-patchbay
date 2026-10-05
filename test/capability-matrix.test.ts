@@ -20,6 +20,7 @@ import {
   type AuthMethodView,
   type DeclaredCapabilities,
 } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const noDeclared: DeclaredCapabilities = {
   loadSession: false,
@@ -246,13 +247,13 @@ function trackerOver(declared: DeclaredCapabilities, version: string | undefined
   } as unknown as AgentPool;
   const changed: string[] = [];
   const tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
-    changed: (agentId) => changed.push(agentId),
+    changed: (patchbayAgentId) => changed.push(patchbayAgentId),
     probeRoot: async () => "/nowhere",
   });
   /** A fresh connection — the same agent, at `nextVersion`. */
   const reconnect = (nextVersion: string | undefined) => {
     live = { declared, initialize: { protocolVersion: 1, agentInfo: nextVersion === undefined ? undefined : { name: "a", version: nextVersion } } };
-    tracker.onDeclared("a1");
+    tracker.onDeclared("a1" as PatchbayAgentId);
   };
   return { tracker, changed, reconnect };
 }
@@ -262,57 +263,57 @@ describe("tracker marks — the matrix as it is read", () => {
 
   it("reads the connection's declaration, unmarked", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: false });
   });
 
   it("a used mark flips a declared row to used", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "session.fork", "used");
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
   it("used implies declared even for rows with no initialize-time claim", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "usage", "used");
-    expect(tracker.matrix("a1")!.usage).toEqual({ declared: true, used: true });
+    tracker.noteEvidence("a1" as PatchbayAgentId, "usage", "used");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!.usage).toEqual({ declared: true, used: true });
   });
 
   it("a reconnect at the same version keeps what was proven; a version change starts fresh", () => {
     const { tracker, reconnect } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "session.fork", "used");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
     reconnect("1.0.0");
-    expect(tracker.matrix("a1")!["session.fork"].used).toBe(true);
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"].used).toBe(true);
     reconnect("1.1.0");
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: false });
   });
 
   it("an agent reporting no version keeps its marks for the connection only", () => {
     const { tracker, reconnect } = trackerOver(declared, undefined);
-    tracker.noteEvidence("a1", "session.fork", "used");
-    expect(tracker.matrix("a1")!["session.fork"].used).toBe(true);
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"].used).toBe(true);
     reconnect(undefined);
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: false });
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: false });
   });
 
   it("suspect flags a declared row — suspicion implies declared, like used does", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "prompt.image", "suspect");
-    expect(tracker.matrix("a1")!["prompt.image"]).toEqual({ declared: true, used: false, suspect: true });
-    expect(capabilityState(tracker.matrix("a1")!["prompt.image"])).toBe("suspect");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "prompt.image", "suspect");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["prompt.image"]).toEqual({ declared: true, used: false, suspect: true });
+    expect(capabilityState(tracker.matrix("a1" as PatchbayAgentId)!["prompt.image"])).toBe("suspect");
   });
 
   it("suspicion never speaks over proof — suspect on a used row is a no-op", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "session.fork", "used");
-    tracker.noteEvidence("a1", "session.fork", "suspect");
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "suspect");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
   it("first success acquits — a used mark drops the suspect flag", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "session.fork", "suspect");
-    tracker.noteEvidence("a1", "session.fork", "used");
-    expect(tracker.matrix("a1")!["session.fork"]).toEqual({ declared: true, used: true });
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "suspect");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    expect(tracker.matrix("a1" as PatchbayAgentId)!["session.fork"]).toEqual({ declared: true, used: true });
   });
 
   // Features gate on used: a mark on a row the connection no longer claims
@@ -320,16 +321,16 @@ describe("tracker marks — the matrix as it is read", () => {
   // restart already applied, now the only one.
   it("a used mark on a row the connection doesn't declare stays dark", () => {
     const { tracker } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "prompt.image", "used");
-    expect(capabilityState(tracker.matrix("a1")!["prompt.image"])).toBe("not-declared");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "prompt.image", "used");
+    expect(capabilityState(tracker.matrix("a1" as PatchbayAgentId)!["prompt.image"])).toBe("not-declared");
   });
 
   it("a repeat of a standing mark writes nothing and moves nothing", () => {
     const { tracker, changed } = trackerOver(declared, "1.0.0");
-    tracker.noteEvidence("a1", "session.fork", "used");
-    tracker.noteEvidence("a1", "session.fork", "used");
-    tracker.noteEvidence("a1", "prompt.image", "suspect");
-    tracker.noteEvidence("a1", "prompt.image", "suspect");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "session.fork", "used");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "prompt.image", "suspect");
+    tracker.noteEvidence("a1" as PatchbayAgentId, "prompt.image", "suspect");
     expect(changed).toEqual(["a1", "a1"]);
   });
 });

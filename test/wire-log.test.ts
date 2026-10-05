@@ -10,6 +10,7 @@ import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { WireLog, WIRE_LOG_TTL_MS } from "../src/orchestrator/wire-log";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 function harness() {
   const lines: string[] = [];
@@ -26,7 +27,7 @@ describe("WireLog", () => {
     const { log, lines } = harness();
     log.registerSecret("sk-super-secret-value");
     log.enable();
-    log.frame("claude", "→", '{"env":[{"name":"KEY","value":"sk-super-secret-value"}]}');
+    log.frame("claude" as PatchbayAgentId, "→", '{"env":[{"name":"KEY","value":"sk-super-secret-value"}]}');
     const frame = lines.find((l) => l.includes("claude"))!;
     expect(frame).not.toContain("sk-super-secret-value");
     expect(frame).toContain("•••");
@@ -39,7 +40,7 @@ describe("WireLog", () => {
     log.registerSecret("ctx-1");
     log.registerSecret("ctx-10");
     log.enable();
-    log.frame("claude", "→", '{"env":[{"name":"SID","value":"ctx-10"}]}');
+    log.frame("claude" as PatchbayAgentId, "→", '{"env":[{"name":"SID","value":"ctx-10"}]}');
     const frame = lines.find((l) => l.includes("claude"))!;
     expect(frame).not.toContain("•••0");
     expect(frame).toContain('"•••"');
@@ -49,7 +50,7 @@ describe("WireLog", () => {
     const { log, lines } = harness();
     log.registerSecret('pa"ss\\word');
     log.enable();
-    log.frame("claude", "→", JSON.stringify({ env: [{ name: "KEY", value: 'pa"ss\\word' }] }));
+    log.frame("claude" as PatchbayAgentId, "→", JSON.stringify({ env: [{ name: "KEY", value: 'pa"ss\\word' }] }));
     const frame = lines.find((l) => l.includes("claude"))!;
     expect(frame).not.toContain('pa\\"ss');
     expect(frame).toContain("•••");
@@ -59,7 +60,7 @@ describe("WireLog", () => {
     const { log, lines } = harness();
     log.registerSecret("ab"); // too short to be a credential
     log.enable();
-    log.frame("claude", "→", '{"x":"ab"}');
+    log.frame("claude" as PatchbayAgentId, "→", '{"x":"ab"}');
     expect(lines.find((l) => l.includes("claude"))).toContain('"ab"');
   });
 
@@ -67,14 +68,14 @@ describe("WireLog", () => {
     vi.useFakeTimers();
     try {
       const { log, lines, states } = harness();
-      log.frame("claude", "→", "{}"); // inactive — dropped
+      log.frame("claude" as PatchbayAgentId, "→", "{}"); // inactive — dropped
       expect(lines).toEqual([]);
       log.enable();
       expect(states.at(-1)).toMatchObject({ active: true });
       expect(states.at(-1)!.until).not.toBeNull();
       vi.advanceTimersByTime(WIRE_LOG_TTL_MS + 1);
       expect(states.at(-1)).toEqual({ active: false, until: null });
-      log.frame("claude", "→", "{}");
+      log.frame("claude" as PatchbayAgentId, "→", "{}");
       expect(lines.some((l) => l.includes("{}"))).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -102,7 +103,7 @@ describe("WireLog", () => {
   it("truncates oversized frames with an honest marker", () => {
     const { log, lines } = harness();
     log.enable();
-    log.frame("claude", "←", "x".repeat(10_000));
+    log.frame("claude" as PatchbayAgentId, "←", "x".repeat(10_000));
     const frame = lines.find((l) => l.includes("claude"))!;
     expect(frame).toContain("[truncated — 10000 chars total]");
     expect(frame.length).toBeLessThan(9_000);
@@ -119,9 +120,9 @@ beforeEach(async () => {
 });
 afterEach(() => rm(cwd, { recursive: true, force: true }));
 
-function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -139,14 +140,14 @@ describe("AgentPool wire tap", () => {
       onDeclaredCaptured: () => {},
       onSessionUpdate: () => {},
       wireLogActive: () => active,
-      onWireFrame: (_agentId, direction, line) => frames.push({ direction, line }),
+      onWireFrame: (_patchbayAgentId, direction, line) => frames.push({ direction, line }),
       ...stubFsTerminalHooks(),
     });
-    await pool.connect(spec({}, "tap")); // tap inactive during connect — nothing captured
+    await pool.connect(spec({}, "tap" as PatchbayAgentId)); // tap inactive during connect — nothing captured
     expect(frames).toEqual([]);
 
     active = true;
-    await pool.newSession("tap", cwd);
+    await pool.newSession("tap" as PatchbayAgentId, cwd);
     const out = frames.filter((f) => f.direction === "→");
     const back = frames.filter((f) => f.direction === "←");
     expect(out.some((f) => f.line.includes('"session/new"'))).toBe(true);
@@ -154,7 +155,7 @@ describe("AgentPool wire tap", () => {
     // every captured frame is a whole JSON document, never a torn chunk
     for (const f of frames) expect(() => JSON.parse(f.line)).not.toThrow();
 
-    await pool.stop("tap");
+    await pool.stop("tap" as PatchbayAgentId);
   });
 
   it("names an agent that writes non-protocol lines, once per connection, with no content — the session goes on", async () => {
@@ -171,14 +172,14 @@ describe("AgentPool wire tap", () => {
       },
       log,
     );
-    await pool.connect(spec({ stdoutNoise: ["Starting agent v1 secret=abc", "42", "{not json"] }, "noisy"));
-    const { sessionId } = await pool.newSession("noisy", cwd);
+    await pool.connect(spec({ stdoutNoise: ["Starting agent v1 secret=abc", "42", "{not json"] }, "noisy" as PatchbayAgentId));
+    const { sessionId } = await pool.newSession("noisy" as PatchbayAgentId, cwd);
     expect(sessionId).toBeTruthy(); // not interrupted
 
     const notes = logged.filter((m) => m.includes("noisy"));
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain("wire log");
     expect(notes[0]).not.toContain("secret");
-    await pool.stop("noisy");
+    await pool.stop("noisy" as PatchbayAgentId);
   });
 });

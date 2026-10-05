@@ -4,7 +4,7 @@
 // Installs a downloaded executable: fetch the archive (or a raw executable
 // — the registry format allows both), check it against its published
 // SHA-256 when one exists, extract, chmod, resolve to an absolute launch
-// path. Cached per (agentId, version) under globalStorageUri so
+// path. Cached per (distribution, version) under globalStorageUri so
 // re-adding/reconnecting never re-downloads.
 //
 // The digest is checked on the downloaded bytes before anything touches
@@ -12,7 +12,7 @@
 // passed the check (or had none to pass). Without a digest, integrity is
 // HTTPS + the host's own authenticity — the trust a manual browser
 // download has. Either way callers gate the first install of each
-// (agentId, version) behind an explicit, visible user confirmation, and
+// (distribution, version) behind an explicit, visible user confirmation, and
 // tell the user which of the two it is.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -29,7 +29,9 @@ function archiveExtension(url: string): string | null {
 }
 
 export interface BinaryInstallSpec {
-  agentId: string;
+  /** What the download is — a registry agent's id, or a runtime's name
+   * (`.runtime-node`) — the cache directory it lands in. */
+  distribution: string;
   version: string;
   archiveUrl: string;
   /** Relative path to the executable, within the extracted/downloaded dir —
@@ -78,23 +80,23 @@ async function pathExists(path: string): Promise<boolean> {
 
 export function resolvedBinaryPath(
   cacheRoot: string,
-  agentId: string,
+  distribution: string,
   version: string,
   cmd: string,
 ): string {
-  return join(cacheRoot, agentId, version, cmd);
+  return join(cacheRoot, distribution, version, cmd);
 }
 
-/** Whether this exact (agentId, version) is already cached — callers use
+/** Whether this exact (distribution, version) is already cached — callers use
  * this to decide whether the one-time download confirmation is even
  * necessary (already-installed reconnects never re-prompt). */
 export function isBinaryInstalled(
   cacheRoot: string,
-  agentId: string,
+  distribution: string,
   version: string,
   cmd: string,
 ): Promise<boolean> {
-  return pathExists(resolvedBinaryPath(cacheRoot, agentId, version, cmd));
+  return pathExists(resolvedBinaryPath(cacheRoot, distribution, version, cmd));
 }
 
 /** Shells out to the system `tar` — GNU tar (Linux) / bsdtar (macOS, and
@@ -121,8 +123,8 @@ export async function installBinary(
   spec: BinaryInstallSpec,
   log: Logger = nullLogger,
 ): Promise<InstalledBinary> {
-  const destDir = join(cacheRoot, spec.agentId, spec.version);
-  const resolvedCmd = resolvedBinaryPath(cacheRoot, spec.agentId, spec.version, spec.cmd);
+  const destDir = join(cacheRoot, spec.distribution, spec.version);
+  const resolvedCmd = resolvedBinaryPath(cacheRoot, spec.distribution, spec.version, spec.cmd);
   if (!(await pathExists(resolvedCmd))) {
     // Staging + rename-on-success: `resolvedCmd` existing IS the installed
     // check (isBinaryInstalled), so nothing may appear at that path until
@@ -131,14 +133,14 @@ export async function installBinary(
     // poison the npx cache suffers from, launcher-health.ts; here we own
     // the disk, so it's prevented rather than repaired). Same parent dir on
     // purpose: rename stays atomic on one filesystem.
-    const download = await readBytes(spec.archiveUrl, { log, what: `download of ${spec.agentId} ${spec.version}` });
+    const download = await readBytes(spec.archiveUrl, { log, what: `download of ${spec.distribution} ${spec.version}` });
     if (!download.ok) throw new Error(`download failed: ${describeNetFailure(download.failure)}`);
     const { bytes } = download.value;
     if (spec.sha256 !== null) {
       const actual = createHash("sha256").update(bytes).digest("hex");
       if (actual !== spec.sha256) throw new ChecksumMismatch(spec.sha256, actual);
     }
-    const staging = join(cacheRoot, spec.agentId, `.staging-${spec.version}`);
+    const staging = join(cacheRoot, spec.distribution, `.staging-${spec.version}`);
     await rm(staging, { recursive: true, force: true }); // a prior interrupted attempt
     await mkdir(staging, { recursive: true });
     const stagedCmd = join(staging, spec.cmd);

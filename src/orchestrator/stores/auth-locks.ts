@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Persisted auth locks (auth-evidence.ts), keyed by agentId. Machine
+// Persisted auth locks (auth-evidence.ts), keyed by agent. Machine
 // store: a logout or a wire auth_required is a fact about this machine's
 // credentials, not about a workspace — and it must survive window reloads,
 // or an autoConnect + lazy-auth probe would launder a witnessed logout
@@ -15,9 +15,11 @@
 // single-window flow is the overwhelming case); a merge-on-write FileKV is
 // the visible extension point if multi-window auth flows become real.
 import { z } from "zod";
+import { savedId } from "./saved-id";
 import type { AuthLock } from "../auth-evidence";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 const authLockSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("loggedOut"), reason: z.string(), at: z.string() }),
@@ -30,7 +32,7 @@ const authLockSchema = z.discriminatedUnion("kind", [
 ]);
 
 const authLockEntrySchema = z.object({
-  id: z.string().min(1), // agentId
+  id: savedId<PatchbayAgentId>(),
   lock: authLockSchema,
 });
 export type AuthLockEntry = z.infer<typeof authLockEntrySchema>;
@@ -42,7 +44,7 @@ export class AuthLockStore extends GlobalRecordStore<AuthLockEntry> {
     super(kv, KEY, authLockEntrySchema);
   }
 
-  lockFor(agentId: string): AuthLock | null {
-    return this.get(agentId)?.lock ?? null;
+  lockFor(patchbayAgentId: PatchbayAgentId): AuthLock | null {
+    return this.get(patchbayAgentId)?.lock ?? null;
   }
 }

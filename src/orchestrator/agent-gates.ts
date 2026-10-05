@@ -13,6 +13,7 @@ import type { ConnectionOperations } from "./agents-store";
 import type { ProbeOutcome } from "./capability-tracker";
 import type { Queue } from "./queue";
 import type { OpenWork } from "./sessions-store";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** An operation on one agent's connection — and so what the agent's row
  * can hold, its busy vocabulary. */
@@ -73,8 +74,8 @@ export function endQuestion(
 
 /** What the gates read, and ask through, to put the one question. */
 export interface GateAsks {
-  name(agentId: string): string | undefined;
-  openWork(agentId: string): OpenWork;
+  name(patchbayAgentId: PatchbayAgentId): string | undefined;
+  openWork(patchbayAgentId: PatchbayAgentId): OpenWork;
   /** A modal question with one affirmative choice; true = it was chosen. */
   confirm(message: string, choice: string): Promise<boolean>;
 }
@@ -82,55 +83,55 @@ export interface GateAsks {
 export class AgentGates implements ConnectionOperations {
   constructor(
     private readonly agents: ConnectionOperations,
-    private readonly queue: Queue<AgentOperation>,
+    private readonly queue: Queue<AgentOperation, PatchbayAgentId>,
     private readonly asks: GateAsks,
   ) {}
 
-  connect(agentId: string): Promise<void> {
-    return this.pass("connect", agentId, (signal) => this.agents.connect(agentId, signal));
+  connect(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("connect", patchbayAgentId, (signal) => this.agents.connect(patchbayAgentId, signal));
   }
 
-  restart(agentId: string): Promise<void> {
-    return this.pass("restart", agentId, (signal) => this.agents.restart(agentId, signal));
+  restart(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("restart", patchbayAgentId, (signal) => this.agents.restart(patchbayAgentId, signal));
   }
 
   /** Asks when it would stop a running agent — after the registry has
    * shown it can upgrade at all, so it never asks for nothing. */
-  upgrade(agentId: string): Promise<void> {
-    return this.pass("upgrade", agentId, (signal) =>
-      this.agents.upgrade(agentId, signal, () => this.agreed("upgrade", agentId)),
+  upgrade(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("upgrade", patchbayAgentId, (signal) =>
+      this.agents.upgrade(patchbayAgentId, signal, () => this.agreed("upgrade", patchbayAgentId)),
     );
   }
 
-  login(agentId: string, methodId: string): Promise<void> {
-    return this.pass("login", agentId, (signal) => this.agents.login(agentId, methodId, signal), methodId);
+  login(patchbayAgentId: PatchbayAgentId, methodId: string): Promise<void> {
+    return this.pass("login", patchbayAgentId, (signal) => this.agents.login(patchbayAgentId, methodId, signal), methodId);
   }
 
   /** Asks when its turn comes, so the counts are the ones it would cut
    * off, and a repeat shares the question. */
-  logout(agentId: string): Promise<void> {
-    return this.pass("logout", agentId, () => this.unlessDeclined("logout", agentId, () => this.agents.logout(agentId)));
+  logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("logout", patchbayAgentId, () => this.unlessDeclined("logout", patchbayAgentId, () => this.agents.logout(patchbayAgentId)));
   }
 
-  verify(agentId: string): Promise<ProbeOutcome> {
-    return this.pass("verify", agentId, () => this.agents.verify(agentId));
+  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
+    return this.pass("verify", patchbayAgentId, () => this.agents.verify(patchbayAgentId));
   }
 
   /** Asks before cutting in — nothing is cut while the question is open. */
-  stop(agentId: string): Promise<void> {
-    return this.unlessDeclined("stop", agentId, () => this.pass("stop", agentId, () => this.agents.stop(agentId)));
+  stop(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.unlessDeclined("stop", patchbayAgentId, () => this.pass("stop", patchbayAgentId, () => this.agents.stop(patchbayAgentId)));
   }
 
   /** Asks before cutting in, like Stop — always, since it also forgets. */
-  remove(agentId: string): Promise<void> {
-    return this.unlessDeclined("remove", agentId, () => this.pass("remove", agentId, () => this.agents.remove(agentId)));
+  remove(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.unlessDeclined("remove", patchbayAgentId, () => this.pass("remove", patchbayAgentId, () => this.agents.remove(patchbayAgentId)));
   }
 
   /** Settles once the work the agent's row holds now has left it — what a
    * session's work enters behind, so nothing binds a session to a
    * connection being replaced. */
-  settled(agentId: string): Promise<void> {
-    return this.queue.settled(agentId);
+  settled(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.queue.settled(patchbayAgentId);
   }
 
   /** Every agent's connection ends — the window closing, or erase: all the
@@ -145,39 +146,39 @@ export class AgentGates implements ConnectionOperations {
 
   /** Runs `go` unless the one question before the agent's connection ends
    * is declined — at once when there is nothing to ask. */
-  private unlessDeclined(operation: Ending, agentId: string, go: () => Promise<void>): Promise<void> {
-    const question = this.question(operation, agentId);
+  private unlessDeclined(operation: Ending, patchbayAgentId: PatchbayAgentId, go: () => Promise<void>): Promise<void> {
+    const question = this.question(operation, patchbayAgentId);
     if (question === null) return go();
     return this.asks.confirm(question.message, question.choice).then((yes) => (yes ? go() : undefined));
   }
 
   /** The one question's answer — yes, unasked, when there is nothing to
    * ask. */
-  private async agreed(operation: Ending, agentId: string): Promise<boolean> {
-    const question = this.question(operation, agentId);
+  private async agreed(operation: Ending, patchbayAgentId: PatchbayAgentId): Promise<boolean> {
+    const question = this.question(operation, patchbayAgentId);
     return question === null || this.asks.confirm(question.message, question.choice);
   }
 
   /** The one question, put to the facts as they stand now. */
-  private question(operation: Ending, agentId: string): { message: string; choice: string } | null {
-    return endQuestion(operation, this.asks.name(agentId) ?? agentId, this.asks.openWork(agentId));
+  private question(operation: Ending, patchbayAgentId: PatchbayAgentId): { message: string; choice: string } | null {
+    return endQuestion(operation, this.asks.name(patchbayAgentId) ?? patchbayAgentId, this.asks.openWork(patchbayAgentId));
   }
 
   /** The operation through its gate. Its identity is the operation and its
    * arguments beyond the agent — a login is one operation per method. */
   private pass<T>(
     operation: AgentOperation,
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     run: (signal: AbortSignal) => Promise<T>,
     ...args: string[]
   ): Promise<T> {
     const identity = [operation, ...args].join(":");
-    if (GATES[operation] === "waits") return this.queue.run(agentId, operation, run, identity);
-    const outcome = this.queue.cut(agentId, operation, run, identity);
+    if (GATES[operation] === "waits") return this.queue.run(patchbayAgentId, operation, run, identity);
+    const outcome = this.queue.cut(patchbayAgentId, operation, run, identity);
     // The process goes down now: what the cut stopped may be waiting on a
     // hung agent, and ends only with it. The operation's own stop, when it
     // runs, joins this one.
-    void this.agents.stop(agentId);
+    void this.agents.stop(patchbayAgentId);
     return outcome;
   }
 }

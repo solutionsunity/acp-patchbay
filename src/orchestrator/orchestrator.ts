@@ -88,6 +88,7 @@ import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** Context-chip id mint. The timestamp alone collided once a multi-file
  * drop started dispatching several adds in the same millisecond (duplicate
@@ -152,7 +153,7 @@ export class Orchestrator {
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
   readonly sessionContinuity: SessionContinuityStore;
-  /** The updates already announced this window ("agentId@version") — each
+  /** The updates already announced this window ("patchbayAgentId@version") — each
    * newer version is told once. */
   private readonly announcedUpdates = new Set<string>();
   readonly pool: AgentPool;
@@ -372,18 +373,18 @@ export class Orchestrator {
     // capabilityTracker / broker here — before they're assigned below — is
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
-      onStatusChanged: (agentId, status, detail) => {
-        this.agents.noteStatus(agentId, status, detail);
-        if (status !== "running") this.settleAsksOn(agentId);
+      onStatusChanged: (patchbayAgentId, status, detail) => {
+        this.agents.noteStatus(patchbayAgentId, status, detail);
+        if (status !== "running") this.settleAsksOn(patchbayAgentId);
         // Every way a connection ends detaches the sessions that rode it —
         // they reopen (session/load or resume) before reuse, keeping what
         // they hold.
-        this.sessions.agentStatusChanged(agentId, status);
+        this.sessions.agentStatusChanged(patchbayAgentId, status);
         // The editor's session rode the connection that just ended, and so
         // did any completion notice still waiting for its question.
         if (status !== "running") {
-          this.defaultsEditor.forget(agentId);
-          this.broker.forgetAgent(agentId);
+          this.defaultsEditor.forget(patchbayAgentId);
+          this.broker.forgetAgent(patchbayAgentId);
         }
         // Every connect of a list-capable agent syncs its own session
         // history into the list — the wire is the ONLY list (patchbay
@@ -392,46 +393,46 @@ export class Orchestrator {
         // the last-active pointer still resolves.
         if (status === "running") {
           const sync = this.sessions
-            .syncAgentSessions(agentId)
+            .syncAgentSessions(patchbayAgentId)
             // A session opened before its agent connected sat blank (no
             // replay to run yet) — attach whatever is on view now that a
             // process exists.
-            .then(() => this.sessionGates.reattachViewed(agentId))
-            .catch(this.logCatch(`session/list sync for ${agentId}`))
+            .then(() => this.sessionGates.reattachViewed(patchbayAgentId))
+            .catch(this.logCatch(`session/list sync for ${patchbayAgentId}`))
             .finally(() => {
-              if (this.pendingSyncs.get(agentId) === sync) this.pendingSyncs.delete(agentId);
+              if (this.pendingSyncs.get(patchbayAgentId) === sync) this.pendingSyncs.delete(patchbayAgentId);
             });
-          this.pendingSyncs.set(agentId, sync);
+          this.pendingSyncs.set(patchbayAgentId, sync);
         }
         // Offerings are connection state — the settings reducer drops its
         // copy off the row's status; the defaults editor forgot its session
         // above, and an expanded card reopens one once running.
       },
-      onDeclaredCaptured: (agentId) => this.agents.noteDeclared(agentId),
-      onSessionUpdate: (agentId, notification) => {
+      onDeclaredCaptured: (patchbayAgentId) => this.agents.noteDeclared(patchbayAgentId),
+      onSessionUpdate: (patchbayAgentId, notification) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
-        if (this.capabilityTracker.isProbeSession(agentId, notification.sessionId)) return;
-        if (this.defaultsEditor.owns(agentId, notification.sessionId)) {
-          this.defaultsEditor.handleUpdate(agentId, notification);
+        if (this.capabilityTracker.isProbeSession(patchbayAgentId, notification.sessionId)) return;
+        if (this.defaultsEditor.owns(patchbayAgentId, notification.sessionId)) {
+          this.defaultsEditor.handleUpdate(patchbayAgentId, notification);
           return;
         }
-        this.sessions.handleUpdate(agentId, notification);
+        this.sessions.handleUpdate(patchbayAgentId, notification);
       },
-      onCapabilityEvidence: (agentId, row, evidence) => this.agents.noteEvidence(agentId, row, evidence),
-      onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
-        this.agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
+      onCapabilityEvidence: (patchbayAgentId, row, evidence) => this.agents.noteEvidence(patchbayAgentId, row, evidence),
+      onAuthWireFact: (patchbayAgentId, method, settled, startedAt, reason) =>
+        this.agents.noteAuthWireFact(patchbayAgentId, method, settled, startedAt, reason),
       wireLogActive: () => this.wireLog.active,
-      onWireFrame: (agentId, direction, line) => this.wireLog.frame(agentId, direction, line),
+      onWireFrame: (patchbayAgentId, direction, line) => this.wireLog.frame(patchbayAgentId, direction, line),
       // Spawn registry: records persist machine-scoped so an abnormal
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
-      onElicitation: async (agentId, params, signal) => {
+      onElicitation: async (patchbayAgentId, params, signal) => {
         const reading = readElicitationRequest(params);
         if (reading.kind === "invalid") throw RequestError.invalidParams({ reason: reading.why });
         if (reading.kind === "refuse") {
-          this.log.info(`${agentId}: declined an elicitation — ${reading.why}`);
+          this.log.info(`${patchbayAgentId}: declined an elicitation — ${reading.why}`);
           return { action: "decline" };
         }
         const { message, ask, elicitationId } = reading;
@@ -439,27 +440,27 @@ export class Orchestrator {
         // invisible by construction; the user never saw the question, which
         // is exactly what `cancel` means (same rule as permission asks).
         if (
-          this.capabilityTracker.isProbeSession(agentId, reading.sessionId) ||
-          this.defaultsEditor.owns(agentId, reading.sessionId)
+          this.capabilityTracker.isProbeSession(patchbayAgentId, reading.sessionId) ||
+          this.defaultsEditor.owns(patchbayAgentId, reading.sessionId)
         ) {
-          this.log.info(`${agentId}: cancelled an elicitation on a throwaway session`);
+          this.log.info(`${patchbayAgentId}: cancelled an elicitation on a throwaway session`);
           return { action: "cancel" };
         }
         // So is a session patchbay doesn't hold: no transcript to ask in.
-        const sessionId = this.sessions.rowFor(agentId, reading.sessionId);
+        const sessionId = this.sessions.rowFor(patchbayAgentId, reading.sessionId);
         if (sessionId === undefined) {
-          this.log.info(`${agentId}: cancelled an elicitation on session ${reading.sessionId}, which patchbay doesn't hold`);
+          this.log.info(`${patchbayAgentId}: cancelled an elicitation on session ${reading.sessionId}, which patchbay doesn't hold`);
           return { action: "cancel" };
         }
         const answer = await this.broker.askElicitation(
           sessionId,
-          { message, ask, ...(elicitationId !== undefined ? { completion: { agentId, elicitationId } } : {}) },
+          { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
           signal,
         );
         return elicitationResponseOf(ask, answer, signal);
       },
-      onElicitationComplete: (agentId, elicitationId) => this.broker.completeLink(agentId, elicitationId),
-      onPermissionRequest: async (agentId, params) => {
+      onElicitationComplete: (patchbayAgentId, elicitationId) => this.broker.completeLink(patchbayAgentId, elicitationId),
+      onPermissionRequest: async (patchbayAgentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
         // A throwaway session — the probe's or the defaults editor's — can
@@ -470,10 +471,10 @@ export class Orchestrator {
         // question re-asks on the user's first real session, and the probe
         // dir is never the workspace.
         if (
-          this.capabilityTracker.isProbeSession(agentId, params.sessionId) ||
-          this.defaultsEditor.owns(agentId, params.sessionId)
+          this.capabilityTracker.isProbeSession(patchbayAgentId, params.sessionId) ||
+          this.defaultsEditor.owns(patchbayAgentId, params.sessionId)
         ) {
-          this.log.info(`${agentId}: auto-declined "${title}" on a throwaway session`);
+          this.log.info(`${patchbayAgentId}: auto-declined "${title}" on a throwaway session`);
           const auto = await this.broker.resolveProbePermissionRequest(
             params.sessionId,
             title,
@@ -485,9 +486,9 @@ export class Orchestrator {
         }
         // A session patchbay doesn't hold has no card to show — the request
         // is still owed an answer, and nobody saw it: cancelled.
-        const sessionId = this.sessions.rowFor(agentId, params.sessionId);
+        const sessionId = this.sessions.rowFor(patchbayAgentId, params.sessionId);
         if (sessionId === undefined) {
-          this.log.info(`${agentId}: cancelled "${title}" on session ${params.sessionId}, which patchbay doesn't hold`);
+          this.log.info(`${patchbayAgentId}: cancelled "${title}" on session ${params.sessionId}, which patchbay doesn't hold`);
           return { outcome: { outcome: "cancelled" } };
         }
         const result = await this.broker.resolveAgentPermissionRequest(
@@ -512,7 +513,7 @@ export class Orchestrator {
       },
       ...clientRequestHooks(
         () => this.clientHost,
-        (agentId, agentSessionId) => this.sessions.rowFor(agentId, agentSessionId),
+        (patchbayAgentId, agentSessionId) => this.sessions.rowFor(patchbayAgentId, agentSessionId),
       ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
@@ -526,8 +527,8 @@ export class Orchestrator {
           log: this.log,
           onPhase,
           confirmDownload: (ask) => this.confirmDownload(ask),
-          digestFor: (agentId, version, pinned) =>
-            binaryDigestFor(this.acpRegistry.current().agents, agentId, version, pinned),
+          digestFor: (patchbayAgentId, version, pinned) =>
+            binaryDigestFor(this.acpRegistry.current().agents, patchbayAgentId, version, pinned),
           refreshRegistry: async () => (await this.acpRegistry.refresh("download")).ok,
         }),
     });
@@ -543,8 +544,8 @@ export class Orchestrator {
         return sessionId === undefined ? [] : this.sessions.rootsOf(sessionId);
       },
       getMcpServerToken: (contextToken, serverId) => {
-        const agentId = this.sessions.bridgedTo(contextToken, serverId);
-        return agentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(serverId, agentId);
+        const patchbayAgentId = this.sessions.bridgedTo(contextToken, serverId);
+        return patchbayAgentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(serverId, patchbayAgentId);
       },
     });
     this.editorStateHost.start();
@@ -601,16 +602,16 @@ export class Orchestrator {
         // (extensions/first-session-mcp-latch) — and, for everyone, the
         // signal that a real session now owns this id (any probe entry
         // still carrying it is retired).
-        onRealSessionAttached: (agentId, sessionId) =>
-          this.capabilityTracker.noteRealSessionOpened(agentId, sessionId),
+        onRealSessionAttached: (patchbayAgentId, sessionId) =>
+          this.capabilityTracker.noteRealSessionOpened(patchbayAgentId, sessionId),
         // From the agent's saved config, never the pool entry's spec: that
         // one is a connect-time snapshot, and a Settings edit to defaults
         // must reach the very next session, not wait for a reconnect. The
         // knobSource preference is read just as fresh. Defaults themselves
         // are written only by the Settings save path — read-only to
         // everything here.
-        seedFor: (agentId) => this.agents.knobSeed(agentId, this.preferences.get().knobSource),
-        onKnobsConfirmed: (agentId, seed) => this.agents.recordKnobs(agentId, seed),
+        seedFor: (patchbayAgentId) => this.agents.knobSeed(patchbayAgentId, this.preferences.get().knobSource),
+        onKnobsConfirmed: (patchbayAgentId, seed) => this.agents.recordKnobs(patchbayAgentId, seed),
         rootsChanged: (sessionId) => {
           // Every subprocess of the session was spawned with one of its
           // tokens (one per attach; a re-attach mints a fresh one).
@@ -626,14 +627,14 @@ export class Orchestrator {
         // page's next unrelated refresh
         rootsMissing: () => this.publishSavedRoots(),
         currentTranscript: (sessionId) => this.agentView.current.transcripts[sessionId] ?? [],
-        isDeleteUsed: (agentId) => this.agents.matrix(agentId)?.["session.delete"]?.used ?? false,
+        isDeleteUsed: (patchbayAgentId) => this.agents.matrix(patchbayAgentId)?.["session.delete"]?.used ?? false,
         isActiveSession: (sessionId) =>
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
         cancelAsks: (sessionId) => this.broker.cancelPending(sessionId),
-        authLocked: (agentId) => this.agents.authLocked(agentId),
+        authLocked: (patchbayAgentId) => this.agents.authLocked(patchbayAgentId),
         // the pointer names the session the agent's way, which a re-mint moves
         handleChanged: (sessionId) => {
           if (this.pointerRow === sessionId) this.recordPointer(sessionId);
@@ -646,11 +647,11 @@ export class Orchestrator {
       // used, and that's correct (prompt.image mechanics): passthrough is
       // how the claim gets exercised at all — a used-gate would deadlock the
       // row forever.
-      (contextToken, agentId) =>
+      (contextToken, patchbayAgentId) =>
         this.mcpServers.mcpServersFor(
-          agentId,
+          patchbayAgentId,
           contextToken,
-          this.agents.matrix(agentId)?.["mcp.http"]?.declared === true,
+          this.agents.matrix(patchbayAgentId)?.["mcp.http"]?.declared === true,
         ),
       log,
     );
@@ -668,7 +669,7 @@ export class Orchestrator {
       {
         connect: (sessionId) => void this.connectForSession(sessionId),
         failed: (context, err) => this.logCatch(context)(err),
-        agentSettled: (agentId) => this.gates.settled(agentId),
+        agentSettled: (patchbayAgentId) => this.gates.settled(patchbayAgentId),
       },
       {
         // Read fresh every sweep (store-truth) — 0 in Preferences disables.
@@ -682,21 +683,21 @@ export class Orchestrator {
       this.pool,
       this.usedCapabilities,
       {
-        changed: (agentId) => this.agents.publish(agentId),
-        probeRoot: (agentId) => this.agents.probeRoot(agentId),
+        changed: (patchbayAgentId) => this.agents.publish(patchbayAgentId),
+        probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
       },
       log,
     );
     this.defaultsEditor = new DefaultsEditor(
       this.pool,
       {
-        probeRoot: (agentId) => this.agents.probeRoot(agentId),
-        defaultsFor: (agentId) => this.agents.spec(agentId)?.defaults ?? {},
+        probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
+        defaultsFor: (patchbayAgentId) => this.agents.spec(patchbayAgentId)?.defaults ?? {},
         normalize: (response) =>
           normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
             this.log.info(m),
           ),
-        mayOpen: (agentId) => !this.capabilityTracker.isProbeDeferred(agentId),
+        mayOpen: (patchbayAgentId) => !this.capabilityTracker.isProbeDeferred(patchbayAgentId),
         emit: (...events) => this.settings.emit(...events),
       },
       log,
@@ -706,7 +707,7 @@ export class Orchestrator {
     // an agent's connection — decide how each operation meets it, and put
     // the one question before a connection ends. What the queue holds is
     // the agent's busy state, so every move re-sends its row.
-    const queue = new Queue<AgentOperation>((agentId) => this.agents.publish(agentId));
+    const queue = new Queue<AgentOperation, PatchbayAgentId>((patchbayAgentId) => this.agents.publish(patchbayAgentId));
     const agents = new AgentsStore(
       {
         pool: this.pool,
@@ -718,7 +719,7 @@ export class Orchestrator {
         lastConnected: this.lastConnected,
         registry: this.acpRegistry,
         tracker: this.capabilityTracker,
-        busy: (agentId) => queue.held(agentId),
+        busy: (patchbayAgentId) => queue.held(patchbayAgentId),
         workspaceCwd: this.workspaceCwd,
         binaryCacheDir: this.binaryCacheDir,
         probeRootBase: join(context.globalStorageUri.fsPath, "probe"),
@@ -731,24 +732,24 @@ export class Orchestrator {
         emitSettings: (...events) => this.settings.emit(...events),
         warn: (message) => void vscode.window.showWarningMessage(message),
         runLoginTask: (name, recipe) => runLoginTask(name, recipe),
-        removed: (agentId) => {
-          this.sessions.forgetAgentSessions(agentId);
-          void this.mcpServers.forgetAgent(agentId).catch(this.logCatch(`forget ${agentId} in MCP reach`));
+        removed: (patchbayAgentId) => {
+          this.sessions.forgetAgentSessions(patchbayAgentId);
+          void this.mcpServers.forgetAgent(patchbayAgentId).catch(this.logCatch(`forget ${patchbayAgentId} in MCP reach`));
           // A chat pane on the agent — still starting, or failed with a
           // Retry — has nothing left to wait for or retry.
-          if (this.agentView.current.chatConnect?.agentId === agentId) {
+          if (this.agentView.current.chatConnect?.patchbayAgentId === patchbayAgentId) {
             this.agentView.emit({ kind: "chatConnectResolved" });
           }
         },
-        authCleared: (agentId) => this.sessionGates.lockCleared(agentId),
-        defaultsChanged: (agentId) => void this.defaultsEditor.defaultsChanged(agentId),
+        authCleared: (patchbayAgentId) => this.sessionGates.lockCleared(patchbayAgentId),
+        defaultsChanged: (patchbayAgentId) => void this.defaultsEditor.defaultsChanged(patchbayAgentId),
       },
       log,
     );
     this.agents = agents;
     this.gates = new AgentGates(agents, queue, {
-      name: (agentId) => agents.name(agentId),
-      openWork: (agentId) => this.sessions.openWork(agentId),
+      name: (patchbayAgentId) => agents.name(patchbayAgentId),
+      openWork: (patchbayAgentId) => this.sessions.openWork(patchbayAgentId),
       confirm: askModal,
     });
     // The editor's sessions exist only to serve the open panel — they end
@@ -981,20 +982,20 @@ export class Orchestrator {
       this.handleAction({ kind: "openSettings", section: "agents" });
       return;
     }
-    let agentId = agents[0]!.id;
+    let patchbayAgentId = agents[0]!.id;
     if (agents.length > 1) {
       const picked = await vscode.window.showQuickPick(
         agents.map((a) => ({
           label: a.name,
           description: a.detail ?? (a.status === "running" ? "ready" : a.status === "untested" ? "never connected" : a.status),
-          agentId: a.id,
+          patchbayAgentId: a.id,
         })),
         { placeHolder: "New session with…" },
       );
       if (picked === undefined) return;
-      agentId = picked.agentId;
+      patchbayAgentId = picked.patchbayAgentId;
     }
-    await this.startChat(agentId);
+    await this.startChat(patchbayAgentId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -1008,7 +1009,7 @@ export class Orchestrator {
     const items = (): Item[] =>
       this.agentView.current.sessions.map((s) => ({
         label: s.title,
-        description: this.agents.name(s.agentId) ?? s.agentId,
+        description: this.agents.name(s.patchbayAgentId) ?? s.patchbayAgentId,
         sessionId: s.id,
       }));
     const pick = vscode.window.createQuickPick<Item>();
@@ -1113,11 +1114,11 @@ export class Orchestrator {
   /** The pointer names the session the way the next window can find it:
    * its agent, and the agent's own id for it. */
   private recordPointer(sessionId: string): void {
-    const agentId = this.sessions.agentFor(sessionId);
+    const patchbayAgentId = this.sessions.agentFor(sessionId);
     const handle = this.sessions.handleOf(sessionId);
-    if (agentId === undefined || handle === undefined) return;
+    if (patchbayAgentId === undefined || handle === undefined) return;
     this.pointerRow = sessionId;
-    void this.lastActiveSession.set({ agentId, sessionId: handle });
+    void this.lastActiveSession.set({ agentId: patchbayAgentId, sessionId: handle });
   }
 
   /** Done-sound (Preferences): the system chime as a turn resolves —
@@ -1337,8 +1338,8 @@ export class Orchestrator {
    * open on it settles as cancelled — the same answer a stopped turn gives —
    * so no card, and no "waiting" mark, outlives the process it was asked
    * on. Read before the sessions are invalidated. */
-  private settleAsksOn(agentId: string): void {
-    for (const sessionId of this.sessions.sessionsOn(agentId)) this.broker.cancelPending(sessionId);
+  private settleAsksOn(patchbayAgentId: PatchbayAgentId): void {
+    for (const sessionId of this.sessions.sessionsOn(patchbayAgentId)) this.broker.cancelPending(sessionId);
   }
 
   /** The native notification is raised from the waiting fact, not by a
@@ -1563,18 +1564,18 @@ export class Orchestrator {
    * and only while the update is still the fact: a notification answered
    * after the agent was upgraded elsewhere restarts nothing. */
   private async announceUpdates(): Promise<void> {
-    const fresh = Object.entries(this.agents.updates()).filter(([id, u]) => !this.announcedUpdates.has(`${id}@${u.to}`));
+    const fresh = [...this.agents.updates()].filter(([patchbayAgentId, u]) => !this.announcedUpdates.has(`${patchbayAgentId}@${u.to}`));
     if (fresh.length === 0) return;
-    for (const [id, u] of fresh) this.announcedUpdates.add(`${id}@${u.to}`);
-    const nameOf = (id: string) => this.agents.name(id) ?? id;
+    for (const [patchbayAgentId, u] of fresh) this.announcedUpdates.add(`${patchbayAgentId}@${u.to}`);
+    const nameOf = (patchbayAgentId: PatchbayAgentId) => this.agents.name(patchbayAgentId) ?? patchbayAgentId;
     if (fresh.length === 1) {
-      const [id, u] = fresh[0]!;
+      const [patchbayAgentId, u] = fresh[0]!;
       const picked = await vscode.window.showInformationMessage(
-        `${nameOf(id)} ${u.to} is available — you run ${u.from}.`,
+        `${nameOf(patchbayAgentId)} ${u.to} is available — you run ${u.from}.`,
         "Upgrade",
       );
-      if (picked === "Upgrade" && this.agents.updates()[id] !== undefined) {
-        await this.gates.upgrade(id).catch(this.logCatch(`upgrade ${id}`));
+      if (picked === "Upgrade" && this.agents.updates().has(patchbayAgentId)) {
+        await this.gates.upgrade(patchbayAgentId).catch(this.logCatch(`upgrade ${patchbayAgentId}`));
       }
       return;
     }
@@ -1584,12 +1585,12 @@ export class Orchestrator {
     );
     if (picked !== "Upgrade…") return;
     const chosen = await vscode.window.showQuickPick(
-      fresh.map(([id, u]) => ({ label: nameOf(id), description: `${u.from} → ${u.to}`, picked: true, id })),
+      fresh.map(([patchbayAgentId, u]) => ({ label: nameOf(patchbayAgentId), description: `${u.from} → ${u.to}`, picked: true, patchbayAgentId })),
       { canPickMany: true, placeHolder: "Upgrade which agents?" },
     );
     for (const item of chosen ?? []) {
-      if (this.agents.updates()[item.id] !== undefined) {
-        await this.gates.upgrade(item.id).catch(this.logCatch(`upgrade ${item.id}`));
+      if (this.agents.updates().has(item.patchbayAgentId)) {
+        await this.gates.upgrade(item.patchbayAgentId).catch(this.logCatch(`upgrade ${item.patchbayAgentId}`));
       }
     }
   }
@@ -1629,13 +1630,13 @@ export class Orchestrator {
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
-        void this.gates.restart(action.agentId).catch(this.logCatch(`restart ${action.agentId}`));
+        void this.gates.restart(action.patchbayAgentId).catch(this.logCatch(`restart ${action.patchbayAgentId}`));
         break;
       case "stopAgent":
-        void this.gates.stop(action.agentId).catch(this.logCatch(`stop ${action.agentId}`));
+        void this.gates.stop(action.patchbayAgentId).catch(this.logCatch(`stop ${action.patchbayAgentId}`));
         break;
       case "startChat":
-        void this.startChat(action.agentId);
+        void this.startChat(action.patchbayAgentId);
         break;
       case "dismissChatConnect":
         this.agentView.emit({ kind: "chatConnectResolved" });
@@ -1719,10 +1720,10 @@ export class Orchestrator {
         void this.sessionGates.stop(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
         break;
       case "verifyAgent":
-        void this.gates.verify(action.agentId).catch(this.logCatch(`verify ${action.agentId}`));
+        void this.gates.verify(action.patchbayAgentId).catch(this.logCatch(`verify ${action.patchbayAgentId}`));
         break;
       case "editAgentDefaults":
-        void (action.open ? this.defaultsEditor.open(action.agentId) : this.defaultsEditor.close(action.agentId));
+        void (action.open ? this.defaultsEditor.open(action.patchbayAgentId) : this.defaultsEditor.close(action.patchbayAgentId));
         break;
       case "resolvePermission":
         this.broker.resolve(action.requestId, action.optionId);
@@ -1732,15 +1733,15 @@ export class Orchestrator {
         break;
       case "authenticateAgent":
         // failure leaves needsAuth set — the honest signal, no separate reply channel
-        void this.gates.login(action.agentId, action.methodId).catch(this.logCatch(`login ${action.agentId}`));
+        void this.gates.login(action.patchbayAgentId, action.methodId).catch(this.logCatch(`login ${action.patchbayAgentId}`));
         break;
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
-        void this.gates.logout(action.agentId).catch(this.logCatch(`logout ${action.agentId}`));
+        void this.gates.logout(action.patchbayAgentId).catch(this.logCatch(`logout ${action.patchbayAgentId}`));
         break;
       case "upgradeAgent":
-        void this.gates.upgrade(action.agentId).catch(this.logCatch(`upgrade ${action.agentId}`));
+        void this.gates.upgrade(action.patchbayAgentId).catch(this.logCatch(`upgrade ${action.patchbayAgentId}`));
         break;
       case "refreshRegistry":
         void this.acpRegistry.refresh("manual");
@@ -1919,10 +1920,10 @@ export class Orchestrator {
         void this.agents.save(action.config);
         break;
       case "removeAgentConfig":
-        void this.gates.remove(action.agentId).catch(this.logCatch(`remove ${action.agentId}`));
+        void this.gates.remove(action.patchbayAgentId).catch(this.logCatch(`remove ${action.patchbayAgentId}`));
         break;
       case "reorderAgentConfigs":
-        void this.agents.reorder(action.ids).catch(this.logCatch("reorderAgentConfigs"));
+        void this.agents.reorder(action.patchbayAgentIds).catch(this.logCatch("reorderAgentConfigs"));
         break;
       case "reorderMcpServers":
         void this.mcpServers.reorder(action.ids);
@@ -2186,11 +2187,11 @@ export class Orchestrator {
    * the palette, startup): the store saves what is new, then the connect
    * and, when asked, the free check pass the gates. */
   private async connectFrom(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
-    const agentId = await this.agents.saveFrom(source);
-    if (agentId === undefined) return;
+    const patchbayAgentId = await this.agents.saveFrom(source);
+    if (patchbayAgentId === undefined) return;
     try {
-      await this.gates.connect(agentId);
-      if (verifyAfterConnect) void this.gates.verify(agentId).catch(this.logCatch(`verify ${agentId}`));
+      await this.gates.connect(patchbayAgentId);
+      if (verifyAfterConnect) void this.gates.verify(patchbayAgentId).catch(this.logCatch(`verify ${patchbayAgentId}`));
     } catch {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
@@ -2203,34 +2204,34 @@ export class Orchestrator {
    * pool.connect. Failure lands inline with the
    * specific reason and a Retry — never a silent bounce to the empty
    * state. */
-  private async startChat(agentId: string): Promise<void> {
+  private async startChat(patchbayAgentId: PatchbayAgentId): Promise<void> {
     void this.acpRegistry.refresh("new-session");
-    const agentName = this.agents.name(agentId);
+    const agentName = this.agents.name(patchbayAgentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the
     // new session — focus it instead of minting a sibling blank shell.
     // One whose connection died is still that session: it is minted again
     // from its row (the ladder's zero-turn rung) on the same path a fresh
     // create takes, connect-on-demand included.
-    const draft = this.sessions.findNeverPrompted(agentId);
+    const draft = this.sessions.findNeverPrompted(patchbayAgentId);
     if (draft !== undefined && this.sessions.isLive(draft)) {
       this.sessionGates.activate(draft);
       return;
     }
-    this.agentView.emit({ kind: "chatConnectStarted", agentId });
+    this.agentView.emit({ kind: "chatConnectStarted", patchbayAgentId });
     try {
       // A running agent serves the chat now — it never waits behind the
       // agent's other work (a terminal login can take minutes). One that
       // isn't takes the connect's turn, joining one already under way.
-      if (this.agents.row(agentId)?.status !== "running") await this.gates.connect(agentId);
-      if (!this.paneShows(agentId)) return;
+      if (this.agents.row(patchbayAgentId)?.status !== "running") await this.gates.connect(patchbayAgentId);
+      if (!this.paneShows(patchbayAgentId)) return;
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event; the re-mint emits the same event.
       if (draft !== undefined) await this.sessionGates.revive(draft);
-      else await this.sessions.createSession(agentId, agentName, this.workspaceCwd);
+      else await this.sessions.createSession(patchbayAgentId, agentName, this.workspaceCwd);
     } catch (err) {
-      this.logCatch(`startChat ${agentId}`)(err);
-      this.chatPaneFailed(agentId, err);
+      this.logCatch(`startChat ${patchbayAgentId}`)(err);
+      this.chatPaneFailed(patchbayAgentId, err);
     }
   }
 
@@ -2243,25 +2244,25 @@ export class Orchestrator {
    * new chat. Unconfigured agents stay untouched — the row is a readable
    * record, nothing more to offer. */
   private async connectForSession(sessionId: string): Promise<void> {
-    const agentId = this.sessions.agentFor(sessionId);
-    if (agentId === undefined) return;
-    const row = this.agents.row(agentId);
+    const patchbayAgentId = this.sessions.agentFor(sessionId);
+    if (patchbayAgentId === undefined) return;
+    const row = this.agents.row(patchbayAgentId);
     if (row === undefined || row.status === "running") return;
-    this.agentView.emit({ kind: "chatConnectStarted", agentId, forSessionId: sessionId });
+    this.agentView.emit({ kind: "chatConnectStarted", patchbayAgentId, forSessionId: sessionId });
     try {
-      await this.gates.connect(agentId);
-      if (this.paneShows(agentId, sessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
+      await this.gates.connect(patchbayAgentId);
+      if (this.paneShows(patchbayAgentId, sessionId)) this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
-      this.logCatch(`connect for session ${sessionId} (${agentId})`)(err);
-      this.chatPaneFailed(agentId, err, sessionId);
+      this.logCatch(`connect for session ${sessionId} (${patchbayAgentId})`)(err);
+      this.chatPaneFailed(patchbayAgentId, err, sessionId);
     }
   }
 
   /** A chat that didn't land on its agent: the pane says why, with a Retry
    * — unless the user's own Stop or Remove ended it, and the pane just
    * goes. A pane taken by a later request is not this one's to touch. */
-  private chatPaneFailed(agentId: string, err: unknown, forSessionId?: string): void {
-    if (!this.paneShows(agentId, forSessionId)) return;
+  private chatPaneFailed(patchbayAgentId: PatchbayAgentId, err: unknown, forSessionId?: string): void {
+    if (!this.paneShows(patchbayAgentId, forSessionId)) return;
     if (err instanceof Cancelled) {
       this.agentView.emit({ kind: "chatConnectResolved" });
       return;
@@ -2269,8 +2270,8 @@ export class Orchestrator {
     const raw = err instanceof Error ? err.message : String(err);
     this.agentView.emit({
       kind: "chatConnectFailed",
-      agentId,
-      reason: this.connectFailureReason(agentId, err, raw),
+      patchbayAgentId,
+      reason: this.connectFailureReason(patchbayAgentId, err, raw),
       forSessionId,
     });
   }
@@ -2280,8 +2281,8 @@ export class Orchestrator {
    * comes up, but its chat neither lands nor fails over the later one. A
    * repeat of the same request shows the same pane and shares its work —
    * the connect it joined, the new session it asked for. */
-  private paneShows(agentId: string, forSessionId?: string): boolean {
-    return chatPaneShows(this.agentView.current.chatConnect, agentId, forSessionId);
+  private paneShows(patchbayAgentId: PatchbayAgentId, forSessionId?: string): boolean {
+    return chatPaneShows(this.agentView.current.chatConnect, patchbayAgentId, forSessionId);
   }
 
   /** Prefer the pool's own crash detail (spawn failed / initialize failed)
@@ -2290,14 +2291,14 @@ export class Orchestrator {
    * "authentication required" (an agent with no login methods, like Auggie,
    * names the exact CLI command there), the Settings Agents pointer
    * otherwise. */
-  private connectFailureReason(agentId: string, err: unknown, raw: string): string {
+  private connectFailureReason(patchbayAgentId: PatchbayAgentId, err: unknown, raw: string): string {
     const auth = authRequiredReasonOf(err);
     if (auth !== null) {
       return auth.reason !== null && !/^authentication required\.?$/i.test(auth.reason.trim())
         ? auth.reason
         : "needs login first — use Log in on this agent in Settings › Agents";
     }
-    return this.agents.row(agentId)?.detail ?? raw;
+    return this.agents.row(patchbayAgentId)?.detail ?? raw;
   }
 
   /** Formats a swallowed action failure for the Output channel — these

@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 export const mcpServerSourceSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -97,12 +98,12 @@ export class McpServerConfigStore extends GlobalRecordStore<McpServerConfig> {
 
   /** A removed agent leaves every reach list that names it, in one write —
    * an "only" list it alone was on then reaches no one, as chosen. */
-  async forgetAgent(agentId: string): Promise<void> {
+  async forgetAgent(patchbayAgentId: PatchbayAgentId): Promise<void> {
     await this.rewrite((current) =>
       current.map((v) => {
         if (v.routing === "auto") return v;
-        if (Array.isArray(v.routing)) return { ...v, routing: v.routing.filter((id) => id !== agentId) };
-        return { ...v, routing: { except: v.routing.except.filter((id) => id !== agentId) } };
+        if (Array.isArray(v.routing)) return { ...v, routing: v.routing.filter((id) => id !== patchbayAgentId) };
+        return { ...v, routing: { except: v.routing.except.filter((id) => id !== patchbayAgentId) } };
       }),
     );
   }

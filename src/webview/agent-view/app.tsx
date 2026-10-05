@@ -50,8 +50,8 @@ export function App({
     ? null
     : (state.sessions.find((s) => s.id === (pinned ? pinnedSessionId : state.activeSessionId)) ??
       null);
-  const activeAgentId = active?.agentId ?? (incoming ? state.chatConnect?.agentId : undefined);
-  const activeAgent = state.agents.find((a) => a.id === activeAgentId) ?? null;
+  const activePatchbayAgentId = active?.patchbayAgentId ?? (incoming ? state.chatConnect?.patchbayAgentId : undefined);
+  const activeAgent = state.agents.find((a) => a.id === activePatchbayAgentId) ?? null;
   // The open session's agent — what its roots chip is judged against.
   const activeMatrix = active !== null ? activeAgent?.capabilities : undefined;
 
@@ -93,7 +93,7 @@ export function App({
   const newChat = () => {
     setDrawer(null);
     if (state.agents.length === 0) send({ kind: "openSettings", section: "agents" });
-    else if (state.agents.length === 1) send({ kind: "startChat", agentId: state.agents[0]!.id });
+    else if (state.agents.length === 1) send({ kind: "startChat", patchbayAgentId: state.agents[0]!.id });
     else setDrawer("agents");
   };
 
@@ -109,7 +109,7 @@ export function App({
       {!pinned && (
         <Header
           agent={activeAgent}
-          onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", agentId: activeAgent.id })}
+          onUpgrade={() => activeAgent !== null && send({ kind: "upgradeAgent", patchbayAgentId: activeAgent.id })}
           onSessions={openSessions}
           onNew={newChat}
         >
@@ -136,7 +136,7 @@ export function App({
             variant="destructive"
             size="sm"
             onClick={() => {
-              send({ kind: "restartAgent", agentId: activeAgent.id });
+              send({ kind: "restartAgent", patchbayAgentId: activeAgent.id });
               showToast("restarting…");
             }}
           >

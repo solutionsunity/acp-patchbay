@@ -24,6 +24,8 @@ import { z } from "zod";
 import type { SessionContinuity } from "../../shared/protocol";
 import { GlobalRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
+import type { PatchbayAgentId } from "../../shared/ids";
+import { savedId } from "./saved-id";
 
 const knobSeedSchema = z.record(z.string(), z.union([z.string(), z.boolean()]));
 
@@ -68,7 +70,7 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
 
 const sessionContinuityEntrySchema = z.object({
   id: z.string().min(1), // rowId: the agent, and the agent's own id for the session
-  agentId: z.string().min(1),
+  agentId: savedId<PatchbayAgentId>(),
   // The workspace the session belongs to: session/list is read per cwd, so
   // a reconcile can only judge the rows of the workspace it walked. Absent
   // only on rows written before the field existed — the first walk that
@@ -90,8 +92,8 @@ const FIELDS = ["knobs", "roots", "queue", "chips", "draft"] as const;
  * that is what names the session again after a reload, and two agents
  * minting the same string are two different sessions — a sessionId-only
  * key would let one agent's row destroy the other's. */
-function rowId(agentId: string, sessionId: string): string {
-  return `${agentId}\u0000${sessionId}`;
+function rowId(patchbayAgentId: PatchbayAgentId, sessionId: string): string {
+  return `${patchbayAgentId}\u0000${sessionId}`;
 }
 
 /** True when a field value carries nothing worth a row: absorbing these as
@@ -108,8 +110,8 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
     super(kv, KEY, sessionContinuityEntrySchema);
   }
 
-  read(sessionId: string, agentId: string): SessionContinuity | undefined {
-    const entry = this.get(rowId(agentId, sessionId));
+  read(sessionId: string, patchbayAgentId: PatchbayAgentId): SessionContinuity | undefined {
+    const entry = this.get(rowId(patchbayAgentId, sessionId));
     if (entry === undefined) return undefined;
     const { id: _i, agentId: _a, cwd: _c, ...fields } = entry;
     return fields;
@@ -120,10 +122,10 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
    * row with no fields left is removed entirely. Synchronous up to the KV
    * write (FileKV swaps memory before returning), so interleaved patches
    * never read each other mid-merge — a contract an async KV would break. */
-  patch(sessionId: string, agentId: string, cwd: string, fields: SessionContinuity): Promise<void> {
-    const id = rowId(agentId, sessionId);
+  patch(sessionId: string, patchbayAgentId: PatchbayAgentId, cwd: string, fields: SessionContinuity): Promise<void> {
+    const id = rowId(patchbayAgentId, sessionId);
     const existing = this.get(id);
-    const base: SessionContinuityEntry = existing !== undefined ? { ...existing, cwd } : { id, agentId, cwd };
+    const base: SessionContinuityEntry = existing !== undefined ? { ...existing, cwd } : { id, agentId: patchbayAgentId, cwd };
     for (const key of FIELDS) {
       if (!(key in fields)) continue;
       const value = fields[key];
@@ -134,8 +136,8 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
     return hasFields ? this.upsert(base) : this.remove(id);
   }
 
-  forget(sessionId: string, agentId: string): Promise<void> {
-    return this.remove(rowId(agentId, sessionId));
+  forget(sessionId: string, patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.remove(rowId(patchbayAgentId, sessionId));
   }
 
   /** The agent's rows for one workspace against what its complete list
@@ -143,18 +145,18 @@ export class SessionContinuityStore extends GlobalRecordStore<SessionContinuityE
    * is judged by the same call — stamped when kept, dropped when not — since
    * no later walk could place it either. Other workspaces' rows are not
    * this walk's to judge. */
-  reconcile(agentId: string, cwd: string, keep: (sessionId: string) => boolean): Promise<void> {
+  reconcile(patchbayAgentId: PatchbayAgentId, cwd: string, keep: (sessionId: string) => boolean): Promise<void> {
     return this.rewrite((current) =>
       current.flatMap((row) => {
-        if (row.agentId !== agentId || (row.cwd !== undefined && row.cwd !== cwd)) return [row];
-        if (!keep(row.id.slice(agentId.length + 1))) return [];
+        if (row.agentId !== patchbayAgentId || (row.cwd !== undefined && row.cwd !== cwd)) return [row];
+        if (!keep(row.id.slice(patchbayAgentId.length + 1))) return [];
         return [row.cwd === undefined ? { ...row, cwd } : row];
       }),
     );
   }
 
   /** Every row of the agent, every workspace: the agent is gone. */
-  forgetAgent(agentId: string): Promise<void> {
-    return this.rewrite((current) => current.filter((row) => row.agentId !== agentId));
+  forgetAgent(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.rewrite((current) => current.filter((row) => row.agentId !== patchbayAgentId));
   }
 }

@@ -8,6 +8,7 @@ import type { LaunchSpec } from "../src/orchestrator/pool";
 import { capabilityState } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { agentsHarness } from "./support/agents-harness";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -17,9 +18,9 @@ beforeEach(async () => {
 });
 afterEach(() => rm(cwd, { recursive: true, force: true }));
 
-function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -43,37 +44,37 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
 describe("CapabilityTracker", () => {
   it("an honest agent's declared fork gets used automatically on connect — the branch affordance's gate", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "honest"));
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "honest" as PatchbayAgentId));
 
     const cell = await waitFor(() => {
-      const c = tracker.matrix("honest")?.["session.fork"];
+      const c = tracker.matrix("honest" as PatchbayAgentId)?.["session.fork"];
       return c?.used ? c : undefined;
     });
     expect(capabilityState(cell)).toBe("used");
 
-    await pool.stop("honest");
+    await pool.stop("honest" as PatchbayAgentId);
   });
 
   it("the fork probe's throwaway sessions never linger in the connection's session set", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "tidy"));
-    await waitFor(() => (tracker.matrix("tidy")?.["session.fork"]?.used ? true : undefined));
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "tidy" as PatchbayAgentId));
+    await waitFor(() => (tracker.matrix("tidy" as PatchbayAgentId)?.["session.fork"]?.used ? true : undefined));
     // Lingering probe sessions would count toward the concurrent-sessions
     // proof — the user's first real session would read as a second one —
     // so the set must be empty again.
-    expect(pool.get("tidy")!.sessions).toEqual([]);
-    await pool.stop("tidy");
+    expect(pool.get("tidy" as PatchbayAgentId)!.sessions).toEqual([]);
+    await pool.stop("tidy" as PatchbayAgentId);
   });
 
   it("a failed fork probe also cleans up its throwaway parent session", async () => {
     const { pool, tracker } = harness();
     await pool.connect(
-      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "tidy2"),
+      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "tidy2" as PatchbayAgentId),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(tracker.matrix("tidy2")!["session.fork"].used).toBe(false);
-    expect(pool.get("tidy2")!.sessions).toEqual([]);
-    await pool.stop("tidy2");
+    expect(tracker.matrix("tidy2" as PatchbayAgentId)!["session.fork"].used).toBe(false);
+    expect(pool.get("tidy2" as PatchbayAgentId)!.sessions).toEqual([]);
+    await pool.stop("tidy2" as PatchbayAgentId);
   });
 
   it("an ended probe session's id is retired — the agent may legally re-mint it for a real session", async () => {
@@ -84,12 +85,12 @@ describe("CapabilityTracker", () => {
     // real session's updates and auto-denies its permission requests.
     const { pool, tracker, probes } = harness();
     await pool.connect(
-      spec({ declare: { sessionCapabilities: { close: {}, delete: {} } } }, "reuse"),
+      spec({ declare: { sessionCapabilities: { close: {}, delete: {} } } }, "reuse" as PatchbayAgentId),
     );
     const probeId = (await waitFor(() => probes[0])).sessionId;
-    await waitFor(() => (tracker.isProbeSession("reuse", probeId) ? undefined : true));
-    expect(tracker.isProbeSession("reuse", probeId)).toBe(false);
-    await pool.stop("reuse");
+    await waitFor(() => (tracker.isProbeSession("reuse" as PatchbayAgentId, probeId) ? undefined : true));
+    expect(tracker.isProbeSession("reuse" as PatchbayAgentId, probeId)).toBe(false);
+    await pool.stop("reuse" as PatchbayAgentId);
   });
 
   it("probe identity is agent-scoped and real adoption supersedes it — a lingering entry can't capture another agent's session", async () => {
@@ -99,13 +100,13 @@ describe("CapabilityTracker", () => {
     // classified by it, and the owning agent re-minting the id for a real
     // session retires it (the probe session necessarily ended agent-side).
     const { pool, tracker, probes } = harness();
-    await pool.connect(spec({}, "lingerer")); // declares neither close nor delete
+    await pool.connect(spec({}, "lingerer" as PatchbayAgentId)); // declares neither close nor delete
     const probeId = (await waitFor(() => probes[0])).sessionId;
-    expect(tracker.isProbeSession("lingerer", probeId)).toBe(true);
-    expect(tracker.isProbeSession("other-agent", probeId)).toBe(false);
-    tracker.noteRealSessionOpened("lingerer", probeId);
-    expect(tracker.isProbeSession("lingerer", probeId)).toBe(false);
-    await pool.stop("lingerer");
+    expect(tracker.isProbeSession("lingerer" as PatchbayAgentId, probeId)).toBe(true);
+    expect(tracker.isProbeSession("other-agent" as PatchbayAgentId, probeId)).toBe(false);
+    tracker.noteRealSessionOpened("lingerer" as PatchbayAgentId, probeId);
+    expect(tracker.isProbeSession("lingerer" as PatchbayAgentId, probeId)).toBe(false);
+    await pool.stop("lingerer" as PatchbayAgentId);
   });
 
   it("the probe root survives the probe — a workspace-aware agent may hold it past session/new", async () => {
@@ -114,11 +115,11 @@ describe("CapabilityTracker", () => {
     // from under it (CLI-fatal agent-side). Lifetime = agent config, not
     // the probe call.
     const { pool, tracker } = harness();
-    await pool.connect(spec({}, "rooted"));
-    await waitFor(() => (tracker.matrix("rooted") !== undefined ? true : undefined));
+    await pool.connect(spec({}, "rooted" as PatchbayAgentId));
+    await waitFor(() => (tracker.matrix("rooted" as PatchbayAgentId) !== undefined ? true : undefined));
     await new Promise((r) => setTimeout(r, 100)); // let the probe's finally run
     expect((await stat(join(cwd, "probe", "rooted"))).isDirectory()).toBe(true);
-    await pool.stop("rooted");
+    await pool.stop("rooted" as PatchbayAgentId);
   });
 
   it("a lying agent (declares fork, breaks it) reads suspect — indicted, never used", async () => {
@@ -126,100 +127,100 @@ describe("CapabilityTracker", () => {
     await pool.connect(
       spec(
         { declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } },
-        "liar",
+        "liar" as PatchbayAgentId,
       ),
     );
 
     // give the automatic round trip a chance to run and fail
     await new Promise((r) => setTimeout(r, 300));
-    const cell = tracker.matrix("liar")!["session.fork"];
+    const cell = tracker.matrix("liar" as PatchbayAgentId)!["session.fork"];
     // The probe's failed fork is exactly a fact-that-would-have-proven riding
     // a failed request: declared, not used, flagged — suspicion, not error.
     expect(capabilityState(cell)).toBe("suspect");
     expect(cell.used).toBe(false);
 
-    await pool.stop("liar");
+    await pool.stop("liar" as PatchbayAgentId);
   });
 
   it("an agent that never declares fork never shows declared, let alone used", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({}, "nofork"));
+    await pool.connect(spec({}, "nofork" as PatchbayAgentId));
     await new Promise((r) => setTimeout(r, 100));
-    expect(capabilityState(tracker.matrix("nofork")!["session.fork"])).toBe("not-declared");
-    await pool.stop("nofork");
+    expect(capabilityState(tracker.matrix("nofork" as PatchbayAgentId)!["session.fork"])).toBe("not-declared");
+    await pool.stop("nofork" as PatchbayAgentId);
   });
 
   it("reconnect at the same version seeds used from the persisted cache immediately", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "reconn"));
-    await waitFor(() => (tracker.matrix("reconn")!["session.fork"].used ? true : undefined));
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "reconn" as PatchbayAgentId));
+    await waitFor(() => (tracker.matrix("reconn" as PatchbayAgentId)!["session.fork"].used ? true : undefined));
 
-    const resetAt1 = pool.get("reconn")?.initializedAt;
-    await pool.restart("reconn");
+    const resetAt1 = pool.get("reconn" as PatchbayAgentId)?.initializedAt;
+    await pool.restart("reconn" as PatchbayAgentId);
 
     // same agentInfo.version (the fake agent's fixed "0.0.0") — seeded from
     // the persisted cache the instant the new matrix is declared, not reset.
-    expect(tracker.matrix("reconn")!["session.fork"].used).toBe(true);
-    expect(pool.get("reconn")?.initializedAt).not.toBe(resetAt1);
+    expect(tracker.matrix("reconn" as PatchbayAgentId)!["session.fork"].used).toBe(true);
+    expect(pool.get("reconn" as PatchbayAgentId)?.initializedAt).not.toBe(resetAt1);
 
-    await pool.stop("reconn");
+    await pool.stop("reconn" as PatchbayAgentId);
   });
 
   it("a latched agent's probe waits for the first real session, and the trigger spends once (first-session-mcp-latch)", async () => {
     const { pool, tracker, probes } = harness();
     // "auggie" is the id-keyed curated entry in extensions/first-session-mcp-latch.
     await pool.connect(
-      spec({ modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] } }, "auggie"),
+      spec({ modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] } }, "auggie" as PatchbayAgentId),
     );
     await new Promise((r) => setTimeout(r, 200));
     expect(probes).toHaveLength(0); // connect did NOT spend the process's first session
-    expect(tracker.isProbeDeferred("auggie")).toBe(true); // what the defaults editor consults
-    tracker.noteRealSessionOpened("auggie", "real-1");
+    expect(tracker.isProbeDeferred("auggie" as PatchbayAgentId)).toBe(true); // what the defaults editor consults
+    tracker.noteRealSessionOpened("auggie" as PatchbayAgentId, "real-1");
     await waitFor(() => (probes.length > 0 ? true : undefined));
-    expect(probes[0]!.agentId).toBe("auggie");
-    expect(tracker.isProbeDeferred("auggie")).toBe(false);
-    tracker.noteRealSessionOpened("auggie", "real-2"); // already spent — no second probe
+    expect(probes[0]!.patchbayAgentId).toBe("auggie");
+    expect(tracker.isProbeDeferred("auggie" as PatchbayAgentId)).toBe(false);
+    tracker.noteRealSessionOpened("auggie" as PatchbayAgentId, "real-2"); // already spent — no second probe
     await new Promise((r) => setTimeout(r, 200));
     expect(probes).toHaveLength(1);
     // ...and a non-latched agent id is a no-op trigger.
-    tracker.noteRealSessionOpened("someone-else", "real-3");
-    await pool.stop("auggie");
+    tracker.noteRealSessionOpened("someone-else" as PatchbayAgentId, "real-3");
+    await pool.stop("auggie" as PatchbayAgentId);
   });
 
   it("a version change resets used — an honestly fresh matrix, not carried over", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "verbump"));
-    await waitFor(() => (tracker.matrix("verbump")!["session.fork"].used ? true : undefined));
-    await pool.stop("verbump");
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } } }, "verbump" as PatchbayAgentId));
+    await waitFor(() => (tracker.matrix("verbump" as PatchbayAgentId)!["session.fork"].used ? true : undefined));
+    await pool.stop("verbump" as PatchbayAgentId);
 
-    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } }, version: "0.0.1" }, "verbump"));
+    await pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } }, version: "0.0.1" }, "verbump" as PatchbayAgentId));
     // immediately after the version-bumped connect, before the round trip re-runs
-    expect(tracker.matrix("verbump")!["session.fork"].used).toBe(false);
-    expect(capabilityState(tracker.matrix("verbump")!["session.fork"])).toBe("declared");
+    expect(tracker.matrix("verbump" as PatchbayAgentId)!["session.fork"].used).toBe(false);
+    expect(capabilityState(tracker.matrix("verbump" as PatchbayAgentId)!["session.fork"])).toBe("declared");
 
     // and it earns used on its own, same as any fresh connect
-    await waitFor(() => (tracker.matrix("verbump")!["session.fork"].used ? true : undefined));
-    await pool.stop("verbump");
+    await waitFor(() => (tracker.matrix("verbump" as PatchbayAgentId)!["session.fork"].used ? true : undefined));
+    await pool.stop("verbump" as PatchbayAgentId);
   });
 
   it("verify() re-runs the free fork check on demand", async () => {
     const { pool, tracker } = harness();
     await pool.connect(
-      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "diag"),
+      spec({ declare: { sessionCapabilities: { fork: {} } }, lies: { forkBroken: true } }, "diag" as PatchbayAgentId),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(tracker.matrix("diag")!["session.fork"].used).toBe(false);
+    expect(tracker.matrix("diag" as PatchbayAgentId)!["session.fork"].used).toBe(false);
 
     // still broken — Verify doesn't fake success, it just re-checks honestly
-    await tracker.verify("diag");
-    expect(tracker.matrix("diag")!["session.fork"].used).toBe(false);
+    await tracker.verify("diag" as PatchbayAgentId);
+    expect(tracker.matrix("diag" as PatchbayAgentId)!["session.fork"].used).toBe(false);
 
-    await pool.stop("diag");
+    await pool.stop("diag" as PatchbayAgentId);
   });
 
   it("auth_required surfaces as needsAuth on the row, not a check failure", async () => {
     const { pool, tracker, state, seedAgent } = harness();
-    seedAgent("needsauth");
+    seedAgent("needsauth" as PatchbayAgentId);
     await pool.connect(
       spec(
         {
@@ -227,20 +228,20 @@ describe("CapabilityTracker", () => {
           authMethods: [{ id: "default", name: "Default" }],
           lies: { authRequired: true },
         },
-        "needsauth",
+        "needsauth" as PatchbayAgentId,
       ),
     );
     await new Promise((r) => setTimeout(r, 300));
     const agent = state().agents.find((a) => a.id === "needsauth");
     expect(agent?.needsAuth).toBe(true);
-    expect(capabilityState(tracker.matrix("needsauth")!.auth)).toBe("declared");
+    expect(capabilityState(tracker.matrix("needsauth" as PatchbayAgentId)!.auth)).toBe("declared");
 
-    await pool.stop("needsauth");
+    await pool.stop("needsauth" as PatchbayAgentId);
   });
 
   it("authenticate() clears needsAuth and marks auth used once the retry succeeds", async () => {
     const { pool, tracker, state, seedAgent } = harness();
-    seedAgent("login");
+    seedAgent("login" as PatchbayAgentId);
     await pool.connect(
       spec(
         {
@@ -248,30 +249,30 @@ describe("CapabilityTracker", () => {
           authMethods: [{ id: "default", name: "Default" }],
           lies: { authRequired: true },
         },
-        "login",
+        "login" as PatchbayAgentId,
       ),
     );
     await new Promise((r) => setTimeout(r, 300));
     expect(state().agents.find((a) => a.id === "login")?.needsAuth).toBe(true);
 
-    await tracker.authenticate("login", "default");
+    await tracker.authenticate("login" as PatchbayAgentId, "default");
     expect(state().agents.find((a) => a.id === "login")?.needsAuth).toBe(false);
-    expect(capabilityState(tracker.matrix("login")!.auth)).toBe("used");
+    expect(capabilityState(tracker.matrix("login" as PatchbayAgentId)!.auth)).toBe("used");
 
-    await pool.stop("login");
+    await pool.stop("login" as PatchbayAgentId);
   });
 
   it("concurrent sessions get marked used the moment a second session succeeds on one connection", async () => {
     const { pool, tracker } = harness();
-    await pool.connect(spec({}, "multi"));
-    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("not-declared");
+    await pool.connect(spec({}, "multi" as PatchbayAgentId));
+    expect(capabilityState(tracker.matrix("multi" as PatchbayAgentId)!.concurrentSessions)).toBe("not-declared");
 
-    await pool.newSession("multi", cwd);
-    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("not-declared");
+    await pool.newSession("multi" as PatchbayAgentId, cwd);
+    expect(capabilityState(tracker.matrix("multi" as PatchbayAgentId)!.concurrentSessions)).toBe("not-declared");
 
-    await pool.newSession("multi", cwd);
-    expect(capabilityState(tracker.matrix("multi")!.concurrentSessions)).toBe("used");
+    await pool.newSession("multi" as PatchbayAgentId, cwd);
+    expect(capabilityState(tracker.matrix("multi" as PatchbayAgentId)!.concurrentSessions)).toBe("used");
 
-    await pool.stop("multi");
+    await pool.stop("multi" as PatchbayAgentId);
   });
 });

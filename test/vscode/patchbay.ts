@@ -96,8 +96,8 @@ export class Patchbay {
     return this.orchestrator.settings.current;
   }
 
-  agent(agentId: string): AgentRow | undefined {
-    return this.view.agents.find((a) => a.id === agentId);
+  agent(patchbayAgentId: string): AgentRow | undefined {
+    return this.view.agents.find((a) => a.id === patchbayAgentId);
   }
 
   /** Settings' Add: the config saved, the agent listed. */
@@ -106,46 +106,46 @@ export class Patchbay {
     await waitFor(() => (this.agent(config.id) !== undefined ? true : undefined), 8000, `${config.id} listed`);
   }
 
-  async connect(agentId: string): Promise<void> {
-    this.act({ kind: "connectAgent", source: { configuredId: agentId } });
+  async connect(patchbayAgentId: string): Promise<void> {
+    this.act({ kind: "connectAgent", source: { patchbayAgentId } });
     await waitFor(
-      () => (this.agent(agentId)?.status === "running" ? true : undefined),
+      () => (this.agent(patchbayAgentId)?.status === "running" ? true : undefined),
       15000,
-      () => `${agentId} running (status: ${this.agent(agentId)?.status})`,
+      () => `${patchbayAgentId} running (status: ${this.agent(patchbayAgentId)?.status})`,
     );
   }
 
   /** Stop, its question answered yes. */
-  async stop(agentId: string): Promise<void> {
+  async stop(patchbayAgentId: string): Promise<void> {
     await answeringYes(async () => {
-      this.act({ kind: "stopAgent", agentId });
-      await waitFor(() => (this.agent(agentId)?.status !== "running" ? true : undefined), 8000, `${agentId} stopped`);
+      this.act({ kind: "stopAgent", patchbayAgentId });
+      await waitFor(() => (this.agent(patchbayAgentId)?.status !== "running" ? true : undefined), 8000, `${patchbayAgentId} stopped`);
     });
   }
 
   /** Remove, its question answered yes — and a fake agent's records with
    * it. */
-  async remove(agentId: string): Promise<void> {
+  async remove(patchbayAgentId: string): Promise<void> {
     await answeringYes(async () => {
-      this.act({ kind: "removeAgentConfig", agentId });
-      await waitFor(() => (this.agent(agentId) === undefined ? true : undefined), 8000, `${agentId} removed`);
+      this.act({ kind: "removeAgentConfig", patchbayAgentId });
+      await waitFor(() => (this.agent(patchbayAgentId) === undefined ? true : undefined), 8000, `${patchbayAgentId} removed`);
     });
-    await rm(fakeAgentStore(agentId), { recursive: true, force: true });
+    await rm(fakeAgentStore(patchbayAgentId), { recursive: true, force: true });
   }
 
   /** A new chat with the agent — the session it lands on. An agent's
    * never-prompted session is reused, as the product does: prompt it
    * before asking for another. */
-  async newSession(agentId: string): Promise<string> {
+  async newSession(patchbayAgentId: string): Promise<string> {
     const known = new Set(this.view.sessions.map((s) => s.id));
-    this.act({ kind: "startChat", agentId });
+    this.act({ kind: "startChat", patchbayAgentId });
     return waitFor(
       () => {
         const id = this.view.activeSessionId;
         return id !== null && !known.has(id) ? id : undefined;
       },
       15000,
-      `a new session for ${agentId}`,
+      `a new session for ${patchbayAgentId}`,
     );
   }
 

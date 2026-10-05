@@ -31,6 +31,7 @@ import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import { waitFor } from "./support/wait-for";
 import { gatesFor } from "./support/session-gates";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 describe("formFieldsOf", () => {
   it("normalizes the primitive types, carrying title, description and requiredness", () => {
@@ -255,9 +256,9 @@ beforeEach(async () => {
 });
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
-function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -287,23 +288,23 @@ function wireHarness() {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
+    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
     ...stubFsTerminalHooks(),
-    onElicitation: async (agentId, params, signal) => {
+    onElicitation: async (patchbayAgentId, params, signal) => {
       const reading = readElicitationRequest(params);
       if (reading.kind !== "ask") return { action: "decline" };
       const { message, ask, elicitationId } = reading;
       // the session the agent names its own way, as patchbay holds it
-      const sessionId = sessions.rowFor(agentId, reading.sessionId);
+      const sessionId = sessions.rowFor(patchbayAgentId, reading.sessionId);
       if (sessionId === undefined) return { action: "cancel" };
       const answer = await broker.askElicitation(
         sessionId,
-        { message, ask, ...(elicitationId !== undefined ? { completion: { agentId, elicitationId } } : {}) },
+        { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
         signal,
       );
       return elicitationResponseOf(ask, answer, signal);
     },
-    onElicitationComplete: (agentId, elicitationId) => broker.completeLink(agentId, elicitationId),
+    onElicitationComplete: (patchbayAgentId, elicitationId) => broker.completeLink(patchbayAgentId, elicitationId),
   });
   sessions = new SessionsStore(
     pool,
@@ -346,10 +347,10 @@ describe("elicitation on the wire", () => {
             },
           ],
         },
-        "e1",
+        "e1" as PatchbayAgentId,
       ),
     );
-    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
@@ -365,28 +366,28 @@ describe("elicitation on the wire", () => {
     expect(echoed?.kind === "text" && echoed.text).toBe('elicitation: accept {"db":"prod"}');
     const resolved = elicitationCard(h.state().transcripts[sessionId])!;
     expect(resolved.kind === "elicitation" && resolved.resolution).toEqual({ outcome: "accepted" });
-    await h.pool.stop("e1");
+    await h.pool.stop("e1" as PatchbayAgentId);
   });
 
   it("a declined question reaches the agent as a decline, not as silence", async () => {
     const h = wireHarness();
-    await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2"));
-    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "decline" });
     await turn;
     const echoed = h.state().transcripts[sessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: decline null");
-    await h.pool.stop("e2");
+    await h.pool.stop("e2" as PatchbayAgentId);
   });
 
   it("patchbay declares form mode, so a conforming agent may ask at all", async () => {
     const h = wireHarness();
     // The fake agent refuses to ask when the client declared nothing — the
     // spec's own rule. Its answer here proves the declaration went out.
-    await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3"));
-    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "cancel" });
@@ -396,7 +397,7 @@ describe("elicitation on the wire", () => {
         (b) => b.kind === "text" && b.text.includes("client declares no form mode"),
       ),
     ).toBe(false);
-    await h.pool.stop("e3");
+    await h.pool.stop("e3" as PatchbayAgentId);
   });
 });
 
@@ -409,9 +410,9 @@ describe("url elicitation on the wire", () => {
   it("nothing opens until the user consents; then the page opens and the agent's completion settles the card", async () => {
     const h = wireHarness();
     await h.pool.connect(
-      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1"),
+      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u1", "Fake Agent", dir);
+    const sessionId = await h.sessions.createSession("u1" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
@@ -431,30 +432,30 @@ describe("url elicitation on the wire", () => {
     // A completed link no longer re-opens.
     h.broker.reopenLink(card.id);
     expect(h.opened).toEqual([SIGN_IN]);
-    await h.pool.stop("u1");
+    await h.pool.stop("u1" as PatchbayAgentId);
   });
 
   it("a flow that finishes first — its notice right behind the request — settles the card as completed, nothing ever opens", async () => {
     const h = wireHarness();
     await h.pool.connect(
-      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2"),
+      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u2", "Fake Agent", dir);
+    const sessionId = await h.sessions.createSession("u2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
     expect(card.kind === "elicitation" && card.linkState).toBe("completed");
     expect(card.resolution).toEqual({ outcome: "completed" });
     expect(h.opened).toEqual([]);
-    await h.pool.stop("u2");
+    await h.pool.stop("u2" as PatchbayAgentId);
   });
 
   it("a question the agent withdraws settles as withdrawn, and the agent's request ends cancelled", async () => {
     const h = wireHarness();
     await h.pool.connect(
-      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3"),
+      spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("u3", "Fake Agent", dir);
+    const sessionId = await h.sessions.createSession("u3" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
@@ -465,6 +466,6 @@ describe("url elicitation on the wire", () => {
     // the user's late click is a no-op: nothing opens for a withdrawn question
     h.broker.resolveElicitation(card.id, { action: "accept", content: {} });
     expect(h.opened).toEqual([]);
-    await h.pool.stop("u3");
+    await h.pool.stop("u3" as PatchbayAgentId);
   });
 });

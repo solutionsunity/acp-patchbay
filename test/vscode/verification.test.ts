@@ -19,7 +19,7 @@ suite("opportunistic fs/terminal verification", () => {
     await writeFile(readTarget, "hello", "utf8");
     // Used marks are kept per agent and version across windows; an agent
     // of its own per run starts with none.
-    const agentId = `verify-e2e-${Date.now()}`;
+    const patchbayAgentId = `verify-e2e-${Date.now()}`;
 
     // The exact command the fake agent will run, allowed by a rule so the
     // terminal gate resolves without a user; the file write is left to
@@ -27,7 +27,7 @@ suite("opportunistic fs/terminal verification", () => {
     await pb.addMachineRule("node -e ok", "allow");
     try {
       await pb.addAgent(
-        fakeAgentConfig(agentId, "Verify E2E Fake", fakeAgentPath(), {
+        fakeAgentConfig(patchbayAgentId, "Verify E2E Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [
             { type: "readFile", path: readTarget },
@@ -36,14 +36,14 @@ suite("opportunistic fs/terminal verification", () => {
           ],
         }),
       );
-      await pb.connect(agentId);
+      await pb.connect(patchbayAgentId);
 
-      const matrix = () => pb.agent(agentId)!.capabilities!;
+      const matrix = () => pb.agent(patchbayAgentId)!.capabilities!;
       assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["terminal"], { declared: true, used: false });
 
-      const sessionId = await pb.newSession(agentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       const turnDone = pb.prompt(sessionId, "go");
       const diff = await pb.openCard(sessionId, "diff");
       await pb.answerDiff(sessionId, diff, true);
@@ -53,7 +53,7 @@ suite("opportunistic fs/terminal verification", () => {
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await pb.remove(agentId);
+      await pb.remove(patchbayAgentId);
       await pb.removeMachineRule("node -e ok");
       await rm(dir, { recursive: true, force: true });
     }

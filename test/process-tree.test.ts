@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { commandOf, isAlive, killTree, reapOrphans, treeSpawnOptions } from "../src/orchestrator/process-tree";
 import { AgentPool } from "../src/orchestrator/pool";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const posix = describe.skipIf(process.platform === "win32");
 
@@ -136,7 +137,7 @@ posix("pool.stop ladder", () => {
       ...stubFsTerminalHooks(),
     });
     await pool.connect({
-      agentId: "stubborn",
+      patchbayAgentId: "stubborn" as PatchbayAgentId,
       name: "Stubborn",
       command: process.execPath,
       args: ["-e", STUBBORN_AGENT],
@@ -147,16 +148,16 @@ posix("pool.stop ladder", () => {
     // The grandchild announces itself on stderr → pool's stderrTail.
     let grandchildPid = 0;
     await waitUntil(() => {
-      const line = pool.get("stubborn")?.stderrTail.find((l) => l.startsWith("grandchild "));
+      const line = pool.get("stubborn" as PatchbayAgentId)?.stderrTail.find((l) => l.startsWith("grandchild "));
       if (line === undefined) return false;
       grandchildPid = Number(line.slice("grandchild ".length));
       return true;
     }, "grandchild announcement");
     expect(isAlive(grandchildPid)).toBe(true);
 
-    await pool.stop("stubborn", { eofMs: 120, termMs: 250, killMs: 3_000 });
+    await pool.stop("stubborn" as PatchbayAgentId, { eofMs: 120, termMs: 250, killMs: 3_000 });
 
-    expect(pool.get("stubborn")?.status).toBe("stopped");
+    expect(pool.get("stubborn" as PatchbayAgentId)?.status).toBe("stopped");
     expect(statuses.at(-1)).toBe("stopped");
     await waitUntil(() => !isAlive(grandchildPid), "grandchild death");
   });

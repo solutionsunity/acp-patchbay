@@ -1,3 +1,5 @@
+import type { PatchbayAgentId } from "../../shared/ids";
+
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
@@ -32,6 +34,6 @@ const LATCHED_AGENTS: ReadonlySet<string> = new Set([
 /** True when this agent's connect-time capability probe must wait for the
  * first real session (capability-tracker consults this at its probe
  * chokepoint; the sessions store's attach fires the trigger). */
-export function probeDeferredFor(agentId: string): boolean {
-  return LATCHED_AGENTS.has(agentId);
+export function probeDeferredFor(patchbayAgentId: PatchbayAgentId): boolean {
+  return LATCHED_AGENTS.has(patchbayAgentId);
 }

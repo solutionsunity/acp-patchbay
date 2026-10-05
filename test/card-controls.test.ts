@@ -12,6 +12,7 @@ import type {
   CapabilityMatrix,
   CapabilityRowId,
 } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const ROWS: readonly CapabilityRowId[] = [
   "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation",
@@ -33,7 +34,7 @@ const undrivable: AuthMethodView = { id: "key", name: "API key", description: nu
 const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
-  return { id: "a1", name: "Agent", status: "running", needsAuth: false, authMethods: [], busy: [], ...over };
+  return { id: "a1" as PatchbayAgentId, name: "Agent", status: "running", needsAuth: false, authMethods: [], busy: [], ...over };
 }
 
 const config = { id: "a1", registrySource: null } as unknown as AgentConfigView;

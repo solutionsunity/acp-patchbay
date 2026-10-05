@@ -26,6 +26,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 /** A curated entry's vendor mark (mcp-catalog.ts's curated-only exception
  * to the Codicons rule — inline SVG, fill=currentColor, so it themes
@@ -106,7 +107,7 @@ function RoutingEditor(props: {
     // thing in "only" vs "except".
     props.onChange(m === "auto" ? "auto" : m === "only" ? [] : { except: [] });
   };
-  const tickList = (onTick: (agentId: string, checked: boolean) => void) => (
+  const tickList = (onTick: (patchbayAgentId: PatchbayAgentId, checked: boolean) => void) => (
     <div className="ml-6 flex flex-wrap gap-x-2.5 gap-y-1">
       {props.agents.map((a) => (
         <label key={a.id} className="flex items-center gap-1.5">
@@ -135,8 +136,8 @@ function RoutingEditor(props: {
           <RadioGroupItem value="only" /> only these agents
         </label>
         {mode === "only" &&
-          tickList((agentId, checked) =>
-            props.onChange(checked ? list.filter((id) => id !== agentId) : [...list, agentId]),
+          tickList((patchbayAgentId, checked) =>
+            props.onChange(checked ? list.filter((id) => id !== patchbayAgentId) : [...list, patchbayAgentId]),
           )}
         <label
           className="flex items-center gap-1.5"
@@ -145,8 +146,8 @@ function RoutingEditor(props: {
           <RadioGroupItem value="except" /> all agents except these
         </label>
         {mode === "except" &&
-          tickList((agentId, checked) =>
-            props.onChange({ except: checked ? list.filter((id) => id !== agentId) : [...list, agentId] }),
+          tickList((patchbayAgentId, checked) =>
+            props.onChange({ except: checked ? list.filter((id) => id !== patchbayAgentId) : [...list, patchbayAgentId] }),
           )}
       </RadioGroup>
     </div>

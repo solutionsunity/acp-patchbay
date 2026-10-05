@@ -31,18 +31,19 @@ import {
 import { nullLogger, type Logger } from "./logger";
 import type { AgentPool } from "./pool";
 import type { KnobSeed, SettingsEvent } from "../shared/protocol";
+import type { PatchbayAgentId } from "../shared/ids";
 
 export interface DefaultsEditorHooks {
   /** The agent's standing probe workspace — never a user workspace root. */
-  probeRoot(agentId: string): Promise<string>;
+  probeRoot(patchbayAgentId: PatchbayAgentId): Promise<string>;
   /** The stored defaults — the one durable fact the session is seeded from. */
-  defaultsFor(agentId: string): KnobSeed;
+  defaultsFor(patchbayAgentId: PatchbayAgentId): KnobSeed;
   /** The one normalizer (spec surfaces plus extension extras), so the editor
    * offers exactly what the composer would. */
   normalize(response: NewSessionResponse): NormalizedKnobs;
   /** Whether a throwaway session may open on this agent right now — false
    * while a latched agent's first-session privilege is unspent. */
-  mayOpen(agentId: string): boolean;
+  mayOpen(patchbayAgentId: PatchbayAgentId): boolean;
   emit(...events: SettingsEvent[]): void;
 }
 
@@ -55,7 +56,7 @@ interface Editing {
 }
 
 export class DefaultsEditor {
-  private readonly editing = new Map<string, Editing>();
+  private readonly editing = new Map<PatchbayAgentId, Editing>();
   /** Per-agent serialization: opens, sets, and closes on one agent never
    * interleave, so the surface published is always the reply to the last
    * request — later wins by construction. */
@@ -69,66 +70,66 @@ export class DefaultsEditor {
 
   /** The editor expanded (or the agent it shows came up): ensure a seeded
    * session and publish its surface. Idempotent. */
-  open(agentId: string): Promise<void> {
-    return this.enqueue(agentId, () => this.ensure(agentId));
+  open(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.enqueue(patchbayAgentId, () => this.ensure(patchbayAgentId));
   }
 
   /** The stored defaults moved while the editor is open: a changed or added
    * entry is set on the session (and the surface it yields published); a
    * removed entry has no wire form — the session is recomputed from the
    * store. Nothing to do while no editor is open for this agent. */
-  defaultsChanged(agentId: string): Promise<void> {
-    return this.enqueue(agentId, async () => {
-      const entry = this.editing.get(agentId);
+  defaultsChanged(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.enqueue(patchbayAgentId, async () => {
+      const entry = this.editing.get(patchbayAgentId);
       if (entry === undefined) return;
-      const next = this.hooks.defaultsFor(agentId);
+      const next = this.hooks.defaultsFor(patchbayAgentId);
       const removed = Object.keys(entry.applied).some((k) => !(k in next));
       if (removed) {
-        await this.end(agentId, entry);
-        await this.ensure(agentId);
+        await this.end(patchbayAgentId, entry);
+        await this.ensure(patchbayAgentId);
         return;
       }
       const changed = Object.fromEntries(
         Object.entries(next).filter(([k, v]) => entry.applied[k] !== v),
       );
-      await this.seed(agentId, entry, changed);
+      await this.seed(patchbayAgentId, entry, changed);
       entry.applied = next;
-      this.publish(agentId, entry);
+      this.publish(patchbayAgentId, entry);
     });
   }
 
   /** The editor collapsed: end the session and release the surface. */
-  close(agentId: string): Promise<void> {
-    return this.enqueue(agentId, async () => {
-      const entry = this.editing.get(agentId);
+  close(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.enqueue(patchbayAgentId, async () => {
+      const entry = this.editing.get(patchbayAgentId);
       if (entry === undefined) return;
-      await this.end(agentId, entry);
-      this.hooks.emit({ kind: "agentKnobsReleased", agentId });
+      await this.end(patchbayAgentId, entry);
+      this.hooks.emit({ kind: "agentKnobsReleased", patchbayAgentId });
     });
   }
 
   closeAll(): Promise<void> {
-    return Promise.all([...this.editing.keys()].map((id) => this.close(id))).then(() => {});
+    return Promise.all([...this.editing.keys()].map((patchbayAgentId) => this.close(patchbayAgentId))).then(() => {});
   }
 
   /** The connection is gone (stopped, crashed, reconnecting): the session
    * died with it — drop the entry without a wire call. The reducer drops
    * the surface on the same status event. */
-  forget(agentId: string): void {
-    this.editing.delete(agentId);
+  forget(patchbayAgentId: PatchbayAgentId): void {
+    this.editing.delete(patchbayAgentId);
   }
 
   /** Agent-scoped, like the probe's identity: session ids are only unique
    * within one agent's connection. */
-  owns(agentId: string, sessionId: string): boolean {
-    return this.editing.get(agentId)?.sessionId === sessionId;
+  owns(patchbayAgentId: PatchbayAgentId, sessionId: string): boolean {
+    return this.editing.get(patchbayAgentId)?.sessionId === sessionId;
   }
 
   /** The editing session's own notifications — the agent's transition duty
    * confirms sets out of band (mode changes; config updates some agents
    * send in addition to the response). */
-  handleUpdate(agentId: string, notification: SessionNotification): void {
-    const entry = this.editing.get(agentId);
+  handleUpdate(patchbayAgentId: PatchbayAgentId, notification: SessionNotification): void {
+    const entry = this.editing.get(patchbayAgentId);
     if (entry === undefined || entry.sessionId !== notification.sessionId) return;
     const update = notification.update;
     if (update.sessionUpdate === "config_option_update") {
@@ -138,35 +139,35 @@ export class DefaultsEditor {
       if (next === null) return;
       entry.knobs = next;
     } else return;
-    this.publish(agentId, entry);
+    this.publish(patchbayAgentId, entry);
   }
 
-  private async ensure(agentId: string): Promise<void> {
-    const existing = this.editing.get(agentId);
+  private async ensure(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    const existing = this.editing.get(patchbayAgentId);
     if (existing !== undefined) {
-      this.publish(agentId, existing);
+      this.publish(patchbayAgentId, existing);
       return;
     }
-    if (this.pool.get(agentId)?.status !== "running") return; // the card states "connect to edit"
-    if (!this.hooks.mayOpen(agentId)) {
+    if (this.pool.get(patchbayAgentId)?.status !== "running") return; // the card states "connect to edit"
+    if (!this.hooks.mayOpen(patchbayAgentId)) {
       this.hooks.emit({
         kind: "agentKnobsObserved",
-        agentId,
+        patchbayAgentId,
         knobs: { knobs: [], unavailable: "defaults can be edited after this agent's first session" },
       });
       return;
     }
-    const dir = await this.hooks.probeRoot(agentId);
+    const dir = await this.hooks.probeRoot(patchbayAgentId);
     let response: NewSessionResponse;
     try {
-      response = await this.pool.newSession(agentId, dir);
+      response = await this.pool.newSession(patchbayAgentId, dir);
     } catch (err) {
       // auth_required or a plain failure — stated on the card, never a
       // spinner that spins forever; needsAuth itself is the pool's own
       // wire chokepoint's business.
       this.hooks.emit({
         kind: "agentKnobsObserved",
-        agentId,
+        patchbayAgentId,
         knobs: { knobs: [], unavailable: `couldn't open a session to read knobs — ${(err as Error).message}` },
       });
       return;
@@ -176,64 +177,64 @@ export class DefaultsEditor {
       knobs: this.hooks.normalize(response),
       applied: {},
     };
-    this.editing.set(agentId, entry);
-    const defaults = this.hooks.defaultsFor(agentId);
-    await this.seed(agentId, entry, defaults);
+    this.editing.set(patchbayAgentId, entry);
+    const defaults = this.hooks.defaultsFor(patchbayAgentId);
+    await this.seed(patchbayAgentId, entry, defaults);
     entry.applied = defaults;
-    this.publish(agentId, entry);
+    this.publish(patchbayAgentId, entry);
   }
 
-  private async seed(agentId: string, entry: Editing, seed: KnobSeed): Promise<void> {
+  private async seed(patchbayAgentId: PatchbayAgentId, entry: Editing, seed: KnobSeed): Promise<void> {
     await applySeedToFixedPoint(
       seed,
       () => entry.knobs,
-      (route, _knobId, value) => this.set(agentId, entry, route, value),
+      (route, _knobId, value) => this.set(patchbayAgentId, entry, route, value),
     );
   }
 
   /** One routed set; a rejection leaves the agent's state standing (the
    * surface still reflects what the agent actually holds). A null next
    * state means the agent confirms by notification — handleUpdate. */
-  private async set(agentId: string, entry: Editing, route: KnobSetRoute, value: string | boolean): Promise<void> {
+  private async set(patchbayAgentId: PatchbayAgentId, entry: Editing, route: KnobSetRoute, value: string | boolean): Promise<void> {
     try {
-      const next = await performKnobSet(this.knobWire(agentId), entry.sessionId, () => entry.knobs, route, value, (m) =>
+      const next = await performKnobSet(this.knobWire(patchbayAgentId), entry.sessionId, () => entry.knobs, route, value, (m) =>
         this.log.info(m),
       );
       if (next !== null) entry.knobs = next;
     } catch (err) {
-      this.log.info(`${agentId}: defaults editor set rejected — ${(err as Error).message}`);
+      this.log.info(`${patchbayAgentId}: defaults editor set rejected — ${(err as Error).message}`);
     }
   }
 
   /** The wire one routed set needs, bound to this agent's connection. */
-  private knobWire(agentId: string): KnobWire {
+  private knobWire(patchbayAgentId: PatchbayAgentId): KnobWire {
     return {
-      setMode: (sessionId, modeId) => this.pool.setSessionMode(agentId, sessionId, modeId),
+      setMode: (sessionId, modeId) => this.pool.setSessionMode(patchbayAgentId, sessionId, modeId),
       setConfigOption: (sessionId, configId, value) =>
-        this.pool.setSessionConfigOption(agentId, sessionId, configId, value),
-      send: (method, params) => this.pool.unstableRequest(agentId, method, params),
+        this.pool.setSessionConfigOption(patchbayAgentId, sessionId, configId, value),
+      send: (method, params) => this.pool.unstableRequest(patchbayAgentId, method, params),
     };
   }
 
-  private publish(agentId: string, entry: Editing): void {
-    this.hooks.emit({ kind: "agentKnobsObserved", agentId, knobs: { knobs: toOfferedKnobs(entry.knobs.knobs) } });
+  private publish(patchbayAgentId: PatchbayAgentId, entry: Editing): void {
+    this.hooks.emit({ kind: "agentKnobsObserved", patchbayAgentId, knobs: { knobs: toOfferedKnobs(entry.knobs.knobs) } });
   }
 
   /** Ends the session agent-side where the agent can (close, then delete —
    * the same hygiene the probe applies: a list-capable agent's history must
    * not accrete one junk session per edit) and drops the entry. */
-  private async end(agentId: string, entry: Editing): Promise<void> {
-    this.editing.delete(agentId);
-    const declared = this.pool.get(agentId)?.declared;
-    if (declared?.sessionClose) await this.pool.closeSession(agentId, entry.sessionId).catch(() => {});
-    if (declared?.sessionDelete) await this.pool.deleteSession(agentId, entry.sessionId).catch(() => {});
+  private async end(patchbayAgentId: PatchbayAgentId, entry: Editing): Promise<void> {
+    this.editing.delete(patchbayAgentId);
+    const declared = this.pool.get(patchbayAgentId)?.declared;
+    if (declared?.sessionClose) await this.pool.closeSession(patchbayAgentId, entry.sessionId).catch(() => {});
+    if (declared?.sessionDelete) await this.pool.deleteSession(patchbayAgentId, entry.sessionId).catch(() => {});
   }
 
-  private enqueue(agentId: string, task: () => Promise<void>): Promise<void> {
-    const chain = (this.queues.get(agentId) ?? Promise.resolve())
+  private enqueue(patchbayAgentId: PatchbayAgentId, task: () => Promise<void>): Promise<void> {
+    const chain = (this.queues.get(patchbayAgentId) ?? Promise.resolve())
       .then(task)
-      .catch((err: Error) => this.log.info(`${agentId}: defaults editor — ${err.message}`));
-    this.queues.set(agentId, chain);
+      .catch((err: Error) => this.log.info(`${patchbayAgentId}: defaults editor — ${err.message}`));
+    this.queues.set(patchbayAgentId, chain);
     return chain;
   }
 }

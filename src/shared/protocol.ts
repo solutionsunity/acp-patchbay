@@ -6,6 +6,8 @@
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
+import type { PatchbayAgentId } from "./ids";
+
 // ── envelope ─────────────────────────────────────────────────────────────────
 
 export interface SnapshotMsg<S> {
@@ -33,7 +35,7 @@ export type ViewToHost =
 export type ConnectAgentSource =
   | { registryId: string } // an agent from the official ACP registry
   | { command: string } // custom command line that speaks ACP
-  | { configuredId: string }; // a saved workspace agent config (Settings Agents)
+  | { patchbayAgentId: PatchbayAgentId }; // a saved workspace agent config (Settings Agents)
 
 /** The Settings shell's section ids — protocol-level because the open
  * section is host-owned state (webviews rehydrate
@@ -82,13 +84,13 @@ export type Action =
    * and any required login — succeeds. Absent → false (existing callers:
    * Agent View drawer, command palette, default-agent bootstrap). */
   | { kind: "connectAgent"; source: ConnectAgentSource; verifyAfterConnect?: boolean }
-  | { kind: "restartAgent"; agentId: string }
-  | { kind: "stopAgent"; agentId: string }
+  | { kind: "restartAgent"; patchbayAgentId: PatchbayAgentId }
+  | { kind: "stopAgent"; patchbayAgentId: PatchbayAgentId }
   /** One intent, one click: connect if needed — inside the chat pane
    * — then create and activate the session. The picker, the single-agent
    * "+", and the palette's New Session all land here. (Replaced
    * `newSession`, which assumed an already-running agent.) */
-  | { kind: "startChat"; agentId: string }
+  | { kind: "startChat"; patchbayAgentId: PatchbayAgentId }
   | { kind: "dismissChatConnect" }
   /** "Disconnect & erase all data" — explicit and user-triggered,
    * never a lifecycle side effect: the platform has no uninstall hook, so
@@ -133,18 +135,18 @@ export type Action =
   | { kind: "reclaimQueuedPrompt"; sessionId: string; promptId: string }
   /** Debounced durable save of the composer's per-session draft. */
   | { kind: "setSessionDraft"; sessionId: string; draft: string }
-  | { kind: "verifyAgent"; agentId: string }
+  | { kind: "verifyAgent"; patchbayAgentId: PatchbayAgentId }
   /** A Settings card's knob editor expanded (open) or collapsed — the
    * orchestrator's defaults editor opens/ends the throwaway session that
    * reads the agent's surface for the defaults being edited. */
-  | { kind: "editAgentDefaults"; agentId: string; open: boolean }
+  | { kind: "editAgentDefaults"; patchbayAgentId: PatchbayAgentId; open: boolean }
   | { kind: "resolvePermission"; requestId: string; optionId: string }
   | { kind: "resolveDiff"; requestId: string; accept: boolean }
-  | { kind: "authenticateAgent"; agentId: string; methodId: string }
+  | { kind: "authenticateAgent"; patchbayAgentId: PatchbayAgentId; methodId: string }
   /** Only ever offered when the agent declared `auth.logout` — the spec's
    * "Clients MUST NOT call it" otherwise holds by construction. */
-  | { kind: "logoutAgent"; agentId: string }
-  | { kind: "upgradeAgent"; agentId: string }
+  | { kind: "logoutAgent"; patchbayAgentId: PatchbayAgentId }
+  | { kind: "upgradeAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "refreshRegistry" }
   /** `layer` picks which rule list (permission-rules.ts): "workspace"
    * (workspaceState, this repo, evaluated first) or "machine" (machine store,
@@ -236,10 +238,10 @@ export type Action =
   /** The form's full desired config, `env` included — what is in the box
    * is what gets stored. */
   | { kind: "addOrUpdateAgentConfig"; config: AgentConfigView }
-  | { kind: "removeAgentConfig"; agentId: string }
+  | { kind: "removeAgentConfig"; patchbayAgentId: PatchbayAgentId }
   /** Drag-drop reorder from Settings — `ids` is the full list order as the
    * view sees it at drop time; the store keeps unnamed records at the tail. */
-  | { kind: "reorderAgentConfigs"; ids: readonly string[] }
+  | { kind: "reorderAgentConfigs"; patchbayAgentIds: readonly PatchbayAgentId[] }
   | { kind: "reorderMcpServers"; ids: readonly string[] }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
@@ -332,7 +334,7 @@ export interface AgentRegistrySourceView {
 }
 
 export interface AgentConfigView {
-  id: string;
+  id: PatchbayAgentId;
   name: string;
   command: string;
   args: readonly string[];
@@ -539,7 +541,7 @@ export interface AgentUpdate {
 }
 
 export interface AgentSummary {
-  id: string;
+  id: PatchbayAgentId;
   name: string;
   status: AgentStatus;
   /** Human-readable status context, e.g. "exited 1 · 14:07". */
@@ -767,7 +769,7 @@ export function hasUnusedProbe(matrix: CapabilityMatrix): boolean {
 
 export interface SessionSummary {
   id: string;
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   title: string;
   /** What the session's two lines hold: the attachment line's work, then
    * its turn — empty while it is idle. The views' one busy state for the
@@ -1235,7 +1237,7 @@ export interface AvailableCommand {
  * its row), or a failure with the specific reason and a Retry, never a
  * bounce back to the empty state. */
 export interface ChatConnectView {
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   /** Why it failed — present only once it has. */
   reason?: string;
   /** Present when the connect was triggered by opening an existing session
@@ -1251,10 +1253,10 @@ export interface ChatConnectView {
  * taken, or has failed, has nothing left to land in it. */
 export function chatPaneShows(
   pane: ChatConnectView | null,
-  agentId: string,
+  patchbayAgentId: PatchbayAgentId,
   forSessionId: string | undefined,
 ): boolean {
-  return pane !== null && pane.agentId === agentId && pane.forSessionId === forSessionId && pane.reason === undefined;
+  return pane !== null && pane.patchbayAgentId === patchbayAgentId && pane.forSessionId === forSessionId && pane.reason === undefined;
 }
 
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
@@ -1507,9 +1509,9 @@ export type AgentViewEvent =
    * re-sends it, and it replaces what the view held. One event, both
    * channels. */
   | { kind: "agentUpserted"; agent: AgentSummary }
-  | { kind: "agentRemoved"; agentId: string }
-  | { kind: "chatConnectStarted"; agentId: string; forSessionId?: string }
-  | { kind: "chatConnectFailed"; agentId: string; reason: string; forSessionId?: string }
+  | { kind: "agentRemoved"; patchbayAgentId: PatchbayAgentId }
+  | { kind: "chatConnectStarted"; patchbayAgentId: PatchbayAgentId; forSessionId?: string }
+  | { kind: "chatConnectFailed"; patchbayAgentId: PatchbayAgentId; reason: string; forSessionId?: string }
   | { kind: "chatConnectResolved" }
   /** The startup restore settled — restored, or found nothing to restore
    * (stale pointer, failed connects); either way `restoring` clears and the
@@ -1681,7 +1683,7 @@ function reduceAgents(
       return agents.map((a, j) => (j === i ? event.agent : a));
     }
     case "agentRemoved":
-      return agents.filter((a) => a.id !== event.agentId);
+      return agents.filter((a) => a.id !== event.patchbayAgentId);
     default:
       return agents;
   }
@@ -1850,9 +1852,9 @@ export function reduceAgentView(
       // the snapshot's fetchedAt for the Add Agent card's freshness line.
       return { ...state, registryAgents: event.agents };
     case "chatConnectStarted":
-      return { ...state, chatConnect: { agentId: event.agentId, forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, forSessionId: event.forSessionId } };
     case "chatConnectFailed":
-      return { ...state, chatConnect: { agentId: event.agentId, reason: event.reason, forSessionId: event.forSessionId } };
+      return { ...state, chatConnect: { patchbayAgentId: event.patchbayAgentId, reason: event.reason, forSessionId: event.forSessionId } };
     case "chatConnectResolved":
       return { ...state, chatConnect: null };
     case "startupSettled":
@@ -2357,7 +2359,7 @@ export interface SettingsState {
    * wire's `session/list` carries only an activity stamp, so activity is
    * the one definition every row can honor. */
   sessionsActiveToday: number;
-  /** Keyed by agentId — observed knob offerings (see AgentKnobsView). */
+  /** Keyed by patchbayAgentId — observed knob offerings (see AgentKnobsView). */
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
@@ -2428,10 +2430,10 @@ export type SettingsEvent =
     }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
-  | { kind: "agentKnobsObserved"; agentId: string; knobs: AgentKnobsView }
+  | { kind: "agentKnobsObserved"; patchbayAgentId: PatchbayAgentId; knobs: AgentKnobsView }
   /** The defaults editor ended its session — the surface leaves with it,
    * so a re-expanded card reads fresh instead of showing a stale one. */
-  | { kind: "agentKnobsReleased"; agentId: string }
+  | { kind: "agentKnobsReleased"; patchbayAgentId: PatchbayAgentId }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "sectionChanged"; section: SettingsSectionId };
@@ -2457,7 +2459,7 @@ export function reduceSettings(
       return {
         ...state,
         agents: reduceAgents(state.agents, event),
-        agentKnobs: dropKey(state.agentKnobs, event.agentId),
+        agentKnobs: dropKey(state.agentKnobs, event.patchbayAgentId),
       };
     case "registryChanged":
       return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
@@ -2479,9 +2481,9 @@ export function reduceSettings(
     case "sessionStatsChanged":
       return { ...state, sessionsActiveToday: event.sessionsActiveToday };
     case "agentKnobsObserved":
-      return { ...state, agentKnobs: { ...state.agentKnobs, [event.agentId]: event.knobs } };
+      return { ...state, agentKnobs: { ...state.agentKnobs, [event.patchbayAgentId]: event.knobs } };
     case "agentKnobsReleased":
-      return { ...state, agentKnobs: dropKey(state.agentKnobs, event.agentId) };
+      return { ...state, agentKnobs: dropKey(state.agentKnobs, event.patchbayAgentId) };
     case "wireLogChanged":
       return { ...state, wireLog: { active: event.active, until: event.until } };
     case "dataInventoryChanged":

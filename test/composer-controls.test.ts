@@ -6,16 +6,17 @@
 import { describe, expect, it } from "vitest";
 import { composerControls, newChatInFlight } from "../src/webview/agent-view/composer/composer-controls";
 import type { AgentSummary, SessionSummary } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const session: SessionSummary = {
   id: "s1",
-  agentId: "a1",
+  patchbayAgentId: "a1" as PatchbayAgentId,
   title: "T",
   busy: [],
   updatedAt: "2026-07-21T00:00:00Z",
 };
 const agent = (over: Partial<AgentSummary>): AgentSummary => ({
-  id: "a1",
+  id: "a1" as PatchbayAgentId,
   name: "Claude",
   status: "running",
   needsAuth: false,
@@ -104,9 +105,9 @@ describe("composerControls", () => {
 
 describe("newChatInFlight", () => {
   it("a New-chat connect (connecting or failed, not yet dismissed) is in flight; a session-click connect is not", () => {
-    expect(newChatInFlight({ agentId: "a1" })).toBe(true);
-    expect(newChatInFlight({ agentId: "a1", reason: "boom" })).toBe(true);
-    expect(newChatInFlight({ agentId: "a1", forSessionId: "s1" })).toBe(false);
+    expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId })).toBe(true);
+    expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId, reason: "boom" })).toBe(true);
+    expect(newChatInFlight({ patchbayAgentId: "a1" as PatchbayAgentId, forSessionId: "s1" })).toBe(false);
     expect(newChatInFlight(null)).toBe(false);
     expect(newChatInFlight(undefined)).toBe(false); // snapshots minted before the field existed
   });

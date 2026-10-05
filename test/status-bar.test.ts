@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { initialAgentViewState, type AgentViewState } from "../src/shared/protocol";
 import { statusBarContent } from "../src/orchestrator/status-bar";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 function state(overrides: Partial<AgentViewState>): AgentViewState {
   return { ...initialAgentViewState, ...overrides };
@@ -17,9 +18,9 @@ describe("statusBarContent", () => {
   it("shows the active session's title under the Patchbay mark — running adds no glyph", () => {
     const content = statusBarContent(
       state({
-        sessions: [{ id: "s1", agentId: "a1", title: "Fix the bug", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
+        sessions: [{ id: "s1", patchbayAgentId: "a1" as PatchbayAgentId, title: "Fix the bug", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
+        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) Fix the bug");
@@ -29,9 +30,9 @@ describe("statusBarContent", () => {
   it("a crashed agent shows an error glyph, not the running one", () => {
     const content = statusBarContent(
       state({
-        sessions: [{ id: "s1", agentId: "a1", title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
+        sessions: [{ id: "s1", patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
         activeSessionId: "s1",
-        agents: [{ id: "a1", name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [], busy: [] }],
+        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [], busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) $(error) T");
@@ -39,9 +40,9 @@ describe("statusBarContent", () => {
 
   it("appends usage only once reported — absent, never a fake 0%", () => {
     const base = state({
-      sessions: [{ id: "s1", agentId: "a1", title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
+      sessions: [{ id: "s1", patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
       activeSessionId: "s1",
-      agents: [{ id: "a1", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
+      agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
     });
     expect(statusBarContent(base).text).toBe("$(plug) T");
 

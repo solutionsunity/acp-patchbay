@@ -26,6 +26,7 @@ import {
   runtimeInstallSpec,
   type DownloadAsk,
 } from "../src/orchestrator/runtime-resolver";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 // POSIX-only guard for tests that need fake shell-script runtimes.
 const onPosix = process.platform !== "win32";
@@ -45,7 +46,7 @@ async function fakeExe(dir: string, name: string, output: string): Promise<strin
 }
 
 function spec(command: string, env: Record<string, string> = {}): LaunchSpec {
-  return { agentId: "a1", name: "Agent", command, args: ["-y", "pkg"], env, cwd: tmp };
+  return { patchbayAgentId: "a1" as PatchbayAgentId, name: "Agent", command, args: ["-y", "pkg"], env, cwd: tmp };
 }
 
 describe("requiredRuntime", () => {
@@ -108,9 +109,9 @@ describe("runtimeInstallSpec", () => {
     }
   });
 
-  it("pseudo agentIds keep runtimes distinct in the shared bin-cache", () => {
-    expect(runtimeInstallSpec("node", "linux", "x64")!.agentId).toBe(".runtime-node");
-    expect(runtimeInstallSpec("uv", "linux", "x64")!.agentId).toBe(".runtime-uv");
+  it("dot-named distributions keep runtimes distinct in the shared bin-cache", () => {
+    expect(runtimeInstallSpec("node", "linux", "x64")!.distribution).toBe(".runtime-node");
+    expect(runtimeInstallSpec("uv", "linux", "x64")!.distribution).toBe(".runtime-uv");
   });
 });
 
@@ -285,9 +286,9 @@ describe("resolveRuntime", () => {
     let installedDir = "";
     const install = async (
       root: string,
-      cat: { agentId: string; version: string },
+      cat: { distribution: string; version: string },
     ): Promise<InstalledBinary> => {
-      installedDir = join(root, cat.agentId, cat.version);
+      installedDir = join(root, cat.distribution, cat.version);
       await mkdir(installedDir, { recursive: true });
       await fakeExe(installedDir, "pb-bad-node", "v16.0.0"); // below floor
       await fakeExe(installedDir, "pb-bad-npx", "8.0.0");
@@ -311,9 +312,9 @@ describe("resolveRuntime", () => {
     let installedDir = "";
     const install = async (
       root: string,
-      cat: { agentId: string; version: string },
+      cat: { distribution: string; version: string },
     ): Promise<InstalledBinary> => {
-      installedDir = join(root, cat.agentId, cat.version);
+      installedDir = join(root, cat.distribution, cat.version);
       await mkdir(installedDir, { recursive: true });
       await fakeExe(installedDir, "pb-ok-node", "v22.0.0");
       return { command: join(installedDir, "pb-ok-node"), args: [], env: {}, cwd: installedDir };
@@ -369,7 +370,7 @@ describe("resolveRuntime", () => {
 describe("resolveBinaryLaunch", () => {
   const ARCHIVE = "https://github.com/example/agent/releases/download/1.2.3/agent-linux.tar.gz";
   const binarySpec = (root: string, id = "bin-agent"): LaunchSpec => ({
-    agentId: id,
+    patchbayAgentId: id as PatchbayAgentId,
     name: "Bin Agent",
     command: join(root, id, "1.2.3", "bin/agent"),
     args: ["--acp"],
@@ -378,9 +379,9 @@ describe("resolveBinaryLaunch", () => {
     binary: { archiveUrl: ARCHIVE, version: "1.2.3", cmd: "bin/agent" },
   });
   /** A fake install that materializes the cmd where the real one would. */
-  const fakeInstall = (calls: { count: number }) => async (root: string, cat: { agentId: string; version: string; cmd: string; args: readonly string[]; env: Readonly<Record<string, string>> }): Promise<InstalledBinary> => {
+  const fakeInstall = (calls: { count: number }) => async (root: string, cat: { distribution: string; version: string; cmd: string; args: readonly string[]; env: Readonly<Record<string, string>> }): Promise<InstalledBinary> => {
     calls.count++;
-    const dir = join(root, cat.agentId, cat.version);
+    const dir = join(root, cat.distribution, cat.version);
     await mkdir(join(dir, "bin"), { recursive: true });
     await writeFile(join(dir, cat.cmd), "");
     return { command: join(dir, cat.cmd), args: cat.args, env: cat.env, cwd: dir };
@@ -419,7 +420,7 @@ describe("resolveBinaryLaunch", () => {
   it("cached: no ask, no phase, no install — the path is handed back", async () => {
     const root = join(tmp, "bin-cache-cached");
     const calls = { count: 0 };
-    await fakeInstall(calls)(root, { agentId: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
+    await fakeInstall(calls)(root, { distribution: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
     calls.count = 0;
     let asked = false;
     const resolved = await resolveBinaryLaunch(binarySpec(root), {
@@ -575,7 +576,7 @@ describe("resolveBinaryLaunch", () => {
 
     it("a cached binary is never blocked by what its source says now", async () => {
       const root = join(tmp, "digest-cached");
-      await fakeInstall({ count: 0 })(root, { agentId: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
+      await fakeInstall({ count: 0 })(root, { distribution: "bin-agent", version: "1.2.3", cmd: "bin/agent", args: [], env: {} });
       const resolved = await resolveBinaryLaunch(pinnedSpec(root), {
         cacheRoot: root,
         log: nullLogger,

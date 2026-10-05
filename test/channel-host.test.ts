@@ -12,6 +12,7 @@ import {
   type AgentViewState,
   type HostToView,
 } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 class FakeWebview implements WebviewLike {
   messages: HostToView<AgentViewState, AgentViewEvent>[] = [];
@@ -37,7 +38,7 @@ function makeHost() {
 
 const upsert = (id: string): AgentViewEvent => ({
   kind: "agentUpserted",
-  agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], busy: [] },
+  agent: { id: id as PatchbayAgentId, name: id, status: "running", needsAuth: false, authMethods: [], busy: [] },
 });
 
 describe("ChannelHost", () => {

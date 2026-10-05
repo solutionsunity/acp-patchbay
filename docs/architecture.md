@@ -153,7 +153,7 @@ fact lives — is [the stores architecture](store-architecture.md).
 
 ## ACP client pool & process model
 
-- Registry: `agentId → { process, declared, used, sessions[] }`.
+- Registry: `patchbayAgentId → { process, declared, used, sessions[] }`.
 - Different agents are always separate subprocesses. An agent has **one
   process per window**, and every session opened with it rides that one
   connection — the protocol's own model (`session/new`/`load`/`close` are
@@ -402,7 +402,7 @@ session on the same standing probe directory — see § Session model — but
 only while a card's knob editor is expanded, never at connect.) (Auth proof deliberately does
 NOT — see § Auth evidence below: `session/new` succeeding is non-bearing on
 lazy-auth agents.) The probe session's root is the
-agent's **standing probe workspace** (`globalStorage/probe/<agentId>` — never
+agent's **standing probe workspace** (`globalStorage/probe/<patchbayAgentId>` — never
 the user's workspace roots), created idempotently per probe and deleted only
 with the agent's config: a workspace-aware agent may validate or index that
 root *after* replying to `session/new` (observed: Auggie, where a vanished
@@ -542,7 +542,7 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   condition** in its header. Retirement is mechanical: delete the module
   and its one compose line.
 - **Core exposes declared doors, not interception points:**
-  `pool.unstableRequest(agentId, method, params)` — the one untracked
+  `pool.unstableRequest(patchbayAgentId, method, params)` — the one untracked
   escape hatch (extension-owned methods bear on no capability row);
   `normalizeKnobs(..., extras?)` where an extra is `{ knob, execute }` —
   knobs.ts applies one generic rule (extras append unless a spec-surface

@@ -16,15 +16,16 @@ import {
   type AgentViewState,
   type SettingsEvent,
 } from "../src/shared/protocol";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
-const claude: AgentSummary = { id: "claude", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
-const gemini: AgentSummary = { id: "gemini", name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
+const claude: AgentSummary = { id: "claude" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
+const gemini: AgentSummary = { id: "gemini" as PatchbayAgentId, name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
 
 const events: AgentViewEvent[] = [
   { kind: "agentUpserted", agent: claude },
   { kind: "agentUpserted", agent: gemini },
   { kind: "agentUpserted", agent: { ...gemini, status: "running" } },
-  { kind: "agentRemoved", agentId: "claude" },
+  { kind: "agentRemoved", patchbayAgentId: "claude" as PatchbayAgentId },
 ];
 
 function replay(state: AgentViewState, evs: AgentViewEvent[]): AgentViewState {
@@ -80,13 +81,13 @@ describe("reducers", () => {
   // erase-to-factory-state made it matter). The row carries its own facts;
   // Settings' side maps go with it.
   it("agentRemoved takes the agent's per-agent facts with it", () => {
-    const view = replay(stateWith([claude]), [{ kind: "agentRemoved", agentId: "claude" }]);
+    const view = replay(stateWith([claude]), [{ kind: "agentRemoved", patchbayAgentId: "claude" as PatchbayAgentId }]);
     expect(view.agents).toEqual([]);
 
     const settings = [
       { kind: "agentUpserted", agent: claude } as const,
-      { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
-      { kind: "agentRemoved", agentId: "claude" } as const,
+      { kind: "agentKnobsObserved", patchbayAgentId: "claude" as PatchbayAgentId, knobs: { knobs: [] } } as const,
+      { kind: "agentRemoved", patchbayAgentId: "claude" as PatchbayAgentId } as const,
     ].reduce(reduceSettings, initialSettingsState);
     expect(settings.agents).toEqual([]);
     expect(settings.agentKnobs).toEqual({});
@@ -97,7 +98,7 @@ describe("reducers", () => {
   it("a row that isn't running drops the agent's knob offerings in Settings", () => {
     const observed = [
       { kind: "agentUpserted", agent: claude } as const,
-      { kind: "agentKnobsObserved", agentId: "claude", knobs: { knobs: [] } } as const,
+      { kind: "agentKnobsObserved", patchbayAgentId: "claude" as PatchbayAgentId, knobs: { knobs: [] } } as const,
     ].reduce(reduceSettings, initialSettingsState);
     expect(reduceSettings(observed, { kind: "agentUpserted", agent: claude }).agentKnobs.claude).toBeDefined();
     expect(
@@ -111,14 +112,14 @@ describe("reducers", () => {
   // reality); dismiss clears a failure.
   it("chatConnect: in progress → failed → cleared by sessionCreated or dismissal", () => {
     const connecting = replay(initialAgentViewState, [
-      { kind: "chatConnectStarted", agentId: "claude" },
+      { kind: "chatConnectStarted", patchbayAgentId: "claude" as PatchbayAgentId },
     ]);
-    expect(connecting.chatConnect).toEqual({ agentId: "claude" });
+    expect(connecting.chatConnect).toEqual({ patchbayAgentId: "claude" });
 
     const failed = replay(connecting, [
-      { kind: "chatConnectFailed", agentId: "claude", reason: "spawn failed: ENOENT" },
+      { kind: "chatConnectFailed", patchbayAgentId: "claude" as PatchbayAgentId, reason: "spawn failed: ENOENT" },
     ]);
-    expect(failed.chatConnect).toEqual({ agentId: "claude", reason: "spawn failed: ENOENT" });
+    expect(failed.chatConnect).toEqual({ patchbayAgentId: "claude", reason: "spawn failed: ENOENT" });
 
     const dismissed = replay(failed, [{ kind: "chatConnectResolved" }]);
     expect(dismissed.chatConnect).toBeNull();
@@ -126,7 +127,7 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1", patchbayAgentId: "claude" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
@@ -140,11 +141,11 @@ describe("reducers", () => {
     const two = replay(initialAgentViewState, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1", patchbayAgentId: "claude" as PatchbayAgentId, title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
       {
         kind: "sessionCreated",
-        session: { id: "s2", agentId: "claude", title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
+        session: { id: "s2", patchbayAgentId: "claude" as PatchbayAgentId, title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
       },
     ]);
     expect(two.activeSessionId).toBe("s2");
@@ -159,25 +160,25 @@ describe("reducers", () => {
   // same request in progress — the latest connect on demand took it, or it
   // failed, and the earlier one stands down.
   it("chatPaneShows: only the request the pane shows in progress", () => {
-    const newChat = { agentId: "claude" };
-    expect(chatPaneShows(newChat, "claude", undefined)).toBe(true);
-    expect(chatPaneShows(null, "claude", undefined)).toBe(false);
-    expect(chatPaneShows({ ...newChat, reason: "spawn failed" }, "claude", undefined)).toBe(false);
-    expect(chatPaneShows(newChat, "gemini", undefined)).toBe(false);
+    const newChat = { patchbayAgentId: "claude" as PatchbayAgentId };
+    expect(chatPaneShows(newChat, "claude" as PatchbayAgentId, undefined)).toBe(true);
+    expect(chatPaneShows(null, "claude" as PatchbayAgentId, undefined)).toBe(false);
+    expect(chatPaneShows({ ...newChat, reason: "spawn failed" }, "claude" as PatchbayAgentId, undefined)).toBe(false);
+    expect(chatPaneShows(newChat, "gemini" as PatchbayAgentId, undefined)).toBe(false);
     // a new chat and a session open on one agent are two requests
-    expect(chatPaneShows(newChat, "claude", "s1")).toBe(false);
-    expect(chatPaneShows({ agentId: "claude", forSessionId: "s1" }, "claude", undefined)).toBe(false);
-    expect(chatPaneShows({ agentId: "claude", forSessionId: "s1" }, "claude", "s1")).toBe(true);
-    expect(chatPaneShows({ agentId: "claude", forSessionId: "s2" }, "claude", "s1")).toBe(false);
+    expect(chatPaneShows(newChat, "claude" as PatchbayAgentId, "s1")).toBe(false);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s1" }, "claude" as PatchbayAgentId, undefined)).toBe(false);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s1" }, "claude" as PatchbayAgentId, "s1")).toBe(true);
+    expect(chatPaneShows({ patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s2" }, "claude" as PatchbayAgentId, "s1")).toBe(false);
   });
 
   it("chatConnect carries forSessionId through progress and failure — the Retry-as-same-click hook", () => {
     const connecting = replay(initialAgentViewState, [
-      { kind: "chatConnectStarted", agentId: "claude", forSessionId: "s9" },
+      { kind: "chatConnectStarted", patchbayAgentId: "claude" as PatchbayAgentId, forSessionId: "s9" },
     ]);
     expect(connecting.chatConnect?.forSessionId).toBe("s9");
     const failed = replay(connecting, [
-      { kind: "chatConnectFailed", agentId: "claude", reason: "spawn failed", forSessionId: "s9" },
+      { kind: "chatConnectFailed", patchbayAgentId: "claude" as PatchbayAgentId, reason: "spawn failed", forSessionId: "s9" },
     ]);
     expect(failed.chatConnect?.forSessionId).toBe("s9");
   });
@@ -240,7 +241,7 @@ describe("settings projections (ui.md § Settings Agents)", () => {
       { kind: "sessionStatsChanged", sessionsActiveToday: 3 },
       {
         kind: "agentKnobsObserved",
-        agentId: "claude",
+        patchbayAgentId: "claude" as PatchbayAgentId,
         knobs: {
           knobs: [
             { id: "model", name: "Model", category: "model", type: "select", values: [{ value: "s", name: "Sonnet" }] },
@@ -253,7 +254,7 @@ describe("settings projections (ui.md § Settings Agents)", () => {
     expect(s.agentKnobs.claude!.knobs[0]!.category).toBe("model");
     // the defaults editor ending its session releases the surface — a
     // re-expanded card reads fresh instead of showing the old one
-    expect(reduceSettings(s, { kind: "agentKnobsReleased", agentId: "claude" }).agentKnobs.claude).toBeUndefined();
+    expect(reduceSettings(s, { kind: "agentKnobsReleased", patchbayAgentId: "claude" as PatchbayAgentId }).agentKnobs.claude).toBeUndefined();
   });
 
   // Busy is a row fact, not a side map: each upsert carries what the
@@ -319,7 +320,7 @@ describe("applyHostMessage", () => {
 describe("session activity + unseen (drawer ordering / dots)", () => {
   const mk = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, agentId: "claude", title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+    session: { id, patchbayAgentId: "claude" as PatchbayAgentId, title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
   });
 
   it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
@@ -435,7 +436,7 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
 describe("sessionBusyChanged (what a session's lines hold — its busy state)", () => {
   const created = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, agentId: "a1", title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
+    session: { id, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
   });
 
   it("a prompt on the turn line is a turn underway; an open or a reload is an attach; other work is neither", () => {

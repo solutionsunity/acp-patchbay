@@ -33,6 +33,7 @@ import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "./logger";
 import { resolveSpawn } from "./spawn-resolve";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** Normalized launcher name from a command that may be a path or a Windows
  * shim — THE one spelling of "is this an ecosystem launcher", shared by
@@ -252,12 +253,12 @@ export interface PathDivergence {
  * not populated yet, versions compatible) — callers only ever see a real
  * divergence. */
 export async function checkPathDivergence(spec: {
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   command: string;
   args: readonly string[];
   env: Readonly<Record<string, string>>;
 }): Promise<PathDivergence | null> {
-  const sibling = PATH_SIBLINGS[spec.agentId];
+  const sibling = PATH_SIBLINGS[spec.patchbayAgentId];
   if (sibling === undefined) return null;
   const launchPkg = npxPackageName(spec);
   if (launchPkg === null) return null;

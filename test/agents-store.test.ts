@@ -16,6 +16,7 @@ import { MemoryKV } from "../src/orchestrator/stores/kv";
 import type { AgentConfigView } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { agentsHarness, type AgentsHarness } from "./support/agents-harness";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -27,7 +28,7 @@ afterEach(() => rm(dir, { recursive: true, force: true }));
 
 function fakeConfig(id: string, script: FakeAgentScript, over: Partial<AgentConfigView> = {}): AgentConfigView {
   return {
-    id,
+    id: id as PatchbayAgentId,
     name: `Fake ${id}`,
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -61,7 +62,7 @@ async function upgradable(h: AgentsHarness, listed = [{ id: "reg", version: "2.0
   await h.agents.save(
     fakeConfig("reg", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
   );
-  await h.agents.connect("reg");
+  await h.agents.connect("reg" as PatchbayAgentId);
 }
 
 /** The gates' asks with open work on the connection, and questions the
@@ -92,27 +93,27 @@ describe("agents store", () => {
     const kv = new MemoryKV();
     const h = agentsHarness(dir, { kv });
     await h.agents.save(fakeConfig("a", {}));
-    expect(h.agents.name("a")).toBe("Fake a");
+    expect(h.agents.name("a" as PatchbayAgentId)).toBe("Fake a");
     // Another window, its own store over the same file, renames the agent.
     const elsewhere = new AgentConfigStore(kv);
     await elsewhere.upsert({ ...elsewhere.get("a")!, name: "Renamed", args: ["--other"] });
-    expect(h.agents.name("a")).toBe("Renamed");
-    expect(h.agents.spec("a")?.args).toEqual(["--other"]);
+    expect(h.agents.name("a" as PatchbayAgentId)).toBe("Renamed");
+    expect(h.agents.spec("a" as PatchbayAgentId)?.args).toEqual(["--other"]);
     await elsewhere.remove("a");
-    expect(h.agents.spec("a")).toBeUndefined();
+    expect(h.agents.spec("a" as PatchbayAgentId)).toBeUndefined();
   });
 
   it("connects a saved agent with its env from SecretStorage, and records the version that answered", async () => {
     const h = agentsHarness(dir);
     await h.agents.save(fakeConfig("v", { version: "9.9.9" }));
-    await h.agents.connect("v");
+    await h.agents.connect("v" as PatchbayAgentId);
 
-    expect(h.pool.get("v")?.status).toBe("running");
+    expect(h.pool.get("v" as PatchbayAgentId)?.status).toBe("running");
     expect(h.state().agents.find((a) => a.id === "v")?.status).toBe("running");
     // the script — and so the version — only reaches the process through the env
-    await expect.poll(() => h.agents.config("v")?.lastSeenVersion).toBe("9.9.9");
+    await expect.poll(() => h.agents.config("v" as PatchbayAgentId)?.lastSeenVersion).toBe("9.9.9");
 
-    await h.agents.stop("v");
+    await h.agents.stop("v" as PatchbayAgentId);
   });
 
   it("a crashed row carries the process's last words; a running one carries none", async () => {
@@ -120,26 +121,26 @@ describe("agents store", () => {
     // write-callback → exit: the last words are flushed before death
     const dying = ["-e", 'process.stderr.write("boom: config missing\\n", () => process.exit(1));'];
     await h.agents.save(fakeConfig("doomed", {}, { args: dying }));
-    await expect(h.agents.connect("doomed")).rejects.toThrow();
-    expect(h.row("doomed")?.status).toBe("crashed");
-    expect(h.row("doomed")?.stderr?.join("\n")).toContain("boom: config missing");
+    await expect(h.agents.connect("doomed" as PatchbayAgentId)).rejects.toThrow();
+    expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("crashed");
+    expect(h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain("boom: config missing");
 
     await h.agents.save(fakeConfig("doomed", {}));
-    await h.agents.connect("doomed");
-    expect(h.row("doomed")?.status).toBe("running");
-    expect(h.row("doomed")?.stderr).toBeUndefined();
-    await h.agents.stop("doomed");
+    await h.agents.connect("doomed" as PatchbayAgentId);
+    expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("running");
+    expect(h.row("doomed" as PatchbayAgentId)?.stderr).toBeUndefined();
+    await h.agents.stop("doomed" as PatchbayAgentId);
   });
 
   it("the row's command is what runs while a process runs, and what Connect would run otherwise", async () => {
     const h = agentsHarness(dir);
     await h.agents.save(fakeConfig("cmd", {}));
-    await h.agents.connect("cmd");
-    const spawned = h.row("cmd")!.command;
+    await h.agents.connect("cmd" as PatchbayAgentId);
+    const spawned = h.row("cmd" as PatchbayAgentId)!.command;
     await h.agents.save(fakeConfig("cmd", {}, { args: [FAKE_AGENT, "--edited"] }));
-    expect(h.row("cmd")!.command).toBe(spawned);
-    await h.agents.stop("cmd");
-    expect(h.row("cmd")!.command).toContain("--edited");
+    expect(h.row("cmd" as PatchbayAgentId)!.command).toBe(spawned);
+    await h.agents.stop("cmd" as PatchbayAgentId);
+    expect(h.row("cmd" as PatchbayAgentId)!.command).toContain("--edited");
   });
 
   it("publishing sends every row before the config list waits on any env read — the first frame has every agent", async () => {
@@ -150,36 +151,36 @@ describe("agents store", () => {
     const settled = h.agents.publishAll();
     // synchronously, before the env reads behind the config list resolve
     expect(h.state().agents.map((a) => a.id)).toEqual(["first", "second"]);
-    expect(h.row("second")?.status).toBe("untested");
+    expect(h.row("second" as PatchbayAgentId)?.status).toBe("untested");
     await settled;
   });
 
   it("refuses to connect an agent with no saved config", async () => {
     const h = agentsHarness(dir);
-    await expect(h.agents.connect("ghost")).rejects.toThrow("no saved launch configuration");
+    await expect(h.agents.connect("ghost" as PatchbayAgentId)).rejects.toThrow("no saved launch configuration");
   });
 
   it("Remove stops the process, tells the sessions side, purges every saved fact, lets go of its live state and leaves the views", async () => {
     const h = agentsHarness(dir);
     await h.agents.save(fakeConfig("gone", {}));
-    await h.agents.connect("gone");
+    await h.agents.connect("gone" as PatchbayAgentId);
     await h.deps.authLocks.upsert({
-      id: "gone",
+      id: "gone" as PatchbayAgentId,
       lock: { kind: "authRequired", method: "session/new", reason: null, at: new Date().toISOString() },
     });
-    h.agents.recordKnobs("gone", { mode: "code" });
-    const probe = await h.agents.probeRoot("gone");
+    h.agents.recordKnobs("gone" as PatchbayAgentId, { mode: "code" });
+    const probe = await h.agents.probeRoot("gone" as PatchbayAgentId);
 
-    await h.agents.remove("gone");
+    await h.agents.remove("gone" as PatchbayAgentId);
 
     // The pool lets go only of a process that is down.
-    expect(h.pool.get("gone")).toBeUndefined();
-    expect(h.tracker.matrix("gone")).toBeUndefined();
+    expect(h.pool.get("gone" as PatchbayAgentId)).toBeUndefined();
+    expect(h.tracker.matrix("gone" as PatchbayAgentId)).toBeUndefined();
     expect(h.removed).toEqual(["gone"]);
-    expect(h.agents.config("gone")).toBeUndefined();
+    expect(h.agents.config("gone" as PatchbayAgentId)).toBeUndefined();
     expect(await h.deps.env.get("gone")).toEqual({});
-    expect(h.agents.authLocked("gone")).toBe(false);
-    expect(h.deps.composerKnobs.get("gone")).toBeUndefined();
+    expect(h.agents.authLocked("gone" as PatchbayAgentId)).toBe(false);
+    expect(h.deps.composerKnobs.get("gone" as PatchbayAgentId)).toBeUndefined();
     expect(h.deps.usedCapabilities.list().some((r) => r.id === "gone")).toBe(false);
     expect(existsSync(probe)).toBe(false);
     expect(h.state().agents.some((a) => a.id === "gone")).toBe(false);
@@ -187,8 +188,8 @@ describe("agents store", () => {
 
   it("auth evidence for an agent with no saved config writes nothing", () => {
     const h = agentsHarness(dir);
-    h.agents.noteAuthWireFact("ghost", "session/new", "auth_required", new Date().toISOString(), "log in");
-    expect(h.agents.authLocked("ghost")).toBe(false);
+    h.agents.noteAuthWireFact("ghost" as PatchbayAgentId, "session/new", "auth_required", new Date().toISOString(), "log in");
+    expect(h.agents.authLocked("ghost" as PatchbayAgentId)).toBe(false);
     expect(h.events.some((e) => e.kind === "agentUpserted" && e.agent.id === "ghost")).toBe(false);
   });
 
@@ -197,17 +198,17 @@ describe("agents store", () => {
     await h.agents.save(fakeConfig("auto", {}, { autoConnect: true }));
     await h.agents.save(fakeConfig("manual", {}));
 
-    expect(await h.agents.startupSources("")).toEqual([{ configuredId: "auto" }]);
+    expect(await h.agents.startupSources("")).toEqual([{ patchbayAgentId: "auto" }]);
   });
 
   it("the old default-agent setting folds into the flag once — or names a registry agent not yet saved", async () => {
     const h = agentsHarness(dir);
     await h.agents.save(fakeConfig("legacy", {}));
 
-    expect(await h.agents.startupSources("legacy")).toEqual([{ configuredId: "legacy" }]);
-    expect(h.agents.config("legacy")?.autoConnect).toBe(true);
+    expect(await h.agents.startupSources("legacy")).toEqual([{ patchbayAgentId: "legacy" }]);
+    expect(h.agents.config("legacy" as PatchbayAgentId)?.autoConnect).toBe(true);
     expect(await h.agents.startupSources("from-registry")).toEqual([
-      { configuredId: "legacy" },
+      { patchbayAgentId: "legacy" },
       { registryId: "from-registry" },
     ]);
   });
@@ -217,10 +218,10 @@ describe("agents store", () => {
     const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h, [{ id: "other", version: "2.0.0" }]); // the registry no longer lists it
 
-    await h.agents.upgrade("reg");
+    await h.agents.upgrade("reg" as PatchbayAgentId);
     expect(user.asked).toEqual([]);
-    expect(h.row("reg")?.status).toBe("running");
-    await h.agents.stop("reg");
+    expect(h.row("reg" as PatchbayAgentId)?.status).toBe("running");
+    await h.agents.stop("reg" as PatchbayAgentId);
   });
 
   it("an agent saved under an older id than the registry's is upgraded in place", async () => {
@@ -232,10 +233,10 @@ describe("agents store", () => {
       fakeConfig("legacy", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
     );
 
-    await h.agents.upgrade("legacy");
-    expect(h.agents.config("legacy")?.registrySource?.pinnedVersion).toBe("2.0.0");
-    expect(h.agents.config("reg")).toBeUndefined();
-    expect(h.row("legacy")?.status).toBe("crashed");
+    await h.agents.upgrade("legacy" as PatchbayAgentId);
+    expect(h.agents.config("legacy" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("2.0.0");
+    expect(h.agents.config("reg" as PatchbayAgentId)).toBeUndefined();
+    expect(h.row("legacy" as PatchbayAgentId)?.status).toBe("crashed");
   });
 });
 
@@ -249,16 +250,16 @@ describe("the gates", () => {
     await h.agents.save(fakeConfig("auto", {}, { autoConnect: true }));
     const spawns = vi.spyOn(h.pool, "connect");
 
-    const startup = h.gates.connect("auto");
-    await vi.waitFor(() => expect(h.pool.get("auto")?.status).toBe("reconnecting"));
-    const chat = h.gates.connect("auto");
-    expect(h.row("auto")?.busy).toEqual([{ kind: "connect" }]);
+    const startup = h.gates.connect("auto" as PatchbayAgentId);
+    await vi.waitFor(() => expect(h.pool.get("auto" as PatchbayAgentId)?.status).toBe("reconnecting"));
+    const chat = h.gates.connect("auto" as PatchbayAgentId);
+    expect(h.row("auto" as PatchbayAgentId)?.busy).toEqual([{ kind: "connect" }]);
     release();
 
     await expect(chat).resolves.toBeUndefined();
     await startup;
     expect(spawns).toHaveBeenCalledTimes(1);
-    expect(h.row("auto")).toMatchObject({ status: "running", busy: [] });
+    expect(h.row("auto" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
     await h.agents.stopAll();
   });
 
@@ -269,21 +270,21 @@ describe("the gates", () => {
     const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h);
 
-    const first = h.gates.upgrade("reg");
-    const second = h.gates.upgrade("reg");
+    const first = h.gates.upgrade("reg" as PatchbayAgentId);
+    const second = h.gates.upgrade("reg" as PatchbayAgentId);
     await vi.waitFor(() => expect(user.asked).toHaveLength(1));
     expect(user.asked[0]).toMatch(/1 open conversation/);
-    expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }]);
+    expect(h.row("reg" as PatchbayAgentId)?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }]);
     // A chat asked for meanwhile waits its turn behind the upgrade.
-    const chat = h.gates.connect("reg");
-    expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "connect" }]);
+    const chat = h.gates.connect("reg" as PatchbayAgentId);
+    expect(h.row("reg" as PatchbayAgentId)?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "connect" }]);
 
     user.answer("Upgrade", false);
     await Promise.all([first, second, chat]);
     expect(user.asked).toHaveLength(1);
     // Declined: the agent runs as it was, and the chat's connect found it up.
-    expect(h.row("reg")).toMatchObject({ status: "running", busy: [], update: { from: "1.0.0", to: "2.0.0" } });
-    await h.agents.stop("reg");
+    expect(h.row("reg" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [], update: { from: "1.0.0", to: "2.0.0" } });
+    await h.agents.stop("reg" as PatchbayAgentId);
   });
 
   it("Stop never waits its turn, and an upgrade it stopped goes no further — the agent keeps its version", async () => {
@@ -291,24 +292,24 @@ describe("the gates", () => {
     const h = agentsHarness(dir, { asks: user.asks });
     await upgradable(h);
 
-    const upgrade = h.gates.upgrade("reg");
+    const upgrade = h.gates.upgrade("reg" as PatchbayAgentId);
     await vi.waitFor(() => expect(user.asked).toHaveLength(1));
     const cut = expect(upgrade).rejects.toBeInstanceOf(Cancelled);
-    const stop = h.gates.stop("reg");
+    const stop = h.gates.stop("reg" as PatchbayAgentId);
     // A conversation is open, so the Stop puts the one question too.
     await vi.waitFor(() => expect(user.asked).toHaveLength(2));
     expect(user.asked[1]).toBe("Stop Fake reg? It disconnects 1 open conversation.");
     user.answer("Stop", true);
     // The escape hatch reaches the agent whatever its queue holds.
-    await vi.waitFor(() => expect(h.row("reg")?.status).toBe("stopped"));
+    await vi.waitFor(() => expect(h.row("reg" as PatchbayAgentId)?.status).toBe("stopped"));
     await cut;
-    expect(h.row("reg")?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "stop" }]);
+    expect(h.row("reg" as PatchbayAgentId)?.busy).toEqual([{ kind: "upgrade", to: "2.0.0" }, { kind: "stop" }]);
     // The upgrade's own question, still open, is answered yes: told to
     // stop, it saves no new pin and starts nothing.
     user.answer("Upgrade", true);
     await stop;
-    expect(h.agents.config("reg")?.registrySource?.pinnedVersion).toBe("1.0.0");
-    expect(h.row("reg")).toMatchObject({ status: "stopped", busy: [] });
+    expect(h.agents.config("reg" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.row("reg" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
   });
 
   // Before Stop and Remove could reach a launch still downloading, Remove
@@ -318,18 +319,18 @@ describe("the gates", () => {
     const download = new Promise<void>((resolve) => (release = resolve));
     const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await download, spec) });
     await h.agents.save(fakeConfig("doomed", {}));
-    const connect = h.gates.connect("doomed");
-    await vi.waitFor(() => expect(h.pool.get("doomed")?.status).toBe("reconnecting"));
+    const connect = h.gates.connect("doomed" as PatchbayAgentId);
+    await vi.waitFor(() => expect(h.pool.get("doomed" as PatchbayAgentId)?.status).toBe("reconnecting"));
     const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
 
-    await h.gates.remove("doomed");
+    await h.gates.remove("doomed" as PatchbayAgentId);
     await cut;
     // The download lands after all — and launches nothing.
     release();
     await new Promise((r) => setTimeout(r, 300));
-    expect(h.pool.get("doomed")).toBeUndefined();
-    expect(h.agents.config("doomed")).toBeUndefined();
-    expect(h.row("doomed")).toBeUndefined();
+    expect(h.pool.get("doomed" as PatchbayAgentId)).toBeUndefined();
+    expect(h.agents.config("doomed" as PatchbayAgentId)).toBeUndefined();
+    expect(h.row("doomed" as PatchbayAgentId)).toBeUndefined();
     expect(h.removed).toEqual(["doomed"]);
   });
 
@@ -337,16 +338,16 @@ describe("the gates", () => {
     let hold: Promise<void> | null = new Promise<void>(() => {});
     const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await hold, spec) });
     await h.agents.save(fakeConfig("slow", {}));
-    const connect = h.gates.connect("slow");
-    await vi.waitFor(() => expect(h.pool.get("slow")?.status).toBe("reconnecting"));
+    const connect = h.gates.connect("slow" as PatchbayAgentId);
+    await vi.waitFor(() => expect(h.pool.get("slow" as PatchbayAgentId)?.status).toBe("reconnecting"));
     const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
 
-    await h.gates.stop("slow");
+    await h.gates.stop("slow" as PatchbayAgentId);
     await cut;
-    expect(h.row("slow")).toMatchObject({ status: "stopped", busy: [] });
+    expect(h.row("slow" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
     hold = null;
-    await h.gates.connect("slow");
-    expect(h.row("slow")?.status).toBe("running");
+    await h.gates.connect("slow" as PatchbayAgentId);
+    expect(h.row("slow" as PatchbayAgentId)?.status).toBe("running");
     await h.agents.stopAll();
   });
 
@@ -358,15 +359,15 @@ describe("the gates", () => {
     await h.agents.save(
       fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
     );
-    await h.gates.connect("tl");
-    const login = h.gates.login("tl", "tl");
+    await h.gates.connect("tl" as PatchbayAgentId);
+    const login = h.gates.login("tl" as PatchbayAgentId, "tl");
     await vi.waitFor(() => expect(close).toBeDefined());
     await new Promise((r) => setTimeout(r, 50));
-    expect(h.row("tl")?.busy).toEqual([{ kind: "login" }]);
+    expect(h.row("tl" as PatchbayAgentId)?.busy).toEqual([{ kind: "login" }]);
 
     close?.(1);
     await login;
-    expect(h.agents.authLocked("tl")).toBe(true);
+    expect(h.agents.authLocked("tl" as PatchbayAgentId)).toBe(true);
     await h.agents.stopAll();
   });
 
@@ -382,24 +383,24 @@ describe("the gates", () => {
     await h.agents.save(
       fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
     );
-    await h.gates.connect("tl");
+    await h.gates.connect("tl" as PatchbayAgentId);
     const probes = vi.spyOn(h.tracker, "verify");
     const restarts = vi.spyOn(h.pool, "restart");
-    const login = h.gates.login("tl", "tl");
+    const login = h.gates.login("tl" as PatchbayAgentId, "tl");
     await vi.waitFor(() => expect(close).toBeDefined());
     const cut = expect(login).rejects.toBeInstanceOf(Cancelled);
 
     // The terminal is still open; the Stop doesn't wait for it.
-    await h.gates.stop("tl");
+    await h.gates.stop("tl" as PatchbayAgentId);
     await cut;
-    expect(h.row("tl")).toMatchObject({ status: "stopped", busy: [] });
+    expect(h.row("tl" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
     // The user is done with it later, and its code is the login's result.
     // The probe and the restart that follow a login need the process the
     // stop ended: neither runs.
     close?.(1);
-    await vi.waitFor(() => expect(h.agents.authLocked("tl")).toBe(true));
+    await vi.waitFor(() => expect(h.agents.authLocked("tl" as PatchbayAgentId)).toBe(true));
     expect(probes).not.toHaveBeenCalled();
     expect(restarts).not.toHaveBeenCalled();
-    expect(h.row("tl")?.status).toBe("stopped");
+    expect(h.row("tl" as PatchbayAgentId)?.status).toBe("stopped");
   });
 });

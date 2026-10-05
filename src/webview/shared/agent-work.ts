@@ -26,7 +26,7 @@ export function upgradeOffer(agent: AgentSummary | undefined): UpgradeOffer | nu
  * starts; once the agent runs, the chat itself being opened (a running
  * agent serves a chat at once, whatever else it is busy with). */
 export function chatPaneProgress(connect: ChatConnectView, agent: AgentSummary | undefined): string {
-  const name = agent?.name ?? connect.agentId;
+  const name = agent?.name ?? connect.patchbayAgentId;
   const work = agent?.busy[0];
   if (agent?.status === "running" || work === undefined) {
     return connect.forSessionId !== undefined ? "Opening the session…" : `Starting a chat with ${name}…`;

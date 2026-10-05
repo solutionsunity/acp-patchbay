@@ -87,25 +87,25 @@ export function App({ state }: { state: SettingsState }) {
         {section === "agents" && (
           <AgentsSection
             state={state}
-            onVerify={(agentId) => send({ kind: "verifyAgent", agentId })}
-            onConnectConfigured={(agentId) =>
-              send({ kind: "connectAgent", source: { configuredId: agentId } })
+            onVerify={(patchbayAgentId) => send({ kind: "verifyAgent", patchbayAgentId })}
+            onConnectConfigured={(patchbayAgentId) =>
+              send({ kind: "connectAgent", source: { patchbayAgentId } })
             }
             onAddAgent={(source, verifyAfterConnect) =>
               send({ kind: "connectAgent", source, verifyAfterConnect })
             }
             onSave={(config) => send({ kind: "addOrUpdateAgentConfig", config })}
-            onRemove={(agentId) => send({ kind: "removeAgentConfig", agentId })}
-            onStop={(agentId) => send({ kind: "stopAgent", agentId })}
-            onRestart={(agentId) => send({ kind: "restartAgent", agentId })}
-            onAuthenticate={(agentId, methodId) =>
-              send({ kind: "authenticateAgent", agentId, methodId })
+            onRemove={(patchbayAgentId) => send({ kind: "removeAgentConfig", patchbayAgentId })}
+            onStop={(patchbayAgentId) => send({ kind: "stopAgent", patchbayAgentId })}
+            onRestart={(patchbayAgentId) => send({ kind: "restartAgent", patchbayAgentId })}
+            onAuthenticate={(patchbayAgentId, methodId) =>
+              send({ kind: "authenticateAgent", patchbayAgentId, methodId })
             }
-            onLogout={(agentId) => send({ kind: "logoutAgent", agentId })}
-            onUpgrade={(agentId) => send({ kind: "upgradeAgent", agentId })}
+            onLogout={(patchbayAgentId) => send({ kind: "logoutAgent", patchbayAgentId })}
+            onUpgrade={(patchbayAgentId) => send({ kind: "upgradeAgent", patchbayAgentId })}
             onRefreshRegistry={() => send({ kind: "refreshRegistry" })}
-            onReorder={(ids) => send({ kind: "reorderAgentConfigs", ids })}
-            onEditDefaults={(agentId, open) => send({ kind: "editAgentDefaults", agentId, open })}
+            onReorder={(patchbayAgentIds) => send({ kind: "reorderAgentConfigs", patchbayAgentIds })}
+            onEditDefaults={(patchbayAgentId, open) => send({ kind: "editAgentDefaults", patchbayAgentId, open })}
           />
         )}
         {section === "matrix" && <MatrixSection state={state} />}

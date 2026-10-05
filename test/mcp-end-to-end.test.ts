@@ -32,6 +32,7 @@ import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import { gatesFor } from "./support/session-gates";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 const MCP_SERVER = join(process.cwd(), "out", "mcp-server.js");
@@ -106,9 +107,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -144,7 +145,7 @@ function harness() {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
+    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
     ...stubFsTerminalHooks(),
   });
   const sessions = new SessionsStore(
@@ -166,8 +167,8 @@ function harness() {
 describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads the live selection via the local MCP server", async () => {
     const h = harness();
-    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1"));
-    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "what's selected?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
@@ -177,28 +178,28 @@ describe("local MCP server, end to end through a real agent process", () => {
       endLine: 87,
       text: "class AgentPool { ... }",
     });
-    await h.pool.stop("e1");
+    await h.pool.stop("e1" as PatchbayAgentId);
   });
 
   it("the agent reads diagnostics via the local MCP server — opportunistically verifiable data", async () => {
     const h = harness();
-    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2"));
-    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "any problems?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual([
       { file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" },
     ]);
-    await h.pool.stop("e2");
+    await h.pool.stop("e2" as PatchbayAgentId);
   });
 
   it("request_user_input resolves against the real sessionId, not the raw correlation token", async () => {
     const h = harness();
     await h.pool.connect(
-      spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3"),
+      spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3" as PatchbayAgentId),
     );
-    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "go" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
@@ -208,16 +209,16 @@ describe("local MCP server, end to end through a real agent process", () => {
     expect(host.requests.some((r) => r.method === "requestUserInput" && r.sessionId !== sessionId)).toBe(
       true,
     );
-    await h.pool.stop("e3");
+    await h.pool.stop("e3" as PatchbayAgentId);
   });
 
   it("two sessions on the same agent get independent correlation tokens", async () => {
     const h = harness();
     await h.pool.connect(
-      spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e4"),
+      spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e4" as PatchbayAgentId),
     );
-    const s1 = await h.sessions.createSession("e4", "Fake Agent", dir);
-    const s2 = await h.sessions.createSession("e4", "Fake Agent", dir);
+    const s1 = await h.sessions.createSession("e4" as PatchbayAgentId, "Fake Agent", dir);
+    const s2 = await h.sessions.createSession("e4" as PatchbayAgentId, "Fake Agent", dir);
     expect(s1).not.toBe(s2);
 
     await h.gates.prompt(s1, { text: "go" });
@@ -230,6 +231,6 @@ describe("local MCP server, end to end through a real agent process", () => {
     // each session's tool call resolved against its own sessionId, never the other's
     expect(resolvedFor(s1)).toBe(s1);
     expect(resolvedFor(s2)).toBe(s2);
-    await h.pool.stop("e4");
+    await h.pool.stop("e4" as PatchbayAgentId);
   });
 });

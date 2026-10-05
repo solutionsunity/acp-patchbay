@@ -48,7 +48,7 @@ suite("upgrade guard", () => {
         asked.push(args);
         return Promise.resolve(undefined); // the user dismisses the dialog
       };
-      pb.act({ kind: "upgradeAgent", agentId: AGENT_ID });
+      pb.act({ kind: "upgradeAgent", patchbayAgentId: AGENT_ID });
       const [message, options] = await waitFor(() => asked[0]);
       assert.match(String(message), /1 open conversation/);
       assert.deepStrictEqual(options, { modal: true });

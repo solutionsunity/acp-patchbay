@@ -30,9 +30,10 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { PatchbayAgentId } from "../../shared/ids";
 
 const EMPTY_AGENT_CONFIG: AgentConfigView = {
-  id: "",
+  id: "" as PatchbayAgentId,
   name: "",
   command: "",
   args: [],
@@ -54,7 +55,7 @@ function AgentConfigForm(props: {
   onSave(config: AgentConfigView): void;
   onCancel(): void;
 }) {
-  const [id, setId] = useState(props.initial.id);
+  const [id, setId] = useState<string>(props.initial.id);
   const [name, setName] = useState(props.initial.name);
   const [command, setCommand] = useState(props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args));
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
@@ -63,7 +64,7 @@ function AgentConfigForm(props: {
   const save = () => {
     if (id.trim() === "" || name.trim() === "" || command.trim() === "") return;
     props.onSave({
-      id: id.trim(),
+      id: id.trim() as PatchbayAgentId,
       name: name.trim(),
       command: command.trim(),
       args: [],
@@ -255,8 +256,8 @@ function AddAgentRow(props: {
   onAdd(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
   onRefreshRegistry(): void;
 }) {
-  const configuredIds = new Set(props.state.agentConfigs.map((c) => c.id));
-  const available = props.state.registryAgents.filter((r) => !configuredIds.has(r.id));
+  const added = new Set(props.state.agentConfigs.flatMap((c) => (c.registrySource === null ? [] : [c.registrySource.registryId])));
+  const available = props.state.registryAgents.filter((r) => !added.has(r.id));
   const registryCount = props.state.registryAgents.length;
   const [mode, setMode] = useState<"registry" | "custom">("registry");
   const [registryQuery, setRegistryQuery] = useState("");
@@ -349,10 +350,10 @@ function AddAgentRow(props: {
  * here?"); an "unsupported" method stays declared but never wired to a
  * button. Same action either way: the orchestrator routes by method. */
 function LoginControl(props: {
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   methods: readonly AuthMethodView[];
   disabled: boolean;
-  onAuthenticate(agentId: string, methodId: string): void;
+  onAuthenticate(patchbayAgentId: PatchbayAgentId, methodId: string): void;
 }) {
   const actionable = runnableLoginMethods(props.methods);
   const [methodId, setMethodId] = useState(actionable[0]?.id ?? "");
@@ -393,7 +394,7 @@ function LoginControl(props: {
         size="sm"
         title={selected.description ?? undefined}
         disabled={props.disabled}
-        onClick={() => props.onAuthenticate(props.agentId, selected.id)}
+        onClick={() => props.onAuthenticate(props.patchbayAgentId, selected.id)}
       >
         Log in
       </Button>
@@ -505,25 +506,25 @@ function StoredDefaultsLine({ defaults }: { defaults: AgentConfigView["defaults"
 
 export function AgentsSection(props: {
   state: SettingsState;
-  onVerify(agentId: string): void;
-  onConnectConfigured(agentId: string): void;
+  onVerify(patchbayAgentId: PatchbayAgentId): void;
+  onConnectConfigured(patchbayAgentId: PatchbayAgentId): void;
   onAddAgent(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
   onSave(config: AgentConfigView): void;
-  onRemove(agentId: string): void;
-  onStop(agentId: string): void;
-  onRestart(agentId: string): void;
-  onAuthenticate(agentId: string, methodId: string): void;
-  onLogout(agentId: string): void;
-  onUpgrade(agentId: string): void;
+  onRemove(patchbayAgentId: PatchbayAgentId): void;
+  onStop(patchbayAgentId: PatchbayAgentId): void;
+  onRestart(patchbayAgentId: PatchbayAgentId): void;
+  onAuthenticate(patchbayAgentId: PatchbayAgentId, methodId: string): void;
+  onLogout(patchbayAgentId: PatchbayAgentId): void;
+  onUpgrade(patchbayAgentId: PatchbayAgentId): void;
   onRefreshRegistry(): void;
-  onReorder(ids: string[]): void;
+  onReorder(patchbayAgentIds: PatchbayAgentId[]): void;
   /** A card's knob editor is showing (open) or gone — the host opens or
    * ends the throwaway session that reads the agent's surface. */
-  onEditDefaults(agentId: string, open: boolean): void;
+  onEditDefaults(patchbayAgentId: PatchbayAgentId, open: boolean): void;
 }) {
   const { state } = props;
-  const [editing, setEditing] = useState<string | null>(null); // agentId being edited
-  const [diagFor, setDiagFor] = useState<string | null>(null);
+  const [editing, setEditing] = useState<PatchbayAgentId | null>(null); // the agent being edited
+  const [diagFor, setDiagFor] = useState<PatchbayAgentId | null>(null);
   // Card body (command line, capabilities, knobs) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
@@ -538,13 +539,13 @@ export function AgentsSection(props: {
   const onEditDefaults = useRef(props.onEditDefaults);
   onEditDefaults.current = props.onEditDefaults;
   useEffect(() => {
-    for (const id of editingIds.split("\n").filter(Boolean)) onEditDefaults.current(id, true);
+    for (const patchbayAgentId of editingIds.split("\n").filter(Boolean) as PatchbayAgentId[]) onEditDefaults.current(patchbayAgentId, true);
   }, [editingIds]);
   const editingRef = useRef(editingIds);
   editingRef.current = editingIds;
   useEffect(
     () => () => {
-      for (const id of editingRef.current.split("\n").filter(Boolean)) onEditDefaults.current(id, false);
+      for (const patchbayAgentId of editingRef.current.split("\n").filter(Boolean) as PatchbayAgentId[]) onEditDefaults.current(patchbayAgentId, false);
     },
     [],
   );
@@ -553,14 +554,14 @@ export function AgentsSection(props: {
   // (state.agents) and persisted (state.agentConfigs); Add always persists,
   // so in steady state every agent has both. No more separate "workspace
   // configs" list — one set of cards, not two.
-  const ids = [
+  const patchbayAgentIds = [
     ...state.agentConfigs.map((c) => c.id),
     ...state.agents.filter((a) => !state.agentConfigs.some((c) => c.id === a.id)).map((a) => a.id),
   ];
   // Open by default only when there's nothing to collapse to — otherwise
   // the trigger button next to the stat tiles is the one way in, so adding
   // stays a click away instead of a permanent card taking up the page.
-  const [addOpen, setAddOpen] = useState(ids.length === 0);
+  const [addOpen, setAddOpen] = useState(patchbayAgentIds.length === 0);
 
   return (
     <section className="section">
@@ -595,31 +596,31 @@ export function AgentsSection(props: {
           onRefreshRegistry={props.onRefreshRegistry}
         />
       )}
-      {ids.length === 0 && (
+      {patchbayAgentIds.length === 0 && (
         <div className="card">
           <div className="note m-0">
             No agents yet — add one above.
           </div>
         </div>
       )}
-      <SortableList ids={ids} onReorder={props.onReorder}>
-        {ids.map((id) => {
-          const a = state.agents.find((x) => x.id === id);
-          const config = state.agentConfigs.find((c) => c.id === id);
+      <SortableList ids={patchbayAgentIds} onReorder={props.onReorder}>
+        {patchbayAgentIds.map((patchbayAgentId) => {
+          const a = state.agents.find((x) => x.id === patchbayAgentId);
+          const config = state.agentConfigs.find((c) => c.id === patchbayAgentId);
           const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
           // Registry row for this config: the config's own registrySource is
           // the link (a config id may predate the registry naming); plain id
           // covers agents added straight from the registry.
           const registry = state.registryAgents.find(
-            (r) => r.id === (config?.registrySource?.registryId ?? id),
+            (r) => r.id === (config?.registrySource?.registryId ?? patchbayAgentId),
           );
-          const knobs = state.agentKnobs[id];
+          const knobs = state.agentKnobs[patchbayAgentId];
           // No summary at all = the orchestrator never saw this config — the
           // honest unknown is "untested", never a claimed "stopped".
           const status = a?.status ?? "untested";
           const command = a?.command ?? (config !== undefined ? formatCommandLine(config.command, config.args) : undefined);
           // Editing forces the body open — the form lives there.
-          const detailsOpen = openDetails[id] === true || editing === id;
+          const detailsOpen = openDetails[patchbayAgentId] === true || editing === patchbayAgentId;
           // The action cluster's one derivation (card-controls.ts) — every
           // show/disabled rule lives there, unit-tested; the JSX below reads
           // `controls.x` and nothing else.
@@ -651,7 +652,7 @@ export function AgentsSection(props: {
             }
           }
           return (
-            <SortableItem key={id} id={id} disabled={config === undefined}>
+            <SortableItem key={patchbayAgentId} id={patchbayAgentId} disabled={config === undefined}>
               {(handle) => (
                 <div className="card">
                   {/* flex-wrap + min-w-0: at narrow widths the action cluster wraps
@@ -665,12 +666,12 @@ export function AgentsSection(props: {
                       <UpgradeChip
                         agentName={a?.name ?? effectiveConfig.name}
                         offer={controls.upgrade}
-                        onUpgrade={() => props.onUpgrade(id)}
+                        onUpgrade={() => props.onUpgrade(patchbayAgentId)}
                       />
                     )}
                     <span className="flex-1" />
                     {controls.login.show && (
-                      <LoginControl agentId={id} methods={a?.authMethods ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
+                      <LoginControl patchbayAgentId={patchbayAgentId} methods={a?.authMethods ?? []} disabled={controls.login.disabled} onAuthenticate={props.onAuthenticate} />
                     )}
                     {/* Log out and Remove ask nothing here: the host puts the
                         one question before a connection ends, with what it
@@ -681,7 +682,7 @@ export function AgentsSection(props: {
                         title="Log out — signs the agent out and stops it"
                         aria-label="Log out"
                         disabled={controls.logout.disabled}
-                        onClick={() => props.onLogout(id)}
+                        onClick={() => props.onLogout(patchbayAgentId)}
                       >
                         <Icon name="sign-out" />
                       </Button>
@@ -691,7 +692,7 @@ export function AgentsSection(props: {
                         variant="outline" size="icon" className="size-8"
                         title={controls.stop.busy ? "Stopping…" : "Stop"}
                         aria-label="Stop"
-                        onClick={() => props.onStop(id)}
+                        onClick={() => props.onStop(patchbayAgentId)}
                       >
                         <Icon name={controls.stop.busy ? "loading" : "debug-stop"} spin={controls.stop.busy} />
                       </Button>
@@ -702,18 +703,18 @@ export function AgentsSection(props: {
                         title={controls.verify.busy ? "Verifying…" : "Verify…"}
                         aria-label="Verify"
                         disabled={controls.verify.disabled}
-                        onClick={() => setDiagFor(id)}
+                        onClick={() => setDiagFor(patchbayAgentId)}
                       >
                         <Icon name={controls.verify.busy ? "loading" : "beaker"} spin={controls.verify.busy} />
                       </Button>
                     )}
                     {controls.connect.show && (
-                      <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(id)}>
+                      <Button variant="outline" size="icon" className="size-8" title="Connect" aria-label="Connect" onClick={() => props.onConnectConfigured(patchbayAgentId)}>
                         <Icon name="plug" />
                       </Button>
                     )}
                     {controls.edit.show && (
-                      <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(id)}>
+                      <Button variant="outline" size="icon" className="size-8" title="Edit" aria-label="Edit" onClick={() => setEditing(patchbayAgentId)}>
                         <Icon name="edit" />
                       </Button>
                     )}
@@ -723,7 +724,7 @@ export function AgentsSection(props: {
                         title={controls.remove.busy ? "Removing…" : "Remove — stops the agent and forgets it"}
                         aria-label="Remove"
                         disabled={controls.remove.busy}
-                        onClick={() => props.onRemove(id)}
+                        onClick={() => props.onRemove(patchbayAgentId)}
                       >
                         <Icon name={controls.remove.busy ? "loading" : "trash"} spin={controls.remove.busy} />
                       </Button>
@@ -734,11 +735,11 @@ export function AgentsSection(props: {
                       aria-label={detailsOpen ? "Hide settings" : "Settings"}
                       aria-expanded={detailsOpen}
                       onClick={() => {
-                        if (editing === id) setEditing(null);
-                        setOpenDetails({ ...openDetails, [id]: !detailsOpen });
+                        if (editing === patchbayAgentId) setEditing(null);
+                        setOpenDetails({ ...openDetails, [patchbayAgentId]: !detailsOpen });
                         // Opening is derived (expanded ∧ running — the effect
                         // above); collapsing is this click, stated once.
-                        if (detailsOpen) props.onEditDefaults(id, false);
+                        if (detailsOpen) props.onEditDefaults(patchbayAgentId, false);
                       }}
                     >
                       <Icon name={detailsOpen ? "chevron-up" : "settings-gear"} />
@@ -764,7 +765,7 @@ export function AgentsSection(props: {
                   {status === "crashed" && (
                     <div className="note crashed-note mt-1.5">
                       <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}
-                      <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(id)}>
+                      <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(patchbayAgentId)}>
                         Restart
                       </Button>
                       {a?.stderr !== undefined && a.stderr.length > 0 && (
@@ -782,7 +783,7 @@ export function AgentsSection(props: {
                       {capabilityOneLiner(a.capabilities)}
                     </div>
                   )}
-                  {!detailsOpen ? null : editing === id ? (
+                  {!detailsOpen ? null : editing === patchbayAgentId ? (
                     <AgentConfigForm
                       initial={effectiveConfig}
                       onSave={(c) => {

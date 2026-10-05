@@ -26,6 +26,7 @@ import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import { gatesFor } from "./support/session-gates";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 const BRIDGE = join(process.cwd(), "out", "mcp-bridge.js");
@@ -266,9 +267,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
+function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): LaunchSpec {
   return {
-    agentId,
+    patchbayAgentId,
     name: "Fake Agent",
     command: process.execPath,
     args: [FAKE_AGENT],
@@ -282,7 +283,7 @@ function harness(mcpServers: McpServer[]) {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (agentId, notification) => sessions.handleUpdate(agentId, notification),
+    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
     ...stubFsTerminalHooks(),
   });
   const sessions = new SessionsStore(
@@ -320,15 +321,15 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
       ],
     };
     const h = harness([bridgeEntry]);
-    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e1"));
-    const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e1" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "any open issues?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && text.text).toBe("issue #1: fix the thing");
     expect(remote.authHeadersSeen).toContain("Bearer gh-token-1");
 
-    await h.pool.stop("e1");
+    await h.pool.stop("e1" as PatchbayAgentId);
     tokenHost.close();
     remote.close();
   });
@@ -352,8 +353,8 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
       ],
     };
     const h = harness([bridgeEntry]);
-    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e2"));
-    const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues" }] }, "e2" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "any open issues?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
@@ -364,7 +365,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     expect(remote.authHeadersSeen).toContain("Bearer stale-token");
     expect(remote.authHeadersSeen.at(-1)).toBe("Bearer fresh-token");
 
-    await h.pool.stop("e2");
+    await h.pool.stop("e2" as PatchbayAgentId);
     tokenHost.close();
     remote.close();
   });
@@ -393,8 +394,8 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
       ],
     };
     const h = harness([bridgeEntry]);
-    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_roots" }] }, "e3"));
-    const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
+    await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_roots" }] }, "e3" as PatchbayAgentId));
+    const sessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(sessionId, { text: "what can you see?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
@@ -410,7 +411,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     expect(host.requests.some((r) => r.method === "getRoots" && r.sessionId === "ctx-1")).toBe(true);
     expect(host.requests.some((r) => r.method === "watchRoots" && r.sessionId === "ctx-1")).toBe(true);
 
-    await h.pool.stop("e3");
+    await h.pool.stop("e3" as PatchbayAgentId);
     host.close();
     remote.close();
   });

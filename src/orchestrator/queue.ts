@@ -29,21 +29,21 @@ export class Cancelled extends Error {
   }
 }
 
-export class Queue<Work extends string> {
+export class Queue<Work extends string, Row extends string = string> {
   /** Per row, what it holds — the running operations first. */
-  private readonly rows = new Map<string, Held<Work>[]>();
+  private readonly rows = new Map<Row, Held<Work>[]>();
 
   /** `changed` hears every move of a row's holdings. */
-  constructor(private readonly changed: (row: string) => void) {}
+  constructor(private readonly changed: (row: Row) => void) {}
 
   /** The row's operations: the running ones first, then the ones waiting,
    * in turn order — empty while the row is idle. */
-  held(row: string): Work[] {
+  held(row: Row): Work[] {
     return (this.rows.get(row) ?? []).map((h) => h.work);
   }
 
   /** Every row holding work now. */
-  holding(): string[] {
+  holding(): Row[] {
     return [...this.rows.keys()];
   }
 
@@ -54,7 +54,7 @@ export class Queue<Work extends string> {
    * cut aborts: told to stop, a running operation ends there. `after` is
    * work elsewhere its turn waits for too. */
   run<T>(
-    row: string,
+    row: Row,
     work: Work,
     body: (signal: AbortSignal) => Promise<T>,
     identity: string = work,
@@ -66,7 +66,7 @@ export class Queue<Work extends string> {
   /** Ends the row's work, then runs `body` as `work` once what it cut, and
    * any cut-in held before it, has left the row. Its signal never aborts. */
   cut<T>(
-    row: string,
+    row: Row,
     work: Work,
     body: (signal: AbortSignal) => Promise<T>,
     identity: string = work,
@@ -76,7 +76,7 @@ export class Queue<Work extends string> {
 
   /** Ends the row's work as `by` cutting in would, and runs nothing after:
    * settles once all of it has left. */
-  end(row: string, by: string): Promise<void> {
+  end(row: Row, by: string): Promise<void> {
     const held = [...(this.rows.get(row) ?? [])];
     for (const h of held) h.cancel(by);
     return Promise.all(held.map((h) => h.left)).then(() => {});
@@ -90,12 +90,12 @@ export class Queue<Work extends string> {
 
   /** Settles once everything the row holds now has left it — what an
    * operation elsewhere waits for (`after`). */
-  settled(row: string): Promise<void> {
+  settled(row: Row): Promise<void> {
     return Promise.all((this.rows.get(row) ?? []).map((h) => h.left)).then(() => {});
   }
 
   private enter<T>(
-    row: string,
+    row: Row,
     work: Work,
     identity: string,
     body: (signal: AbortSignal) => Promise<T>,
@@ -152,7 +152,7 @@ export class Queue<Work extends string> {
     return entry.outcome as Promise<T>;
   }
 
-  private leave(row: string, entry: Held<Work>): void {
+  private leave(row: Row, entry: Held<Work>): void {
     const held = (this.rows.get(row) ?? []).filter((h) => h !== entry);
     if (held.length === 0) this.rows.delete(row);
     else this.rows.set(row, held);

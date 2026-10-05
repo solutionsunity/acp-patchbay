@@ -7,6 +7,7 @@
 // `npx tsx test/support/e2e-repair-drive.ts`.
 import { AgentPool } from "../../src/orchestrator/pool";
 import { stubFsTerminalHooks } from "./stub-hooks";
+import type { PatchbayAgentId } from "../../src/shared/ids";
 
 // The ACP SDK's receive loop rejects unhandled when the child dies mid-
 // connect; the extension host logs-and-survives those, so this drive does
@@ -34,7 +35,7 @@ const pool = new AgentPool(
 
 async function main(): Promise<void> {
   const declared = await pool.connect({
-    agentId: "codex-acp",
+    patchbayAgentId: "codex-acp" as PatchbayAgentId,
     name: "Codex",
     command: "npx",
     args: ["-y", "@agentclientprotocol/codex-acp@1.1.2"],

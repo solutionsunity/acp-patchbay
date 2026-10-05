@@ -32,8 +32,8 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const spec = (agentId: string, sha256: string | null): BinaryInstallSpec => ({
-  agentId,
+const spec = (distribution: string, sha256: string | null): BinaryInstallSpec => ({
+  distribution,
   version: "1.0.0",
   archiveUrl: url,
   cmd: "agent",

@@ -27,6 +27,7 @@ import {
   type AgentViewState,
 } from "../../src/shared/protocol";
 import { stubFsTerminalHooks } from "./stub-hooks";
+import type { PatchbayAgentId } from "../../src/shared/ids";
 
 export interface AgentsHarness {
   pool: AgentPool;
@@ -39,16 +40,16 @@ export interface AgentsHarness {
   events: AgentViewEvent[];
   state(): AgentViewState;
   /** The agent's row as the views hold it. */
-  row(agentId: string): AgentSummary | undefined;
+  row(patchbayAgentId: PatchbayAgentId): AgentSummary | undefined;
   /** Agents the store reported removed — the sessions side's cue. */
   removed: string[];
   /** Every onProbeSession announcement, in order — the probe's raw
    * session/new response (spec-pure-core: raw, tests reach into it). */
-  probes: { agentId: string; sessionId: string; modes: unknown; configOptions: unknown }[];
+  probes: { patchbayAgentId: PatchbayAgentId; sessionId: string; modes: unknown; configOptions: unknown }[];
   /** A saved config — and so a row in the views — for an agent a suite
    * connects through the pool directly: the store acts only on agents that
    * exist (auth evidence for an unknown one is dropped). */
-  seedAgent(agentId: string): void;
+  seedAgent(patchbayAgentId: PatchbayAgentId): void;
 }
 
 /** `dir` holds the probe workspaces and the registry cache. */
@@ -74,26 +75,26 @@ export function agentsHarness(
   const state = () => events.reduce(reduceAgentView, initialAgentViewState);
   let agents!: AgentsStore;
   const pool = new AgentPool({
-    onStatusChanged: (agentId, status, detail) => agents.noteStatus(agentId, status, detail),
-    onDeclaredCaptured: (agentId) => agents.noteDeclared(agentId),
+    onStatusChanged: (patchbayAgentId, status, detail) => agents.noteStatus(patchbayAgentId, status, detail),
+    onDeclaredCaptured: (patchbayAgentId) => agents.noteDeclared(patchbayAgentId),
     onSessionUpdate: () => {},
-    onCapabilityEvidence: (agentId, row, evidence) => agents.noteEvidence(agentId, row, evidence),
-    onAuthWireFact: (agentId, method, settled, startedAt, reason) =>
-      agents.noteAuthWireFact(agentId, method, settled, startedAt, reason),
+    onCapabilityEvidence: (patchbayAgentId, row, evidence) => agents.noteEvidence(patchbayAgentId, row, evidence),
+    onAuthWireFact: (patchbayAgentId, method, settled, startedAt, reason) =>
+      agents.noteAuthWireFact(patchbayAgentId, method, settled, startedAt, reason),
     ...stubFsTerminalHooks(),
   }, undefined, { resolveLaunch: opts.resolveLaunch });
-  const queue = new Queue<AgentOperation>((agentId) => agents.publish(agentId));
+  const queue = new Queue<AgentOperation, PatchbayAgentId>((patchbayAgentId) => agents.publish(patchbayAgentId));
   const usedCapabilities = new UsedCapabilityStore(kv);
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
-    changed: (agentId) => agents.publish(agentId),
-    onProbeSession: (agentId, response: acp.NewSessionResponse) =>
+    changed: (patchbayAgentId) => agents.publish(patchbayAgentId),
+    onProbeSession: (patchbayAgentId, response: acp.NewSessionResponse) =>
       probes.push({
-        agentId,
+        patchbayAgentId,
         sessionId: response.sessionId,
         modes: response.modes,
         configOptions: response.configOptions,
       }),
-    probeRoot: (agentId) => agents.probeRoot(agentId),
+    probeRoot: (patchbayAgentId) => agents.probeRoot(patchbayAgentId),
   });
   const deps: AgentsStoreDeps = {
     pool,
@@ -105,7 +106,7 @@ export function agentsHarness(
     lastConnected: new LastConnectedStore(new MemoryKV()),
     registry: new AcpRegistryStore(join(dir, "registry"), () => {}),
     tracker,
-    busy: (agentId) => queue.held(agentId),
+    busy: (patchbayAgentId) => queue.held(patchbayAgentId),
     workspaceCwd: dir,
     binaryCacheDir: join(dir, "bin-cache"),
     probeRootBase: join(dir, "probe"),
@@ -115,17 +116,17 @@ export function agentsHarness(
     emitSettings: () => {},
     warn: () => {},
     runLoginTask: async () => 0,
-    removed: (agentId) => removed.push(agentId),
+    removed: (patchbayAgentId) => removed.push(patchbayAgentId),
     authCleared: () => {},
     defaultsChanged: () => {},
     ...opts.hooks,
   });
-  const seedAgent = (agentId: string) => {
+  const seedAgent = (patchbayAgentId: PatchbayAgentId) => {
     // MemoryKV writes land before the promise resolves — the record is
     // there by the time this returns.
     void deps.configs.upsert({
-      id: agentId,
-      name: agentId,
+      id: patchbayAgentId,
+      name: patchbayAgentId,
       command: process.execPath,
       args: [],
       autoConnect: false,
@@ -133,11 +134,11 @@ export function agentsHarness(
       registrySource: null,
       lastSeenVersion: null,
     });
-    agents.publish(agentId);
+    agents.publish(patchbayAgentId);
   };
-  const row = (agentId: string) => state().agents.find((a) => a.id === agentId);
+  const row = (patchbayAgentId: PatchbayAgentId) => state().agents.find((a) => a.id === patchbayAgentId);
   const gates = new AgentGates(agents, queue, {
-    name: (agentId) => agents.name(agentId),
+    name: (patchbayAgentId) => agents.name(patchbayAgentId),
     openWork: () => ({ conversations: 0, turns: 0 }),
     confirm: async () => true,
     ...opts.asks,

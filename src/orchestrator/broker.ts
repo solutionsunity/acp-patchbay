@@ -32,6 +32,7 @@ import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import { NodeTerminalRunner, type CreateTerminalParams, type TerminalRunner } from "./terminal-runner";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
@@ -102,7 +103,7 @@ interface Pending {
  * unique among one agent connection's open questions — so a notice is
  * matched on (agent, id). */
 interface LinkCompletion {
-  agentId: string;
+  patchbayAgentId: PatchbayAgentId;
   elicitationId: string;
 }
 
@@ -240,14 +241,14 @@ export class PermissionBroker {
       });
       let record: LinkRecord | null = null;
       if (link !== null && question.completion !== undefined) {
-        const { agentId, elicitationId } = question.completion;
-        const links = this.linksOf(agentId);
+        const { patchbayAgentId, elicitationId } = question.completion;
+        const links = this.linksOf(patchbayAgentId);
         // A reused id starts fresh: ids are unique only among open questions.
         record = { sessionId, blockId, completed: false, withdrawn: false };
         links.ids.set(elicitationId, record);
         if (links.early.includes(elicitationId)) {
           links.early = links.early.filter((id) => id !== elicitationId);
-          this.completeLink(agentId, elicitationId);
+          this.completeLink(patchbayAgentId, elicitationId);
           return;
         }
       }
@@ -288,8 +289,8 @@ export class PermissionBroker {
    * order. A card the user answered keeps their answer and is marked done.
    * A notice with no question yet is held for one; a repeat for an id that
    * already completed is ignored, as the spec requires. */
-  completeLink(agentId: string, elicitationId: string): void {
-    const links = this.linksOf(agentId);
+  completeLink(patchbayAgentId: PatchbayAgentId, elicitationId: string): void {
+    const links = this.linksOf(patchbayAgentId);
     const record = links.ids.get(elicitationId);
     if (record === undefined) {
       links.early = [...links.early, elicitationId].slice(-EARLY_COMPLETIONS_KEPT);
@@ -309,15 +310,15 @@ export class PermissionBroker {
 
   /** The agent's connection ended: its completions can no longer meet a
    * question, and its ids start fresh on the next connection. */
-  forgetAgent(agentId: string): void {
-    this.linkIds.delete(agentId);
+  forgetAgent(patchbayAgentId: PatchbayAgentId): void {
+    this.linkIds.delete(patchbayAgentId);
   }
 
-  private linksOf(agentId: string): AgentLinks {
-    let links = this.linkIds.get(agentId);
+  private linksOf(patchbayAgentId: PatchbayAgentId): AgentLinks {
+    let links = this.linkIds.get(patchbayAgentId);
     if (links === undefined) {
       links = { early: [], ids: new Map() };
-      this.linkIds.set(agentId, links);
+      this.linkIds.set(patchbayAgentId, links);
     }
     return links;
   }

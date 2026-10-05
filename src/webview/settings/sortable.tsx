@@ -30,9 +30,9 @@ import { Icon } from "../shared/icon";
 /** The card lists are vertical and homogeneous, so one context + the
  * vertical strategy covers both pages. `ids` is the rendered order;
  * `onReorder` gets the full post-drop order exactly once, on drop. */
-export function SortableList(props: {
-  ids: readonly string[];
-  onReorder(ids: string[]): void;
+export function SortableList<Id extends string>(props: {
+  ids: readonly Id[];
+  onReorder(ids: Id[]): void;
   children: ReactNode;
 }) {
   const sensors = useSensors(
@@ -48,8 +48,8 @@ export function SortableList(props: {
       modifiers={[restrictToVerticalAxis, restrictToParentElement]}
       onDragEnd={({ active, over }) => {
         if (over === null || active.id === over.id) return;
-        const from = props.ids.indexOf(String(active.id));
-        const to = props.ids.indexOf(String(over.id));
+        const from = props.ids.findIndex((id) => id === active.id);
+        const to = props.ids.findIndex((id) => id === over.id);
         if (from === -1 || to === -1) return;
         props.onReorder(arrayMove([...props.ids], from, to));
       }}

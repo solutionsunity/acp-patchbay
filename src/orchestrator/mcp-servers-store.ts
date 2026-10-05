@@ -32,6 +32,7 @@ import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-token
 import { McpServerConfigStore, type McpServerConfig, type McpServerSource } from "./stores/mcp-server-configs";
 import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
+import type { PatchbayAgentId } from "../shared/ids";
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
@@ -152,12 +153,12 @@ function expiresAtFrom(expiresIn: number | undefined): string | undefined {
  * it ("auto" = every agent; an id list pins exactly; "except" = every
  * agent minus the listed). Muted means configured, credential intact, not
  * routed. */
-function reaches(config: McpServerConfig, agentId: string): boolean {
+function reaches(config: McpServerConfig, patchbayAgentId: PatchbayAgentId): boolean {
   if (!config.active) return false;
   if (config.routing === "auto") return true;
   return Array.isArray(config.routing)
-    ? config.routing.includes(agentId)
-    : !config.routing.except.includes(agentId);
+    ? config.routing.includes(patchbayAgentId)
+    : !config.routing.except.includes(patchbayAgentId);
 }
 
 /** Whether "connected" requires a stored credential: curated servers
@@ -661,8 +662,8 @@ export class McpServersStore {
   }
 
   /** An agent removed: no server's reach names it any more. */
-  async forgetAgent(agentId: string): Promise<void> {
-    await this.configs.forgetAgent(agentId);
+  async forgetAgent(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    await this.configs.forgetAgent(patchbayAgentId);
     await this.refresh();
   }
 
@@ -763,13 +764,13 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  /** A server's credential for the bridge serving it to `agentId` — only
+  /** A server's credential for the bridge serving it to `patchbayAgentId` — only
    * while the server is still connected, switched on and routed to that
    * agent: muting, re-routing or removing it reaches a running bridge at
    * its next request. */
-  async credentialFor(serverId: string, agentId: string): Promise<{ accessToken: string } | null> {
+  async credentialFor(serverId: string, patchbayAgentId: PatchbayAgentId): Promise<{ accessToken: string } | null> {
     const config = this.configs.get(serverId);
-    if (config === undefined || !reaches(config, agentId)) return null;
+    if (config === undefined || !reaches(config, patchbayAgentId)) return null;
     return this.freshToken(serverId);
   }
 
@@ -820,7 +821,7 @@ export class McpServersStore {
     }
   }
 
-  /** The mcpServers entries a session for `agentId` should get — the
+  /** The mcpServers entries a session for `patchbayAgentId` should get — the
    * editor server first, then every configured server that reaches it
    * (protocol.ts records the fidelity-gate supersession) and is actually
    * usable (connected where a credential is needed, a real endpoint where
@@ -836,7 +837,7 @@ export class McpServersStore {
    * the earlier bridge-only rule). Otherwise the stdio-to-HTTP
    * bridge, the guaranteed floor. */
   async mcpServersFor(
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     contextToken: string,
     declaresHttp: boolean,
   ): Promise<{ servers: McpServer[]; given: AttachedServer[] }> {
@@ -855,7 +856,7 @@ export class McpServersStore {
     ];
     const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
     for (const config of this.configs.list()) {
-      if (!reaches(config, agentId)) continue;
+      if (!reaches(config, patchbayAgentId)) continue;
 
       const source = config.source;
       if (source.kind === "custom-stdio") {
@@ -928,7 +929,7 @@ export class McpServersStore {
       for (const { value } of "headers" in server ? (server.headers ?? []) : []) this.wire.crossing(value);
     }
     this.log.debug(
-      `mcpServersFor ${agentId}: serving ${servers.length} server(s)` +
+      `mcpServersFor ${patchbayAgentId}: serving ${servers.length} server(s)` +
         (servers.length > 0 ? ` — ${servers.map((sv) => sv.name).join(", ")}` : ""),
     );
     return { servers, given };

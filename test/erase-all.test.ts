@@ -25,6 +25,7 @@ import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
+import type { PatchbayAgentId } from "../src/shared/ids";
 
 let dir: string;
 beforeEach(async () => {
@@ -60,24 +61,24 @@ describe("eraseAllData", () => {
     const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
     // A lived-in install.
-    await agentConfigs.upsert({ id: "claude", name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
+    await agentConfigs.upsert({ id: "claude" as PatchbayAgentId, name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
     await mcpServerConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
     await mcpServerEnv.set("github", { GITHUB_PAT: "ghp-secret" });
     await mcpServerTokens.set("github", { accessToken: "gho-secret" });
-    await usedCapabilities.save("claude", "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
+    await usedCapabilities.save("claude" as PatchbayAgentId, "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // A stray from a removed agent — no config left, must still go.
-    await usedCapabilities.save("ghost", "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
+    await usedCapabilities.save("ghost" as PatchbayAgentId, "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     await spawnRegistry.add(4242, "node agent.js", "agent");
     await permissionRules.set({ commandRules: [{ pattern: "npm *", verdict: "allow" }], fileWriteScope: "always-ask" });
     await machineRules.set([{ pattern: "git status", verdict: "allow" }]);
     await decisionAudit.append({ kind: "permission", decision: "allow" });
-    await lastConnected.write(["claude"]);
-    await lastActiveSession.set({ agentId: "a", sessionId: "s1" });
+    await lastConnected.write(["claude" as PatchbayAgentId]);
+    await lastActiveSession.set({ agentId: "a" as PatchbayAgentId, sessionId: "s1" });
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
-    await composerKnobs.record("claude", { mode: "code" });
-    await authLocks.upsert({ id: "claude", lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
-    await sessionContinuity.patch("s1", "claude", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
+    await composerKnobs.record("claude" as PatchbayAgentId, { mode: "code" });
+    await authLocks.upsert({ id: "claude" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
+    await sessionContinuity.patch("s1", "claude" as PatchbayAgentId, "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
     await workspaceSavedRoots.add("/src/lib");
     await machineSavedRoots.add("/src/odoo");
     let stashWiped = false;
@@ -85,7 +86,7 @@ describe("eraseAllData", () => {
     await eraseAllData({
       agentConfigs, mcpServerConfigs, usedCapabilities,
       authLocks, spawnRegistry, agentEnv, mcpServerEnv,
-      mcpServerTokens, permissionRules, machineRules: machineRules,
+      mcpServerTokens, permissionRules, machineRules,
       decisionAudit, lastConnected, lastActiveSession,
       preferences, composerKnobs, sessionContinuity,
       workspaceSavedRoots, machineSavedRoots,
@@ -108,7 +109,7 @@ describe("eraseAllData", () => {
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
-    expect(composerKnobs.get("claude")).toBeUndefined();
+    expect(composerKnobs.get("claude" as PatchbayAgentId)).toBeUndefined();
     expect(composerKnobs.count()).toBe(0);
     expect(workspaceSavedRoots.list()).toEqual([]);
     expect(machineSavedRoots.list()).toEqual([]);

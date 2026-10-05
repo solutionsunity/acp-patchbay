@@ -19,6 +19,8 @@
 // vscode-free (like sessions-store.ts) so redaction and lifetime are
 // unit-testable; the orchestrator supplies the real OutputChannel as sink.
 
+import type { PatchbayAgentId } from "../shared/ids";
+
 export interface WireLogSink {
   appendLine(line: string): void;
 }
@@ -80,13 +82,13 @@ export class WireLog {
 
   /** One complete ndjson frame. Cheap no-op while inactive — the pool's tap
    * additionally gates on `active` before even assembling lines. */
-  frame(agentId: string, direction: "→" | "←", line: string): void {
+  frame(patchbayAgentId: PatchbayAgentId, direction: "→" | "←", line: string): void {
     if (!this.active) return;
     let out = this.redact(line);
     if (out.length > MAX_FRAME_CHARS) {
       out = `${out.slice(0, MAX_FRAME_CHARS)} … [truncated — ${line.length} chars total]`;
     }
-    this.sink().appendLine(`${new Date().toISOString()} ${direction} ${agentId} ${out}`);
+    this.sink().appendLine(`${new Date().toISOString()} ${direction} ${patchbayAgentId} ${out}`);
   }
 
   /** `text` with every registered value masked. Longest first: when one

@@ -185,11 +185,11 @@ export function resolveDistribution(
  * no digest anywhere. */
 export function binaryDigestFor(
   agents: readonly RegistryAgent[],
-  agentId: string,
+  registryId: string,
   version: string,
   pinned: string | null,
 ): string | null {
-  const agent = agents.find((a) => a.id === agentId && a.version === version);
+  const agent = agents.find((a) => a.id === registryId && a.version === version);
   const current = agent === undefined ? undefined : resolveDistribution(agent);
   const listed = current !== undefined && "kind" in current && current.kind === "binary" ? current.sha256 : null;
   return listed ?? pinned;

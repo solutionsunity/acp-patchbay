@@ -51,6 +51,7 @@ import type { ComposerKnobsStore } from "./stores/composer-knobs";
 import type { LastConnectedStore } from "./stores/last-connected";
 import type { SecretEnvStore } from "./stores/secret-env";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
+import type { PatchbayAgentId } from "../shared/ids";
 
 /** Where an agent's facts live — the files its saved facts are read from,
  * the pool its live facts come from — and the directories its launches and
@@ -68,7 +69,7 @@ export interface AgentsStoreDeps {
   tracker: CapabilityTracker;
   /** What the orchestrator's queue holds for the agent, the running
    * operation first — read for the row, never kept. */
-  busy: (agentId: string) => readonly AgentWork["kind"][];
+  busy: (patchbayAgentId: PatchbayAgentId) => readonly AgentWork["kind"][];
   /** The cwd every spawn and new session starts in. */
   workspaceCwd: string;
   /** Downloaded binaries, by agent and version. */
@@ -89,11 +90,11 @@ export interface AgentsStoreHooks {
   runLoginTask(name: string, recipe: TerminalAuthRecipe): Promise<number | undefined>;
   /** The agent is being removed — its sessions leave with it. Called once
    * its process is down, before its own facts are purged. */
-  removed(agentId: string): void;
+  removed(patchbayAgentId: PatchbayAgentId): void;
   /** The agent's auth lock just cleared. */
-  authCleared(agentId: string): void;
+  authCleared(patchbayAgentId: PatchbayAgentId): void;
   /** A save moved the agent's stored defaults. */
-  defaultsChanged(agentId: string): void;
+  defaultsChanged(patchbayAgentId: PatchbayAgentId): void;
 }
 
 /** The operations on agents' connections — every door reaches them through
@@ -101,14 +102,14 @@ export interface AgentsStoreHooks {
  * `signal` stops where it is once the signal aborts, and throws its
  * reason. */
 export interface ConnectionOperations {
-  connect(agentId: string, signal?: AbortSignal): Promise<void>;
-  restart(agentId: string, signal?: AbortSignal): Promise<void>;
-  upgrade(agentId: string, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
-  login(agentId: string, methodId: string, signal?: AbortSignal): Promise<void>;
-  logout(agentId: string): Promise<void>;
-  verify(agentId: string): Promise<ProbeOutcome>;
-  stop(agentId: string): Promise<void>;
-  remove(agentId: string): Promise<void>;
+  connect(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void>;
+  restart(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void>;
+  upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
+  login(patchbayAgentId: PatchbayAgentId, methodId: string, signal?: AbortSignal): Promise<void>;
+  logout(patchbayAgentId: PatchbayAgentId): Promise<void>;
+  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome>;
+  stop(patchbayAgentId: PatchbayAgentId): Promise<void>;
+  remove(patchbayAgentId: PatchbayAgentId): Promise<void>;
   stopAll(): Promise<void>;
 }
 
@@ -126,24 +127,24 @@ export class AgentsStore implements ConnectionOperations {
   // ── reads ─────────────────────────────────────────────────────────────────
 
   /** The agent's saved config, read from the file — undefined once removed. */
-  config(agentId: string): AgentConfig | undefined {
-    return this.deps.configs.get(agentId);
+  config(patchbayAgentId: PatchbayAgentId): AgentConfig | undefined {
+    return this.deps.configs.get(patchbayAgentId);
   }
 
   /** The spawnable spec its saved config stands for. */
-  spec(agentId: string): LaunchSpec | undefined {
-    const config = this.config(agentId);
+  spec(patchbayAgentId: PatchbayAgentId): LaunchSpec | undefined {
+    const config = this.config(patchbayAgentId);
     return config === undefined ? undefined : this.specFromConfig(config);
   }
 
-  name(agentId: string): string | undefined {
-    return this.config(agentId)?.name;
+  name(patchbayAgentId: PatchbayAgentId): string | undefined {
+    return this.config(patchbayAgentId)?.name;
   }
 
   /** The agent as the views show it, every fact read now — undefined once it
    * has no saved config. */
-  row(agentId: string): AgentSummary | undefined {
-    const config = this.config(agentId);
+  row(patchbayAgentId: PatchbayAgentId): AgentSummary | undefined {
+    const config = this.config(patchbayAgentId);
     return config === undefined ? undefined : this.rowOf(config);
   }
 
@@ -152,43 +153,43 @@ export class AgentsStore implements ConnectionOperations {
   }
 
   /** The agent's capability matrix, read now (capability-tracker.ts). */
-  matrix(agentId: string): CapabilityMatrix | undefined {
-    return this.deps.tracker.matrix(agentId);
+  matrix(patchbayAgentId: PatchbayAgentId): CapabilityMatrix | undefined {
+    return this.deps.tracker.matrix(patchbayAgentId);
   }
 
   /** The update fact, worked out now — the registry's version against each
    * config's pin and the version that last answered (agent-updates.ts). */
-  updates(): Readonly<Record<string, AgentUpdate>> {
+  updates(): ReadonlyMap<PatchbayAgentId, AgentUpdate> {
     return agentUpdates(this.deps.registry.current().agents, this.deps.configs.list());
   }
 
-  authLocked(agentId: string): boolean {
-    return this.deps.authLocks.lockFor(agentId) !== null;
+  authLocked(patchbayAgentId: PatchbayAgentId): boolean {
+    return this.deps.authLocks.lockFor(patchbayAgentId) !== null;
   }
 
   /** The knob seed a fresh session of this agent starts from: its configured
    * defaults, or — when the preference says so — the last combination the
    * agent confirmed on it, falling back to the defaults when it has none
    * (an agent whose knobs were never touched has no record). */
-  knobSeed(agentId: string, source: PreferencesView["knobSource"]): KnobSeed | undefined {
-    const defaults = this.spec(agentId)?.defaults;
+  knobSeed(patchbayAgentId: PatchbayAgentId, source: PreferencesView["knobSource"]): KnobSeed | undefined {
+    const defaults = this.spec(patchbayAgentId)?.defaults;
     if (source !== "last-session") return defaults;
-    return this.deps.composerKnobs.get(agentId) ?? defaults;
+    return this.deps.composerKnobs.get(patchbayAgentId) ?? defaults;
   }
 
   /** A user-set, agent-confirmed knob combination — the one write of the
    * last-session seed. */
-  recordKnobs(agentId: string, seed: KnobSeed): void {
-    void this.deps.composerKnobs.record(agentId, seed);
+  recordKnobs(patchbayAgentId: PatchbayAgentId, seed: KnobSeed): void {
+    void this.deps.composerKnobs.record(patchbayAgentId, seed);
   }
 
-  /** An agent's standing throwaway workspace (`probe/<agentId>`) — the
+  /** An agent's standing throwaway workspace (`probe/<patchbayAgentId>`) — the
    * capability probe's and the defaults editor's sessions both open here,
    * never in a user workspace root. Created idempotently, deleted only with
    * the agent's config (`remove`): a workspace-aware agent may hold it
    * agent-side past session/new. */
-  async probeRoot(agentId: string): Promise<string> {
-    const dir = join(this.deps.probeRootBase, agentId);
+  async probeRoot(patchbayAgentId: PatchbayAgentId): Promise<string> {
+    const dir = join(this.deps.probeRootBase, patchbayAgentId);
     await mkdir(dir, { recursive: true });
     return dir;
   }
@@ -197,9 +198,9 @@ export class AgentsStore implements ConnectionOperations {
 
   /** Sends the agent's row to both views as it reads now — or its removal,
    * once it has no saved config. */
-  publish(agentId: string): void {
-    const row = this.row(agentId);
-    this.hooks.emit(row !== undefined ? { kind: "agentUpserted", agent: row } : { kind: "agentRemoved", agentId });
+  publish(patchbayAgentId: PatchbayAgentId): void {
+    const row = this.row(patchbayAgentId);
+    this.hooks.emit(row !== undefined ? { kind: "agentUpserted", agent: row } : { kind: "agentRemoved", patchbayAgentId });
   }
 
   /** Every row — a config change can move any row's name, command or
@@ -238,39 +239,39 @@ export class AgentsStore implements ConnectionOperations {
   // ── what the pool reports ─────────────────────────────────────────────────
 
   /** The process's status, as the pool saw it change. */
-  noteStatus(agentId: string, status: AgentStatus, detail?: string): void {
-    this.publish(agentId);
+  noteStatus(patchbayAgentId: PatchbayAgentId, status: AgentStatus, detail?: string): void {
+    this.publish(patchbayAgentId);
     const suffix = detail !== undefined ? ` — ${detail}` : "";
-    if (status === "crashed") this.log.error(`${agentId}: crashed${suffix}`);
-    else this.log.info(`${agentId}: ${status}${suffix}`);
+    if (status === "crashed") this.log.error(`${patchbayAgentId}: crashed${suffix}`);
+    else this.log.info(`${patchbayAgentId}: ${status}${suffix}`);
   }
 
   /** A fresh connection's `initialize` answer is in the pool: its claims
    * reach the matrix, and the version that actually answered is recorded. */
-  noteDeclared(agentId: string): void {
-    this.deps.tracker.onDeclared(agentId);
-    const version = this.deps.pool.get(agentId)?.initialize?.agentInfo?.version;
-    if (version !== undefined) void this.recordSeenVersion(agentId, version);
+  noteDeclared(patchbayAgentId: PatchbayAgentId): void {
+    this.deps.tracker.onDeclared(patchbayAgentId);
+    const version = this.deps.pool.get(patchbayAgentId)?.initialize?.agentInfo?.version;
+    if (version !== undefined) void this.recordSeenVersion(patchbayAgentId, version);
   }
 
   /** The single sink for pool.ts's proof-table hits (capabilities.ts
    * CAPABILITY_PROOFS) — the tracker marks the row, and the matrix it
    * reads moves. */
-  noteEvidence(agentId: string, row: CapabilityRowId, evidence: "used" | "suspect"): void {
-    this.deps.tracker.noteEvidence(agentId, row, evidence);
+  noteEvidence(patchbayAgentId: PatchbayAgentId, row: CapabilityRowId, evidence: "used" | "suspect"): void {
+    this.deps.tracker.noteEvidence(patchbayAgentId, row, evidence);
   }
 
   /** One agent RPC's auth bearing, as the pool's wire chokepoint reports
    * it, read as evidence for the authority table. */
   noteAuthWireFact(
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     method: string,
     settled: "ok" | "auth_required",
     startedAt: string,
     reason?: string | null,
   ): void {
     this.noteAuthEvidence(
-      agentId,
+      patchbayAgentId,
       settled === "ok"
         ? { kind: "rpcOk", method, startedAt }
         : { kind: "authRequired", method, reason: reason ?? null },
@@ -282,21 +283,21 @@ export class AgentsStore implements ConnectionOperations {
    * the authority table (auth-evidence.ts) decides what that does to the
    * lock, the lock persists machine-scoped, and only a real transition
    * re-sends the row. Nothing else writes the lock. */
-  private noteAuthEvidence(agentId: string, evidence: AuthEvidence): void {
+  private noteAuthEvidence(patchbayAgentId: PatchbayAgentId, evidence: AuthEvidence): void {
     // Evidence for an agent that no longer exists writes nothing: a
     // terminal login left open across a Remove would otherwise re-create
     // a lock entry for a deleted id and poison a future re-add.
-    if (this.config(agentId) === undefined) {
-      this.log.debug(`auth evidence for unknown agent ${agentId} dropped (${evidence.kind})`);
+    if (this.config(patchbayAgentId) === undefined) {
+      this.log.debug(`auth evidence for unknown agent ${patchbayAgentId} dropped (${evidence.kind})`);
       return;
     }
-    const result = applyAuthEvidence(this.deps.authLocks.lockFor(agentId), evidence, new Date().toISOString());
+    const result = applyAuthEvidence(this.deps.authLocks.lockFor(patchbayAgentId), evidence, new Date().toISOString());
     if (!result.changed) return;
     if (result.lock === null) {
-      this.deps.authLocks.remove(agentId).catch((err: Error) => {
-        this.log.error(`${agentId}: auth-lock remove failed — ${err.message}`);
+      this.deps.authLocks.remove(patchbayAgentId).catch((err: Error) => {
+        this.log.error(`${patchbayAgentId}: auth-lock remove failed — ${err.message}`);
       });
-      this.publish(agentId);
+      this.publish(patchbayAgentId);
       // The auth row's off-table proof source (recorded at
       // CAPABILITY_PROOFS.auth) — deliberately only the affirmative auth
       // actions: an authenticate round-trip or a terminal login exiting 0.
@@ -307,18 +308,18 @@ export class AgentsStore implements ConnectionOperations {
         evidence.kind === "loginOk" ||
         (evidence.kind === "rpcOk" && evidence.method === methods.agent.authenticate)
       ) {
-        this.noteEvidence(agentId, "auth", "used");
+        this.noteEvidence(patchbayAgentId, "auth", "used");
       }
       // Words held at the turn-start door were waiting for exactly this:
       // an idle session has no coming turn end to drain them. The lock is
       // already cleared in memory (FileKV swaps synchronously), so the
       // drain reads the new truth.
-      this.hooks.authCleared(agentId);
+      this.hooks.authCleared(patchbayAgentId);
     } else {
-      this.deps.authLocks.upsert({ id: agentId, lock: result.lock }).catch((err: Error) => {
-        this.log.error(`${agentId}: auth-lock write failed — ${err.message}`);
+      this.deps.authLocks.upsert({ id: patchbayAgentId, lock: result.lock }).catch((err: Error) => {
+        this.log.error(`${patchbayAgentId}: auth-lock write failed — ${err.message}`);
       });
-      this.publish(agentId);
+      this.publish(patchbayAgentId);
     }
   }
 
@@ -326,8 +327,8 @@ export class AgentsStore implements ConnectionOperations {
    * truth") — recorded on the config so the registry's live version
    * can be compared against what actually answered, driving "update
    * available" without ever trusting the pinned ask over the wire's fact. */
-  private async recordSeenVersion(agentId: string, version: string): Promise<void> {
-    const existing = this.config(agentId);
+  private async recordSeenVersion(patchbayAgentId: PatchbayAgentId, version: string): Promise<void> {
+    const existing = this.config(patchbayAgentId);
     if (existing === undefined || existing.lastSeenVersion === version) return;
     // Knob offerings need no reset here: they're connection-scoped, and a
     // version can only change on a fresh connect, which already dropped
@@ -348,19 +349,19 @@ export class AgentsStore implements ConnectionOperations {
    * connect. Throws when the agent has no saved config, or when the connect
    * fails (the pool already reported the crash and its reason) or is
    * stopped. */
-  async connect(agentId: string, signal?: AbortSignal): Promise<void> {
-    if (this.deps.pool.get(agentId)?.status === "running") return;
-    const spec = this.spec(agentId);
+  async connect(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void> {
+    if (this.deps.pool.get(patchbayAgentId)?.status === "running") return;
+    const spec = this.spec(patchbayAgentId);
     if (spec === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
-    const env = await this.deps.env.get(agentId);
+    const env = await this.deps.env.get(patchbayAgentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
     await this.deps.pool.connect(merged, { signal });
     void this.warnOnPathDivergence(merged);
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
-  stop(agentId: string): Promise<void> {
-    return this.deps.pool.stop(agentId);
+  stop(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.deps.pool.stop(patchbayAgentId);
   }
 
   /** Every connection down on the shutdown budget, in parallel. */
@@ -373,14 +374,14 @@ export class AgentsStore implements ConnectionOperations {
    * connect-time snapshot (a command edit or key rotation in Settings must
    * reach the very next spawn). No config behind the connection: the
    * snapshot is all there is, and pool.restart falls back to it. */
-  async restart(agentId: string, signal?: AbortSignal): Promise<void> {
-    const spec = this.spec(agentId);
+  async restart(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void> {
+    const spec = this.spec(patchbayAgentId);
     if (spec === undefined) {
-      await this.deps.pool.restart(agentId, { signal });
+      await this.deps.pool.restart(patchbayAgentId, { signal });
       return;
     }
-    const env = await this.deps.env.get(agentId);
-    await this.deps.pool.restart(agentId, { spec: { ...spec, env: { ...spec.env, ...env } }, signal });
+    const env = await this.deps.env.get(patchbayAgentId);
+    await this.deps.pool.restart(patchbayAgentId, { spec: { ...spec, env: { ...spec.env, ...env } }, signal });
   }
 
   /** Re-resolves the registry's current (possibly newer) pinned version and
@@ -392,23 +393,23 @@ export class AgentsStore implements ConnectionOperations {
    * stopped only on `consent`, asked at that moment — the caller's
    * question, so it is never asked for an upgrade that can't happen.
    * Stopped before the new pin is saved, the agent keeps its version. */
-  async upgrade(agentId: string, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
-    const config = this.config(agentId);
+  async upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
+    const config = this.config(patchbayAgentId);
     const registryId = config?.registrySource?.registryId;
     if (config === undefined || registryId === undefined) return;
     const listed = this.deps.registry.current().agents.find((a) => a.id === registryId);
     const launch = listed === undefined ? null : this.registryLaunch(listed);
     if (launch === null) return;
-    if (this.deps.pool.get(agentId)?.status === "running") {
+    if (this.deps.pool.get(patchbayAgentId)?.status === "running") {
       if (consent !== undefined && !(await consent())) return;
-      await this.deps.pool.stop(agentId);
+      await this.deps.pool.stop(patchbayAgentId);
     }
     signal?.throwIfAborted();
     // Saved under the agent's own id: a config that predates the registry
     // naming has an id the registry doesn't use.
-    await this.persistAgentConfig({ ...launch.spec, agentId }, launch.registrySource);
+    await this.persistAgentConfig({ ...launch.spec, patchbayAgentId }, launch.registrySource);
     try {
-      await this.connect(agentId, signal);
+      await this.connect(patchbayAgentId, signal);
     } catch {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
@@ -423,18 +424,18 @@ export class AgentsStore implements ConnectionOperations {
    * tracker's marks — and its session rows leave the drawer. Patchbay
    * holds no session history — the sessions live on in the agent's own
    * store and reappear via session/list on a re-add. */
-  async remove(agentId: string): Promise<void> {
-    await this.deps.pool.stop(agentId);
-    this.hooks.removed(agentId);
-    await this.deps.configs.remove(agentId);
-    await this.deps.usedCapabilities.remove(agentId);
-    await this.deps.composerKnobs.remove(agentId);
-    await this.deps.env.remove(agentId);
-    await this.deps.authLocks.remove(agentId);
-    await rm(join(this.deps.probeRootBase, agentId), { recursive: true, force: true }).catch(() => {});
-    this.deps.pool.forget(agentId);
-    this.deps.tracker.forget(agentId);
-    this.publish(agentId);
+  async remove(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    await this.deps.pool.stop(patchbayAgentId);
+    this.hooks.removed(patchbayAgentId);
+    await this.deps.configs.remove(patchbayAgentId);
+    await this.deps.usedCapabilities.remove(patchbayAgentId);
+    await this.deps.composerKnobs.remove(patchbayAgentId);
+    await this.deps.env.remove(patchbayAgentId);
+    await this.deps.authLocks.remove(patchbayAgentId);
+    await rm(join(this.deps.probeRootBase, patchbayAgentId), { recursive: true, force: true }).catch(() => {});
+    this.deps.pool.forget(patchbayAgentId);
+    this.deps.tracker.forget(patchbayAgentId);
+    this.publish(patchbayAgentId);
     await this.publishAll();
   }
 
@@ -443,8 +444,8 @@ export class AgentsStore implements ConnectionOperations {
    * connect — nothing when the source names nothing this machine can run.
    * Like every save it never waits: the card exists from the click, and
    * every download the launch needs then happens on it as a connect phase. */
-  async saveFrom(source: ConnectAgentSource): Promise<string | undefined> {
-    if ("configuredId" in source) return this.config(source.configuredId)?.id;
+  async saveFrom(source: ConnectAgentSource): Promise<PatchbayAgentId | undefined> {
+    if ("patchbayAgentId" in source) return this.config(source.patchbayAgentId)?.id;
     let spec: LaunchSpec | null = null;
     let registrySource: AgentConfig["registrySource"] = null;
     if ("registryId" in source) {
@@ -458,7 +459,7 @@ export class AgentsStore implements ConnectionOperations {
       const parsed = parseCommandLine(source.command);
       if (parsed === null) return undefined;
       spec = {
-        agentId: `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}`,
+        patchbayAgentId: `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}` as PatchbayAgentId,
         name: parsed.command,
         command: parsed.command,
         args: parsed.args,
@@ -467,7 +468,7 @@ export class AgentsStore implements ConnectionOperations {
       };
     }
     await this.persistAgentConfig(spec, registrySource);
-    return spec.agentId;
+    return spec.patchbayAgentId;
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
@@ -524,15 +525,15 @@ export class AgentsStore implements ConnectionOperations {
    * belongs to the agent type alone. Failure leaves needsAuth set — the
    * honest signal, no separate reply channel. `signal` stops the wait on a
    * terminal login — never its terminal. */
-  async login(agentId: string, methodId: string, signal?: AbortSignal): Promise<void> {
+  async login(patchbayAgentId: PatchbayAgentId, methodId: string, signal?: AbortSignal): Promise<void> {
     // The method as the connection's own `initialize` declared it — its
     // kind (capabilities.ts's one classification), and the raw entry a
     // terminal recipe or typed terminal method is read from. Command paths
     // are machine-absolute and stay host-side; the webview only ever sees
     // the kind.
-    const live = this.deps.pool.get(agentId);
+    const live = this.deps.pool.get(patchbayAgentId);
     if (live?.declared?.authMethods.find((m) => m.id === methodId)?.kind === "unsupported") {
-      this.log.warn(`${agentId}: ignored a login on "${methodId}" — patchbay can't run this method's type`);
+      this.log.warn(`${patchbayAgentId}: ignored a login on "${methodId}" — patchbay can't run this method's type`);
       return;
     }
     const method = live?.initialize?.authMethods?.find((m) => m.id === methodId);
@@ -542,7 +543,7 @@ export class AgentsStore implements ConnectionOperations {
     if (recipe !== null) {
       // terminal-recipe method: the login runs in a visible terminal,
       // `authenticate` is never called on it (meta.ts).
-      await this.loginViaTerminal(agentId, recipe, signal);
+      await this.loginViaTerminal(patchbayAgentId, recipe, signal);
       return;
     }
     const typed = method === undefined ? null : terminalAuthOf(method);
@@ -552,10 +553,10 @@ export class AgentsStore implements ConnectionOperations {
       // `authenticate` is never called on it either, so a login's
       // success is always terminal-ran-plus-reprobe, never the RPC's
       // word for it.
-      await this.typedLoginViaTerminal(agentId, typed, signal);
+      await this.typedLoginViaTerminal(patchbayAgentId, typed, signal);
       return;
     }
-    await this.deps.tracker.authenticate(agentId, methodId);
+    await this.deps.tracker.authenticate(patchbayAgentId, methodId);
   }
 
   /** The logout round-trip — needsAuth is raised by the tracker itself (a
@@ -566,16 +567,16 @@ export class AgentsStore implements ConnectionOperations {
    * only clear-out that needs no agent cooperation. The card lands on
    * stopped + the logout reason, and the lock persists (auth-evidence.ts) —
    * a reconnect carries it until real login evidence clears it. */
-  async logout(agentId: string): Promise<void> {
-    await this.deps.tracker.logout(agentId);
-    await this.deps.pool.stop(agentId);
+  async logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    await this.deps.tracker.logout(patchbayAgentId);
+    await this.deps.pool.stop(patchbayAgentId);
   }
 
   /** The free protocol check (Settings Verify, "Verify after add") —
    * returns what the probe observed, so the terminal-login flow can react
    * to a still-locked agent. */
-  verify(agentId: string): Promise<ProbeOutcome> {
-    return this.deps.tracker.verify(agentId);
+  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
+    return this.deps.tracker.verify(patchbayAgentId);
   }
 
   // ── window lifecycle ──────────────────────────────────────────────────────
@@ -596,8 +597,11 @@ export class AgentsStore implements ConnectionOperations {
    * (superseded by the per-agent flag): folded into the config once, so the
    * old setting keeps working without two mechanisms living on. */
   async startupSources(legacyDefault: string): Promise<ConnectAgentSource[]> {
-    if (legacyDefault !== "") {
-      const existing = this.config(legacyDefault);
+    // The setting names an agent by its id — or, with no config on this
+    // machine, by its registry id (resolved below).
+    const legacy = legacyDefault === "" ? undefined : (legacyDefault as PatchbayAgentId);
+    if (legacy !== undefined) {
+      const existing = this.config(legacy);
       if (existing !== undefined && !existing.autoConnect) {
         await this.deps.configs.upsert({ ...existing, autoConnect: true });
         await this.publishAll();
@@ -606,15 +610,15 @@ export class AgentsStore implements ConnectionOperations {
     }
     const stamped = await this.deps.lastConnected.consume();
     const flagged = this.deps.configs.list().filter((c) => c.autoConnect).map((c) => c.id);
-    const ids = new Set([...flagged, ...stamped]);
-    if (legacyDefault !== "") ids.add(legacyDefault); // config may not exist yet — resolved below
-    return [...ids].flatMap((id): ConnectAgentSource[] => {
-      if (this.config(id) !== undefined) return [{ configuredId: id }];
+    const patchbayAgentIds = new Set([...flagged, ...stamped]);
+    if (legacy !== undefined) patchbayAgentIds.add(legacy); // config may not exist yet — resolved below
+    return [...patchbayAgentIds].flatMap((patchbayAgentId): ConnectAgentSource[] => {
+      if (this.config(patchbayAgentId) !== undefined) return [{ patchbayAgentId }];
       // Only the legacy setting can name an agent with no config on this
       // machine (a stamp or flag implies one was persisted) — the registry
       // path covers it, and persists the config it was missing.
-      if (id === legacyDefault) return [{ registryId: id }];
-      this.log.debug(`startup connect: ${id} has no config (removed since the stamp) — skipped`);
+      if (patchbayAgentId === legacy) return [{ registryId: patchbayAgentId }];
+      this.log.debug(`startup connect: ${patchbayAgentId} has no config (removed since the stamp) — skipped`);
       return [];
     });
   }
@@ -625,14 +629,14 @@ export class AgentsStore implements ConnectionOperations {
    * last-connected.ts). */
   stampRunning(): Promise<void> {
     return this.deps.lastConnected.write(
-      this.deps.pool.list().filter((v) => v.status === "running").map((v) => v.spec.agentId),
+      this.deps.pool.list().filter((v) => v.status === "running").map((v) => v.spec.patchbayAgentId),
     );
   }
 
   /** "Disconnect & erase all data" wiped the files: every agent the views
    * show leaves them, and the config list republishes empty. */
-  async erased(shownAgentIds: readonly string[]): Promise<void> {
-    for (const agentId of shownAgentIds) this.hooks.emit({ kind: "agentRemoved", agentId });
+  async erased(shownPatchbayAgentIds: readonly PatchbayAgentId[]): Promise<void> {
+    for (const patchbayAgentId of shownPatchbayAgentIds) this.hooks.emit({ kind: "agentRemoved", patchbayAgentId });
     await this.publishAll();
   }
 
@@ -647,7 +651,7 @@ export class AgentsStore implements ConnectionOperations {
     // A process running or starting answers for what it was spawned with;
     // otherwise the config is what the next Connect runs.
     const launch = live?.status === "running" || live?.status === "reconnecting" ? live.spec : config;
-    const update = agentUpdates(this.deps.registry.current().agents, [config])[config.id];
+    const update = agentUpdates(this.deps.registry.current().agents, [config]).get(config.id);
     return {
       id: config.id,
       name: config.name,
@@ -686,7 +690,7 @@ export class AgentsStore implements ConnectionOperations {
   private specFromConfig(agent: AgentConfig): LaunchSpec {
     const source = agent.registrySource;
     return {
-      agentId: agent.id,
+      patchbayAgentId: agent.id,
       name: agent.name,
       command: agent.command,
       args: agent.args,
@@ -717,14 +721,14 @@ export class AgentsStore implements ConnectionOperations {
       case "npx":
       case "uvx":
         return {
-          spec: { agentId: agent.id, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
+          spec: { patchbayAgentId: agent.id as PatchbayAgentId, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
           registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
         };
       case "binary": {
         const pinnedDigest = launch.sha256 === null ? {} : { sha256: launch.sha256 };
         return {
           spec: {
-            agentId: agent.id,
+            patchbayAgentId: agent.id as PatchbayAgentId,
             name: agent.name,
             command: resolvedBinaryPath(this.deps.binaryCacheDir, agent.id, agent.version, launch.cmd),
             args: [...launch.args],
@@ -752,17 +756,17 @@ export class AgentsStore implements ConnectionOperations {
     spec: LaunchSpec,
     registrySource: AgentConfig["registrySource"],
   ): Promise<void> {
-    const existing = this.config(spec.agentId);
+    const existing = this.config(spec.patchbayAgentId);
     // Registry-declared launch env (part of the distribution recipe) goes to
     // the same SecretStorage record user-entered env lives in — one source
     // at spawn time. Registry values win for their own keys; the user's
     // other keys survive a re-add/Upgrade.
     if (Object.keys(spec.env).length > 0) {
-      const stored = await this.deps.env.get(spec.agentId);
-      await this.deps.env.set(spec.agentId, { ...stored, ...spec.env });
+      const stored = await this.deps.env.get(spec.patchbayAgentId);
+      await this.deps.env.set(spec.patchbayAgentId, { ...stored, ...spec.env });
     }
     await this.deps.configs.upsert({
-      id: spec.agentId,
+      id: spec.patchbayAgentId,
       name: spec.name,
       command: spec.command,
       args: [...spec.args],
@@ -783,7 +787,7 @@ export class AgentsStore implements ConnectionOperations {
     try {
       const d = await checkPathDivergence(spec);
       if (d === null) return;
-      const key = `${spec.agentId}:${d.pathVersion}:${d.bundledVersion}`;
+      const key = `${spec.patchbayAgentId}:${d.pathVersion}:${d.bundledVersion}`;
       if (this.divergenceWarned.has(key)) return;
       this.divergenceWarned.add(key);
       this.hooks.warn(
@@ -818,15 +822,15 @@ export class AgentsStore implements ConnectionOperations {
    * on it — while the probe and the restart, which need the process the
    * stop ended, don't run. */
   private async loginViaTerminal(
-    agentId: string,
+    patchbayAgentId: PatchbayAgentId,
     recipe: TerminalAuthRecipe,
     signal?: AbortSignal,
   ): Promise<void> {
-    const name = recipe.label ?? `${this.name(agentId) ?? agentId} login`;
+    const name = recipe.label ?? `${this.name(patchbayAgentId) ?? patchbayAgentId} login`;
     const reported = this.hooks.runLoginTask(name, recipe).then((exitCode) => {
-      this.log.info(`${agentId}: login command finished (exit ${exitCode ?? "unknown"})`);
+      this.log.info(`${patchbayAgentId}: login command finished (exit ${exitCode ?? "unknown"})`);
       if (exitCode !== undefined && exitCode !== 0) {
-        this.noteAuthEvidence(agentId, {
+        this.noteAuthEvidence(patchbayAgentId, {
           kind: "loginFailed",
           reason: `login command failed (exit ${exitCode}) — check the terminal output and try again`,
         });
@@ -838,22 +842,22 @@ export class AgentsStore implements ConnectionOperations {
       // (task never started, terminated, terminal closed mid-run) is not
       // affirmative — no evidence is noted, and the lock heals later
       // through a same-method success or a completed prompt.
-      if (exitCode === 0) this.noteAuthEvidence(agentId, { kind: "loginOk" });
+      if (exitCode === 0) this.noteAuthEvidence(patchbayAgentId, { kind: "loginOk" });
       return exitCode;
     });
     const exitCode = await unlessAborted(reported, signal);
     signal?.throwIfAborted();
     if (exitCode !== undefined && exitCode !== 0) return;
-    const outcome = await this.verify(agentId);
+    const outcome = await this.verify(patchbayAgentId);
     // "skipped" = the probe is latch-deferred (first-session-mcp-latch) —
     // no corroboration is possible without spending the latch slot, and
     // the latched vendor is also the spawn-time-credential-read vendor:
     // restart unconditionally, same reasoning as the auth_required arm.
     if (exitCode === 0 && outcome === "skipped") {
       this.log.info(
-        `${agentId}: login succeeded but the probe is latch-deferred — restarting so the process reads the fresh credentials`,
+        `${patchbayAgentId}: login succeeded but the probe is latch-deferred — restarting so the process reads the fresh credentials`,
       );
-      await this.restart(agentId, signal);
+      await this.restart(patchbayAgentId, signal);
       return;
     }
     if (outcome === "auth_required") {
@@ -865,9 +869,9 @@ export class AgentsStore implements ConnectionOperations {
       // still needs auth, the wire chokepoint re-raises it and the card
       // shows Log in again.
       this.log.info(
-        `${agentId}: login succeeded but the running process still reports auth_required — restarting it to pick up the fresh credentials`,
+        `${patchbayAgentId}: login succeeded but the running process still reports auth_required — restarting it to pick up the fresh credentials`,
       );
-      await this.restart(agentId, signal);
+      await this.restart(patchbayAgentId, signal);
     }
   }
 
@@ -881,18 +885,18 @@ export class AgentsStore implements ConnectionOperations {
    * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
    * guards, and it must not win here any more than it can at spawn;
    * not-found falls back to the bare name and lets the task report it. */
-  private async typedLoginViaTerminal(agentId: string, typed: TerminalAuth, signal?: AbortSignal): Promise<void> {
-    const spec = this.spec(agentId);
+  private async typedLoginViaTerminal(patchbayAgentId: PatchbayAgentId, typed: TerminalAuth, signal?: AbortSignal): Promise<void> {
+    const spec = this.spec(patchbayAgentId);
     if (spec === undefined) {
-      this.log.warn(`typed terminal login: no configured spec for ${agentId}`);
+      this.log.warn(`typed terminal login: no configured spec for ${patchbayAgentId}`);
       return;
     }
-    const secretEnv = await this.deps.env.get(agentId);
+    const secretEnv = await this.deps.env.get(patchbayAgentId);
     const env = { ...spec.env, ...secretEnv, ...typed.env };
     const command =
       process.platform === "win32"
         ? (resolveExecutableWin32(spec.command, { ...process.env, ...env }) ?? spec.command)
         : spec.command;
-    await this.loginViaTerminal(agentId, { command, args: [...spec.args, ...typed.args], env }, signal);
+    await this.loginViaTerminal(patchbayAgentId, { command, args: [...spec.args, ...typed.args], env }, signal);
   }
 }
