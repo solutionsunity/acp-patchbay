@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertKind } from "./support/assert-kind";
+import type { McpServer } from "@agentclientprotocol/sdk";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
+import type { AttachedServer } from "../src/orchestrator/integrations";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { SessionGates } from "../src/orchestrator/session-gates";
 import { harnessEnvelopeTag, SessionsStore } from "../src/orchestrator/sessions-store";
@@ -82,6 +84,12 @@ function harness(opts?: {
   /** Stand-in for the agents' queue: what a session's work enters behind.
    * Absent, agents' rows hold nothing. */
   agentSettled?(agentId: string): Promise<void>;
+  /** Stand-in for the orchestrator's composition of a session's MCP
+   * servers. Absent, an attach gives none. */
+  mcpServersFor?(
+    contextToken: string,
+    agentId: string,
+  ): Promise<{ servers: McpServer[]; given: readonly AttachedServer[] }>;
 }): {
   pool: AgentPool;
   sessions: SessionsStore;
@@ -152,6 +160,7 @@ function harness(opts?: {
     },
     continuity,
     () => cwd,
+    opts?.mcpServersFor,
   );
   const gates = gatesFor(sessions, (event) => events.push(event), {
     idleCloseMs: opts?.idleCloseMs ?? null,
@@ -3012,6 +3021,89 @@ describe("session activity stamp — one home", () => {
     expect(h.state().sessions.find((s) => s.id === b)?.agentId).toBe("twin-b");
     await h.pool.stop("twin-a");
     await h.pool.stop("twin-b");
+  });
+});
+
+describe("context tokens — what the IPC socket admits (#72)", () => {
+  /** An attach's composition that records each token it is handed, giving
+   * one server through the bridge and one handed through. */
+  function composer() {
+    const minted: string[] = [];
+    return {
+      minted,
+      mcpServersFor: async (contextToken: string) => {
+        minted.push(contextToken);
+        return {
+          servers: [],
+          given: [
+            { id: "remote", delivery: "bridge" as const },
+            { id: "local", delivery: "stdio" as const },
+          ],
+        };
+      },
+    };
+  }
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it("an attach's token is unguessable, admitted from the mint, and names its session once it has a row", async () => {
+    const c = composer();
+    const h = harness({ mcpServersFor: c.mcpServersFor });
+    await h.pool.connect(spec({ newSessionReplyDelayMs: 200 }, "ct1"));
+    const born = h.sessions.createSession("ct1", "Fake Agent", cwd);
+    await new Promise((r) => setTimeout(r, 80)); // session/new is on the wire
+    const [token] = c.minted;
+    expect(token).toMatch(UUID);
+    // the agent may start the session's servers before it answers
+    expect(h.sessions.admits(token!)).toBe(true);
+    expect(h.sessions.sessionOfToken(token!)).toBeUndefined();
+    const sessionId = await born;
+    expect(h.sessions.sessionOfToken(token!)).toBe(sessionId);
+    expect(h.sessions.tokensOf(sessionId)).toEqual([token]);
+    expect(h.sessions.admits("ctx-1")).toBe(false);
+    await h.pool.stop("ct1");
+  });
+
+  it("a credential's bridge is the server's: only a server given through the bridge under that token names the agent", async () => {
+    const c = composer();
+    const h = harness({ mcpServersFor: c.mcpServersFor });
+    await h.pool.connect(spec({}, "ct2"));
+    await h.sessions.createSession("ct2", "Fake Agent", cwd);
+    const [token] = c.minted;
+    expect(h.sessions.bridgedTo(token!, "remote")).toBe("ct2");
+    expect(h.sessions.bridgedTo(token!, "local")).toBeUndefined(); // handed through: asks for nothing
+    expect(h.sessions.bridgedTo(token!, "never-given")).toBeUndefined();
+    expect(h.sessions.bridgedTo("forged", "remote")).toBeUndefined();
+    await h.pool.stop("ct2");
+  });
+
+  it("a token outlives its session's close while the connection is up, and ends with the connection", async () => {
+    const c = composer();
+    const h = harness({ mcpServersFor: c.mcpServersFor });
+    await h.pool.connect(spec({}, "ct3"));
+    const sessionId = await h.sessions.createSession("ct3", "Fake Agent", cwd);
+    const [token] = c.minted;
+    await h.gates.close(sessionId);
+    // an agent that keeps one server for all its sessions still calls with
+    // it — but the closed session has no roots or transcript to answer from
+    expect(h.sessions.admits(token!)).toBe(true);
+    expect(h.sessions.sessionOfToken(token!)).toBeUndefined();
+    await h.pool.stop("ct3");
+    expect(h.sessions.admits(token!)).toBe(false);
+  });
+
+  it("every attach mints its own token, each naming the session; erase drops them all", async () => {
+    const c = composer();
+    const h = harness({ mcpServersFor: c.mcpServersFor });
+    await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "ct4"));
+    const sessionId = await h.sessions.createSession("ct4", "Fake Agent", cwd);
+    await h.gates.prompt(sessionId, { text: "first" });
+    await h.gates.reload(sessionId);
+    expect(c.minted).toHaveLength(2);
+    expect(new Set(c.minted).size).toBe(2);
+    expect(h.sessions.tokensOf(sessionId).sort()).toEqual([...c.minted].sort());
+    h.sessions.reset();
+    expect(c.minted.some((t) => h.sessions.admits(t))).toBe(false);
+    await h.pool.stop("ct4");
   });
 });
 

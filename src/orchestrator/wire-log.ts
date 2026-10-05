@@ -90,11 +90,11 @@ export class WireLog {
   }
 
   /** `text` with every registered value masked. Longest first: when one
-   * registered value is a prefix of another (systematic for context
-   * tokens — ctx-1/ctx-10), replacing the short one first would shred the
-   * long one and print its tail in clear. Each value is also masked in its
-   * JSON-escaped spelling — a frame is JSON, so a secret containing `"` or
-   * `\` rides the wire escaped and would never match raw. */
+   * registered value is a prefix of another, replacing the short one first
+   * would shred the long one and print its tail in clear. Each value is
+   * also masked in its JSON-escaped spelling — a frame is JSON, so a secret
+   * containing `"` or `\` rides the wire escaped and would never match
+   * raw. */
   redact(text: string): string {
     const spellings = [...this.secrets]
       .flatMap((secret) => {

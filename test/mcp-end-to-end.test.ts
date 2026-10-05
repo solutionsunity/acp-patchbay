@@ -5,12 +5,13 @@
 // it. Only EditorStateHost's data source is stood in for (real vscode
 // state needs a real extension host; see test-electron for that half).
 //
-// get_selection/get_diagnostics/etc. are global editor state — session-
-// agnostic by design, so the IPC request's sessionId field is legitimately
-// the raw correlation token there, untranslated. request_user_input is the
-// one method that actually needs the real sessionId (to know which
-// transcript to post the elicitation card into), so that's where the
-// contextToken → sessionId mapping is exercised and asserted.
+// Every IPC request carries the context token the server was spawned with,
+// and the host admits a request only by a token the sessions store minted
+// for an attach (#72) — so these turns prove the token the store mints is
+// the one the spawned server sends. get_selection/get_diagnostics/etc. are
+// global editor state and need nothing more; request_user_input needs the
+// real session (to know which transcript to post the elicitation card
+// into), so that's where token → session is exercised and asserted.
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -37,13 +38,15 @@ const MCP_SERVER = join(process.cwd(), "out", "mcp-server.js");
 
 /** Stands in for EditorStateHost — same wire protocol, canned data (real
  * vscode-backed data is test-electron/manual-smoke territory). Mirrors
- * Orchestrator's own split: requestUserInput translates contextToken →
- * sessionId (it needs the real one); the rest don't. */
+ * Orchestrator's own split: every request is admitted by its token, and
+ * requestUserInput translates the token to its session (it needs the real
+ * one); the rest don't. */
 class FakeEditorStateHost {
   server: Server;
   socketPath: string;
   requests: IpcRequest[] = [];
-  contextTokenToSession = new Map<string, string>();
+  /** The store whose attaches minted the tokens — set by the harness. */
+  sessions: Pick<SessionsStore, "admits" | "sessionOfToken"> | null = null;
 
   constructor(id: string) {
     this.socketPath = join(tmpdir(), `patchbay-e2e-${id}.sock`);
@@ -57,7 +60,10 @@ class FakeEditorStateHost {
         for (const message of messages) {
           const req = message as IpcRequest;
           this.requests.push(req);
-          const response: IpcResponse = { id: req.id, result: this.answer(req) };
+          const response: IpcResponse =
+            this.sessions?.admits(req.sessionId) === true
+              ? { id: req.id, result: this.answer(req) }
+              : { id: req.id, error: "unknown session token" };
           socket.write(encodeLine(response));
         }
       });
@@ -71,7 +77,7 @@ class FakeEditorStateHost {
       case "getDiagnostics":
         return [{ file: "/ws/pool.ts", line: 10, severity: "error", message: "unused import" }];
       case "requestUserInput": {
-        const realSessionId = this.contextTokenToSession.get(req.sessionId) ?? req.sessionId;
+        const realSessionId = this.sessions?.sessionOfToken(req.sessionId);
         return { action: "accept", content: { resolvedFor: realSessionId } };
       }
       default:
@@ -113,25 +119,28 @@ function spec(script: FakeAgentScript, agentId: string): LaunchSpec {
 
 /** Builds the exact mcpServers entry Orchestrator builds — same shape,
  * pointed at the fake IPC host instead of a real EditorStateHost. */
-async function mcpServersFor(contextToken: string): Promise<McpServer[]> {
-  return [
-    {
-      name: "patchbay",
-      command: process.execPath,
-      args: [MCP_SERVER],
-      env: [
-        { name: "ACP_PATCHBAY_IPC", value: host.socketPath },
-        { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
-      ],
-    },
-  ];
+async function mcpServersFor(contextToken: string): Promise<{ servers: McpServer[]; given: [] }> {
+  return {
+    servers: [
+      {
+        name: "patchbay",
+        command: process.execPath,
+        args: [MCP_SERVER],
+        env: [
+          { name: "ACP_PATCHBAY_IPC", value: host.socketPath },
+          { name: "ACP_PATCHBAY_SESSION_ID", value: contextToken },
+        ],
+      },
+    ],
+    given: [],
+  };
 }
 
 function harness() {
   const events: AgentViewEvent[] = [];
-  // Real production wiring: SessionsStore mints a contextToken (the real
-  // sessionId doesn't exist until session/new returns), and the caller
-  // (Orchestrator, here the test's fake host) maps it back once it does.
+  // Real production wiring: SessionsStore mints a context token per attach
+  // and answers for it — the host (here the test's fake) admits a request
+  // by it and finds its session through the store.
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
@@ -140,14 +149,12 @@ function harness() {
   });
   const sessions = new SessionsStore(
     pool,
-    {
-      emit: (...evs) => events.push(...evs),
-      mapContextToken: (token, sessionId) => host.contextTokenToSession.set(token, sessionId),
-    },
+    { emit: (...evs) => events.push(...evs) },
     new SessionContinuityStore(new MemoryKV()),
     () => dir,
     mcpServersFor,
   );
+  host.sessions = sessions;
   return {
     pool,
     sessions,

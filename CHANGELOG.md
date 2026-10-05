@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Security:** patchbay's local socket now answers only the processes an
+  agent was started with for a session. Before, any program running as
+  the same user could ask it for the credential of any connected MCP
+  server by its name, read the open editors' contents, unsaved edits
+  included, and show a form in a chat. Session tokens were a counter, so
+  they were easy to guess; they are random now. A bridge gets a server's
+  credential only while that server was given to its session and is still
+  connected, switched on and routed to the agent: switching a server off
+  or routing it away now reaches chats that are already open. (#72)
 - New logo: a chat bubble with the AI spark plugged into a socket in its
   rim. The Marketplace icon is the full mark on a purple-to-blue tile, now
   at 256px for sharp display on high-density screens. The activity-bar and

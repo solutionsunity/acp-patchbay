@@ -182,7 +182,6 @@ export class Orchestrator {
   private readonly clientHost: ClientHost;
   private readonly mcpServerScriptPath: string;
   private readonly integrationBridgeScriptPath: string;
-  private readonly contextTokenToSession = new Map<string, string>();
   /** The session the last-open pointer names, by this window's id for it —
    * null until one is activated here. */
   private pointerRow: string | null = null;
@@ -517,15 +516,21 @@ export class Orchestrator {
           refreshRegistry: async () => (await this.acpRegistry.refresh("download")).ok,
         }),
     });
+    // The socket answers only through what each attach was given: its
+    // token, the session it served, and the servers it got.
     this.editorStateHost = new EditorStateHost(String(process.pid), {
+      admits: (contextToken) => this.sessions.admits(contextToken),
       requestUserInput: (contextToken, params) => this.requestUserInput(contextToken, params),
-      // Same token discipline as requestUserInput: an unknown token names
-      // a session that is gone, and a gone session has no roots.
+      // Same token discipline as requestUserInput: a token whose session is
+      // gone has no roots.
       sessionRoots: (contextToken) => {
-        const sessionId = this.contextTokenToSession.get(contextToken);
+        const sessionId = this.sessions.sessionOfToken(contextToken);
         return sessionId === undefined ? [] : this.sessions.rootsOf(sessionId);
       },
-      getIntegrationToken: (integrationId) => this.integrations.getToken(integrationId),
+      getIntegrationToken: (contextToken, integrationId) => {
+        const agentId = this.sessions.bridgedTo(contextToken, integrationId);
+        return agentId === undefined ? Promise.resolve(null) : this.integrations.credentialFor(integrationId, agentId);
+      },
     });
     this.editorStateHost.start();
 
@@ -567,7 +572,6 @@ export class Orchestrator {
         emit: (...events) => {
           this.agentView.emit(...events);
           this.recordLastActive(events);
-          this.dropContextTokens(events);
           this.maybeChime(events);
         },
         // The session/load replay window: canonical state advances (and the
@@ -578,7 +582,6 @@ export class Orchestrator {
           this.recordLastActive(events);
         },
         resyncView: () => this.agentView.resync(),
-        mapContextToken: (token, sessionId) => this.contextTokenToSession.set(token, sessionId),
         // The deferred-probe trigger for latched agents
         // (extensions/first-session-mcp-latch) — and, for everyone, the
         // signal that a real session now owns this id (any probe entry
@@ -596,9 +599,7 @@ export class Orchestrator {
         rootsChanged: (sessionId) => {
           // Every subprocess of the session was spawned with one of its
           // tokens (one per attach; a re-attach mints a fresh one).
-          for (const [token, mapped] of this.contextTokenToSession) {
-            if (mapped === sessionId) this.editorStateHost.notifyRootsChanged(token);
-          }
+          for (const token of this.sessions.tokensOf(sessionId)) this.editorStateHost.notifyRootsChanged(token);
         },
         workspaceRoots: workspaceRootsView,
         savedRoots: () => {
@@ -643,7 +644,7 @@ export class Orchestrator {
         // mechanics): passthrough is how the mcp.http claim gets exercised
         // at all — a used-gate would deadlock the row forever.
         const declaresHttp = this.agents.matrix(agentId)?.["mcp.http"]?.declared === true;
-        const integrationServers = await this.integrations.mcpServersFor(
+        const { servers: integrationServers, given } = await this.integrations.mcpServersFor(
           agentId,
           this.integrationBridgeScriptPath,
           this.editorStateHost.socketPath,
@@ -663,7 +664,7 @@ export class Orchestrator {
             for (const { value } of server.headers) this.wireLog.registerSecret(value);
           }
         }
-        return [editorServer, ...integrationServers];
+        return { servers: [editorServer, ...integrationServers], given };
       },
       log,
     );
@@ -863,7 +864,6 @@ export class Orchestrator {
     this.clientHost.clear();
     await Promise.all([this.gates.stopAll(), this.sessionGates.endAll()]);
     this.sessions.reset();
-    this.contextTokenToSession.clear();
 
     await eraseAllData({
       agentConfigs: this.agentConfigs,
@@ -1097,10 +1097,9 @@ export class Orchestrator {
     contextToken: string,
     params: RequestUserInputParams,
   ): Promise<ElicitationAnswer> {
-    // Unknown token = the session it named is gone (tokens are minted at
-    // attach and retired at close). There is no transcript to ask in, so
-    // the user never saw the question — a cancel, never a guessed session.
-    const sessionId = this.contextTokenToSession.get(contextToken);
+    // A token whose session is gone has no transcript to ask in, so the
+    // user never saw the question — a cancel, never a guessed session.
+    const sessionId = this.sessions.sessionOfToken(contextToken);
     if (sessionId === undefined) return Promise.resolve({ action: "cancel" });
     // Same parser as the agent's own elicitation request. A field it cannot
     // present fails the tool call with the reason, rather than rendering a
@@ -1108,19 +1107,6 @@ export class Orchestrator {
     const fields = params.requestedSchema === undefined ? [] : formFieldsOf(params.requestedSchema);
     if (fields === null) return Promise.reject(new Error("the form has a field patchbay cannot present"));
     return this.broker.askElicitation(sessionId, { message: params.message, ask: { mode: "form", fields } });
-  }
-
-  /** A closed session's context tokens leave the map with it: the token
-   * names a session-scoped identity, so a late MCP subprocess call after
-   * the close finds no session to land in. Also the map's only bound —
-   * one token is minted per attach. */
-  private dropContextTokens(events: readonly AgentViewEvent[]): void {
-    for (const event of events) {
-      if (event.kind !== "sessionClosed") continue;
-      for (const [token, sessionId] of this.contextTokenToSession) {
-        if (sessionId === event.sessionId) this.contextTokenToSession.delete(token);
-      }
-    }
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).

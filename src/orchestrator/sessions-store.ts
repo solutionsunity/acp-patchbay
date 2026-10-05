@@ -52,6 +52,7 @@ import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted, untilGivenUp } from "./abort";
+import type { AttachedServer } from "./integrations";
 import type { AgentPool } from "./pool";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
@@ -68,11 +69,6 @@ export interface SessionsStoreHooks {
   /** Closes a silent window: one wholesale webview sync from canonical
    * state — the replay lands as a single swap, never a patch flood. */
   resyncView?(): void;
-  /** The local MCP server is spawned with `contextToken` as its correlation
-   * id (the agent's id doesn't exist yet when mcpServers must be built —
-   * session/new hasn't returned). Lets the orchestrator's IPC host
-   * translate that token back to its session once it's known. */
-  mapContextToken?(token: string, sessionId: string): void;
   /** The knob seed a session starts from on *entry* — a fresh session, or a
    * history session attached with no live combination in hand (folded,
    * knob-id-keyed — knobs.ts foldSeed). Which seed that is — the agent
@@ -390,7 +386,14 @@ export class SessionsStore {
    * reads back through `toolCallDiff`. Cleared with the session; a replay
    * re-sends tool_call content, so it repopulates itself. */
   private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
-  private contextTokenCounter = 0;
+  /** Every attach's context token — what the subprocesses an agent spawns
+   * from the session's mcpServers carry on each IPC request — with the
+   * attach it was minted for: the agent, the session (once it has a row),
+   * and which servers it was given. Good from the mint (the agent may start
+   * the servers before it answers) until the agent's connection ends, which
+   * ends them too: an agent that keeps one server for all its sessions
+   * keeps using the first session's token after that session closed. */
+  private tokens = new Map<string, { agentId: string; sessionId?: string; given: readonly AttachedServer[] }>();
   /** Per agent: the agent's ids of sessions that left (closed, or re-minted
    * away from) while a session/list walk may be in flight — a page fetched
    * before that would otherwise resurrect the row with an empty
@@ -417,10 +420,13 @@ export class SessionsStore {
     private readonly continuity: SessionContinuityStore,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
-    /** Builds the local MCP server's mcpServers entry for a fresh session,
-     * given the correlation token to spawn it with. `[]` (the default) when
-     * no MCP integration is wired — tests mostly don't need it. */
-    private readonly mcpServersFor: (contextToken: string, agentId: string) => Promise<McpServer[]> = async () => [],
+    /** A session's mcpServers for an attach, given the context token to
+     * spawn them with — and which servers were given, and how. None (the
+     * default) when no MCP server is wired — tests mostly don't need one. */
+    private readonly mcpServersFor: (
+      contextToken: string,
+      agentId: string,
+    ) => Promise<{ servers: McpServer[]; given: readonly AttachedServer[] }> = async () => ({ servers: [], given: [] }),
     /** Output-channel seam (logger.ts). */
     private readonly log: Logger = nullLogger,
   ) {}
@@ -600,21 +606,27 @@ export class SessionsStore {
 
   /** The one attach chokepoint: every wire call that binds a session to a
    * connection (`session/new`, `session/load`, `session/resume`) rides
-   * through here, so the ceremony — context-token mint + IPC mapping, local
-   * MCP server list, canonical roots, knob normalization — exists exactly
-   * once. Callers own *policy*: which rung, LiveSession bookkeeping, what
-   * the transcript shows, and where the returned knob state is published
-   * (event order is theirs, not this method's). A `session/new` has no row
-   * to map its token to yet: its caller files the agent's id it returns,
-   * then maps the token. */
+   * through here, so the ceremony — the context token and what it was
+   * given, the MCP server list, canonical roots, knob normalization —
+   * exists exactly once. Callers own *policy*: which rung, LiveSession
+   * bookkeeping, what the transcript shows, and where the returned knob
+   * state is published (event order is theirs, not this method's). A
+   * `session/new` has no row to name in its token yet: its caller files
+   * the agent's id it returns, then binds the token. */
   private async attachSession(
     target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
     agentId: string,
     opts: { cwd?: string; roots?: readonly string[] } = {},
     signal?: AbortSignal,
   ): Promise<{ handle: string; contextToken: string; knobs: NormalizedKnobs; missing: string[] }> {
-    const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const mcpServers = await unlessAborted(this.mcpServersFor(contextToken, agentId), signal);
+    // Unguessable: the token is what the IPC socket admits a request by.
+    const contextToken = randomUUID();
+    const { servers: mcpServers, given } = await unlessAborted(this.mcpServersFor(contextToken, agentId), signal);
+    this.tokens.set(contextToken, {
+      agentId,
+      given,
+      ...(target.via !== "new" ? { sessionId: target.sessionId } : {}),
+    });
     const cwd = opts.cwd ?? this.cwd();
     // Roots: an explicit list wins (every session/new — a birth seeded
     // from the saved roots, a recreate carrying its own); otherwise the one
@@ -638,7 +650,6 @@ export class SessionsStore {
     }
     const handle = this.known.get(target.sessionId)?.handle;
     if (handle === undefined) throw new Error(`unknown session ${target.sessionId}`);
-    this.hooks.mapContextToken?.(contextToken, target.sessionId);
     // Told to stop, the wait ends here; an answer that comes later finds
     // no attachment to land in.
     const r = await unlessAborted(
@@ -655,6 +666,38 @@ export class SessionsStore {
       knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
       missing,
     };
+  }
+
+  /** A `session/new`'s token names its session once the session has a
+   * row. */
+  private bindToken(token: string, sessionId: string): void {
+    const grant = this.tokens.get(token);
+    if (grant !== undefined) grant.sessionId = sessionId;
+  }
+
+  /** Whether a token was minted at an attach on a connection still up —
+   * the IPC socket answers nothing else. */
+  admits(token: string): boolean {
+    return this.tokens.has(token);
+  }
+
+  /** The session a token's attach served, while that session is known. */
+  sessionOfToken(token: string): string | undefined {
+    const sessionId = this.tokens.get(token)?.sessionId;
+    return sessionId !== undefined && this.known.has(sessionId) ? sessionId : undefined;
+  }
+
+  /** The agent a server was given to under a token through the bridge —
+   * the one delivery that asks patchbay for the server's credential. */
+  bridgedTo(token: string, serverId: string): string | undefined {
+    const grant = this.tokens.get(token);
+    return grant?.given.some((s) => s.id === serverId && s.delivery === "bridge") === true ? grant.agentId : undefined;
+  }
+
+  /** Every token a session's attaches were given — what its subprocesses
+   * were spawned with. */
+  tokensOf(sessionId: string): string[] {
+    return [...this.tokens].filter(([, grant]) => grant.sessionId === sessionId).map(([token]) => token);
   }
 
   private onDisk(path: string): boolean {
@@ -767,7 +810,7 @@ export class SessionsStore {
     });
     const sessionId = randomUUID();
     this.bind(sessionId, { agentId, handle, titled: false, everPrompted: false });
-    this.hooks.mapContextToken?.(contextToken, sessionId);
+    this.bindToken(contextToken, sessionId);
     const seeded = saved.filter((p) => !missing.includes(p));
     this.sessions.set(sessionId, liveSession(agentId));
     const now = new Date().toISOString();
@@ -891,6 +934,7 @@ export class SessionsStore {
     this.byHandle.clear();
     this.toolDiffs.clear();
     this.closedDuringSync.clear();
+    this.tokens.clear();
   }
 
   /** A removed agent's session rows leave the view — nothing of them is
@@ -918,11 +962,16 @@ export class SessionsStore {
   }
 
   /** Drops bookkeeping for sessions whose connection just died — a stale
-   * sessionId cannot be used on a new connection until reopened. */
+   * sessionId cannot be used on a new connection until reopened — and the
+   * tokens its attaches minted: the subprocesses holding them ended with
+   * it. */
   invalidateAgent(agentId: string): void {
     for (const [sessionId, session] of this.sessions) {
       if (session.agentId !== agentId) continue;
       this.dropLiveSession(sessionId, session);
+    }
+    for (const [token, grant] of this.tokens) {
+      if (grant.agentId === agentId) this.tokens.delete(token);
     }
   }
 
@@ -1628,7 +1677,7 @@ export class SessionsStore {
     this.unbind(sessionId);
     row.handle = handle;
     this.bind(sessionId, row);
-    this.hooks.mapContextToken?.(contextToken, sessionId);
+    this.bindToken(contextToken, sessionId);
     // The continuity row follows the session to its new id.
     this.write({ agentId, handle: was }, null);
     if (Object.keys(carried).length > 0) this.write(row, carried);

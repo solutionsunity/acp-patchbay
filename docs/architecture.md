@@ -872,6 +872,22 @@ The differentiator (the PRD's current-release scope), shipped complete:
   the last text editor from the change event and validates on read: the
   file counts while its document is open, the selection only while its tab
   is on screen.
+- **One socket, admitted by token.** The subprocesses an agent spawns from a
+  session's `mcpServers` — the local server, the bridge — reach the editor
+  and patchbay's facts over one local socket, which every process of the
+  user can reach. Each attach mints a context token (a UUID) and spawns its
+  servers with it; the sessions store records what the attach was given —
+  its agent, its session, and each configured server with how it was
+  delivered — and the socket answers through that record only. A request
+  whose token no attach minted gets nothing. A token is good from the mint
+  (an agent may start the servers before it answers `session/new`) until
+  its agent's connection ends, which ends those subprocesses too — it
+  outlives its session's close, since an agent that keeps one server for
+  all its sessions keeps calling with the first one's token; the
+  session-scoped answers (roots, a form) need the session still there. A
+  credential goes only to a bridge for a server given under that token,
+  and only while the server is connected, switched on and routed to that
+  agent (#72).
 - **Context roots**: a session's roots are the workspace folders plus user-added
   external folders (multi-repo work). Delivered protocol-native: the first
   workspace folder is the session `cwd`; every other folder and every user-added

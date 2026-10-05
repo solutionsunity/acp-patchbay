@@ -7,12 +7,13 @@
 // Neither subprocess can reach vscode APIs (they don't run in the extension
 // host), so everything forwards over this newline-delimited JSON channel to
 // whoever does. One socket for the orchestrator's whole lifetime; every
-// subprocess belongs to exactly one session and names it on every message.
+// subprocess was spawned at one session's attach, and carries that attach's
+// token on every message.
 export interface IpcRequest {
   id: number;
-  /** The session the calling subprocess serves — the correlation token it
-   * was spawned with, which the orchestrator maps back to the real ACP
-   * session id. */
+  /** The context token the calling subprocess was spawned with — what the
+   * socket admits a request by, and how the orchestrator finds the session
+   * it serves. */
   sessionId: string;
   method:
     | "getSelection"
@@ -33,8 +34,9 @@ export interface IntegrationTokenParams {
   integrationId: string;
 }
 
-/** Result of `getIntegrationToken` — null when the integration isn't
- * connected in this workspace (never silently substitutes another one's
+/** Result of `getIntegrationToken` — null unless the server was given to
+ * the caller's attach through the bridge and is still connected, switched
+ * on and reaching that agent (never silently substitutes another one's
  * credential, never partially connects). */
 export interface IntegrationTokenResult {
   accessToken: string;

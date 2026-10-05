@@ -242,14 +242,14 @@ describe("IntegrationsManager — custom escape hatch", () => {
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
       ["agent-a"],
     );
-    expect(await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).toHaveLength(1);
+    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toHaveLength(1);
 
     await h.manager.setActive("mute-me", false);
-    expect(await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).toEqual([]);
+    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toEqual([]);
     expect(await h.tokens.get("mute-me")).not.toBeNull(); // credential intact — muted, not disconnected
 
     await h.manager.setActive("mute-me", true);
-    expect(await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).toHaveLength(1);
+    expect((await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers).toHaveLength(1);
   });
 
   it("a failed custom OAuth add stores nothing — no stranded credential-less record", async () => {
@@ -301,10 +301,10 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       except: ["agent-a"],
     });
 
-    const agentA = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const agentA = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(agentA.map((s) => s.name)).toEqual(["Auto Tool"]);
 
-    const agentB = await h.manager.mcpServersFor("agent-b", "/bridge.js", "/sock", "ctx-1", false);
+    const agentB = (await h.manager.mcpServersFor("agent-b", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(agentB.map((s) => s.name)).toEqual(["Auto Tool", "Pinned Tool", "Except Tool"]);
   });
 
@@ -318,7 +318,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     ]);
     await h.manager.connectRegistryWithKey("stitch", "goog-key");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers).toHaveLength(1);
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("X-Goog-Api-Key");
@@ -335,7 +335,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     ]);
     await h.manager.connectRegistryOAuth("svc");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_AUTH_HEADER).toBe("Authorization");
     expect(env.ACP_PATCHBAY_AUTH_PREFIX).toBe("Bearer ");
@@ -344,7 +344,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
   it("a per-account entry's user-supplied URL is what reaches the bridge", async () => {
     const h = harness([entry({ id: "acct", url: "", userUrl: true })]);
     await h.manager.connectRegistryWithKey("acct", "k", "https://mine.example.test/mcp");
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_INTEGRATION_URL).toBe("https://mine.example.test/mcp");
   });
@@ -360,7 +360,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       active: true,
       transport: "auto",
     });
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers).toEqual([]);
   });
 
@@ -385,7 +385,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
       args: ["some-server", "--root", "/tmp/my dir"],
     });
     // and the agent receives it split the same way
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers[0]).toMatchObject({ command: "npx", args: ["some-server", "--root", "/tmp/my dir"] });
   });
 
@@ -401,7 +401,7 @@ describe("IntegrationsManager — routing and mcpServers", () => {
     // the value round-trips through the secret store...
     expect(await h.envStore.get("keyed")).toEqual({ SRV_API_KEY: "sk-secret" });
     // ...and reaches the agent's spawn config at attach time
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(envOf(servers[0]!)).toEqual({ SRV_API_KEY: "sk-secret" });
     // remove purges it with the rest
     await h.manager.remove("keyed");
@@ -429,7 +429,7 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "key-9");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toEqual([
       {
         type: "http",
@@ -438,6 +438,7 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
         headers: [{ name: "Authorization", value: "Bearer key-9" }],
       },
     ]);
+    expect(given).toEqual([{ id: "svc", delivery: "http" }]);
   });
 
   it("transport 'bridge' pins the stdio bridge even for a declaring agent (the escape hatch)", async () => {
@@ -445,17 +446,19 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
     await h.manager.connectRegistryWithKey("svc", "key-9");
     await h.manager.setTransport("svc", "bridge");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toHaveLength(1);
     expect("command" in servers[0]!).toBe(true);
     expect(envOf(servers[0]!).ACP_PATCHBAY_INTEGRATION_ID).toBe("svc");
+    // the one delivery that asks patchbay for the credential
+    expect(given).toEqual([{ id: "svc", delivery: "bridge" }]);
   });
 
   it("a non-declaring agent rides the bridge regardless of transport 'auto'", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "key-9");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false);
+    const servers = (await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", false)).servers;
     expect(servers).toHaveLength(1);
     expect("command" in servers[0]!).toBe(true);
   });
@@ -464,9 +467,10 @@ describe("IntegrationsManager — http passthrough (prompt.image mechanics)", ()
     const h = harness([]);
     await h.manager.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
 
-    const servers = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
+    const { servers, given } = await h.manager.mcpServersFor("agent-a", "/bridge.js", "/sock", "ctx-1", true);
     expect(servers).toHaveLength(1);
     expect(servers[0]).toMatchObject({ name: "Local Tool", command: "echo" });
+    expect(given).toEqual([{ id: "local-tool", delivery: "stdio" }]);
   });
 });
 
@@ -706,27 +710,45 @@ describe("IntegrationsManager — cancelling a browser flow", () => {
   });
 });
 
-describe("IntegrationsManager — token refresh", () => {
-  it("getToken refreshes a near-expiry OAuth token with the captured context", async () => {
+describe("IntegrationsManager — a bridge's credential", () => {
+  it("refreshes a near-expiry OAuth token with the captured context", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryOAuth("svc");
     // age the token into the refresh margin
     const stored = (await h.tokens.get("svc"))!;
     await h.tokens.set("svc", { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
 
-    const result = await h.manager.getToken("svc");
+    const result = await h.manager.credentialFor("svc", "agent-a");
     expect(result?.accessToken).toBe("refreshed-2");
     expect((await h.tokens.get("svc"))?.accessToken).toBe("refreshed-2");
   });
 
-  it("getToken returns a static key as-is — nothing to refresh, no expiry on our side", async () => {
+  it("returns a static key as-is — nothing to refresh, no expiry on our side", async () => {
     const h = harness([entry()]);
     await h.manager.connectRegistryWithKey("svc", "static-key");
-    expect((await h.manager.getToken("svc"))?.accessToken).toBe("static-key");
+    expect((await h.manager.credentialFor("svc", "agent-a"))?.accessToken).toBe("static-key");
   });
 
-  it("getToken returns null for a disconnected integration", async () => {
+  it("returns null for a disconnected integration", async () => {
     const h = harness([entry()]);
-    expect(await h.manager.getToken("svc")).toBeNull();
+    expect(await h.manager.credentialFor("svc", "agent-a")).toBeNull();
+  });
+
+  it("answers only while the server reaches the agent — muting, re-routing or removing it reaches a running bridge (#72)", async () => {
+    const h = harness([entry()]);
+    await h.manager.connectRegistryWithKey("svc", "static-key");
+    expect((await h.manager.credentialFor("svc", "agent-a"))?.accessToken).toBe("static-key");
+
+    await h.manager.setRouting("svc", ["agent-b"]);
+    expect(await h.manager.credentialFor("svc", "agent-a")).toBeNull();
+    expect((await h.manager.credentialFor("svc", "agent-b"))?.accessToken).toBe("static-key");
+
+    await h.manager.setActive("svc", false);
+    expect(await h.manager.credentialFor("svc", "agent-b")).toBeNull();
+
+    await h.manager.setActive("svc", true);
+    await h.manager.remove("svc");
+    expect(await h.manager.credentialFor("svc", "agent-b")).toBeNull();
+    expect(await h.manager.credentialFor("no-such-server", "agent-b")).toBeNull();
   });
 });

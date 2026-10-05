@@ -30,24 +30,31 @@ import {
 } from "../mcp/ipc-protocol";
 import type { ElicitationAnswer } from "../shared/protocol";
 
+/** Every hook takes the context token the calling subprocess was spawned
+ * with — the one thing that says which attach it serves. */
 export interface EditorStateHostHooks {
-  /** Renders an elicitation form card in the given session's transcript and
-   * resolves with what the user did: answered, declined, or cancelled. */
+  /** Whether the token was minted for one of this window's attaches, on a
+   * connection still up. A request with any other token gets nothing: the
+   * socket is reachable by every process of the user, and only the
+   * subprocesses an agent spawned from a session's mcpServers hold one. */
+  admits(contextToken: string): boolean;
+  /** Renders an elicitation form card in the token's session's transcript
+   * and resolves with what the user did: answered, declined, or
+   * cancelled. */
   requestUserInput(
-    sessionId: string,
+    contextToken: string,
     params: RequestUserInputParams,
   ): Promise<ElicitationAnswer>;
-  /** The session's complete root list, cwd first — what the sessions
-   * store composes for the wire, read fresh per call so a subprocess
-   * never holds a copy the user has since changed. Empty for a session
-   * that is gone (tokens are minted at attach and retired at close). */
-  sessionRoots(sessionId: string): readonly string[];
+  /** The token's session's complete root list, cwd first — what the
+   * sessions store composes for the wire, read fresh per call so a
+   * subprocess never holds a copy the user has since changed. Empty for a
+   * session that is gone. */
+  sessionRoots(contextToken: string): readonly string[];
   /** The one other thing spawned subprocesses need from the extension host
-   * that isn't editor state: a currently-valid token for a connected
-   * integration, refreshed transparently server-side if needed. This host is
-   * the same "subprocess ↔ orchestrator" trust boundary either way — one
-   * socket, one bridge, two kinds of callers. */
-  getIntegrationToken(integrationId: string): Promise<IntegrationTokenResult | null>;
+   * that isn't editor state: a currently-valid credential for an MCP
+   * server — only for a bridge the server was given to under this token,
+   * refreshed transparently if needed. */
+  getIntegrationToken(contextToken: string, integrationId: string): Promise<IntegrationTokenResult | null>;
 }
 
 function severityName(sev: vscode.DiagnosticSeverity): DiagnosticInfo["severity"] {
@@ -74,8 +81,8 @@ export class EditorStateHost {
   private lastTextEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
   private subscription: vscode.Disposable | null = null;
   /** Sockets that asked to hear about their session's root changes, by
-   * the session they serve. A socket leaves when it closes — the agent
-   * that spawned the subprocess ended it. */
+   * the token they were spawned with. A socket leaves when it closes — the
+   * agent that spawned the subprocess ended it. */
   private readonly rootWatchers = new Map<Socket, string>();
 
   constructor(
@@ -127,12 +134,12 @@ export class EditorStateHost {
     socket.on("close", () => this.rootWatchers.delete(socket));
   }
 
-  /** The session's root list changed: every subprocess of that session
-   * that asked to hear it is told, and re-reads the list itself. */
-  notifyRootsChanged(sessionId: string): void {
+  /** A token's session's root list changed: every subprocess spawned with
+   * it that asked to hear it is told, and re-reads the list itself. */
+  notifyRootsChanged(contextToken: string): void {
     const notification: IpcNotification = { method: "rootsChanged" };
     for (const [socket, watched] of this.rootWatchers) {
-      if (watched === sessionId) socket.write(encodeLine(notification));
+      if (watched === contextToken) socket.write(encodeLine(notification));
     }
   }
 
@@ -148,6 +155,7 @@ export class EditorStateHost {
   }
 
   private async dispatch(socket: Socket, request: IpcRequest): Promise<unknown> {
+    if (!this.hooks.admits(request.sessionId)) throw new Error("unknown session token");
     switch (request.method) {
       case "getSelection":
         return this.getSelection();
@@ -172,7 +180,10 @@ export class EditorStateHost {
           request.params as RequestUserInputParams,
         );
       case "getIntegrationToken":
-        return this.hooks.getIntegrationToken((request.params as IntegrationTokenParams).integrationId);
+        return this.hooks.getIntegrationToken(
+          request.sessionId,
+          (request.params as IntegrationTokenParams).integrationId,
+        );
     }
   }
 

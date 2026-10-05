@@ -290,7 +290,7 @@ function harness(mcpServers: McpServer[]) {
     { emit: (...evs) => events.push(...evs) },
     new SessionContinuityStore(new MemoryKV()),
     () => dir,
-    async () => mcpServers,
+    async () => ({ servers: mcpServers, given: [] }),
   );
   return {
     pool,

@@ -33,6 +33,15 @@ export interface IntegrationsManagerHooks {
   emit(...events: SettingsEvent[]): void;
 }
 
+/** A server given to a session at its attach: its id, and how it reached
+ * the agent — handed through (stdio), passed through to the agent's own
+ * client (http), or through patchbay's bridge, the one delivery that asks
+ * patchbay for the server's credential. */
+export interface AttachedServer {
+  id: string;
+  delivery: "stdio" | "http" | "bridge";
+}
+
 const CLIENT_INFO = {
   clientName: "acp-patchbay",
   clientUri: "https://github.com/solutionsunity/acp-patchbay",
@@ -85,6 +94,18 @@ function isExpired(token: StoredToken): boolean {
 
 function expiresAtFrom(expiresIn: number | undefined): string | undefined {
   return expiresIn !== undefined ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined;
+}
+
+/** Whether a server reaches an agent's sessions: switched on, and routed to
+ * it ("auto" = every agent; an id list pins exactly; "except" = every
+ * agent minus the listed). Muted means configured, credential intact, not
+ * routed. */
+function reaches(integration: IntegrationConfig, agentId: string): boolean {
+  if (!integration.active) return false;
+  if (integration.routing === "auto") return true;
+  return Array.isArray(integration.routing)
+    ? integration.routing.includes(agentId)
+    : !integration.routing.except.includes(agentId);
 }
 
 /** Whether "connected" requires a stored credential: registry integrations
@@ -726,12 +747,22 @@ export class IntegrationsManager {
     await this.refresh();
   }
 
-  /** A currently-valid token for the bridge process, refreshed transparently
-   * if it's near/past expiry and refresh context exists — the bridge itself
-   * never sees a refresh token, only ever a fresh access token. Refresh
-   * context (token endpoint + client id) was captured at connect, since
-   * OAuth endpoints are discovered, not static (StoredToken carries them). */
-  async getToken(integrationId: string): Promise<{ accessToken: string } | null> {
+  /** A server's credential for the bridge serving it to `agentId` — only
+   * while the server is still connected, switched on and routed to that
+   * agent: muting, re-routing or removing it reaches a running bridge at
+   * its next request. */
+  async credentialFor(integrationId: string, agentId: string): Promise<{ accessToken: string } | null> {
+    const integration = this.integrationStore.get(integrationId);
+    if (integration === undefined || !reaches(integration, agentId)) return null;
+    return this.getToken(integrationId);
+  }
+
+  /** A currently-valid token, refreshed transparently if it's near/past
+   * expiry and refresh context exists — a bridge never sees a refresh
+   * token, only ever a fresh access token. Refresh context (token endpoint +
+   * client id) was captured at connect, since OAuth endpoints are
+   * discovered, not static (StoredToken carries them). */
+  private async getToken(integrationId: string): Promise<{ accessToken: string } | null> {
     const stored = await this.tokens.get(integrationId);
     if (stored === null) return null;
     if (!isExpired(stored)) return { accessToken: stored.accessToken };
@@ -753,11 +784,11 @@ export class IntegrationsManager {
     }
   }
 
-  /** The mcpServers entries a session for `agentId` should get: every
-   * integration routed to it ("auto" = every agent; explicit id list;
-   * "except" = every agent minus the listed — protocol.ts records the
-   * fidelity-gate supersession) and actually usable (connected where a
-   * credential is needed, a real endpoint where one is required).
+  /** The mcpServers entries a session for `agentId` should get — every
+   * integration that reaches it (protocol.ts records the fidelity-gate
+   * supersession) and is actually usable (connected where a credential is
+   * needed, a real endpoint where one is required) — and, beside them,
+   * which servers were given and how: the session's attach records it.
    * custom-stdio needs no bridge — handed straight through.
    * registry/custom-http go one of two ways (prompt.image mechanics —
    * capability-conditional delivery): `declaresHttp` and transport "auto" ⇒
@@ -772,17 +803,11 @@ export class IntegrationsManager {
     ipcSocketPath: string,
     contextToken: string,
     declaresHttp: boolean,
-  ): Promise<McpServer[]> {
+  ): Promise<{ servers: McpServer[]; given: AttachedServer[] }> {
     const servers: McpServer[] = [];
+    const given: AttachedServer[] = [];
     for (const integration of this.integrationStore.list()) {
-      if (!integration.active) continue; // muted — configured, credential intact, not routed
-      const routed =
-        integration.routing === "auto"
-          ? true
-          : Array.isArray(integration.routing)
-            ? integration.routing.includes(agentId)
-            : !integration.routing.except.includes(agentId);
-      if (!routed) continue;
+      if (!reaches(integration, agentId)) continue;
 
       const source = integration.source;
       if (source.kind === "custom-stdio") {
@@ -800,6 +825,7 @@ export class IntegrationsManager {
           args: source.args,
           env: Object.entries(env).map(([name, value]) => ({ name, value })),
         });
+        given.push({ id: integration.id, delivery: "stdio" });
         continue;
       }
 
@@ -824,6 +850,7 @@ export class IntegrationsManager {
               ? [{ name: header.headerName, value: `${header.valuePrefix}${token}` }]
               : [],
         });
+        given.push({ id: integration.id, delivery: "http" });
         continue;
       }
       servers.push({
@@ -843,11 +870,12 @@ export class IntegrationsManager {
             : []),
         ],
       });
+      given.push({ id: integration.id, delivery: "bridge" });
     }
     this.log.debug(
       `mcpServersFor ${agentId}: serving ${servers.length} server(s)` +
         (servers.length > 0 ? ` — ${servers.map((sv) => sv.name).join(", ")}` : ""),
     );
-    return servers;
+    return { servers, given };
   }
 }

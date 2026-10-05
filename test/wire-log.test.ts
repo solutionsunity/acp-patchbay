@@ -33,8 +33,8 @@ describe("WireLog", () => {
   });
 
   it("masks longest-first: a value prefixed by another registered value never leaks its tail", () => {
-    // Systematic for context tokens (ctx-1 / ctx-10): replacing the short
-    // one first used to rewrite "ctx-10" as "•••0" — the observed leak.
+    // A short value that prefixes a longer one: replacing it first would
+    // rewrite "ctx-10" as "•••0", printing the long one's tail in clear.
     const { log, lines } = harness();
     log.registerSecret("ctx-1");
     log.registerSecret("ctx-10");
