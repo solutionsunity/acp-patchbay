@@ -476,6 +476,7 @@ export class Orchestrator {
         ) {
           this.log.info(`${patchbayAgentId}: auto-declined "${title}" on a throwaway session`);
           const auto = await this.broker.resolveProbePermissionRequest(
+            patchbayAgentId,
             params.sessionId,
             title,
             options,
@@ -765,6 +766,7 @@ export class Orchestrator {
       {
         emit: (...events) => this.agentView.emit(...events),
         onAuditWritten: () => void this.refreshAuditTail(),
+        pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
         redact: (text) => this.wireLog.redact(text),
         openLink: (href) => void openInBrowser(href),
       },

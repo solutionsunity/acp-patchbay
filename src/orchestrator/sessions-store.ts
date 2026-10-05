@@ -391,6 +391,13 @@ export class SessionsStore {
     return this.known.get(patchbaySessionId)?.sessionId;
   }
 
+  /** The session as a later window can name it: its agent, and the agent's
+   * own id for it. Undefined for a session patchbay no longer holds. */
+  pairOf(patchbaySessionId: PatchbaySessionId): { patchbayAgentId: PatchbayAgentId; sessionId: string } | undefined {
+    const row = this.known.get(patchbaySessionId);
+    return row === undefined ? undefined : { patchbayAgentId: row.patchbayAgentId, sessionId: row.sessionId };
+  }
+
   /** Files a row under its id and its agent's. A page of the agent's own
    * list that crossed this session's creation may have named it first, as
    * a row of its own — that row is this session, and leaves. */

@@ -65,7 +65,12 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   const broker = new PermissionBroker(
     rules,
     audit,
-    { emit: (...evs) => events.push(...evs), onAuditWritten: () => {}, redact: (text) => text },
+    {
+      emit: (...evs) => events.push(...evs),
+      onAuditWritten: () => {},
+      pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
+      redact: (text) => text,
+    },
     (patchbaySessionId) => sessions.grantedRoots(patchbaySessionId),
   );
 

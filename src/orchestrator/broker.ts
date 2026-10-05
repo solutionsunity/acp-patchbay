@@ -44,6 +44,10 @@ export interface BrokerHooks {
   emit(...events: AgentViewEvent[]): void;
   /** Refresh Settings' audit tail after every write. */
   onAuditWritten(): void;
+  /** The session as a later window can name it — its agent, and the
+   * agent's own id for it — for the decisions recorded about it. Undefined
+   * for a session patchbay no longer holds. */
+  pairOf(patchbaySessionId: PatchbaySessionId): { patchbayAgentId: PatchbayAgentId; sessionId: string } | undefined;
   /** `text` with every value patchbay handed an agent masked — for agent
    * text a card shows, which such a value can ride back in. */
   redact(text: string): string;
@@ -365,9 +369,18 @@ export class PermissionBroker {
     return new Promise((resolve) => this.pending.set(blockId, { patchbaySessionId, resolve }));
   }
 
-  private async writeAudit(entry: Record<string, unknown>): Promise<void> {
+  /** One decision on the record. One about a session names it by its pair
+   * (`pairOf`), which a later window can still match — patchbay's own id
+   * for a session lives with this window. */
+  private async writeAudit(entry: { kind: string } & Record<string, unknown>): Promise<void> {
     await this.audit.append(entry);
     this.hooks.onAuditWritten();
+  }
+
+  /** The pair a decision about this session is recorded under; none once
+   * the session has left. */
+  private pairOf(patchbaySessionId: PatchbaySessionId): Record<string, string> {
+    return this.hooks.pairOf(patchbaySessionId) ?? {};
   }
 
   /** A probe session's permission request: the tracker's throwaway
@@ -378,6 +391,7 @@ export class PermissionBroker {
    * privilege wins: reject_once, then reject_always, else the cancelled
    * outcome. Audited like every other automatic decision. */
   async resolveProbePermissionRequest(
+    patchbayAgentId: PatchbayAgentId,
     sessionId: string,
     toolTitle: string,
     options: readonly PermissionOptionView[],
@@ -385,7 +399,7 @@ export class PermissionBroker {
     const reject =
       options.find((o) => o.kind === "reject_once") ??
       options.find((o) => o.kind === "reject_always");
-    await this.writeAudit({ kind: "probe-auto-deny", sessionId, tool: toolTitle, subject: null });
+    await this.writeAudit({ kind: "probe-auto-deny", patchbayAgentId, sessionId, tool: toolTitle, subject: null });
     return reject !== undefined ? { optionId: reject.optionId } : { cancelled: true };
   }
 
@@ -412,7 +426,7 @@ export class PermissionBroker {
       const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
       if (auto !== undefined) {
         this.pending.delete(blockId);
-        await this.writeAudit({ kind: "auto-allow", patchbaySessionId, tool: toolTitle, files });
+        await this.writeAudit({ kind: "auto-allow", ...this.pairOf(patchbaySessionId), tool: toolTitle, files });
         return { optionId: auto.optionId };
       }
       this.hooks.emit({
@@ -438,7 +452,7 @@ export class PermissionBroker {
           auto: true,
         });
       }
-      await this.writeAudit({ kind: "turn-cancelled", patchbaySessionId, tool: toolTitle, files });
+      await this.writeAudit({ kind: "turn-cancelled", ...this.pairOf(patchbaySessionId), tool: toolTitle, files });
       return { cancelled: true };
     }
     const chosen = options.find((o) => o.optionId === optionId);
@@ -452,7 +466,7 @@ export class PermissionBroker {
     });
     await this.writeAudit({
       kind: `user-${chosen.kind}`,
-      patchbaySessionId,
+      ...this.pairOf(patchbaySessionId),
       tool: toolTitle,
       files,
     });
@@ -485,7 +499,7 @@ export class PermissionBroker {
     }
     const verdict = await this.evaluateFileWrites(patchbaySessionId, [path]);
     if (!this.pending.has(blockId)) {
-      await this.writeAudit({ kind: "turn-cancelled", patchbaySessionId, file: path });
+      await this.writeAudit({ kind: "turn-cancelled", ...this.pairOf(patchbaySessionId), file: path });
       return "cancelled";
     }
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
@@ -503,7 +517,7 @@ export class PermissionBroker {
     if (verdict === "allow") {
       this.pending.delete(blockId);
       this.hooks.emit({ kind: "diffResolved", patchbaySessionId, blockId, accepted: true, auto: true });
-      await this.writeAudit({ kind: "auto-allow", patchbaySessionId, file: path });
+      await this.writeAudit({ kind: "auto-allow", ...this.pairOf(patchbaySessionId), file: path });
       return "accepted";
     }
 
@@ -515,7 +529,7 @@ export class PermissionBroker {
     this.hooks.emit({ kind: "diffResolved", patchbaySessionId, blockId, accepted, auto: cancelled });
     await this.writeAudit({
       kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
-      patchbaySessionId,
+      ...this.pairOf(patchbaySessionId),
       file: path,
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
@@ -534,11 +548,11 @@ export class PermissionBroker {
     const subject = { command, cwd: run.cwd, env: Object.keys(run.env) };
     const verdict = this.evaluateCommand(command);
     if (verdict === "deny") {
-      await this.writeAudit({ kind: "auto-deny", patchbaySessionId, ...subject });
+      await this.writeAudit({ kind: "auto-deny", ...this.pairOf(patchbaySessionId), ...subject });
       return "rejected";
     }
     if (verdict === "allow") {
-      await this.writeAudit({ kind: "auto-allow", patchbaySessionId, ...subject });
+      await this.writeAudit({ kind: "auto-allow", ...this.pairOf(patchbaySessionId), ...subject });
       return "accepted";
     }
 
@@ -569,7 +583,7 @@ export class PermissionBroker {
     });
     await this.writeAudit({
       kind: cancelled ? "turn-cancelled" : accepted ? "user-allow" : "user-reject",
-      patchbaySessionId,
+      ...this.pairOf(patchbaySessionId),
       ...subject,
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";

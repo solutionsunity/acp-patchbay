@@ -279,6 +279,7 @@ function wireHarness() {
     {
       emit: (...evs) => events.push(...evs),
       onAuditWritten: () => {},
+      pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
       redact: (text) => text,
       openLink: (href) => opened.push(href),
     },

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The decision audit names each session by its agent and the agent's own
+  id for it — what you can still match in that agent's history after the
+  window closes — instead of an id that lived only as long as the window.
 - **Security:** a terminal now answers only the session that started it.
   Before, any connected agent could read the output of a command another
   agent's session ran, wait on it, or kill and release it, by naming its

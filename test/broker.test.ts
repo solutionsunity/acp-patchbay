@@ -48,6 +48,8 @@ function harness() {
     {
       emit: (...evs) => events.push(...evs),
       onAuditWritten: () => auditRefreshes++,
+      // every session the agent "a1" holds, under its own id for it
+      pairOf: (patchbaySessionId) => ({ patchbayAgentId: "a1" as PatchbayAgentId, sessionId: `agent-${patchbaySessionId}` }),
       redact: (text) => text.split(HANDED_OUT).join("•••"),
       openLink: (href) => opened.push(href),
     },
@@ -246,6 +248,9 @@ describe("PermissionBroker audit trail", () => {
     const tail = await audit.tail(10);
     expect(tail).toHaveLength(1);
     expect(tail[0]).toMatchObject({ kind: "auto-allow", command: "npm run build" });
+    // named by the pair a later window can match, never this window's id
+    expect(tail[0]).toMatchObject({ patchbayAgentId: "a1", sessionId: "agent-s1" });
+    expect(tail[0]).not.toHaveProperty("patchbaySessionId");
   });
 
   it("auto-deny via rule writes an audit entry and rejects", async () => {
@@ -437,6 +442,7 @@ describe("resolveProbePermissionRequest — probe sessions answer, never dangle"
   it("picks reject_once over everything, whatever the agent's ordering", async () => {
     const { broker } = harness();
     const result = await broker.resolveProbePermissionRequest(
+      "a1" as PatchbayAgentId,
       "probe-1",
       "Workspace Indexing Permission",
       options(["allow_always", "reject_always", "allow_once", "reject_once"]),
@@ -447,18 +453,18 @@ describe("resolveProbePermissionRequest — probe sessions answer, never dangle"
   it("falls back to reject_always, then the cancelled outcome", async () => {
     const { broker } = harness();
     expect(
-      await broker.resolveProbePermissionRequest("p", "t", options(["allow_once", "reject_always"])),
+      await broker.resolveProbePermissionRequest("a1" as PatchbayAgentId, "p", "t", options(["allow_once", "reject_always"])),
     ).toEqual({ optionId: "o1" });
     expect(
-      await broker.resolveProbePermissionRequest("p", "t", options(["allow_once", "allow_always"])),
+      await broker.resolveProbePermissionRequest("a1" as PatchbayAgentId, "p", "t", options(["allow_once", "allow_always"])),
     ).toEqual({ cancelled: true });
   });
 
   it("audits the automatic decision and never emits a card", async () => {
     const { broker, audit, events } = harness();
-    await broker.resolveProbePermissionRequest("probe-1", "Indexing", options(["reject_once"]));
+    await broker.resolveProbePermissionRequest("a1" as PatchbayAgentId, "probe-1", "Indexing", options(["reject_once"]));
     const tail = await audit.tail(10);
-    expect(tail.at(-1)).toMatchObject({ kind: "probe-auto-deny", tool: "Indexing" });
+    expect(tail.at(-1)).toMatchObject({ kind: "probe-auto-deny", patchbayAgentId: "a1", sessionId: "probe-1", tool: "Indexing" });
     expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
   });
 });
