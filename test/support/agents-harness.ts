@@ -17,6 +17,7 @@ import { ComposerKnobsStore } from "../../src/orchestrator/stores/composer-knobs
 import { MemorySecrets } from "../../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../../src/orchestrator/stores/kv";
 import { LastConnectedStore } from "../../src/orchestrator/stores/last-connected";
+import { DefaultAgentFoldStore } from "../../src/orchestrator/stores/default-agent-fold";
 import { SecretEnvStore } from "../../src/orchestrator/stores/secret-env";
 import { UsedCapabilityStore } from "../../src/orchestrator/stores/used-capabilities";
 import {
@@ -105,6 +106,7 @@ export function agentsHarness(
     usedCapabilities,
     composerKnobs: new ComposerKnobsStore(kv),
     lastConnected: new LastConnectedStore(new MemoryKV()),
+    defaultAgentFold: new DefaultAgentFoldStore(kv),
     registry: new AcpRegistryStore(join(dir, "registry"), () => {}),
     tracker,
     busy: (patchbayAgentId) => queue.held(patchbayAgentId),

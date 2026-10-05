@@ -50,6 +50,7 @@ import type { AuthLockStore } from "./stores/auth-locks";
 import { resolvedBinaryPath } from "./stores/binary-installer";
 import type { ComposerKnobsStore } from "./stores/composer-knobs";
 import type { LastConnectedStore } from "./stores/last-connected";
+import type { DefaultAgentFoldStore } from "./stores/default-agent-fold";
 import type { SecretEnvStore } from "./stores/secret-env";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
 import type { PatchbayAgentId } from "../shared/ids";
@@ -66,6 +67,7 @@ export interface AgentsStoreDeps {
   usedCapabilities: UsedCapabilityStore;
   composerKnobs: ComposerKnobsStore;
   lastConnected: LastConnectedStore;
+  defaultAgentFold: DefaultAgentFoldStore;
   registry: AcpRegistryStore;
   tracker: CapabilityTracker;
   /** What the orchestrator's queue holds for the agent, the running
@@ -612,17 +614,21 @@ export class AgentsStore implements ConnectionOperations {
   async startupSources(legacyDefault: string): Promise<ConnectAgentSource[]> {
     // The setting names an agent by its id, or by the registry entry it was
     // added from: one added from it since is that agent, and with none on
-    // this machine the registry path adds it — once, since the next start
-    // finds it by its registry id.
-    const legacy =
-      legacyDefault === ""
-        ? undefined
-        : (this.config(legacyDefault as PatchbayAgentId) ??
-          this.deps.configs.list().find((c) => c.registrySource?.registryId === legacyDefault));
-    if (legacy !== undefined && !legacy.autoConnect) {
-      await this.deps.configs.upsert({ ...legacy, autoConnect: true });
-      await this.publishAll();
-      this.log.info(`migrated acpPatchbay.defaultAgent ("${legacyDefault}") to the per-agent auto-connect flag`);
+    // this machine the registry path adds it — the next start finds it by
+    // its registry id and flags it. A value flagged once is folded: never
+    // again (the setting can't be cleared, so the record consumes it).
+    const unfolded = legacyDefault !== "" && legacyDefault !== this.deps.defaultAgentFold.folded();
+    const legacy = !unfolded
+      ? undefined
+      : (this.config(legacyDefault as PatchbayAgentId) ??
+        this.deps.configs.list().find((c) => c.registrySource?.registryId === legacyDefault));
+    if (legacy !== undefined) {
+      if (!legacy.autoConnect) {
+        await this.deps.configs.upsert({ ...legacy, autoConnect: true });
+        await this.publishAll();
+        this.log.info(`migrated acpPatchbay.defaultAgent ("${legacyDefault}") to the per-agent auto-connect flag`);
+      }
+      await this.deps.defaultAgentFold.record(legacyDefault);
     }
     const stamped = await this.deps.lastConnected.consume();
     const flagged = this.deps.configs.list().filter((c) => c.autoConnect).map((c) => c.id);
@@ -631,7 +637,7 @@ export class AgentsStore implements ConnectionOperations {
       this.log.debug(`startup connect: ${patchbayAgentId} has no config (removed since the stamp) — skipped`);
       return [];
     });
-    return legacyDefault !== "" && legacy === undefined ? [...sources, { registryId: legacyDefault }] : sources;
+    return unfolded && legacy === undefined ? [...sources, { registryId: legacyDefault }] : sources;
   }
 
   /** Reload-continuation stamp, written before any killing at shutdown —

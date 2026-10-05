@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Switching off auto-connect for the agent the old
+  `acpPatchbay.defaultAgent` setting named now stays off; it was switched
+  back on at every start.
 - The decision audit names each session by its agent and the agent's own
   id for it — what you can still match in that agent's history after the
   window closes — instead of an id that lived only as long as the window.

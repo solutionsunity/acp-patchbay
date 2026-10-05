@@ -78,6 +78,7 @@ import { McpServerConfigStore } from "./stores/mcp-server-configs";
 import { McpServerTokenStore } from "./stores/mcp-server-tokens";
 import { LastActiveSessionStore } from "./stores/last-active-session";
 import { LastConnectedStore } from "./stores/last-connected";
+import { DefaultAgentFoldStore } from "./stores/default-agent-fold";
 import { MachineRulesStore, PermissionRulesStore } from "./stores/permission-rules";
 import { SavedRootsStore } from "./stores/saved-roots";
 import { loadCatalog } from "./stores/mcp-catalog";
@@ -134,6 +135,7 @@ export class Orchestrator {
 
   readonly decisionAudit: DecisionAuditStore;
   readonly lastConnected: LastConnectedStore;
+  private readonly defaultAgentFold: DefaultAgentFoldStore;
   readonly lastActiveSession: LastActiveSessionStore;
   readonly agentConfigs: AgentConfigStore;
   readonly mcpServerConfigs: McpServerConfigStore;
@@ -245,6 +247,7 @@ export class Orchestrator {
     this.machineSavedRoots = new SavedRootsStore(machineKV, "machine");
     this.decisionAudit = new DecisionAuditStore(context.storageUri?.fsPath ?? null);
     this.lastConnected = new LastConnectedStore(context.workspaceState);
+    this.defaultAgentFold = new DefaultAgentFoldStore(machineKV);
     this.lastActiveSession = new LastActiveSessionStore(context.workspaceState);
     // Agents and MCP servers are developer-env, not code-env: global to
     // this machine, never a repo-committed file. Deliberately global-only —
@@ -719,6 +722,7 @@ export class Orchestrator {
         usedCapabilities: this.usedCapabilities,
         composerKnobs: this.composerKnobs,
         lastConnected: this.lastConnected,
+        defaultAgentFold: this.defaultAgentFold,
         registry: this.acpRegistry,
         tracker: this.capabilityTracker,
         busy: (patchbayAgentId) => queue.held(patchbayAgentId),
@@ -870,6 +874,7 @@ export class Orchestrator {
       decisionAudit: this.decisionAudit,
       lastActiveSession: this.lastActiveSession,
       lastConnected: this.lastConnected,
+      defaultAgentFold: this.defaultAgentFold,
       preferences: this.preferences,
       composerKnobs: this.composerKnobs,
       sessionContinuity: this.sessionContinuity,

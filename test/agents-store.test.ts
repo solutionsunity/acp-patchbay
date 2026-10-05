@@ -263,6 +263,16 @@ describe("agents store", () => {
     expect(added.map((id) => h.agents.name(id!))).toEqual(["reg", "reg 2"]);
   });
 
+  it("a value folded once is never folded again — the flag switched off afterwards stays off", async () => {
+    const h = agentsHarness(dir);
+    await stored(h, fakeConfig("legacy", {}));
+    await h.agents.startupSources("legacy");
+    expect(h.agents.config("legacy" as PatchbayAgentId)?.autoConnect).toBe(true);
+    await h.agents.save(fakeConfig("legacy", {}, { autoConnect: false })); // the user switches it off
+    expect(await h.agents.startupSources("legacy")).toEqual([]);
+    expect(h.agents.config("legacy" as PatchbayAgentId)?.autoConnect).toBe(false);
+  });
+
   it("the old default-agent setting naming a registry entry adds its agent once — the next start finds it by its registry id", async () => {
     const h = agentsHarness(dir);
     await seedRegistry(h, { id: "reg", version: "1.0.0" });

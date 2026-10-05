@@ -14,6 +14,7 @@ import { McpServerTokenStore, MemorySecrets } from "../src/orchestrator/stores/m
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
+import { DefaultAgentFoldStore } from "../src/orchestrator/stores/default-agent-fold";
 import { ComposerKnobsStore } from "../src/orchestrator/stores/composer-knobs";
 import { PreferencesStore } from "../src/orchestrator/stores/preferences";
 import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
@@ -54,6 +55,7 @@ describe("eraseAllData", () => {
     const machineRules = new MachineRulesStore(globalKv);
     const decisionAudit = new DecisionAuditStore(dir);
     const lastConnected = new LastConnectedStore(workspaceKv);
+    const defaultAgentFold = new DefaultAgentFoldStore(globalKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
     const composerKnobs = new ComposerKnobsStore(globalKv);
@@ -88,7 +90,7 @@ describe("eraseAllData", () => {
       agentConfigs, mcpServerConfigs, usedCapabilities,
       authLocks, spawnRegistry, agentEnv, mcpServerEnv,
       mcpServerTokens, permissionRules, machineRules,
-      decisionAudit, lastConnected, lastActiveSession,
+      decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
       preferences, composerKnobs, sessionContinuity,
       workspaceSavedRoots, machineSavedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },

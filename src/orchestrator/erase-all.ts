@@ -38,6 +38,7 @@ export interface EraseTargets {
   machineRules: { set(rules: CommandRule[]): Promise<void> };
   decisionAudit: Wipeable;
   lastConnected: Wipeable;
+  defaultAgentFold: Wipeable;
   lastActiveSession: Wipeable;
   preferences: Wipeable;
   composerKnobs: Wipeable;
@@ -82,6 +83,7 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.machineRules.set([]);
   await targets.decisionAudit.wipe();
   await targets.lastConnected.wipe();
+  await targets.defaultAgentFold.wipe();
   await targets.lastActiveSession.wipe();
   await targets.preferences.wipe();
   await targets.composerKnobs.wipe();

@@ -313,7 +313,7 @@ and how it went. The editor-state socket answers through that record only:
 | Fact | Where | Why |
 |---|---|---|
 | Agent configs and MCP-server records | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically; on its first load it takes over what older versions kept in `globalState` and deletes it there | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever. The file is patchbay's own because the editor-owned `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it |
-| Session continuity, preferences, last knob choices, auth locks, used-capability marks, spawned-process records | Machine store | Facts nothing else can tell again, per machine |
+| Session continuity, preferences, last knob choices, auth locks, used-capability marks, spawned-process records, the old default-agent setting's folded value | Machine store | Facts nothing else can tell again, per machine |
 | Saved roots | `workspaceState` (this workspace) + machine store (every workspace) | Folders every new session starts with, read at session birth only; per user either way, never repo-shipped |
 | Permission rules | `workspaceState` (workspace rules) + machine store (machine command rules) + built-in defaults | Workspace rules first, machine rules the floor, then ask. Per user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Last-connected stamp | `workspaceState` | The agents still running at shutdown, with the stamp's time. The next activate consumes it — read and cleared, spent either way — and honors it only within 60 s: deactivate fires the same for a reload and a quit, so the stamp's age tells them apart. Stale or absent, only the agents set to connect on window open start |
@@ -322,6 +322,14 @@ and how it went. The editor-state socket answers through that record only:
 | ACP registry | A copy of the last fetch in the extension's `globalStorage` directory | Read at start, shown while a fetch is out or failing, replaced whole by every fetch that lands; a copy in an older shape reads as none |
 | Image bytes | The attachments stash, a temp directory | Ephemeral: the OS owns cleanup, and a reference whose file is gone degrades to a label chip. Staged chips carry the file's reference |
 | Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers) | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |
+
+**A saved shape changes by migration, once.** What a store reads in an
+older shape is rewritten in the new one — where the store is built, or,
+when it takes facts only a later moment has (the startup lists), at that
+moment. Every migration consumes what triggers it: the rewrite itself, or
+a record that it ran where the old value can't be rewritten (an
+unregistered setting), so none runs twice and none undoes what the user
+did since.
 
 Agents and MCP servers are deliberately global-only. The risk this guards —
 a production-access MCP server silently following a user between repos — is
