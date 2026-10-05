@@ -524,7 +524,12 @@ for (const theme of Object.keys(THEMES)) {
   p = await page(browser, theme, { width: 420, height: 600 });
   await renderView(p, "agent-view", agentViewState({ live: true }));
   await p.waitForSelector(".chat .msg-user");
-  check(`[${theme}] live ticker spins`, (await p.$(".chat .codicon-loading.codicon-modifier-spin")) !== null);
+  // The live view's spinner can render after the user message, not with
+  // it — wait for it rather than read once.
+  check(
+    `[${theme}] live ticker spins`,
+    await p.waitForSelector(".chat .codicon-loading.codicon-modifier-spin", { timeout: 3000 }).then(() => true, () => false),
+  );
   await p.screenshot({ path: `${OUT}/chat-live-${theme}.png` });
   await p.close();
 
