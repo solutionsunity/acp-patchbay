@@ -12,7 +12,8 @@
 //    Cancelled at once — and the one that cut in takes its turn when what
 //    is left of them has unwound. What cuts in is never cut: it is how
 //    work ends;
-//  - rows never wait on each other.
+//  - rows wait on each other only where a caller says so: an operation can
+//    take its turn after work elsewhere has settled too (`after`).
 // What a row holds is the views' busy state for it, so every move is
 // reported. Live only — it ends with the window, like the processes it
 // orders. A running operation never comes back through here for its own
@@ -22,7 +23,7 @@
 /** How an operation the queue cut settles — `by` is the operation that cut
  * it. */
 export class Cancelled extends Error {
-  constructor(by: string) {
+  constructor(readonly by: string) {
     super(`cancelled by ${by}`);
     this.name = "Cancelled";
   }
@@ -45,14 +46,16 @@ export class Queue<Work extends string> {
    * operation's outcome, shared by every request that joined it.
    * `identity` is what makes two requests one operation — the work's kind,
    * plus any parameter that changes the outcome. `body` gets the signal a
-   * cut aborts: told to stop, a running operation ends there. */
+   * cut aborts: told to stop, a running operation ends there. `after` is
+   * work elsewhere its turn waits for too. */
   run<T>(
     row: string,
     work: Work,
     body: (signal: AbortSignal) => Promise<T>,
     identity: string = work,
+    after?: Promise<unknown>,
   ): Promise<T> {
-    return this.enter(row, work, identity, body, false);
+    return this.enter(row, work, identity, body, false, after);
   }
 
   /** Ends the row's work, then runs `body` as `work` once what it cut, and
@@ -66,12 +69,24 @@ export class Queue<Work extends string> {
     return this.enter(row, work, identity, body, true);
   }
 
-  /** Ends every row's work, as `by` would cutting in on each; settles once
-   * all of it has left. */
-  cutAll(by: Work): Promise<void> {
-    const held = [...this.rows.values()].flat();
+  /** Ends the row's work as `by` cutting in would, and runs nothing after:
+   * settles once all of it has left. */
+  end(row: string, by: string): Promise<void> {
+    const held = [...(this.rows.get(row) ?? [])];
     for (const h of held) h.cancel(by);
     return Promise.all(held.map((h) => h.left)).then(() => {});
+  }
+
+  /** Ends every row's work, as `by` would cutting in on each; settles once
+   * all of it has left. */
+  cutAll(by: string): Promise<void> {
+    return Promise.all([...this.rows.keys()].map((row) => this.end(row, by))).then(() => {});
+  }
+
+  /** Settles once everything the row holds now has left it — what an
+   * operation elsewhere waits for (`after`). */
+  settled(row: string): Promise<void> {
+    return Promise.all((this.rows.get(row) ?? []).map((h) => h.left)).then(() => {});
   }
 
   private enter<T>(
@@ -80,6 +95,7 @@ export class Queue<Work extends string> {
     identity: string,
     body: (signal: AbortSignal) => Promise<T>,
     cuts: boolean,
+    after?: Promise<unknown>,
   ): Promise<T> {
     const held = this.rows.get(row) ?? [];
     // One already cut is no longer the operation being asked for.
@@ -87,7 +103,7 @@ export class Queue<Work extends string> {
     // One identity, one body — and so one result type.
     if (same !== undefined) return same.outcome as Promise<T>;
     if (cuts) for (const h of held) h.cancel(work);
-    const turn = Promise.all(held.map((h) => h.left));
+    const turn = Promise.all([...held.map((h) => h.left), after]);
     const controller = new AbortController();
     const { signal } = controller;
     let started = false;
@@ -147,7 +163,7 @@ interface Held<Work> {
   outcome: Promise<unknown>;
   /** Ends the operation, `by` cutting in — nothing for one that cut in
    * itself. */
-  cancel(by: Work): void;
+  cancel(by: string): void;
   /** Settles once the operation has left the row. */
   left: Promise<void>;
 }

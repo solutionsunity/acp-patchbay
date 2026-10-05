@@ -23,6 +23,7 @@ import {
   type PermissionOptionView,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
+import { gatesFor } from "./support/session-gates";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -121,6 +122,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     pool,
     host,
     broker,
+    gates: gatesFor(sessions, (event) => events.push(event)),
     rules,
     sessions,
     events,
@@ -145,7 +147,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "writeFile", path: join(workspaceRoot, "a.txt"), content: "hello\n" }] }, "w1"),
     );
     const sessionId = await h.sessions.createSession("w1", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     expect(textOf(sessionId, h.events)).toContain("write: ok");
     expect(await readFile(join(workspaceRoot, "a.txt"), "utf8")).toBe("hello\n");
@@ -167,7 +169,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: outside, content: "malicious\n" }] }, "w2"));
     const sessionId = await h.sessions.createSession("w2", "Fake Agent", workspaceRoot);
 
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     // resolve the diff card as a reject once it appears
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
     const diffBlock = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
@@ -193,7 +195,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: escaping, content: "x\n" }] }, "w2e"));
     const sessionId = await h.sessions.createSession("w2e", "Fake Agent", workspaceRoot);
 
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
     const diffBlock = h.state().transcripts[sessionId]!.find((b) => b.kind === "diff")!;
     expect(diffBlock.kind === "diff" && diffBlock.resolution).toBeNull(); // waiting on the user, not auto-accepted
@@ -209,10 +211,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: outside, content: "x\n" }] }, "w3"));
     const sessionId = await h.sessions.createSession("w3", "Fake Agent", workspaceRoot);
 
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "diff"));
-    await h.sessions.stopTurn(sessionId);
-    await turn;
+    await h.gates.stop(sessionId);
+    expect(await turn).toMatchObject({ by: "stop" });
 
     expect(textOf(sessionId, h.events)).toContain(
       `write: rejected (-32800 Request cancelled: the turn was stopped before the user decided on the write to ${outside})`,
@@ -226,7 +228,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const missing = join(workspaceRoot, "missing.txt");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: missing }] }, "r2"));
     const sessionId = await h.sessions.createSession("r2", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
     expect(textOf(sessionId, h.events)).toContain(`read: failed (-32002 Resource not found: ${missing})`);
     // fs answered truthfully — the path fired
     expect(h.evidence).toContain("fs.readTextFile:used");
@@ -242,7 +244,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const target = join(workspaceRoot, "c.txt");
     await h.pool.connect(spec({ turn: [{ type: "writeFile", path: target, content: "x\n" }] }, "w4"));
     const sessionId = await h.sessions.createSession("w4", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     expect(textOf(sessionId, h.events)).toContain("write: rejected (-32603 Internal error)");
     expect(h.evidence).not.toContain("fs.writeTextFile:used");
@@ -255,7 +257,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const file = join(workspaceRoot, "d.txt");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: file }] }, "r3"));
     const sessionId = await h.sessions.createSession("r3", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     expect(textOf(sessionId, h.events)).toContain("read: failed (-32603 Internal error)");
     expect(h.evidence).not.toContain("fs.readTextFile:used");
@@ -269,7 +271,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await applyFileWrite(file, "existing content\n");
     await h.pool.connect(spec({ turn: [{ type: "readFile", path: file }] }, "r1"));
     const sessionId = await h.sessions.createSession("r1", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
     expect(textOf(sessionId, h.events)).toContain("read: existing content\n");
     await h.pool.stop("r1");
   });
@@ -285,7 +287,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "console.log('hi from child')"] }] }, "c1"),
     );
     const sessionId = await h.sessions.createSession("c1", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     const texts = textOf(sessionId, h.events);
     expect(texts.some((t) => t.includes("exit=0"))).toBe(true);
@@ -303,7 +305,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("c57", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
     const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
     expect(card.detail).toBe(`${process.execPath} -e "${probe}"`);
@@ -323,7 +325,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "console.log('cwd=' + process.cwd())"] }] }, "c64"),
     );
     const sessionId = await h.sessions.createSession("c64", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
     const card = assertKind(h.state().transcripts[sessionId]!.find((b) => b.kind === "permission"), "permission");
     expect(card.facts).toEqual([{ label: "cwd", value: workspaceRoot }]);
@@ -344,12 +346,12 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       const agentId = `c64-${via.slice(8)}`;
       await h.pool.connect(spec({ declare, turn: [probe] }, agentId));
       const sessionId = await h.sessions.createSession(agentId, "Fake Agent", workspaceRoot);
-      await h.sessions.sendPrompt(sessionId, "first turn"); // prompted: re-attached, never re-minted
+      await h.gates.prompt(sessionId, { text: "first turn" }); // prompted: re-attached, never re-minted
 
       // a fresh process: its connection has opened nothing until the re-attach
       await h.pool.restart(agentId);
       expect(h.pool.get(agentId)?.sessions).toEqual([]);
-      await h.sessions.sendPrompt(sessionId, "second turn");
+      await h.gates.prompt(sessionId, { text: "second turn" });
 
       // the connection names it the agent's way
       expect(h.pool.get(agentId)?.sessions).toEqual([h.sessions.handleOf(sessionId)]);
@@ -373,7 +375,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "runCommand", command: process.execPath, args: ["-e", "1"] }] }, "c2"),
     );
     const sessionId = await h.sessions.createSession("c2", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
     expect(textOf(sessionId, h.events)).toContain(
       `command: rejected (-32803 The user rejected the command \`${process.execPath} -e 1\`)`,
     );
@@ -394,7 +396,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("p1", "Fake Agent", workspaceRoot);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
     expect(textOf(sessionId, h.events)).toContain("permission: allow_once");
     // auto-resolved — no card should have been shown
     expect(h.state().transcripts[sessionId]!.some((b) => b.kind === "permission")).toBe(false);
@@ -408,7 +410,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "askPermission", title: "Edit two", kind: "edit", subject: locations }] }, "p1m"),
     );
     const sessionId = await h.sessions.createSession("p1m", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
     const card = h.state().transcripts[sessionId]!.find((b) => b.kind === "permission")!;
     h.broker.resolve(card.id, "reject_once");
@@ -426,7 +428,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("p2", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
     const card = h.state().transcripts[sessionId]!.find((b) => b.kind === "permission")!;
     h.broker.resolve(card.id, "allow_once");
@@ -450,11 +452,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("p3", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    await h.sessions.reload(sessionId);
+    await h.gates.reload(sessionId);
     expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
-    await turn;
+    expect(await turn).toMatchObject({ by: "reload" });
     await h.pool.stop("p3");
   });
 
@@ -464,11 +466,11 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       spec({ turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }] }, "p4"),
     );
     const sessionId = await h.sessions.createSession("p4", "Fake Agent", workspaceRoot);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" }).catch((err: unknown) => err);
     await waitFor(() => h.state().transcripts[sessionId]?.some((b) => b.kind === "permission"));
-    await h.sessions.close(sessionId);
+    await h.gates.close(sessionId);
     expect(textOf(sessionId, h.events)).toContain("permission: cancelled");
-    await turn;
+    expect(await turn).toMatchObject({ by: "close" });
     await h.pool.stop("p4");
   });
 });

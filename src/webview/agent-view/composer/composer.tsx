@@ -6,16 +6,17 @@
 // its send/stop routing per session id; the only ephemeral state is UI
 // furniture (draft content, open adder, drag height).
 import { useRef, useState } from "react";
-import type {
-  AgentSummary,
-  ContextChip,
-  LiveSelectionView,
-  OpenEditorView,
-  PreferencesView,
-  PromptPart,
-  SessionKnobView,
-  SessionSummary,
-  UsageInfo,
+import {
+  turnUnderway,
+  type AgentSummary,
+  type ContextChip,
+  type LiveSelectionView,
+  type OpenEditorView,
+  type PreferencesView,
+  type PromptPart,
+  type SessionKnobView,
+  type SessionSummary,
+  type UsageInfo,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
@@ -78,13 +79,13 @@ export function Composer(props: {
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
   const { enabled, stop, placeholder } = composerControls(props.session, props.agent, props.incoming);
   const sessionId = props.session?.id ?? "";
-  const live = props.session?.live ?? false;
+  const underway = props.session !== null && turnUnderway(props.session);
 
   const sendOrStop = () => {
-    if (live) send({ kind: "stopTurn", sessionId });
+    if (underway) send({ kind: "stopTurn", sessionId });
     else submitRef.current?.();
   };
-  // Enter during a live turn queues (the orchestrator holds it until the
+  // Enter during a turn underway queues (the orchestrator holds it until the
   // turn ends); the Stop button is the only stop — Enter-as-stop would be
   // too easy to trip once sending mid-turn is legal.
   const onSubmit = (text: string, parts: readonly PromptPart[] | undefined, draft: string): void =>
@@ -286,19 +287,19 @@ export function Composer(props: {
           <ComposerStats totals={props.totals} usage={props.usage} show={props.preferences} />
         )}
         {/* theme-token primary (brand fills superseded — theme.css
-            identity palette); while a turn is live it becomes Stop,
+            identity palette); while a turn is underway it becomes Stop,
             which is destructive. Each role has its own gate (composerControls
             says why they differ). */}
         <Button
-          variant={live ? "destructive" : "default"}
+          variant={underway ? "destructive" : "default"}
           size="icon"
           className="ml-auto size-[26px] rounded-[7px]"
-          disabled={live ? !stop : !enabled}
-          title={live ? "Stop" : "Send"}
-          aria-label={live ? "Stop" : "Send"}
+          disabled={underway ? !stop : !enabled}
+          title={underway ? "Stop" : "Send"}
+          aria-label={underway ? "Stop" : "Send"}
           onClick={sendOrStop}
         >
-          <Icon name={live ? "debug-stop" : "arrow-up"} />
+          <Icon name={underway ? "debug-stop" : "arrow-up"} />
         </Button>
       </div>
     </div>

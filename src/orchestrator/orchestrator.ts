@@ -53,7 +53,8 @@ import { runLoginTask } from "./login-task";
 import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { Cancelled, Queue } from "./queue";
-import { normalizeRootPath, SessionsStore } from "./sessions-store";
+import { type AttachWork, SessionGates } from "./session-gates";
+import { normalizeRootPath, SessionsStore, type SessionConnectionOperations } from "./sessions-store";
 import { nonce } from "./webview-host";
 import { WireLog } from "./wire-log";
 import { listDoneSounds, playDoneSound } from "./sound";
@@ -157,7 +158,10 @@ export class Orchestrator {
    * reached only through the gates. */
   readonly agents: Omit<AgentsStore, keyof ConnectionOperations>;
   readonly gates: AgentGates;
-  readonly sessions: SessionsStore;
+  /** The sessions store without its connection operations — those are
+   * reached only through the session gates. */
+  readonly sessions: Omit<SessionsStore, keyof SessionConnectionOperations>;
+  readonly sessionGates: SessionGates;
   readonly capabilityTracker: CapabilityTracker;
   private readonly defaultsEditor: DefaultsEditor;
   readonly broker: PermissionBroker;
@@ -376,9 +380,9 @@ export class Orchestrator {
           const sync = this.sessions
             .syncAgentSessions(agentId)
             // A session opened before its agent connected sat blank (no
-            // replay to run yet) — hydrate whatever is on view now that a
+            // replay to run yet) — attach whatever is on view now that a
             // process exists.
-            .then(() => this.sessions.hydrateViewed(agentId))
+            .then(() => this.sessionGates.reattachViewed(agentId))
             .catch(this.logCatch(`session/list sync for ${agentId}`))
             .finally(() => {
               if (this.pendingSyncs.get(agentId) === sync) this.pendingSyncs.delete(agentId);
@@ -553,11 +557,11 @@ export class Orchestrator {
         // the first folder in, or the last out, opens or closes this
         // workspace's saved list
         this.publishSavedRoots();
-        void this.sessions.reapplyWorkspaceRoots().catch(this.logCatch("reapply workspace roots"));
+        void this.sessionGates.reapplyWorkspaceRoots().catch(this.logCatch("reapply workspace roots"));
       }),
     );
 
-    this.sessions = new SessionsStore(
+    const sessions = new SessionsStore(
       this.pool,
       {
         emit: (...events) => {
@@ -610,7 +614,6 @@ export class Orchestrator {
         isActiveSession: (sessionId) =>
           this.agentView.current.activeSessionId === sessionId ||
           this.pinnedSessions().includes(sessionId),
-        connectForSession: (sessionId) => void this.connectForSession(sessionId),
         isUnseen: (sessionId) =>
           this.agentView.current.sessions.find((s) => s.id === sessionId)?.unseen === true,
         cancelAsks: (sessionId) => this.broker.cancelPending(sessionId),
@@ -663,6 +666,22 @@ export class Orchestrator {
         return [editorServer, ...integrationServers];
       },
       log,
+    );
+    // The management side's tools for sessions: two lines per session —
+    // its attachment work and its turn — and the gates, the one way any
+    // door reaches an operation on a session's connection. What the lines
+    // hold is the session's busy state, so every move re-sends it.
+    const publishBusy = (sessionId: string) =>
+      this.agentView.emit({ kind: "sessionBusyChanged", sessionId, busy: this.sessionGates.busy(sessionId) });
+    this.sessions = sessions;
+    this.sessionGates = new SessionGates(
+      sessions,
+      new Queue<AttachWork>(publishBusy),
+      new Queue<"prompt">(publishBusy),
+      {
+        connect: (sessionId) => void this.connectForSession(sessionId),
+        failed: (context, err) => this.logCatch(context)(err),
+      },
       {
         // Read fresh every sweep (store-truth) — 0 in Preferences disables.
         idleCloseMs: () => {
@@ -732,7 +751,7 @@ export class Orchestrator {
             this.agentView.emit({ kind: "chatConnectResolved" });
           }
         },
-        authCleared: (agentId) => this.sessions.drainHeldQueues(agentId),
+        authCleared: (agentId) => this.sessionGates.lockCleared(agentId),
         defaultsChanged: (agentId) => void this.defaultsEditor.defaultsChanged(agentId),
       },
       log,
@@ -841,7 +860,7 @@ export class Orchestrator {
     this.log.info("erase all data: stopping every process");
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     this.clientHost.clear();
-    await this.gates.stopAll();
+    await Promise.all([this.gates.stopAll(), this.sessionGates.endAll()]);
     this.sessions.reset();
     this.contextTokenToSession.clear();
 
@@ -906,7 +925,7 @@ export class Orchestrator {
     await this.agents.stampRunning();
     for (const pid of this.clientHost.runningPids()) killTree(pid, "SIGKILL");
     await Promise.race([
-      this.gates.stopAll(),
+      Promise.all([this.gates.stopAll(), this.sessionGates.endAll()]),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
     ]);
   }
@@ -941,7 +960,7 @@ export class Orchestrator {
     if (this.agentView.current.activeSessionId !== null) return;
     const sessionId = this.sessions.rowFor(pointer.agentId, pointer.sessionId);
     if (sessionId === undefined) return;
-    this.sessions.activate(sessionId);
+    this.sessionGates.activate(sessionId);
   }
 
   /** Mirrors the detachWindows preference into a when-clause context key —
@@ -1398,7 +1417,7 @@ export class Orchestrator {
   /** Brings a session up in the Agent View — the one path for every
    * "take me there" (the switch-session command, a notification's Open). */
   private async revealSession(sessionId: string): Promise<void> {
-    this.sessions.open(sessionId);
+    this.sessionGates.open(sessionId);
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }
 
@@ -1659,11 +1678,11 @@ export class Orchestrator {
       case "switchSession":
         // Switching NEVER closes the session being left — open sessions
         // stay attached until the idle reaper's full predicate says
-        // otherwise (sessions-store.ts reapIdle).
-        this.sessions.open(action.sessionId);
+        // otherwise (sessions-store `idle`).
+        this.sessionGates.open(action.sessionId);
         break;
       case "closeSession":
-        void this.sessions.close(action.sessionId).catch(this.logCatch(`close ${action.sessionId}`));
+        void this.sessionGates.close(action.sessionId).catch(this.logCatch(`close ${action.sessionId}`));
         break;
       case "copySessionId": {
         const handle = this.sessions.handleOf(action.sessionId);
@@ -1671,12 +1690,12 @@ export class Orchestrator {
         break;
       }
       case "reloadSession":
-        void this.sessions.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
+        void this.sessionGates.reload(action.sessionId).catch(this.logCatch(`reload ${action.sessionId}`));
         break;
       // A rejected set leaves authoritative state unchanged — republish it
       // (fresh identity) so the pill's pending spinner settles back to truth.
       case "setSessionKnob":
-        void this.sessions
+        void this.sessionGates
           .setKnob(action.sessionId, action.knobId, action.value)
           .catch((err) => {
             this.logCatch(`setKnob ${action.sessionId}`)(err);
@@ -1687,12 +1706,16 @@ export class Orchestrator {
           });
         break;
       case "sendPrompt":
-        // Pure dispatch: the auth-lock adjudication lives at the
-        // sessions store's turn-start door (with inFlight), where every
-        // prompt passes — a guard here would cover only this entrance.
-        // failure surfaces as sessionLiveChanged(false) with no new text — no reply channel by design
-        void this.sessions
-          .sendPrompt(action.sessionId, action.text, action.parts, action.draft)
+        // Pure dispatch: the turn-start door is the session gates', where
+        // every prompt passes — a guard here would cover only this entrance.
+        // A failure leaves the turn's end, or the words held, with no reply
+        // channel by design.
+        void this.sessionGates
+          .prompt(action.sessionId, {
+            text: action.text,
+            ...(action.parts !== undefined ? { parts: action.parts } : {}),
+            ...(action.draft !== undefined ? { draft: action.draft } : {}),
+          })
           .catch(this.logCatch(`sendPrompt ${action.sessionId}`));
         break;
       case "detachSession":
@@ -1703,7 +1726,7 @@ export class Orchestrator {
         // command. Then the one open ceremony, pinned: the panel renders
         // this session by id, so the active pointer stays where it is.
         void vscode.commands.executeCommand("acpPatchbay.detachSession", action.sessionId);
-        this.sessions.open(action.sessionId, { pin: true });
+        this.sessionGates.open(action.sessionId, { pin: true });
         break;
       case "removeQueuedPrompt":
         this.sessions.removeQueuedPrompt(action.sessionId, action.promptId);
@@ -1716,7 +1739,7 @@ export class Orchestrator {
         this.sessions.saveDraft(action.sessionId, action.draft);
         break;
       case "stopTurn":
-        void this.sessions.stopTurn(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
+        void this.sessionGates.stop(action.sessionId).catch(this.logCatch(`stop turn ${action.sessionId}`));
         break;
       case "verifyAgent":
         void this.gates.verify(action.agentId).catch(this.logCatch(`verify ${action.agentId}`));
@@ -1936,7 +1959,7 @@ export class Orchestrator {
           .then(() => this.publishSavedRoots(), this.logCatch("unsaveRoot"));
         break;
       case "removeContextRoot":
-        void this.sessions
+        void this.sessionGates
           .removeRoot(action.sessionId, action.path)
           .catch(this.logCatch(`removeRoot ${action.sessionId}`));
         break;
@@ -2020,7 +2043,7 @@ export class Orchestrator {
     });
     const uri = picked?.[0];
     if (uri === undefined) return;
-    await this.sessions.addRoot(sessionId, uri.fsPath);
+    await this.sessionGates.addRoot(sessionId, uri.fsPath);
   }
 
   /** The saved roots as both channels show them: this workspace's list
@@ -2208,7 +2231,7 @@ export class Orchestrator {
     // create takes, connect-on-demand included.
     const draft = this.sessions.findNeverPrompted(agentId);
     if (draft !== undefined && this.sessions.isLive(draft)) {
-      this.sessions.activate(draft);
+      this.sessionGates.activate(draft);
       return;
     }
     this.agentView.emit({ kind: "chatConnectStarted", agentId });
@@ -2220,7 +2243,7 @@ export class Orchestrator {
       if (!this.paneShows(agentId)) return;
       // sessionCreated itself clears the connect pane (reducer) — success
       // needs no extra event; the re-mint emits the same event.
-      if (draft !== undefined) await this.sessions.reviveNew(draft);
+      if (draft !== undefined) await this.sessionGates.revive(draft);
       else await this.sessions.createSession(agentId, agentName, this.workspaceCwd);
     } catch (err) {
       this.logCatch(`startChat ${agentId}`)(err);
@@ -2228,11 +2251,11 @@ export class Orchestrator {
     }
   }
 
-  /** The connect half of the sessions store's open ceremony (its
-   * connectForSession hook): opening a session whose configured agent is
-   * off spawns it, through the same in-pane chatConnect states startChat
-   * uses — but no session is minted: on success the status-running hook
-   * re-syncs and hydrates whatever is on view, and `forSessionId` makes
+  /** The connect half of the session gates' open ceremony (their
+   * `connect` ask): opening a session whose configured agent is off spawns
+   * it, through the same in-pane chatConnect states startChat uses — but
+   * no session is minted: on success the status-running hook re-syncs and
+   * attaches whatever is on view, and `forSessionId` makes
    * the failure pane's Retry re-open this session instead of starting a
    * new chat. Unconfigured agents stay untouched — the row is a readable
    * record, nothing more to offer. */
@@ -2300,16 +2323,18 @@ export class Orchestrator {
    * nothing to debug from. */
   private logCatch(context: string): (err: unknown) => void {
     return (err) => {
-      // Ended by the user's own Stop or Remove — no failure.
+      // Ended by the user's own hand — an agent's Stop or Remove, a
+      // session's Stop, Reload or Close — no failure.
       if (err instanceof Cancelled) this.log.info(`${context}: ${err.message}`);
       else this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
     };
   }
 
   dispose(): void {
-    this.sessions.dispose();
+    this.sessionGates.dispose();
     for (const d of this.editorSubscriptions) d.dispose();
     this.editorStateHost.stop();
+    void this.sessionGates.endAll();
     void this.gates.stopAll();
     this.agentView.flushNow();
     this.settings.flushNow();

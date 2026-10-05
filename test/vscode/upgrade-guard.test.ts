@@ -3,7 +3,7 @@
 // in the registry, Upgrade asks first, and declining leaves the agent
 // running.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,10 +19,8 @@ interface Internal {
     agents: AgentsDoor;
     gates: GatesDoor;
     acpRegistry: { current(): { agents: unknown[] }; refresh(moment: "manual"): Promise<{ ok: boolean }> };
-    sessions: {
-      createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
-      sendPrompt(sessionId: string, text: string): Promise<void>;
-    };
+    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
+    sessionGates: SessionGatesDoor;
     pool: { get(agentId: string): { status: string } | undefined };
   };
 }
@@ -80,7 +78,7 @@ suite("upgrade guard", () => {
       );
       await orchestrator.gates.connect(AGENT_ID);
       const sessionId = await orchestrator.sessions.createSession(AGENT_ID, "Upgrade Guard Fake", cwd);
-      await orchestrator.sessions.sendPrompt(sessionId, "go");
+      await orchestrator.sessionGates.prompt(sessionId, { text: "go" });
 
       orchestrator.handleAction({ kind: "upgradeAgent", agentId: AGENT_ID });
       const [message, options] = await waitFor(() => asked[0]);

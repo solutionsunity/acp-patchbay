@@ -51,6 +51,7 @@ import { createProseRewriter, sessionKnobExtras, type ProseRewriter } from "./ex
 import { planUsageOf } from "./meta";
 import { computeLineDiff } from "./diff";
 import { nullLogger, type Logger } from "./logger";
+import { unlessAborted, untilGivenUp } from "./abort";
 import type { AgentPool } from "./pool";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { toolLocationsOf } from "./tool-locations";
@@ -121,10 +122,10 @@ export interface SessionsStoreHooks {
    * delete on close (features gate on used). */
   isDeleteUsed?(agentId: string): boolean;
   /** Whether this session is on view — the sidebar's active one or a
-   * pinned window's. The idle reaper exempts it (the visible chat's state
+   * pinned window's. The idle sweep exempts it (the visible chat's state
    * never changes under the user, and the composer, whose draft must block
-   * a close, only exists for a viewed session), and hydrateViewed reopens
-   * it when its agent comes up — one on-view set, both readers. */
+   * a close, only exists for a viewed session), and it attaches again when
+   * its agent comes up — one on-view set, both readers. */
   isActiveSession?(sessionId: string): boolean;
   /** The blue mark: a turn completed while the session wasn't open in the
    * view and the user hasn't looked yet — the reaper must not close under
@@ -141,12 +142,6 @@ export interface SessionsStoreHooks {
    * already witnessed to refuse — and the drain holds until the lock's
    * clearing releases it. */
   authLocked?(agentId: string): boolean;
-  /** Connect-on-demand: the user opened a session whose configured agent
-   * may be off — spawn it (the orchestrator's agent lifecycle, with its
-   * in-pane connect states). Fired on every open; a running agent makes
-   * it a no-op. When the agent comes up, hydrateViewed runs the ladder for
-   * whatever is on view. */
-  connectForSession?(sessionId: string): void;
   /** A zero-turn re-mint gave the session a new id on the agent's side —
    * what keys on that id outside this store (the last-open pointer)
    * follows it. */
@@ -161,13 +156,10 @@ const MAX_LIST_PAGES = 50;
  * same line on both sides, so it reads as a boundary and never as a change. */
 const REGION_MARKER = "\n⋯\n";
 
-/** How long an honest close/reload waits for a cancelled turn to settle
- * before proceeding anyway (interruptTurn). */
+/** How long a turn told to stop waits, after its cancel, for the agent to
+ * end it — then it ends here, so a Stop, a Reload or a Close never waits on
+ * an agent that ignores the cancel. */
 const CANCEL_SETTLE_MS = 3000;
-
-/** Attached-but-idle sessions release their agent-side resources after an
- * hour — the row stays listed and re-attaches on the next open/prompt. */
-const DEFAULT_IDLE_CLOSE_MS = 60 * 60_000;
 
 let blockCounter = 0;
 function newBlockId(prefix: string): string {
@@ -211,17 +203,6 @@ function deriveTitle(promptText: string): string {
   const flat = promptText.trim().replace(/\s+/g, " ");
   if (flat === "") return "Untitled session";
   return flat.length > 48 ? `${flat.slice(0, 47)}…` : flat;
-}
-
-/** Thrown by sendPromptNow when the turn never started (attach failed or
- * the session vanished under it): nothing was rendered and nothing reached
- * the wire, so the words go back to the held ones. Past that point a
- * failure means the words were spent — a rendered user message with an
- * honest error turn. */
-class TurnNotStartedError extends Error {
-  constructor(readonly reason: Error) {
-    super(reason.message);
-  }
 }
 
 /** ContextChip → its durable encoding: image bytes stay in the stash (the
@@ -332,14 +313,6 @@ interface LiveSession {
   knobs: NormalizedKnobs;
   /** A prompt turn is in flight — release/reap must never close under it. */
   inFlight: boolean;
-  /** Settles when the in-flight prompt resolves, any stop reason — what an
-   * honest close/reload awaits after cancelling, so the turn's own end
-   * (turnEnded, the tool-call sweep) lands before the session is ripped
-   * out from under it. Null between turns. */
-  turnSettled: Promise<void> | null;
-  /** A root change landed mid-turn — re-applied (reapplyRoots) on turn end
-   * instead of yanking the attachment under the in-flight prompt. */
-  rootsDirty: boolean;
   /** Epoch ms of the last prompt or session/update — the idle reaper's basis. */
   lastActivityAt: number;
   /** toolCallIds seen pending/in_progress and not yet resolved — the turn-end
@@ -373,8 +346,6 @@ function liveSession(agentId: string): LiveSession {
     openRun: null,
     knobs: NO_KNOBS,
     inFlight: false,
-    turnSettled: null,
-    rootsDirty: false,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
     replayTurnDirty: false,
@@ -397,6 +368,14 @@ export interface OpenWork {
   turns: number;
 }
 
+/** The operations that ride a session's connection — every door reaches
+ * them through the session gates, which order them on the session's
+ * lines. */
+export type SessionConnectionOperations = Pick<
+  SessionsStore,
+  "hydrate" | "reload" | "close" | "setKnob" | "reapplyRoots" | "release" | "runTurn"
+>;
+
 export class SessionsStore {
   private sessions = new Map<string, LiveSession>();
   /** Every session known to exist right now (see KnownSession), by
@@ -412,13 +391,6 @@ export class SessionsStore {
    * re-sends tool_call content, so it repopulates itself. */
   private toolDiffs = new Map<string, Map<string, Map<string, { oldText: string; newText: string }>>>();
   private contextTokenCounter = 0;
-  /** Sessions with a turn being started right now — the synchronous claim
-   * that closes the door↔drain race across sendPromptNow's attach await:
-   * checked beside inFlight at every adjudication, taken before any await,
-   * released the moment inFlight takes over or the start fails. Without
-   * it, an unlock poke and a turn-end drain landing in the same window
-   * would both pass the gates and fire two concurrent turns. */
-  private turnStarting = new Set<string>();
   /** Per agent: the agent's ids of sessions that left (closed, or re-minted
    * away from) while a session/list walk may be in flight — a page fetched
    * before that would otherwise resurrect the row with an empty
@@ -430,12 +402,8 @@ export class SessionsStore {
    * joins the one in flight. Two interleaved walks would each clear the
    * other's close tombstones (closedDuringSync) and race the prune. */
   private walks = new Map<string, Promise<void>>();
-  /** In-flight zero-turn re-mints by session (see recreateFromRow). */
-  private recreating = new Map<string, Promise<void>>();
   /** In-flight new sessions by agent (see createSession). */
   private creating = new Map<string, Promise<string>>();
-  /** Rapid re-clicks must not stack replays — one hydration per session. */
-  private hydrating = new Set<string>();
   /** Sessions inside a session/load replay window: their transcript events
    * reduce into canonical state silently; `loadSilently` closes the window
    * with one wholesale resync. */
@@ -455,32 +423,7 @@ export class SessionsStore {
     private readonly mcpServersFor: (contextToken: string, agentId: string) => Promise<McpServer[]> = async () => [],
     /** Output-channel seam (logger.ts). */
     private readonly log: Logger = nullLogger,
-    /** `idleCloseMs`: attached sessions idle past this are released
-     * (session/close) by the reaper — null disables it entirely. A getter
-     * is read fresh on every sweep (store-truth: the orchestrator hands in
-     * the Preferences read, so an edit applies to the very next sweep,
-     * no reconstruction). */
-    opts?: { idleCloseMs?: number | null | (() => number | null) },
-  ) {
-    const idle = opts?.idleCloseMs === undefined ? DEFAULT_IDLE_CLOSE_MS : opts.idleCloseMs;
-    this.idleCloseMs = typeof idle === "function" ? idle : () => idle;
-    if (idle !== null) {
-      // Static values keep their own cadence (tests run ms-scale timers);
-      // a getter sweeps every minute — the setting is minute-grained.
-      this.idleTimer = setInterval(
-        () => void this.reapIdle(),
-        typeof idle === "number" ? Math.min(60_000, idle) : 60_000,
-      );
-      this.idleTimer.unref?.();
-    }
-  }
-
-  private readonly idleCloseMs: () => number | null;
-  private idleTimer: ReturnType<typeof setInterval> | null = null;
-
-  dispose(): void {
-    if (this.idleTimer !== null) clearInterval(this.idleTimer);
-  }
+  ) {}
 
   isLive(sessionId: string): boolean {
     return this.sessions.has(sessionId);
@@ -561,6 +504,11 @@ export class SessionsStore {
     return undefined;
   }
 
+  /** Every session of an agent patchbay knows, attached or not. */
+  ofAgent(agentId: string): string[] {
+    return [...this.known].filter(([, row]) => row.agentId === agentId).map(([sessionId]) => sessionId);
+  }
+
   /** The sessions attached to an agent's connection. */
   sessionsOn(agentId: string): readonly string[] {
     return [...this.sessions].filter(([, session]) => session.agentId === agentId).map(([sessionId]) => sessionId);
@@ -615,8 +563,10 @@ export class SessionsStore {
     }
   }
 
-  /** The resource timer — the ONLY thing that ever closes an attached
-   * session (switching chats never does). Auto-close requires ALL of:
+  /** The attached sessions the idle reaper may release now — the resource
+   * timer is the ONLY thing that ever closes an attached session (switching
+   * chats never does), and the gates run it, a release only on a session
+   * with nothing in its lines. Auto-close requires ALL of:
    *
    * 1. not new — `everPrompted`: a never-prompted session never closes,
    *    period (nothing persisted agent-side; load/resume would 404);
@@ -634,18 +584,18 @@ export class SessionsStore {
    *
    * The active-in-view session is always exempt: visible chat state never
    * changes under the user. */
-  private async reapIdle(): Promise<void> {
-    const idleCloseMs = this.idleCloseMs();
-    if (idleCloseMs === null) return;
+  idle(idleCloseMs: number): string[] {
     const cutoff = Date.now() - idleCloseMs;
-    for (const [sessionId, session] of [...this.sessions]) {
-      if (!this.hasTurns(sessionId)) continue;
-      if (session.lastActivityAt > cutoff) continue;
-      if (this.hooks.isActiveSession?.(sessionId) ?? false) continue;
-      if (this.hooks.isUnseen?.(sessionId) ?? false) continue;
-      if ((this.saved(sessionId).queue?.length ?? 0) > 0) continue;
-      await this.release(sessionId, "idle");
-    }
+    return [...this.sessions]
+      .filter(
+        ([sessionId, session]) =>
+          this.hasTurns(sessionId) &&
+          session.lastActivityAt <= cutoff &&
+          !(this.hooks.isActiveSession?.(sessionId) ?? false) &&
+          !(this.hooks.isUnseen?.(sessionId) ?? false) &&
+          !this.hasHeld(sessionId),
+      )
+      .map(([sessionId]) => sessionId);
   }
 
   /** The one attach chokepoint: every wire call that binds a session to a
@@ -661,9 +611,10 @@ export class SessionsStore {
     target: { via: "new" } | { via: "load" | "resume"; sessionId: string },
     agentId: string,
     opts: { cwd?: string; roots?: readonly string[] } = {},
+    signal?: AbortSignal,
   ): Promise<{ handle: string; contextToken: string; knobs: NormalizedKnobs; missing: string[] }> {
     const contextToken = `ctx-${++this.contextTokenCounter}`;
-    const mcpServers = await this.mcpServersFor(contextToken, agentId);
+    const mcpServers = await unlessAborted(this.mcpServersFor(contextToken, agentId), signal);
     const cwd = opts.cwd ?? this.cwd();
     // Roots: an explicit list wins (every session/new — a birth seeded
     // from the saved roots, a recreate carrying its own); otherwise the one
@@ -675,7 +626,7 @@ export class SessionsStore {
     const roots = composed.filter((p) => !missing.includes(p));
     if (missing.length > 0) this.hooks.rootsMissing?.(missing);
     if (target.via === "new") {
-      const r = await this.pool.newSession(agentId, cwd, mcpServers, roots);
+      const r = await unlessAborted(this.pool.newSession(agentId, cwd, mcpServers, roots), signal);
       this.hooks.onRealSessionAttached?.(agentId, r.sessionId);
       // the session isn't in the view yet — its caller says what was skipped
       return {
@@ -688,10 +639,14 @@ export class SessionsStore {
     const handle = this.known.get(target.sessionId)?.handle;
     if (handle === undefined) throw new Error(`unknown session ${target.sessionId}`);
     this.hooks.mapContextToken?.(contextToken, target.sessionId);
-    const r =
+    // Told to stop, the wait ends here; an answer that comes later finds
+    // no attachment to land in.
+    const r = await unlessAborted(
       target.via === "load"
-        ? await this.pool.loadSession(agentId, handle, cwd, mcpServers, roots)
-        : await this.pool.resumeSession(agentId, handle, cwd, mcpServers, roots);
+        ? this.pool.loadSession(agentId, handle, cwd, mcpServers, roots)
+        : this.pool.resumeSession(agentId, handle, cwd, mcpServers, roots),
+      signal,
+    );
     this.hooks.onRealSessionAttached?.(agentId, handle);
     this.noticeMissingRoots(target.sessionId, missing);
     return {
@@ -728,12 +683,12 @@ export class SessionsStore {
    * blank flash, no patch flood) until the closing resync swaps the webview
    * wholesale. The window closes on failure too: canonical was reset, and
    * the webview must not keep showing blocks canonical no longer holds. */
-  private async loadSilently(sessionId: string, agentId: string): Promise<NormalizedKnobs> {
+  private async loadSilently(sessionId: string, agentId: string, signal: AbortSignal): Promise<NormalizedKnobs> {
     this.replaying.add(sessionId);
     try {
       this.emitterFor(sessionId)({ kind: "transcriptReset", sessionId });
       this.dropToolDiffs(sessionId);
-      const { knobs } = await this.attachSession({ via: "load", sessionId }, agentId);
+      const { knobs } = await this.attachSession({ via: "load", sessionId }, agentId, {}, signal);
       // A finished replay is the same quiet point as a turn end: nothing is
       // in flight, so history that stops on a still-open call is stranded —
       // without this, a replayed cancelled turn would spin forever (live
@@ -821,7 +776,7 @@ export class SessionsStore {
       id: sessionId,
       agentId,
       title,
-      live: false,
+      busy: [],
       updatedAt: now,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
@@ -839,93 +794,55 @@ export class SessionsStore {
     return sessionId;
   }
 
-  /** The user opened a session — drawer click, palette pick, or "Open in
-   * new window". One ceremony, whatever the entrance: the pointer moves
-   * (unless the session is pinned to its own window, which renders it
-   * without the pointer), the attach ladder runs, and an off agent is
-   * asked for (connect-on-demand — its coming-up re-runs the ladder via
-   * hydrateViewed, since hydrate can do nothing without a process). */
-  open(sessionId: string, opts: { pin?: boolean } = {}): void {
-    if (opts.pin === true) void this.hydrateLogged(sessionId);
-    else this.activate(sessionId);
-    this.hooks.connectForSession?.(sessionId);
-  }
-
-  /** Point the view at a session and run the ladder — no connect. The
-   * unpinned open wraps this with the connect ask; the two entrances that
-   * must never spawn a process — the startup restore and "new session"
-   * focusing a never-prompted draft — call it directly. */
-  activate(sessionId: string): void {
+  /** Points the sidebar at a session — the view's pointer, nothing more;
+   * the attach that opening runs is the session gates'. */
+  point(sessionId: string): void {
     this.hooks.emit({ kind: "sessionActivated", sessionId });
-    void this.hydrateLogged(sessionId);
   }
 
-  /** An agent came up: each of its sessions that is on view (active or
-   * pinned — the reaper's exemption set, read through the same hook) sat
-   * blank until now, having nothing to attach to. Run the ladder for each;
-   * a live one costs nothing (hydrate returns at once). */
-  async hydrateViewed(agentId: string): Promise<void> {
-    const viewed = [...this.known]
+  /** An agent's sessions on view right now — active or pinned, the reaper's
+   * exemption set, read through the same hook. When the agent comes up,
+   * these attach again: they sat blank, with nothing to attach to. */
+  viewed(agentId: string): string[] {
+    return [...this.known]
       .filter(([sessionId, k]) => k.agentId === agentId && this.hooks.isActiveSession?.(sessionId) === true)
       .map(([sessionId]) => sessionId);
-    await Promise.all(viewed.map((sessionId) => this.hydrateLogged(sessionId)));
   }
 
-  /** The ladder with open's exhaustion policy applied: a failed rung is
-   * logged — blank pane + working Reload button is the honest degraded
-   * state — never thrown at a click. */
-  private hydrateLogged(sessionId: string): Promise<void> {
-    return this.hydrate(sessionId).catch((err: Error) => {
-      this.log.info(`session ${sessionId}: hydrate on open failed — ${err.message}`);
+  /** Opening a session: the one attach ladder, with open's exhaustion
+   * policy — a failed rung is logged (blank pane + Reload is the honest
+   * degraded state), and no rung at all says so with an inline notice:
+   * there is nothing in hand and nothing to fetch (patchbay persists no
+   * transcripts) — said as such, never faked. Both wire paths are free (no
+   * LLM turn). Open never mints a session. True when the session is
+   * attached at the end; an agent not running attaches nothing — its
+   * coming up attaches what is on view. */
+  async hydrate(sessionId: string, signal: AbortSignal): Promise<boolean> {
+    if (this.sessions.has(sessionId)) return true;
+    const agentId = this.known.get(sessionId)?.agentId;
+    if (agentId === undefined) return false;
+    if (this.pool.get(agentId)?.status !== "running") return false;
+    const outcome = await this.attach(sessionId, agentId, signal);
+    if (outcome.attached) return true;
+    if (outcome.reason === "failed") return false;
+    // No rung declared: this session cannot be reopened. Reachable only
+    // after a crash/reload (the reaper never closes these).
+    if ((this.hooks.currentTranscript?.(sessionId) ?? []).length > 0) return false;
+    this.hooks.emit({
+      kind: "transcriptSeeded",
+      sessionId,
+      blocks: [{
+        kind: "notice",
+        id: newBlockId("notice"),
+        text: "This agent supports neither session/load nor session/resume — this session's history lives only in the agent and can't be reopened here.",
+      }],
     });
+    return false;
   }
 
-  /** Opening a closed session: the one attach ladder, with open's
-   * exhaustion policy — a failed rung is logged (blank pane + retry is the
-   * honest degraded state), and no rung at all says so with an inline
-   * notice: there is nothing in hand and nothing to fetch (patchbay
-   * persists no transcripts) — said as such, never faked. Both wire paths
-   * are free (no LLM turn). Open never mints a session. */
-  async hydrate(sessionId: string): Promise<void> {
-    if (this.sessions.has(sessionId) || this.hydrating.has(sessionId)) return;
-    this.hydrating.add(sessionId);
-    // The loading-page signal — live patch on purpose (never the silent
-    // replay channel): it must show while the replay is still reducing.
-    this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: true });
-    try {
-      const agentId = this.known.get(sessionId)?.agentId;
-      if (agentId === undefined) return;
-      if (this.pool.get(agentId)?.status !== "running") return; // hydrateViewed runs once the connect lands
-      const outcome = await this.attach(sessionId, agentId);
-      if (outcome.attached) {
-        // Held words whose firing trigger died with the old window:
-        // opening the session is their release (locks still hold them).
-        this.drainQueue(sessionId);
-        return;
-      }
-      if (outcome.reason === "failed") return;
-      // No rung declared: this session cannot be reopened. Reachable only
-      // after a crash/reload (the reaper never closes these).
-      if ((this.hooks.currentTranscript?.(sessionId) ?? []).length > 0) return;
-      this.hooks.emit({
-        kind: "transcriptSeeded",
-        sessionId,
-        blocks: [{
-          kind: "notice",
-          id: newBlockId("notice"),
-          text: "This agent supports neither session/load nor session/resume — this session's history lives only in the agent and can't be reopened here.",
-        }],
-      });
-    } finally {
-      this.hydrating.delete(sessionId);
-      this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
-    }
-  }
-
+  /** The session leaves for good — once its turn has ended (the gates end
+   * it first: never a session/delete under a live turn). */
   async close(sessionId: string): Promise<void> {
-    // Closing while streaming means stop, then close — never a session/delete
-    // fired under a live turn.
-    await this.interruptTurn(sessionId);
     // Whatever the session still asks, it asks no one now.
     this.hooks.cancelAsks?.(sessionId);
     const row = this.known.get(sessionId);
@@ -1026,7 +943,6 @@ export class SessionsStore {
       this.sealRun(sessionId, session);
     }
     this.sessions.delete(sessionId);
-    this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
   }
 
   /** A transcript reset's other half, orchestrator-side: the reducer just
@@ -1179,7 +1095,7 @@ export class SessionsStore {
       const saved = this.saved(sessionId);
       this.hooks.emit({
         kind: "sessionListed",
-        session: { id: sessionId, agentId, title, live: false, updatedAt: at },
+        session: { id: sessionId, agentId, title, busy: [], updatedAt: at },
       });
       if (info.additionalDirectories !== undefined) {
         // the view has no list for this session yet; the row may
@@ -1230,39 +1146,23 @@ export class SessionsStore {
 
   /** One-click reload: re-attach on demand, even when the session
    * isn't currently invalidated — the same ladder as every attach
-   * (load > resume), so a resume-only agent's reload works too. */
-  async reload(sessionId: string): Promise<void> {
-    // Same in-flight signal as a cold open — the row spinner's basis; the
-    // set doubles as the reentry guard, so a double-click is one reload.
-    if (this.hydrating.has(sessionId)) return;
-    this.hydrating.add(sessionId);
-    this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: true });
-    try {
-      // Reload discards the render cache and replays from the agent — a turn
-      // still streaming into that cache is stopped first, so replay and live
-      // stream never interleave.
-      await this.interruptTurn(sessionId, { keepHeldWords: true });
-      // Live-channel reset, deliberately outside the silent replay window
-      // and strictly after the interrupt (the dying turn's tail must not
-      // stream into a blanked view): an explicit reload means "what's shown
-      // is not trusted" — keeping it up while re-reading would be the cache
-      // lying. The view blanks to the same loading page as a cold open (one
-      // route); only the *involuntary* re-attach (reopen on connection
-      // death) keeps its transcript standing, since there the user asked
-      // for nothing and yanking it would be hostile.
-      this.hooks.emit({ kind: "transcriptReset", sessionId });
-      this.dropToolDiffs(sessionId);
-      const dying = this.sessions.get(sessionId);
-      if (dying !== undefined) this.dropLiveSession(sessionId, dying);
-      const agentId = this.known.get(sessionId)?.agentId;
-      if (agentId === undefined) return;
-      await this.ensureAttached(sessionId, agentId);
-      // Held words kept across the reload re-drain once hydrating clears.
-      setImmediate(() => this.drainQueue(sessionId));
-    } finally {
-      this.hydrating.delete(sessionId);
-      this.hooks.emit({ kind: "sessionHydrating", sessionId, hydrating: false });
-    }
+   * (load > resume), so a resume-only agent's reload works too. The turn
+   * still streaming into the transcript has ended first (the gates end
+   * it), so replay and live stream never interleave. */
+  async reload(sessionId: string, signal: AbortSignal): Promise<void> {
+    // Live-channel reset, deliberately outside the silent replay window
+    // and strictly after the turn ended (the dying turn's tail must not
+    // stream into a blanked view): an explicit reload means "what's shown
+    // is not trusted" — keeping it up while re-reading would be the cache
+    // lying. The view blanks to the same loading page as a cold open (one
+    // route); only the *involuntary* re-attach (reopen on connection
+    // death) keeps its transcript standing, since there the user asked
+    // for nothing and yanking it would be hostile.
+    this.hooks.emit({ kind: "transcriptReset", sessionId });
+    this.dropToolDiffs(sessionId);
+    const dying = this.sessions.get(sessionId);
+    if (dying !== undefined) this.dropLiveSession(sessionId, dying);
+    await this.ensureAttached(sessionId, signal);
   }
 
   /** Re-attaches a session after its connection died, via `session/load`
@@ -1270,7 +1170,7 @@ export class SessionsStore {
    * merged with what patchbay had. A sessionId is connection-scoped: without
    * replay there is no protocol-legal way to resume it on the new
    * connection. */
-  private async reopen(sessionId: string, agentId: string): Promise<void> {
+  private async reopen(sessionId: string, agentId: string, signal: AbortSignal): Promise<void> {
     if (this.sessions.has(sessionId)) return;
     const declared = this.pool.get(agentId)?.declared;
     if (!declared?.loadSession) {
@@ -1281,7 +1181,7 @@ export class SessionsStore {
     this.sessions.set(sessionId, liveSession(agentId));
     let knobs: NormalizedKnobs;
     try {
-      knobs = await this.loadSilently(sessionId, agentId);
+      knobs = await this.loadSilently(sessionId, agentId, signal);
     } catch (err) {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
@@ -1308,10 +1208,12 @@ export class SessionsStore {
    * continuation. Exhaustion is the caller's policy, so the outcome is
    * returned, not thrown: `failed` = a declared rung broke (logged here,
    * suspect mark already landed at the wire chokepoint); `no-rung` = the
-   * agent declares neither. */
+   * agent declares neither. Told to stop, it stops where it waits and
+   * throws — a stop is no rung's failure. */
   private async attach(
     sessionId: string,
     agentId: string,
+    signal: AbortSignal,
   ): Promise<
     | { attached: true }
     | { attached: false; reason: "failed"; error: Error }
@@ -1319,7 +1221,7 @@ export class SessionsStore {
   > {
     if (this.sessions.has(sessionId)) return { attached: true };
     if (!this.hasTurns(sessionId)) {
-      await this.recreateFromRow(sessionId);
+      await this.recreateEmpty(sessionId, undefined, signal);
       return { attached: true };
     }
     const declared = this.pool.get(agentId)?.declared;
@@ -1329,10 +1231,11 @@ export class SessionsStore {
     let error: Error | undefined;
     if (declared?.loadSession) {
       try {
-        await this.reopen(sessionId, agentId);
-        await this.reseedAfterAttach(sessionId, agentId, remembered);
+        await this.reopen(sessionId, agentId, signal);
+        await this.reseedAfterAttach(sessionId, agentId, remembered, signal);
         return { attached: true };
       } catch (err) {
+        if (signal.aborted) throw err;
         // The agent may no longer hold this session — descend to resume
         // rather than erroring forever.
         error = err as Error;
@@ -1341,11 +1244,12 @@ export class SessionsStore {
     }
     if (declared?.sessionResume) {
       try {
-        await this.resumeReattach(sessionId, agentId);
-        await this.reseedAfterAttach(sessionId, agentId, remembered);
+        await this.resumeReattach(sessionId, agentId, signal);
+        await this.reseedAfterAttach(sessionId, agentId, remembered, signal);
         return { attached: true };
       } catch (err) {
         this.sessions.delete(sessionId);
+        if (signal.aborted) throw err;
         error = err as Error;
         this.log.info(`session ${sessionId}: resume failed — ${error.message}`);
       }
@@ -1354,39 +1258,27 @@ export class SessionsStore {
     return { attached: false, reason: "no-rung" };
   }
 
-  /** The zero-turn rung, coalesced per session: the open path and a prompt
-   * can both reach a dead never-prompted row in the same tick, and one row
-   * must become one session, not two. */
-  private recreateFromRow(sessionId: string): Promise<void> {
-    const inFlight = this.recreating.get(sessionId);
-    if (inFlight !== undefined) return inFlight;
-    const run = this.recreateEmpty(sessionId, undefined).finally(() => {
-      if (this.recreating.get(sessionId) === run) this.recreating.delete(sessionId);
-    });
-    this.recreating.set(sessionId, run);
-    return run;
-  }
-
-  /** "New session" for an agent whose never-prompted session lost its
-   * connection: the row is still the new session — run the ladder on it
-   * (the zero-turn rung mints it again, carrying what the user staged) and
-   * point the view at it. Throws like createSession does, so the caller's
-   * connect pane can say why. */
-  async reviveNew(sessionId: string): Promise<void> {
+  /** The attach a reload must land: attach or throw, so a reload with no
+   * session behind it fails loudly on its caller's error channel. */
+  private async ensureAttached(sessionId: string, signal: AbortSignal): Promise<void> {
     const agentId = this.known.get(sessionId)?.agentId;
     if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-    await this.ensureAttached(sessionId, agentId);
-    this.activate(sessionId);
+    const outcome = await this.attach(sessionId, agentId, signal);
+    if (outcome.attached) return;
+    throw outcome.reason === "failed" ? outcome.error : new Error(this.notAttached(sessionId));
   }
 
-  /** The prompt/reload exhaustion policy: attach or throw — a prompt with
-   * no session behind it must fail loudly on the caller's error channel. */
-  private async ensureAttached(sessionId: string, agentId: string): Promise<void> {
-    const outcome = await this.attach(sessionId, agentId);
-    if (outcome.attached) return;
-    throw outcome.reason === "failed"
-      ? outcome.error
-      : new Error(`session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`);
+  /** Why a session has no attachment, for its caller's error channel. */
+  private notAttached(sessionId: string): string {
+    const agentId = this.agentFor(sessionId);
+    const agent = agentId === undefined ? undefined : this.pool.get(agentId);
+    if (agentId === undefined || agent?.status !== "running") {
+      return `session ${sessionId} is not attached: ${agentId ?? "its agent"} is not running`;
+    }
+    if (agent.declared?.loadSession !== true && agent.declared?.sessionResume !== true) {
+      return `session ${sessionId} is not live and ${agentId} declares neither session/load nor session/resume`;
+    }
+    return `session ${sessionId} could not be attached`;
   }
 
   /** The resume rung: re-attaches via `session/resume` — no replay, so the
@@ -1394,9 +1286,9 @@ export class SessionsStore {
    * (patchbay persists no transcripts), closed with a seam notice marking
    * where it ends and the agent's unreplayed memory continues. Never merged
    * with replay — there is none. */
-  private async resumeReattach(sessionId: string, agentId: string): Promise<void> {
+  private async resumeReattach(sessionId: string, agentId: string, signal: AbortSignal): Promise<void> {
     this.sessions.set(sessionId, liveSession(agentId));
-    const { knobs } = await this.attachSession({ via: "resume", sessionId }, agentId);
+    const { knobs } = await this.attachSession({ via: "resume", sessionId }, agentId, {}, signal);
     const blocks = this.hooks.currentTranscript?.(sessionId) ?? [];
     const notice: ChatBlock = {
       kind: "notice",
@@ -1470,10 +1362,10 @@ export class SessionsStore {
   /** Entry seed: applied
    * post-create on a fresh session, and by reseedAfterAttach on a history
    * session entered with no combination in hand. */
-  private async applySeedFor(agentId: string, sessionId: string): Promise<void> {
+  private async applySeedFor(agentId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
     const seed = this.hooks.seedFor?.(agentId);
     if (seed === undefined) return;
-    await this.applySeed(sessionId, seed);
+    await this.applySeed(sessionId, seed, signal);
   }
 
   /** The post-attach knob policy — the two-fold rule in one place.
@@ -1499,9 +1391,10 @@ export class SessionsStore {
     sessionId: string,
     agentId: string,
     remembered: KnobSeed | undefined,
+    signal: AbortSignal,
   ): Promise<void> {
-    if (remembered !== undefined) await this.applySeed(sessionId, remembered);
-    else await this.applySeedFor(agentId, sessionId);
+    if (remembered !== undefined) await this.applySeed(sessionId, remembered, signal);
+    else await this.applySeedFor(agentId, sessionId, signal);
   }
 
   /** Issues the set requests for a knob seed to a fixed point (knobs.ts
@@ -1509,15 +1402,16 @@ export class SessionsStore {
    * session actually offers at that moment — silently skipped otherwise.
    * Rejections are swallowed: the honest displayed state comes from the
    * agent's own responses/notifications either way. A session that vanished
-   * mid-seed reads as an empty surface, which ends the loop. */
-  private async applySeed(sessionId: string, seed: KnobSeed): Promise<void> {
+   * mid-seed reads as an empty surface, which ends the loop; told to stop,
+   * it sets nothing more. */
+  private async applySeed(sessionId: string, seed: KnobSeed, signal?: AbortSignal): Promise<void> {
     await applySeedToFixedPoint(
       seed,
-      () => this.sessions.get(sessionId)?.knobs ?? NO_KNOBS,
+      () => (signal?.aborted === true ? NO_KNOBS : (this.sessions.get(sessionId)?.knobs ?? NO_KNOBS)),
       async (route, _knobId, value) => {
         const session = this.sessions.get(sessionId);
         const handle = this.known.get(sessionId)?.handle;
-        if (!session || handle === undefined) return;
+        if (!session || handle === undefined || signal?.aborted === true) return;
         try {
           const next = await performKnobSet(this.knobWire(session.agentId), handle, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(sessionId, next);
@@ -1560,31 +1454,41 @@ export class SessionsStore {
   }
 
   /** External context roots: the list lives on the session's continuity
-   * row, so this stays "append/remove, republish, re-apply."
-   * The list has two readers: the agent, which ACP tells only on lifecycle
-   * requests (so a change re-applies to the live attachment through one,
-   * reapplyRoots), and the session's MCP servers, which the orchestrator
-   * tells at once through `rootsChanged`. A root is therefore always
+   * row, so this stays "append/remove, republish, tell."
+   * The list has two readers: the session's MCP servers, told at once
+   * (`tellRoots`), and the agent, which ACP tells only on lifecycle
+   * requests — so a change re-applies to the live attachment through one
+   * (`reapplyRoots`, the gates' to schedule). A root is therefore always
    * accepted — it reaches the servers regardless — and the chip's gate
    * states, from the same declared facts the pool holds, whether and when
-   * the agent gets it. */
-  async addRoot(sessionId: string, path: string): Promise<void> {
-    if (!this.known.has(sessionId)) return;
+   * the agent gets it. True when the list moved. */
+  addRoot(sessionId: string, path: string): boolean {
+    if (!this.known.has(sessionId)) return false;
     const normalized = normalizeRootPath(path);
     const current = this.addedRootsOf(sessionId);
-    if (current.includes(normalized)) return;
+    if (current.includes(normalized)) return false;
     const next = [...current, normalized];
     this.save(sessionId, { roots: next });
     this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: next });
-    await this.reapplyRoots(sessionId);
+    this.tellRoots(sessionId);
+    return true;
   }
 
-  async removeRoot(sessionId: string, path: string): Promise<void> {
-    if (!this.known.has(sessionId)) return;
+  removeRoot(sessionId: string, path: string): boolean {
+    if (!this.known.has(sessionId)) return false;
     const next = this.addedRootsOf(sessionId).filter((p) => p !== path);
     this.save(sessionId, { roots: next });
     this.hooks.emit({ kind: "contextRootsChanged", sessionId, roots: next });
-    await this.reapplyRoots(sessionId);
+    this.tellRoots(sessionId);
+    return true;
+  }
+
+  /** The session's root list moved (a root added or removed, a workspace
+   * folder came or went): its MCP servers hear it now, whatever the
+   * agent's rung — telling them is patchbay's own act, no lifecycle request
+   * involved. A session with no attachment has no servers to tell. */
+  tellRoots(sessionId: string): void {
+    if (this.sessions.has(sessionId)) this.hooks.rootsChanged?.(sessionId);
   }
 
   /** The one composition of what crosses the wire as additional
@@ -1624,19 +1528,16 @@ export class SessionsStore {
     return (this.hooks.workspaceRoots?.() ?? []).includes(this.cwd()) ? roots : roots.slice(1);
   }
 
-  /** A workspace folder was added or removed: every live session's wire
-   * list is re-applied, the same rung a user-added root takes. Without
-   * this the chip would update from reality while the agent kept the old
-   * list. */
-  async reapplyWorkspaceRoots(): Promise<void> {
-    for (const sessionId of [...this.sessions.keys()]) {
-      await this.reapplyRoots(sessionId);
-    }
+  /** The sessions attached right now — what a workspace folder change
+   * re-applies its list to. */
+  attached(): string[] {
+    return [...this.sessions.keys()];
   }
 
-  /** Pushes the canonical root list to a *live* attachment: the session's
-   * MCP servers are told first, unconditionally; the agent's copy then
-   * moves through a lifecycle request, where one applies. Three cases:
+  /** Pushes the canonical root list to a *live* attachment's agent copy,
+   * through a lifecycle request where one applies — never under a running
+   * turn (the gates hold it until the turn ends, then run it before the
+   * held words). Two cases:
    *
    * - **Never prompted, nothing shown**: recreate — `session/new` with the
    *   complete list, same row/title/knobs, old shell closed. The one
@@ -1650,29 +1551,20 @@ export class SessionsStore {
    *   list"). Not declared → nothing to do: the list is recorded and the
    *   chip says the agent takes it at the next open; a folder change waits
    *   for the next attach, which reads the composed list anyway.
-   * - **Turn in flight**: deferred to turn end (`rootsDirty`), applied
-   *   before the held queue drains so the next prompt runs on the new list.
    *
    * Failure is logged, never thrown — but the local attachment is dropped:
    * a failed re-attach may have taken the agent-side session with it, and
    * the next prompt must re-enter the continuation ladder, not hit a
    * corpse. */
-  private async reapplyRoots(sessionId: string): Promise<void> {
+  async reapplyRoots(sessionId: string, signal: AbortSignal): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return; // not attached — next attach picks the list up
-    // The session's MCP servers hear it now, whatever the agent's rung:
-    // telling them is patchbay's own act, no lifecycle request involved.
-    this.hooks.rootsChanged?.(sessionId);
     const declared = this.pool.get(session.agentId)?.declared;
     // An agent that never advertised the field gets no field on any
     // request — a re-attach would carry nothing, so none is made.
     if (declared?.sessionAdditionalDirectories !== true) return;
-    if (session.inFlight) {
-      session.rootsDirty = true;
-      return;
-    }
     if (!this.hasTurns(sessionId)) {
-      await this.recreateEmpty(sessionId, session);
+      await this.recreateEmpty(sessionId, session, signal);
       return;
     }
     // Resume is the only re-apply rung after a turn: real memory, no
@@ -1689,9 +1581,9 @@ export class SessionsStore {
     // applySeed routes through set requests whose responses are the truth.
     const seed = confirmedFromKnobs(session.knobs);
     try {
-      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.agentId);
+      const { knobs } = await this.attachSession({ via: "resume", sessionId }, session.agentId, {}, signal);
       this.publishKnobs(sessionId, knobs);
-      await this.applySeed(sessionId, seed);
+      await this.applySeed(sessionId, seed, signal);
       this.log.info(`session ${sessionId}: roots re-applied via session/resume`);
     } catch (err) {
       // An involuntary detach like any other.
@@ -1712,13 +1604,16 @@ export class SessionsStore {
    * id; its continuity row follows that id, and the user-steered knob
    * values are re-seeded (silently skipped where the fresh session doesn't
    * offer them). `old` is the live attachment when there still is one. */
-  private async recreateEmpty(sessionId: string, old: LiveSession | undefined): Promise<void> {
+  private async recreateEmpty(sessionId: string, old: LiveSession | undefined, signal: AbortSignal): Promise<void> {
     const row = this.known.get(sessionId);
     if (row === undefined) throw new Error(`unknown session ${sessionId}`);
     const { agentId, handle: was } = row;
-    const { handle, contextToken, knobs, missing } = await this.attachSession({ via: "new" }, agentId, {
-      roots: this.rootsFor(sessionId, this.cwd()),
-    });
+    const { handle, contextToken, knobs, missing } = await this.attachSession(
+      { via: "new" },
+      agentId,
+      { roots: this.rootsFor(sessionId, this.cwd()) },
+      signal,
+    );
     // Closed while the agent minted it: the fresh session serves no one,
     // and is freed like the shell it would have replaced.
     if (this.known.get(sessionId) !== row) {
@@ -1750,7 +1645,7 @@ export class SessionsStore {
     // connection took it along.
     if (old !== undefined) this.retire(agentId, was);
     this.publishKnobs(sessionId, knobs);
-    await this.applySeed(sessionId, seed);
+    await this.applySeed(sessionId, seed, signal);
     this.log.info(`session ${sessionId}: zero-turn — minted again (agent id ${was} → ${handle})`);
   }
 
@@ -1764,86 +1659,70 @@ export class SessionsStore {
     }
   }
 
-  async sendPrompt(
-    sessionId: string,
-    text: string,
-    parts?: readonly PromptPart[],
-    draft?: string,
-  ): Promise<void> {
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined) throw new Error(`unknown session ${sessionId}`);
-    // The turn-start door — the one adjudication every prompt passes,
-    // ahead of any transcript write or wire call. Three reasons a turn
-    // can't start now, one outcome: the words queue as visible held rows,
-    // never silently dropped. Mid-turn (ACP is one prompt per turn)
-    // releases at turn end; a standing auth lock releases when login
-    // evidence clears it (firing under a lock would fabricate a user
-    // message the wire is already witnessed to refuse); words already
-    // held ahead keep their order — this prompt joins the back.
-    const inFlight =
-      this.sessions.get(sessionId)?.inFlight === true || this.turnStarting.has(sessionId);
-    const locked = this.hooks.authLocked?.(agentId) === true;
-    const held = this.saved(sessionId).queue ?? [];
-    if (inFlight || locked || held.length > 0) {
-      // Ids outlive the window with the row, so they are unique anywhere.
-      const queued: QueuedPrompt = {
-        id: randomUUID(),
-        text,
-        ...(parts !== undefined ? { parts } : {}),
-        ...(draft !== undefined ? { draft } : {}),
-      };
-      this.save(sessionId, { queue: [...held, queued] });
-      this.hooks.emit({ kind: "promptQueued", sessionId, prompt: queued });
-      // Held only by order — rehydrated words whose firing trigger died
-      // with the old window: release the front now; this prompt fires
-      // after them, one per turn end.
-      if (!inFlight && !locked) this.drainQueue(sessionId);
-      return;
-    }
-    return this.sendPromptNow(sessionId, agentId, text, parts).catch((err: unknown) => {
-      // The composer let these words go when it sent them, and the turn
-      // never started: they wait among the held ones, where the next open,
-      // reload or prompt sends them — only the user discards words.
-      if (err instanceof TurnNotStartedError) {
-        this.reHold(sessionId, {
-          id: randomUUID(),
-          text,
-          ...(parts !== undefined ? { parts } : {}),
-          ...(draft !== undefined ? { draft } : {}),
-        });
-      }
-      throw err;
-    });
+  /** Words that wait their turn — the held prompts, saved on the
+   * session's row; only the user discards them (Stop, the row's ×, close).
+   * Ids outlive the window with the row, so they are unique anywhere. */
+  hold(sessionId: string, words: Omit<QueuedPrompt, "id">): void {
+    if (!this.known.has(sessionId)) return;
+    const queued: QueuedPrompt = { id: randomUUID(), ...words };
+    this.save(sessionId, { queue: [...(this.saved(sessionId).queue ?? []), queued] });
+    this.hooks.emit({ kind: "promptQueued", sessionId, prompt: queued });
   }
 
-  /** The body behind the door: attach, transcript write, wire call, turn
-   * end, drain. Reached only through sendPrompt's adjudication or through
-   * drainQueue — which re-checks the same conditions before shifting, so
-   * nothing lands here that the door would have held. */
-  private async sendPromptNow(
+  /** Whether words wait on the session's row. */
+  hasHeld(sessionId: string): boolean {
+    return (this.saved(sessionId).queue?.length ?? 0) > 0;
+  }
+
+  /** The held words next in line, taken off the row to start their turn. */
+  takeHeld(sessionId: string): QueuedPrompt | undefined {
+    const [next, ...rest] = this.saved(sessionId).queue ?? [];
+    if (next === undefined) return undefined;
+    this.save(sessionId, { queue: rest });
+    this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId: next.id });
+    return next;
+  }
+
+  /** Whether the session's agent stands signed out — its turns hold, never
+   * fire into a wire already witnessed to refuse. */
+  locked(sessionId: string): boolean {
+    const agentId = this.agentFor(sessionId);
+    return agentId !== undefined && this.hooks.authLocked?.(agentId) === true;
+  }
+
+  /** Whether a turn may start on the session now, as far as its own facts
+   * go: its agent running, not signed out. What already runs on the
+   * session is the gates' to know. */
+  turnAllowed(sessionId: string): boolean {
+    const agentId = this.agentFor(sessionId);
+    return agentId !== undefined && this.pool.get(agentId)?.status === "running" && !this.locked(sessionId);
+  }
+
+  /** One turn: the transcript write, the wire call, the turn's end. The
+   * session is attached first (the gates attach it); a turn that cannot
+   * start throws before anything is rendered or sent — the words still the
+   * user's. `spent` hears the moment they become a user message. Told to
+   * stop mid-turn, it sends the cancel, answers the asks the turn leaves
+   * open (an ACP MUST), and waits at most CANCEL_SETTLE_MS for the agent to
+   * end the turn — a hung agent must not hold the session — then ends it
+   * here; an answer that comes later changes nothing. */
+  async runTurn(
     sessionId: string,
-    agentId: string,
-    text: string,
-    parts?: readonly PromptPart[],
+    words: { text: string; parts?: readonly PromptPart[] },
+    signal: AbortSignal,
+    spent: () => void,
   ): Promise<void> {
-    this.turnStarting.add(sessionId);
-    let session: LiveSession;
-    let handle: string;
-    try {
-      await this.ensureAttached(sessionId, agentId);
-      const attached = this.sessions.get(sessionId);
-      const row = this.known.get(sessionId);
-      if (attached === undefined || row === undefined) throw new Error(`session ${sessionId} vanished during attach`);
-      session = attached;
-      // Read after the attach: the zero-turn rung gives the session a
-      // fresh agent id.
-      handle = row.handle;
-    } catch (err) {
-      // The turn never started: nothing rendered, nothing on the wire —
-      // the caller may safely re-hold the words.
-      this.turnStarting.delete(sessionId);
-      throw new TurnNotStartedError(err as Error);
-    }
+    signal.throwIfAborted();
+    const attached = this.sessions.get(sessionId);
+    const known = this.known.get(sessionId);
+    if (attached === undefined || known === undefined) throw new Error(this.notAttached(sessionId));
+    if (this.locked(sessionId)) throw new Error(`${attached.agentId} is signed out`);
+    if (attached.inFlight) throw new Error(`session ${sessionId} has a turn running`);
+    const session = attached;
+    const { text, parts } = words;
+    // Read now: the zero-turn rung, on the attach just before, may have
+    // given the session a fresh agent id.
+    const handle = known.handle;
     // A mode-set confirmation that hasn't arrived by the next prompt is
     // not coming — the flag attributes the *immediate* notification to the
     // user's click; stale, it would record an agent-initiated transition
@@ -1854,17 +1733,13 @@ export class SessionsStore {
     session.userModeSetPending = false;
     this.sealRun(sessionId, session);
     session.inFlight = true;
-    this.turnStarting.delete(sessionId);
-    const row = this.known.get(sessionId);
-    if (row !== undefined) row.everPrompted = true;
+    known.everPrompted = true;
     session.lastActivityAt = Date.now();
-    let settleTurn!: () => void;
-    const turnSettled = new Promise<void>((resolve) => (settleTurn = resolve));
-    session.turnSettled = turnSettled;
+    spent();
 
     const events: AgentViewEvent[] = [];
-    if (row !== undefined && !row.titled) {
-      row.titled = true;
+    if (!known.titled) {
+      known.titled = true;
       events.push({ kind: "sessionRefreshed", sessionId, title: deriveTitle(text) });
     }
     // Duration basis is send→stop, deliberately not first-chunk→stop: the
@@ -1905,7 +1780,6 @@ export class SessionsStore {
     }
     events.push(
       { kind: "userMessageAppended", sessionId, blockId: newBlockId("user"), parts: userParts },
-      { kind: "sessionLiveChanged", sessionId, live: true },
       { kind: "turnStarted", sessionId, at: startedAt },
     );
     this.hooks.emit(...events);
@@ -1982,9 +1856,8 @@ export class SessionsStore {
       // end_turn — the turn is over and nothing runs on: any still-open
       // call is stranded. Sweep before the turnEnd block lands, so the
       // turn's stop reason and its calls' fate are never a render apart.
-      // Current session, not the capture (same rule as the finally below):
-      // a mid-turn reload replaces the object, and its replay repopulates
-      // the fresh worklist — the stale one must not speak for it.
+      // The attachment as it stands, not the capture: a connection that
+      // died under the turn took it, and the drop helper swept it then.
       const current = this.sessions.get(sessionId);
       if (current !== undefined) {
         this.sweepOpenToolCalls(sessionId, current);
@@ -2002,8 +1875,29 @@ export class SessionsStore {
         usage,
       });
     };
+    // Told to stop while the blocks were read, the turn ends before it
+    // reaches the wire: the message stands, nothing was sent.
+    if (signal.aborted) {
+      endTurn("cancelled", null);
+      session.inFlight = false;
+      return;
+    }
+    const cancel = () => {
+      void this.pool.cancel(session.agentId, handle).catch(() => {}); // a dead connection stops nothing
+      // The cancel goes out first, then the asks it leaves are answered —
+      // the agent hears the turn is ending before it hears why its ask was.
+      this.hooks.cancelAsks?.(sessionId);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
     try {
-      const response = await this.pool.prompt(session.agentId, handle, prompt);
+      const response = await untilGivenUp(this.pool.prompt(session.agentId, handle, prompt), signal, CANCEL_SETTLE_MS);
+      if (response === null) {
+        this.log.info(
+          `session ${sessionId}: turn told to stop, still unanswered after ${CANCEL_SETTLE_MS} ms — ended here`,
+        );
+        endTurn("cancelled", null);
+        return;
+      }
       // end_turn is the unremarkable outcome; anything else is worth a line.
       if (response.stopReason === "end_turn") {
         this.log.debug(`session ${sessionId}: turn ended`);
@@ -2011,91 +1905,27 @@ export class SessionsStore {
         this.log.info(`session ${sessionId}: turn stopped — ${response.stopReason}`);
       }
       endTurn(response.stopReason, toTurnUsage(response.usage));
-      // Drain rides SUCCESS only — one held prompt per completed turn.
-      // An errored turn holds the words instead (open/prompt/unlock
-      // releases them later): auto-firing the next words into whatever
-      // just failed would retry a deterministic rejection forever, and on
-      // a crash the status gate can race the exit event — the stream's
-      // close rejects the prompt BEFORE the child's exit lands (pool.ts
-      // records this observed live), so a drain scheduled off the failure
-      // could still see "running" and spend held words into a dying
-      // connection. Deferred one IO tick so the turn's own bookkeeping
-      // (the finally below) settles first.
-      setImmediate(() => this.drainQueue(sessionId));
     } catch (err) {
       // The turn still ended — as an error, said as such, never silently.
       endTurn("error", null);
       throw err;
     } finally {
-      // The session object may have been replaced under this turn (a
-      // reload's fresh LiveSession) — flag the current one, not the capture.
+      signal.removeEventListener("abort", cancel);
       const current = this.sessions.get(sessionId);
       if (current !== undefined) {
         current.inFlight = false;
         current.lastActivityAt = Date.now();
-        if (current.turnSettled === turnSettled) current.turnSettled = null;
-        if (current.rootsDirty) {
-          // Awaited on purpose: settleTurn drains the held queue, and a
-          // prompt firing while the resume is still in flight would run on
-          // the old list — the change the user made mid-turn must land
-          // before the next prompt goes out.
-          current.rootsDirty = false;
-          await this.reapplyRoots(sessionId);
-        }
       }
-      this.hooks.emit({ kind: "sessionLiveChanged", sessionId, live: false });
-      settleTurn();
     }
-  }
-
-  /** Fire the next held prompt, if its session can start a turn — one per
-   * call; the fired turn's own end drains its successor. Holds without
-   * shifting while the agent's auth lock stands (or a turn is already in
-   * flight); the fired prompt goes through sendPromptNow, past the door —
-   * the door's own queue-order condition would otherwise send the front
-   * to the back. */
-  private drainQueue(sessionId: string): void {
-    if (this.sessions.get(sessionId)?.inFlight === true) return;
-    if (this.turnStarting.has(sessionId)) return;
-    // A reload/open in progress owns the session — the cancelled turn's
-    // trailing drain must not fire into the replay window; the reload's
-    // own completion re-fires the drain.
-    if (this.hydrating.has(sessionId)) return;
-    const agentId = this.sessions.get(sessionId)?.agentId ?? this.known.get(sessionId)?.agentId;
-    if (agentId === undefined || this.hooks.authLocked?.(agentId) === true) return;
-    // A dead or stopped agent holds the queue, never eats it: the crashed
-    // turn's own end fires this drain a tick after the exit handler, and
-    // shifting into a dead connection would discard words the reattach
-    // could have sent. Open/prompt/unlock re-fire the drain once a
-    // connection is back.
-    if (this.pool.get(agentId)?.status !== "running") return;
-    const [next, ...rest] = this.saved(sessionId).queue ?? [];
-    if (next === undefined) return;
-    this.save(sessionId, { queue: rest });
-    this.hooks.emit({ kind: "promptUnqueued", sessionId, promptId: next.id });
-    void this.sendPromptNow(sessionId, agentId, next.text, next.parts).catch((err: Error) => {
-      if (err instanceof TurnNotStartedError) {
-        // Nothing rendered, nothing sent — the words go back (only the user
-        // discards). The next open/prompt/unlock retries.
-        this.log.info(`session ${sessionId}: held words re-held — ${err.message}`);
-        this.reHold(sessionId, next);
-        return;
-      }
-      // The wire settled: the words were spent — rendered as a user
-      // message with an honest error turn, same as a direct prompt that
-      // fails. Re-holding would duplicate the send, and a deterministic
-      // rejection would retry forever off its own turn's end.
-      this.log.info(`session ${sessionId}: queued prompt failed — ${err.message}`);
-    });
   }
 
   /** Words whose turn never started go back to the front of the held ones
    * — anything held meanwhile came after them. The view's rows resync
    * wholesale, so their order stays the firing order. A session closed
    * meanwhile took its held words with it, these included. */
-  private reHold(sessionId: string, words: QueuedPrompt): void {
+  reHold(sessionId: string, words: Omit<QueuedPrompt, "id"> & { id?: string }): void {
     if (!this.known.has(sessionId)) return;
-    const queue = [words, ...(this.saved(sessionId).queue ?? [])];
+    const queue = [{ ...words, id: words.id ?? randomUUID() }, ...(this.saved(sessionId).queue ?? [])];
     this.save(sessionId, { queue });
     this.hooks.emit({ kind: "promptQueueCleared", sessionId });
     for (const q of queue) this.hooks.emit({ kind: "promptQueued", sessionId, prompt: q });
@@ -2159,33 +1989,6 @@ export class SessionsStore {
     }
   }
 
-  /** The auth lock's release valve: when an agent's lock clears, fire the
-   * next held prompt of each of its sessions. An idle session has no
-   * coming turn end to drain it — without this, words held at the
-   * turn-start door would wait forever behind a login that already
-   * happened. */
-  drainHeldQueues(agentId: string): void {
-    for (const [sessionId, row] of [...this.known]) {
-      if (row.agentId === agentId) this.drainQueue(sessionId);
-    }
-  }
-
-  async stopTurn(sessionId: string, opts?: { keepHeldWords?: boolean }): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    const handle = this.known.get(sessionId)?.handle;
-    if (!session || handle === undefined) return;
-    // Stop means stop: queued prompts go with the cancelled turn — draining
-    // them after a deliberate stop would restart what the user just ended.
-    // A reload's cancel is plumbing, not the user ending the work: it keeps
-    // its held words (keepHeldWords) and re-drains after the re-attach.
-    if (opts?.keepHeldWords !== true) this.clearPromptQueue(sessionId);
-    // The cancel goes out first, then the asks it leaves are answered — the
-    // agent hears the turn is ending before it hears why its ask was.
-    const cancelled = this.pool.cancel(session.agentId, handle);
-    this.hooks.cancelAsks?.(sessionId);
-    await cancelled;
-  }
-
   /** Drops one still-queued prompt (composer row × button). */
   removeQueuedPrompt(sessionId: string, promptId: string): void {
     const queue = this.saved(sessionId).queue ?? [];
@@ -2214,31 +2017,13 @@ export class SessionsStore {
     );
   }
 
-  private clearPromptQueue(sessionId: string): void {
-    if ((this.saved(sessionId).queue?.length ?? 0) === 0) return;
+  /** Stop means stop: the held words go with the turn the user ended —
+   * draining them after a deliberate stop would restart what they just
+   * ended. */
+  clearHeld(sessionId: string): void {
+    if (!this.hasHeld(sessionId)) return;
     this.save(sessionId, { queue: [] });
     this.hooks.emit({ kind: "promptQueueCleared", sessionId });
-  }
-
-  /** Honest interruption: a live turn is cancelled (per the spec)
-   * and awaited to settle before the caller rips the session out from under
-   * it — the turn's own end (turnEnded, the tool-call sweep) must land
-   * first, or it would write into a session that no longer exists. Bounded:
-   * a hung agent gets CANCEL_SETTLE_MS, then the caller proceeds anyway —
-   * a wedged process must not make a session unclosable. */
-  private async interruptTurn(
-    sessionId: string,
-    opts?: { keepHeldWords?: boolean },
-  ): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session === undefined || !session.inFlight) return;
-    await this.stopTurn(sessionId, opts).catch(() => {}); // a dead connection stops nothing — proceed
-    const settled = session.turnSettled;
-    if (settled === null) return;
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => setTimeout(resolve, CANCEL_SETTLE_MS).unref()),
-    ]);
   }
 
   /** Pulls type:"diff" entries out of a tool call's content: texts stashed
@@ -2319,7 +2104,7 @@ export class SessionsStore {
     return this.toolDiffs.get(sessionId)?.get(toolCallId)?.get(path) ?? null;
   }
 
-  /** Replay counterpart of sendPrompt's part building: one wire content
+  /** Replay counterpart of runTurn's part building: one wire content
    * block of a replayed user message → its part, through the one content
    * mapping every chat surface shares. */
   private userPartOf(sessionId: string, content: ContentBlock): UserPart {
@@ -2372,7 +2157,7 @@ export class SessionsStore {
    * N+1's heading un-closes the fence). With an id missing on either side
    * the channels honestly differ:
    * - user: never continues. Every user chunk that reaches its arm is a
-   *   whole message — live sends render via sendPrompt, live echoes die at
+   *   whole message — live sends render via runTurn, live echoes die at
    *   the inFlight guard, and id-less replay is whole-message-per-chunk
    *   (auggie, wire-verified: merging fused adjacent cancelled prompts).
    * - text/thought: always continues. An id-less agent wire carries no
@@ -2477,7 +2262,7 @@ export class SessionsStore {
     // events, so turn structure is reconstructed here — agent activity marks
     // the segment dirty, and the next user message (or the end of the replay,
     // in loadSilently) flushes it as a synthesized TurnEndBlock. Only ever
-    // set inside the window: live turns get their real turnEnded (sendPrompt).
+    // set inside the window: live turns get their real turnEnded (runTurn).
     if (
       this.replaying.has(sessionId) &&
       (update.sessionUpdate === "agent_message_chunk" ||
@@ -2492,7 +2277,7 @@ export class SessionsStore {
       // Block-model rule for all three chunk
       // arms: runBlockFor above is the one place a chunk's block is decided.
       // This arm is replay-only by design: a live send appends its own whole
-      // user block (sendPrompt), and some agents echo the in-flight prompt
+      // user block (runTurn), and some agents echo the in-flight prompt
       // back as a user_message_chunk (observed: slash-command expansion) —
       // consuming that would duplicate it, hence the inFlight guard. During
       // session/load replay nothing is in flight, so every historical user

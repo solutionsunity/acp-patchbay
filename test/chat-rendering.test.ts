@@ -9,6 +9,7 @@ import {
   TOOL_RUN_MIN,
   diffTotal,
   toolFileRows,
+  turnLive,
 } from "../src/webview/agent-view/chat/view-model";
 import {
   coalesceAgentViewEvent,
@@ -90,12 +91,34 @@ describe("deriveTranscript: the live-block contract (stream/end)", () => {
     const { liveBlockId } = deriveTranscript([text("a")], false);
     expect(liveBlockId).toBeNull();
   });
+
+  it("a turn waiting for its session to attach is underway, not live — the replay meanwhile is history", () => {
+    const events: AgentViewEvent[] = [
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionBusyChanged", sessionId: S, busy: ["open", "prompt"] },
+      { kind: "agentTextDelta", sessionId: S, blockId: "replayed", text: "an old answer" },
+    ];
+    let state = events.reduce(reduceAgentView, initialAgentViewState);
+    expect(turnLive(state, S)).toBe(false);
+    state = reduceAgentView(state, { kind: "turnStarted", sessionId: S, at: "2026-07-09T00:00:01Z" });
+    expect(turnLive(state, S)).toBe(true);
+    state = reduceAgentView(state, {
+      kind: "turnEnded",
+      sessionId: S,
+      blockId: "end",
+      startedAt: "2026-07-09T00:00:01Z",
+      at: "2026-07-09T00:00:02Z",
+      stopReason: "end_turn",
+      usage: null,
+    });
+    expect(turnLive(state, S)).toBe(false);
+  });
 });
 
 describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
   it("marks the block denied in place; a later failed status keeps the denied fact", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "rm -rf", status: "in_progress", toolKind: "execute" },
       { kind: "toolCallDenied", sessionId: S, blockId: "t1" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "failed" },
@@ -124,7 +147,7 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
 describe("userPartAppended injected flag (harness envelopes on the user role)", () => {
   it("an injected envelope lands as its own flagged block; the real prompt around it stays a clean bubble", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "userPartAppended", sessionId: S, blockId: "u1", part: { kind: "text", text: "fix the bug" } },
       { kind: "userPartAppended", sessionId: S, blockId: "u2", part: { kind: "text", text: "<system-reminder>x</system-reminder>" }, injected: true },
       { kind: "userPartAppended", sessionId: S, blockId: "u3", part: { kind: "text", text: "and add a test" } },
@@ -141,7 +164,7 @@ describe("userPartAppended injected flag (harness envelopes on the user role)", 
 describe("toolCallUpserted merge semantics (P13b)", () => {
   it("reducer: absent fields keep what a prior event established", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Read", status: "in_progress", toolKind: "read", input: "{ path }" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed", output: "contents" },
     ];
@@ -291,7 +314,7 @@ describe("deriveTranscript: per-turn rollups", () => {
 describe("turn lifecycle reducer (P13c)", () => {
   it("turnStarted sets the ticker basis; turnEnded clears it and appends the block", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-09T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "turnStarted", sessionId: S, at: "2026-07-07T10:00:00Z" },
     ];
     const mid = events.reduce(reduceAgentView, initialAgentViewState);
@@ -317,7 +340,7 @@ describe("turn lifecycle reducer (P13c)", () => {
     // its own turn's real end (toolCallInterrupted) — a later turnStarted
     // must not touch it.
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-11T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-11T00:00:00Z" } },
       { kind: "turnStarted", sessionId: S, at: "2026-07-11T10:00:00Z" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
       // The orchestrator's turn-end sweep fires before turnEnded lands.
@@ -339,7 +362,7 @@ describe("turn lifecycle reducer (P13c)", () => {
 
   it("a trailing tool_call_update still wins over a stale interrupted flag", () => {
     const events: AgentViewEvent[] = [
-      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", live: true, updatedAt: "2026-07-11T00:00:00Z" } },
+      { kind: "sessionCreated", session: { id: S, agentId: "a", title: "t", busy: ["prompt"], updatedAt: "2026-07-11T00:00:00Z" } },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
       { kind: "toolCallInterrupted", sessionId: S, blockId: "t1" },
       { kind: "toolCallUpserted", sessionId: S, blockId: "t1", title: "", status: "completed" },

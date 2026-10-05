@@ -4,7 +4,7 @@
 // this gate is a manual smoke test outside this harness — no live agent
 // credentials are available in this sandboxed run.)
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,15 +26,13 @@ interface Internal {
       current: {
         screen: { pointer: boolean };
         transcripts: Record<string, ChatBlockLike[]>;
-        sessions: Array<{ id: string; live: boolean }>;
+        sessions: Array<{ id: string; busy: readonly string[] }>;
       };
     };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessions: {
-      createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
-      sendPrompt(sessionId: string, text: string): Promise<void>;
-    };
+    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
+    sessionGates: SessionGatesDoor;
   };
 }
 
@@ -84,7 +82,7 @@ suite("chat vertical slice", () => {
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
 
       // fire the turn without awaiting completion — we want to interrupt mid-stream
-      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
 
       // wait for the first chunk to land, then kill the webview mid-turn
       await waitFor(() => {
@@ -94,7 +92,7 @@ suite("chat vertical slice", () => {
       const midTurnSession = orchestrator.agentView.current.sessions.find(
         (s) => s.id === sessionId,
       );
-      assert.strictEqual(midTurnSession?.live, true, "turn should still be in flight");
+      assert.ok(midTurnSession?.busy.includes("prompt"), "turn should still be underway");
 
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
       await waitFor(() => (orchestrator.agentView.current.screen.pointer ? undefined : true));
@@ -114,10 +112,7 @@ suite("chat vertical slice", () => {
         textOf(finalState.transcripts[sessionId] ?? []),
         "part one part two part three",
       );
-      assert.strictEqual(
-        finalState.sessions.find((s) => s.id === sessionId)?.live,
-        false,
-      );
+      assert.deepStrictEqual(finalState.sessions.find((s) => s.id === sessionId)?.busy, []);
 
       // and the final state reached the webview too
       await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);

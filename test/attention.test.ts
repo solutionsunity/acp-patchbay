@@ -16,7 +16,7 @@ function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewS
 
 const created = (id: string): AgentViewEvent => ({
   kind: "sessionCreated",
-  session: { id, agentId: "fake", title: `title ${id}`, live: false, updatedAt: "2026-09-25T00:00:00Z" },
+  session: { id, agentId: "fake", title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
 });
 
 const permission = (sessionId: string, blockId: string): AgentViewEvent => ({
@@ -101,7 +101,7 @@ describe("session marks — most urgent first", () => {
   it("waiting outranks running outranks unseen", () => {
     const s = replay([
       created("a"),
-      { kind: "sessionLiveChanged", sessionId: "a", live: true },
+      { kind: "sessionBusyChanged", sessionId: "a", busy: ["prompt"] },
       question("a", "q1"),
     ]);
     const mark = () => sessionMark(s, s.sessions[0]!);
@@ -123,7 +123,7 @@ describe("elsewhere — what the header reports", () => {
       question("a", "q1"),
       permission("b", "p1"),
       question("c", "q2"),
-      { kind: "sessionLiveChanged", sessionId: "d", live: true },
+      { kind: "sessionBusyChanged", sessionId: "d", busy: ["prompt"] },
     ]);
     const e = elsewhere(s);
     expect(e.waiting.map((x) => x.id)).toEqual(["b"]);

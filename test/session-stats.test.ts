@@ -6,7 +6,7 @@ import type { SessionSummary } from "../src/shared/protocol";
 import { sessionsActiveToday } from "../src/orchestrator/session-stats";
 
 function row(id: string, updatedAt: string): SessionSummary {
-  return { id, agentId: "a", title: id, live: false, updatedAt };
+  return { id, agentId: "a", title: id, busy: [], updatedAt };
 }
 
 describe("sessionsActiveToday", () => {

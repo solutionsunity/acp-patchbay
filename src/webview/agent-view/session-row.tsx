@@ -34,8 +34,9 @@ export function SessionActions({
 }: {
   session: SessionSummary;
   detach: boolean;
-  /** A replay is in flight for this session (state.hydrating) — Reload
-   * disables rather than queueing a second replay behind the first. */
+  /** The session is being attached (an open or a reload on its attachment
+   * line) — Reload disables rather than queueing a second read behind the
+   * first. */
   reloading?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;

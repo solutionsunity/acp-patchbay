@@ -30,6 +30,7 @@ import { SessionContinuityStore } from "../src/orchestrator/stores/session-conti
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
+import { gatesFor } from "./support/session-gates";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 const MCP_SERVER = join(process.cwd(), "out", "mcp-server.js");
@@ -147,7 +148,12 @@ function harness() {
     () => dir,
     mcpServersFor,
   );
-  return { pool, sessions, state: () => events.reduce(reduceAgentView, initialAgentViewState) };
+  return {
+    pool,
+    sessions,
+    gates: gatesFor(sessions, (event) => events.push(event)),
+    state: () => events.reduce(reduceAgentView, initialAgentViewState),
+  };
 }
 
 describe("local MCP server, end to end through a real agent process", () => {
@@ -155,7 +161,7 @@ describe("local MCP server, end to end through a real agent process", () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1"));
     const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
-    await h.sessions.sendPrompt(sessionId, "what's selected?");
+    await h.gates.prompt(sessionId, { text: "what's selected?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({
@@ -171,7 +177,7 @@ describe("local MCP server, end to end through a real agent process", () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2"));
     const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
-    await h.sessions.sendPrompt(sessionId, "any problems?");
+    await h.gates.prompt(sessionId, { text: "any problems?" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual([
@@ -186,7 +192,7 @@ describe("local MCP server, end to end through a real agent process", () => {
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3"),
     );
     const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     const text = h.state().transcripts[sessionId]!.find((b) => b.kind === "text");
     expect(text?.kind === "text" && JSON.parse(text.text)).toEqual({ resolvedFor: sessionId });
@@ -207,8 +213,8 @@ describe("local MCP server, end to end through a real agent process", () => {
     const s2 = await h.sessions.createSession("e4", "Fake Agent", dir);
     expect(s1).not.toBe(s2);
 
-    await h.sessions.sendPrompt(s1, "go");
-    await h.sessions.sendPrompt(s2, "go");
+    await h.gates.prompt(s1, { text: "go" });
+    await h.gates.prompt(s2, { text: "go" });
 
     const resolvedFor = (sid: string) => {
       const text = h.state().transcripts[sid]!.find((b) => b.kind === "text");

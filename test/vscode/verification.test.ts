@@ -5,7 +5,7 @@
 // used on those rows — the matrix's honest data-plane record (the fidelity
 // aggregate that once hung off these rows is removed, 2026-07-12).
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,10 +34,8 @@ interface Internal {
     usedCapabilities: { remove(id: string): Promise<void> };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessions: {
-      createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
-      sendPrompt(sessionId: string, text: string): Promise<void>;
-    };
+    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
+    sessionGates: SessionGatesDoor;
   };
 }
 
@@ -100,7 +98,7 @@ suite("opportunistic fs/terminal verification", () => {
         "Verify E2E Fake",
         cwd,
       );
-      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
 
       // the write arrives as a pending diff card (no workspace root → ask);
       // accept it the way the card's button would

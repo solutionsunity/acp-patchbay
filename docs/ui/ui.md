@@ -15,7 +15,7 @@ what it's made of.
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected) |
-| Session mark | ● amber (pulsing) / green (pulsing) / blue | waiting on you / turn in flight / finished while no visible surface showed it — one per session, most urgent first |
+| Session mark | ● amber (pulsing) / green (pulsing) / blue | waiting on you / turn underway / finished while no visible surface showed it — one per session, most urgent first |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | Toast | transient strip, bottom-center | confirmation of an action; never the only record (the audit holds the durable one) |
@@ -119,7 +119,7 @@ Action row (below):
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic |
 | Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
-| Send / Stop | ↑ / ■ | send prompt / cancel mid-turn |
+| Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach |
 
 ### 6 · Drawers
 
@@ -129,7 +129,7 @@ connected` / capability one-liner); clicking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
-per session: session mark (waiting on you / turn in flight / finished unseen) · title · agent + state subtitle · kebab
+per session: session mark (waiting on you / turn underway / finished unseen) · title · agent + state subtitle · kebab
 (same actions as the session row). Below the rows, one line per agent whose
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
 only the ones open in this window are listed`. Footer: `＋ New chat` (the same

@@ -8,6 +8,7 @@
 // containment (style.css), and memoized rows.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  attaching,
   userPartsText,
   type AgentViewState,
   type ChatBlock,
@@ -405,8 +406,7 @@ export function Chat(props: {
   // content doesn't stay up while reality is re-read). One route, one
   // loading page. Only the involuntary reopen after a connection death
   // keeps its transcript standing through the replay's wholesale swap.
-  // `?? {}` guards snapshots minted before the field.
-  if ((props.state.hydrating ?? {})[active.id] === true && items.length === 0) {
+  if (attaching(active) && items.length === 0) {
     return <StatePage icon="loading" spin tag="Loading session history…" />;
   }
   const visible = hidden > 0 ? items.slice(hidden) : items;

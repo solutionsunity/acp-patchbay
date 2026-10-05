@@ -234,4 +234,61 @@ describe("Queue — cutting in", () => {
     await all;
     expect([q.held("a"), q.held("b")]).toEqual([[], []]);
   });
+
+  it("end stops one row's work, says who ended it, runs nothing after, and settles once it has left", async () => {
+    const q = new Queue<Work>(() => {});
+    const a = gate();
+    const signals: AbortSignal[] = [];
+    const ran = q.run("a", "connect", (s) => (signals.push(s), a.body()));
+    const waits = q.run("a", "upgrade", async () => {});
+    const other = gate();
+    const elsewhere = q.run("b", "connect", other.body);
+    await tick();
+    let settled = false;
+    const ended = q.end("a", "reload").then(() => (settled = true));
+    expect(signals.map((s) => s.aborted)).toEqual([true]);
+    await expect(ran).rejects.toMatchObject({ by: "reload" });
+    await expect(waits).rejects.toThrow(Cancelled);
+    await tick();
+    expect(settled).toBe(false); // the running one is still unwinding
+    a.reject(new Error("aborted"));
+    await ended;
+    expect(q.held("a")).toEqual([]);
+    expect(q.held("b")).toEqual(["connect"]); // another row is not this end's
+    other.resolve();
+    await elsewhere;
+  });
+
+  it("an operation can wait for work on another row: it takes its turn once that has settled too", async () => {
+    const q = new Queue<Work>(() => {});
+    const elsewhere = gate();
+    void q.run("b", "connect", elsewhere.body);
+    const mine = gate();
+    const done = q.run("a", "verify", mine.body, "verify", q.settled("b"));
+    await tick();
+    expect(mine.starts).toBe(0); // its own row is idle, but b is not
+    elsewhere.resolve();
+    await tick();
+    await tick();
+    expect(mine.starts).toBe(1);
+    mine.resolve();
+    await done;
+  });
+
+  it("settled is already settled for an idle row, and waits only for what the row holds when asked", async () => {
+    const q = new Queue<Work>(() => {});
+    await q.settled("idle");
+    const first = gate();
+    void q.run("a", "connect", first.body);
+    const settled = q.settled("a");
+    const later = gate();
+    void q.run("a", "verify", later.body);
+    let heard = false;
+    void settled.then(() => (heard = true));
+    first.resolve();
+    await tick();
+    await tick();
+    expect(heard).toBe(true); // the later one, still running, is not waited for
+    later.resolve();
+  });
 });

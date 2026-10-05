@@ -8,6 +8,7 @@
 // what counts as waiting.
 import {
   onScreen,
+  turnUnderway,
   type AgentViewState,
   type ChatBlock,
   type DiffBlock,
@@ -43,7 +44,7 @@ export type SessionMark = "waiting" | "running" | "unseen";
 
 export function sessionMark(state: AgentViewState, session: SessionSummary): SessionMark | null {
   if (openAsks(state.transcripts[session.id] ?? []).length > 0) return "waiting";
-  if (session.live) return "running";
+  if (turnUnderway(session)) return "running";
   if (session.unseen === true) return "unseen";
   return null;
 }

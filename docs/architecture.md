@@ -205,7 +205,7 @@ flowchart TD
     Q2 -- no --> N["Honestly not reopenable<br/><small>never mint a session and call it a continuation</small>"]
 ```
 - **Session lifecycle**: opening a session — drawer click, palette pick, or
-  "Open in new window" — is one ceremony (`SessionsStore.open`): the
+  "Open in new window" — is one ceremony (`SessionGates.open`): the
   pointer moves unless the session is pinned to its own window, the ladder
   above runs, and an off agent is spawned (connect-on-demand); when an agent
   comes up, every session on view (active or pinned — the reaper's same
@@ -367,6 +367,39 @@ flowchart TD
   chat pane says what the agent is busy with while a chat waits on it — a
   chat whose connect a Stop or Remove ended simply closes its pane. Live
   only — it ends with the window.
+- **Session operations take turns too**, with the same two tools: two
+  lines per session in the queue, and the session gates (session-gates.ts —
+  the one way any door reaches an operation on a session's connection; the
+  orchestrator's handle on the sessions store carries none of them). The
+  attachment line orders what binds the session to its connection or rides
+  it between turns: an open's attach (the ladder above, the zero-turn
+  re-mint with it), a reload, a roots re-apply, a knob set, an idle
+  release, a close. The turn line holds the session's turn, one at a time
+  as ACP has it; held words wait on the continuity row and enter the line
+  one by one. A turn starts once the attachment line is idle, so nothing
+  re-binds a session under its turn and no prompt fires into a replay. A
+  knob set waits for the attachment line only — a mode or option change
+  may land mid-turn. A root change made during a turn is re-applied when
+  the turn ends, however it ends, ahead of the next held words. A repeat joins: a second
+  open of a session still attaching, a second Reload, the same knob value
+  set again. Three doors end a turn. Stop ends it and drops the held words
+  — Stop means stop; words sent after it go once the stopped turn has
+  wound down. Reload ends it (words that never reached the wire go
+  back to the front of the held ones), reads the session again, then lets
+  the held words go. Close ends the turn and drops the attach work, then
+  the session leaves. A turn told to stop while on the wire sends
+  `session/cancel`, answers the asks it leaves open as cancelled, and gives
+  the agent 3 s to end it before ending it here — an agent that ignores
+  the cancel never holds a session; one still attaching just ends. The
+  prompt whose turn was ended settles as `Cancelled` at once.
+  Sessions never wait on each other. Gates decide policy only; the store
+  keeps its facts valid at its writer whatever the gates admit — one turn
+  at a time, never under a standing auth lock. What the two lines hold is
+  the session's `busy`, read by the views, never kept: a turn on the line
+  is a turn underway (the running mark, the composer's Stop), an open or a
+  reload is the session attaching (the loading page, Reload's wait). A
+  turn is live only once it is on the wire — a turn still waiting for its
+  attach streams nothing. Never persisted — it ends with the window.
 
 ## Agent capability matrix
 
@@ -515,15 +548,17 @@ wire fact means for auth.
 - One thing the writer refuses on its own: evidence for an agent whose
   config no longer exists (a terminal login left open across a Remove).
 - **A standing lock is a turn-start precondition** — the consumer side of
-  the authority. The one adjudication every prompt passes (the sessions store's
-  `sendPrompt` top, ahead of any transcript write or wire call; the queue
-  drain re-checks the same conditions before shifting) treats a lock as `inFlight`'s peer: the words queue as
-  visible held rows — never a fabricated user message fired into a wire
-  already witnessed to refuse, never a silent drop. `inFlight` releases at
-  turn end; the lock releases when its clearing drains the held queues
-  (`drainHeldQueues`, poked by the one writer). The idle reaper spares
-  sessions holding words. The composer's disabled state is the courtesy
-  telling the user why; the door is the invariant.
+  the authority. The one adjudication every prompt passes (the session
+  gates' `prompt`, ahead of any transcript write or wire call; the drain
+  re-checks the same conditions before taking the next words) treats a
+  lock as a running turn's peer: the words queue as visible held rows —
+  never a fabricated user message fired into a wire already witnessed to
+  refuse, never a silent drop. A turn releases them when it ends; the lock
+  when its clearing drains the held words (`lockCleared`, poked by the one
+  writer). The idle reaper spares sessions holding words. The composer's
+  disabled state is the courtesy telling the user why; the door holds the
+  words, and the store's turn refuses to start under a lock whatever
+  reaches it — the invariant at the writer.
 
 The generalized rule (state-authority, `.dotagent/rules/`): centralized
 transport is not centralized authority — every fact with more than one
@@ -806,8 +841,9 @@ non-tail row is edited by hand: copy, ×, paste. The drain rides
 success: it fires one held prompt per completed turn (plus login, open, and
 reload's re-attach), holds while the agent isn't running, and never
 auto-retries after a failure — a send that never started, drained or sent
-straight from the composer, re-holds the words at the front; a send the
-wire settled is spent, visible as a user message with its error turn. The composer **draft** is per-session state owned
+straight from the composer, re-holds the words at the front (unless Stop
+or Close ended it, which ends its words too); a send the wire settled is
+spent, visible as a user message with its error turn. The composer **draft** is per-session state owned
 here, not by the webview (render-only): the composer edits the live buffer,
 saves debounced, and reads the durable copy only when switching sessions —
 its own echoes never fight the keyboard. A new chat in flight leaves no

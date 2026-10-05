@@ -86,6 +86,18 @@
 - Context attached to a session while its agent is stopped — a
   selection, a file, an image — now waits for the next message instead of
   being silently dropped.
+- Stop now works from the moment a message is sent. While its session is
+  still opening or reloading, the composer already shows Stop, and
+  stopping there means the message is never sent; before, Stop appeared
+  only once the message had reached the agent. A reply the agent doesn't
+  end after Stop is ended on patchbay's side after 3 seconds.
+- Everything done to one session now takes turns, as it does for an
+  agent. A message sent while the session opens or reloads goes once it is
+  back, never while its history is still being read in, and a model, mode
+  or effort change made meanwhile applies then instead of being dropped.
+  An idle session is released only when nothing else is happening on it,
+  so a message sent at that moment reopens the session instead of racing
+  the release.
 
 ## 0.84.1 — 2026-09-29
 

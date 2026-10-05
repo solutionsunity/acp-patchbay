@@ -11,7 +11,7 @@ const session: SessionSummary = {
   id: "s1",
   agentId: "a1",
   title: "T",
-  live: false,
+  busy: [],
   updatedAt: "2026-07-21T00:00:00Z",
 };
 const agent = (over: Partial<AgentSummary>): AgentSummary => ({
@@ -65,23 +65,28 @@ describe("composerControls", () => {
   });
 
   // Send and Stop have opposite preconditions: Send needs a healthy agent
-  // ready for a prompt, Stop needs only a turn in flight on a live process.
+  // ready for a prompt, Stop needs only a turn underway on a live process.
   // The lock is per agent, a turn is per session — a second session's RPC
   // settling auth_required raises the lock while this session's prompt is
   // still streaming, and that turn's only exit is Stop (issue #24).
-  it("a live turn on a running-but-locked agent keeps Stop open while Send stays shut", () => {
-    const c = composerControls({ ...session, live: true }, agent({ needsAuth: true }), false);
+  it("a turn underway on a running-but-locked agent keeps Stop open while Send stays shut", () => {
+    const c = composerControls({ ...session, busy: ["prompt"] }, agent({ needsAuth: true }), false);
     expect(c.enabled).toBe(false);
     expect(c.stop).toBe(true);
   });
 
-  it("Stop follows the turn, not the lock: closed with no live turn, closed on a dead process", () => {
+  it("Stop follows the turn, not the lock: closed with no turn underway, closed on a dead process", () => {
     expect(composerControls(session, agent({}), false).stop).toBe(false);
-    expect(composerControls({ ...session, live: true }, agent({}), false).stop).toBe(true);
+    expect(composerControls({ ...session, busy: ["prompt"] }, agent({}), false).stop).toBe(true);
     // The process is gone, so there is nothing to cancel — the turn will
     // settle on its own teardown path.
-    expect(composerControls({ ...session, live: true }, agent({ status: "stopped" }), false).stop).toBe(false);
+    expect(composerControls({ ...session, busy: ["prompt"] }, agent({ status: "stopped" }), false).stop).toBe(false);
     expect(composerControls(null, agent({}), false).stop).toBe(false);
+  });
+
+  it("a turn still waiting for its session to attach can be stopped; an attach alone cannot", () => {
+    expect(composerControls({ ...session, busy: ["open", "prompt"] }, agent({}), false).stop).toBe(true);
+    expect(composerControls({ ...session, busy: ["reload"] }, agent({}), false).stop).toBe(false);
   });
 
   it("a new chat in flight locks the box and names the starting agent — no session exists yet", () => {

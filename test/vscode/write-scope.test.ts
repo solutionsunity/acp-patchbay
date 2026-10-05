@@ -4,7 +4,7 @@
 // out of it asks; the process cwd standing in for an absent folder is never a
 // root — this suite runs with no folder open, so that state is live here.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,11 +26,8 @@ interface Internal {
     };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessions: {
-      createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
-      addRoot(sessionId: string, path: string): Promise<void>;
-      sendPrompt(sessionId: string, text: string): Promise<void>;
-    };
+    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
+    sessionGates: SessionGatesDoor;
   };
 }
 
@@ -57,7 +54,7 @@ suite("write scope (issue #56)", () => {
       );
       await orchestrator.gates.connect("write-scope-e2e");
       const born = await orchestrator.sessions.createSession("write-scope-e2e", "Write Scope Fake", root);
-      await orchestrator.sessions.addRoot(born, root);
+      await orchestrator.sessionGates.addRoot(born, root);
       // a never-prompted session is re-minted to carry its new root
       const sessionId = orchestrator.agentView.current.activeSessionId!;
 
@@ -67,7 +64,7 @@ suite("write scope (issue #56)", () => {
         "no folder open: the process cwd was never handed to the agent",
       );
 
-      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
       const diffs = () => orchestrator.agentView.current.transcripts[sessionId]?.filter((b) => b.kind === "diff") ?? [];
       const asking = await waitFor(() => diffs()[1]);
       assert.deepStrictEqual(diffs()[0]!.resolution, { accepted: true, auto: true }, "inside the root: no card to click");

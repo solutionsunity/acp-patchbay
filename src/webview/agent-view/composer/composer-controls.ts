@@ -7,17 +7,19 @@
 // render expression nobody can sweep. Born of a caught miss: when
 // running-but-logged-out became a designed, durable state, the inline gate
 // still encoded running≈usable and let a prompt fire into a locked agent.
-// A UX courtesy, not the invariant — the sessions store's turn-start door
-// holds the guarantee (a locked agent's prompts queue instead of firing).
-import type { AgentSummary, ChatConnectView, SessionSummary } from "../../../shared/protocol";
+// A UX courtesy, not the invariant — the session gates' turn-start door
+// holds the words (a locked agent's prompts queue instead of firing), and
+// the sessions store refuses a turn under a lock whatever reaches it.
+import { turnUnderway, type AgentSummary, type ChatConnectView, type SessionSummary } from "../../../shared/protocol";
 
 export interface ComposerControls {
   /** Input + send accept text: a session is open, its agent runs, and no
    * standing auth lock holds — a locked agent's prompts would queue at
    * the turn-start door instead of sending, so the box says why up front. */
   enabled: boolean;
-  /** The Stop role of the send button: a turn is in flight on a running
-   * process, so there is something to cancel. Deliberately blind to the
+  /** The Stop role of the send button: a turn is underway on a running
+   * process — on the wire, or still waiting for its session to attach — so
+   * there is something to stop. Deliberately blind to the
    * auth lock — the lock is per agent, the turn is per session, and a
    * sibling session's `auth_required` mid-turn must not strand this one's
    * only exit. Sending and stopping have opposite preconditions. */
@@ -42,7 +44,7 @@ export function composerControls(
   const needsAuth = agent?.needsAuth === true;
   const running = session !== null && agent?.status === "running";
   const enabled = running && !needsAuth;
-  const stop = running && session.live;
+  const stop = running && turnUnderway(session);
   const placeholder = enabled
     ? `Message ${agent!.name} — / commands · @ context`
     : incoming

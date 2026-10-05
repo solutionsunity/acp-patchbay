@@ -30,6 +30,7 @@ import {
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
 import { waitFor } from "./support/wait-for";
+import { gatesFor } from "./support/session-gates";
 
 describe("formFieldsOf", () => {
   it("normalizes the primitive types, carrying title, description and requiredness", () => {
@@ -314,6 +315,7 @@ function wireHarness() {
     pool,
     broker,
     sessions,
+    gates: gatesFor(sessions, (event) => events.push(event)),
     events,
     opened,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
@@ -348,7 +350,7 @@ describe("elicitation on the wire", () => {
       ),
     );
     const sessionId = await h.sessions.createSession("e1", "Fake Agent", dir);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
@@ -370,7 +372,7 @@ describe("elicitation on the wire", () => {
     const h = wireHarness();
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2"));
     const sessionId = await h.sessions.createSession("e2", "Fake Agent", dir);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "decline" });
     await turn;
@@ -385,7 +387,7 @@ describe("elicitation on the wire", () => {
     // spec's own rule. Its answer here proves the declaration went out.
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3"));
     const sessionId = await h.sessions.createSession("e3", "Fake Agent", dir);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
     h.broker.resolveElicitation(elicitationCard(h.state().transcripts[sessionId])!.id, { action: "cancel" });
     await turn;
@@ -410,7 +412,7 @@ describe("url elicitation on the wire", () => {
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1"),
     );
     const sessionId = await h.sessions.createSession("u1", "Fake Agent", dir);
-    const turn = h.sessions.sendPrompt(sessionId, "go");
+    const turn = h.gates.prompt(sessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[sessionId]) !== undefined);
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
@@ -438,7 +440,7 @@ describe("url elicitation on the wire", () => {
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2"),
     );
     const sessionId = await h.sessions.createSession("u2", "Fake Agent", dir);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
     expect(card.kind === "elicitation" && card.linkState).toBe("completed");
@@ -453,7 +455,7 @@ describe("url elicitation on the wire", () => {
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3"),
     );
     const sessionId = await h.sessions.createSession("u3", "Fake Agent", dir);
-    await h.sessions.sendPrompt(sessionId, "go");
+    await h.gates.prompt(sessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[sessionId])!;
     expect(card.resolution).toEqual({ outcome: "withdrawn" });

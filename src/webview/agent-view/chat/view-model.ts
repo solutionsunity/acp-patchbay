@@ -14,7 +14,14 @@
 // principle): grouping and per-turn rollups are
 // render arrangements derived here, never separate traversals with separate
 // boundary rules.
-import { terminalBlockId, type ChatBlock, type DiffStat, type ToolCallBlock, type ToolCallKind } from "../../../shared/protocol";
+import {
+  terminalBlockId,
+  type AgentViewState,
+  type ChatBlock,
+  type DiffStat,
+  type ToolCallBlock,
+  type ToolCallKind,
+} from "../../../shared/protocol";
 
 export type TranscriptItem =
   | { kind: "single"; block: ChatBlock }
@@ -121,6 +128,14 @@ function embeddedTerminalIds(blocks: readonly ChatBlock[]): ReadonlySet<string> 
 export const TOOL_RUN_MIN = 3;
 
 const FILE_TOUCHING: ReadonlySet<ToolCallKind> = new Set(["edit", "delete", "move"]);
+
+/** Whether the session's turn is live — on the wire, started and not yet
+ * ended: the only time a block can be receiving deltas. A turn still
+ * waiting for its session to attach is underway, not live — what lands
+ * meanwhile is the replay, history. */
+export function turnLive(state: Pick<AgentViewState, "activeTurn">, sessionId: string): boolean {
+  return state.activeTurn[sessionId] !== undefined;
+}
 
 export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): TranscriptView {
   const items: TranscriptItem[] = [];

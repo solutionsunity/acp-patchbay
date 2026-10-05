@@ -75,7 +75,7 @@ export interface PromptEditorProps {
   /** `parts` present only when the prompt carries inline file mentions;
    * `draft` is the buffer's serialized editor state at the moment of send,
    * so a held prompt can be taken back exactly. Always consumes the
-   * buffer: Enter during a live turn queues the prompt (orchestrator-side)
+   * buffer: Enter during a turn underway queues the prompt (orchestrator-side)
    * — only the Stop button stops. */
   onSubmit(text: string, parts: readonly PromptPart[] | undefined, draft: string): void;
   /** Files lifted off the clipboard — a pasted bitmap (Chromium exposes it

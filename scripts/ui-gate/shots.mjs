@@ -455,7 +455,7 @@ for (const theme of Object.keys(THEMES)) {
     window.__patch([
       {
         kind: "sessionCreated",
-        session: { id: "s3", agentId: "fake", title: "fresh", live: false, updatedAt: "2026-09-18T00:00:00Z" },
+        session: { id: "s3", agentId: "fake", title: "fresh", busy: [], updatedAt: "2026-09-18T00:00:00Z" },
       },
     ]),
   );

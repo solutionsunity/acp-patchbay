@@ -7,12 +7,12 @@
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
 import { useMemo, useState } from "react";
-import type { AgentViewState } from "../../shared/protocol";
+import { attaching, type AgentViewState } from "../../shared/protocol";
 import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Chat } from "./chat/chat";
-import { deriveTranscript, EMPTY_TRANSCRIPT } from "./chat/view-model";
+import { deriveTranscript, EMPTY_TRANSCRIPT, turnLive } from "./chat/view-model";
 import { Composer } from "./composer/composer";
 import { newChatInFlight } from "./composer/composer-controls";
 import { AttentionIndicators } from "./attention";
@@ -59,7 +59,7 @@ export function App({
   // siblings consume it: Chat renders the items/rollups, the composer's
   // stats strip the same pass's session totals.
   const blocks = active !== null ? (state.transcripts[active.id] ?? []) : [];
-  const activeLive = active?.live ?? false;
+  const activeLive = active !== null && turnLive(state, active.id);
   const derived = useMemo(
     () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
     [blocks, activeLive],
@@ -125,7 +125,7 @@ export function App({
           session={active}
           onTitle={pinned ? () => {} : openSessions}
           detach={detach && !pinned}
-          reloading={(state.hydrating ?? {})[active.id] === true}
+          reloading={attaching(active)}
         />
       )}
       {activeAgent !== null && activeAgent.status === "crashed" && (

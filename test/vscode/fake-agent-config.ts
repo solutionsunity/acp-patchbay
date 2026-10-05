@@ -26,6 +26,14 @@ export interface GatesDoor {
   remove(agentId: string): Promise<void>;
 }
 
+/** The session gates — the way a door reaches an operation on a session's
+ * connection. */
+export interface SessionGatesDoor {
+  prompt(sessionId: string, words: { text: string }): Promise<void>;
+  open(sessionId: string): void;
+  addRoot(sessionId: string, path: string): Promise<void>;
+}
+
 export function fakeAgentConfig(
   id: string,
   name: string,

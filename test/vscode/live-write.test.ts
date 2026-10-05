@@ -5,7 +5,7 @@
 // the user's next save. The no-editor disk path stays covered by
 // verification.test.ts.
 import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor } from "./fake-agent-config";
+import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,10 +21,8 @@ interface Internal {
     broker: { resolve(requestId: string, optionId: string): void };
     agents: AgentsDoor;
     gates: GatesDoor;
-    sessions: {
-      createSession(agentId: string, agentName: string, cwd: string): Promise<string>;
-      sendPrompt(sessionId: string, text: string): Promise<void>;
-    };
+    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
+    sessionGates: SessionGatesDoor;
   };
 }
 
@@ -66,7 +64,7 @@ suite("live-buffer write (W1)", () => {
         "Live Write Fake",
         cwd,
       );
-      const turnDone = orchestrator.sessions.sendPrompt(sessionId, "go");
+      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
       const diffBlock = await waitFor(() =>
         orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "diff"),
       );
@@ -101,7 +99,7 @@ suite("live-buffer write (W1)", () => {
       );
       await orchestrator.gates.connect("live-read-e2e");
       const sessionId = await orchestrator.sessions.createSession("live-read-e2e", "Live Read Fake", cwd);
-      await orchestrator.sessions.sendPrompt(sessionId, "go");
+      await orchestrator.sessionGates.prompt(sessionId, { text: "go" });
       const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
         .filter((b) => b.kind === "text")
         .map((b) => b.text ?? "")

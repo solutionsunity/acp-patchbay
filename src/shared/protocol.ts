@@ -759,8 +759,10 @@ export interface SessionSummary {
   id: string;
   agentId: string;
   title: string;
-  /** Turn in flight. */
-  live: boolean;
+  /** What the session's two lines hold: the attachment line's work, then
+   * its turn — empty while it is idle. The views' one busy state for the
+   * session. */
+  busy: readonly SessionWork[];
   /** ISO time of the last activity — creation, prompt send, turn end, or
    * the agent's own session/list metadata, whichever is newest. The
    * drawer's sort key ("latest" = last activity, not creation). */
@@ -770,6 +772,25 @@ export interface SessionSummary {
    * visible surface renders it; never persisted — a reload starts with
    * nothing unread. */
   unseen?: boolean;
+}
+
+/** What a session's lines can hold: the attachment line's open (an attach,
+ * the ladder), reload, roots (re-applied to the agent), knob (a set), release
+ * (idle), close — and the turn line's prompt. */
+export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "close" | "prompt";
+
+/** A turn underway on the session — running, or waiting for its session to
+ * attach: what Stop ends, the running mark. Not the same as a live turn,
+ * which is on the wire (`activeTurn`). */
+export function turnUnderway(session: SessionSummary): boolean {
+  return session.busy.includes("prompt");
+}
+
+/** The session being attached — an open or a reload on its attachment
+ * line: the rendering area's loading page while it has nothing else to
+ * show, and a Reload that would only wait behind it. */
+export function attaching(session: SessionSummary): boolean {
+  return session.busy.includes("open") || session.busy.includes("reload");
 }
 
 // ── session knobs — one
@@ -1244,7 +1265,7 @@ export interface PreferencesView {
    * defaults, or the last agent-confirmed combination on that agent
    * (stores/composer-knobs.ts, falling back to the defaults when none). */
   knobSource: "agent-default" | "last-session";
-  /** Idle-release timer (sessions-store reapIdle, condition 5) in
+  /** Idle-release timer (sessions-store `idle`, condition 5) in
    * minutes; 0 disables the reaper entirely. */
   idleCloseMinutes: number;
   /** The composer's session-stats strip, one switch per read-out — pure
@@ -1307,9 +1328,6 @@ export interface AgentViewState {
   /** ISO start time of the in-flight turn, per session — the live elapsed
    * ticker's basis; cleared when the turn's TurnEndBlock lands. */
   activeTurn: Readonly<Record<string, string>>;
-  /** Sessions with a hydration (session/load replay) in flight — the
-   * rendering area's per-session loading page signal. */
-  hydrating: Readonly<Record<string, true>>;
   commandsBySession: Readonly<Record<string, readonly AvailableCommand[]>>;
   /** Present only once `usage` is used — absence over fake. */
   sessionUsage: Readonly<Record<string, UsageInfo>>;
@@ -1458,7 +1476,6 @@ export const initialAgentViewState: AgentViewState = {
   transcripts: {},
   activePlan: {},
   activeTurn: {},
-  hydrating: {},
   commandsBySession: {},
   sessionUsage: {},
   contextChips: {},
@@ -1507,12 +1524,9 @@ export type AgentViewEvent =
   /** The visible surfaces changed — shown, hidden, opened, or closed. */
   | ({ kind: "screenChanged" } & ScreenView)
   | { kind: "sessionClosed"; sessionId: string }
-  | { kind: "sessionLiveChanged"; sessionId: string; live: boolean }
-  /** A session/load hydration is in flight for this session (open of a cold
-   * session — sessions-store.hydrate). The rendering area holds a loading
-   * page while it has nothing else to show; a warm reload keeps its
-   * standing content instead (the replay window swaps it wholesale). */
-  | { kind: "sessionHydrating"; sessionId: string; hydrating: boolean }
+  /** What the session's lines hold moved — the gates' queue reports every
+   * move. */
+  | { kind: "sessionBusyChanged"; sessionId: string; busy: readonly SessionWork[] }
   /** Replay always wins — the transcript is discarded, never merged. */
   | { kind: "transcriptReset"; sessionId: string }
   | { kind: "userMessageAppended"; sessionId: string; blockId: string; parts: readonly UserPart[] }
@@ -1896,7 +1910,6 @@ export function reduceAgentView(
       const { [event.sessionId]: _u, ...sessionUsage } = state.sessionUsage;
       const { [event.sessionId]: _q, ...promptQueue } = state.promptQueue;
       const { [event.sessionId]: _d, ...drafts } = state.drafts;
-      const { [event.sessionId]: _hy, ...hydrating } = state.hydrating ?? {};
       const sessions = state.sessions.filter((s) => s.id !== event.sessionId);
       // Closing the active session lands on home ("+ New chat"), never on a
       // sibling: opening a session is the one hydrate/connect trigger, so a
@@ -1916,25 +1929,14 @@ export function reduceAgentView(
         sessionUsage,
         promptQueue,
         drafts,
-        hydrating,
         activeSessionId,
       };
     }
-    case "sessionLiveChanged":
+    case "sessionBusyChanged":
       return {
         ...state,
-        sessions: state.sessions.map((s) =>
-          s.id === event.sessionId ? { ...s, live: event.live } : s,
-        ),
+        sessions: state.sessions.map((s) => (s.id === event.sessionId ? { ...s, busy: event.busy } : s)),
       };
-    case "sessionHydrating": {
-      // `?? {}` guards snapshots minted before this field existed.
-      const { [event.sessionId]: _h, ...rest } = state.hydrating ?? {};
-      return {
-        ...state,
-        hydrating: event.hydrating ? { ...rest, [event.sessionId]: true } : rest,
-      };
-    }
     case "transcriptReset": {
       // The strip mirrors only what the agent reports: a reset means replay
       // is about to rebuild the transcript, and the live plan rebuilds from

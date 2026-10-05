@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import {
   applyHostMessage,
+  attaching,
   chatPaneShows,
   coalesceAgentViewEvent,
   initialAgentViewState,
   initialSettingsState,
   reduceAgentView,
   reduceSettings,
+  turnUnderway,
   type AgentSummary,
   type AgentViewEvent,
   type AgentViewState,
@@ -124,7 +126,7 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "t", live: false, updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1", agentId: "claude", title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
@@ -138,11 +140,11 @@ describe("reducers", () => {
     const two = replay(initialAgentViewState, [
       {
         kind: "sessionCreated",
-        session: { id: "s1", agentId: "claude", title: "one", live: false, updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1", agentId: "claude", title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
       },
       {
         kind: "sessionCreated",
-        session: { id: "s2", agentId: "claude", title: "two", live: false, updatedAt: "2026-07-09T00:00:01Z" },
+        session: { id: "s2", agentId: "claude", title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
       },
     ]);
     expect(two.activeSessionId).toBe("s2");
@@ -317,7 +319,7 @@ describe("applyHostMessage", () => {
 describe("session activity + unseen (drawer ordering / dots)", () => {
   const mk = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id, agentId: "claude", title: id, live: false, updatedAt: "2026-07-09T00:00:00Z" },
+    session: { id, agentId: "claude", title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
   });
 
   it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
@@ -430,34 +432,35 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
 });
 
 
-describe("sessionHydrating (the load-replay loading page signal)", () => {
-  it("sets and clears per session, tolerating pre-field snapshots", () => {
-    const on = reduceAgentView(initialAgentViewState, {
-      kind: "sessionHydrating",
-      sessionId: "s1",
-      hydrating: true,
-    });
-    expect(on.hydrating).toEqual({ s1: true });
-    const off = reduceAgentView(on, { kind: "sessionHydrating", sessionId: "s1", hydrating: false });
-    expect(off.hydrating).toEqual({});
-    // a snapshot minted before the field existed reduces without crashing
-    const legacy = { ...initialAgentViewState } as Record<string, unknown>;
-    delete legacy.hydrating;
-    const revived = reduceAgentView(legacy as unknown as typeof initialAgentViewState, {
-      kind: "sessionHydrating",
-      sessionId: "s2",
-      hydrating: true,
-    });
-    expect(revived.hydrating).toEqual({ s2: true });
+describe("sessionBusyChanged (what a session's lines hold — its busy state)", () => {
+  const created = (id: string): AgentViewEvent => ({
+    kind: "sessionCreated",
+    session: { id, agentId: "a1", title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
+  });
+
+  it("a prompt on the turn line is a turn underway; an open or a reload is an attach; other work is neither", () => {
+    let s = replay(initialAgentViewState, [created("s1")]);
+    const read = () => [turnUnderway(s.sessions[0]!), attaching(s.sessions[0]!)];
+    expect(read()).toEqual([false, false]);
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["open", "prompt"] });
+    expect(s.sessions[0]!.busy).toEqual(["open", "prompt"]);
+    expect(read()).toEqual([true, true]);
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["knob"] });
+    expect(read()).toEqual([false, false]);
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: ["reload"] });
+    expect(read()).toEqual([false, true]);
+    s = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "s1", busy: [] });
+    expect(s.sessions[0]!.busy).toEqual([]);
+  });
+
+  it("busy for a session the view no longer holds changes no session", () => {
+    const s = replay(initialAgentViewState, [created("s1")]);
+    const after = reduceAgentView(s, { kind: "sessionBusyChanged", sessionId: "gone", busy: ["reload"] });
+    expect(after.sessions).toEqual(s.sessions);
   });
 });
 
 describe("state-truth regressions — weak evidence never overwrites strong", () => {
-  const session = (id: string) => ({
-    kind: "sessionCreated" as const,
-    session: { id, agentId: "a1", title: "T", live: false, updatedAt: "2026-07-21T00:00:00Z" },
-  });
-
   it("usageReported coalesce: a plain tick never erases a standing plan reading", () => {
     const withPlan: AgentViewEvent = {
       kind: "usageReported", sessionId: "s1", used: 10, size: 100, cost: undefined,
@@ -474,13 +477,6 @@ describe("state-truth regressions — weak evidence never overwrites strong", ()
       plan: { status: "ok", window: "weekly", utilization: 0.2, resetsAt: undefined },
     };
     expect(coalesceAgentViewEvent(withPlan, otherWindow)).toBeNull();
-  });
-
-  it("sessionClosed drops a hung hydration's ghost key", () => {
-    let state = replay(initialAgentViewState, [session("s1")]);
-    state = reduceAgentView(state, { kind: "sessionHydrating", sessionId: "s1", hydrating: true });
-    state = reduceAgentView(state, { kind: "sessionClosed", sessionId: "s1" });
-    expect(state.hydrating.s1).toBeUndefined();
   });
 });
 
