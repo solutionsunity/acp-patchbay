@@ -1,37 +1,26 @@
-// The config a suite saves for the fake agent — the record a Settings custom
-// Add writes, script in its env (SecretStorage), so every suite connects
-// through the product's own path: save, then connect by id, remove after.
-export interface FakeAgentConfig {
+// The config a suite adds — the record a Settings custom Add writes. For the
+// fake agent, its script rides in the env (SecretStorage), so every suite
+// connects through the product's own path: add, then connect by id, remove
+// after.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/** Where a fake agent keeps its sessions' records: the suite's window has
+ * no folder, and its cwd is the repo — not the agent's to write in. */
+export function fakeAgentStore(agentId: string): string {
+  return join(tmpdir(), "patchbay-fake-agent", agentId);
+}
+
+export interface AgentConfig {
   id: string;
   name: string;
   command: string;
   args: string[];
   env: Record<string, string>;
-  autoConnect: false;
+  autoConnect: boolean;
   defaults: Record<string, never>;
   registrySource: { registryId: string; distributionKind: "npx"; pinnedVersion: string } | null;
   lastSeenVersion: null;
-}
-
-/** The agents store's save — a save never meets the gates. */
-export interface AgentsDoor {
-  save(config: FakeAgentConfig): Promise<void>;
-}
-
-/** The gates — the way a door reaches an operation on an agent's
- * connection. */
-export interface GatesDoor {
-  connect(agentId: string): Promise<void>;
-  stop(agentId: string): Promise<void>;
-  remove(agentId: string): Promise<void>;
-}
-
-/** The session gates — the way a door reaches an operation on a session's
- * connection. */
-export interface SessionGatesDoor {
-  prompt(sessionId: string, words: { text: string }): Promise<void>;
-  open(sessionId: string): void;
-  addRoot(sessionId: string, path: string): Promise<void>;
 }
 
 export function fakeAgentConfig(
@@ -39,14 +28,14 @@ export function fakeAgentConfig(
   name: string,
   fakeAgentPath: string,
   script: unknown,
-  registrySource: FakeAgentConfig["registrySource"] = null,
-): FakeAgentConfig {
+  registrySource: AgentConfig["registrySource"] = null,
+): AgentConfig {
   return {
     id,
     name,
     command: process.execPath,
     args: [fakeAgentPath],
-    env: { FAKE_AGENT_SCRIPT: JSON.stringify(script) },
+    env: { FAKE_AGENT_SCRIPT: JSON.stringify(script), FAKE_AGENT_STORE: fakeAgentStore(id) },
     autoConnect: false,
     defaults: {},
     registrySource,

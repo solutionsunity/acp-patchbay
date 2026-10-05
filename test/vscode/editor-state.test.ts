@@ -7,6 +7,7 @@
 import { focusNote, waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
+import { internals } from "./patchbay";
 
 interface SelectionInfo {
   file: string;
@@ -25,6 +26,8 @@ interface DiagnosticInfo {
   message: string;
 }
 
+/** The editor-state host is this suite's subject: it is the one thing the
+ * suite reaches behind the views. */
 interface Internal {
   orchestrator: {
     editorStateHost: {
@@ -35,17 +38,10 @@ interface Internal {
   };
 }
 
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
-}
-
 suite("EditorStateHost — real vscode data", () => {
   test("getCurrentFile and getSelection reflect the actual open editor", async function () {
     this.timeout(20000);
-    const { orchestrator } = await internal();
+    const { orchestrator } = await internals<Internal>();
 
     const doc = await vscode.workspace.openTextDocument({
       content: "line one\nline two\nline three\n",
@@ -68,7 +64,7 @@ suite("EditorStateHost — real vscode data", () => {
 
   test("a webview taking the editor area keeps the last text editor current; closing its tab ends that (issue #7)", async function () {
     this.timeout(20000);
-    const { orchestrator } = await internal();
+    const { orchestrator } = await internals<Internal>();
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 
     const doc = await vscode.workspace.openTextDocument({
@@ -120,7 +116,7 @@ suite("EditorStateHost — real vscode data", () => {
 
   test("getSelection is null when there is no selection", async function () {
     this.timeout(20000);
-    const { orchestrator } = await internal();
+    const { orchestrator } = await internals<Internal>();
     const doc = await vscode.workspace.openTextDocument({ content: "abc", language: "plaintext" });
     const editor = await vscode.window.showTextDocument(doc);
     editor.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));

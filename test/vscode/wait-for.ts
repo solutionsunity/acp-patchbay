@@ -2,14 +2,22 @@ import * as vscode from "vscode";
 
 // Condition polling for the electron suite — a probe returning undefined
 // keeps waiting; anything else resolves. Replaces fixed sleeps: the test
-// waits for the fact it needs, fails loudly at timeout, and runs at the
-// speed of the condition instead of the worst-case guess.
-export async function waitFor<T>(probe: () => T | undefined, timeoutMs = 8000): Promise<T> {
+// waits for the fact it needs, fails loudly at timeout — naming what it
+// waited for, when told — and runs at the speed of the condition instead
+// of the worst-case guess.
+export async function waitFor<T>(
+  probe: () => T | undefined,
+  timeoutMs = 8000,
+  what?: string | (() => string),
+): Promise<T> {
   const start = Date.now();
   for (;;) {
     const value = probe();
     if (value !== undefined) return value;
-    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    if (Date.now() - start > timeoutMs) {
+      const named = typeof what === "function" ? what() : what;
+      throw new Error(named === undefined ? "waitFor timed out" : `waitFor timed out: ${named}`);
+    }
     await new Promise((r) => setTimeout(r, 30));
   }
 }

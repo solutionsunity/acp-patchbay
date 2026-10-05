@@ -4,7 +4,10 @@
 import { waitFor } from "./wait-for";
 import * as assert from "node:assert";
 import * as vscode from "vscode";
+import { internals } from "./patchbay";
 
+/** The channels' sync with their webviews is this suite's subject: it is
+ * the one thing the suite reaches behind the views. */
 type Internal = {
   orchestrator: {
     agentView: {
@@ -30,13 +33,6 @@ type Internal = {
   };
 };
 
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
-}
-
 const upsert = (id: string, over: Record<string, unknown> = {}) => ({
   kind: "agentUpserted",
   agent: { id, name: id, status: "running", needsAuth: false, authMethods: [], busy: [], ...over },
@@ -44,7 +40,7 @@ const upsert = (id: string, over: Record<string, unknown> = {}) => ({
 
 suite("snapshot/patch round-trip through real webviews", () => {
   test("settings panel hydrates, patches, survives kill/reopen", async () => {
-    const { orchestrator, settingsPanelHost } = await internal();
+    const { orchestrator, settingsPanelHost } = await internals<Internal>();
     const ch = orchestrator.settings;
 
     await vscode.commands.executeCommand("acpPatchbay.openSettings");
@@ -71,7 +67,7 @@ suite("snapshot/patch round-trip through real webviews", () => {
   });
 
   test("busy rows round-trip to the real settings webview", async () => {
-    const { orchestrator } = await internal();
+    const { orchestrator } = await internals<Internal>();
     const ch = orchestrator.settings;
 
     await vscode.commands.executeCommand("acpPatchbay.openSettings");
@@ -97,7 +93,7 @@ suite("snapshot/patch round-trip through real webviews", () => {
   });
 
   test("agent view hydrates on focus and re-hydrates after hide/show", async () => {
-    const { orchestrator } = await internal();
+    const { orchestrator } = await internals<Internal>();
     const ch = orchestrator.agentView;
 
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");

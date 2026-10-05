@@ -6,10 +6,11 @@
 // declared-vs-used honesty deterministically.
 //
 // Every update sent during a turn is also durably recorded per session under
-// `<cwd>/.fake-agent-sessions/` — simulating what a real agent's own storage
-// does — so `session/load` can replay it verbatim after this process is
-// killed and a fresh one spawned in its place (a real crash/restart, not an
-// in-memory shortcut).
+// `<cwd>/.fake-agent-sessions/` (or FAKE_AGENT_STORE when set, for a host
+// whose cwd isn't the test's to write in) — simulating what a real agent's
+// own storage does — so `session/load` can replay it verbatim after this
+// process is killed and a fresh one spawned in its place (a real
+// crash/restart, not an in-memory shortcut).
 //
 // Script arrives as JSON in the FAKE_AGENT_SCRIPT env var.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -168,8 +169,12 @@ let sessionCounter = 0;
 
 // ── durable per-session record, so session/load survives this process dying ─
 
+function storeDir(cwd: string): string {
+  return process.env.FAKE_AGENT_STORE ?? join(cwd, ".fake-agent-sessions");
+}
+
 function storeFile(cwd: string, sessionId: string): string {
-  return join(cwd, ".fake-agent-sessions", `${sessionId}.jsonl`);
+  return join(storeDir(cwd), `${sessionId}.jsonl`);
 }
 
 function recordUpdate(cwd: string, sessionId: string, update: acp.SessionUpdate): void {
@@ -788,8 +793,8 @@ const app = acp
     const infos = new Map<string, acp.SessionInfo>();
     // The durable store is what survives this process dying — exactly how a
     // real agent's history outlives its connections.
-    if (cwd !== null && existsSync(join(cwd, ".fake-agent-sessions"))) {
-      for (const f of readdirSync(join(cwd, ".fake-agent-sessions"))) {
+    if (cwd !== null && existsSync(storeDir(cwd))) {
+      for (const f of readdirSync(storeDir(cwd))) {
         if (!f.endsWith(".jsonl")) continue;
         const sessionId = f.slice(0, -".jsonl".length);
         infos.set(sessionId, { sessionId, cwd, ...meta(sessionId) });

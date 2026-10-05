@@ -1,81 +1,58 @@
-// The write scope through the real extension (issue #56): the broker asks the
-// sessions store which roots the session was given, and judges each write by
-// where it lands. A root added to the session auto-accepts; a `..` that climbs
-// out of it asks; the process cwd standing in for an absent folder is never a
-// root — this suite runs with no folder open, so that state is live here.
-import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
+// The write scope through the real extension (issue #56): a write is judged
+// by where it lands against the roots the session was given. A root added
+// to the session auto-accepts; a `..` that climbs out of it asks; the
+// process cwd standing in for an absent folder is never a root — this suite
+// runs with no folder open, so that state is live here.
 import * as assert from "node:assert";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as vscode from "vscode";
-import { answeringYes } from "./modal";
-
-interface Internal {
-  orchestrator: {
-    agentView: {
-      current: {
-        activeSessionId: string | null;
-        transcripts: Record<string, Array<{ id: string; kind: string; resolution?: unknown }>>;
-      };
-    };
-    broker: {
-      resolve(requestId: string, optionId: string): void;
-      evaluateFileWrites(sessionId: string, paths: readonly string[]): Promise<string>;
-    };
-    agents: AgentsDoor;
-    gates: GatesDoor;
-    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
-    sessionGates: SessionGatesDoor;
-  };
-}
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, Patchbay } from "./patchbay";
 
 suite("write scope (issue #56)", () => {
   test("a root added to the session auto-accepts; a `..` out of it asks; the fallback cwd is not a root", async function () {
-    this.timeout(20000);
-    const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const { orchestrator } = ((await ext.activate()) as { internal: Internal }).internal;
-    const fakeAgentPath = join(ext.extensionUri.fsPath, "out-test", "fake-agent.mjs");
+    this.timeout(30000);
+    const pb = await Patchbay.open();
     const dir = await mkdtemp(join(tmpdir(), "patchbay-write-scope-"));
     const root = join(dir, "root");
     await mkdir(root);
     const inside = join(root, "inside.txt");
     const escaped = join(dir, "escaped.txt");
+    // Rejected on its card below, so nothing ever lands there.
+    const inCwd = join(process.cwd(), "patchbay-write-scope-probe.txt");
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("write-scope-e2e", "Write Scope Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig("write-scope-e2e", "Write Scope Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [
             { type: "writeFile", path: inside, content: "in\n" },
             { type: "writeFile", path: `${root}/../escaped.txt`, content: "out\n" },
+            { type: "writeFile", path: inCwd, content: "cwd\n" },
           ],
         }),
       );
-      await orchestrator.gates.connect("write-scope-e2e");
-      const born = await orchestrator.sessions.createSession("write-scope-e2e", "Write Scope Fake", root);
-      await orchestrator.sessionGates.addRoot(born, root);
-      // a never-prompted session is re-minted to carry its new root
-      const sessionId = orchestrator.agentView.current.activeSessionId!;
+      await pb.connect("write-scope-e2e");
+      const sessionId = await pb.newSession("write-scope-e2e");
+      await pb.addRoot(sessionId, root);
 
-      assert.strictEqual(
-        await orchestrator.broker.evaluateFileWrites(sessionId, [join(process.cwd(), "x.txt")]),
-        "ask",
-        "no folder open: the process cwd was never handed to the agent",
-      );
-
-      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
-      const diffs = () => orchestrator.agentView.current.transcripts[sessionId]?.filter((b) => b.kind === "diff") ?? [];
-      const asking = await waitFor(() => diffs()[1]);
+      const turnDone = pb.prompt(sessionId, "go");
+      const escape = await pb.openCard(sessionId, "diff");
+      const diffs = () => (pb.view.transcripts[sessionId] ?? []).filter((b) => b.kind === "diff");
       assert.deepStrictEqual(diffs()[0]!.resolution, { accepted: true, auto: true }, "inside the root: no card to click");
-      assert.strictEqual(asking.resolution, null, "the `..` escape waits on the user");
-      orchestrator.broker.resolve(asking.id, "reject");
+      assert.strictEqual(escape.id, diffs()[1]!.id, "the `..` escape waits on the user");
+      await pb.answerDiff(sessionId, escape, false);
+
+      const fallback = await pb.openCard(sessionId, "diff");
+      assert.strictEqual(fallback.id, diffs()[2]!.id, "no folder open: the process cwd was never handed to the agent");
+      await pb.answerDiff(sessionId, fallback, false);
       await turnDone;
 
       assert.strictEqual(await readFile(inside, "utf8"), "in\n");
       await assert.rejects(readFile(escaped, "utf8"), "the rejected write never landed");
+      await assert.rejects(readFile(inCwd, "utf8"), "the rejected write never landed");
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("write-scope-e2e"));
+      await pb.remove("write-scope-e2e");
       await rm(dir, { recursive: true, force: true });
     }
   });

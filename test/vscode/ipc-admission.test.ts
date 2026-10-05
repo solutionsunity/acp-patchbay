@@ -3,25 +3,16 @@
 // token gets nothing — not the editor's buffers, not a session's roots or a
 // form in its transcript, not an MCP server's credential — while the editor
 // server an agent was given still answers through its own token.
-import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
-import { mkdtemp, rm } from "node:fs/promises";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import * as vscode from "vscode";
-import { answeringYes } from "./modal";
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, internals, Patchbay } from "./patchbay";
+import { waitFor } from "./wait-for";
 
+/** The socket is this suite's subject: its path is the one thing it
+ * reaches behind the views. */
 interface Internal {
-  orchestrator: {
-    editorStateHost: { socketPath: string };
-    agentView: { current: { transcripts: Record<string, Array<{ kind: string; text?: string }>> } };
-    agents: AgentsDoor;
-    gates: GatesDoor;
-    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
-    sessionGates: SessionGatesDoor;
-  };
+  orchestrator: { editorStateHost: { socketPath: string } };
 }
 
 /** One request on the socket, the way a spawned subprocess sends it —
@@ -45,8 +36,7 @@ function ask(socketPath: string, request: object): Promise<{ result?: unknown; e
 
 suite("IPC admission (issue #72)", () => {
   test("a token no attach minted gets nothing — editor reads, roots, forms and credentials alike", async () => {
-    const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const { orchestrator } = ((await ext.activate()) as { internal: Internal }).internal;
+    const { orchestrator } = await internals<Internal>();
     const requests = [
       { method: "getSelection" },
       { method: "getCurrentFile" },
@@ -63,28 +53,22 @@ suite("IPC admission (issue #72)", () => {
   });
 
   test("the editor server an agent was given answers through its own token", async function () {
-    this.timeout(20000);
-    const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const { orchestrator } = ((await ext.activate()) as { internal: Internal }).internal;
-    const fakeAgentPath = join(ext.extensionUri.fsPath, "out-test", "fake-agent.mjs");
-    const cwd = await mkdtemp(join(tmpdir(), "patchbay-ipc-admission-"));
+    this.timeout(30000);
+    const pb = await Patchbay.open();
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("ipc-admission", "IPC Admission Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig("ipc-admission", "IPC Admission Fake", fakeAgentPath(), {
           turn: [{ type: "callMcpTool", tool: "get_open_editors" }],
         }),
       );
-      await orchestrator.gates.connect("ipc-admission");
-      const sessionId = await orchestrator.sessions.createSession("ipc-admission", "IPC Admission Fake", cwd);
-      await orchestrator.sessionGates.prompt(sessionId, { text: "go" });
-      const text = await waitFor(
-        () => orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "text")?.text,
-      );
+      await pb.connect("ipc-admission");
+      const sessionId = await pb.newSession("ipc-admission");
+      await pb.prompt(sessionId, "go");
+      const text = await waitFor(() => pb.text(sessionId) || undefined);
       assert.ok(!text.startsWith("mcp: rejected"), text);
       assert.ok(Array.isArray(JSON.parse(text)), `open editors answered as a list: ${text}`);
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("ipc-admission"));
-      await rm(cwd, { recursive: true, force: true });
+      await pb.remove("ipc-admission");
     }
   });
 });

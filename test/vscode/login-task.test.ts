@@ -9,20 +9,15 @@ import * as assert from "node:assert";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import * as vscode from "vscode";
+import { internals } from "./patchbay";
 
+/** The login executor is this suite's subject: it is the one thing the
+ * suite reaches behind the views. */
 interface Internal {
   runLoginTask(
     name: string,
     recipe: { command: string; args: string[]; env?: Record<string, string> },
   ): Promise<number | undefined>;
-}
-
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
 }
 
 suite("login task executor", () => {
@@ -46,7 +41,7 @@ suite("login task executor", () => {
     const script =
       "require('fs').writeFileSync(process.argv[1], JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }));" +
       "process.exit(Number(process.env.PATCHBAY_LOGIN_EXIT))";
-    const { runLoginTask } = await internal();
+    const { runLoginTask } = await internals<Internal>();
     const code = await runLoginTask("login-task test", {
       command: "node",
       args: ["-e", script, out, ...payload],

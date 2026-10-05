@@ -1,82 +1,33 @@
-// Opportunistic behavior-level marking through the real orchestrator
-// (architecture.md § Agent capability matrix; plan.md P5's "first fs
-// success" hooks, wired in P6's handlers): an agent that genuinely routes
-// fs reads/writes and terminal commands through patchbay's gates earns
-// used on those rows — the matrix's honest data-plane record (the fidelity
-// aggregate that once hung off these rows is removed, 2026-07-12).
-import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
+// Opportunistic behavior-level marking through the real orchestrator: an
+// agent that genuinely routes fs reads/writes and terminal commands through
+// patchbay's gates earns used on those rows — the matrix's honest
+// data-plane record.
 import * as assert from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as vscode from "vscode";
-import { answeringYes } from "./modal";
-
-interface CapabilityCell {
-  declared: boolean;
-  used: boolean;
-}
-
-interface Internal {
-  orchestrator: {
-    agentView: {
-      current: {
-        agents: Array<{ id: string; capabilities?: Record<string, CapabilityCell> }>;
-        transcripts: Record<string, Array<{ id: string; kind: string }>>;
-      };
-    };
-    broker: { resolve(requestId: string, optionId: string): void };
-    permissionRules: {
-      get(): { commandRules: unknown[]; fileWriteScope: string };
-      set(rules: { commandRules: unknown[]; fileWriteScope: string }): Promise<void>;
-    };
-    usedCapabilities: { remove(id: string): Promise<void> };
-    agents: AgentsDoor;
-    gates: GatesDoor;
-    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
-    sessionGates: SessionGatesDoor;
-  };
-}
-
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
-}
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, Patchbay } from "./patchbay";
 
 suite("opportunistic fs/terminal verification", () => {
   test("fs read+write and terminal get used when exercised; rows start declared-not-used", async function () {
-    this.timeout(20000);
-    const { orchestrator } = await internal();
-    const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const fakeAgentPath = join(extension.extensionUri.fsPath, "out-test", "fake-agent.mjs");
-    const cwd = await mkdtemp(join(tmpdir(), "patchbay-verify-e2e-"));
-    const readTarget = join(cwd, "read-me.txt");
-    const writeTarget = join(cwd, "written.txt");
+    this.timeout(30000);
+    const pb = await Patchbay.open();
+    const dir = await mkdtemp(join(tmpdir(), "patchbay-verify-e2e-"));
+    const readTarget = join(dir, "read-me.txt");
+    const writeTarget = join(dir, "written.txt");
     await writeFile(readTarget, "hello", "utf8");
+    // Used marks are kept per agent and version across windows; an agent
+    // of its own per run starts with none.
+    const agentId = `verify-e2e-${Date.now()}`;
 
-    // The exact command the fake agent will run, pre-allowed by rule so the
+    // The exact command the fake agent will run, allowed by a rule so the
     // terminal gate resolves without a user; the file write is left to
-    // "ask" (no workspace root in this harness) and resolved via the broker
-    // like a user click — a rejected-or-accepted write both count as
-    // brokered, but accept keeps the turn simple.
-    const rules = orchestrator.permissionRules.get();
-    await orchestrator.permissionRules.set({
-      ...rules,
-      commandRules: [...rules.commandRules, { pattern: "node -e ok", verdict: "allow" }],
-    });
-
-    // A previous suite run in this user-data dir leaves its version-keyed
-    // used-capability record behind, and the connect would honestly restore
-    // used:true from it — this test asserts the pre-restore state, so its
-    // agent starts from a clean slate.
-    await orchestrator.usedCapabilities.remove("verify-e2e");
-
+    // "ask" (no workspace root in this harness) and accepted on its card.
+    await pb.addMachineRule("node -e ok", "allow");
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("verify-e2e", "Verify E2E Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig(agentId, "Verify E2E Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [
             { type: "readFile", path: readTarget },
@@ -85,35 +36,26 @@ suite("opportunistic fs/terminal verification", () => {
           ],
         }),
       );
-      await orchestrator.gates.connect("verify-e2e");
+      await pb.connect(agentId);
 
-      const matrix = () =>
-        orchestrator.agentView.current.agents.find((a) => a.id === "verify-e2e")!.capabilities!;
+      const matrix = () => pb.agent(agentId)!.capabilities!;
       assert.deepStrictEqual(matrix()["fs.readTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["fs.writeTextFile"], { declared: true, used: false });
       assert.deepStrictEqual(matrix()["terminal"], { declared: true, used: false });
 
-      const sessionId = await orchestrator.sessions.createSession(
-        "verify-e2e",
-        "Verify E2E Fake",
-        cwd,
-      );
-      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
-
-      // the write arrives as a pending diff card (no workspace root → ask);
-      // accept it the way the card's button would
-      const diffBlock = await waitFor(() =>
-        orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "diff"),
-      );
-      orchestrator.broker.resolve(diffBlock.id, "accept");
+      const sessionId = await pb.newSession(agentId);
+      const turnDone = pb.prompt(sessionId, "go");
+      const diff = await pb.openCard(sessionId, "diff");
+      await pb.answerDiff(sessionId, diff, true);
       await turnDone;
 
       assert.strictEqual(matrix()["fs.readTextFile"].used, true, "read gets used");
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("verify-e2e"));
-      await rm(cwd, { recursive: true, force: true });
+      await pb.remove(agentId);
+      await pb.removeMachineRule("node -e ok");
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

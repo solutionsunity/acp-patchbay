@@ -3,64 +3,19 @@
 // recovers to the accumulated chat state. (The Claude-Code-over-ACP half of
 // this gate is a manual smoke test outside this harness — no live agent
 // credentials are available in this sandboxed run.)
-import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import * as vscode from "vscode";
-import { answeringYes } from "./modal";
-
-interface ChatBlockLike {
-  id: string;
-  kind: string;
-  text?: string;
-}
-
-interface Internal {
-  orchestrator: {
-    agentView: {
-      revision: number;
-      waitForApplied(rev?: number): Promise<number>;
-      current: {
-        screen: { pointer: boolean };
-        transcripts: Record<string, ChatBlockLike[]>;
-        sessions: Array<{ id: string; busy: readonly string[] }>;
-      };
-    };
-    agents: AgentsDoor;
-    gates: GatesDoor;
-    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
-    sessionGates: SessionGatesDoor;
-  };
-}
-
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
-}
-
-function textOf(blocks: ChatBlockLike[]): string {
-  return blocks
-    .filter((b) => b.kind === "text")
-    .map((b) => b.text ?? "")
-    .join("");
-}
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, Patchbay } from "./patchbay";
+import { waitFor } from "./wait-for";
 
 suite("chat vertical slice", () => {
   test("full turn streams end-to-end; webview kill/reopen mid-turn recovers", async function () {
-    this.timeout(20000);
-    const { orchestrator } = await internal();
-    const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const fakeAgentPath = join(extension.extensionUri.fsPath, "out-test", "fake-agent.mjs");
-    const cwd = await mkdtemp(join(tmpdir(), "patchbay-chat-e2e-"));
-
+    this.timeout(30000);
+    const pb = await Patchbay.open();
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("chat-e2e", "Chat E2E Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig("chat-e2e", "Chat E2E Fake", fakeAgentPath(), {
           turn: [
             { type: "chunk", text: "part one " },
             { type: "chunk", text: "part two " },
@@ -69,56 +24,40 @@ suite("chat vertical slice", () => {
           stepDelayMs: 250,
         }),
       );
-      await orchestrator.gates.connect("chat-e2e");
-
-      const sessionId = await orchestrator.sessions.createSession(
-        "chat-e2e",
-        "Chat E2E Fake",
-        cwd,
-      );
+      await pb.connect("chat-e2e");
+      const sessionId = await pb.newSession("chat-e2e");
 
       // mount the real webview and let it hydrate at the session-created snapshot
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
-      await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
+      await pb.agentView.waitForApplied(pb.agentView.revision);
 
-      // fire the turn without awaiting completion — we want to interrupt mid-stream
-      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
+      // send without waiting for the end — we want to interrupt mid-stream
+      const turnDone = pb.prompt(sessionId, "go");
 
       // wait for the first chunk to land, then kill the webview mid-turn
-      await waitFor(() => {
-        const text = textOf(orchestrator.agentView.current.transcripts[sessionId] ?? []);
-        return text.length > 0 ? text : undefined;
-      });
-      const midTurnSession = orchestrator.agentView.current.sessions.find(
-        (s) => s.id === sessionId,
-      );
-      assert.ok(midTurnSession?.busy.includes("prompt"), "turn should still be underway");
+      await waitFor(() => (pb.text(sessionId).length > 0 ? true : undefined));
+      assert.ok(pb.busy(sessionId).includes("prompt"), "turn should still be underway");
 
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
-      await waitFor(() => (orchestrator.agentView.current.screen.pointer ? undefined : true));
+      await waitFor(() => (pb.view.screen.pointer ? undefined : true));
 
       // reopen mid-turn — the webview must resync to whatever canonical state
       // has accumulated by now (render cache lives in the orchestrator, not
       // the disposed webview)
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
-      const revAtReopen = orchestrator.agentView.revision;
-      const acked = await orchestrator.agentView.waitForApplied(revAtReopen);
+      const revAtReopen = pb.agentView.revision;
+      const acked = await pb.agentView.waitForApplied(revAtReopen);
       assert.ok(acked >= revAtReopen, `webview acked ${acked}, wanted ${revAtReopen}`);
 
       // let the turn finish, then verify the complete, correctly-ordered transcript
       await turnDone;
-      const finalState = orchestrator.agentView.current;
-      assert.strictEqual(
-        textOf(finalState.transcripts[sessionId] ?? []),
-        "part one part two part three",
-      );
-      assert.deepStrictEqual(finalState.sessions.find((s) => s.id === sessionId)?.busy, []);
+      assert.strictEqual(pb.text(sessionId), "part one part two part three");
+      assert.deepStrictEqual(pb.busy(sessionId), []);
 
       // and the final state reached the webview too
-      await orchestrator.agentView.waitForApplied(orchestrator.agentView.revision);
+      await pb.agentView.waitForApplied(pb.agentView.revision);
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("chat-e2e"));
-      await rm(cwd, { recursive: true, force: true });
+      await pb.remove("chat-e2e");
     }
   });
 });

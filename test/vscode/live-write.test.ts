@@ -4,43 +4,20 @@
 // this, the write went to disk underneath a dirty buffer and silently lost to
 // the user's next save. The no-editor disk path stays covered by
 // verification.test.ts.
-import { waitFor } from "./wait-for";
-import { fakeAgentConfig, type AgentsDoor, type GatesDoor, type SessionGatesDoor } from "./fake-agent-config";
 import * as assert from "node:assert";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { answeringYes } from "./modal";
-
-interface Internal {
-  orchestrator: {
-    agentView: {
-      current: { transcripts: Record<string, Array<{ id: string; kind: string; text?: string }>> };
-    };
-    broker: { resolve(requestId: string, optionId: string): void };
-    agents: AgentsDoor;
-    gates: GatesDoor;
-    sessions: { createSession(agentId: string, agentName: string, cwd: string): Promise<string> };
-    sessionGates: SessionGatesDoor;
-  };
-}
-
-async function internal(): Promise<Internal> {
-  const ext = vscode.extensions.getExtension("solutionsunity.acp-patchbay");
-  assert.ok(ext);
-  const api = (await ext.activate()) as { internal: Internal };
-  return api.internal;
-}
+import { fakeAgentConfig } from "./fake-agent-config";
+import { fakeAgentPath, Patchbay } from "./patchbay";
 
 suite("live-buffer write (W1)", () => {
   test("agent write to an open dirty editor lands in the buffer and saves — no divergence window", async function () {
-    this.timeout(20000);
-    const { orchestrator } = await internal();
-    const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const fakeAgentPath = join(extension.extensionUri.fsPath, "out-test", "fake-agent.mjs");
-    const cwd = await mkdtemp(join(tmpdir(), "patchbay-live-write-"));
-    const target = join(cwd, "shared.txt");
+    this.timeout(30000);
+    const pb = await Patchbay.open();
+    const dir = await mkdtemp(join(tmpdir(), "patchbay-live-write-"));
+    const target = join(dir, "shared.txt");
     await writeFile(target, "on disk\n", "utf8");
 
     // Open the file and dirty it the way a user would — this is the stale
@@ -52,23 +29,17 @@ suite("live-buffer write (W1)", () => {
     assert.strictEqual(doc.isDirty, true);
 
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("live-write-e2e", "Live Write Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig("live-write-e2e", "Live Write Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [{ type: "writeFile", path: target, content: "from agent\n" }],
         }),
       );
-      await orchestrator.gates.connect("live-write-e2e");
-      const sessionId = await orchestrator.sessions.createSession(
-        "live-write-e2e",
-        "Live Write Fake",
-        cwd,
-      );
-      const turnDone = orchestrator.sessionGates.prompt(sessionId, { text: "go" });
-      const diffBlock = await waitFor(() =>
-        orchestrator.agentView.current.transcripts[sessionId]?.find((b) => b.kind === "diff"),
-      );
-      orchestrator.broker.resolve(diffBlock.id, "accept");
+      await pb.connect("live-write-e2e");
+      const sessionId = await pb.newSession("live-write-e2e");
+      const turnDone = pb.prompt(sessionId, "go");
+      const diff = await pb.openCard(sessionId, "diff");
+      await pb.answerDiff(sessionId, diff, true);
       await turnDone;
 
       // buffer, dirty flag, and disk all tell the same story
@@ -76,38 +47,32 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("live-write-e2e"));
-      await rm(cwd, { recursive: true, force: true });
+      await pb.remove("live-write-e2e");
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
   test("a read of a missing file reaches the agent as -32002 for that path", async function () {
     // VS Code's own FileSystemError, not Node's ENOENT — the vocabulary only
     // the real extension host produces.
-    this.timeout(20000);
-    const { orchestrator } = await internal();
-    const extension = vscode.extensions.getExtension("solutionsunity.acp-patchbay")!;
-    const fakeAgentPath = join(extension.extensionUri.fsPath, "out-test", "fake-agent.mjs");
-    const cwd = await mkdtemp(join(tmpdir(), "patchbay-live-read-"));
-    const missing = join(cwd, "missing.txt");
+    this.timeout(30000);
+    const pb = await Patchbay.open();
+    const dir = await mkdtemp(join(tmpdir(), "patchbay-live-read-"));
+    const missing = join(dir, "missing.txt");
     try {
-      await orchestrator.agents.save(
-        fakeAgentConfig("live-read-e2e", "Live Read Fake", fakeAgentPath, {
+      await pb.addAgent(
+        fakeAgentConfig("live-read-e2e", "Live Read Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [{ type: "readFile", path: missing }],
         }),
       );
-      await orchestrator.gates.connect("live-read-e2e");
-      const sessionId = await orchestrator.sessions.createSession("live-read-e2e", "Live Read Fake", cwd);
-      await orchestrator.sessionGates.prompt(sessionId, { text: "go" });
-      const text = (orchestrator.agentView.current.transcripts[sessionId] ?? [])
-        .filter((b) => b.kind === "text")
-        .map((b) => b.text ?? "")
-        .join("");
-      assert.strictEqual(text, `read: failed (-32002 Resource not found: ${missing})`);
+      await pb.connect("live-read-e2e");
+      const sessionId = await pb.newSession("live-read-e2e");
+      await pb.prompt(sessionId, "go");
+      assert.strictEqual(pb.text(sessionId), `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
-      await answeringYes(() => orchestrator.gates.remove("live-read-e2e"));
-      await rm(cwd, { recursive: true, force: true });
+      await pb.remove("live-read-e2e");
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
