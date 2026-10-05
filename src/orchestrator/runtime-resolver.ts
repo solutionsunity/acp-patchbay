@@ -495,14 +495,14 @@ export async function resolveBinaryLaunch(
   deps: LaunchResolveDeps,
 ): Promise<LaunchSpec> {
   if (spec.binary === undefined) return spec;
-  const { archiveUrl, version, cmd } = spec.binary;
+  const { distribution, archiveUrl, version, cmd } = spec.binary;
   const pinned = spec.binary.sha256 ?? null;
   const label = `${spec.name} ${version}`;
   // Read the registry at the moment it matters — right before the bytes
   // arrive — so the digest is today's, never a stale cache's silence.
   const digest = async (): Promise<Digest> => {
     const reachable = (await deps.refreshRegistry?.()) ?? true;
-    const raw = deps.digestFor === undefined ? pinned : deps.digestFor(spec.patchbayAgentId, version, pinned);
+    const raw = deps.digestFor === undefined ? pinned : deps.digestFor(distribution, version, pinned);
     if (raw === null) return { sha256: null, check: reachable ? "none-published" : "registry-unreachable" };
     const sha256 = parseSha256(raw);
     if (sha256 === null) {
@@ -514,7 +514,7 @@ export async function resolveBinaryLaunch(
   try {
     installed = await installOnce(
       deps,
-      { distribution: spec.patchbayAgentId, version, archiveUrl, cmd, args: spec.args, env: spec.env, sha256: pinned },
+      { distribution, version, archiveUrl, cmd, args: spec.args, env: spec.env, sha256: pinned },
       {
         ask: (check) => ({ kind: "agent", name: spec.name, version, archiveUrl, check }),
         phase: `downloading ${label}…`,

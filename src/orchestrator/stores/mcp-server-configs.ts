@@ -9,7 +9,7 @@
 // to workspaces (not repos) may return later as an opt-in. SecretStorage
 // (mcp-server-tokens.ts) keys credentials globally by server id.
 import { z } from "zod";
-import { GlobalRecordStore } from "./global-record-store";
+import { NamedRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
 
@@ -75,25 +75,12 @@ export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 /** Under the name the records were first stored by. */
 const KEY = "acpPatchbay.integrations";
 
-export class McpServerConfigStore extends GlobalRecordStore<McpServerConfig> {
+/** A server's name rides the wire as its name, so two of one name would
+ * collide in an agent: adds take a name no record holds, and none takes the
+ * built-in editor server's, which is never stored (the callers reserve it). */
+export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   constructor(kv: KV) {
     super(kv, KEY, mcpServerConfigSchema);
-  }
-
-  /** Adds a record under a display name no other record holds — picked in
-   * the same write, so two adds can't both take it: the name rides the
-   * wire as the server's name, and two of one name would collide in an
-   * agent. A taken name — or a `reserved` one, a server that is never
-   * stored — gets a number. Returns the name it got. */
-  async add(value: McpServerConfig, reserved: readonly string[] = []): Promise<string> {
-    let name = value.name;
-    await this.rewrite((current) => {
-      const taken = new Set([...reserved, ...current.map((v) => v.name)]);
-      for (let n = 2; taken.has(name); n++) name = `${value.name} ${n}`;
-      current.push({ ...value, name });
-      return current;
-    });
-    return name;
   }
 
   /** A removed agent leaves every reach list that names it, in one write —

@@ -8,7 +8,7 @@ import { fakeAgentConfig } from "./fake-agent-config";
 import { fakeAgentPath, Patchbay } from "./patchbay";
 import { waitFor } from "./wait-for";
 
-const AGENT_ID = "waiting-notice";
+const LABEL = "waiting-notice";
 
 suite("waiting-on-user notice", () => {
   test("a question from an off-screen session notifies — view hidden, and view on another session", async function () {
@@ -32,15 +32,15 @@ suite("waiting-on-user notice", () => {
     const noticeFor = (question: string) => shown.find((args) => String(args[0]).includes(question));
 
     try {
-      await pb.addAgent(
-        fakeAgentConfig(AGENT_ID, "Waiting Fake", fakeAgentPath(), { turn: [{ type: "elicit", message: "Which branch?" }] }),
+      const patchbayAgentId = await pb.addAgent(
+        fakeAgentConfig(LABEL, "Waiting Fake", fakeAgentPath(), { turn: [{ type: "elicit", message: "Which branch?" }] }),
       );
-      await pb.connect(AGENT_ID);
+      await pb.connect(patchbayAgentId);
 
       // 1. The Agent View is hidden.
       await vscode.commands.executeCommand("workbench.action.closeSidebar");
       await waitFor(() => (pb.view.screen.pointer ? undefined : true));
-      const first = await pb.newSession(AGENT_ID);
+      const first = await pb.newSession(patchbayAgentId);
       const firstTurn = pb.prompt(first, "go");
       const hiddenNotice = await waitFor(() => noticeFor("Which branch?"));
       assert.ok(hiddenNotice.includes("Open"), "a question's notice offers Open");
@@ -48,7 +48,7 @@ suite("waiting-on-user notice", () => {
 
       // 2. The Agent View is open, on a different session.
       shown.length = 0;
-      const asking = await pb.newSession(AGENT_ID);
+      const asking = await pb.newSession(patchbayAgentId);
       pb.switchTo(first);
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
       await waitFor(() => (pb.view.screen.pointer && pb.view.activeSessionId === first ? true : undefined));
@@ -63,7 +63,7 @@ suite("waiting-on-user notice", () => {
       assert.strictEqual(noticeFor("Which branch?"), undefined);
     } finally {
       window.showWarningMessage = original;
-      await pb.remove(AGENT_ID);
+      await pb.removeAdded();
     }
   });
 
@@ -71,22 +71,22 @@ suite("waiting-on-user notice", () => {
     this.timeout(30000);
     const pb = await Patchbay.open();
     try {
-      await pb.addAgent(
-        fakeAgentConfig(AGENT_ID, "Waiting Fake", fakeAgentPath(), {
+      const patchbayAgentId = await pb.addAgent(
+        fakeAgentConfig(LABEL, "Waiting Fake", fakeAgentPath(), {
           turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }],
         }),
       );
-      await pb.connect(AGENT_ID);
-      const sessionId = await pb.newSession(AGENT_ID);
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       void pb.prompt(sessionId, "go").catch(() => {});
       const card = await pb.openCard(sessionId, "permission");
 
-      await pb.stop(AGENT_ID);
+      await pb.stop(patchbayAgentId);
       await waitFor(() =>
         pb.view.transcripts[sessionId]?.find((b) => b.id === card.id)?.resolution != null ? true : undefined,
       );
     } finally {
-      await pb.remove(AGENT_ID);
+      await pb.removeAdded();
     }
   });
 });

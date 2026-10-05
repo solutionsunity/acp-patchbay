@@ -19,15 +19,15 @@ const registryAgent = (id: string, version: string) => ({
 
 /** An agent added from the registry, pinned at `pinnedVersion` — never
  * connected here. */
-const config = (id: string, pinnedVersion: string): AgentConfig => ({
-  id,
-  name: `Agent ${id}`,
+const config = (registryId: string, pinnedVersion: string): AgentConfig => ({
+  id: "",
+  name: `Agent ${registryId}`,
   command: "npx",
   args: [],
   env: {},
   autoConnect: false,
   defaults: {},
-  registrySource: { registryId: id, distributionKind: "npx", pinnedVersion },
+  registrySource: { registryId, distributionKind: "npx", pinnedVersion },
   lastSeenVersion: null,
 });
 
@@ -45,12 +45,12 @@ suite("update notice", () => {
     };
 
     try {
-      await pb.addAgent(config("upd-a", "1.0.0"));
+      const updA = await pb.addAgent(config("upd-a", "1.0.0"));
       await pb.addAgent(config("upd-b", "2.0.0"));
       await pb.addAgent(config("upd-c", "3.0.0"));
 
       await pb.landRegistry(registryAgent("upd-a", "1.1.0"), registryAgent("upd-b", "2.0.0"), registryAgent("upd-c", "3.0.0"));
-      assert.deepStrictEqual(pb.agent("upd-a")?.update, { from: "1.0.0", to: "1.1.0" });
+      assert.deepStrictEqual(pb.agent(updA)?.update, { from: "1.0.0", to: "1.1.0" });
       assert.deepStrictEqual(shown, [["Agent upd-a 1.1.0 is available — you run 1.0.0.", "Upgrade"]]);
 
       // the next fetch with nothing newer says nothing again
@@ -62,7 +62,7 @@ suite("update notice", () => {
       assert.deepStrictEqual(shown[1], ["Updates are available for 2 agents.", "Upgrade…"]);
     } finally {
       window.showInformationMessage = show;
-      for (const id of ["upd-a", "upd-b", "upd-c"]) await pb.remove(id);
+      await pb.removeAdded();
       globalThis.fetch = realFetch;
     }
   });

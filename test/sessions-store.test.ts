@@ -132,6 +132,7 @@ function harness(opts?: {
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    registryIdOf: () => null,
     changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });

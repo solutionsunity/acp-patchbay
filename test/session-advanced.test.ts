@@ -76,6 +76,7 @@ function harness(extraHooks: {
     ...stubFsTerminalHooks(),
   });
   capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    registryIdOf: () => null,
     changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });
@@ -321,6 +322,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       ...stubFsTerminalHooks(),
     });
     capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+      registryIdOf: () => null,
     changed: () => {},
     probeRoot: async () => cwd, // exists for the test's life — the contract
   });

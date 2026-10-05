@@ -8,7 +8,7 @@ import * as assert from "node:assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { fakeAgentStore, type AgentConfig } from "./fake-agent-config";
+import type { AgentConfig } from "./fake-agent-config";
 import { answeringYes } from "./modal";
 import { waitFor } from "./wait-for";
 
@@ -72,6 +72,10 @@ export function fakeAgentPath(): string {
 }
 
 export class Patchbay {
+  /** The agents this driver added, each with the folder its fake agent
+   * keeps records in — what `removeAdded` takes away. */
+  private readonly added = new Map<string, string | undefined>();
+
   private constructor(private readonly orchestrator: Orchestrator) {}
 
   static async open(): Promise<Patchbay> {
@@ -100,10 +104,15 @@ export class Patchbay {
     return this.view.agents.find((a) => a.id === patchbayAgentId);
   }
 
-  /** Settings' Add: the config saved, the agent listed. */
-  async addAgent(config: AgentConfig): Promise<void> {
+  /** Settings' save of a new config: the store adds it under an id it
+   * mints, and that id — the row that wasn't listed before — is what the
+   * test names the agent by from then on. */
+  async addAgent(config: AgentConfig): Promise<string> {
+    const before = new Set(this.view.agents.map((a) => a.id));
     this.act({ kind: "addOrUpdateAgentConfig", config });
-    await waitFor(() => (this.agent(config.id) !== undefined ? true : undefined), 8000, `${config.id} listed`);
+    const patchbayAgentId = await waitFor(() => this.view.agents.find((a) => !before.has(a.id))?.id, 8000, `${config.name} listed`);
+    this.added.set(patchbayAgentId, config.env.FAKE_AGENT_STORE);
+    return patchbayAgentId;
   }
 
   async connect(patchbayAgentId: string): Promise<void> {
@@ -130,7 +139,15 @@ export class Patchbay {
       this.act({ kind: "removeAgentConfig", patchbayAgentId });
       await waitFor(() => (this.agent(patchbayAgentId) === undefined ? true : undefined), 8000, `${patchbayAgentId} removed`);
     });
-    await rm(fakeAgentStore(patchbayAgentId), { recursive: true, force: true });
+    const store = this.added.get(patchbayAgentId);
+    if (store !== undefined) await rm(store, { recursive: true, force: true });
+    this.added.delete(patchbayAgentId);
+  }
+
+  /** Every agent this driver added and still holds — a test's cleanup,
+   * whatever point the test reached. */
+  async removeAdded(): Promise<void> {
+    for (const patchbayAgentId of [...this.added.keys()]) await this.remove(patchbayAgentId);
   }
 
   /** A new chat with the agent — the session it lands on. An agent's

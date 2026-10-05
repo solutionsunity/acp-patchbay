@@ -376,7 +376,7 @@ describe("resolveBinaryLaunch", () => {
     args: ["--acp"],
     env: { AGENT_HOME: "x" },
     cwd: tmp,
-    binary: { archiveUrl: ARCHIVE, version: "1.2.3", cmd: "bin/agent" },
+    binary: { distribution: id, archiveUrl: ARCHIVE, version: "1.2.3", cmd: "bin/agent" },
   });
   /** A fake install that materializes the cmd where the real one would. */
   const fakeInstall = (calls: { count: number }) => async (root: string, cat: { distribution: string; version: string; cmd: string; args: readonly string[]; env: Readonly<Record<string, string>> }): Promise<InstalledBinary> => {
@@ -504,6 +504,22 @@ describe("resolveBinaryLaunch", () => {
       });
       expect(asks[0]).toMatchObject({ kind: "agent", check: "sha256" });
       expect(seen).toEqual([A]); // normalized to lowercase before the check
+    });
+
+    it("the download is its registry entry's, whatever the agent's own id — cached and checked under the entry", async () => {
+      const root = join(tmp, "digest-by-entry");
+      const named: string[] = [];
+      const resolved = await resolveBinaryLaunch(
+        { ...binarySpec(root), patchbayAgentId: "a-minted-id" as PatchbayAgentId },
+        {
+          cacheRoot: root,
+          log: nullLogger,
+          install: checkingInstall([], []),
+          digestFor: (distribution) => (named.push(distribution), A),
+        },
+      );
+      expect(named).toEqual(["bin-agent"]);
+      expect(resolved.command).toBe(join(root, "bin-agent", "1.2.3", "bin/agent"));
     });
 
     it("the registry's current word wins over the pinned copy while it lists that version", async () => {

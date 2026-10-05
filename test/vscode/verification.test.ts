@@ -17,17 +17,15 @@ suite("opportunistic fs/terminal verification", () => {
     const readTarget = join(dir, "read-me.txt");
     const writeTarget = join(dir, "written.txt");
     await writeFile(readTarget, "hello", "utf8");
-    // Used marks are kept per agent and version across windows; an agent
-    // of its own per run starts with none.
-    const patchbayAgentId = `verify-e2e-${Date.now()}`;
-
     // The exact command the fake agent will run, allowed by a rule so the
     // terminal gate resolves without a user; the file write is left to
     // "ask" (no workspace root in this harness) and accepted on its card.
     await pb.addMachineRule("node -e ok", "allow");
     try {
-      await pb.addAgent(
-        fakeAgentConfig(patchbayAgentId, "Verify E2E Fake", fakeAgentPath(), {
+      // Used marks are kept per agent and version across windows; the agent
+      // this run adds has an id of its own, so it starts with none.
+      const patchbayAgentId = await pb.addAgent(
+        fakeAgentConfig("verify-e2e", "Verify E2E Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [
             { type: "readFile", path: readTarget },
@@ -53,7 +51,7 @@ suite("opportunistic fs/terminal verification", () => {
       assert.strictEqual(matrix()["fs.writeTextFile"].used, true, "write gets used");
       assert.strictEqual(matrix()["terminal"].used, true, "terminal gets used");
     } finally {
-      await pb.remove(patchbayAgentId);
+      await pb.removeAdded();
       await pb.removeMachineRule("node -e ok");
       await rm(dir, { recursive: true, force: true });
     }

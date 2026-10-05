@@ -22,7 +22,7 @@ suite("write scope (issue #56)", () => {
     // Rejected on its card below, so nothing ever lands there.
     const inCwd = join(process.cwd(), "patchbay-write-scope-probe.txt");
     try {
-      await pb.addAgent(
+      const patchbayAgentId = await pb.addAgent(
         fakeAgentConfig("write-scope-e2e", "Write Scope Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [
@@ -32,8 +32,8 @@ suite("write scope (issue #56)", () => {
           ],
         }),
       );
-      await pb.connect("write-scope-e2e");
-      const sessionId = await pb.newSession("write-scope-e2e");
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       await pb.addRoot(sessionId, root);
 
       const turnDone = pb.prompt(sessionId, "go");
@@ -52,7 +52,7 @@ suite("write scope (issue #56)", () => {
       await assert.rejects(readFile(escaped, "utf8"), "the rejected write never landed");
       await assert.rejects(readFile(inCwd, "utf8"), "the rejected write never landed");
     } finally {
-      await pb.remove("write-scope-e2e");
+      await pb.removeAdded();
       await rm(dir, { recursive: true, force: true });
     }
   });

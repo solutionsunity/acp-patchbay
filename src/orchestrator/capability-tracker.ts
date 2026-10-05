@@ -63,6 +63,9 @@ export interface CapabilityTrackerHooks {
    * so an ephemeral mkdtemp/rm around the RPCs was patchbay deleting a
    * directory it had just promised away. */
   probeRoot(patchbayAgentId: PatchbayAgentId): Promise<string>;
+  /** The registry entry the agent was added from — what an extension
+   * module's curated entry names a vendor by. Null for a custom command. */
+  registryIdOf(patchbayAgentId: PatchbayAgentId): string | null;
 }
 
 export class CapabilityTracker {
@@ -147,7 +150,7 @@ export class CapabilityTracker {
     // (extensions/first-session-mcp-latch — the probe must not spend the
     // process's one honored mcpServers slot); re-armed on every connect
     // because the latch is per-process.
-    if (probeDeferredFor(patchbayAgentId)) {
+    if (probeDeferredFor(this.hooks.registryIdOf(patchbayAgentId))) {
       this.deferredProbes.add(patchbayAgentId);
       this.log.info(`${patchbayAgentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
       return;

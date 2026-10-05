@@ -34,9 +34,8 @@ export class ComposerKnobsStore {
     await this.kv.update(KEY, { ...all, [patchbayAgentId]: seed });
   }
 
-  /** Agent removal: the combination is a fact about *that* agent, and the
-   * id is user-chosen and reusable — a lingering record would seed a
-   * future re-add under the same id with the old agent's knobs. */
+  /** Agent removal: the combination is a fact about *that* agent, so it
+   * leaves with it. */
   async remove(patchbayAgentId: PatchbayAgentId): Promise<void> {
     const all = this.kv.get<ComposerKnobsRecord>(KEY);
     if (all === undefined || !(patchbayAgentId in all)) return;

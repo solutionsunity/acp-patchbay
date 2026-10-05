@@ -1,4 +1,3 @@
-import type { PatchbayAgentId } from "../../shared/ids";
 
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
@@ -24,6 +23,7 @@ import type { PatchbayAgentId } from "../../shared/ids";
 // needsAuth surfaces at first real use instead of at connect.
 //
 // Reported upstream 2026-07-13 (pending send).
+/** Keyed by the registry entry the agent was added from. */
 const LATCHED_AGENTS: ReadonlySet<string> = new Set([
   // auggie 0.32.0 (commit eb99b871) — verified 2026-07-12, re-verified
   // 2026-07-13 (control spawns within ~10s of session/new; second-session
@@ -34,6 +34,6 @@ const LATCHED_AGENTS: ReadonlySet<string> = new Set([
 /** True when this agent's connect-time capability probe must wait for the
  * first real session (capability-tracker consults this at its probe
  * chokepoint; the sessions store's attach fires the trigger). */
-export function probeDeferredFor(patchbayAgentId: PatchbayAgentId): boolean {
-  return LATCHED_AGENTS.has(patchbayAgentId);
+export function probeDeferredFor(registryId: string | null): boolean {
+  return registryId !== null && LATCHED_AGENTS.has(registryId);
 }

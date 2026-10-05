@@ -237,8 +237,8 @@ flowchart TD
   PATH-installed sibling CLI shares the agent's per-user state store with
   the copy patchbay runs (by design — never a second history); a
   major-version divergence between the two writers gets a one-time warning,
-  never a gate. The comparison is like-with-like via a per-agent table
-  (`PATH_SIBLINGS`): the bundled CLI's version, not the adapter's — entries
+  never a gate. The comparison is like-with-like via a table keyed by
+  registry id (`PATH_SIBLINGS`): the bundled CLI's version, not the adapter's — entries
   earned by verifying that mapping (claude-acp absent: its adapter bundles
   the SDK, no honest comparison exists). Patchbay never mutates PATH or
   installs globally — a user who wants the CLI in their terminal owns that

@@ -14,6 +14,7 @@
 // its facts moves.
 // vscode-free: the login task, warnings, the sessions side and the views
 // are hooks; the questions before a connection ends are the caller's.
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
@@ -111,6 +112,12 @@ export interface ConnectionOperations {
   stop(patchbayAgentId: PatchbayAgentId): Promise<void>;
   remove(patchbayAgentId: PatchbayAgentId): Promise<void>;
   stopAll(): Promise<void>;
+}
+
+/** A new agent's id — patchbay's own, never borrowed from a registry entry
+ * or an executable. */
+function mintAgentId(): PatchbayAgentId {
+  return randomUUID() as PatchbayAgentId;
 }
 
 export class AgentsStore implements ConnectionOperations {
@@ -356,7 +363,7 @@ export class AgentsStore implements ConnectionOperations {
     const env = await this.deps.env.get(patchbayAgentId);
     const merged = { ...spec, env: { ...spec.env, ...env } };
     await this.deps.pool.connect(merged, { signal });
-    void this.warnOnPathDivergence(merged);
+    void this.warnOnPathDivergence(merged, this.config(patchbayAgentId)?.registrySource?.registryId ?? null);
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
@@ -398,16 +405,14 @@ export class AgentsStore implements ConnectionOperations {
     const registryId = config?.registrySource?.registryId;
     if (config === undefined || registryId === undefined) return;
     const listed = this.deps.registry.current().agents.find((a) => a.id === registryId);
-    const launch = listed === undefined ? null : this.registryLaunch(listed);
+    const launch = listed === undefined ? null : this.registryLaunch(listed, patchbayAgentId);
     if (launch === null) return;
     if (this.deps.pool.get(patchbayAgentId)?.status === "running") {
       if (consent !== undefined && !(await consent())) return;
       await this.deps.pool.stop(patchbayAgentId);
     }
     signal?.throwIfAborted();
-    // Saved under the agent's own id: a config that predates the registry
-    // naming has an id the registry doesn't use.
-    await this.persistAgentConfig({ ...launch.spec, patchbayAgentId }, launch.registrySource);
+    await this.saveUpgrade(config, launch.spec, launch.registrySource);
     try {
       await this.connect(patchbayAgentId, signal);
     } catch {
@@ -440,26 +445,28 @@ export class AgentsStore implements ConnectionOperations {
   }
 
   /** Add's save half: a registry agent or a custom command is saved as a
-   * config, a saved agent is taken as it stands. Returns the agent to
-   * connect — nothing when the source names nothing this machine can run.
-   * Like every save it never waits: the card exists from the click, and
-   * every download the launch needs then happens on it as a connect phase. */
+   * new agent under an id patchbay mints — one registry entry or one
+   * executable added twice is two agents — and a saved agent is taken as
+   * it stands. Returns the agent to connect — nothing when the source names
+   * nothing this machine can run. Like every save it never waits: the card
+   * exists from the click, and every download the launch needs then
+   * happens on it as a connect phase. */
   async saveFrom(source: ConnectAgentSource): Promise<PatchbayAgentId | undefined> {
     if ("patchbayAgentId" in source) return this.config(source.patchbayAgentId)?.id;
-    let spec: LaunchSpec | null = null;
+    const patchbayAgentId = mintAgentId();
+    let spec: LaunchSpec;
     let registrySource: AgentConfig["registrySource"] = null;
     if ("registryId" in source) {
       const agent = this.deps.registry.current().agents.find((a) => a.id === source.registryId);
       if (agent === undefined) return undefined;
-      const resolved = this.registryLaunch(agent);
+      const resolved = this.registryLaunch(agent, patchbayAgentId);
       if (resolved === null) return undefined; // can't run on this platform
-      spec = resolved.spec;
-      registrySource = resolved.registrySource;
+      ({ spec, registrySource } = resolved);
     } else {
       const parsed = parseCommandLine(source.command);
       if (parsed === null) return undefined;
       spec = {
-        patchbayAgentId: `custom-${parsed.command.replace(/[^\w.-]+/g, "-")}` as PatchbayAgentId,
+        patchbayAgentId,
         name: parsed.command,
         command: parsed.command,
         args: parsed.args,
@@ -467,8 +474,8 @@ export class AgentsStore implements ConnectionOperations {
         cwd: this.deps.workspaceCwd,
       };
     }
-    await this.persistAgentConfig(spec, registrySource);
-    return spec.patchbayAgentId;
+    await this.add(spec, registrySource);
+    return patchbayAgentId;
   }
 
   /** The Settings Agents page (add, edit, and remove agents,
@@ -477,7 +484,10 @@ export class AgentsStore implements ConnectionOperations {
    * logic), so an empty args array means "parse `command` here" — the same
    * quote-aware house parser custom Add uses, never a naive split.
    * `config.env` is the form's full desired set — what is in the box is
-   * what gets stored, to SecretStorage only (stores/secret-env.ts). */
+   * what gets stored, to SecretStorage only (stores/secret-env.ts). A
+   * config for an agent the store doesn't hold is added under an id the
+   * store mints, and a name no other agent holds — a view never chooses an
+   * agent's id. */
   async save(config: AgentConfigView): Promise<void> {
     let { command, args } = { command: config.command, args: [...config.args] };
     if (args.length === 0) {
@@ -489,14 +499,15 @@ export class AgentsStore implements ConnectionOperations {
       ({ command } = parsed);
       args = parsed.args;
     }
-    await this.deps.env.set(config.id, { ...config.env });
+    const prior = this.config(config.id);
+    const patchbayAgentId = prior?.id ?? mintAgentId();
+    await this.deps.env.set(patchbayAgentId, { ...config.env });
     // Identity/wire facts never round-trip through the form: the webview's
     // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
     // the moment a connect or an Upgrade lands mid-edit — the store's own
     // values are the truth the form has no business carrying back.
-    const prior = this.config(config.id);
-    await this.deps.configs.upsert({
-      id: config.id,
+    const record: AgentConfig = {
+      id: patchbayAgentId,
       name: config.name,
       command,
       args,
@@ -506,16 +517,18 @@ export class AgentsStore implements ConnectionOperations {
       defaults: { options: { ...config.defaults } },
       registrySource: prior?.registrySource ?? config.registrySource,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
-    });
+    };
+    if (prior === undefined) await this.deps.configs.add(record);
+    else await this.deps.configs.upsert(record);
     await this.publishAll();
     // The store moved; an open editor re-reads the surface for the new
     // defaults from the agent (a no-op when no editor is open).
-    this.hooks.defaultsChanged(config.id);
+    this.hooks.defaultsChanged(patchbayAgentId);
   }
 
   /** The Settings list order — a view's picture of it at drop time. */
-  async reorder(ids: readonly string[]): Promise<void> {
-    await this.deps.configs.reorder(ids);
+  async reorder(patchbayAgentIds: readonly PatchbayAgentId[]): Promise<void> {
+    await this.deps.configs.reorder(patchbayAgentIds);
     await this.publishAll();
   }
 
@@ -597,30 +610,28 @@ export class AgentsStore implements ConnectionOperations {
    * (superseded by the per-agent flag): folded into the config once, so the
    * old setting keeps working without two mechanisms living on. */
   async startupSources(legacyDefault: string): Promise<ConnectAgentSource[]> {
-    // The setting names an agent by its id — or, with no config on this
-    // machine, by its registry id (resolved below).
-    const legacy = legacyDefault === "" ? undefined : (legacyDefault as PatchbayAgentId);
-    if (legacy !== undefined) {
-      const existing = this.config(legacy);
-      if (existing !== undefined && !existing.autoConnect) {
-        await this.deps.configs.upsert({ ...existing, autoConnect: true });
-        await this.publishAll();
-        this.log.info(`migrated acpPatchbay.defaultAgent ("${legacyDefault}") to the per-agent auto-connect flag`);
-      }
+    // The setting names an agent by its id, or by the registry entry it was
+    // added from: one added from it since is that agent, and with none on
+    // this machine the registry path adds it — once, since the next start
+    // finds it by its registry id.
+    const legacy =
+      legacyDefault === ""
+        ? undefined
+        : (this.config(legacyDefault as PatchbayAgentId) ??
+          this.deps.configs.list().find((c) => c.registrySource?.registryId === legacyDefault));
+    if (legacy !== undefined && !legacy.autoConnect) {
+      await this.deps.configs.upsert({ ...legacy, autoConnect: true });
+      await this.publishAll();
+      this.log.info(`migrated acpPatchbay.defaultAgent ("${legacyDefault}") to the per-agent auto-connect flag`);
     }
     const stamped = await this.deps.lastConnected.consume();
     const flagged = this.deps.configs.list().filter((c) => c.autoConnect).map((c) => c.id);
-    const patchbayAgentIds = new Set([...flagged, ...stamped]);
-    if (legacy !== undefined) patchbayAgentIds.add(legacy); // config may not exist yet — resolved below
-    return [...patchbayAgentIds].flatMap((patchbayAgentId): ConnectAgentSource[] => {
+    const sources = [...new Set([...flagged, ...stamped])].flatMap((patchbayAgentId): ConnectAgentSource[] => {
       if (this.config(patchbayAgentId) !== undefined) return [{ patchbayAgentId }];
-      // Only the legacy setting can name an agent with no config on this
-      // machine (a stamp or flag implies one was persisted) — the registry
-      // path covers it, and persists the config it was missing.
-      if (patchbayAgentId === legacy) return [{ registryId: patchbayAgentId }];
       this.log.debug(`startup connect: ${patchbayAgentId} has no config (removed since the stamp) — skipped`);
       return [];
     });
+    return legacyDefault !== "" && legacy === undefined ? [...sources, { registryId: legacyDefault }] : sources;
   }
 
   /** Reload-continuation stamp, written before any killing at shutdown —
@@ -698,7 +709,7 @@ export class AgentsStore implements ConnectionOperations {
       cwd: this.deps.workspaceCwd,
       defaults: foldSeed(agent.defaults),
       ...(source?.distributionKind === "binary" && source.binary !== undefined
-        ? { binary: { ...source.binary, version: source.pinnedVersion } }
+        ? { binary: { ...source.binary, distribution: source.registryId, version: source.pinnedVersion } }
         : {}),
     };
   }
@@ -713,6 +724,7 @@ export class AgentsStore implements ConnectionOperations {
    * platform (the reason is already on the picker row). */
   private registryLaunch(
     agent: RegistryAgent,
+    patchbayAgentId: PatchbayAgentId,
   ): { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null {
     const launch = resolveDistribution(agent);
     const cwd = this.deps.workspaceCwd;
@@ -721,20 +733,20 @@ export class AgentsStore implements ConnectionOperations {
       case "npx":
       case "uvx":
         return {
-          spec: { patchbayAgentId: agent.id as PatchbayAgentId, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
+          spec: { patchbayAgentId, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
           registrySource: { registryId: agent.id, distributionKind: launch.kind, pinnedVersion: agent.version },
         };
       case "binary": {
         const pinnedDigest = launch.sha256 === null ? {} : { sha256: launch.sha256 };
         return {
           spec: {
-            patchbayAgentId: agent.id as PatchbayAgentId,
+            patchbayAgentId,
             name: agent.name,
             command: resolvedBinaryPath(this.deps.binaryCacheDir, agent.id, agent.version, launch.cmd),
             args: [...launch.args],
             env: { ...launch.env },
             cwd,
-            binary: { archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd, ...pinnedDigest },
+            binary: { distribution: agent.id, archiveUrl: launch.archiveUrl, version: agent.version, cmd: launch.cmd, ...pinnedDigest },
           },
           registrySource: {
             registryId: agent.id,
@@ -747,35 +759,46 @@ export class AgentsStore implements ConnectionOperations {
     }
   }
 
-  /** Persists the launch as a global agent config — "add" and "connect" are
-   * one action now (adding an agent means it's activated —
-   * checked spawnable, ready to start conversations on), not two decoupled
-   * steps a user could leave half-done. Preserves any hand-edited
-   * defaults an existing config already carries. */
-  private async persistAgentConfig(
-    spec: LaunchSpec,
-    registrySource: AgentConfig["registrySource"],
-  ): Promise<void> {
-    const existing = this.config(spec.patchbayAgentId);
-    // Registry-declared launch env (part of the distribution recipe) goes to
-    // the same SecretStorage record user-entered env lives in — one source
-    // at spawn time. Registry values win for their own keys; the user's
-    // other keys survive a re-add/Upgrade.
-    if (Object.keys(spec.env).length > 0) {
-      const stored = await this.deps.env.get(spec.patchbayAgentId);
-      await this.deps.env.set(spec.patchbayAgentId, { ...stored, ...spec.env });
-    }
-    await this.deps.configs.upsert({
+  /** Saves a new agent as a global config — "add" and "connect" are one
+   * action (adding an agent means it's activated — checked spawnable, ready
+   * to start conversations on), not two decoupled steps a user could leave
+   * half-done. It takes a name no other agent holds. */
+  private async add(spec: LaunchSpec, registrySource: AgentConfig["registrySource"]): Promise<void> {
+    await this.mergeRegistryEnv(spec);
+    await this.deps.configs.add({
       id: spec.patchbayAgentId,
       name: spec.name,
       command: spec.command,
       args: [...spec.args],
-      autoConnect: existing?.autoConnect ?? false,
-      defaults: existing?.defaults ?? (spec.defaults !== undefined ? { options: spec.defaults } : {}),
-      registrySource: registrySource ?? existing?.registrySource ?? null,
-      lastSeenVersion: existing?.lastSeenVersion ?? null,
+      autoConnect: false,
+      defaults: {},
+      registrySource,
+      lastSeenVersion: null,
     });
     await this.publishAll();
+  }
+
+  /** Upgrade's save: the registry's new launch and pin replace the old
+   * ones; the agent's own facts — its name, auto-connect, defaults, the
+   * version that last answered — stay as they are. */
+  private async saveUpgrade(
+    config: AgentConfig,
+    spec: LaunchSpec,
+    registrySource: AgentConfig["registrySource"],
+  ): Promise<void> {
+    await this.mergeRegistryEnv(spec);
+    await this.deps.configs.upsert({ ...config, command: spec.command, args: [...spec.args], registrySource });
+    await this.publishAll();
+  }
+
+  /** Registry-declared launch env (part of the distribution recipe) goes to
+   * the same SecretStorage record user-entered env lives in — one source
+   * at spawn time. Registry values win for their own keys; the user's
+   * other keys survive an Upgrade. */
+  private async mergeRegistryEnv(spec: LaunchSpec): Promise<void> {
+    if (Object.keys(spec.env).length === 0) return;
+    const stored = await this.deps.env.get(spec.patchbayAgentId);
+    await this.deps.env.set(spec.patchbayAgentId, { ...stored, ...spec.env });
   }
 
   /** Two installs, one memory: a PATH-installed sibling CLI shares the
@@ -783,9 +806,9 @@ export class AgentsStore implements ConnectionOperations {
    * but a wide version gap means two writers of different vintages on one
    * store (launcher-health.ts PATH_SIBLINGS). Warning only, never a gate;
    * once per exact version pair so reconnects don't nag. */
-  private async warnOnPathDivergence(spec: LaunchSpec): Promise<void> {
+  private async warnOnPathDivergence(spec: LaunchSpec, registryId: string | null): Promise<void> {
     try {
-      const d = await checkPathDivergence(spec);
+      const d = await checkPathDivergence(spec, registryId);
       if (d === null) return;
       const key = `${spec.patchbayAgentId}:${d.pathVersion}:${d.bundledVersion}`;
       if (this.divergenceWarned.has(key)) return;

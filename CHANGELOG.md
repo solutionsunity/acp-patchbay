@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Adding a second custom agent that starts with the same executable (two
+  `npx …` agents, two `hermes --profile …` agents) no longer replaces the
+  first. Each added agent gets an id of its own and a name no other agent
+  holds ("npx 2"), so a registry agent can also be added more than once —
+  two profiles, two agents; the registry list marks the ones already added.
+  The palette's Connect agent… lists your saved agents first and connects
+  the one you pick; its registry entries and custom command add one. An
+  Upgrade now keeps the agent's name. (#51)
 - An MCP server's browser sign-in that fails on the network now names the
   server and the reason (for example "couldn't get a token from
   auth.example.com — network error — fetch failed (ECONNRESET)"), instead

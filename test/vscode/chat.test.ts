@@ -14,7 +14,7 @@ suite("chat vertical slice", () => {
     this.timeout(30000);
     const pb = await Patchbay.open();
     try {
-      await pb.addAgent(
+      const patchbayAgentId = await pb.addAgent(
         fakeAgentConfig("chat-e2e", "Chat E2E Fake", fakeAgentPath(), {
           turn: [
             { type: "chunk", text: "part one " },
@@ -24,8 +24,8 @@ suite("chat vertical slice", () => {
           stepDelayMs: 250,
         }),
       );
-      await pb.connect("chat-e2e");
-      const sessionId = await pb.newSession("chat-e2e");
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
 
       // mount the real webview and let it hydrate at the session-created snapshot
       await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
@@ -57,7 +57,7 @@ suite("chat vertical slice", () => {
       // and the final state reached the webview too
       await pb.agentView.waitForApplied(pb.agentView.revision);
     } finally {
-      await pb.remove("chat-e2e");
+      await pb.removeAdded();
     }
   });
 });

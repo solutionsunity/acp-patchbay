@@ -69,9 +69,11 @@ export interface LaunchSpec {
    * (`cmd` is the executable's path inside it). The launch phase
    * (runtime-resolver.ts resolveBinaryLaunch) resolves `command` to the
    * cached absolute path, downloading first when this version isn't cached
-   * — a spec without this spawns `command` as given. `sha256`: the digest
-   * pinned with this version, when its registry entry published one. */
-  binary?: { archiveUrl: string; version: string; cmd: string; sha256?: string };
+   * — a spec without this spawns `command` as given. `distribution`: the
+   * registry entry it comes from — the cache directory it lands in, and
+   * what its digest is looked up by. `sha256`: the digest pinned with this
+   * version, when its registry entry published one. */
+  binary?: { distribution: string; archiveUrl: string; version: string; cmd: string; sha256?: string };
 }
 
 export interface PoolHooks {

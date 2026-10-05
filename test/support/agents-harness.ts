@@ -49,7 +49,7 @@ export interface AgentsHarness {
   /** A saved config — and so a row in the views — for an agent a suite
    * connects through the pool directly: the store acts only on agents that
    * exist (auth evidence for an unknown one is dropped). */
-  seedAgent(patchbayAgentId: PatchbayAgentId): void;
+  seedAgent(patchbayAgentId: PatchbayAgentId, registryId?: string): void;
 }
 
 /** `dir` holds the probe workspaces and the registry cache. */
@@ -87,6 +87,7 @@ export function agentsHarness(
   const usedCapabilities = new UsedCapabilityStore(kv);
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
     changed: (patchbayAgentId) => agents.publish(patchbayAgentId),
+    registryIdOf: (patchbayAgentId) => agents.config(patchbayAgentId)?.registrySource?.registryId ?? null,
     onProbeSession: (patchbayAgentId, response: acp.NewSessionResponse) =>
       probes.push({
         patchbayAgentId,
@@ -121,7 +122,8 @@ export function agentsHarness(
     defaultsChanged: () => {},
     ...opts.hooks,
   });
-  const seedAgent = (patchbayAgentId: PatchbayAgentId) => {
+  /** A saved agent; `registryId` saves it as added from that registry entry. */
+  const seedAgent = (patchbayAgentId: PatchbayAgentId, registryId?: string) => {
     // MemoryKV writes land before the promise resolves — the record is
     // there by the time this returns.
     void deps.configs.upsert({
@@ -131,7 +133,7 @@ export function agentsHarness(
       args: [],
       autoConnect: false,
       defaults: {},
-      registrySource: null,
+      registrySource: registryId === undefined ? null : { registryId, distributionKind: "npx", pinnedVersion: "1.0.0" },
       lastSeenVersion: null,
     });
     agents.publish(patchbayAgentId);

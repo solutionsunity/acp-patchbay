@@ -41,6 +41,26 @@ function fakeConfig(id: string, script: FakeAgentScript, over: Partial<AgentConf
   };
 }
 
+/** An agent saved under a fixed id, as one stored before patchbay minted
+ * ids keeps its own — so a test can name it. */
+async function stored(h: AgentsHarness, config: AgentConfigView): Promise<void> {
+  await h.deps.env.set(config.id, { ...config.env });
+  await h.deps.configs.upsert({
+    id: config.id,
+    name: config.name,
+    command: config.command,
+    args: [...config.args],
+    autoConnect: config.autoConnect,
+    defaults: { options: { ...config.defaults } },
+    registrySource: config.registrySource,
+    lastSeenVersion: config.lastSeenVersion,
+  });
+  await h.agents.publishAll();
+}
+
+/** The shape of an id patchbay mints. */
+const MINTED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** The registry as its disk cache holds it, one npx agent per entry. */
 async function seedRegistry(h: AgentsHarness, ...agents: { id: string; version: string }[]): Promise<void> {
   const raw = {
@@ -59,7 +79,7 @@ async function seedRegistry(h: AgentsHarness, ...agents: { id: string; version: 
  * offer; `listed` is what the registry lists instead. */
 async function upgradable(h: AgentsHarness, listed = [{ id: "reg", version: "2.0.0" }]): Promise<void> {
   await seedRegistry(h, ...listed);
-  await h.agents.save(
+  await stored(h, 
     fakeConfig("reg", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
   );
   await h.agents.connect("reg" as PatchbayAgentId);
@@ -92,20 +112,20 @@ describe("agents store", () => {
   it("reads saved facts from the file when asked — another window's save shows at once", async () => {
     const kv = new MemoryKV();
     const h = agentsHarness(dir, { kv });
-    await h.agents.save(fakeConfig("a", {}));
+    await stored(h, fakeConfig("a", {}));
     expect(h.agents.name("a" as PatchbayAgentId)).toBe("Fake a");
     // Another window, its own store over the same file, renames the agent.
     const elsewhere = new AgentConfigStore(kv);
-    await elsewhere.upsert({ ...elsewhere.get("a")!, name: "Renamed", args: ["--other"] });
+    await elsewhere.upsert({ ...elsewhere.get("a" as PatchbayAgentId)!, name: "Renamed", args: ["--other"] });
     expect(h.agents.name("a" as PatchbayAgentId)).toBe("Renamed");
     expect(h.agents.spec("a" as PatchbayAgentId)?.args).toEqual(["--other"]);
-    await elsewhere.remove("a");
+    await elsewhere.remove("a" as PatchbayAgentId);
     expect(h.agents.spec("a" as PatchbayAgentId)).toBeUndefined();
   });
 
   it("connects a saved agent with its env from SecretStorage, and records the version that answered", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("v", { version: "9.9.9" }));
+    await stored(h, fakeConfig("v", { version: "9.9.9" }));
     await h.agents.connect("v" as PatchbayAgentId);
 
     expect(h.pool.get("v" as PatchbayAgentId)?.status).toBe("running");
@@ -120,7 +140,7 @@ describe("agents store", () => {
     const h = agentsHarness(dir);
     // write-callback → exit: the last words are flushed before death
     const dying = ["-e", 'process.stderr.write("boom: config missing\\n", () => process.exit(1));'];
-    await h.agents.save(fakeConfig("doomed", {}, { args: dying }));
+    await stored(h, fakeConfig("doomed", {}, { args: dying }));
     await expect(h.agents.connect("doomed" as PatchbayAgentId)).rejects.toThrow();
     expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("crashed");
     expect(h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain("boom: config missing");
@@ -134,7 +154,7 @@ describe("agents store", () => {
 
   it("the row's command is what runs while a process runs, and what Connect would run otherwise", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("cmd", {}));
+    await stored(h, fakeConfig("cmd", {}));
     await h.agents.connect("cmd" as PatchbayAgentId);
     const spawned = h.row("cmd" as PatchbayAgentId)!.command;
     await h.agents.save(fakeConfig("cmd", {}, { args: [FAKE_AGENT, "--edited"] }));
@@ -145,8 +165,8 @@ describe("agents store", () => {
 
   it("publishing sends every row before the config list waits on any env read — the first frame has every agent", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("first", {}));
-    await h.agents.save(fakeConfig("second", {}));
+    await stored(h, fakeConfig("first", {}));
+    await stored(h, fakeConfig("second", {}));
     h.events.length = 0;
     const settled = h.agents.publishAll();
     // synchronously, before the env reads behind the config list resolve
@@ -162,7 +182,7 @@ describe("agents store", () => {
 
   it("Remove stops the process, tells the sessions side, purges every saved fact, lets go of its live state and leaves the views", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("gone", {}));
+    await stored(h, fakeConfig("gone", {}));
     await h.agents.connect("gone" as PatchbayAgentId);
     await h.deps.authLocks.upsert({
       id: "gone" as PatchbayAgentId,
@@ -195,15 +215,15 @@ describe("agents store", () => {
 
   it("startup opens the agents flagged auto-connect, and nothing else", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("auto", {}, { autoConnect: true }));
-    await h.agents.save(fakeConfig("manual", {}));
+    await stored(h, fakeConfig("auto", {}, { autoConnect: true }));
+    await stored(h, fakeConfig("manual", {}));
 
     expect(await h.agents.startupSources("")).toEqual([{ patchbayAgentId: "auto" }]);
   });
 
   it("the old default-agent setting folds into the flag once — or names a registry agent not yet saved", async () => {
     const h = agentsHarness(dir);
-    await h.agents.save(fakeConfig("legacy", {}));
+    await stored(h, fakeConfig("legacy", {}));
 
     expect(await h.agents.startupSources("legacy")).toEqual([{ patchbayAgentId: "legacy" }]);
     expect(h.agents.config("legacy" as PatchbayAgentId)?.autoConnect).toBe(true);
@@ -211,6 +231,46 @@ describe("agents store", () => {
       { patchbayAgentId: "legacy" },
       { registryId: "from-registry" },
     ]);
+  });
+
+  it("a saved config for an agent the store doesn't hold is added under an id the store mints — a view never chooses one", async () => {
+    const h = agentsHarness(dir);
+    await h.agents.save(fakeConfig("chosen", {}));
+    expect(h.agents.config("chosen" as PatchbayAgentId)).toBeUndefined();
+    const [added] = h.deps.configs.list();
+    expect(added?.id).toMatch(MINTED);
+    expect(added?.name).toBe("Fake chosen");
+    expect(await h.deps.env.get(added!.id)).toEqual(fakeConfig("chosen", {}).env);
+  });
+
+  it("one executable added twice is two agents — ids patchbay minted, numbered names, neither overwrites the other (#51)", async () => {
+    const h = agentsHarness(dir);
+    const first = await h.agents.saveFrom({ command: "npx foo acp" });
+    const second = await h.agents.saveFrom({ command: "npx bar acp" });
+    expect(first).toMatch(MINTED);
+    expect(second).toMatch(MINTED);
+    expect(second).not.toBe(first);
+    expect(h.agents.config(first!)).toMatchObject({ name: "npx", command: "npx", args: ["foo", "acp"] });
+    expect(h.agents.config(second!)).toMatchObject({ name: "npx 2", command: "npx", args: ["bar", "acp"] });
+  });
+
+  it("one registry entry added twice is two agents, each linked to the entry by its registry id", async () => {
+    const h = agentsHarness(dir);
+    await seedRegistry(h, { id: "reg", version: "1.0.0" });
+    const added = [await h.agents.saveFrom({ registryId: "reg" }), await h.agents.saveFrom({ registryId: "reg" })];
+    expect(added[1]).not.toBe(added[0]);
+    expect(added.map((id) => h.agents.config(id!)?.registrySource?.registryId)).toEqual(["reg", "reg"]);
+    expect(added.map((id) => h.agents.name(id!))).toEqual(["reg", "reg 2"]);
+  });
+
+  it("the old default-agent setting naming a registry entry adds its agent once — the next start finds it by its registry id", async () => {
+    const h = agentsHarness(dir);
+    await seedRegistry(h, { id: "reg", version: "1.0.0" });
+    expect(await h.agents.startupSources("reg")).toEqual([{ registryId: "reg" }]);
+    const added = await h.agents.saveFrom({ registryId: "reg" }); // the startup connect's save
+    expect(await h.agents.startupSources("reg")).toEqual([{ patchbayAgentId: added }]);
+    expect(h.agents.config(added!)?.autoConnect).toBe(true);
+    expect(h.deps.configs.list()).toHaveLength(1);
   });
 
   it("an Upgrade the registry can't serve asks nothing and leaves the agent as it is", async () => {
@@ -224,19 +284,29 @@ describe("agents store", () => {
     await h.agents.stop("reg" as PatchbayAgentId);
   });
 
-  it("an agent saved under an older id than the registry's is upgraded in place", async () => {
+  it("an Upgrade moves the pin in place and keeps the agent's own facts — its id, name, auto-connect and defaults", async () => {
     // The launch can't run in a unit test — the pin moves all the same, and
     // the failed connect shows on the row as a crash would.
     const h = agentsHarness(dir, { resolveLaunch: () => Promise.reject(new Error("offline")) });
     await seedRegistry(h, { id: "reg", version: "2.0.0" });
-    await h.agents.save(
-      fakeConfig("legacy", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+    await stored(h, 
+      fakeConfig("mine", {}, {
+        name: "Work profile",
+        autoConnect: true,
+        defaults: { model: "fast" },
+        registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" },
+      }),
     );
 
-    await h.agents.upgrade("legacy" as PatchbayAgentId);
-    expect(h.agents.config("legacy" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("2.0.0");
-    expect(h.agents.config("reg" as PatchbayAgentId)).toBeUndefined();
-    expect(h.row("legacy" as PatchbayAgentId)?.status).toBe("crashed");
+    await h.agents.upgrade("mine" as PatchbayAgentId);
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({
+      name: "Work profile",
+      autoConnect: true,
+      defaults: { options: { model: "fast" } },
+      registrySource: { registryId: "reg", pinnedVersion: "2.0.0" },
+    });
+    expect(h.deps.configs.list()).toHaveLength(1);
+    expect(h.row("mine" as PatchbayAgentId)?.status).toBe("crashed");
   });
 });
 
@@ -247,7 +317,7 @@ describe("the gates", () => {
     let release!: () => void;
     const download = new Promise<void>((resolve) => (release = resolve));
     const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await download, spec) });
-    await h.agents.save(fakeConfig("auto", {}, { autoConnect: true }));
+    await stored(h, fakeConfig("auto", {}, { autoConnect: true }));
     const spawns = vi.spyOn(h.pool, "connect");
 
     const startup = h.gates.connect("auto" as PatchbayAgentId);
@@ -318,7 +388,7 @@ describe("the gates", () => {
     let release!: () => void;
     const download = new Promise<void>((resolve) => (release = resolve));
     const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await download, spec) });
-    await h.agents.save(fakeConfig("doomed", {}));
+    await stored(h, fakeConfig("doomed", {}));
     const connect = h.gates.connect("doomed" as PatchbayAgentId);
     await vi.waitFor(() => expect(h.pool.get("doomed" as PatchbayAgentId)?.status).toBe("reconnecting"));
     const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
@@ -337,7 +407,7 @@ describe("the gates", () => {
   it("Stop during a launch ends it, and the next Connect starts afresh", async () => {
     let hold: Promise<void> | null = new Promise<void>(() => {});
     const h = agentsHarness(dir, { resolveLaunch: async (spec) => (await hold, spec) });
-    await h.agents.save(fakeConfig("slow", {}));
+    await stored(h, fakeConfig("slow", {}));
     const connect = h.gates.connect("slow" as PatchbayAgentId);
     await vi.waitFor(() => expect(h.pool.get("slow" as PatchbayAgentId)?.status).toBe("reconnecting"));
     const cut = expect(connect).rejects.toBeInstanceOf(Cancelled);
@@ -356,7 +426,7 @@ describe("the gates", () => {
     const h = agentsHarness(dir, {
       hooks: { runLoginTask: () => new Promise<number | undefined>((resolve) => (close = resolve)) },
     });
-    await h.agents.save(
+    await stored(h, 
       fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
     );
     await h.gates.connect("tl" as PatchbayAgentId);
@@ -380,7 +450,7 @@ describe("the gates", () => {
       // The login's terminal: open until the user is done with it.
       hooks: { runLoginTask: () => new Promise<number | undefined>((resolve) => (close = resolve)) },
     });
-    await h.agents.save(
+    await stored(h, 
       fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
     );
     await h.gates.connect("tl" as PatchbayAgentId);

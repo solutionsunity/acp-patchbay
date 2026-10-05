@@ -32,18 +32,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import type { PatchbayAgentId } from "../../shared/ids";
 
-const EMPTY_AGENT_CONFIG: AgentConfigView = {
-  id: "" as PatchbayAgentId,
-  name: "",
-  command: "",
-  args: [],
-  env: {},
-  autoConnect: false,
-  defaults: {},
-  registrySource: null,
-  lastSeenVersion: null,
-};
-
 /** ✎ Edit: launch line, env. Parsing the line is the
  * orchestrator's job — it's sent raw, args empty. Env shows what is
  * stored and saves what is in the box. Default model/mode/effort
@@ -55,16 +43,15 @@ function AgentConfigForm(props: {
   onSave(config: AgentConfigView): void;
   onCancel(): void;
 }) {
-  const [id, setId] = useState<string>(props.initial.id);
   const [name, setName] = useState(props.initial.name);
   const [command, setCommand] = useState(props.initial.command === "" ? "" : formatCommandLine(props.initial.command, props.initial.args));
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
 
   const save = () => {
-    if (id.trim() === "" || name.trim() === "" || command.trim() === "") return;
+    if (name.trim() === "" || command.trim() === "") return;
     props.onSave({
-      id: id.trim() as PatchbayAgentId,
+      id: props.initial.id,
       name: name.trim(),
       command: command.trim(),
       args: [],
@@ -78,9 +65,6 @@ function AgentConfigForm(props: {
 
   return (
     <div className="connect-form">
-      <Field label="id" hint="the storage key — fixed once created">
-        <Input type="text" placeholder="id (unique)" value={id} disabled={props.initial.id !== ""} onInput={(e) => setId((e.target as HTMLInputElement).value)} />
-      </Field>
       <Field label="name">
         <Input type="text" placeholder="display name" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
       </Field>
@@ -166,6 +150,9 @@ function AgentIcon({ icon }: { icon: string | null | undefined }) {
  * parent reset (after Add, or on mode toggle) can't leave it out of sync. */
 function RegistryCombobox(props: {
   entries: readonly RegistryAgentView[];
+  /** Registry ids an agent was already added from — marked, never hidden:
+   * adding one again adds a second agent. */
+  added: ReadonlySet<string>;
   query: string;
   selectedId: string;
   onQueryChange(query: string): void;
@@ -220,6 +207,7 @@ function RegistryCombobox(props: {
                   {r.id === props.selectedId && <Icon name="check" />}
                   <AgentIcon icon={r.icon} />
                   {r.name}
+                  {props.added.has(r.id) && <span className="note"> — added</span>}
                   {r.unavailableReason !== null && <span className="note"> — {r.unavailableReason}</span>}
                 </CommandItem>
               ))}
@@ -247,9 +235,9 @@ function RegistryCombobox(props: {
 
 /** Registry search or custom command — the one way
  * to add an agent, which is also how it's activated: persisted, connected,
- * and (by default) Verified in one action. Already-configured registry ids
- * are excluded here — their own card below is the way back to them. The two
- * ways of naming an agent are mutually exclusive modes behind one toggle,
+ * and (by default) Verified in one action. A registry agent already added
+ * is marked, and adding it again adds a second agent — two profiles of one
+ * agent are two agents. The two ways of naming an agent are mutually exclusive modes behind one toggle,
  * never two half-filled fields at once. */
 function AddAgentRow(props: {
   state: SettingsState;
@@ -257,7 +245,6 @@ function AddAgentRow(props: {
   onRefreshRegistry(): void;
 }) {
   const added = new Set(props.state.agentConfigs.flatMap((c) => (c.registrySource === null ? [] : [c.registrySource.registryId])));
-  const available = props.state.registryAgents.filter((r) => !added.has(r.id));
   const registryCount = props.state.registryAgents.length;
   const [mode, setMode] = useState<"registry" | "custom">("registry");
   const [registryQuery, setRegistryQuery] = useState("");
@@ -306,7 +293,8 @@ function AddAgentRow(props: {
       <div className="connect-form mt-2">
         {mode === "registry" ? (
           <RegistryCombobox
-            entries={available}
+            entries={props.state.registryAgents}
+            added={added}
             query={registryQuery}
             selectedId={registryId}
             onQueryChange={setRegistryQuery}
@@ -607,13 +595,10 @@ export function AgentsSection(props: {
         {patchbayAgentIds.map((patchbayAgentId) => {
           const a = state.agents.find((x) => x.id === patchbayAgentId);
           const config = state.agentConfigs.find((c) => c.id === patchbayAgentId);
-          const effectiveConfig: AgentConfigView = config ?? (a !== undefined ? configFor(state, a) : EMPTY_AGENT_CONFIG);
-          // Registry row for this config: the config's own registrySource is
-          // the link (a config id may predate the registry naming); plain id
-          // covers agents added straight from the registry.
-          const registry = state.registryAgents.find(
-            (r) => r.id === (config?.registrySource?.registryId ?? patchbayAgentId),
-          );
+          const effectiveConfig = config ?? (a === undefined ? undefined : configFor(state, a));
+          if (effectiveConfig === undefined) return null;
+          // Registry row for this config: its registrySource is the link.
+          const registry = state.registryAgents.find((r) => r.id === config?.registrySource?.registryId);
           const knobs = state.agentKnobs[patchbayAgentId];
           // No summary at all = the orchestrator never saw this config — the
           // honest unknown is "untested", never a claimed "stopped".

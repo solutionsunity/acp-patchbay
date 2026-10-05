@@ -29,14 +29,14 @@ suite("live-buffer write (W1)", () => {
     assert.strictEqual(doc.isDirty, true);
 
     try {
-      await pb.addAgent(
+      const patchbayAgentId = await pb.addAgent(
         fakeAgentConfig("live-write-e2e", "Live Write Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [{ type: "writeFile", path: target, content: "from agent\n" }],
         }),
       );
-      await pb.connect("live-write-e2e");
-      const sessionId = await pb.newSession("live-write-e2e");
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       const turnDone = pb.prompt(sessionId, "go");
       const diff = await pb.openCard(sessionId, "diff");
       await pb.answerDiff(sessionId, diff, true);
@@ -47,7 +47,7 @@ suite("live-buffer write (W1)", () => {
       assert.strictEqual(doc.isDirty, false, "buffer saved — user's next save can't clobber");
       assert.strictEqual(await readFile(target, "utf8"), "from agent\n", "disk matches the buffer");
     } finally {
-      await pb.remove("live-write-e2e");
+      await pb.removeAdded();
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -60,18 +60,18 @@ suite("live-buffer write (W1)", () => {
     const dir = await mkdtemp(join(tmpdir(), "patchbay-live-read-"));
     const missing = join(dir, "missing.txt");
     try {
-      await pb.addAgent(
+      const patchbayAgentId = await pb.addAgent(
         fakeAgentConfig("live-read-e2e", "Live Read Fake", fakeAgentPath(), {
           declare: { promptCapabilities: {} },
           turn: [{ type: "readFile", path: missing }],
         }),
       );
-      await pb.connect("live-read-e2e");
-      const sessionId = await pb.newSession("live-read-e2e");
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       await pb.prompt(sessionId, "go");
       assert.strictEqual(pb.text(sessionId), `read: failed (-32002 Resource not found: ${missing})`);
     } finally {
-      await pb.remove("live-read-e2e");
+      await pb.removeAdded();
       await rm(dir, { recursive: true, force: true });
     }
   });

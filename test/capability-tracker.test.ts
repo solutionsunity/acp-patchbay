@@ -167,24 +167,26 @@ describe("CapabilityTracker", () => {
   });
 
   it("a latched agent's probe waits for the first real session, and the trigger spends once (first-session-mcp-latch)", async () => {
-    const { pool, tracker, probes } = harness();
-    // "auggie" is the id-keyed curated entry in extensions/first-session-mcp-latch.
+    const { pool, tracker, probes, seedAgent } = harness();
+    // The latch's curated entry names the registry entry "auggie"; the agent
+    // added from it has an id of its own.
+    seedAgent("latched" as PatchbayAgentId, "auggie");
     await pool.connect(
-      spec({ modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] } }, "auggie" as PatchbayAgentId),
+      spec({ modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] } }, "latched" as PatchbayAgentId),
     );
     await new Promise((r) => setTimeout(r, 200));
     expect(probes).toHaveLength(0); // connect did NOT spend the process's first session
-    expect(tracker.isProbeDeferred("auggie" as PatchbayAgentId)).toBe(true); // what the defaults editor consults
-    tracker.noteRealSessionOpened("auggie" as PatchbayAgentId, "real-1");
+    expect(tracker.isProbeDeferred("latched" as PatchbayAgentId)).toBe(true); // what the defaults editor consults
+    tracker.noteRealSessionOpened("latched" as PatchbayAgentId, "real-1");
     await waitFor(() => (probes.length > 0 ? true : undefined));
-    expect(probes[0]!.patchbayAgentId).toBe("auggie");
-    expect(tracker.isProbeDeferred("auggie" as PatchbayAgentId)).toBe(false);
-    tracker.noteRealSessionOpened("auggie" as PatchbayAgentId, "real-2"); // already spent — no second probe
+    expect(probes[0]!.patchbayAgentId).toBe("latched");
+    expect(tracker.isProbeDeferred("latched" as PatchbayAgentId)).toBe(false);
+    tracker.noteRealSessionOpened("latched" as PatchbayAgentId, "real-2"); // already spent — no second probe
     await new Promise((r) => setTimeout(r, 200));
     expect(probes).toHaveLength(1);
     // ...and a non-latched agent id is a no-op trigger.
     tracker.noteRealSessionOpened("someone-else" as PatchbayAgentId, "real-3");
-    await pool.stop("auggie" as PatchbayAgentId);
+    await pool.stop("latched" as PatchbayAgentId);
   });
 
   it("a version change resets used — an honestly fresh matrix, not carried over", async () => {

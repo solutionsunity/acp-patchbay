@@ -2,10 +2,10 @@
 // Copyright 2026 Solutions Unity
 
 // Generic id-keyed record store over the machine-scoped KV (file-kv.ts) —
-// agents,
-// MCP servers, and the used-capability cache are all "developer env,
-// not code env" (never repo-committed) and all need the same shape: list,
-// upsert-by-id, remove-by-id. One implementation, three instantiations.
+// agents, MCP servers, auth locks and the used-capability cache are all
+// "developer env, not code env" (never repo-committed) and all need the same
+// shape: list, upsert-by-id, remove-by-id. One implementation; the records a
+// person names (agents, MCP servers) add under a name no other holds.
 // Same trust-boundary treatment as acp-registry.ts/registry.ts: zod-validated
 // on read, a malformed stored record is dropped rather than trusted blind.
 import type { z } from "zod";
@@ -28,7 +28,7 @@ export class GlobalRecordStore<T extends { id: string }> {
     return out;
   }
 
-  get(id: string): T | undefined {
+  get(id: T["id"]): T | undefined {
     return this.list().find((v) => v.id === id);
   }
 
@@ -41,7 +41,7 @@ export class GlobalRecordStore<T extends { id: string }> {
     });
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: T["id"]): Promise<void> {
     await this.rewrite((current) => current.filter((v) => v.id !== id));
   }
 
@@ -49,7 +49,7 @@ export class GlobalRecordStore<T extends { id: string }> {
    * drop time — records it doesn't name (added since, or never shown there)
    * keep their relative order at the tail rather than being dropped, so a
    * stale picture can never lose data. */
-  async reorder(ids: readonly string[]): Promise<void> {
+  async reorder(ids: readonly T["id"][]): Promise<void> {
     const rank = new Map(ids.map((id, i) => [id, i]));
     await this.rewrite((current) => {
       const named = current.filter((v) => rank.has(v.id));
@@ -63,5 +63,22 @@ export class GlobalRecordStore<T extends { id: string }> {
    * a per-agent drop) costs one file rewrite, never one per row. */
   protected async rewrite(transform: (current: T[]) => T[]): Promise<void> {
     await this.kv.update(this.key, transform(this.list()));
+  }
+}
+
+/** Records a person tells apart by name — no two hold one. */
+export class NamedRecordStore<T extends { id: string; name: string }> extends GlobalRecordStore<T> {
+  /** Adds a record under a name no other record holds — picked in the same
+   * write, so two adds can't both take it. A taken name, or a `reserved`
+   * one, gets a number ("GitHub 2"). Returns the name it got. */
+  async add(value: T, reserved: readonly string[] = []): Promise<string> {
+    let name = value.name;
+    await this.rewrite((current) => {
+      const taken = new Set([...reserved, ...current.map((v) => v.name)]);
+      for (let n = 2; taken.has(name); n++) name = `${value.name} ${n}`;
+      current.push({ ...value, name });
+      return current;
+    });
+    return name;
   }
 }

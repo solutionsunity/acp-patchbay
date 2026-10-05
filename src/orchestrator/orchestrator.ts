@@ -685,6 +685,7 @@ export class Orchestrator {
       {
         changed: (patchbayAgentId) => this.agents.publish(patchbayAgentId),
         probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
+        registryIdOf: (patchbayAgentId) => this.agents.config(patchbayAgentId)?.registrySource?.registryId ?? null,
       },
       log,
     );
@@ -1039,24 +1040,26 @@ export class Orchestrator {
     await this.revealSession(picked.sessionId);
   }
 
-  /** "Connect agent" — the palette shortcut into the one add path (the
-   * Settings Agents save-connect-verify flow): registry or custom command,
-   * the same `connectFrom` either way. */
+  /** "Connect agent" — the palette shortcut, through the same `connectFrom`
+   * Settings uses: a saved agent connects as it stands; a registry entry or
+   * a command line adds an agent first — so an entry added before adds a
+   * second one, as in Settings. */
   async connectAgentCommand(): Promise<void> {
-    const items = [
+    const items: (vscode.QuickPickItem & { source?: ConnectAgentSource })[] = [
+      ...this.agents.rows().map((row) => ({ label: row.name, description: row.status, source: { patchbayAgentId: row.id } })),
       ...this.acpRegistry.current().agents
         .filter((a) => !("error" in resolveDistribution(a)))
-        .map((a) => ({ label: a.name, registryId: a.id as string | undefined })),
-      { label: "Custom command…", registryId: undefined as string | undefined },
+        .map((a) => ({ label: a.name, description: "add from the ACP registry", source: { registryId: a.id } })),
+      { label: "Custom command…", description: "add" },
     ];
     const picked = await vscode.window.showQuickPick(items, { placeHolder: "Connect agent…" });
     if (picked === undefined) return;
-    if (picked.registryId === undefined) {
+    if (picked.source === undefined) {
       const command = await vscode.window.showInputBox({ placeHolder: "command that speaks ACP…" });
       if (command === undefined || command.trim() === "") return;
       await this.connectFrom({ command });
     } else {
-      await this.connectFrom({ registryId: picked.registryId });
+      await this.connectFrom(picked.source);
     }
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
   }

@@ -31,7 +31,7 @@ describe("agent config store — registry binary facts", () => {
         binary: { archiveUrl: "https://example.test/kimi-1.2.3.tar.gz", cmd: "kimi" },
       },
     });
-    const reread = new AgentConfigStore(kv).get("kimi");
+    const reread = new AgentConfigStore(kv).get("kimi" as PatchbayAgentId);
     expect(reread?.registrySource).toEqual({
       registryId: "kimi",
       distributionKind: "binary",
@@ -47,7 +47,7 @@ describe("agent config store — registry binary facts", () => {
       ...base,
       registrySource: { registryId: "legacy", distributionKind: "binary", pinnedVersion: "0.9.0" },
     });
-    const reread = new AgentConfigStore(kv).get("legacy");
+    const reread = new AgentConfigStore(kv).get("legacy" as PatchbayAgentId);
     expect(reread?.registrySource?.binary).toBeUndefined();
     expect(reread?.command).toBe("/cache/kimi/1.2.3/kimi");
   });
@@ -60,7 +60,7 @@ describe("agent config store — registry binary facts", () => {
       command: "npx",
       registrySource: { registryId: "kilo", distributionKind: "npx", pinnedVersion: "2.0.0" },
     });
-    expect(new AgentConfigStore(kv).get("kilo")?.registrySource?.binary).toBeUndefined();
+    expect(new AgentConfigStore(kv).get("kilo" as PatchbayAgentId)?.registrySource?.binary).toBeUndefined();
   });
 });
 

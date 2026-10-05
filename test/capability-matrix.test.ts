@@ -247,6 +247,7 @@ function trackerOver(declared: DeclaredCapabilities, version: string | undefined
   } as unknown as AgentPool;
   const changed: string[] = [];
   const tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+    registryIdOf: () => null,
     changed: (patchbayAgentId) => changed.push(patchbayAgentId),
     probeRoot: async () => "/nowhere",
   });

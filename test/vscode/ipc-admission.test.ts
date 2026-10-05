@@ -56,19 +56,19 @@ suite("IPC admission (issue #72)", () => {
     this.timeout(30000);
     const pb = await Patchbay.open();
     try {
-      await pb.addAgent(
+      const patchbayAgentId = await pb.addAgent(
         fakeAgentConfig("ipc-admission", "IPC Admission Fake", fakeAgentPath(), {
           turn: [{ type: "callMcpTool", tool: "get_open_editors" }],
         }),
       );
-      await pb.connect("ipc-admission");
-      const sessionId = await pb.newSession("ipc-admission");
+      await pb.connect(patchbayAgentId);
+      const sessionId = await pb.newSession(patchbayAgentId);
       await pb.prompt(sessionId, "go");
       const text = await waitFor(() => pb.text(sessionId) || undefined);
       assert.ok(!text.startsWith("mcp: rejected"), text);
       assert.ok(Array.isArray(JSON.parse(text)), `open editors answered as a list: ${text}`);
     } finally {
-      await pb.remove("ipc-admission");
+      await pb.removeAdded();
     }
   });
 });

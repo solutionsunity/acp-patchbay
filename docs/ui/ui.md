@@ -175,7 +175,9 @@ Add Agent card: one mode at a time behind a toggle, never a registry field and a
 command field half-filled together — a searchable combobox (type to filter, click
 to pick, ✕ to clear) or a custom command line. Buttons in order: `Add` (submits
 whichever mode is active) · the mode toggle itself (`Add custom…` in registry
-mode, `Add from list` in custom mode) · `Verify after add` checkbox.
+mode, `Add from list` in custom mode) · `Verify after add` checkbox. A
+registry agent already added is listed with `— added`; adding it again adds a
+second agent under a numbered name.
 
 Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
 registry has a newer version than the pin — the same chip as the Agent View's,

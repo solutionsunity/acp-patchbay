@@ -10,7 +10,7 @@
 import { z } from "zod";
 import type { PatchbayAgentId } from "../../shared/ids";
 import { savedId } from "./saved-id";
-import { GlobalRecordStore } from "./global-record-store";
+import { NamedRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 
 /** `options` is keyed by knob id (the agent's own config-option id, or
@@ -72,7 +72,9 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 
 const KEY = "acpPatchbay.agents";
 
-export class AgentConfigStore extends GlobalRecordStore<AgentConfig> {
+/** Two agents from one executable or one registry entry are told apart by
+ * name: an add takes a name no other agent holds. */
+export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
   constructor(kv: KV) {
     super(kv, KEY, agentConfigSchema);
     // Once, at construction: records from when each agent carried a process

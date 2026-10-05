@@ -111,6 +111,17 @@ whenever any of its facts moves:
   login methods offered, the capability matrix;
 - busy — what the agent's line holds.
 
+**Ids and names.** A new agent's id is minted (a UUID); an agent stored
+earlier keeps its own, since ids are opaque keys. Anywhere but its own row it
+is a `patchbayAgentId`, of its own type (`PatchbayAgentId`), so no other
+string passes for one. The registry id is a fact on the row, so one registry
+entry can be added more than once — two profiles, two agents — and what the
+registry speaks for goes by it: the update fact, a binary's download and its
+digest, and the tables that name a vendor (a wire-extension module's curated
+entry, the PATH-sibling check). An added agent takes a name no other agent
+holds: a taken name gets a number ("Gemini CLI 2"), picked in the same write
+as the add.
+
 An agent runs one process per window, holding all its sessions, so a row has
 exactly one connection. **Operations:** connect, stop, restart, upgrade,
 remove, save, reorder, log in, log out, verify. Add and startup are the
