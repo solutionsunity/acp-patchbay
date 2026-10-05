@@ -27,6 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { PatchbayAgentId } from "../../shared/ids";
+import type { PatchbayMcpServerId } from "../../shared/ids";
 
 /** A curated entry's vendor mark (mcp-catalog.ts's curated-only exception
  * to the Codicons rule — inline SVG, fill=currentColor, so it themes
@@ -420,20 +421,20 @@ function CatalogRow(props: {
 
 export function McpServersSection(props: {
   state: SettingsState;
-  onConnectKey(registryId: string, token: string, url?: string): void;
-  onConnectOAuth(registryId: string, url?: string): void;
+  onConnectKey(catalogId: string, token: string, url?: string): void;
+  onConnectOAuth(catalogId: string, url?: string): void;
   onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): void;
   onImportJson(json: string): void;
-  onUpdateJson(serverId: string, json: string): void;
+  onUpdateJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
-  onSetActive(serverId: string, active: boolean): void;
-  onRemove(serverId: string): void;
-  onSetRouting(serverId: string, routing: McpServerRoutingView): void;
-  onSetTransport(serverId: string, transport: "auto" | "bridge"): void;
-  onProbe(serverId: string): void;
-  onCopy(serverId: string): void;
-  onReorder(ids: string[]): void;
+  onSetActive(patchbayMcpServerId: PatchbayMcpServerId, active: boolean): void;
+  onRemove(patchbayMcpServerId: PatchbayMcpServerId): void;
+  onSetRouting(patchbayMcpServerId: PatchbayMcpServerId, routing: McpServerRoutingView): void;
+  onSetTransport(patchbayMcpServerId: PatchbayMcpServerId, transport: "auto" | "bridge"): void;
+  onProbe(patchbayMcpServerId: PatchbayMcpServerId): void;
+  onCopy(patchbayMcpServerId: PatchbayMcpServerId): void;
+  onReorder(patchbayMcpServerIds: PatchbayMcpServerId[]): void;
 }) {
   const { state } = props;
   const [expandedCatalogId, setExpandedCatalogId] = useState<string | null>(null);
@@ -558,7 +559,7 @@ export function McpServersSection(props: {
           const detailsOpen = openDetails[server.id] === true || editingJsonId === server.id;
           // A connected curated server keeps its catalog icon (the catalog
           // entry is still the id's source of truth; custom servers have none).
-          const catalogEntry = state.mcpCatalog.find((r) => r.id === server.registryId);
+          const catalogEntry = state.mcpCatalog.find((r) => r.id === server.catalogId);
           return (
             <SortableItem key={server.id} id={server.id}>
               {(handle) => (
@@ -568,8 +569,8 @@ export function McpServersSection(props: {
                     <span className={`dot ${server.connected && server.active ? "running" : "stopped"}`} />
                     {catalogEntry !== undefined && <EntryIcon glyph={catalogEntry.brandIcon} />}
                     <span className="nm min-w-0">{server.name}</span>
-                    <Badge className={server.sourceKind === "registry" ? "border-brand/40 text-brand" : undefined}>
-                      {server.sourceKind === "registry" ? "curated" : server.sourceKind}
+                    <Badge className={server.sourceKind === "catalog" ? "border-brand/40 text-brand" : undefined}>
+                      {server.sourceKind === "catalog" ? "curated" : server.sourceKind}
                     </Badge>
                     <span className="flex-1" />
                     {/* on/off is a state, not an act — a switch says so (a power
@@ -593,10 +594,10 @@ export function McpServersSection(props: {
                       <Icon name="copy" />
                     </Button>
                     <ConfirmButton
-                      label={server.sourceKind === "registry" ? "Disconnect" : "Remove"}
-                      icon={server.sourceKind === "registry" ? "debug-disconnect" : "trash"}
+                      label={server.sourceKind === "catalog" ? "Disconnect" : "Remove"}
+                      icon={server.sourceKind === "catalog" ? "debug-disconnect" : "trash"}
                       title={
-                        server.sourceKind === "registry"
+                        server.sourceKind === "catalog"
                           ? "full clear — credential and config; the catalog entry stays, ready to connect again"
                           : "full clear — credential, env, and config"
                       }

@@ -20,7 +20,7 @@ import type {
   McpServerSourceView,
   McpServerView,
   McpServerWork,
-  RegistryEntryView,
+  CatalogEntryView,
   SettingsEvent,
 } from "../shared/protocol";
 import { unlessAborted } from "./abort";
@@ -32,7 +32,7 @@ import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-token
 import { McpServerConfigStore, type McpServerConfig, type McpServerSource } from "./stores/mcp-server-configs";
 import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
-import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
@@ -41,7 +41,7 @@ export interface McpServersStoreHooks {
 /** What the gates' lines hold — read when the store publishes, never kept:
  * each server's line, and the connects under way. */
 export interface McpServerLines {
-  busy(serverId: string): readonly McpServerWork[];
+  busy(patchbayMcpServerId: PatchbayMcpServerId): readonly McpServerWork[];
   /** The connect line's keys holding work (`connectKey`). */
   connecting(): readonly string[];
 }
@@ -61,13 +61,13 @@ export interface McpServerWire {
  * Built in: never stored, never removed, and its name is never another
  * server's. The id can't be a stored one's: no minted or slugged id holds
  * a colon. */
-const EDITOR_SERVER = { id: "patchbay:editor", name: "patchbay" } as const;
+const EDITOR_SERVER = { id: "patchbay:editor" as PatchbayMcpServerId, name: "patchbay" } as const;
 
 /** The operations that take time — a connect, an add, a probe, a remove —
  * each reached only through the gates, which order them on their lines. */
 export type McpServerLineOperations = Pick<
   McpServersStore,
-  "connectRegistryWithKey" | "connectRegistryOAuth" | "addCustom" | "probe" | "remove"
+  "connectCatalogWithKey" | "connectCatalogOAuth" | "addCustom" | "probe" | "remove"
 >;
 
 /** The connect line's keys — one line per curated entry, one per custom
@@ -78,7 +78,7 @@ export const connectKey = {
   catalog: (catalogId: string) => `catalog:${catalogId}`,
   custom: (name: string) => `custom:${name}`,
   import: (entryName?: string) => (entryName === undefined ? "import" : `import:${entryName}`),
-  server: (serverId: string) => `server:${serverId}`,
+  server: (patchbayMcpServerId: PatchbayMcpServerId) => `server:${patchbayMcpServerId}`,
 };
 
 function connectOf(key: string): Pick<McpServerConnectView, "kind" | "subject"> {
@@ -92,7 +92,7 @@ function connectOf(key: string): Pick<McpServerConnectView, "kind" | "subject"> 
  * client (http), or through patchbay's bridge, the one delivery that asks
  * patchbay for the server's credential. */
 export interface AttachedServer {
-  id: string;
+  id: PatchbayMcpServerId;
   delivery: "stdio" | "http" | "bridge";
 }
 
@@ -165,19 +165,19 @@ function reaches(config: McpServerConfig, patchbayAgentId: PatchbayAgentId): boo
  * always (both header and oauth modes carry one); custom-http except
  * authType "none"; custom-stdio never. */
 function needsToken(source: McpServerSource): boolean {
-  if (source.kind === "registry") return true;
+  if (source.kind === "catalog") return true;
   if (source.kind === "custom-http") return source.authType !== "none";
   return false;
 }
 
 /** The endpoint an http-backed server reaches: the user's own URL for
- * a per-account entry, else the registry's fixed one; "" when neither
+ * a per-account entry, else the catalog's fixed one; "" when neither
  * exists (not connectable). Never called for custom-stdio. */
 function endpointOf(
   source: Exclude<McpServerSource, { kind: "custom-stdio" }>,
   entry: CatalogEntry | undefined,
 ): string {
-  return source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
+  return source.kind === "catalog" ? (source.url ?? entry?.url ?? "") : source.url;
 }
 
 /** How the bridge should present the stored credential on the wire —
@@ -188,7 +188,7 @@ function headerShapeOf(
   entry: CatalogEntry | undefined,
 ): { headerName: string; valuePrefix: string } | null {
   if (source.kind === "custom-stdio") return null;
-  if (source.kind === "registry") {
+  if (source.kind === "catalog") {
     if (source.authMode === "oauth") return { headerName: "Authorization", valuePrefix: "Bearer " };
     const header = entry?.auth.header;
     return header ? { headerName: header.headerName, valuePrefix: header.valuePrefix } : null;
@@ -196,6 +196,12 @@ function headerShapeOf(
   if (source.authType === "none") return null;
   if (source.authType === "oauth") return { headerName: "Authorization", valuePrefix: "Bearer " };
   return { headerName: source.headerName, valuePrefix: source.valuePrefix };
+}
+
+/** A new server's id — patchbay's own, never the catalog's or one made
+ * from a name. */
+function mintMcpServerId(): PatchbayMcpServerId {
+  return randomUUID() as PatchbayMcpServerId;
 }
 
 export class McpServersStore {
@@ -279,7 +285,7 @@ export class McpServersStore {
     }
   }
 
-  registryViews(): RegistryEntryView[] {
+  catalogViews(): CatalogEntryView[] {
     return this.catalog.map((r) => ({
       id: r.id,
       name: r.name,
@@ -312,7 +318,7 @@ export class McpServersStore {
    * — same "replace, don't patch" shape as the capability matrix. */
   async refresh(): Promise<void> {
     this.hooks.emit(
-      { kind: "mcpCatalogLoaded", entries: this.registryViews() },
+      { kind: "mcpCatalogLoaded", entries: this.catalogViews() },
       { kind: "mcpServersChanged", servers: await this.currentViews(), connects: this.connectViews() },
     );
   }
@@ -340,7 +346,7 @@ export class McpServersStore {
         id: config.id,
         name: config.name,
         sourceKind: source.kind,
-        registryId: source.kind === "registry" ? source.registryId : undefined,
+        catalogId: source.kind === "catalog" ? source.catalogId : undefined,
         command:
           source.kind === "custom-stdio"
             ? formatCommandLine(source.command, source.args)
@@ -360,10 +366,10 @@ export class McpServersStore {
   }
 
   /** The editable mcpServers entry for a custom server, values included.
-   * Undefined for curated entries — their shape is registry data. */
-  private async editJsonFor(id: string, source: McpServerSource): Promise<string | undefined> {
-    if (source.kind === "registry") return undefined;
-    const entry = await this.entryJsonFor(id, source);
+   * Undefined for curated entries — their shape is catalog data. */
+  private async editJsonFor(patchbayMcpServerId: PatchbayMcpServerId, source: McpServerSource): Promise<string | undefined> {
+    if (source.kind === "catalog") return undefined;
+    const entry = await this.entryJsonFor(patchbayMcpServerId, source);
     return entry === undefined ? undefined : JSON.stringify(entry, null, 2);
   }
 
@@ -373,10 +379,10 @@ export class McpServersStore {
    * A curated entry copies as its resolved endpoint plus auth shape (what
    * a re-import would create as a custom-http server). Undefined when there
    * is no endpoint to name. */
-  async exportJson(id: string): Promise<string | undefined> {
-    const config = this.configs.get(id);
+  async exportJson(patchbayMcpServerId: PatchbayMcpServerId): Promise<string | undefined> {
+    const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined) return undefined;
-    const entry = await this.entryJsonFor(id, config.source);
+    const entry = await this.entryJsonFor(patchbayMcpServerId, config.source);
     if (entry === undefined) return undefined;
     return JSON.stringify({ mcpServers: { [config.name]: entry } }, null, 2);
   }
@@ -385,23 +391,23 @@ export class McpServersStore {
    * carrying what the owner typed: env values, and the key of a header-auth
    * server. An OAuth token is flow-minted and never rides. */
   private async entryJsonFor(
-    id: string,
+    patchbayMcpServerId: PatchbayMcpServerId,
     source: McpServerSource,
   ): Promise<Record<string, unknown> | undefined> {
     if (source.kind === "custom-stdio") {
-      return { command: source.command, args: source.args, env: await this.envStore.get(id) };
+      return { command: source.command, args: source.args, env: await this.envStore.get(patchbayMcpServerId) };
     }
-    const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
+    const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
     const url = endpointOf(source, entry);
     if (url === "") return undefined;
-    const authType = source.kind === "registry" ? source.authMode : source.authType;
+    const authType = source.kind === "catalog" ? source.authMode : source.authType;
     if (authType !== "header") return { url, authType };
-    const token = (await this.tokens.get(id))?.accessToken;
+    const token = (await this.tokens.get(patchbayMcpServerId))?.accessToken;
     return { url, authType, ...headerShapeOf(source, entry), ...(token !== undefined ? { token } : {}) };
   }
 
-  private entryFor(registryId: string): CatalogEntry | undefined {
-    return this.catalog.find((r) => r.id === registryId);
+  private entryFor(catalogId: string): CatalogEntry | undefined {
+    return this.catalog.find((r) => r.id === catalogId);
   }
 
   /** Resolves the endpoint a connect will use: the entry's fixed URL, or
@@ -422,21 +428,21 @@ export class McpServersStore {
   /** Static-key connect (the v1 floor): store the pasted key, record
    * which mechanism/endpoint this connection uses. No network round-trip;
    * the first real request proves the key. Returns the server's id. */
-  connectRegistryWithKey(registryId: string, token: string, url?: string, signal?: AbortSignal): Promise<string> {
-    return this.attempt(connectKey.catalog(registryId), signal, async () => {
-      const entry = this.entryFor(registryId);
+  connectCatalogWithKey(catalogId: string, token: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
+    return this.attempt(connectKey.catalog(catalogId), signal, async () => {
+      const entry = this.entryFor(catalogId);
       if (entry === undefined || entry.auth.header === null) throw new Error("no API-key mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
       if (token.trim() === "") throw new Error("key is empty");
-      const id = randomUUID();
-      await this.tokens.set(id, { accessToken: token.trim() });
+      const patchbayMcpServerId = mintMcpServerId();
+      await this.tokens.set(patchbayMcpServerId, { accessToken: token.trim() });
       const name = await this.configs.add({
-        id,
+        id: patchbayMcpServerId,
         name: entry.name,
         source: {
-          kind: "registry",
-          registryId,
+          kind: "catalog",
+          catalogId,
           authMode: "header",
           ...(entry.userUrl ? { url: endpoint.url } : {}),
         },
@@ -444,8 +450,8 @@ export class McpServersStore {
         active: true,
         transport: "auto",
       }, [EDITOR_SERVER.name]);
-      this.log.info(`${id}: ${name} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
-      return id;
+      this.log.info(`${patchbayMcpServerId}: ${name} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
+      return patchbayMcpServerId;
     });
   }
 
@@ -453,17 +459,17 @@ export class McpServersStore {
    * registration, PKCE, browser redirect via the injected user agent.
    * Failure (gated DCR, non-compliant server, denied consent, timeout) is
    * immediate and labeled. Returns the server's id. */
-  connectRegistryOAuth(registryId: string, url?: string, signal?: AbortSignal): Promise<string> {
-    return this.attempt(connectKey.catalog(registryId), signal, async () => {
-      const entry = this.entryFor(registryId);
+  connectCatalogOAuth(catalogId: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
+    return this.attempt(connectKey.catalog(catalogId), signal, async () => {
+      const entry = this.entryFor(catalogId);
       if (entry === undefined || !entry.auth.oauth) throw new Error("no OAuth mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
       if ("error" in endpoint) throw new Error(endpoint.error);
       if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
-      this.log.info(`${registryId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
+      this.log.info(`${catalogId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
       const result = await this.browserFlow(connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent), signal);
-      const id = randomUUID();
-      await this.tokens.set(id, {
+      const patchbayMcpServerId = mintMcpServerId();
+      await this.tokens.set(patchbayMcpServerId, {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
         expiresAt: expiresAtFrom(result.expiresIn),
@@ -471,11 +477,11 @@ export class McpServersStore {
         clientId: result.clientId,
       });
       const name = await this.configs.add({
-        id,
+        id: patchbayMcpServerId,
         name: entry.name,
         source: {
-          kind: "registry",
-          registryId,
+          kind: "catalog",
+          catalogId,
           authMode: "oauth",
           ...(entry.userUrl ? { url: endpoint.url } : {}),
         },
@@ -483,8 +489,8 @@ export class McpServersStore {
         active: true,
         transport: "auto",
       }, [EDITOR_SERVER.name]);
-      this.log.info(`${id}: ${name} connected via OAuth`);
-      return id;
+      this.log.info(`${patchbayMcpServerId}: ${name} connected via OAuth`);
+      return patchbayMcpServerId;
     });
   }
 
@@ -498,9 +504,9 @@ export class McpServersStore {
     source: McpServerSourceView,
     routing: McpServerRoutingView,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.custom(name), signal, async () => {
-      const id = randomUUID();
+      const patchbayMcpServerId = mintMcpServerId();
       let configSource: McpServerSource;
       if (source.kind === "custom-stdio") {
         // `args` arrive structured (form lines / imported JSON) and are never
@@ -516,7 +522,7 @@ export class McpServersStore {
         };
         // Values ride the action once and land in SecretStorage — the config
         // record above deliberately carries no env.
-        await this.envStore.set(id, { ...source.env });
+        await this.envStore.set(patchbayMcpServerId, { ...source.env });
       } else {
         configSource = {
           kind: "custom-http",
@@ -527,12 +533,12 @@ export class McpServersStore {
         };
         if (source.authType === "header") {
           if (!source.token) throw new Error("key is empty");
-          await this.tokens.set(id, { accessToken: source.token });
+          await this.tokens.set(patchbayMcpServerId, { accessToken: source.token });
         }
         if (source.authType === "oauth") {
           if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
           const result = await this.browserFlow(connectMcpOAuth(source.url, CLIENT_INFO, this.oauthUserAgent), signal);
-          await this.tokens.set(id, {
+          await this.tokens.set(patchbayMcpServerId, {
             accessToken: result.accessToken,
             refreshToken: result.refreshToken,
             expiresAt: expiresAtFrom(result.expiresIn),
@@ -542,15 +548,15 @@ export class McpServersStore {
         }
       }
       const given = await this.configs.add({
-        id,
+        id: patchbayMcpServerId,
         name,
         source: configSource,
         routing: cloneRouting(routing),
         active: true,
         transport: "auto",
       }, [EDITOR_SERVER.name]);
-      this.log.info(`${id}: custom ${configSource.kind} ${given} added`);
-      return id;
+      this.log.info(`${patchbayMcpServerId}: custom ${configSource.kind} ${given} added`);
+      return patchbayMcpServerId;
     });
   }
 
@@ -604,10 +610,10 @@ export class McpServersStore {
    * the truth: env is stored as written, and for header auth so is
    * `token` (removing it removes the key, which reads as disconnected
    * until one is entered again). */
-  async updateFromJson(id: string, json: string): Promise<void> {
-    const existing = this.configs.get(id);
-    if (existing === undefined || existing.source.kind === "registry") return;
-    const key = connectKey.server(id);
+  async updateFromJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): Promise<void> {
+    const existing = this.configs.get(patchbayMcpServerId);
+    if (existing === undefined || existing.source.kind === "catalog") return;
+    const key = connectKey.server(patchbayMcpServerId);
     this.failures.delete(key);
     let raw: unknown;
     try {
@@ -624,15 +630,15 @@ export class McpServersStore {
       return;
     }
     if ("command" in spec.data) {
-      await this.envStore.set(id, spec.data.env);
+      await this.envStore.set(patchbayMcpServerId, spec.data.env);
       await this.configs.upsert({
         ...existing,
         source: { kind: "custom-stdio", command: spec.data.command, args: spec.data.args },
       });
     } else {
       if (spec.data.authType === "header") {
-        if (spec.data.token) await this.tokens.set(id, { accessToken: spec.data.token });
-        else await this.tokens.remove(id);
+        if (spec.data.token) await this.tokens.set(patchbayMcpServerId, { accessToken: spec.data.token });
+        else await this.tokens.remove(patchbayMcpServerId);
       }
       await this.configs.upsert({
         ...existing,
@@ -652,13 +658,13 @@ export class McpServersStore {
    * the server is gone, curated or custom; its catalog entry stays there to
    * connect again. The non-destructive option is `setActive(false)`, which
    * keeps everything and only unroutes. */
-  async remove(id: string): Promise<void> {
-    this.probes.delete(id);
-    this.failures.delete(connectKey.server(id));
-    await this.tokens.remove(id);
-    await this.envStore.remove(id);
-    await this.configs.remove(id);
-    this.log.info(`${id}: removed — credential, env, and config cleared`);
+  async remove(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    this.probes.delete(patchbayMcpServerId);
+    this.failures.delete(connectKey.server(patchbayMcpServerId));
+    await this.tokens.remove(patchbayMcpServerId);
+    await this.envStore.remove(patchbayMcpServerId);
+    await this.configs.remove(patchbayMcpServerId);
+    this.log.info(`${patchbayMcpServerId}: removed — credential, env, and config cleared`);
   }
 
   /** An agent removed: no server's reach names it any more. */
@@ -667,8 +673,8 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  async setActive(id: string, active: boolean): Promise<void> {
-    const existing = this.configs.get(id);
+  async setActive(patchbayMcpServerId: PatchbayMcpServerId, active: boolean): Promise<void> {
+    const existing = this.configs.get(patchbayMcpServerId);
     if (existing === undefined) return;
     await this.configs.upsert({ ...existing, active });
     await this.refresh();
@@ -677,13 +683,13 @@ export class McpServersStore {
   /** Settings drag-drop — persist the dropped order and republish. Order
    * is presentational only (routing never depends on it): no probe, no
    * reconnect. */
-  async reorder(ids: readonly string[]): Promise<void> {
-    await this.configs.reorder(ids);
+  async reorder(patchbayMcpServerIds: readonly PatchbayMcpServerId[]): Promise<void> {
+    await this.configs.reorder(patchbayMcpServerIds);
     await this.refresh();
   }
 
-  async setTransport(id: string, transport: "auto" | "bridge"): Promise<void> {
-    const existing = this.configs.get(id);
+  async setTransport(patchbayMcpServerId: PatchbayMcpServerId, transport: "auto" | "bridge"): Promise<void> {
+    const existing = this.configs.get(patchbayMcpServerId);
     if (existing === undefined) return;
     await this.configs.upsert({ ...existing, transport });
     await this.refresh();
@@ -694,8 +700,8 @@ export class McpServersStore {
    * Explicit-trigger only (connect, power-on, refresh button): probing a
    * custom-stdio server executes its command, and even http shouldn't fire
    * on background sweeps — reality is read when the user acts on it. */
-  async probe(id: string, signal?: AbortSignal): Promise<void> {
-    const config = this.configs.get(id);
+  async probe(patchbayMcpServerId: PatchbayMcpServerId, signal?: AbortSignal): Promise<void> {
+    const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined) return;
     let target: ProbeTarget | null = null;
     try {
@@ -703,17 +709,17 @@ export class McpServersStore {
       if (target === null) {
         // Nothing reachable to probe (no endpoint / missing credential) —
         // the card's connected flag already tells that story.
-        this.probes.delete(id);
+        this.probes.delete(patchbayMcpServerId);
       } else {
         const outcome = await unlessAborted(this.probeFn(target, signal), signal);
-        this.probes.set(id, {
+        this.probes.set(patchbayMcpServerId, {
           status: "ok",
           at: new Date().toISOString(),
           serverName: outcome.serverName,
           serverVersion: outcome.serverVersion,
           tools: outcome.tools,
         });
-        this.log.info(`${id}: probe ok — ${outcome.tools.length} tool(s)`);
+        this.log.info(`${patchbayMcpServerId}: probe ok — ${outcome.tools.length} tool(s)`);
       }
     } catch (err) {
       // Told to stop, the probe has no outcome to keep.
@@ -725,13 +731,13 @@ export class McpServersStore {
         target?.kind === "stdio"
           ? `${(err as Error).message} (ran in ${target.cwd})`
           : (err as Error).message;
-      this.probes.set(id, { status: "failed", at: new Date().toISOString(), reason });
-      this.log.info(`${id}: probe failed — ${reason}`);
+      this.probes.set(patchbayMcpServerId, { status: "failed", at: new Date().toISOString(), reason });
+      this.log.info(`${patchbayMcpServerId}: probe failed — ${reason}`);
     }
   }
 
   /** The probe's connection recipe for one server — same resolution as
-   * mcpServersFor (registry entry URL, header shape, fresh token), pointed
+   * mcpServersFor (catalog entry URL, header shape, fresh token), pointed
    * at patchbay's own MCP client instead of an agent's. */
   private async probeTargetFor(config: McpServerConfig): Promise<ProbeTarget | null> {
     const source = config.source;
@@ -744,8 +750,8 @@ export class McpServersStore {
         cwd: this.workspaceCwd,
       };
     }
-    const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
-    const url = source.kind === "registry" ? (source.url ?? entry?.url ?? "") : source.url;
+    const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
+    const url = source.kind === "catalog" ? (source.url ?? entry?.url ?? "") : source.url;
     if (url === "") return null;
     const shape = headerShapeOf(source, entry);
     if (shape === null) return { kind: "http", url, header: null };
@@ -754,8 +760,8 @@ export class McpServersStore {
     return { kind: "http", url, header: { name: shape.headerName, value: `${shape.valuePrefix}${token}` } };
   }
 
-  async setRouting(id: string, routing: McpServerRoutingView): Promise<void> {
-    const existing = this.configs.get(id);
+  async setRouting(patchbayMcpServerId: PatchbayMcpServerId, routing: McpServerRoutingView): Promise<void> {
+    const existing = this.configs.get(patchbayMcpServerId);
     if (existing === undefined) return;
     await this.configs.upsert({
       ...existing,
@@ -768,20 +774,20 @@ export class McpServersStore {
    * while the server is still connected, switched on and routed to that
    * agent: muting, re-routing or removing it reaches a running bridge at
    * its next request. */
-  async credentialFor(serverId: string, patchbayAgentId: PatchbayAgentId): Promise<{ accessToken: string } | null> {
-    const config = this.configs.get(serverId);
+  async credentialFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId): Promise<{ accessToken: string } | null> {
+    const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined || !reaches(config, patchbayAgentId)) return null;
-    return this.freshToken(serverId);
+    return this.freshToken(patchbayMcpServerId);
   }
 
   /** The stored token, refreshed first when near expiry and refreshable —
    * a bridge never sees a refresh token, only ever a fresh access token. A
    * refresh that fails leaves the stale one: the server's own 401 speaks. */
-  private async freshToken(serverId: string): Promise<{ accessToken: string } | null> {
-    const stored = await this.tokens.get(serverId);
+  private async freshToken(patchbayMcpServerId: PatchbayMcpServerId): Promise<{ accessToken: string } | null> {
+    const stored = await this.tokens.get(patchbayMcpServerId);
     if (stored === null) return null;
-    if (isExpired(stored) && refreshable(stored)) await this.refreshOnce(serverId);
-    const current = await this.tokens.get(serverId);
+    if (isExpired(stored) && refreshable(stored)) await this.refreshOnce(patchbayMcpServerId);
+    const current = await this.tokens.get(patchbayMcpServerId);
     return current === null ? null : { accessToken: current.accessToken };
   }
 
@@ -790,26 +796,26 @@ export class McpServersStore {
    * spent twice can cost the grant: every connect here is a public client,
    * which OAuth 2.1 has the server rotate or bind refresh tokens for, and a
    * rotating server takes a replay for theft. */
-  private refreshOnce(serverId: string): Promise<void> {
-    const running = this.refreshing.get(serverId);
+  private refreshOnce(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    const running = this.refreshing.get(patchbayMcpServerId);
     if (running !== undefined) return running;
-    const run = this.refreshCredential(serverId).finally(() => this.refreshing.delete(serverId));
-    this.refreshing.set(serverId, run);
+    const run = this.refreshCredential(patchbayMcpServerId).finally(() => this.refreshing.delete(patchbayMcpServerId));
+    this.refreshing.set(patchbayMcpServerId, run);
     return run;
   }
 
   /** Refreshes the stored credential if it still needs it. The refresh
    * context (token endpoint + client id) was captured at connect, since
    * OAuth endpoints are discovered, not static. */
-  private async refreshCredential(serverId: string): Promise<void> {
-    const stored = await this.tokens.get(serverId);
+  private async refreshCredential(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    const stored = await this.tokens.get(patchbayMcpServerId);
     if (stored === null || !isExpired(stored) || !refreshable(stored)) return;
     try {
       const refreshed = await refreshMcpOAuth(stored.tokenEndpoint, stored.clientId, stored.refreshToken);
       // Removed or connected anew while the request was out: the answer is
       // for a credential that no longer stands.
-      if ((await this.tokens.get(serverId))?.refreshToken !== stored.refreshToken) return;
-      await this.tokens.set(serverId, {
+      if ((await this.tokens.get(patchbayMcpServerId))?.refreshToken !== stored.refreshToken) return;
+      await this.tokens.set(patchbayMcpServerId, {
         accessToken: refreshed.accessToken,
         refreshToken: refreshed.refreshToken,
         expiresAt: expiresAtFrom(refreshed.expiresIn),
@@ -817,7 +823,7 @@ export class McpServersStore {
         clientId: stored.clientId,
       });
     } catch (err) {
-      this.log.error(`${serverId}: credential refresh failed — ${(err as Error).message}`);
+      this.log.error(`${patchbayMcpServerId}: credential refresh failed — ${(err as Error).message}`);
     }
   }
 
@@ -829,7 +835,7 @@ export class McpServersStore {
    * the session's attach records it. Every value that crosses to the agent
    * is registered with the wire log's redaction, here, where it crosses.
    * custom-stdio needs no bridge — handed straight through.
-   * registry/custom-http go one of two ways (prompt.image mechanics —
+   * catalog/custom-http go one of two ways (prompt.image mechanics —
    * capability-conditional delivery): `declaresHttp` and transport "auto" ⇒
    * a real `type: "http"` entry, the agent's own MCP client connects (token
    * read here, at attach — it rides agent-visible config, ephemeral per
@@ -878,7 +884,7 @@ export class McpServersStore {
         continue;
       }
 
-      const entry = source.kind === "registry" ? this.entryFor(source.registryId) : undefined;
+      const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
       const url = endpointOf(source, entry);
       if (url === "") continue; // not connectable — nothing to route to
       if (needsToken(source) && (await this.tokens.get(config.id)) === null) continue;

@@ -3,9 +3,9 @@
 // AND-combined, registry order kept.
 import { describe, expect, it } from "vitest";
 import { filterCatalog, mechanismsOf, type Mechanism } from "../src/webview/settings/catalog-filter";
-import type { RegistryEntryView } from "../src/shared/protocol";
+import type { CatalogEntryView as CatalogEntryView } from "../src/shared/protocol";
 
-function entry(over: Partial<RegistryEntryView> & { id: string }): RegistryEntryView {
+function entry(over: Partial<CatalogEntryView> & { id: string }): CatalogEntryView {
   return {
     name: over.id, description: over.id, brandIcon: { viewBox: "0 0 24 24", path: "M4 4h16v16H4z" }, connectable: true, note: "",
     docsUrl: "", userUrl: false, headerAuth: null, oauth: false, local: null, ...over,
@@ -15,7 +15,7 @@ function entry(over: Partial<RegistryEntryView> & { id: string }): RegistryEntry
 const key = { hint: "", keyUrl: "" };
 const stdio = { kind: "stdio" as const, command: "npx", args: [], envKeys: [], note: "" };
 
-const CATALOG: readonly RegistryEntryView[] = [
+const CATALOG: readonly CatalogEntryView[] = [
   // Augment-shaped: the caveat note names GitHub, the description doesn't
   entry({ id: "github", name: "GitHub", description: "repositories, issues, pull requests", headerAuth: key, local: stdio }),
   entry({ id: "figma", name: "Figma", description: "Design context from your files", note: "remote gated, desktop server open", connectable: false, local: { kind: "http", url: "http://127.0.0.1:3845/mcp", note: "" } }),
@@ -24,7 +24,7 @@ const CATALOG: readonly RegistryEntryView[] = [
   entry({ id: "augment", name: "Augment", description: "semantic retrieval over your codebase", note: "remote indexing needs Augment's GitHub App", headerAuth: key, oauth: true }),
 ];
 
-const ids = (rows: readonly RegistryEntryView[]) => rows.map((r) => r.id);
+const ids = (rows: readonly CatalogEntryView[]) => rows.map((r) => r.id);
 const set = (...m: Mechanism[]) => new Set<Mechanism>(m);
 
 describe("catalog filter", () => {

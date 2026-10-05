@@ -9,14 +9,14 @@
 // positive) — and the mechanism chips the rows already wear, turned into
 // toggles. The catalog is shipped data meant to grow; at eight rows a
 // plain list reads, at fifty it needs this.
-import type { RegistryEntryView } from "../../shared/protocol";
+import type { CatalogEntryView } from "../../shared/protocol";
 
 /** The three ways a curated entry can be connected — one home for "what
  * this entry offers", read by the row chips and the filter toggles alike. */
 export type Mechanism = "key" | "oauth" | "local";
 export const MECHANISMS: readonly Mechanism[] = ["key", "oauth", "local"];
 
-export function mechanismsOf(entry: RegistryEntryView): ReadonlySet<Mechanism> {
+export function mechanismsOf(entry: CatalogEntryView): ReadonlySet<Mechanism> {
   const has = new Set<Mechanism>();
   if (entry.headerAuth !== null) has.add("key");
   if (entry.oauth) has.add("oauth");
@@ -29,10 +29,10 @@ export function mechanismsOf(entry: RegistryEntryView): ReadonlySet<Mechanism> {
  * selected = all). Order is the registry's — the filter narrows, never
  * re-sorts. */
 export function filterCatalog(
-  entries: readonly RegistryEntryView[],
+  entries: readonly CatalogEntryView[],
   query: string,
   mechanisms: ReadonlySet<Mechanism>,
-): RegistryEntryView[] {
+): CatalogEntryView[] {
   const text = query.trim().toLowerCase();
   return entries.filter((entry) => {
     if (

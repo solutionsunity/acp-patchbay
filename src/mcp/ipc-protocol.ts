@@ -9,6 +9,8 @@
 // whoever does. One socket for the orchestrator's whole lifetime; every
 // subprocess was spawned at one session's attach, and carries that attach's
 // token on every message.
+import type { PatchbayMcpServerId } from "../shared/ids";
+
 export interface IpcRequest {
   id: number;
   /** The context token the calling subprocess was spawned with — what the
@@ -31,7 +33,7 @@ export interface IpcRequest {
 /** Params of `getMcpServerToken`: which server's credential the
  * bridge is presenting. */
 export interface McpServerTokenParams {
-  serverId: string;
+  patchbayMcpServerId: PatchbayMcpServerId;
 }
 
 /** Result of `getMcpServerToken` — null unless the server was given to

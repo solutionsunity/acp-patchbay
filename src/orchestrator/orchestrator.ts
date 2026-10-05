@@ -89,6 +89,7 @@ import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
 import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayMcpServerId } from "../shared/ids";
 
 /** Context-chip id mint. The timestamp alone collided once a multi-file
  * drop started dispatching several adds in the same millisecond (duplicate
@@ -283,7 +284,7 @@ export class Orchestrator {
       this.mcpServerTokens,
       this.mcpServerEnv,
       { emit: (...events) => this.settings.emit(...events) },
-      { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
+      { busy: (patchbayMcpServerId) => serverLine.held(patchbayMcpServerId), connecting: () => connectLine.holding() },
       {
         editorServerScript: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath,
         bridgeScript: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-bridge.js").fsPath,
@@ -337,7 +338,7 @@ export class Orchestrator {
         commandRules: rules.commandRules,
         machineCommandRules: this.machinePermissionRules.get().commandRules,
         fileWriteScope: rules.fileWriteScope,
-        mcpCatalog: this.mcpServers.registryViews(),
+        mcpCatalog: this.mcpServers.catalogViews(),
         preferences: this.preferences.get(),
         doneSounds: listDoneSounds(),
         savedRoots: this.savedRootsView(),
@@ -543,9 +544,9 @@ export class Orchestrator {
         const sessionId = this.sessions.sessionOfToken(contextToken);
         return sessionId === undefined ? [] : this.sessions.rootsOf(sessionId);
       },
-      getMcpServerToken: (contextToken, serverId) => {
-        const patchbayAgentId = this.sessions.bridgedTo(contextToken, serverId);
-        return patchbayAgentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(serverId, patchbayAgentId);
+      getMcpServerToken: (contextToken, patchbayMcpServerId) => {
+        const patchbayAgentId = this.sessions.bridgedTo(contextToken, patchbayMcpServerId);
+        return patchbayAgentId === undefined ? Promise.resolve(null) : this.mcpServers.credentialFor(patchbayMcpServerId, patchbayAgentId);
       },
     });
     this.editorStateHost.start();
@@ -1859,11 +1860,11 @@ export class Orchestrator {
         break;
       // A connect's failure is the store's to hold and show; the log has it
       // already.
-      case "connectRegistryKey":
-        void this.mcpServerGates.connectWithKey(action.registryId, action.token, action.url).catch(() => {});
+      case "connectCatalogKey":
+        void this.mcpServerGates.connectWithKey(action.catalogId, action.token, action.url).catch(() => {});
         break;
-      case "connectRegistryOAuth":
-        void this.mcpServerGates.connectOAuth(action.registryId, action.url).catch(() => {});
+      case "connectCatalogOAuth":
+        void this.mcpServerGates.connectOAuth(action.catalogId, action.url).catch(() => {});
         break;
       case "addCustomMcpServer":
         void this.mcpServerGates.addCustom(action.name, action.source, action.routing).catch(() => {});
@@ -1872,7 +1873,7 @@ export class Orchestrator {
         void this.mcpServerGates.importJson(action.json).catch(this.logCatch("import MCP servers"));
         break;
       case "updateMcpServerJson":
-        void this.mcpServers.updateFromJson(action.serverId, action.json);
+        void this.mcpServers.updateFromJson(action.patchbayMcpServerId, action.json);
         break;
       case "cancelMcpServerConnect":
         void this.mcpServerGates.cancel(action.key).catch(this.logCatch(`cancel ${action.key}`));
@@ -1880,24 +1881,24 @@ export class Orchestrator {
       case "setMcpServerActive":
         // Switched on, it is probed at once: the user just acted on it.
         void this.mcpServers
-          .setActive(action.serverId, action.active)
-          .then(() => (action.active ? this.mcpServerGates.probe(action.serverId) : undefined))
-          .catch(this.logCatch(`switch ${action.serverId}`));
+          .setActive(action.patchbayMcpServerId, action.active)
+          .then(() => (action.active ? this.mcpServerGates.probe(action.patchbayMcpServerId) : undefined))
+          .catch(this.logCatch(`switch ${action.patchbayMcpServerId}`));
         break;
       case "removeMcpServer":
-        void this.mcpServerGates.remove(action.serverId).catch(this.logCatch(`remove ${action.serverId}`));
+        void this.mcpServerGates.remove(action.patchbayMcpServerId).catch(this.logCatch(`remove ${action.patchbayMcpServerId}`));
         break;
       case "setMcpServerRouting":
-        void this.mcpServers.setRouting(action.serverId, action.routing);
+        void this.mcpServers.setRouting(action.patchbayMcpServerId, action.routing);
         break;
       case "setMcpServerTransport":
-        void this.mcpServers.setTransport(action.serverId, action.transport);
+        void this.mcpServers.setTransport(action.patchbayMcpServerId, action.transport);
         break;
       case "probeMcpServer":
-        void this.mcpServerGates.probe(action.serverId).catch(this.logCatch(`probe ${action.serverId}`));
+        void this.mcpServerGates.probe(action.patchbayMcpServerId).catch(this.logCatch(`probe ${action.patchbayMcpServerId}`));
         break;
       case "copyMcpServerJson":
-        void this.copyMcpServerJson(action.serverId);
+        void this.copyMcpServerJson(action.patchbayMcpServerId);
         break;
       case "openProposedDiff":
         void this.openProposedDiff(action.blockId).catch(this.logCatch(`openProposedDiff ${action.blockId}`));
@@ -1929,7 +1930,7 @@ export class Orchestrator {
         void this.agents.reorder(action.patchbayAgentIds).catch(this.logCatch("reorderAgentConfigs"));
         break;
       case "reorderMcpServers":
-        void this.mcpServers.reorder(action.ids);
+        void this.mcpServers.reorder(action.patchbayMcpServerIds);
         break;
       case "addContextRoot":
         void this.addContextRoot(action.sessionId);
@@ -2166,9 +2167,9 @@ export class Orchestrator {
    * values, a header key — and never an OAuth token. Copy and paste are
    * the owner's explicit acts; configs never ride a repo, so nothing can
    * follow a user between workspaces on its own. */
-  private async copyMcpServerJson(serverId: string): Promise<void> {
-    const config = this.mcpServerConfigs.get(serverId);
-    const json = await this.mcpServers.exportJson(serverId);
+  private async copyMcpServerJson(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    const config = this.mcpServerConfigs.get(patchbayMcpServerId);
+    const json = await this.mcpServers.exportJson(patchbayMcpServerId);
     if (config === undefined || json === undefined) return;
     await vscode.env.clipboard.writeText(json);
     void vscode.window.showInformationMessage(

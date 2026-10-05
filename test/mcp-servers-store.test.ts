@@ -20,6 +20,7 @@ import type { McpServerConnectView, McpServerWork, SettingsEvent } from "../src/
 import type { OAuthUserAgent } from "../src/orchestrator/mcp-oauth";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayMcpServerId } from "../src/shared/ids";
 
 let provider: FakeOAuthProvider;
 
@@ -89,7 +90,7 @@ function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } =
     tokens,
     envStore,
     { emit: (...evs) => events.push(...evs) },
-    { busy: (serverId) => serverLine.held(serverId), connecting: () => connectLine.holding() },
+    { busy: (patchbayMcpServerId) => serverLine.held(patchbayMcpServerId), connecting: () => connectLine.holding() },
     {
       editorServerScript: "/mcp-server.js",
       bridgeScript: "/bridge.js",
@@ -138,6 +139,23 @@ function failure(key: string, reason: RegExp) {
   return expect.objectContaining({ key, status: "failed", reason: expect.stringMatching(reason) });
 }
 
+describe("McpServerConfigStore — saved records", () => {
+  it("a server stored from the catalog under its old name reads as a catalog server — nothing dropped", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.integrations", [
+      { id: "old", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "oauth" } },
+      { id: "own", name: "Mine", source: { kind: "custom-stdio", command: "srv", args: [] } },
+    ]);
+    const configs = new McpServerConfigStore(kv);
+    expect(configs.list().map((c) => c.source)).toEqual([
+      { kind: "catalog", catalogId: "github", authMode: "oauth" },
+      { kind: "custom-stdio", command: "srv", args: [] },
+    ]);
+    // rewritten on disk, so the next read has nothing left to fold
+    expect(JSON.stringify(kv.get("acpPatchbay.integrations"))).not.toContain("registry");
+  });
+});
+
 describe("McpServersStore — key connect (the v1 floor)", () => {
   it("stores the pasted key and upserts the config entry with authMode header", async () => {
     const h = harness([entry()]);
@@ -152,8 +170,8 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
       {
         id,
         name: "Service",
-        sourceKind: "registry",
-        registryId: "svc",
+        sourceKind: "catalog",
+        catalogId: "svc",
         command: undefined,
         connected: true,
         active: true,
@@ -172,8 +190,8 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
     ]);
 
     expect(h.configs.get(id)?.source).toMatchObject({
-      kind: "registry",
-      registryId: "svc",
+      kind: "catalog",
+      catalogId: "svc",
       authMode: "header",
     });
     // the raw key never touches the non-secret config record
@@ -287,7 +305,7 @@ describe("McpServersStore — custom escape hatch", () => {
     expect(await h.tokens.get(id)).toBeNull();
     expect(h.configs.list()).toEqual([]);
     // the catalog entry itself is shipped data — still there, ready to reconnect
-    expect(h.manager.registryViews().some((r) => r.id === "svc")).toBe(true);
+    expect(h.manager.catalogViews().some((r) => r.id === "svc")).toBe(true);
   });
 
   it("inactive keeps config and credential but reaches no agent until toggled back", async () => {
@@ -399,9 +417,9 @@ describe("McpServersStore — routing and mcpServers", () => {
     const h = harness([entry()]);
     // config entry exists (e.g. pasted from a shared config), no token here
     await h.configs.upsert({
-      id: "svc",
+      id: "svc" as PatchbayMcpServerId,
       name: "Service",
-      source: { kind: "registry", registryId: "svc", authMode: "header" },
+      source: { kind: "catalog", catalogId: "svc", authMode: "header" },
       routing: "auto",
       active: true,
       transport: "auto",
@@ -895,7 +913,7 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("returns null for a disconnected server", async () => {
     const h = harness([entry()]);
-    expect(await h.manager.credentialFor("svc", "agent-a" as PatchbayAgentId)).toBeNull();
+    expect(await h.manager.credentialFor("svc" as PatchbayMcpServerId, "agent-a" as PatchbayAgentId)).toBeNull();
   });
 
   it("answers only while the server reaches the agent — muting, re-routing or removing it reaches a running bridge (#72)", async () => {
@@ -913,6 +931,6 @@ describe("McpServersStore — a bridge's credential", () => {
     await h.manager.setActive(id, true);
     await h.gates.remove(id);
     expect(await h.manager.credentialFor(id, "agent-b" as PatchbayAgentId)).toBeNull();
-    expect(await h.manager.credentialFor("no-such-server", "agent-b" as PatchbayAgentId)).toBeNull();
+    expect(await h.manager.credentialFor("no-such-server" as PatchbayMcpServerId, "agent-b" as PatchbayAgentId)).toBeNull();
   });
 });

@@ -39,10 +39,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { IpcClient } from "./ipc-client";
 import type { McpServerTokenParams, RootsResult } from "./ipc-protocol";
+import type { PatchbayMcpServerId } from "../shared/ids";
 
 const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
 const sessionId = process.env.ACP_PATCHBAY_SESSION_ID ?? "";
-const serverId = process.env.ACP_PATCHBAY_MCP_SERVER_ID ?? "";
+const patchbayMcpServerId = (process.env.ACP_PATCHBAY_MCP_SERVER_ID ?? "") as PatchbayMcpServerId;
 const url = process.env.ACP_PATCHBAY_MCP_SERVER_URL ?? "";
 // How the credential rides the request — per-server data, since not
 // every service takes `Authorization: Bearer` (Stitch wants a raw key in
@@ -56,7 +57,7 @@ const ipc = new IpcClient(socketPath, sessionId, () => onRootsChanged());
 
 async function currentToken(): Promise<string | null> {
   if (authHeader === "") return null;
-  const params: McpServerTokenParams = { serverId };
+  const params: McpServerTokenParams = { patchbayMcpServerId };
   const result = (await ipc.request("getMcpServerToken", params)) as { accessToken: string } | null;
   return result?.accessToken ?? null;
 }

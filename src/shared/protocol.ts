@@ -6,7 +6,7 @@
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
-import type { PatchbayAgentId } from "./ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "./ids";
 
 // ── envelope ─────────────────────────────────────────────────────────────────
 
@@ -179,8 +179,8 @@ export type Action =
    * whether a knob rides ACP's config-option surface or the legacy modes
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
   | { kind: "setSessionKnob"; sessionId: string; knobId: string; value: string | boolean }
-  | { kind: "connectRegistryKey"; registryId: string; token: string; url?: string }
-  | { kind: "connectRegistryOAuth"; registryId: string; url?: string }
+  | { kind: "connectCatalogKey"; catalogId: string; token: string; url?: string }
+  | { kind: "connectCatalogOAuth"; catalogId: string; url?: string }
   /** The id is minted orchestrator-side — the storage/SecretStorage key,
    * an internal concern the user never names; a name another server holds
    * gets a number. */
@@ -196,7 +196,7 @@ export type Action =
   | { kind: "importMcpServersJson"; json: string }
   /** Replaces one custom server's config from its edited mcpServers entry
    * JSON — env (and a header key) stored exactly as written. */
-  | { kind: "updateMcpServerJson"; serverId: string; json: string }
+  | { kind: "updateMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId; json: string }
   /** Abandons a connect under way — nothing is stored, and a browser tab
    * still open dies unanswered — or dismisses a failure's note. `key` is
    * the store's own, read off the published connect, never built here. */
@@ -205,19 +205,19 @@ export type Action =
    * credential + env): the server is gone, curated or custom; its catalog
    * entry stays, ready to connect again. The non-destructive option is the
    * active toggle below. */
-  | { kind: "removeMcpServer"; serverId: string }
-  | { kind: "setMcpServerActive"; serverId: string; active: boolean }
-  | { kind: "setMcpServerRouting"; serverId: string; routing: McpServerRoutingView }
+  | { kind: "removeMcpServer"; patchbayMcpServerId: PatchbayMcpServerId }
+  | { kind: "setMcpServerActive"; patchbayMcpServerId: PatchbayMcpServerId; active: boolean }
+  | { kind: "setMcpServerRouting"; patchbayMcpServerId: PatchbayMcpServerId; routing: McpServerRoutingView }
   /** Pins an http-backed server to patchbay's stdio bridge ("bridge")
    * or lets declaring agents connect directly ("auto") — the escape hatch
    * for an agent whose declared mcp.http support is broken in practice. */
-  | { kind: "setMcpServerTransport"; serverId: string; transport: "auto" | "bridge" }
+  | { kind: "setMcpServerTransport"; patchbayMcpServerId: PatchbayMcpServerId; transport: "auto" | "bridge" }
   /** Re-runs the connect-time tool probe (patchbay's own MCP client
    * handshake with the server) — a free read, no agent involved. */
-  | { kind: "probeMcpServer"; serverId: string }
+  | { kind: "probeMcpServer"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Copies the server as a `{"mcpServers": {name: entry}}` document — the
    * shape `importMcpServersJson` reads back and other clients take. */
-  | { kind: "copyMcpServerJson"; serverId: string }
+  | { kind: "copyMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; sessionId: string; toolCallId: string; path: string }
   /** Open a pending write proposal — the diff card's full change — in VS
@@ -242,7 +242,7 @@ export type Action =
   /** Drag-drop reorder from Settings — `ids` is the full list order as the
    * view sees it at drop time; the store keeps unnamed records at the tail. */
   | { kind: "reorderAgentConfigs"; patchbayAgentIds: readonly PatchbayAgentId[] }
-  | { kind: "reorderMcpServers"; ids: readonly string[] }
+  | { kind: "reorderMcpServers"; patchbayMcpServerIds: readonly PatchbayMcpServerId[] }
   | { kind: "addContextRoot"; sessionId: string }
   | { kind: "removeContextRoot"; sessionId: string; path: string }
   /** Saved roots — the folders every new session starts with. `saveRoot`
@@ -374,7 +374,7 @@ export type McpServerRoutingView = "auto" | readonly string[] | { readonly excep
 
 /** Payload for `addCustomMcpServer` — the "any MCP server, command or URL,
  * with auth" escape hatch. Curated servers go through
- * `connectRegistryKey`/`connectRegistryOAuth`
+ * `connectCatalogKey`/`connectCatalogOAuth`
  * instead, since those drive a connect flow rather than taking a source
  * directly. Auth shapes: "header" is a
  * static key in a configurable header (`{headerName}: {valuePrefix}{key}`);
@@ -406,10 +406,10 @@ export type McpServerProbeView =
   | { status: "failed"; at: string; reason: string };
 
 export interface McpServerView {
-  id: string;
+  id: PatchbayMcpServerId;
   name: string;
-  sourceKind: "registry" | "custom-stdio" | "custom-http";
-  registryId?: string;
+  sourceKind: "catalog" | "custom-stdio" | "custom-http";
+  catalogId?: string;
   /** The launch line for a custom-stdio server, or the endpoint URL for a
    * custom-http one — shown mono on the card. */
   command?: string;
@@ -438,7 +438,7 @@ export interface McpServerView {
   editJson?: string;
 }
 
-export interface RegistryEntryView {
+export interface CatalogEntryView {
   id: string;
   name: string;
   /** What the server is for, one line (catalog data) — shown on the row,
@@ -2346,12 +2346,12 @@ export interface SettingsState {
   machineCommandRules: readonly CommandRuleView[];
   fileWriteScope: FileWriteScopeView;
   auditTail: readonly AuditEntryView[];
-  mcpCatalog: readonly RegistryEntryView[];
+  mcpCatalog: readonly CatalogEntryView[];
   mcpServers: readonly McpServerView[];
   mcpConnects: readonly McpServerConnectView[];
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
-   * `connectAgent` action as registry/custom (`{ configuredId }`). */
+   * `connectAgent` action as registry/custom (`{ patchbayAgentId }`). */
   agentConfigs: readonly AgentConfigView[];
   /** Stat tile: sessions active today — a projection of the Agent View's
    * canonical rows (their `updatedAt` falls on today), republished by the
@@ -2422,7 +2422,7 @@ export type SettingsEvent =
       fileWriteScope: FileWriteScopeView;
     }
   | { kind: "auditTailChanged"; entries: readonly AuditEntryView[] }
-  | { kind: "mcpCatalogLoaded"; entries: readonly RegistryEntryView[] }
+  | { kind: "mcpCatalogLoaded"; entries: readonly CatalogEntryView[] }
   | {
       kind: "mcpServersChanged";
       servers: readonly McpServerView[];

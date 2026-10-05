@@ -29,6 +29,7 @@ import {
   type WorkspaceStateSnapshot,
 } from "../mcp/ipc-protocol";
 import type { ElicitationAnswer } from "../shared/protocol";
+import type { PatchbayMcpServerId } from "../shared/ids";
 
 /** Every hook takes the context token the calling subprocess was spawned
  * with — the one thing that says which attach it serves. */
@@ -54,7 +55,7 @@ export interface EditorStateHostHooks {
    * that isn't editor state: a currently-valid credential for an MCP
    * server — only for a bridge the server was given to under this token,
    * refreshed transparently if needed. */
-  getMcpServerToken(contextToken: string, serverId: string): Promise<McpServerTokenResult | null>;
+  getMcpServerToken(contextToken: string, patchbayMcpServerId: PatchbayMcpServerId): Promise<McpServerTokenResult | null>;
 }
 
 function severityName(sev: vscode.DiagnosticSeverity): DiagnosticInfo["severity"] {
@@ -182,7 +183,7 @@ export class EditorStateHost {
       case "getMcpServerToken":
         return this.hooks.getMcpServerToken(
           request.sessionId,
-          (request.params as McpServerTokenParams).serverId,
+          (request.params as McpServerTokenParams).patchbayMcpServerId,
         );
     }
   }

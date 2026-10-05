@@ -11,13 +11,14 @@
 import { z } from "zod";
 import { NamedRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
-import type { PatchbayAgentId } from "../../shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
+import { savedId } from "./saved-id";
 
 export const mcpServerSourceSchema = z.discriminatedUnion("kind", [
   z.object({
-    kind: z.literal("registry"),
-    registryId: z.string().min(1),
-    /** User-supplied endpoint, for registry entries with per-account URLs
+    kind: z.literal("catalog"),
+    catalogId: z.string().min(1),
+    /** User-supplied endpoint, for catalog entries with per-account URLs
      * (Supabase, Augment). Absent when the entry ships a fixed URL. */
     url: z.string().optional(),
     /** Which of the entry's offered mechanisms this connection used —
@@ -46,7 +47,7 @@ export const mcpServerSourceSchema = z.discriminatedUnion("kind", [
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
 export const mcpServerConfigSchema = z.object({
-  id: z.string().min(1),
+  id: savedId<PatchbayMcpServerId>(),
   name: z.string().min(1),
   source: mcpServerSourceSchema,
   /** "auto" (default) attaches to every agent (the fidelity gate is
@@ -81,6 +82,29 @@ const KEY = "acpPatchbay.integrations";
 export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   constructor(kv: KV) {
     super(kv, KEY, mcpServerConfigSchema);
+    // Once, at construction: a server connected from the catalog before the
+    // catalog was named so is stored as `{ kind: "registry", registryId }` —
+    // rewritten as `{ kind: "catalog", catalogId }`, every other field as
+    // stored. Read as it was, the record would fail its schema and be dropped.
+    const stored = kv.get<unknown>(KEY);
+    const fromRegistry = (r: unknown): r is { source: { kind: "registry"; registryId: unknown } } =>
+      typeof r === "object" &&
+      r !== null &&
+      "source" in r &&
+      typeof r.source === "object" &&
+      r.source !== null &&
+      "kind" in r.source &&
+      r.source.kind === "registry";
+    if (Array.isArray(stored) && stored.some(fromRegistry)) {
+      void kv.update(
+        KEY,
+        stored.map((r: unknown) => {
+          if (!fromRegistry(r)) return r;
+          const { kind: _kind, registryId, ...rest } = r.source;
+          return { ...r, source: { ...rest, kind: "catalog", catalogId: registryId } };
+        }),
+      );
+    }
   }
 
   /** A removed agent leaves every reach list that names it, in one write —

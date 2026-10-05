@@ -5,6 +5,8 @@
 // (secrets never go in settings, never in state stores, never in logs).
 // Structural subset of vscode.SecretStorage so this store, like the others,
 // is vscode-free and fakeable in tests.
+import type { PatchbayMcpServerId } from "../../shared/ids";
+
 export interface SecretsLike {
   get(key: string): Thenable<string | undefined>;
   store(key: string, value: string): Thenable<void>;
@@ -43,21 +45,21 @@ export class McpServerTokenStore {
   constructor(private readonly secrets: SecretsLike) {}
 
   /** Under the name the credentials were first stored by. */
-  private key(serverId: string): string {
-    return `acpPatchbay.integration.${serverId}.token`;
+  private key(patchbayMcpServerId: PatchbayMcpServerId): string {
+    return `acpPatchbay.integration.${patchbayMcpServerId}.token`;
   }
 
-  async get(serverId: string): Promise<StoredToken | null> {
-    const raw = await this.secrets.get(this.key(serverId));
+  async get(patchbayMcpServerId: PatchbayMcpServerId): Promise<StoredToken | null> {
+    const raw = await this.secrets.get(this.key(patchbayMcpServerId));
     if (raw === undefined) return null;
     return JSON.parse(raw) as StoredToken;
   }
 
-  async set(serverId: string, token: StoredToken): Promise<void> {
-    await this.secrets.store(this.key(serverId), JSON.stringify(token));
+  async set(patchbayMcpServerId: PatchbayMcpServerId, token: StoredToken): Promise<void> {
+    await this.secrets.store(this.key(patchbayMcpServerId), JSON.stringify(token));
   }
 
-  async remove(serverId: string): Promise<void> {
-    await this.secrets.delete(this.key(serverId));
+  async remove(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    await this.secrets.delete(this.key(patchbayMcpServerId));
   }
 }

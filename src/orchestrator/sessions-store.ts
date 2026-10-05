@@ -59,6 +59,7 @@ import { newBlockId, SessionStream, type StreamState } from "./session-stream";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { boundedText } from "./content-parts";
 import type { PatchbayAgentId } from "../shared/ids";
+import type { PatchbayMcpServerId } from "../shared/ids";
 
 /** A `sessionId` is patchbay's own id for a session — the row's — wherever
  * it isn't named the agent's. */
@@ -620,9 +621,9 @@ export class SessionsStore {
 
   /** The agent a server was given to under a token through the bridge —
    * the one delivery that asks patchbay for the server's credential. */
-  bridgedTo(token: string, serverId: string): PatchbayAgentId | undefined {
+  bridgedTo(token: string, patchbayMcpServerId: PatchbayMcpServerId): PatchbayAgentId | undefined {
     const grant = this.tokens.get(token);
-    return grant?.given.some((s) => s.id === serverId && s.delivery === "bridge") === true ? grant.patchbayAgentId : undefined;
+    return grant?.given.some((s) => s.id === patchbayMcpServerId && s.delivery === "bridge") === true ? grant.patchbayAgentId : undefined;
   }
 
   /** Every token a session's attaches were given — what its subprocesses

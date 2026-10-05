@@ -43,7 +43,7 @@ suite("IPC admission (issue #72)", () => {
       { method: "getOpenEditors" },
       { method: "getRoots" },
       { method: "requestUserInput", params: { message: "your password?" } },
-      { method: "getMcpServerToken", params: { serverId: "github" } },
+      { method: "getMcpServerToken", params: { patchbayMcpServerId: "github" } },
     ];
     for (const [i, request] of requests.entries()) {
       const answer = await ask(orchestrator.editorStateHost.socketPath, { id: i + 1, sessionId: "ctx-1", ...request });

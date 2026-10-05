@@ -26,6 +26,7 @@ import { SessionContinuityStore } from "../src/orchestrator/stores/session-conti
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayMcpServerId } from "../src/shared/ids";
 
 let dir: string;
 beforeEach(async () => {
@@ -63,9 +64,9 @@ describe("eraseAllData", () => {
     // A lived-in install.
     await agentConfigs.upsert({ id: "claude" as PatchbayAgentId, name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
-    await mcpServerConfigs.upsert({ id: "github", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
+    await mcpServerConfigs.upsert({ id: "github" as PatchbayMcpServerId, name: "GitHub", source: { kind: "catalog", catalogId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
     await mcpServerEnv.set("github", { GITHUB_PAT: "ghp-secret" });
-    await mcpServerTokens.set("github", { accessToken: "gho-secret" });
+    await mcpServerTokens.set("github" as PatchbayMcpServerId, { accessToken: "gho-secret" });
     await usedCapabilities.save("claude" as PatchbayAgentId, "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // A stray from a removed agent — no config left, must still go.
     await usedCapabilities.save("ghost" as PatchbayAgentId, "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
@@ -102,7 +103,7 @@ describe("eraseAllData", () => {
     expect(spawnRegistry.list()).toEqual([]);
     expect(await agentEnv.get("claude")).toEqual({});
     expect(await mcpServerEnv.get("github")).toEqual({});
-    expect(await mcpServerTokens.get("github")).toBeNull();
+    expect(await mcpServerTokens.get("github" as PatchbayMcpServerId)).toBeNull();
     expect(permissionRules.get()).toEqual(DEFAULT_PERMISSION_RULES);
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(await decisionAudit.tail(5)).toEqual([]);

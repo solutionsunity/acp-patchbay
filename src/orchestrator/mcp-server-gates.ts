@@ -14,6 +14,7 @@
 import type { McpServerRoutingView, McpServerSourceView, McpServerWork } from "../shared/protocol";
 import { connectKey, type McpServerLineOperations } from "./mcp-servers-store";
 import type { Queue } from "./queue";
+import type { PatchbayMcpServerId } from "../shared/ids";
 
 export class McpServerGates {
   constructor(
@@ -27,24 +28,24 @@ export class McpServerGates {
 
   /** A curated entry connected with a pasted key, then probed. Settles
    * with the new server's id. */
-  connectWithKey(catalogId: string, token: string, url?: string): Promise<string> {
+  connectWithKey(catalogId: string, token: string, url?: string): Promise<PatchbayMcpServerId> {
     return this.connected(
       this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-        this.store.connectRegistryWithKey(catalogId, token, url, signal),
+        this.store.connectCatalogWithKey(catalogId, token, url, signal),
       ),
     );
   }
 
   /** A curated entry connected through its browser OAuth flow. Settles
    * with the new server's id. */
-  connectOAuth(catalogId: string, url?: string): Promise<string> {
+  connectOAuth(catalogId: string, url?: string): Promise<PatchbayMcpServerId> {
     return this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-      this.store.connectRegistryOAuth(catalogId, url, signal),
+      this.store.connectCatalogOAuth(catalogId, url, signal),
     );
   }
 
   /** A custom server added, then probed. Settles with its id. */
-  addCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): Promise<string> {
+  addCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): Promise<PatchbayMcpServerId> {
     return this.connected(
       this.connectLine.run(connectKey.custom(name), "connect", (signal) =>
         this.store.addCustom(name, source, routing, signal),
@@ -60,14 +61,14 @@ export class McpServerGates {
     }
   }
 
-  probe(serverId: string): Promise<void> {
-    return this.serverLine.run(serverId, "probe", (signal) => this.store.probe(serverId, signal));
+  probe(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    return this.serverLine.run(patchbayMcpServerId, "probe", (signal) => this.store.probe(patchbayMcpServerId, signal));
   }
 
   /** Disconnect is remove — the full clear; it cuts in on whatever the
    * server's line holds. */
-  remove(serverId: string): Promise<void> {
-    return this.serverLine.cut(serverId, "remove", () => this.store.remove(serverId));
+  remove(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
+    return this.serverLine.cut(patchbayMcpServerId, "remove", () => this.store.remove(patchbayMcpServerId));
   }
 
   /** A connect under way is told to stop — nothing is stored; with none
@@ -83,9 +84,9 @@ export class McpServerGates {
   }
 
   /** A server a connect made is probed at once: the user just acted on it. */
-  private async connected(made: Promise<string>): Promise<string> {
-    const id = await made;
-    await this.probe(id);
-    return id;
+  private async connected(made: Promise<PatchbayMcpServerId>): Promise<PatchbayMcpServerId> {
+    const patchbayMcpServerId = await made;
+    await this.probe(patchbayMcpServerId);
+    return patchbayMcpServerId;
   }
 }

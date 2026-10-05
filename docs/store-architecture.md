@@ -259,13 +259,14 @@ streams nothing.
 - busy — what the server's line holds, and the connects under way.
 
 **Ids and names.** A new server's id is minted (a UUID); a server stored
-earlier keeps its own, since ids are opaque keys. The catalog id and the
-display name are facts on the row, so one curated entry can be connected more
-than once — two accounts, two servers. The display name rides the wire as the
-server's name, so no two servers share one: a taken name gets a number
-("GitHub 2"), picked in the same write as the add, and "patchbay" is the
-built-in editor server's. Reach lists name agents by id; an agent's removal
-takes it off every list in one write.
+earlier keeps its own, since ids are opaque keys. Anywhere but its own row it
+is a `patchbayMcpServerId`, of its own type (`PatchbayMcpServerId`). The
+catalog id (`catalogId`) and the display name are facts on the row, so one
+curated entry can be connected more than once — two accounts, two servers. The
+display name rides the wire as the server's name, so no two servers share one:
+a taken name gets a number ("GitHub 2"), picked in the same write as the add,
+and "patchbay" is the built-in editor server's. Reach lists name agents by id;
+an agent's removal takes it off every list in one write.
 
 **Operations:** connect a curated entry (a pasted key, or the browser OAuth
 flow), add a custom server, import, probe, remove — disconnect is remove:

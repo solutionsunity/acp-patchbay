@@ -127,35 +127,35 @@ export function App({ state }: { state: SettingsState }) {
         {section === "mcpServers" && (
           <McpServersSection
             state={state}
-            onConnectKey={(registryId, token, url) =>
-              send({ kind: "connectRegistryKey", registryId, token, url })
+            onConnectKey={(catalogId, token, url) =>
+              send({ kind: "connectCatalogKey", catalogId, token, url })
             }
-            onConnectOAuth={(registryId, url) =>
-              send({ kind: "connectRegistryOAuth", registryId, url })
+            onConnectOAuth={(catalogId, url) =>
+              send({ kind: "connectCatalogOAuth", catalogId, url })
             }
             onAddCustom={(name, source, routing) =>
               send({ kind: "addCustomMcpServer", name, source, routing })
             }
             onImportJson={(json) => send({ kind: "importMcpServersJson", json })}
-            onUpdateJson={(serverId, json) =>
-              send({ kind: "updateMcpServerJson", serverId, json })
+            onUpdateJson={(patchbayMcpServerId, json) =>
+              send({ kind: "updateMcpServerJson", patchbayMcpServerId, json })
             }
             onCancelConnect={(key) =>
               send({ kind: "cancelMcpServerConnect", key })
             }
-            onSetActive={(serverId, active) =>
-              send({ kind: "setMcpServerActive", serverId, active })
+            onSetActive={(patchbayMcpServerId, active) =>
+              send({ kind: "setMcpServerActive", patchbayMcpServerId, active })
             }
-            onRemove={(serverId) => send({ kind: "removeMcpServer", serverId })}
-            onSetRouting={(serverId, routing) =>
-              send({ kind: "setMcpServerRouting", serverId, routing })
+            onRemove={(patchbayMcpServerId) => send({ kind: "removeMcpServer", patchbayMcpServerId })}
+            onSetRouting={(patchbayMcpServerId, routing) =>
+              send({ kind: "setMcpServerRouting", patchbayMcpServerId, routing })
             }
-            onSetTransport={(serverId, transport) =>
-              send({ kind: "setMcpServerTransport", serverId, transport })
+            onSetTransport={(patchbayMcpServerId, transport) =>
+              send({ kind: "setMcpServerTransport", patchbayMcpServerId, transport })
             }
-            onProbe={(serverId) => send({ kind: "probeMcpServer", serverId })}
-            onCopy={(serverId) => send({ kind: "copyMcpServerJson", serverId })}
-            onReorder={(ids) => send({ kind: "reorderMcpServers", ids })}
+            onProbe={(patchbayMcpServerId) => send({ kind: "probeMcpServer", patchbayMcpServerId })}
+            onCopy={(patchbayMcpServerId) => send({ kind: "copyMcpServerJson", patchbayMcpServerId })}
+            onReorder={(patchbayMcpServerIds) => send({ kind: "reorderMcpServers", patchbayMcpServerIds })}
           />
         )}
         {section === "permissions" && (

@@ -31,7 +31,7 @@ import {
 import type { FakeAgentScript } from "./fake-agent/main";
 import { gatesFor } from "./support/session-gates";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
-import type { PatchbayAgentId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -3039,8 +3039,8 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
         return {
           servers: [],
           given: [
-            { id: "remote", delivery: "bridge" as const },
-            { id: "local", delivery: "stdio" as const },
+            { id: "remote" as PatchbayMcpServerId, delivery: "bridge" as const },
+            { id: "local" as PatchbayMcpServerId, delivery: "stdio" as const },
           ],
         };
       },
@@ -3072,10 +3072,10 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     await h.pool.connect(spec({}, "ct2"));
     await h.sessions.createSession("ct2" as PatchbayAgentId, "Fake Agent", cwd);
     const [token] = c.minted;
-    expect(h.sessions.bridgedTo(token!, "remote")).toBe("ct2");
-    expect(h.sessions.bridgedTo(token!, "local")).toBeUndefined(); // handed through: asks for nothing
-    expect(h.sessions.bridgedTo(token!, "never-given")).toBeUndefined();
-    expect(h.sessions.bridgedTo("forged", "remote")).toBeUndefined();
+    expect(h.sessions.bridgedTo(token!, "remote" as PatchbayMcpServerId)).toBe("ct2");
+    expect(h.sessions.bridgedTo(token!, "local" as PatchbayMcpServerId)).toBeUndefined(); // handed through: asks for nothing
+    expect(h.sessions.bridgedTo(token!, "never-given" as PatchbayMcpServerId)).toBeUndefined();
+    expect(h.sessions.bridgedTo("forged", "remote" as PatchbayMcpServerId)).toBeUndefined();
     await h.pool.stop("ct2" as PatchbayAgentId);
   });
 
