@@ -2,208 +2,80 @@
 
 ## Unreleased
 
-- Adding an agent from the registry and upgrading one now read the
-  registry first. Before, both used patchbay's last copy of it, which in a
-  window left open for days could be out of date, so an add or an upgrade
-  could install a version the registry had already moved past. (#75)
-- Nothing hides off the edge of a narrow panel anymore. A long root path
-  in the roots popover no longer pushes its Remove button out of view —
-  every menu, popover, list and tooltip now fits the space it opens into,
-  and scrolls when that runs out. In a narrow Settings editor, rows wrap and
-  a field's label sits above its control instead of squeezing it off the
-  page; a long model name on a composer pill shortens with an ellipsis.
-  (#67)
-- Opening a chat puts the cursor in the composer. New Session, Connect
-  agent…, adding a selection from the editor, revealing a session and the
-  status bar item now focus the text box, not just the view, so you can
-  type straight away; switching sessions in the view does too. A view you
-  aren't in never takes focus from where you are. (#55)
-- A file you give a session — a pasted or picked image, a file dropped on
-  the composer — now lives with the session, in patchbay's own storage,
-  instead of the system's temp folder. Before, a reboot or a temp cleanup
-  could delete it while its chip still waited in a draft (sending then
-  dropped the image, or handed the agent a link to nothing), or after the
-  agent was handed a link to it. The files now leave with the session —
-  deleted or closed, gone from its agent's list, or its agent removed — and
-  files staged before this version move in on the first start. (#78)
-- **Close in the session menu no longer deletes the session from the
-  agent's history.** The menu now offers what the agent offers: **Delete…**
-  where the agent can delete sessions — it asks first, and if the agent
-  refuses, the session stays and you see why — and **Close** where the
-  agent keeps no list of its sessions, so closing really ends it. An agent
-  that lists its sessions but can't delete them offers neither; before,
-  Close only hid such a session until the agent's next list. (#77)
-- Switching off auto-connect for the agent the old
-  `acpPatchbay.defaultAgent` setting named now stays off; it was switched
-  back on at every start.
-- The decision audit names each session by its agent and the agent's own
-  id for it — what you can still match in that agent's history after the
-  window closes — instead of an id that lived only as long as the window.
-- **Security:** a terminal now answers only the session that started it.
-  Before, any connected agent could read the output of a command another
-  agent's session ran, wait on it, or kill and release it, by naming its
-  id — and the ids were a counter. A file read naming a session patchbay
-  doesn't hold is refused, like every other request naming one. (#76)
-- Two agents that number their sessions the same way no longer take each
-  other's capability check: the check session of the second could hide the
-  first's, so options the first sent late (a model or mode list) were
-  dropped from its settings.
-- Adding a second custom agent that starts with the same executable (two
-  `npx …` agents, two `hermes --profile …` agents) no longer replaces the
-  first. Each added agent gets an id of its own and a name no other agent
-  holds ("npx 2"), so a registry agent can also be added more than once —
-  two profiles, two agents; the registry list marks the ones already added.
-  The palette's Connect agent… lists your saved agents first and connects
-  the one you pick; its registry entries and custom command add one. An
-  Upgrade now keeps the agent's name. (#51)
-- An MCP server's browser sign-in that fails on the network now names the
-  server and the reason (for example "couldn't get a token from
-  auth.example.com — network error — fetch failed (ECONNRESET)"), instead
-  of a bare "fetch failed".
-- If the file where patchbay keeps its agents, MCP servers and preferences
-  is there but can't be read (a permissions problem, say), patchbay now
-  stops with an error naming the file. Before, it started as if nothing
-  were saved, and its next save replaced the real file. A saved env record
-  that can't be read is now reported in the log by its agent or server, and
-  read as empty, instead of being dropped in silence.
+A refactor of how patchbay holds its state: agents, sessions, MCP servers
+and asks each live in one store with one writer, and work on them takes
+turns (#69). Plus two security fixes and the bugs the refactor surfaced.
+
 - **Security:** patchbay's local socket now answers only the processes an
-  agent was started with for a session. Before, any program running as
-  the same user could ask it for the credential of any connected MCP
-  server by its name, read the open editors' contents, unsaved edits
-  included, and show a form in a chat. Session tokens were a counter, so
-  they were easy to guess; they are random now. A bridge gets a server's
-  credential only while that server was given to its session and is still
-  connected, switched on and routed to the agent: switching a server off
-  or routing it away now reaches chats that are already open. (#72)
-- New logo: a chat bubble with the AI spark plugged into a socket in its
-  rim. The Marketplace icon is the full mark on a purple-to-blue tile, now
-  at 256px for sharp display on high-density screens. The activity-bar and
-  view icon is the mark redrawn for small sizes in the style of VS Code's
-  own icons: the bubble in outline at their line weight, with the spark
-  plugged into it.
-- With patchbay open in two windows, a save in one window no longer erases
-  what the other saved. Each window rebuilt its saved lists (agents, MCP
-  servers, a session's held prompts, chips and draft, sign-in locks,
-  preferences) from what it read when it opened, so a save could drop the
-  other window's newer entries or bring back ones it had removed. Saves now
-  start from what the file holds at that moment. (#71)
-- An agent now runs as one process per window, shared by all of its
-  sessions — the way ACP is designed. The per-agent process setting (auto,
-  shared, isolated) is gone. Under `auto`, a second chat with an agent
-  started an extra copy of it until patchbay had seen the agent handle two
-  chats at once — more memory, another sign-in prompt at times, and two
-  copies writing to one profile for agents that keep their state per
-  profile. If you had set an agent to `isolated`, its chats now share its
-  one process. (#62)
-- A renamed agent shows its new name everywhere right away, and a stopped
-  agent's card shows the launch command it will run next, instead of
-  keeping the old ones until the next connect.
-- Starting a chat, or opening one of its sessions, while the agent is still
-  connecting (at window open, or from Settings) now waits for that connect
-  instead of failing with "already connected". (#53)
-- A second Upgrade while one is still running — a double click, or the
-  notice's Upgrade after the chip's — is now the same upgrade: one question,
-  one restart. Before, it asked again and restarted the agent a second
-  time. While an upgrade runs, its chip reads "upgrading to x.y.z…". (#68)
-- Work on one agent now takes turns: an Upgrade, Restart, Log in or Verify
-  asked for while another runs waits for it, and the chat pane says what the
-  agent is busy with while a chat waits. A second chat started with another
-  agent while one is connecting is no longer ignored.
-- Upgrade checks the registry before stopping anything: an agent the
-  registry no longer lists keeps running instead of being left stopped. An
-  agent saved under an older id than the registry's is upgraded in place
-  instead of being added a second time.
-- Stop and Remove now end whatever the agent is doing. Stop is offered while
-  an agent is still starting, downloading included, and ends the start;
-  removing an agent mid-download no longer starts it once the download
-  finishes, and Erase all data no longer leaves one starting either. Work
-  asked of the agent meanwhile (a Verify, an Upgrade) is dropped instead of
-  running after them, and an Upgrade stopped before it saved the new
-  version keeps the old one. A login still open in its terminal is left to
-  you: patchbay stops waiting on it and the terminal stays open until you
-  close it — a login you finish there still counts. While a Stop or Remove
-  runs, its button spins.
-- Stopping an agent mid-reply no longer marks what that reply carried (an
-  image, say) as suspect in the capability matrix.
-- Stop, Upgrade, Remove and Log out now ask one question, the same from
-  every button and notification, and only when something would be cut off:
-  how many open conversations they disconnect, and how many replies still
-  running. Stop never asked before; Log out asked every time, saying that
-  sessions "may start failing" when it actually stops the agent at once,
-  and now asks only with conversations open. Remove still always asks,
-  now with the counts when there are any.
-- Stopping an agent now disconnects its conversations at once, as a crash
-  does: they show as disconnected, a running reply is closed off, and each
-  reopens later with its knobs, roots and held prompts. Before, they
-  looked connected until the agent's next start.
-- Removing an agent also lets go of everything patchbay held for it in
-  this window, including a chat pane still waiting on it.
-- Reloading a session while the agent waits on your answer (a permission,
-  a file write, a command) now tells the agent the question is cancelled,
-  as ACP requires. Before, the reload sat out its 3-second wait and the
-  agent was left waiting on an answer that never came.
-- A message sent to a session that can't be reopened at that moment (the
-  agent no longer has it, say) no longer disappears with the cleared box:
-  it waits with the held prompts above the composer, to send again or take
-  back.
-- Sessions now carry an id of patchbay's own, with the agent's id for the
-  session kept beside it (Copy session ID still copies the agent's). A new
-  session the agent must create again — its agent stopped before the first
-  message — stays the same session: a window it was open in stays open,
-  and closing it while it is being created again no longer brings it
-  back. Two agents that use the same id for their sessions no longer show
-  as one. A question, file write or command an agent sends for a session
-  patchbay doesn't hold is answered at once instead of waiting with no
-  card to answer it on. The first window reload after updating opens on
-  the home screen instead of the last open session.
-- Context attached to a session while its agent is stopped — a
-  selection, a file, an image — now waits for the next message instead of
-  being silently dropped.
-- Stop now works from the moment a message is sent. While its session is
-  still opening or reloading, the composer already shows Stop, and
-  stopping there means the message is never sent; before, Stop appeared
-  only once the message had reached the agent. A reply the agent doesn't
-  end after Stop is ended on patchbay's side after 3 seconds.
-- Everything done to one session now takes turns, as it does for an
-  agent. A message sent while the session opens or reloads goes once it is
-  back, never while its history is still being read in, and a model, mode
-  or effort change made meanwhile applies then instead of being dropped.
-  An idle session is released only when nothing else is happening on it,
-  so a message sent at that moment reopens the session instead of racing
-  the release. Work on a session also waits for work on its agent: a
-  reload, an open or a message during an agent restart, upgrade or login
-  goes once that is done, never to the connection being replaced.
-- Settings and its messages say "MCP server" wherever they said
-  "integration" — the name the Settings page already used.
-- Work on an MCP server takes turns. A second click on Connect while a
-  browser sign-in is out is that same sign-in, not a second tab. A failed
-  connect or add keeps its note until you dismiss it or try again;
-  before, the next refresh of the list could clear it, and only the last
-  custom add's note could show. Removing a server while it is being
-  checked stops the check.
-- Several requests arriving as an MCP server's sign-in expires now
-  refresh it once. Before, each refreshed it on its own, and a server that
-  rotates refresh tokens could treat the repeats as theft and revoke the
-  sign-in. A refresh that fails is now logged.
-- A curated MCP server can be connected more than once — two GitHub
-  accounts, say. Each connection is a server of its own; the catalog keeps
-  every entry, and a second connection of one takes a number after its
-  name. A name another server already holds always does now, custom ones
-  included: two servers of one name would collide in an agent. That holds
-  for "patchbay" too, the name of patchbay's own server in every session.
-  (#58)
-- Removing an agent also takes it off every MCP server's list of agents
-  it reaches.
-- Dependency advisory on code that ships: dompurify 3.4.15 → 3.4.16 (a
-  sanitizer bypass in its in-place mode — mermaid never sanitizes in
-  place, and the webview CSP blocks inline handlers anyway). The other
-  alert, markdown-it, lives in the packaging tool and never reaches the
-  VSIX.
-- The capability matrix's per-agent chip now reads `handshake <time>`: the
-  last time the agent's declared capabilities were read. It used to say
-  `reset` and claim used marks reset on every reconnect; they carry over
-  while the agent's version stays the same.
-- KaTeX 0.17 → 0.19, one copy for chat math and diagrams (a
+  agent was started with for a session. Before, any program running as the
+  same user could ask it for a connected MCP server's credential, read the
+  open editors (unsaved edits included) or show a form in a chat; session
+  tokens are now random, and a bridge gets a credential only while its
+  server is still given, switched on and routed to that agent. (#72)
+- **Security:** a terminal now answers only the session that started it;
+  before, any agent could read, wait on, kill or release another session's
+  command by guessing its counter id. A request naming a session patchbay
+  doesn't hold is refused or answered at once. (#76)
+- **Sessions offer what the agent offers.** The menu shows **Delete…**
+  (asks first; a refusal keeps the session and says why) where the agent
+  can delete, and **Close** where it keeps no session list. Close no longer
+  deletes the session from the agent's history. (#77)
+- **Files given to a session live with it,** in patchbay's storage instead
+  of the system temp folder, which a reboot could empty while a chip or the
+  agent's link still pointed at the file. They leave with the session, and
+  files staged before move in on the first start. (#78)
+- **Agents get ids of their own.** Two custom agents with the same
+  executable no longer overwrite each other, a registry agent can be added
+  more than once ("npx 2"), and Connect agent… lists your saved agents
+  first (#51). An MCP server can likewise be connected more than once, and
+  a second server of one name takes a number (#58). Sessions carry
+  patchbay's own id too, so two agents numbering sessions alike no longer
+  collide, and a never-prompted session created again stays the same one.
+- **One process per agent per window**, shared by its sessions as ACP
+  intends; the auto/shared/isolated setting is gone. (#62)
+- **Work takes turns.** Upgrade, Restart, Log in and Verify on an agent,
+  and opens, reloads, messages and knob changes on a session, wait for each
+  other instead of racing; a session's work also waits for its agent's
+  (#69). A
+  chat started while its agent is still connecting waits for it (#53); a
+  second Upgrade is the same upgrade, one question and one restart (#68);
+  MCP server work takes turns too, and several requests at a sign-in's
+  expiry refresh it once.
+- **Stop, Upgrade, Remove and Log out ask one question**, the same from
+  every button, and only when conversations would be cut off. Stop and
+  Remove end whatever the agent is doing, starts and downloads included;
+  stopping disconnects its conversations at once, and they reopen later
+  with their knobs, roots and held prompts. Stop on a message works from
+  the moment it is sent.
+- **Upgrade and Add read the registry first,** so they no longer install
+  a version the registry has moved past (the saved copy stands in only when
+  the registry can't be reached); an agent the registry no longer
+  lists keeps running. (#75)
+- **Nothing is dropped quietly anymore:** context attached while the agent
+  is stopped waits for the next message; a message to a session that can't
+  reopen waits with the held prompts; a reload cancels the agent's pending
+  questions, as ACP requires; an unreadable settings file stops patchbay
+  with its name instead of being overwritten; a failed MCP sign-in names
+  the server and the reason.
+- **Two windows no longer erase each other's saves:** every save starts
+  from what the file holds at that moment. (#71)
+- **Opening a chat puts the cursor in the composer**, from New Session,
+  Connect agent…, adding a selection, revealing a session or the status
+  bar item; a view you aren't in never takes focus. (#55)
+- **Nothing hides off a narrow panel:** every menu, popover, list and
+  tooltip fits the space it opens into, Settings rows wrap, and long model
+  names shorten. (#67)
+- Smaller fixes: a renamed agent shows its new name at once; switching off
+  auto-connect for the old default agent stays off; a stopped reply no
+  longer marks its content suspect; removing an agent takes it off every
+  MCP server's routing; Settings says "MCP server" instead of
+  "integration"; the decision audit names sessions by the agent's own id;
+  the capability matrix's chip reads `handshake <time>` instead of claiming
+  used marks reset on every reconnect.
+- New logo, with a 256px Marketplace icon and a VS Code-style activity-bar
+  icon.
+- Dependencies: dompurify 3.4.16 (a sanitizer bypass in a mode patchbay
+  never uses) and KaTeX 0.19.0, one copy for chat math and diagrams (a
   prototype-pollution gadget; patchbay pollutes no prototype).
 
 ## 0.84.1 — 2026-09-29
