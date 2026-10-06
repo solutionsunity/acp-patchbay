@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Top overlay drawers — they overlay from the top. The drawer
-// shells are presentational; every control inside is the shared layer.
-// `onDone(toast?)` closes the drawer — drawer visibility and toasts are the
-// shell's local UI state.
-import { useState } from "react";
+// The agents and sessions drawers — sheets that drop from the top. Escape,
+// the overlay click, the focus trap and focus back to the button that
+// opened them are the shared sheet's; every row is a button, so a drawer
+// is walked and picked from the keyboard. `onDone(toast?)` closes the
+// drawer — drawer visibility and toasts are the shell's local UI state.
+import { useState, type ReactNode } from "react";
 import type { AgentSummary, SessionSummary } from "../../shared/protocol";
 import type { SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
@@ -17,18 +18,29 @@ import { unlistedAgents } from "./drawer-notes";
 import { Dot } from "./header";
 import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import type { PatchbaySessionId } from "../../shared/ids";
 
-/** Drawer title row with the explicit way out — clicking the scrim still
- * works, but the affordance must be visible. */
-function DrawerHead({ title, onClose }: { title: string; onClose(): void }) {
+/** A drawer: the sheet, its title and the explicit way out — the overlay
+ * click and Escape close it too, but the affordance must be visible. Open
+ * while mounted; the shell unmounts it to close. */
+function Drawer({ title, onClose, children }: { title: string; onClose(): void; children: ReactNode }) {
   return (
-    <div className="flex items-center">
-      <h3 className="flex-1">{title}</h3>
-      <Button variant="ghost" size="icon" className="h-6 w-6" title="Close" aria-label="Close" onClick={onClose}>
-        <Icon name="close" />
-      </Button>
-    </div>
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent className="drawer" aria-describedby={undefined}>
+        <div className="flex items-center">
+          <SheetTitle asChild>
+            <h3 className="flex-1">{title}</h3>
+          </SheetTitle>
+          <SheetClose asChild>
+            <Button variant="ghost" size="icon" className="h-6 w-6" title="Close" aria-label="Close">
+              <Icon name="close" />
+            </Button>
+          </SheetClose>
+        </div>
+        {children}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -44,8 +56,7 @@ export function AgentsDrawer(props: {
 }) {
   const send = useActions();
   return (
-    <div className="drawer">
-      <DrawerHead title="New chat with…" onClose={() => props.onDone()} />
+    <Drawer title="New chat with…" onClose={() => props.onDone()}>
       {props.agents.length === 0 && (
         <div className="a-row cursor-default">
           <span className="sub">No agents yet — add one in Settings.</span>
@@ -54,7 +65,8 @@ export function AgentsDrawer(props: {
       {props.agents.map((a) => {
         const matrix = a.capabilities;
         return (
-          <div
+          <button
+            type="button"
             className="a-row"
             key={a.id}
             onClick={() => {
@@ -76,10 +88,11 @@ export function AgentsDrawer(props: {
                         : "")}
               </div>
             </div>
-          </div>
+          </button>
         );
       })}
-      <div
+      <button
+        type="button"
         className="foot"
         onClick={() => {
           send({ kind: "openSettings", section: "agents" });
@@ -87,8 +100,8 @@ export function AgentsDrawer(props: {
         }}
       >
         <Icon name="add" /> Add or manage agents — Settings…
-      </div>
-    </div>
+      </button>
+    </Drawer>
   );
 }
 
@@ -111,8 +124,7 @@ export function SessionsDrawer(props: {
   // append-only and wire-merge arrival order stops mattering.
   const ordered = [...props.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
-    <div className="drawer">
-      <DrawerHead title="Sessions" onClose={props.onDone} />
+    <Drawer title="Sessions" onClose={props.onDone}>
       {ordered.length === 0 && (
         <div className="s-row cursor-default">
           <span className="sub">No sessions yet.</span>
@@ -122,23 +134,25 @@ export function SessionsDrawer(props: {
         const agent = props.agents.find((a) => a.id === s.patchbayAgentId);
         const isActive = s.id === props.activePatchbaySessionId;
         return (
-          <div
-            className={`s-row relative${isActive ? " active" : ""}`}
-            key={s.id}
-            aria-current={isActive ? "true" : undefined}
-            onClick={() => {
-              send({ kind: "switchSession", patchbaySessionId: s.id });
-              props.onDone();
-            }}
-          >
-            <MarkDot mark={props.markOf(s)} />
-            <div>
-              <div className="nm">{s.title}</div>
-              <div className="sub">
-                {agent?.name ?? s.patchbayAgentId} · {timeAgo(s.updatedAt)}
+          <div className={`s-row relative${isActive ? " active" : ""}`} key={s.id}>
+            <button
+              type="button"
+              className="s-row-pick"
+              aria-current={isActive ? "true" : undefined}
+              onClick={() => {
+                send({ kind: "switchSession", patchbaySessionId: s.id });
+                props.onDone();
+              }}
+            >
+              <MarkDot mark={props.markOf(s)} />
+              <div className="min-w-0">
+                <div className="nm">{s.title}</div>
+                <div className="sub">
+                  {agent?.name ?? s.patchbayAgentId} · {timeAgo(s.updatedAt)}
+                </div>
               </div>
-            </div>
-            <div className="badges" onClick={(e) => e.stopPropagation()}>
+            </button>
+            <div className="badges">
               <SessionActions
                 session={s}
                 agent={agent}
@@ -171,9 +185,9 @@ export function SessionsDrawer(props: {
           </span>
         </div>
       ))}
-      <div className="foot" onClick={props.onNew}>
+      <button type="button" className="foot" onClick={props.onNew}>
         <Icon name="add" /> New session
-      </div>
-    </div>
+      </button>
+    </Drawer>
   );
 }

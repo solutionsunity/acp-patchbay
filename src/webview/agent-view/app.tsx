@@ -194,7 +194,6 @@ export function App({
         usage={active !== null ? (state.sessionUsage[active.id] ?? null) : null}
         onNotice={(msg) => showToast(msg, "warning")}
       />
-      {drawer !== null && <div className="scrim" onClick={() => setDrawer(null)} />}
       {drawer === "agents" && (
         <AgentsDrawer agents={state.agents} onDone={closeDrawer} />
       )}

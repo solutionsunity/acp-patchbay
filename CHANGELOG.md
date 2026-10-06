@@ -62,6 +62,13 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
 - **Opening a chat puts the cursor in the composer**, from New Session,
   Connect agent…, adding a selection, revealing a session or the status
   bar item; a view you aren't in never takes focus. (#55)
+- **Every overlay behaves the same way.** The drawers, a diagram's download
+  menu and fullscreen view, and the token gauge's tooltip now close on
+  Escape, keep the keyboard inside while open and give focus back when they
+  close; a drawer's rows are picked from the keyboard. An open menu,
+  popover or dialog now also closes when you click an expand chevron or a
+  tool card's file link or ± elsewhere in the chat. The composer's `/` and
+  `@` menus no longer run past the edge of a short view. (#79)
 - **Nothing hides off a narrow panel:** every menu, popover, list and
   tooltip fits the space it opens into, Settings rows wrap, and long model
   names shorten. (#67)

@@ -119,7 +119,7 @@ function MentionToken({ name, uri }: { name: string; uri: string }) {
   const path = filePathOf(uri);
   const className = `prompt-token mention-token ${LINK}`;
   return path !== null ? (
-    <button type="button" className={className} title={`Open ${path}`} onClick={stopThen(() => send({ kind: "openFile", path }))}>
+    <button type="button" className={className} title={`Open ${path}`} onClick={() => send({ kind: "openFile", path })}>
       @{name}
     </button>
   ) : (
@@ -305,7 +305,7 @@ const HEADER_LINK = `${LINK} truncate font-mono text-[11px] opacity-70 hover:opa
  * edit's own report is the one place a change is counted. */
 function DiffCount({ stat, title, onClick }: { stat: DiffStat; title: string; onClick: () => void }) {
   return (
-    <button type="button" className={`diff-count shrink-0 font-mono text-[11px] ${LINK}`} title={title} onClick={stopThen(onClick)}>
+    <button type="button" className={`diff-count shrink-0 font-mono text-[11px] ${LINK}`} title={title} onClick={onClick}>
       <DiffStatText stat={stat} />
     </button>
   );
@@ -314,12 +314,15 @@ function DiffCount({ stat, title, onClick }: { stat: DiffStat; title: string; on
 /** A small caps label over a section of a card's details. */
 const SECTION_LABEL = "text-[10.5px] uppercase tracking-wide text-muted-foreground";
 
-/** A click handler for a control inside a clickable card: acts, and keeps
- * the click from also toggling the card around it. */
-function stopThen(act: () => void) {
+/** The click handler of a clickable card header: acts unless the click came
+ * from a control inside the header — a chevron, a file link, a ± — which acts
+ * on its own. The control lets its click travel on: an open popover or
+ * dialog reads a click kept from propagating as handled by the page, and
+ * would stay open. */
+function headerClick(act: () => void) {
   return (e: React.MouseEvent) => {
-    e.stopPropagation();
-    act();
+    const control = (e.target as Element).closest("button, a[href], input, select, textarea, [role='button']");
+    if (control === null || !e.currentTarget.contains(control)) act();
   };
 }
 
@@ -369,7 +372,7 @@ export function ToolCallCard({
           the chevron — the header holds other buttons, so it can't be one. */}
       <div
         className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""}`}
-        onClick={expandable ? () => setOpen((v) => !v) : undefined}
+        onClick={expandable ? headerClick(() => setOpen((v) => !v)) : undefined}
       >
         <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]}>
           <Icon name={TOOL_ICON[block.toolKind]} />
@@ -380,7 +383,7 @@ export function ToolCallCard({
             type="button"
             className={`tool-loc min-w-0 max-w-[45%] ${HEADER_LINK}`}
             title={`Open ${first.path}${first.line === null ? "" : ` at line ${first.line}`}`}
-            onClick={stopThen(() => openAt(first.path, first.line ?? undefined))}
+            onClick={() => openAt(first.path, first.line ?? undefined)}
           >
             {basename(first.path)}
             {first.line !== null && `:${first.line}`}
@@ -391,7 +394,7 @@ export function ToolCallCard({
             type="button"
             className={`tool-loc-more shrink-0 ${HEADER_LINK}`}
             title="Show the other files this call reported"
-            onClick={stopThen(() => setOpen(true))}
+            onClick={() => setOpen(true)}
           >
             +{rows.length - 1}
           </button>
@@ -420,7 +423,7 @@ export function ToolCallCard({
                       type="button"
                       className={`flex shrink-0 items-center gap-1 font-medium ${LINK}`}
                       title={`Open ${r.path}${r.lines[0] === undefined ? "" : ` at line ${r.lines[0]}`}`}
-                      onClick={stopThen(() => openAt(r.path, r.lines[0]))}
+                      onClick={() => openAt(r.path, r.lines[0])}
                     >
                       <Icon name="go-to-file" />
                       {base}
@@ -432,7 +435,7 @@ export function ToolCallCard({
                         key={line}
                         className={`shrink-0 font-mono text-[11px] text-muted-foreground ${LINK}`}
                         title={`Open ${r.path} at line ${line}`}
-                        onClick={stopThen(() => openAt(r.path, line))}
+                        onClick={() => openAt(r.path, line)}
                       >
                         :{line}
                       </button>
@@ -570,7 +573,7 @@ export function ToolRunCard({
   if (open) {
     return (
       <>
-        <div className="card-hd tool-hd cursor-pointer" onClick={() => setOpen(false)}>
+        <div className="card-hd tool-hd cursor-pointer" onClick={headerClick(() => setOpen(false))}>
           {weightedIcon} {calls.length} tool calls{" "}
           <Disclosure open={true} onToggle={() => setOpen(false)} label="Collapse the tool calls" />
         </div>
@@ -582,7 +585,7 @@ export function ToolRunCard({
   }
   return (
     <div className="card">
-      <div className="card-hd tool-hd cursor-pointer" onClick={() => setOpen(true)}>
+      <div className="card-hd tool-hd cursor-pointer" onClick={headerClick(() => setOpen(true))}>
         {weightedIcon}
         <span className="min-w-0 flex-1 truncate">
           {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}

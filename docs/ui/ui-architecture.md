@@ -85,15 +85,32 @@ primitive layer, not the component styling. So the rule:
   hand, always incompletely: the recurring failures — a menu painting *behind* a
   drawer, a panel that only Escape (never an outside click) would close, a popup
   pinned to a fixed corner instead of the caret — were each a surface that opted
-  out of Radix, not a gap in Radix.
+  out of Radix, not a gap in Radix. A drawer is a sheet — a `Dialog` dropping
+  from the top edge (`components/ui/sheet.tsx`); a view opens its sheets from
+  buttons of its own rather than a Radix trigger, so the sheet returns focus
+  to whatever had it when it opened. `test/overlay-surfaces.test.ts` fails on
+  the shapes a hand-made overlay takes — a document or window pointer or key
+  listener, a portal mounted by hand, a CSS rule showing an element only
+  while its parent is hovered — and the ui-gate drives the overlays
+  themselves: each opens, takes the keyboard and closes on Escape.
+
+- **No control keeps its click to itself.** An open popover or dialog reads
+  a click whose propagation the page stopped as handled by the page, and
+  stays open. A clickable container that holds controls of its own (a tool
+  card's header with its chevron, file link and ±) ignores clicks that came
+  from one of them instead, and the same scan fails on any
+  `stopPropagation` in app code.
 
 - **App CSS never enters the `z-index ≥ 50` band.** That band is Radix's portal
   band (its content mounts at `document.body` at `z-50` to escape stacking
   contexts). An app layer that climbs into it wins the paint but loses the
   interaction: the portal's modal lock still routes pointer events to the
   now-invisible overlay, so clicks fire blind. App layers occupy the documented
-  ladder below 50 (agent-view `style.css` § Z LADDER); the boundary is enforced
-  by `test/z-ladder.test.ts` — a new violation fails CI, not a reviewer's memory.
+  ladder below 50 (agent-view `style.css` § Z LADDER) — a closed set of
+  rungs. Anything else that floats over the content is a shared-layer
+  primitive, so a new rung is a decision, recorded in the ladder and the test
+  together. `test/z-ladder.test.ts` enforces both the
+  band and the rungs — a new violation fails CI, not a reviewer's memory.
 
 - **An overlay is bounded by the space it opens into.** Placement keeps an
   overlay's corner on screen; its size is a second problem. Each anchored
@@ -131,14 +148,16 @@ primitive layer, not the component styling. So the rule:
   which Radix ships no primitive for). There, and only there, the interaction is
   hand-rolled — but the **placement still is not**: it uses `@floating-ui/react`
   (the same engine Radix wraps internally via `@radix-ui/react-popper`), a virtual
-  anchor at the caret rect with `flip`/`shift`/`size` middleware. So no bespoke
-  popup-positioning math exists anywhere in the tree; the exception is scoped to
-  *focus behavior*, not to reinventing collision handling.
+  anchor at the caret's line across the prompt box, with `flip` and `size`
+  middleware — the menu opens on the side with more room and is shortened to
+  it. So no bespoke popup-positioning math exists anywhere in the tree; the
+  exception is scoped to *focus behavior*, not to reinventing collision handling.
 
 Flag as an architecture violation, in review: a webview overlay assembled from raw
 open-state + a positioned `<div>`; a hand-written outside-click or Escape handler;
-an app `z-index ≥ 50`; or popup positioning math written outside the Radix /
-Floating-UI path.
+a tooltip shown by a CSS hover; a click kept from propagating; an app `z-index ≥ 50`
+or off the recorded rungs;
+or popup positioning math written outside the Radix / Floating-UI path.
 
 ### Control logic — derived once, rendered dumb
 

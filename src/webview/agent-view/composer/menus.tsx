@@ -83,15 +83,15 @@ export function SlashMenu(props: {
   matches: readonly AvailableCommand[];
   selected: number;
   onPick(name: string): void;
-  /** Vertical placement is caret-relative (prompt-editor.tsx computes it);
-   * the ref lets that pass measure the rendered height. */
+  /** Placement is the editor's (prompt-editor.tsx): the ref and the
+   * style are what Floating UI measures and sets. */
   containerRef?: Ref<HTMLDivElement>;
   style?: CSSProperties;
 }) {
   const selRef = useScrollSelectedIntoView(props.selected);
   if (props.matches.length === 0) return null;
   return (
-    <div ref={props.containerRef} className="pop inset-x-0" style={props.style}>
+    <div ref={props.containerRef} className="pop" style={props.style}>
       <div className="rows">
         {props.matches.map((c, i) => (
           <div
@@ -119,14 +119,14 @@ export function MentionMenu(props: {
   entries: readonly MentionEntry[];
   selected: number;
   onPick(entry: MentionEntry): void;
-  /** See SlashMenu — caret-relative placement, computed by the editor. */
+  /** See SlashMenu — placed by the editor. */
   containerRef?: Ref<HTMLDivElement>;
   style?: CSSProperties;
 }) {
   const selRef = useScrollSelectedIntoView(props.selected);
   if (props.entries.length === 0) return null;
   return (
-    <div ref={props.containerRef} className="pop inset-x-0" style={props.style}>
+    <div ref={props.containerRef} className="pop" style={props.style}>
       <div className="rows">
         {props.entries.map((entry, i) => {
           const isSel = i === props.selected;

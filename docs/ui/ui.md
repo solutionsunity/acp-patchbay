@@ -121,22 +121,26 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic |
-| Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
+| Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover or keyboard focus: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
 | Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach |
 
 ### 6 · Drawers
 
+Both are sheets dropping from the top over a dimmed view: Escape, a click
+outside or the ✕ closes one, the keyboard walks and picks its rows, and
+focus goes back to the button that opened it.
+
 **Agents drawer** — the picker: one row per **configured** agent — status dot ·
 name · readiness sub-line (crash reason when crashed; else `ready` / `never
-connected` / capability one-liner); clicking the row starts a chat with it,
+connected` / capability one-liner); picking the row starts a chat with it,
 connecting in-pane when it isn't running. Footer: `＋ Add or manage agents —
 Settings…` — adding lives in Settings only; stop/restart are Settings
 troubleshooting controls plus the crash banner's `Restart`. **Sessions drawer** —
 per session: session mark (waiting on you / turn underway / finished unseen) · title · agent + state subtitle · kebab
 (same actions as the session row). Below the rows, one line per agent whose
 handshake declared no `session/list`: `{agent} doesn't report its sessions —
-only the ones open in this window are listed`. Footer: `＋ New chat` (the same
-smart ＋).
+only the ones open in this window are listed`. Footer: `＋ New session` (the
+same smart ＋).
 
 ### 7 · Chat pane states
 

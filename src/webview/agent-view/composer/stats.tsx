@@ -10,6 +10,7 @@
 import type { PlanUsageInfo, PreferencesView, UsageInfo } from "../../../shared/protocol";
 import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SessionTotals } from "../chat/view-model";
 
 /** Known plan-window tags → short labels; an unknown tag renders raw
@@ -75,6 +76,9 @@ function PlanGauge({ plan }: { plan: Readonly<Record<string, PlanUsageInfo>> }) 
   );
 }
 
+/** The context-window gauge: a bare ring, so its numbers live only in its
+ * tooltip — the shared one, which the keyboard reaches too, and the ring
+ * is labelled with the same words for a screen reader. */
 function Gauge({ usage }: { usage: UsageInfo }) {
   const frac = Math.max(0, Math.min(1, usage.used / usage.size));
   const circumference = 37.7; // 2π·r at r=6
@@ -82,22 +86,28 @@ function Gauge({ usage }: { usage: UsageInfo }) {
     usage.cost !== undefined ? ` · ${usage.cost.amount.toFixed(2)} ${usage.cost.currency}` : ""
   }`;
   return (
-    <div className="gauge" title={tip}>
-      <svg width="16" height="16" viewBox="0 0 16 16">
-        <circle cx="8" cy="8" r="6" fill="none" stroke="var(--pb-border)" stroke-width="2.5" />
-        <circle
-          cx="8"
-          cy="8"
-          r="6"
-          fill="none"
-          stroke="var(--pb-consumed)"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-dasharray={`${(frac * circumference).toFixed(1)} ${circumference}`}
-        />
-      </svg>
-      <div className="tip">{tip}</div>
-    </div>
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="gauge" tabIndex={0} role="img" aria-label={tip}>
+            <svg width="16" height="16" viewBox="0 0 16 16">
+              <circle cx="8" cy="8" r="6" fill="none" stroke="var(--pb-border)" stroke-width="2.5" />
+              <circle
+                cx="8"
+                cy="8"
+                r="6"
+                fill="none"
+                stroke="var(--pb-consumed)"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-dasharray={`${(frac * circumference).toFixed(1)} ${circumference}`}
+              />
+            </svg>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>{tip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

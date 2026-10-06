@@ -21,7 +21,8 @@
 //   transcript is the only scroller and blocks are static once complete;
 // - Codicons via Icon, matching every other control in the extension.
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useActions } from "../shared/actions";
 import { useCopy } from "../shared/use-copy";
 import { Icon } from "../shared/icon";
@@ -163,105 +164,55 @@ function svgToPng(svg: string): Promise<Blob> {
   });
 }
 
-/** Download dropdown — SVG / PNG / MMD, closing on outside click. */
+const FORMATS = ["svg", "png", "mmd"] as const;
+
+/** The download menu — SVG / PNG / MMD. */
 function DownloadMenu({ source, svg }: { source: string; svg: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current !== null && !e.composedPath().includes(ref.current)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  const pick = async (format: "svg" | "png" | "mmd") => {
-    setOpen(false);
+  const pick = async (format: (typeof FORMATS)[number]) => {
     if (format === "mmd") downloadFile("diagram.mmd", source, "text/plain");
     else if (format === "svg") downloadFile("diagram.svg", svg, "image/svg+xml");
     else downloadFile("diagram.png", await svgToPng(svg), "image/png");
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className={ACTION_BTN}
-        onClick={() => setOpen((v) => !v)}
-        title="Download diagram"
-      >
-        <Icon name="desktop-download" />
-      </button>
-      {open && (
-        <div className="absolute top-full right-0 z-10 mt-1 min-w-[120px] overflow-hidden rounded-md border border-border bg-background shadow-lg">
-          {(["svg", "png", "mmd"] as const).map((format) => (
-            <button
-              key={format}
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
-              onClick={() => void pick(format)}
-            >
-              {format.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={ACTION_BTN} title="Download diagram">
+          <Icon name="desktop-download" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {FORMATS.map((format) => (
+          <DropdownMenuItem key={format} onSelect={() => void pick(format)}>
+            {format.toUpperCase()}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-/** Fullscreen portal — Escape closes; note this fills the *webview* (the
- * sidebar column), which is why "Open in editor" exists alongside it. */
+/** The fullscreen view — it fills the *webview* (the sidebar column),
+ * which is why "Open in editor" exists alongside it. */
 function FullscreenButton({ svg }: { svg: string }) {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
   return (
-    <>
-      <button
-        type="button"
-        className={ACTION_BTN}
-        onClick={() => setOpen(true)}
-        title="View fullscreen"
+    <Dialog>
+      <DialogTrigger asChild>
+        <button type="button" className={ACTION_BTN} title="View fullscreen">
+          <Icon name="screen-full" />
+        </button>
+      </DialogTrigger>
+      <DialogContent
+        aria-describedby={undefined}
+        className="inset-0 flex h-full w-full max-w-none max-h-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 bg-background/95 p-4"
       >
-        <Icon name="screen-full" />
-      </button>
-      {open &&
-        createPortal(
-          <div className="fixed inset-0 z-[44] flex flex-col bg-background/95">
-            <button
-              type="button"
-              className="absolute top-4 right-4 z-10 rounded-md p-2 text-muted-foreground transition-all hover:bg-muted hover:text-foreground"
-              onClick={() => setOpen(false)}
-              title="Exit fullscreen"
-            >
-              <Icon name="close" />
-            </button>
-            <div className="size-full p-4">
-              <PanZoom fullscreen>
-                {/* mermaid sanitizes its output (securityLevel strict, the default) */}
-                <div dangerouslySetInnerHTML={{ __html: svg }} />
-              </PanZoom>
-            </div>
-          </div>,
-          document.body,
-        )}
-    </>
+        <DialogTitle className="sr-only">Diagram</DialogTitle>
+        <PanZoom fullscreen>
+          {/* mermaid sanitizes its output (securityLevel strict, the default) */}
+          <div dangerouslySetInnerHTML={{ __html: svg }} />
+        </PanZoom>
+      </DialogContent>
+    </Dialog>
   );
 }
 

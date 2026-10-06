@@ -7,7 +7,8 @@
 // cannot style ranges, which is what forced the editor swap. Still
 // render-only: the editor state is draft furniture, reset with the webview;
 // every pick and the send itself go up as actions.
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { autoUpdate, flip, offset, size, useFloating } from "@floating-ui/react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -156,12 +157,12 @@ function $computeTrigger(): Trigger | null {
   return null;
 }
 
-/** The caret's line box in viewport coords — the anchor the suggestion menu
- * sits above. Read straight from the DOM selection (never mutate it: Lexical
- * owns this contenteditable). A collapsed range still yields a zero-width
- * rect with a real top/bottom in Chromium (the webview engine); the
- * all-zero degenerate case returns null so the caller falls back to a fixed
- * anchor rather than jumping to the corner. */
+/** The caret's line box in viewport coords — the line the suggestion menu
+ * is placed against. Read straight from the DOM selection (never mutate it:
+ * Lexical owns this contenteditable). A collapsed range still yields a
+ * zero-width rect with a real top/bottom in Chromium (the webview engine);
+ * the all-zero degenerate case returns null so the caller falls back to the
+ * editor's own box rather than jumping to the corner. */
 function caretRect(root: HTMLElement): DOMRect | null {
   const sel = window.getSelection();
   if (sel === null || sel.rangeCount === 0 || sel.anchorNode === null) return null;
@@ -172,10 +173,6 @@ function caretRect(root: HTMLElement): DOMRect | null {
   if (rect.top === 0 && rect.bottom === 0 && rect.height === 0) return null;
   return rect;
 }
-
-/** Fallback anchor (old behavior): pinned just above the prompt box's foot.
- * Used only when the caret rect can't be read. */
-const FALLBACK_MENU_STYLE: CSSProperties = { bottom: 44 };
 
 function EditorCore(props: PromptEditorProps) {
   const [editor] = useLexicalComposerContext();
@@ -374,56 +371,46 @@ function EditorCore(props: PromptEditorProps) {
   const menuOpen = active !== null && optionCount > 0;
   const sel = Math.min(selected, Math.max(0, optionCount - 1));
 
-  // Caret-relative placement: the menu sits just above the line being typed
-  // (not pinned to the box bottom), flipping below only when the caret is too
-  // near the viewport top to fit above. maxHeight is clamped to the room on
-  // the chosen side so the list scrolls internally instead of overflowing.
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>(FALLBACK_MENU_STYLE);
+  // The menu sits just above the line being typed, across the prompt box it
+  // opens in, flips below when there is more room there, and is shortened
+  // to the room on the side it opens — never past the window's edge. It
+  // never takes focus (typing stays in the editor), so it is no Radix
+  // primitive; Floating UI, the engine Radix places with, places it, and
+  // follows every scroll and resize while it is open.
+  const { refs, floatingStyles, isPositioned } = useFloating({
+    open: menuOpen,
+    placement: "top-start",
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(6),
+      flip({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableHeight, rects, elements }) {
+          elements.floating.style.setProperty("--pop-width", `${rects.reference.width}px`);
+          elements.floating.style.setProperty("--pop-room", `${Math.max(0, availableHeight)}px`);
+        },
+      }),
+    ],
+  });
   useLayoutEffect(() => {
     if (!menuOpen) return;
     const root = editor.getRootElement();
-    const menuEl = menuRef.current;
-    // offsetParent is exactly what the menu's absolute top/bottom resolve
-    // against — the .input-shell box — so measure relative to it, not to a
-    // presumed DOM parent.
-    const shell = (menuEl?.offsetParent as HTMLElement | null) ?? null;
-    if (root === null || menuEl === null || shell === null) return;
-    const place = () => {
-      const cr = caretRect(root);
-      if (cr === null) {
-        setMenuStyle(FALLBACK_MENU_STYLE);
-        return;
-      }
-      const shellRect = shell.getBoundingClientRect();
-      const GAP = 6;
-      const MARGIN = 8;
-      const spaceAbove = cr.top - MARGIN;
-      const spaceBelow = window.innerHeight - cr.bottom - MARGIN;
-      const cap = window.innerHeight * 0.45; // matches .pop's max-height aesthetic
-      if (spaceAbove >= spaceBelow) {
-        setMenuStyle({
-          bottom: Math.round(shellRect.bottom - cr.top + GAP),
-          top: "auto",
-          maxHeight: Math.max(120, Math.floor(Math.min(cap, spaceAbove - GAP))),
-        });
-      } else {
-        setMenuStyle({
-          top: Math.round(cr.bottom - shellRect.top + GAP),
-          bottom: "auto",
-          maxHeight: Math.max(120, Math.floor(Math.min(cap, spaceBelow - GAP))),
-        });
-      }
-    };
-    place();
-    // Keep the anchor honest if the prompt scrolls or the view resizes while open.
-    root.addEventListener("scroll", place, { passive: true });
-    window.addEventListener("resize", place);
-    return () => {
-      root.removeEventListener("scroll", place);
-      window.removeEventListener("resize", place);
-    };
-  }, [editor, menuOpen, active?.token, optionCount]);
+    if (root === null) return;
+    refs.setPositionReference({
+      // the editor's own scroll moves the caret: watched from inside it
+      contextElement: root.firstElementChild ?? root,
+      getBoundingClientRect: () => {
+        // across the inside of the box the menu opens in, at the caret's line
+        const box = refs.floating.current?.offsetParent ?? root;
+        const across = box.getBoundingClientRect();
+        const line = caretRect(root) ?? root.getBoundingClientRect();
+        return new DOMRect(across.left + box.clientLeft, line.top, box.clientWidth, line.height);
+      },
+    });
+  }, [editor, refs, menuOpen, active?.token]);
+  // hidden until placed: no frame at the box's corner before the first pass
+  const menuStyle = isPositioned ? floatingStyles : { ...floatingStyles, visibility: "hidden" as const };
 
   /** Splits the typed trigger token out of its text node and swaps it for
    * `replacement` + a trailing space (null: just removes it — the fixed
@@ -621,7 +608,7 @@ function EditorCore(props: PromptEditorProps) {
       matches={slashMatches}
       selected={sel}
       onPick={pickCommand}
-      containerRef={menuRef}
+      containerRef={refs.setFloating}
       style={menuStyle}
     />
   ) : (
@@ -629,7 +616,7 @@ function EditorCore(props: PromptEditorProps) {
       entries={mentionEntries}
       selected={sel}
       onPick={pickMention}
-      containerRef={menuRef}
+      containerRef={refs.setFloating}
       style={menuStyle}
     />
   );

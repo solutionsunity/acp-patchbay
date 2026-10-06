@@ -12,6 +12,17 @@ import { describe, expect, it } from "vitest";
 const WEBVIEW_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "webview");
 const PORTAL_BAND = 50;
 
+/** The ladder's rungs below the band — a closed set. Anything that floats
+ * over the content is a shared-layer primitive in the band; an app layer is
+ * one of these, and a new one is added here and in the ladder together, as
+ * a decision. A hand-made overlay needs a layer of its own, so it fails
+ * here before it ships. */
+const RUNGS = new Map([
+  [10, "controls floating inside the content they belong to"],
+  [30, "the composer's autocomplete, and Settings' card while it is dragged"],
+  [46, "the toast"],
+]);
+
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -29,15 +40,24 @@ function authoredZ(source: string): number[] {
   return values;
 }
 
+/** App files with the z values each authors. */
+const appLayers = () =>
+  walk(WEBVIEW_ROOT)
+    .filter((path) => !relative(WEBVIEW_ROOT, path).split(sep).slice(0, 2).join("/").startsWith("components/ui"))
+    .flatMap((path) => authoredZ(readFileSync(path, "utf8")).map((z) => ({ where: relative(WEBVIEW_ROOT, path), z })));
+
 describe("z ladder", () => {
   it(`app-authored z-index stays below the portal band (${PORTAL_BAND})`, () => {
-    const violations = walk(WEBVIEW_ROOT)
-      .filter((path) => !relative(WEBVIEW_ROOT, path).split(sep).slice(0, 2).join("/").startsWith("components/ui"))
-      .flatMap((path) =>
-        authoredZ(readFileSync(path, "utf8"))
-          .filter((z) => z >= PORTAL_BAND)
-          .map((z) => `${relative(WEBVIEW_ROOT, path)}: z ${z}`),
-      );
+    const violations = appLayers()
+      .filter(({ z }) => z >= PORTAL_BAND)
+      .map(({ where, z }) => `${where}: z ${z}`);
     expect(violations, "see the Z LADDER comment in agent-view/style.css").toEqual([]);
+  });
+
+  it("every app layer stands on a recorded rung", () => {
+    const off = appLayers()
+      .filter(({ z }) => z < PORTAL_BAND && !RUNGS.has(z))
+      .map(({ where, z }) => `${where}: z ${z}`);
+    expect(off, "an overlay belongs in the shared layer; a new rung is a decision — see the Z LADDER comment").toEqual([]);
   });
 });

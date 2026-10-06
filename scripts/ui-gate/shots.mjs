@@ -348,6 +348,23 @@ for (const theme of Object.keys(THEMES)) {
   await p.mouse.click(210, 300); // anywhere outside
   await p.waitForTimeout(150);
   check(`[${theme}] adder closes on outside click`, (await p.$('[data-slot="popover-content"]')) === null);
+  // a click on a control elsewhere in the chat — a chevron, a tool card's
+  // ± — closes it too: no control keeps its click to itself (the tool
+  // group opened for it, and closed again after, so later shots see the
+  // default)
+  await p.click("text=5 tool calls");
+  for (const [what, control] of [
+    ["a message's chevron", ".injected > button"],
+    ["a tool card's ±", ".tool-hd .diff-count"],
+  ]) {
+    await p.locator(control).first().scrollIntoViewIfNeeded();
+    await p.click(".ctx-add");
+    await p.waitForSelector('[data-slot="popover-content"]', { timeout: 3000 });
+    await p.locator(control).first().click();
+    check(`[${theme}] adder closes on a click on ${what}`, await p.waitForSelector('[data-slot="popover-content"]', { state: "detached", timeout: 3000 }).then(() => true, () => false));
+    await p.keyboard.press("Escape");
+  }
+  await p.click("text=5 tool calls");
 
   // ── the other sessions (#38): one trigger — waiting, finished unseen,
   // running — counts the sessions not on screen and opens their list ──
@@ -669,6 +686,121 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── every overlay goes through the shared layer (#79): the diagram's
+// download menu and fullscreen view, the drawers and the token gauge's
+// tooltip take the keyboard and close on Escape, and the composer's menu
+// stays inside a short view. Theme-independent: run once. ──
+{
+  const theme0 = Object.keys(THEMES)[0];
+  const focusIn = (p, sel) => p.evaluate((s) => document.querySelector(s)?.contains(document.activeElement) === true, sel);
+  const focusOn = (p, sel) => p.evaluate((s) => document.activeElement === document.querySelector(s), sel);
+  const shown = (p, sel) => p.waitForSelector(sel, { timeout: 3000 }).then(() => true, () => false);
+  const gone = (p, sel) => p.waitForSelector(sel, { state: "detached", timeout: 3000 }).then(() => true, () => false);
+  let p = await page(browser, theme0, { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector('[data-streamdown="mermaid-block"] svg', { timeout: 8000 });
+
+  // the diagram's download menu
+  const download = '[data-streamdown="mermaid-block-actions"] button[title="Download diagram"]';
+  await p.click(download);
+  check("a diagram's download menu is the shared menu", await shown(p, '[data-slot="dropdown-menu-content"]'));
+  const formats = await p.$$eval('[data-slot="dropdown-menu-content"] [role="menuitem"]', (els) => els.map((el) => el.textContent.trim()).join());
+  check(`it offers SVG, PNG and MMD as menu items (${formats})`, formats === "SVG,PNG,MMD");
+  await p.keyboard.press("ArrowDown");
+  check("the keyboard walks its items", await focusIn(p, '[data-slot="dropdown-menu-content"]'));
+  await p.keyboard.press("Escape");
+  check("Escape closes the download menu", await gone(p, '[data-slot="dropdown-menu-content"]'));
+  check("focus returns to the download button", await focusOn(p, download));
+
+  // the diagram's fullscreen view
+  const fullscreen = '[data-streamdown="mermaid-block-actions"] button[title="View fullscreen"]';
+  await p.click(fullscreen);
+  check("a diagram's fullscreen view is the shared dialog", await shown(p, '[data-slot="dialog-content"] svg'));
+  check("focus moves into the fullscreen view", await focusIn(p, '[data-slot="dialog-content"]'));
+  for (let i = 0; i < 6; i++) await p.keyboard.press("Tab");
+  check("Tab stays inside the fullscreen view", await focusIn(p, '[data-slot="dialog-content"]'));
+  await p.screenshot({ path: `${OUT}/mermaid-fullscreen.png` });
+  await p.keyboard.press("Escape");
+  check("Escape closes the fullscreen view", await gone(p, '[data-slot="dialog-content"]'));
+  check("focus returns to the fullscreen button", await focusOn(p, fullscreen));
+
+  // the token gauge's tooltip
+  await p.evaluate(() =>
+    window.__patch([
+      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
+    ]),
+  );
+  const gauge = await p.waitForSelector(".composer-stats .gauge", { timeout: 3000 });
+  check("the token gauge carries no native title beside its tooltip", (await gauge.getAttribute("title")) === null);
+  await gauge.focus();
+  const tip = await p.waitForSelector('[data-slot="tooltip-content"]', { timeout: 3000 }).then((el) => el.textContent(), () => "");
+  check(`the keyboard reaches the token gauge's tooltip ("${tip}")`, tip.includes("50,000 / 200,000 tokens"));
+  await p.keyboard.press("Escape");
+
+  // the sessions drawer
+  const sessions = 'button[aria-label="Sessions"]';
+  await p.click(sessions);
+  await p.waitForSelector(".drawer .s-row");
+  check("the sessions drawer is the shared sheet", (await p.$('[data-slot="sheet-content"].drawer')) !== null);
+  check("focus moves into the open drawer", await focusIn(p, ".drawer"));
+  await p.keyboard.press("Escape");
+  check("Escape closes the drawer", await gone(p, ".drawer"));
+  check("focus returns to the button that opened the drawer", await focusOn(p, sessions));
+  // a session's menu opens inside the drawer, and Escape closes it alone
+  await p.click(sessions, { timeout: 3000 }).catch(() => {});
+  await p.click('.drawer .s-row button[aria-label="Session actions"]', { timeout: 3000 }).catch(() => {});
+  check("a session's menu opens inside the drawer", await shown(p, '[data-slot="dropdown-menu-content"]'));
+  await p.keyboard.press("Escape");
+  check("Escape closes the menu and keeps the drawer", (await gone(p, '[data-slot="dropdown-menu-content"]')) && (await p.$(".drawer")) !== null);
+  await p.keyboard.press("Escape");
+  await gone(p, ".drawer");
+  // New session from the sessions drawer opens the agents drawer in its
+  // place: the closing sheet's focus return must not pull focus out of it
+  await p.click(sessions, { timeout: 3000 }).catch(() => {});
+  await p.click('.drawer .foot:has-text("New session")', { timeout: 3000 }).catch(() => {});
+  check("New session in the sessions drawer opens the agents drawer", await shown(p, '.drawer h3:text-is("New chat with…")'));
+  await p.waitForTimeout(100); // past the closing sheet's focus return
+  check("focus stays inside the agents drawer", await focusIn(p, ".drawer"));
+  await p.keyboard.press("Escape");
+  await gone(p, ".drawer");
+  // a drawer that didn't close covers its button: that fails the checks
+  // below rather than ending the run
+  await p.click(sessions, { timeout: 3000 }).catch(() => {});
+  await p.waitForSelector(".drawer .s-row", { timeout: 3000 }).catch(() => {});
+  await p.keyboard.press("Tab");
+  check("Tab reaches the drawer's first session", await focusIn(p, ".drawer .s-row"));
+  await p.keyboard.press("Enter");
+  const picked = await p.evaluate(() => window.__actions.at(-1));
+  check(`Enter picks it (${JSON.stringify(picked)})`, picked?.kind === "switchSession" && picked.patchbaySessionId === "s2");
+  check("picking a session closes the drawer", await gone(p, ".drawer"));
+  await p.evaluate(() => window.__patch([{ kind: "sessionActivated", patchbaySessionId: "s2" }]));
+  check(
+    "the switch puts the cursor in the composer",
+    await p.waitForFunction(() => document.activeElement?.classList.contains("prompt-editor") === true, null, { timeout: 3000 }).then(() => true, () => false),
+  );
+  await p.close();
+
+  // the composer's menu in a view too short for it on either side of the
+  // caret: placed on the side with more room and shortened to fit, never
+  // past the window's edge
+  p = await page(browser, theme0, { width: 420, height: 150 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("/");
+  await p.waitForSelector(".pop .it.sel", { timeout: 3000 });
+  const box = await p.evaluate(() => {
+    const pop = document.querySelector(".pop").getBoundingClientRect();
+    const shell = document.querySelector(".input-shell").getBoundingClientRect();
+    return { top: Math.round(pop.top), bottom: Math.round(pop.bottom), height: innerHeight, left: pop.left - shell.left, width: pop.width - shell.width };
+  });
+  check(`the composer's menu stays inside a short view (${box.top}..${box.bottom} of ${box.height})`, box.top >= 0 && box.bottom <= box.height);
+  // inside the prompt box's 1px border, as it always sat
+  check(`the composer's menu spans the prompt box (${box.left}, ${box.width})`, Math.abs(box.left - 1) < 0.5 && Math.abs(box.width + 2) < 0.5);
+  await p.screenshot({ path: `${OUT}/composer-menu-short-view.png` });
+  await p.close();
+}
+
 // ── nothing hides at a narrow width (#67): with long unbreakable content
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.
@@ -695,7 +827,7 @@ for (const theme of Object.keys(THEMES)) {
         'button, [role="button"], [role="switch"], [role="combobox"], [role="menuitem"], [role="option"], input, select, textarea, a[href]',
       );
       const overlays = document.querySelectorAll(
-        '[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"]',
+        '[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"]',
       );
       return [
         ...[...controls].filter((el) => off(el)).map((el) => `control "${name(el)}"${scrollsX(el) ? " (in a scroller)" : ""}`),
@@ -753,6 +885,12 @@ for (const theme of Object.keys(THEMES)) {
   await opened(p, 'button[aria-label^="Other sessions"]', "popover-content", "other sessions");
   await p.keyboard.press("Escape");
   await opened(p, '.input-foot [role="combobox"]', "select-content", "a knob's options");
+  await p.keyboard.press("Escape");
+  await opened(p, '[data-streamdown="mermaid-block-actions"] button[title="Download diagram"]', "dropdown-menu-content", "a diagram's download menu");
+  await p.keyboard.press("Escape");
+  await opened(p, 'button[aria-label="Sessions"]', "sheet-content", "the sessions drawer");
+  await p.keyboard.press("Escape");
+  await opened(p, 'button[aria-label="New session"]', "sheet-content", "the agents drawer");
   await p.keyboard.press("Escape");
   await p.screenshot({ path: `${OUT}/narrow-agent-view.png` });
   await p.close();

@@ -32,10 +32,7 @@ export function Disclosure({
       aria-expanded={open}
       aria-label={children === undefined ? label : undefined}
       title={label}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
+      onClick={onToggle}
     >
       {children}
       <Icon name={open ? "chevron-down" : "chevron-right"} />
