@@ -84,6 +84,7 @@ function harness(extraHooks: {
     pool,
     {
       emit: (...evs) => events.push(...evs),
+      capabilities: (patchbayAgentId) => capabilityTracker.matrix(patchbayAgentId),
       ...extraHooks,
     },
     new SessionContinuityStore(new MemoryKV()),
@@ -330,6 +331,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
       pool,
       {
         emit: (...evs) => events.push(...evs),
+        capabilities: (patchbayAgentId) => capabilityTracker.matrix(patchbayAgentId),
         // Folded seed (knob id → value), as the orchestrator delivers it.
         seedFor: () => ({ mode: "code", "model-opt": "opus" }),
       },

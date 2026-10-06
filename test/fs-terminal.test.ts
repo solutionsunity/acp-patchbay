@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import { applyFileWrite, PermissionBroker } from "../src/orchestrator/broker";
 import { ClientHost, clientRequestHooks, type ClientHostDeps } from "../src/orchestrator/client-host";
+import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { tailBytes } from "../src/orchestrator/terminal-runner";
@@ -109,6 +110,10 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       emit: (...evs) => events.push(...evs),
       workspaceRoots: () => [workspaceRoot],
       cancelAsks: (patchbaySessionId) => broker.cancelPending(patchbaySessionId),
+      capabilities: (patchbayAgentId) => {
+        const declared = pool.get(patchbayAgentId)?.declared;
+        return declared == null ? undefined : matrixFromDeclared(declared);
+      },
     },
     new SessionContinuityStore(new MemoryKV()),
     () => workspaceRoot,

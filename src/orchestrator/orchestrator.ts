@@ -631,7 +631,7 @@ export class Orchestrator {
         // page's next unrelated refresh
         rootsMissing: () => this.publishSavedRoots(),
         currentTranscript: (patchbaySessionId) => this.agentView.current.transcripts[patchbaySessionId] ?? [],
-        isDeleteUsed: (patchbayAgentId) => this.agents.matrix(patchbayAgentId)?.["session.delete"]?.used ?? false,
+        capabilities: (patchbayAgentId) => this.agents.matrix(patchbayAgentId),
         isActiveSession: (patchbaySessionId) =>
           this.agentView.current.activePatchbaySessionId === patchbaySessionId ||
           this.pinnedSessions().includes(patchbaySessionId),
@@ -1671,6 +1671,9 @@ export class Orchestrator {
         // otherwise (sessions-store `idle`).
         this.sessionGates.open(action.patchbaySessionId);
         break;
+      case "deleteSession":
+        void this.deleteSession(action.patchbaySessionId);
+        break;
       case "closeSession":
         void this.sessionGates.close(action.patchbaySessionId).catch(this.logCatch(`close ${action.patchbaySessionId}`));
         break;
@@ -2263,6 +2266,28 @@ export class Orchestrator {
     } catch (err) {
       this.logCatch(`connect for session ${patchbaySessionId} (${patchbayAgentId})`)(err);
       this.chatPaneFailed(patchbayAgentId, err, patchbaySessionId);
+    }
+  }
+
+  /** The session menu's Delete: the agent removes the session from its
+   * history, which nothing brings back — so the user confirms first. The
+   * delete needs the agent: one that is off is connected for it. A delete
+   * that fails says why, and the session stays. */
+  private async deleteSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    const session = this.agentView.current.sessions.find((s) => s.id === patchbaySessionId);
+    const agent = session === undefined ? undefined : this.agents.row(session.patchbayAgentId);
+    if (session === undefined || agent === undefined) return;
+    const confirmed = await askModal(
+      `Delete "${session.title}"? ${agent.name} removes it from its history, and this can't be undone.`,
+      "Delete",
+    );
+    if (!confirmed) return;
+    try {
+      if (this.agents.row(agent.id)?.status !== "running") await this.gates.connect(agent.id);
+      await this.sessionGates.delete(patchbaySessionId);
+    } catch (err) {
+      this.logCatch(`delete ${patchbaySessionId}`)(err);
+      void vscode.window.showWarningMessage(`"${session.title}" was not deleted — ${(err as Error).message}`);
     }
   }
 

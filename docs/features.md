@@ -75,8 +75,11 @@ deliverable.
   sibling — after a crash too: the row is still the new session, and its next
   use brings it back with everything staged on it. The first prompt is what
   ends newness.
-- User can switch and close sessions. Switching never closes the session being
-  left. An idle session releases its agent-side resources on its own (row
+- User can switch sessions, and end one the way its agent allows: delete it
+  from the agent's history where the agent can delete (asked first), or close
+  it where the agent keeps no session list. An agent that lists its sessions
+  but can't delete them offers neither — patchbay hides nothing the agent
+  keeps. Switching never closes the session being left. An idle session releases its agent-side resources on its own (row
   kept, reopened on the next click) only when nothing can be lost: never a new
   session, never mid-turn, never one with a result not yet seen or words still
   held, and only where the agent can bring it back with full replay — patchbay

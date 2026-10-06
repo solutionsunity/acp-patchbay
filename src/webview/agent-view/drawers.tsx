@@ -141,6 +141,7 @@ export function SessionsDrawer(props: {
             <div className="badges" onClick={(e) => e.stopPropagation()}>
               <SessionActions
                 session={s}
+                agent={agent}
                 detach={props.detach}
                 open={openMenuId === s.id}
                 // Radix's DismissableLayer defers an outside-pointerdown

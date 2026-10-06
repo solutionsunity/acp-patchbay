@@ -205,7 +205,9 @@ flowchart TD
   "active today" tile is a projection of the same rows (`session-stats.ts`),
   republished from the channel's change hook like the status bar. Switching
   chats never closes anything. The idle
-  reaper is the only closer, and only when *all* hold: not new
+  reaper alone closes a session that stays — the session menu's Close is for
+  agents without `session/list`, where the session leaves — and only when
+  *all* hold: not new
   (`everPrompted` — a never-prompted session never closes, period; agents
   404 load/resume on zero-turn ids), nothing in flight, not unseen-completed
   (blue mark), prompt box empty (structural: the composer exists only for
@@ -305,7 +307,8 @@ flowchart TD
   Stop and Remove cutting in, and one question before a connection ends:
   [the stores architecture](store-architecture.md#agents).
 - **Session operations take turns too** — two lines per session, each
-  session's work behind its agent's, Stop, Reload and Close ending a turn:
+  session's work behind its agent's, Stop, Reload, Delete and Close ending a
+  turn:
   [the stores architecture](store-architecture.md#sessions).
 
 ## Agent capability matrix
@@ -730,13 +733,13 @@ an agent that cannot list is reconciled at its connect against the
 sessions this window holds — no list will name an earlier window's again.
 A row without a cwd on record was written before the field existed — the
 first walk that names it stamps it, one that does not drops it. Rows leave
-with their session: close, reconcile, agent removal (every workspace),
+with their session: delete or close, reconcile, agent removal (every workspace),
 erase-all; a zero-turn re-mint moves the row to the session's new agent
 id. Held words rehydrated behind a standing auth lock stay held;
 opening the session (or the lock clearing) is their release, and a new
 prompt sent while held words wait joins the queue *behind* them — order is
 part of the contract. Held words also survive an involuntary drop (crash,
-connection death): only the user discards words — Stop, the row's ×, close
+connection death): only the user discards words — Stop, the row's ×, a delete or close
 (a reload keeps them and re-drains after its re-attach). Held rows render in
 their own band between the read-out strip and the composer (messages
 already written, not this message's context); every row copies its text,
@@ -748,8 +751,8 @@ non-tail row is edited by hand: copy, ×, paste. The drain rides
 success: it fires one held prompt per completed turn (plus login, open, and
 reload's re-attach), holds while the agent isn't running, and never
 auto-retries after a failure — a send that never started, drained or sent
-straight from the composer, re-holds the words at the front (unless Stop
-or Close ended it, which ends its words too); a send the wire settled is
+straight from the composer, re-holds the words at the front (unless Stop,
+Delete or Close ended it, which ends its words too); a send the wire settled is
 spent, visible as a user message with its error turn. The composer **draft** is per-session state owned
 here, not by the webview (render-only): the composer edits the live buffer,
 saves debounced, and reads the durable copy only when switching sessions —

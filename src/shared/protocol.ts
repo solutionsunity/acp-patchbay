@@ -112,6 +112,10 @@ export type Action =
    * window — detached from the sidebar, multi-screen usable. Does not touch
    * the shared active-session pointer. */
   | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId }
+  /** The session menu's two ends (session-ends.ts): Delete removes the
+   * session from the agent's history, after the user confirms; Close
+   * ends it here, where the agent lists no sessions. */
+  | { kind: "deleteSession"; patchbaySessionId: PatchbaySessionId }
   | { kind: "closeSession"; patchbaySessionId: PatchbaySessionId }
   /** Copy the agent's own id for the session — the one its own tools know
    * it by. The host holds that id; the view never does. */
@@ -787,7 +791,7 @@ export interface SessionSummary {
 /** What a session's lines can hold: the attachment line's open (an attach,
  * the ladder), reload, roots (re-applied to the agent), knob (a set), release
  * (idle), close — and the turn line's prompt. */
-export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "close" | "prompt";
+export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "close" | "delete" | "prompt";
 
 /** A turn underway on the session — running, or waiting for its session to
  * attach: what Stop ends, the running mark. Not the same as a live turn,

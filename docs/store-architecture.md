@@ -202,8 +202,8 @@ the pair: the session's saved row, and the last-open pointer.
   [the session model](architecture.md#session-model-mode-effort);
 - busy — what the session's two lines hold.
 
-**Operations:** create, open, prompt, stop, reload, close, set a knob, release,
-list, and the saves — roots, chips, the draft, held-word edits. Those that
+**Operations:** create, open, prompt, stop, reload, delete, close, set a knob,
+release, list, and the saves — roots, chips, the draft, held-word edits. Those that
 ride the session's connection pass the session gates; a saved root list is
 re-applied to the agent's copy on the attachment line. A duty lives in its
 operation, never at a door: ending a turn answers the asks it left open as
@@ -214,7 +214,7 @@ the held words.
 
 - **The attachment line** orders what binds the session to its connection or
   rides it between turns: an open's attach (the zero-turn re-mint with it), a
-  reload, a roots re-apply, a knob set, an idle release, a close.
+  reload, a roots re-apply, a knob set, an idle release, a delete, a close.
 - **The turn line** holds the session's turn, one at a time, as ACP has it.
   Held words wait on the continuity row and enter the line one by one — after
   a turn that ended by itself, an open or a reload, a login that clears the
@@ -229,21 +229,28 @@ change made during a turn is re-applied when the turn ends, however it ends,
 ahead of the next held words. A repeat joins: a second open of a session still
 attaching, a second Reload, the same knob value set again.
 
-Three doors end a turn. **Stop** ends it and drops the held words — Stop means
+Four doors end a turn. **Stop** ends it and drops the held words — Stop means
 stop; words sent after it go once the stopped turn has wound down. **Reload**
 ends it (words that never reached the wire go back to the front of the held
-ones), reads the session again, then lets the held words go. **Close** ends
-the turn and drops the attach work, then the session leaves. A turn told to
+ones), reads the session again, then lets the held words go. **Delete** and
+**Close** end the turn and drop the attach work, then the session leaves —
+Delete once the agent has removed it from its history (a refused delete
+leaves it where it was), Close at once. Each is offered only as the agent
+offers it (`src/shared/session-ends.ts`): Delete where the agent proved
+`session/delete`, Close where the agent lists no sessions, so nothing could
+bring one back; an agent that lists its sessions but can't delete them
+offers neither, and patchbay stands in for neither. A turn told to
 stop while on the wire sends `session/cancel`, answers the asks it leaves open
 as cancelled, and gives the agent 3 s to end it before ending it here — an
 agent that ignores the cancel never holds a session; a turn still waiting for
 its attach just ends.
 
 **Waits across rows.** Sessions never wait on each other, but every session's
-work except a close enters behind what its agent's row holds at that moment —
-a restart, an upgrade, a login — so nothing binds a session to a connection
-being replaced. A close waits on nothing: a hung restart never keeps a session
-open.
+work except a delete or a close enters behind what its agent's row holds at
+that moment — a restart, an upgrade, a login — so nothing binds a session to
+a connection being replaced. A delete ends the session's own work first and
+waits for its agent after — it needs the agent. A close waits on nothing: a
+hung restart never keeps a session open.
 
 **Busy, in the views.** A turn on the turn line is a turn **underway** — the
 running mark, the composer's Stop. An open or a reload on the attachment line

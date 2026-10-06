@@ -7,7 +7,8 @@
 // every wire call carries. Its saved facts live on the session's continuity row, read when
 // needed; its live facts are the attachment and the running turn; and every
 // operation on a session is here: create, open (the attach ladder), prompt,
-// stop, reload, close, a knob set, roots, the held words, release, list.
+// stop, reload, delete, close, a knob set, roots, the held words, release,
+// list.
 // A store only: when an operation on a session's connection runs is the
 // orchestrator's call — every door reaches those through its session
 // gates; saves never wait. A session's transcript as its updates arrive is
@@ -26,6 +27,7 @@ import type {
 import {
   type AgentStatus,
   type AgentViewEvent,
+  type CapabilityMatrix,
   type ChatBlock,
   type ContextChip,
   type KnobSeed,
@@ -60,6 +62,7 @@ import { SessionStream, type StreamState } from "./session-stream";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import { boundedText } from "./content-parts";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
+import { sessionEnds, type SessionEnds } from "../shared/session-ends";
 
 export interface SessionsStoreHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -115,9 +118,9 @@ export interface SessionsStoreHooks {
    * resume rung shows it behind the seam notice: it's the only history
    * there is (patchbay persists no transcripts). */
   currentTranscript?(patchbaySessionId: PatchbaySessionId): readonly ChatBlock[];
-  /** Whether `session.delete` is declared *and used* — gates the agent-side
-   * delete on close (features gate on used). */
-  isDeleteUsed?(patchbayAgentId: PatchbayAgentId): boolean;
+  /** The agent's capability matrix as it reads now — what decides how its
+   * sessions can end (session-ends.ts). */
+  capabilities(patchbayAgentId: PatchbayAgentId): CapabilityMatrix | undefined;
   /** Whether this session is on view — the sidebar's active one or a
    * pinned window's. The idle sweep exempts it (the visible chat's state
    * never changes under the user, and the composer, whose draft must block
@@ -150,8 +153,8 @@ export interface SessionsStoreHooks {
 const MAX_LIST_PAGES = 50;
 
 /** How long a turn told to stop waits, after its cancel, for the agent to
- * end it — then it ends here, so a Stop, a Reload or a Close never waits on
- * an agent that ignores the cancel. */
+ * end it — then it ends here, so a Stop, a Reload, a Delete or a Close never
+ * waits on an agent that ignores the cancel. */
 const CANCEL_SETTLE_MS = 3000;
 
 /** A root path as agents and saved lists receive it: folder pickers hand
@@ -301,7 +304,7 @@ export interface OpenWork {
  * lines. */
 export type SessionConnectionOperations = Pick<
   SessionsStore,
-  "hydrate" | "reload" | "close" | "setKnob" | "reapplyRoots" | "release" | "runTurn"
+  "hydrate" | "reload" | "delete" | "close" | "setKnob" | "reapplyRoots" | "release" | "runTurn"
 >;
 
 /** A new session's id — patchbay's own, kept for the window's life; the
@@ -326,12 +329,11 @@ export class SessionsStore {
    * ends them too: an agent that keeps one server for all its sessions
    * keeps using the first session's token after that session closed. */
   private tokens = new Map<string, { patchbayAgentId: PatchbayAgentId; patchbaySessionId?: PatchbaySessionId; given: readonly AttachedServer[] }>();
-  /** Per agent: the agent's ids of sessions that left (closed, or re-minted
-   * away from) while a session/list walk may be in flight — a page fetched
-   * before that would otherwise resurrect the row with an empty
-   * transcript. Each new walk clears its agent's set first: that walk's
-   * pages are post-close truth (a failed agent-side delete resurrecting the
-   * row then is honest, not stale). */
+  /** Per agent: the agent's ids of sessions that left (deleted, closed, or
+   * re-minted away from) while a session/list walk may be in flight — a
+   * page fetched before that would otherwise resurrect the row with an
+   * empty transcript. Each new walk clears its agent's set first: that
+   * walk's pages are the truth after the session left. */
   private closedDuringSync = new Map<string, Set<string>>();
   /** One `session/list` walk per agent at a time — a re-read asked mid-walk
    * joins the one in flight. Two interleaved walks would each clear the
@@ -789,33 +791,65 @@ export class SessionsStore {
     return false;
   }
 
-  /** The session leaves for good — once its turn has ended (the gates end
-   * it first: never a session/delete under a live turn). */
-  async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
-    // Whatever the session still asks, it asks no one now.
-    this.hooks.cancelAsks?.(patchbaySessionId);
+  /** The session leaves the agent's history (`session/delete`) — once its
+   * turn has ended (the gates end it first: never a delete under a live
+   * turn), and only where the agent proved the method. The agent goes
+   * first: a delete it refuses leaves the session where it was, and the
+   * caller tells why. */
+  async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const row = this.known.get(patchbaySessionId);
+    if (row === undefined) return;
+    this.requireEnd(patchbaySessionId, "delete");
+    await this.pool.deleteSession(row.patchbayAgentId, row.sessionId);
+    // Gone some other way meanwhile — a removed agent's sessions leave too.
+    if (this.known.get(patchbaySessionId) === row) this.leave(patchbaySessionId, row);
+  }
+
+  /** The session ends here, where its agent lists no sessions: nothing can
+   * bring it back, so it leaves for good. `session/close` then frees what
+   * the agent holds for it, where declared and attached — after the
+   * session has left, so a hung agent never keeps it open, and a failure
+   * only means the agent frees it when its process ends. */
+  async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    const row = this.known.get(patchbaySessionId);
+    if (row === undefined) return;
+    this.requireEnd(patchbaySessionId, "close");
+    const attached = this.sessions.has(patchbaySessionId);
+    this.leave(patchbaySessionId, row);
+    const agent = this.pool.get(row.patchbayAgentId);
+    if (!attached || agent?.status !== "running" || agent.declared?.sessionClose !== true) return;
+    await this.pool.closeSession(row.patchbayAgentId, row.sessionId).catch((err: Error) => {
+      this.log.info(`session ${patchbaySessionId}: session/close failed — ${err.message}`);
+    });
+  }
+
+  /** Refuses an end the session's agent doesn't offer (session-ends.ts).
+   * The gates ask before anything of the session ends — a refused end
+   * stops nothing — and the end asks again at the write. A session no
+   * longer known refuses nothing: it has already left. */
+  requireEnd(patchbaySessionId: PatchbaySessionId, end: keyof SessionEnds): void {
+    const row = this.known.get(patchbaySessionId);
+    if (row === undefined || sessionEnds(this.hooks.capabilities(row.patchbayAgentId))[end]) return;
+    throw new Error(
+      end === "delete"
+        ? "the agent doesn't offer session/delete"
+        : "the agent lists its sessions — a close would only hide this one until its next list",
+    );
+  }
+
+  /** What leaves with a deleted or closed session: whatever it still asks
+   * — it asks no one now — its rows, and what the user staged on it. */
+  private leave(patchbaySessionId: PatchbaySessionId, row: KnownSession): void {
+    this.hooks.cancelAsks?.(patchbaySessionId);
     this.forget(patchbaySessionId);
-    if (row !== undefined) {
-      // what the user staged on it leaves with it
-      this.write(row, null);
-      this.entomb(row);
-    }
-    // Honest close: forgetting a session locally while a delete-capable
-    // agent keeps it would just resurrect it on the next session/list sync.
-    // Gated on used, not declared; spec makes delete idempotent, and a
-    // failure only means the agent still has it — the sync stays truthful.
-    if (row !== undefined && (this.hooks.isDeleteUsed?.(row.patchbayAgentId) ?? false)) {
-      await this.pool.deleteSession(row.patchbayAgentId, row.sessionId).catch((err: Error) => {
-        this.log.info(`session ${patchbaySessionId}: agent-side delete failed — ${err.message}`);
-      });
-    }
+    this.write(row, null);
+    this.entomb(row);
   }
 
   /** The one way a session leaves for good: its attachment, its diff texts,
    * its row in both indexes, its view row. The continuity row is the
-   * caller's — close forgets it, a prune leaves it to the reconcile, and a
-   * removed agent's go together. */
+   * caller's — a delete or close forgets it, a prune leaves it to the
+   * reconcile, and a removed agent's go together. */
   private forget(patchbaySessionId: PatchbaySessionId): void {
     this.sessions.delete(patchbaySessionId);
     this.stream.forget(patchbaySessionId);
@@ -890,8 +924,8 @@ export class SessionsStore {
    * the rewriter tail — endTurn will find the session gone and can only
    * place the turn-end block. What the user staged stays on the session's
    * continuity row, untouched: held words (only the user discards words —
-   * Stop, the row's ×, close; the drain's running-agent gate holds them
-   * until a reattach can send), chips, draft, roots, knobs. */
+   * Stop, the row's ×, a delete or close; the drain's running-agent gate
+   * holds them until a reattach can send), chips, draft, roots, knobs. */
   private dropLiveSession(patchbaySessionId: PatchbaySessionId, session: LiveSession): void {
     if (session.inFlight) {
       this.stream.sweep(patchbaySessionId, session);
@@ -1580,8 +1614,8 @@ export class SessionsStore {
     // The continuity row follows the session to its new id.
     this.write({ patchbayAgentId, sessionId: was }, null);
     if (Object.keys(carried).length > 0) this.write(row, carried);
-    // Same shield as close(): an in-flight session/list walk's stale page
-    // must not resurrect the retired shell.
+    // Same shield as a session leaving: an in-flight session/list walk's
+    // stale page must not resurrect the retired shell.
     this.entomb({ patchbayAgentId, sessionId: was });
     this.sessions.set(patchbaySessionId, liveSession());
     this.hooks.sessionIdChanged?.(patchbaySessionId);

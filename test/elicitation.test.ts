@@ -309,7 +309,7 @@ function wireHarness() {
   });
   sessions = new SessionsStore(
     pool,
-    { emit: (...evs) => events.push(...evs) },
+    { emit: (...evs) => events.push(...evs), capabilities: () => undefined },
     new SessionContinuityStore(new MemoryKV()),
     () => dir,
   );

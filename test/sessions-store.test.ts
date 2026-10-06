@@ -154,7 +154,7 @@ function harness(opts?: {
       rootsChanged: (patchbaySessionId) => rootsChanged.push(patchbaySessionId),
       currentTranscript: (patchbaySessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[patchbaySessionId] ?? [],
-      isDeleteUsed: (patchbayAgentId) => capabilityTracker.matrix(patchbayAgentId)?.["session.delete"]?.used ?? false,
+      capabilities: (patchbayAgentId) => capabilityTracker.matrix(patchbayAgentId),
       isActiveSession: (patchbaySessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).activePatchbaySessionId === patchbaySessionId ||
         (opts?.pinned?.has(patchbaySessionId) ?? false),
@@ -445,9 +445,9 @@ describe("SessionsStore", () => {
     await h.pool.stop("smq4" as PatchbayAgentId);
   });
 
-  // Honest close: closing mid-stream stops the turn (spec cancel) and lets
-  // it settle — turnEnded lands before sessionClosed, never a delete fired
-  // under a live turn.
+  // Closing mid-stream stops the turn (spec cancel) and lets it settle —
+  // turnEnded lands before sessionClosed: a session never leaves, and a
+  // delete never goes, under a live turn.
   it("closing mid-turn cancels first — turnEnded lands before sessionClosed", async () => {
     const h = harness();
     await h.pool.connect(
@@ -2816,7 +2816,7 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh14" as PatchbayAgentId);
   });
 
-  it("close deletes on the agent once session.delete is used — no resurrection on resync", async () => {
+  it("delete removes the session from the agent's own list once session.delete is used — no resurrection on resync", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh6"));
     // the probe's own delete round-trip proves the row (connect-time hygiene)
@@ -2825,16 +2825,76 @@ describe("session history (list / resume / delete)", () => {
 
     const patchbaySessionId = await h.sessions.createSession("sh6" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "leave a durable record" });
-    await h.gates.close(patchbaySessionId);
+    const sessionId = h.sessions.sessionIdOf(patchbaySessionId);
+    expect((await h.pool.listSessions("sh6" as PatchbayAgentId, { cwd })).sessions.map((s) => s.sessionId)).toContain(sessionId);
+    await h.gates.delete(patchbaySessionId);
 
     // the agent's own list must no longer report it — else the next sync
     // would resurrect a session the user asked to remove
     const listed = await h.pool.listSessions("sh6" as PatchbayAgentId, { cwd });
-    expect(listed.sessions.map((s) => s.sessionId)).not.toContain(patchbaySessionId);
+    expect(listed.sessions.map((s) => s.sessionId)).not.toContain(sessionId);
     await h.sessions.syncAgentSessions("sh6" as PatchbayAgentId);
     expect(h.state().sessions.map((s) => s.id)).not.toContain(patchbaySessionId);
 
     await h.pool.stop("sh6" as PatchbayAgentId);
+  });
+
+  it("close never deletes: an agent that lists its sessions refuses it, and keeps the session", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh7"));
+    await h.capabilityTracker.verify("sh7" as PatchbayAgentId);
+    const patchbaySessionId = await h.sessions.createSession("sh7" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "keep me" });
+    const sessionId = h.sessions.sessionIdOf(patchbaySessionId);
+
+    await expect(h.gates.close(patchbaySessionId)).rejects.toThrow(/lists its sessions/);
+
+    const listed = await h.pool.listSessions("sh7" as PatchbayAgentId, { cwd });
+    expect(listed.sessions.map((s) => s.sessionId)).toContain(sessionId);
+    expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
+    await h.pool.stop("sh7" as PatchbayAgentId);
+  });
+
+  it("delete is refused where the agent never offered it — nothing of the session ends", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sh8"));
+    await h.capabilityTracker.verify("sh8" as PatchbayAgentId);
+    const patchbaySessionId = await h.sessions.createSession("sh8" as PatchbayAgentId, "Fake Agent", cwd);
+
+    await expect(h.gates.delete(patchbaySessionId)).rejects.toThrow(/doesn't offer session\/delete/);
+    expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
+    await h.pool.stop("sh8" as PatchbayAgentId);
+  });
+
+  it("a delete that fails leaves the session where it was — the agent goes first", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh9"));
+    await h.capabilityTracker.verify("sh9" as PatchbayAgentId);
+    const patchbaySessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "still mine" });
+    await h.pool.stop("sh9" as PatchbayAgentId);
+
+    // its agent is gone: the wire can't take the delete
+    await expect(h.sessions.delete(patchbaySessionId)).rejects.toThrow();
+    expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
+    expect(h.sessions.sessionIdOf(patchbaySessionId)).toBeDefined();
+  });
+
+  it("close, where the agent lists no sessions: the session leaves for good, and session/close frees the agent's side", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sh10"));
+    await h.capabilityTracker.verify("sh10" as PatchbayAgentId);
+    const patchbaySessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "done here" });
+    const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
+    expect(h.pool.get("sh10" as PatchbayAgentId)?.sessions).toContain(sessionId);
+
+    await h.gates.close(patchbaySessionId);
+
+    expect(h.state().sessions.map((s) => s.id)).not.toContain(patchbaySessionId);
+    expect(h.pool.get("sh10" as PatchbayAgentId)?.sessions).not.toContain(sessionId);
+    await h.pool.stop("sh10" as PatchbayAgentId);
   });
 });
 

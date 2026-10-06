@@ -5,7 +5,10 @@
 // the sessions drawer). Actions are sent per session id; only drawer-opening
 // stays a shell callback. No rename here: ACP has no rename request — agents
 // with an in-chat /rename push the new title back via session_info_update.
-import type { SessionSummary } from "../../shared/protocol";
+// How a session can end is its agent's offer (session-ends.ts): an agent
+// that lists sessions but can't delete them offers no end here at all.
+import type { AgentSummary, SessionSummary } from "../../shared/protocol";
+import { sessionEnds } from "../../shared/session-ends";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -27,12 +30,15 @@ import {
  * the race instead of chasing it. */
 export function SessionActions({
   session,
+  agent,
   detach,
   reloading = false,
   open,
   onOpenChange,
 }: {
   session: SessionSummary;
+  /** The session's agent — its capabilities decide how the session ends. */
+  agent: AgentSummary | undefined;
   detach: boolean;
   /** The session is being attached (an open or a reload on its attachment
    * line) — Reload disables rather than queueing a second read behind the
@@ -42,6 +48,7 @@ export function SessionActions({
   onOpenChange?: (open: boolean) => void;
 }) {
   const send = useActions();
+  const ends = sessionEnds(agent?.capabilities);
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
@@ -66,9 +73,17 @@ export function SessionActions({
         <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", patchbaySessionId: session.id })}>
           Copy session ID
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
-          Close
-        </DropdownMenuItem>
+        {/* The host asks before the agent deletes — nothing brings it back. */}
+        {ends.delete && (
+          <DropdownMenuItem onSelect={() => send({ kind: "deleteSession", patchbaySessionId: session.id })}>
+            Delete…
+          </DropdownMenuItem>
+        )}
+        {ends.close && (
+          <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
+            Close
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -76,6 +91,7 @@ export function SessionActions({
 
 export function SessionRow(props: {
   session: SessionSummary;
+  agent: AgentSummary | undefined;
   onTitle(): void;
   detach: boolean;
   reloading: boolean;
@@ -89,7 +105,7 @@ export function SessionRow(props: {
           area's loading page so the title row says busy too. */}
       {props.reloading && <Icon name="loading" spin />}
       <div className="spacer flex-1" />
-      <SessionActions session={props.session} detach={props.detach} reloading={props.reloading} />
+      <SessionActions session={props.session} agent={props.agent} detach={props.detach} reloading={props.reloading} />
     </div>
   );
 }

@@ -124,6 +124,7 @@ export function App({
       {active !== null && (
         <SessionRow
           session={active}
+          agent={activeAgent ?? undefined}
           onTitle={pinned ? () => {} : openSessions}
           detach={detach && !pinned}
           reloading={attaching(active)}

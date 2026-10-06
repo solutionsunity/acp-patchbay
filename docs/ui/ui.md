@@ -48,8 +48,8 @@ never split panels.
 
 | Control | Behavior |
 |---|---|
-| Title | click → Sessions drawer; rename via kebab |
-| Kebab ⋯ | rename · reload from agent (rejoin truth) · close |
+| Title | click → Sessions drawer |
+| Kebab ⋯ | open in new window (when detached windows are on) · reload from agent (rejoin truth) · copy session ID · **Delete…** where the agent can delete sessions — asks first, then the agent removes the session from its history; a refusal says why and keeps it · **Close** where the agent keeps no session list — the session leaves for good. An agent that lists its sessions but can't delete them offers neither. The same menu sits on every row of the Sessions drawer |
 
 ### 3 · Read-out strip
 

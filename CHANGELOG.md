@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Close in the session menu no longer deletes the session from the
+  agent's history.** The menu now offers what the agent offers: **Delete…**
+  where the agent can delete sessions — it asks first, and if the agent
+  refuses, the session stays and you see why — and **Close** where the
+  agent keeps no list of its sessions, so closing really ends it. An agent
+  that lists its sessions but can't delete them offers neither; before,
+  Close only hid such a session until the agent's next list. (#77)
 - Switching off auto-connect for the agent the old
   `acpPatchbay.defaultAgent` setting named now stays off; it was switched
   back on at every start.

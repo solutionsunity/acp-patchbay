@@ -6,15 +6,17 @@
 // the queue keeps. The attachment line orders what binds the session to its
 // connection or rides it between turns: an open's attach (the ladder, the
 // zero-turn re-mint with it), a reload, a roots re-apply, a knob set, an
-// idle release, a close. The turn line holds the session's turn — one at a
+// idle release, a delete, a close. The turn line holds the session's turn — one at a
 // time, ACP's own rule; held words wait on the session's row and enter the
 // line one by one. A turn starts only once the attachment line is idle, so
 // nothing re-binds the session under a turn and no prompt fires into a
 // replay; a knob set waits for the attachment line only — ACP lets a mode or
-// an option change land mid-turn. Every line's work but a close also enters
-// behind what the session's agent's row holds right then — a restart, an
-// upgrade, a login — so nothing binds a session to a connection being
-// replaced; a close, the escape hatch, waits on nothing. What a session's own
+// an option change land mid-turn. Every line's work but a delete or a close
+// also enters behind what the session's agent's row holds right then — a
+// restart, an upgrade, a login — so nothing binds a session to a connection
+// being replaced; a delete ends the session's own work first and waits for
+// the agent after, since it needs the agent; a close, the escape hatch,
+// waits on nothing. What a session's own
 // facts allow stays the store's to enforce: one turn at a time, never under a
 // standing auth lock. What the two lines hold is the session's busy state for
 // the views.
@@ -172,13 +174,29 @@ export class SessionGates {
     this.drain(patchbaySessionId);
   }
 
-  /** Close: everything the session's lines hold ends — its turn told to
-   * stop, its attach work dropped — then the session leaves for good. It
-   * waits on nothing its agent does: a hung restart never keeps a session
-   * open. */
-  close(patchbaySessionId: PatchbaySessionId): Promise<void> {
+  /** Delete: everything the session's lines hold ends — its turn told to
+   * stop, its attach work dropped — then, once what its agent's row holds
+   * has settled, the agent removes it from its history. An agent that
+   * doesn't offer it refuses before anything ends; one that refuses the
+   * delete itself leaves the session where it was. */
+  async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    this.sessions.requireEnd(patchbaySessionId, "delete");
+    await this.attachLine.cut(patchbaySessionId, "delete", async () => {
+      await this.turnLine.end(patchbaySessionId, "delete");
+      await this.agentWork(patchbaySessionId);
+      await this.sessions.delete(patchbaySessionId);
+      this.rootsWaiting.delete(patchbaySessionId);
+    });
+  }
+
+  /** Close, where the agent lists no sessions — refused before anything
+   * ends anywhere else: everything the session's lines hold ends, then the
+   * session leaves for good. It waits on nothing its agent does: a hung
+   * restart never keeps a session open. */
+  async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    this.sessions.requireEnd(patchbaySessionId, "close");
     this.rootsWaiting.delete(patchbaySessionId);
-    return this.attachLine.cut(patchbaySessionId, "close", async () => {
+    await this.attachLine.cut(patchbaySessionId, "close", async () => {
       await this.turnLine.end(patchbaySessionId, "close");
       await this.sessions.close(patchbaySessionId);
     });
@@ -254,12 +272,13 @@ export class SessionGates {
 
   /** One turn on the turn line: the session attached first, then the
    * store's turn. Words that never became a user message are still the
-   * user's and go back to the held ones — unless the user's own Stop or
-   * Close ended them, which ends them too. However the turn ends, what
-   * waited on it goes once it has left the line — but a failed turn holds
-   * the words (firing them into whatever just failed would retry a
+   * user's and go back to the held ones — unless the user's own Stop,
+   * Delete or Close ended them, which ends them too. However the turn ends,
+   * what waited on it goes once it has left the line — but a failed turn
+   * holds the words (firing them into whatever just failed would retry a
    * deterministic rejection forever), a stopped one releases only what was
-   * asked after the Stop, and a reload or a close takes care of its own. */
+   * asked after the Stop, and a reload, a delete or a close takes care of
+   * its own. */
   private async turn(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id"> & { id?: string }): Promise<void> {
     let spent = false;
     try {
