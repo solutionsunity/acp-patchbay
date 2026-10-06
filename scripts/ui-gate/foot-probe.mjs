@@ -7,16 +7,13 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
+import { codiconCss } from "./codicons.mjs";
 import { agentViewState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
 const OUT = "out/ui-gate";
 mkdirSync(OUT, { recursive: true });
 const read = (f) => readFileSync(`out/${f}`, "utf8");
-const codiconCss = read("codicons/codicon.css").replace(
-  /url\("\.\/codicon\.ttf[^"]*"\)/,
-  `url("file://${process.cwd()}/out/codicons/codicon.ttf")`,
-);
 
 function findChromium() {
   if (process.env.CHROMIUM) return process.env.CHROMIUM;

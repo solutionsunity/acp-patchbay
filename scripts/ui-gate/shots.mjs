@@ -10,6 +10,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
+import { codiconCss } from "./codicons.mjs";
 import { agentViewState, preferences, settingsState } from "./fixtures.mjs";
 import { bodyClass, THEMES } from "./themes.mjs";
 
@@ -17,10 +18,6 @@ const OUT = "out/ui-gate";
 mkdirSync(OUT, { recursive: true });
 
 const read = (f) => readFileSync(`out/${f}`, "utf8");
-const codiconCss = read("codicons/codicon.css").replace(
-  /url\("\.\/codicon\.ttf[^"]*"\)/,
-  `url("file://${process.cwd()}/out/codicons/codicon.ttf")`,
-);
 
 function findChromium() {
   if (process.env.CHROMIUM) return process.env.CHROMIUM;
@@ -47,6 +44,13 @@ async function page(browser, themeName, { width, height }) {
   p.on("pageerror", (e) => {
     // fixture pages must render clean — a page error is itself a failure
     console.log(`FAIL  [${themeName}] pageerror: ${String(e).slice(0, 200)}`);
+    failures++;
+  });
+  // so is a resource the page couldn't load — a font, a script — which
+  // renders as a blank and nothing else would notice
+  p.on("console", (m) => {
+    if (m.type() !== "error" || !/Failed to load resource|Not allowed to load local resource/.test(m.text())) return;
+    console.log(`FAIL  [${themeName}] resource: ${m.text().slice(0, 200)}`);
     failures++;
   });
   // Lazy sibling bundles (mermaid.js) load exactly as in the real webview:
