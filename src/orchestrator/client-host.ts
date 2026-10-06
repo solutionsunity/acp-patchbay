@@ -4,17 +4,19 @@
 // The client side of ACP that patchbay serves to agents: fs/read_text_file,
 // fs/write_text_file and the terminal/* family. Every write and every command
 // passes patchbay's own gate first; every "no" is answered through
-// client-replies.ts. Kept vscode-free — the live-buffer read and write are
-// injected — so the handlers the extension runs are the same ones the tests
-// run.
-import { isAbsolute } from "node:path";
+// client-replies.ts. What it serves, it does here: the reads it slices, the
+// writes it lands, the commands it runs. Kept vscode-free — the live-buffer
+// read and write are injected — so the handlers the extension runs are the
+// same ones the tests run.
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
-import { type PermissionBroker, sliceTextFileRead } from "./broker";
+import type { PermissionBroker } from "./broker";
 import { gateRefusal, readFailure, relativeCwd, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
-import type { CreateTerminalParams, TerminalHandle } from "./terminal-runner";
+import { NodeTerminalRunner, type CreateTerminalParams, type TerminalHandle, type TerminalRunner } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 export interface ClientHostDeps {
@@ -37,6 +39,7 @@ export class ClientHost {
    * terminal. */
   private readonly terminals = new Map<string, { handle: TerminalHandle; owner: PatchbaySessionId }>();
   private terminalCounter = 0;
+  private readonly runner: TerminalRunner = new NodeTerminalRunner();
 
   constructor(private readonly deps: ClientHostDeps) {}
 
@@ -89,7 +92,7 @@ export class ClientHost {
     const outcome = await this.deps.broker.gateCommand(session.id, run);
     if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
 
-    const handle = this.deps.broker.runner.create(run);
+    const handle = this.runner.create(run);
     const terminalId = `term-${++this.terminalCounter}`;
     this.terminals.set(terminalId, { handle, owner: session.id });
     this.deps.trackProcess(handle);
@@ -177,6 +180,28 @@ export class ClientHost {
     if (handle === undefined) throw unknownTerminal(params.terminalId);
     return handle;
   }
+}
+
+/** Writes newContent to path (creating parent dirs as needed) — the actual
+ * disk mutation, called only after the write's gate settled accepted. */
+export async function applyFileWrite(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content, "utf8");
+}
+
+/** ACP `fs/read_text_file` range params: `line` is 1-based, `limit` is a
+ * max line count. The requested slice is what returns — over-serving the
+ * whole file costs the agent tokens and disobeys the request shape. */
+export function sliceTextFileRead(
+  content: string,
+  line?: number | null,
+  limit?: number | null,
+): string {
+  if (line == null && limit == null) return content;
+  const lines = content.split("\n");
+  const start = Math.max(0, (line ?? 1) - 1);
+  const end = limit != null ? start + limit : lines.length;
+  return lines.slice(start, end).join("\n");
 }
 
 /** The pool's fs/terminal hooks, bound to a host. A getter because the host

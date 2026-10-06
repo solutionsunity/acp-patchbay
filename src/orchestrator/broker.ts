@@ -17,7 +17,7 @@
 // given ruleset would answer the same way, so this is a UX rough edge
 // (a possible second "ask" for one logical edit under an "ask" rule), not a
 // correctness or security gap — accepted for v1.
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { formatCommandLine } from "../shared/command-line";
@@ -31,7 +31,7 @@ import type {
 import { computeLineDiff } from "./diff";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
-import { NodeTerminalRunner, type CreateTerminalParams, type TerminalRunner } from "./terminal-runner";
+import type { CreateTerminalParams } from "./terminal-runner";
 import { newBlockId } from "./block-ids";
 import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
@@ -174,7 +174,6 @@ export class PermissionBroker {
     /** The roots a session was given — where its writes may land
      * without asking under the `workspace` scope. */
     private readonly grantedRoots: (patchbaySessionId: PatchbaySessionId) => readonly string[],
-    private readonly terminals: TerminalRunner = new NodeTerminalRunner(),
     /** Machine-layer command rules — absent in tests that don't exercise
      * layering; the workspace layer alone then behaves as before. */
     private readonly machineRules: MachineRulesStore | null = null,
@@ -588,30 +587,4 @@ export class PermissionBroker {
     });
     return cancelled ? "cancelled" : accepted ? "accepted" : "rejected";
   }
-
-  get runner(): TerminalRunner {
-    return this.terminals;
-  }
-}
-
-/** Writes newContent to path (creating parent dirs as needed) — the actual
- * disk mutation, called only after gateFileWrite resolves accepted. */
-export async function applyFileWrite(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, content, "utf8");
-}
-
-/** ACP `fs/read_text_file` range params: `line` is 1-based, `limit` is a
- * max line count. The requested slice is what returns — over-serving the
- * whole file costs the agent tokens and disobeys the request shape. */
-export function sliceTextFileRead(
-  content: string,
-  line?: number | null,
-  limit?: number | null,
-): string {
-  if (line == null && limit == null) return content;
-  const lines = content.split("\n");
-  const start = Math.max(0, (line ?? 1) - 1);
-  const end = limit != null ? start + limit : lines.length;
-  return lines.slice(start, end).join("\n");
 }

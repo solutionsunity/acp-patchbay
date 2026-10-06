@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { PermissionBroker, sliceTextFileRead } from "../src/orchestrator/broker";
+import { PermissionBroker } from "../src/orchestrator/broker";
+import { sliceTextFileRead } from "../src/orchestrator/client-host";
 import type { CreateTerminalParams } from "../src/orchestrator/terminal-runner";
 import { parseCommandLine } from "../src/shared/command-line";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
@@ -54,7 +55,6 @@ function harness() {
       openLink: (href) => opened.push(href),
     },
     () => granted,
-    undefined,
     machineRules,
   );
   return { broker, rules, machineRules, audit, events, opened, refreshCount: () => auditRefreshes };

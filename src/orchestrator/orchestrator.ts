@@ -36,8 +36,8 @@ import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm, stashFile } from "./attachments";
-import { applyFileWrite, PermissionBroker } from "./broker";
-import { ClientHost, clientRequestHooks } from "./client-host";
+import { PermissionBroker } from "./broker";
+import { applyFileWrite, ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
 import { CapabilityTracker } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
@@ -775,7 +775,6 @@ export class Orchestrator {
         openLink: (href) => void openInBrowser(href),
       },
       (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
-      undefined, // default NodeTerminalRunner
       this.machinePermissionRules,
     );
     this.clientHost = new ClientHost({
