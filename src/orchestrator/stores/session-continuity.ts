@@ -32,21 +32,6 @@ import { savedId } from "./saved-id";
 
 const knobSeedSchema = z.record(z.string(), z.union([z.string(), z.boolean()]));
 
-const queuedPromptSchema = z.object({
-  id: z.string().min(1),
-  text: z.string(),
-  parts: z
-    .array(
-      z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("text"), text: z.string() }),
-        z.object({ kind: z.literal("fileRef"), path: z.string() }),
-      ]),
-    )
-    .optional(),
-  // the composer's own form of the words — opaque here, like `draft` below
-  draft: z.string().optional(),
-});
-
 const persistedChipSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.enum(["selection", "file", "diagnostics"]),
@@ -70,6 +55,23 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
     mimeType: z.string().optional(),
   }),
 ]);
+
+const queuedPromptSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  parts: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({ kind: z.literal("text"), text: z.string() }),
+        z.object({ kind: z.literal("fileRef"), path: z.string() }),
+      ]),
+    )
+    .optional(),
+  // the composer's own form of the words — opaque here, like `draft` below
+  draft: z.string().optional(),
+  // the chips staged with these words — theirs, whatever is staged after
+  chips: z.array(persistedChipSchema).optional(),
+});
 
 /** Row identity is the PAIR — the agent and its own id for the session:
  * that is what names the session again after a reload, and two agents

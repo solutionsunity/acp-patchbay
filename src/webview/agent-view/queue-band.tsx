@@ -58,6 +58,13 @@ function QueueRow({
     <div className="queue-row" title={prompt.text}>
       <Icon name="history" />
       <span className="txt">{prompt.text}</span>
+      {/* what goes with these words — the chips staged when they were held */}
+      {prompt.chips !== undefined && prompt.chips.length > 0 && (
+        <span className="att" title={prompt.chips.map((c) => c.label).join(", ")}>
+          <Icon name="attach" />
+          {prompt.chips.length}
+        </span>
+      )}
       <span
         className="act"
         role="button"

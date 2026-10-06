@@ -1780,9 +1780,19 @@ export class SessionsStore {
    * Ids outlive the window with the row, so they are unique anywhere. */
   hold(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id">): void {
     if (!this.known.has(patchbaySessionId)) return;
-    const queued: QueuedPrompt = { id: randomUUID(), ...words };
+    const queued: QueuedPrompt = { id: randomUUID(), ...words, chips: words.chips ?? this.takeStaged(patchbaySessionId) };
     this.save(patchbaySessionId, { queue: [...(this.saved(patchbaySessionId).queue ?? []), queued] });
     this.hooks.emit({ kind: "promptQueued", patchbaySessionId, prompt: queued });
+  }
+
+  /** The chips staged on the session, taken off it — they go with the
+   * words being held or sent now, whatever is staged after. */
+  private takeStaged(patchbaySessionId: PatchbaySessionId): PersistedChip[] {
+    const chips = [...(this.saved(patchbaySessionId).chips ?? [])];
+    if (chips.length === 0) return chips;
+    this.save(patchbaySessionId, { chips: [] });
+    for (const chip of chips) this.hooks.emit({ kind: "contextChipRemoved", patchbaySessionId, chipId: chip.id });
+    return chips;
   }
 
   /** Whether words wait on the session's row. */
@@ -1790,13 +1800,15 @@ export class SessionsStore {
     return (this.saved(patchbaySessionId).queue?.length ?? 0) > 0;
   }
 
-  /** The held words next in line, taken off the row to start their turn. */
+  /** The held words next in line, taken off the row to start their turn —
+   * with their own chips: none, for a row held before held words carried
+   * them. */
   takeHeld(patchbaySessionId: PatchbaySessionId): QueuedPrompt | undefined {
     const [next, ...rest] = this.saved(patchbaySessionId).queue ?? [];
     if (next === undefined) return undefined;
     this.save(patchbaySessionId, { queue: rest });
     this.hooks.emit({ kind: "promptUnqueued", patchbaySessionId, promptId: next.id });
-    return next;
+    return { ...next, chips: next.chips ?? [] };
   }
 
   /** Whether the session's agent stands signed out — its turns hold, never
@@ -1824,7 +1836,7 @@ export class SessionsStore {
    * here; an answer that comes later changes nothing. */
   async runTurn(
     patchbaySessionId: PatchbaySessionId,
-    words: { text: string; parts?: readonly PromptPart[] },
+    words: { text: string; parts?: readonly PromptPart[]; chips?: readonly PersistedChip[] },
     signal: AbortSignal,
     spent: () => void,
   ): Promise<void> {
@@ -1864,13 +1876,9 @@ export class SessionsStore {
     const startedAt = new Date().toISOString();
     // Attached context rides in as its own labeled blocks, ahead of the
     // user's words — distinguishable to the agent, not merged into prose
-    // (explicitly add editor state to the prompt). The turn takes the
-    // chips off the session's row.
-    const chips = this.saved(patchbaySessionId).chips ?? [];
-    if (chips.length > 0) this.save(patchbaySessionId, { chips: [] });
-    for (const chip of chips) {
-      events.push({ kind: "contextChipRemoved", patchbaySessionId, chipId: chip.id });
-    }
+    // (explicitly add editor state to the prompt). Held words carry the
+    // chips staged with them; words sent now take what is staged.
+    const chips = words.chips ?? this.takeStaged(patchbaySessionId);
     // The transcript's copy of the prompt, in the part vocabulary — chips
     // first, then prose, the same order the wire blocks below carry. An
     // image is previewed from the copy its chip left in the attachments stash.
@@ -2041,7 +2049,9 @@ export class SessionsStore {
    * meanwhile took its held words with it, these included. */
   reHold(patchbaySessionId: PatchbaySessionId, words: Omit<QueuedPrompt, "id"> & { id?: string }): void {
     if (!this.known.has(patchbaySessionId)) return;
-    const queue = [{ ...words, id: words.id ?? randomUUID() }, ...(this.saved(patchbaySessionId).queue ?? [])];
+    // Words sent now that never left take the chips still staged for them.
+    const held = { ...words, id: words.id ?? randomUUID(), chips: words.chips ?? this.takeStaged(patchbaySessionId) };
+    const queue = [held, ...(this.saved(patchbaySessionId).queue ?? [])];
     this.save(patchbaySessionId, { queue });
     this.hooks.emit({ kind: "promptQueueCleared", patchbaySessionId });
     for (const q of queue) this.hooks.emit({ kind: "promptQueued", patchbaySessionId, prompt: q });
@@ -2116,8 +2126,9 @@ export class SessionsStore {
     this.hooks.emit({ kind: "promptUnqueued", patchbaySessionId, promptId });
   }
 
-  /** Take the queue's tail back for editing: the row leaves the queue and
-   * its editor state becomes the session's draft. Only into an empty
+  /** Take the queue's tail back for editing: the row leaves the queue, its
+   * editor state becomes the session's draft, and its chips are staged
+   * again. Only into an empty
    * draft — the composer flushes its buffer on blur, so the click that
    * asks came after its last save, and merging two messages into one is
    * the user's call, made with Copy. Tail only — the one row whose place
@@ -2129,11 +2140,18 @@ export class SessionsStore {
     const { queue = [], draft = "" } = this.saved(patchbaySessionId);
     const tail = queue.at(-1);
     if (draft !== "" || tail === undefined || tail.id !== promptId || tail.draft === undefined) return;
-    this.save(patchbaySessionId, { queue: queue.slice(0, -1), draft: tail.draft });
+    const chips = tail.chips ?? [];
+    this.save(patchbaySessionId, {
+      queue: queue.slice(0, -1),
+      draft: tail.draft,
+      ...(chips.length > 0 ? { chips: [...(this.saved(patchbaySessionId).chips ?? []), ...chips] } : {}),
+    });
     this.hooks.emit(
       { kind: "promptUnqueued", patchbaySessionId, promptId },
       { kind: "sessionDraftChanged", patchbaySessionId, draft: tail.draft },
     );
+    // its chips come back staged with its words
+    if (chips.length > 0) void this.rehydrateChips(patchbaySessionId, chips);
   }
 
   /** Stop means stop: the held words go with the turn the user ended —

@@ -2012,7 +2012,13 @@ describe("SessionsStore", () => {
       content: "const x = 1;",
     });
     locked = true; // logout witnessed
-    await h1.gates.prompt(patchbaySessionId, { text: "held words" }); // → held row
+    await h1.gates.prompt(patchbaySessionId, { text: "held words" }); // → held row, carrying chip-1
+    await h1.sessions.addContext(patchbaySessionId, {
+      kind: "selection",
+      id: "chip-2",
+      label: "util.ts:4",
+      content: "const y = 2;",
+    }); // staged after: the composer's own
     h1.sessions.saveDraft(patchbaySessionId, "half-typed thought"); // the composer's debounced save
     const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
     await h1.pool.stop("smq6" as PatchbayAgentId);
@@ -2022,7 +2028,7 @@ describe("SessionsStore", () => {
     await h2.pool.connect(spec(script, "smq6"));
     await h2.sessions.syncAgentSessions("smq6" as PatchbayAgentId);
     const listed = h2.sessions.rowFor("smq6" as PatchbayAgentId, sessionId)!;
-    expect(h2.state().promptQueue[listed]).toMatchObject([{ text: "held words" }]);
+    expect(h2.state().promptQueue[listed]).toMatchObject([{ text: "held words", chips: [{ id: "chip-1" }] }]);
     expect(h2.state().contextRoots[listed]).toEqual(["/repo/extra"]);
     expect(h2.state().drafts[listed]).toBe("half-typed thought");
     {
@@ -2033,9 +2039,10 @@ describe("SessionsStore", () => {
         await new Promise((r) => setTimeout(r, 20));
       }
     }
-    expect(h2.state().contextChips[listed]).toMatchObject([{ id: "chip-1", label: "main.ts:1-3" }]);
+    expect(h2.state().contextChips[listed]).toMatchObject([{ id: "chip-2", label: "util.ts:4" }]);
 
-    // login clears the lock: the held words fire, chips riding along
+    // login clears the lock: the held words fire with their own chip, the
+    // staged one stays the composer's
     locked = false;
     h2.gates.lockCleared("smq6" as PatchbayAgentId);
     const start = Date.now();
@@ -2046,6 +2053,9 @@ describe("SessionsStore", () => {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(h2.state().promptQueue[listed] ?? []).toEqual([]);
+    const fired = h2.state().transcripts[listed]!.filter((b) => b.kind === "user").at(-1)!;
+    expect(fired.kind === "user" && fired.parts.flatMap((p) => (p.kind === "context" ? [p.label] : []))).toEqual(["main.ts:1-3"]);
+    expect(h2.state().contextChips[listed]).toMatchObject([{ id: "chip-2" }]);
     await h2.pool.stop("smq6" as PatchbayAgentId);
   });
 
@@ -2087,8 +2097,9 @@ describe("SessionsStore", () => {
         await h.gates.addRoot(patchbaySessionId, "/repo/extra");
         await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: `${patchbayAgentId}-chip`, label: "a.ts:1", content: "x" });
         locked = true;
-        await h.gates.prompt(patchbaySessionId, { text: "held words" });
+        await h.gates.prompt(patchbaySessionId, { text: "held words" }); // carries the chip staged with it
         locked = false;
+        await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: `${patchbayAgentId}-staged`, label: "b.ts:2", content: "y" });
         h.sessions.saveDraft(patchbaySessionId, "half a thought");
         return patchbaySessionId;
       };
@@ -2099,8 +2110,8 @@ describe("SessionsStore", () => {
         expect(store.read(patchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)).toMatchObject({
           knobs: { model: "sonnet" },
           roots: ["/repo/extra"],
-          chips: [{ id: `${patchbayAgentId}-chip` }],
-          queue: [{ text: "held words" }],
+          chips: [{ id: `${patchbayAgentId}-staged` }],
+          queue: [{ text: "held words", chips: [{ id: `${patchbayAgentId}-chip` }] }],
           draft: "half a thought",
         });
       }
@@ -2387,6 +2398,53 @@ describe("SessionsStore", () => {
 
 // ── session history: the agent's own session/list is the only list there
 // is — patchbay persists no session records (no index, no transcripts).
+// A held prompt owns the chips staged with it (#83): each held prompt sends
+// what was staged when it was written, never what is staged when it fires.
+describe("held prompts and their chips", () => {
+  const selection = (id: string) => ({ id, kind: "selection" as const, label: `Selection ${id}`, content: `content of ${id}` });
+  const contextLabels = (b: ChatBlock) =>
+    b.kind === "user" ? b.parts.flatMap((p) => (p.kind === "context" ? [p.label] : [])) : [];
+
+  it("each held prompt sends the chips staged with it — not the ones staged after", async () => {
+    const h = harness();
+    const agent = "hc1" as PatchbayAgentId;
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 150 }, "hc1"));
+    const id = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const first = h.gates.prompt(id, { text: "first" }); // a turn underway
+    await new Promise((r) => setTimeout(r, 30));
+    await h.sessions.addContext(id, selection("A"));
+    await h.gates.prompt(id, { text: "second" }); // held, with A
+    await h.sessions.addContext(id, selection("B"));
+    await h.gates.prompt(id, { text: "third" }); // held, with B
+    expect(h.state().promptQueue[id]!.map((q) => q.chips?.map((c) => c.id))).toEqual([["A"], ["B"]]);
+    expect(h.state().contextChips[id]).toEqual([]);
+    await first;
+    await vi.waitFor(() => expect(h.state().transcripts[id]!.filter((b) => b.kind === "user")).toHaveLength(3), { timeout: 5000 });
+    await vi.waitFor(() => expect(h.state().promptQueue[id] ?? []).toEqual([]), { timeout: 5000 });
+    const users = h.state().transcripts[id]!.filter((b) => b.kind === "user");
+    expect(users.map(contextLabels)).toEqual([[], ["Selection A"], ["Selection B"]]);
+    await h.pool.stop(agent);
+  });
+
+  it("taking the tail back stages its chips again, with its words", async () => {
+    const h = harness();
+    const agent = "hc2" as PatchbayAgentId;
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 300 }, "hc2"));
+    const id = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const first = h.gates.prompt(id, { text: "first" });
+    await new Promise((r) => setTimeout(r, 30));
+    await h.sessions.addContext(id, selection("A"));
+    await h.gates.prompt(id, { text: "second", draft: "the second, as typed" });
+    const held = h.state().promptQueue[id]![0]!;
+    h.sessions.takeBack(id, held.id);
+    expect(h.state().promptQueue[id] ?? []).toEqual([]);
+    expect(h.state().drafts[id]).toBe("the second, as typed");
+    await vi.waitFor(() => expect(h.state().contextChips[id]!.map((c) => c.id)).toEqual(["A"]));
+    await first;
+    await h.pool.stop(agent);
+  });
+});
+
 describe("session history (list / resume / delete)", () => {
   const LIST_CAPS = { sessionCapabilities: { list: {}, delete: {} } };
 

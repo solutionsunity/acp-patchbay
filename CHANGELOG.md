@@ -49,6 +49,11 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   stopping disconnects its conversations at once, and they reopen later
   with their knobs, roots and held prompts. Stop on a message works from
   the moment it is sent.
+- **A held prompt sends the attachments staged with it.** Before, a prompt
+  sent while a turn ran took no chips, and whichever prompt fired next took
+  everything staged at that moment, so a screenshot could go out with the
+  wrong message. The held row shows its attachments, and taking it back
+  returns them to the composer. (#83)
 - **Fork a session** from its ⋯ menu where the agent offers it: a new
   session carrying the original's history opens, and the original stays as
   it is. The fork's title row names its original and opens it.

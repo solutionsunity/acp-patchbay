@@ -93,6 +93,13 @@ session's worth of change against.
 
 ### 5 · Composer
 
+**Held prompts** sit in a band above the composer: prompts sent while a turn
+runs (or while the agent is signed out), in firing order. Each row shows its
+words and, with a 📎 count, the chips staged when it was sent — a held prompt
+sends those, never what is staged when it fires. Every row copies and
+removes; the tail row takes back into the composer, its words and its chips
+together.
+
 Binding rule: **above the input = what the agent will see (context, nouns); below
 the input = how the turn fires (dials + dispatch).**
 

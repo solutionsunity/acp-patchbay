@@ -234,7 +234,8 @@ the held words.
   zero-turn re-mint with it), a reload, a roots re-apply, a knob set, an idle
   release, a delete, a close.
 - **The turn line** holds the session's turn, one at a time, as ACP has it.
-  Held words wait on the continuity row and enter the line one by one — after
+  Held words wait on the continuity row, each with the chips staged when it
+  was held, and enter the line one by one — after
   a turn that ended by itself, an open or a reload, a login that clears the
   auth lock, or a prompt sent while nothing runs. A turn that ended in an
   error holds them: firing into what just failed would retry a deterministic

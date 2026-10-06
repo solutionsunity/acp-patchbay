@@ -805,6 +805,14 @@ button.more,
   border-top: 1px solid var(--pb-border);
 }
 
+.queue-row .att {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--pb-text-faint);
+}
+
 .queue-row .act {
   flex-shrink: 0;
   cursor: pointer;

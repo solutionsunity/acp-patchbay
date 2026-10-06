@@ -826,6 +826,21 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── a held prompt shows the chips it carries (#83). Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  const chip = (id) => ({ id, kind: "selection", label: `Selection ${id}`, content: "x" });
+  await p.evaluate(
+    (chips) => window.__patch([{ kind: "promptQueued", patchbaySessionId: "s1", prompt: { id: "q1", text: "held words", chips } }]),
+    [chip("A"), chip("B")],
+  );
+  const att = await p.waitForSelector(".queue-row .att", { timeout: 3000 }).then(async (el) => ({ text: (await el.textContent()).trim(), title: await el.getAttribute("title") }), () => null);
+  check(`a held prompt shows the chips it carries (${JSON.stringify(att)})`, att?.text === "2" && att.title === "Selection A, Selection B");
+  await p.close();
+}
+
 // ── nothing hides at a narrow width (#67): with long unbreakable content
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.

@@ -288,6 +288,11 @@ export interface QueuedPrompt {
    * into the composer exactly, tokens and all. Absent on rows held before
    * the composer started sending it; those copy and fire, never reclaim. */
   draft?: string;
+  /** The chips staged with these words, taken off the session when they
+   * were held — a held prompt sends its own, never what is staged when it
+   * fires. Absent on direct words (a turn takes what is staged) and on
+   * rows held before held prompts carried chips (those send none). */
+  chips?: readonly PersistedChip[];
 }
 
 /** A context chip as persisted in the session-continuity store. Bytes never
