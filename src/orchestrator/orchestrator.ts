@@ -814,7 +814,7 @@ export class Orchestrator {
     // Settings "active today" tile (another channel, same source): same
     // state, read where it lives, never a second counter.
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.statusBarItem.command = "acpPatchbay.agentView.focus";
+    this.statusBarItem.command = "acpPatchbay.focusComposer";
     this.statusBarItem.show();
     this.agentView.onChange(() => {
       this.refreshStatusBar();
@@ -1017,7 +1017,7 @@ export class Orchestrator {
       patchbayAgentId = picked.patchbayAgentId;
     }
     await this.startChat(patchbayAgentId);
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    await this.focusComposer();
   }
 
   /** "Switch session." The pick is a read of the list — the same re-read
@@ -1081,7 +1081,7 @@ export class Orchestrator {
     } else {
       await this.connectFrom(picked.source);
     }
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    await this.focusComposer();
   }
 
   /** Editor right-click ("add to context / ask the agent
@@ -1096,7 +1096,7 @@ export class Orchestrator {
       return;
     }
     this.handleAction({ kind: "addSelectionContext", patchbaySessionId });
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    await this.focusComposer();
   }
 
   /** The local MCP server's `request_user_input` tool — the fallback for an
@@ -1415,11 +1415,20 @@ export class Orchestrator {
     });
   }
 
+  /** A chat opened for typing: the Agent View takes focus, then its
+   * composer takes the keyboard. The view goes first — a view only focuses
+   * its composer while it has focus itself, so it never pulls focus from
+   * where the user is. */
+  async focusComposer(): Promise<void> {
+    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    this.agentView.emit({ kind: "composerFocusRequested" });
+  }
+
   /** Brings a session up in the Agent View — the one path for every
    * "take me there" (the switch-session command, a notification's Open). */
   private async revealSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
     this.sessionGates.open(patchbaySessionId);
-    await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+    await this.focusComposer();
   }
 
   private async refreshAuditTail(): Promise<void> {

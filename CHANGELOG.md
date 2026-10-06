@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opening a chat puts the cursor in the composer. New Session, Connect
+  agent…, adding a selection from the editor, revealing a session and the
+  status bar item now focus the text box, not just the view, so you can
+  type straight away; switching sessions in the view does too. A view you
+  aren't in never takes focus from where you are. (#55)
 - A file you give a session — a pasted or picked image, a file dropped on
   the composer — now lives with the session, in patchbay's own storage,
   instead of the system's temp folder. Before, a reboot or a temp cleanup

@@ -30,6 +30,7 @@ import {
   KEY_ESCAPE_COMMAND,
   KEY_TAB_COMMAND,
   PASTE_COMMAND,
+  type LexicalEditor,
   type TextNode,
   CLEAR_HISTORY_COMMAND,
 } from "lexical";
@@ -88,6 +89,22 @@ export interface PromptEditorProps {
   onPickAttach(): void;
   /** The send button lives outside the editor — it fires through here. */
   submitRef: { current: (() => void) | null };
+  /** The host's requests that the composer take the keyboard (the view
+   * state's `composerFocus`) — a change is the request. */
+  focusRequest: number;
+}
+
+/** How long a request to take the keyboard waits for its view's focus —
+ * the host focuses the view just before asking, so the two land within a
+ * moment of each other in either order. */
+const FOCUS_REQUEST_GRACE_MS = 1000;
+
+/** Puts the cursor in the composer: DOM focus first — Lexical's own focus
+ * only moves a selection inside an editor that already has it, and does
+ * nothing in an empty one — then the caret after what the editor holds. */
+function takeKeyboard(editor: LexicalEditor): void {
+  editor.getRootElement()?.focus({ preventScroll: true });
+  editor.focus();
 }
 
 export function PromptEditor(props: PromptEditorProps) {
@@ -257,20 +274,48 @@ function EditorCore(props: PromptEditorProps) {
     }
     editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
     loadedFor.current = props.patchbaySessionId;
+    // A session opened in the view the user is in puts the cursor in its
+    // composer. A view without focus never takes it: a switch made from
+    // elsewhere — a reveal, the startup restore — must not pull focus out
+    // of the editor; a chat opened for typing asks (`focusRequest`).
+    if (props.patchbaySessionId !== "" && document.hasFocus()) takeKeyboard(editor);
     // props.draft deliberately absent: it is read only at the moment of a
     // session switch — reacting to it live would fight the keyboard.
   }, [editor, props.patchbaySessionId]);
 
+  // The host's request that the composer take the keyboard. It focused the
+  // view first, so the view normally has focus by now; a request that lands
+  // just ahead of that focus waits for it — briefly, so a request nobody
+  // followed up never moves the cursor out of something clicked later.
+  const seenRequest = useRef(props.focusRequest);
+  const awaitingFocus = useRef(0);
+  useEffect(() => {
+    if (props.focusRequest === seenRequest.current) return;
+    seenRequest.current = props.focusRequest;
+    if (document.hasFocus()) takeKeyboard(editor);
+    else awaitingFocus.current = Date.now() + FOCUS_REQUEST_GRACE_MS;
+  }, [editor, props.focusRequest]);
+  useEffect(() => {
+    const onFocus = () => {
+      if (Date.now() > awaitingFocus.current) return;
+      awaitingFocus.current = 0;
+      takeKeyboard(editor);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [editor]);
+
   // The sibling-view seam (a session open in the sidebar AND a detached
   // panel): each composer owns its live buffer, so an incoming durable
-  // draft is applied only when this editor is idle — not focused, nothing
-  // pending — and actually differs. A focused editor keeps the keyboard's
-  // truth; its own next save wins.
+  // draft is applied only when this editor is idle — not the one being
+  // typed into, nothing pending — and actually differs. The editor focused
+  // in a focused view keeps the keyboard's truth; its own next save wins.
+  // One whose view lost focus is idle, whatever it still holds.
   useEffect(() => {
     if (loadedFor.current !== props.patchbaySessionId || props.patchbaySessionId === "") return;
     if (saveTimer.current !== null) return;
     const root = editor.getRootElement();
-    if (root !== null && root.contains(document.activeElement)) return;
+    if (root !== null && document.hasFocus() && root.contains(document.activeElement)) return;
     if (serialize() === props.draft) return;
     loadedFor.current = null;
     editor.update(

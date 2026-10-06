@@ -111,7 +111,10 @@ that doesn't apply here); an accepted command becomes an inline token. **`@`** �
 context mention picker: open editors first, then workspace files (queried from the
 orchestrator; the input never reads the filesystem), plus the adder's fixed rows.
 A picked file becomes an inline token sent at its position in the prompt; the fixed
-rows resolve to context chips as before.
+rows resolve to context chips as before. The input takes the cursor when a chat
+opens for typing — a new session, a connect, a selection added from the editor, a
+session revealed, the status bar item — and when a session is switched to in the
+view the user is in; it never pulls focus into a view the user isn't in.
 
 Action row (below):
 

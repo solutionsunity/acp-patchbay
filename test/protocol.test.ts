@@ -193,6 +193,17 @@ describe("reducers", () => {
     expect(replay(initialAgentViewState, [{ kind: "startupSettled" }]).restoring).toBe(false);
   });
 
+  // A chat opened for typing asks the composer for the keyboard; the views
+  // react to a change, so every request must move the count, twice in a
+  // row included.
+  it("each request to take the keyboard moves composerFocus", () => {
+    expect(initialAgentViewState.composerFocus).toBe(0);
+    const once = replay(initialAgentViewState, [{ kind: "composerFocusRequested" }]);
+    const twice = replay(once, [{ kind: "composerFocusRequested" }]);
+    expect(once.composerFocus).not.toBe(initialAgentViewState.composerFocus);
+    expect(twice.composerFocus).not.toBe(once.composerFocus);
+  });
+
 });
 
 describe("live editor context (ui.md — ghost chip / @ mention sources)", () => {

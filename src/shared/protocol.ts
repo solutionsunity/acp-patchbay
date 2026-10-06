@@ -1328,6 +1328,11 @@ export interface AgentViewState {
    * open session is on its way back. Seeded true only when a last-active
    * pointer exists; cleared by `startupSettled`. */
   restoring: boolean;
+  /** The host's requests that the composer take the keyboard — a chat just
+   * opened for typing: a new session, a connect, a selection added from the
+   * editor, a session revealed, the status bar. A change is the request;
+   * the number itself means nothing. */
+  composerFocus: number;
   /** The ACP registry's agents (acp-registry.ts) for the pickers. */
   registryAgents: readonly RegistryAgentView[];
   /** Render cache, per session — rebuilt wholesale from session/load replay. */
@@ -1485,6 +1490,7 @@ export const initialAgentViewState: AgentViewState = {
   activePatchbaySessionId: null,
   chatConnect: null,
   restoring: false,
+  composerFocus: 0,
   registryAgents: [],
   transcripts: {},
   activePlan: {},
@@ -1518,6 +1524,9 @@ export type AgentViewEvent =
    * (stale pointer, failed connects); either way `restoring` clears and the
    * rendering area stops holding the loading page. */
   | { kind: "startupSettled" }
+  /** A chat was opened for typing: its view is focused, and the composer
+   * takes the keyboard (`composerFocus`). */
+  | { kind: "composerFocusRequested" }
   /** A session the user just started — it takes the active pointer and ends
    * the chat pane's connect. */
   | { kind: "sessionCreated"; session: SessionSummary }
@@ -1860,6 +1869,8 @@ export function reduceAgentView(
       return { ...state, chatConnect: null };
     case "startupSettled":
       return { ...state, restoring: false };
+    case "composerFocusRequested":
+      return { ...state, composerFocus: state.composerFocus + 1 };
     case "sessionCreated":
       // Patchbay mints every session's id, so a created session is always a
       // row of its own, its maps starting empty.

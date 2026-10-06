@@ -79,6 +79,8 @@ export function activate(context: vscode.ExtensionContext): {
       orchestrator.addSelectionToContextCommand(),
     ),
     vscode.commands.registerCommand("acpPatchbay.wireLog", () => orchestrator.wireLogCommand()),
+    // The status bar item's door: the chat, ready to type into.
+    vscode.commands.registerCommand("acpPatchbay.focusComposer", () => orchestrator.focusComposer()),
     // OAuth redirect target: MCP servers'
     // browser flows come back as vscode://solutionsunity.acp-patchbay/...
     // URIs — resolved correctly in every environment by asExternalUri,

@@ -61,6 +61,8 @@ export function Composer(props: {
   preferences: PreferencesView;
   totals: SessionTotals;
   usage: UsageInfo | null;
+  /** The host's requests that the composer take the keyboard. */
+  focusRequest: number;
   /** Ingress refusals surface through the app's toast. */
   onNotice(message: string): void;
 }) {
@@ -279,6 +281,7 @@ export function Composer(props: {
           onPickProblems={addDiagnostics}
           onPickAttach={addFilePicker}
           submitRef={submitRef}
+          focusRequest={props.focusRequest}
         />
       </div>
       {/* Outside the input-shell on purpose: the foot sits on the composer's

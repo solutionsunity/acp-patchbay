@@ -170,6 +170,7 @@ export function App({
       )}
       <Composer
         agent={activeAgent}
+        focusRequest={state.composerFocus}
         session={active}
         incoming={incoming}
         commands={active !== null ? (state.commandsBySession[active.id] ?? []) : []}

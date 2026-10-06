@@ -158,6 +158,7 @@ export function agentViewState({ live }) {
     ],
     activePatchbaySessionId: "s1",
     chatConnect: null,
+    composerFocus: 0,
     registryAgents: [],
     transcripts: {
       s1: chatTranscript,

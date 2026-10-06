@@ -628,6 +628,47 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── the composer takes the keyboard (#55): when a chat opens for typing,
+// and on a session switch in the view the user is in — never pulling focus
+// into a view that doesn't have it. Theme-independent: run once. ──
+{
+  const inComposer = (p) => p.evaluate(() => document.activeElement?.classList.contains("prompt-editor") === true);
+  const blur = (p) => p.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+
+  // a view the user is in
+  let p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  check("the composer has the cursor when its view mounts focused", await p.waitForFunction(() => document.activeElement?.classList.contains("prompt-editor") === true, null, { timeout: 3000 }).then(() => true, () => false));
+  await blur(p);
+  await p.evaluate(() => window.__patch([{ kind: "composerFocusRequested" }]));
+  check("a chat opened for typing puts the cursor in the composer", await inComposer(p));
+  await blur(p);
+  await p.evaluate(() => window.__patch([{ kind: "sessionActivated", patchbaySessionId: "s2" }]));
+  check("a session switched to in a focused view takes the cursor", await inComposer(p));
+  await p.close();
+
+  // a view the user is not in: nothing pulls focus into it
+  p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await p.evaluate(() => {
+    document.hasFocus = () => false;
+  });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  check("a view mounting without focus leaves the cursor alone", !(await inComposer(p)));
+  await p.evaluate(() => window.__patch([{ kind: "sessionActivated", patchbaySessionId: "s2" }]));
+  check("a switch made while the view has no focus leaves the cursor alone", !(await inComposer(p)));
+  // a request that lands just ahead of its view's focus waits for it
+  await p.evaluate(() => window.__patch([{ kind: "composerFocusRequested" }]));
+  check("a request ahead of the view's focus doesn't take it", !(await inComposer(p)));
+  await p.evaluate(() => {
+    document.hasFocus = () => true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  check("the view's focus arriving puts the cursor in the composer", await inComposer(p));
+  await p.close();
+}
+
 await browser.close();
 console.log(failures === 0 ? `\nui-gate: all checks passed → ${OUT}/` : `\nui-gate: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
