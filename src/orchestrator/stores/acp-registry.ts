@@ -2,9 +2,8 @@
 // Copyright 2026 Solutions Unity
 
 // Client for the official ACP agent registry (agentclientprotocol/registry)
-// — THE agent source (the pre-registry roster overlay is retired; patchbay's
-// own per-agent curation lives in code tables, meta.ts META_EXTENSIONS being
-// the standing one). Cached to disk (globalStorageUri —
+// — THE agent source; patchbay's own per-agent curation lives in code
+// tables, meta.ts META_EXTENSIONS being the standing one. Cached to disk (globalStorageUri —
 // per-machine, never synced) so a cold start or an offline CDN still has
 // agents to show. Read at the moments the registry matters
 // (`RegistryReadMoment`), never on a clock — and always right before
@@ -218,7 +217,7 @@ export type RegistryRead = { ok: true; at: string } | { ok: false; at: string; r
 
 export class AcpRegistryStore {
   private cache: AcpRegistryData = EMPTY;
-  /** The CDN's validator for the cached copy — a refresh asks "only if
+  /** The CDN's validator for the cached copy — a read asks "only if
    * changed", so an unchanged registry costs a 304 and no body. */
   private etag: string | null = null;
   private raw: unknown = null;
@@ -296,7 +295,7 @@ export class AcpRegistryStore {
   }
 
   /** A missing, unreadable, or older-shaped cache leaves the store empty —
-   * the refresh that follows fills it. A read that landed while the disk
+   * the read that follows fills it. A read that landed while the disk
    * was being read is newer than the disk: the cache never replaces it. */
   private async readCacheFile(): Promise<void> {
     let json: unknown;

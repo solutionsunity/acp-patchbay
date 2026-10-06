@@ -565,7 +565,7 @@ export class SessionStream {
    *   mid-fence, strictly worse than fusing. The cost is honest and open:
    *   an id-less agent's real message boundaries stay invisible until a
    *   wire capture proves its replay granularity (auggie's agent-chunk
-   *   side is uncaptured — dossier note when it lands). */
+   *   side is uncaptured). */
   private runBlockFor(
     patchbaySessionId: PatchbaySessionId,
     session: StreamState,

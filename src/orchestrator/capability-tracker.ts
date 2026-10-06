@@ -325,7 +325,7 @@ export class CapabilityTracker {
    * The agents store disconnects the agent's process right after this
    * returns (its logout): a process that has held credentials is never
    * trusted to shed them — auth state read at spawn and never re-read is
-   * live agent behavior (auggie dossier, 2026-07-14), and its logout-side
+   * live agent behavior (observed in auggie, 2026-07-14), and its logout-side
    * mirror (a process that keeps working after revocation) is a security
    * hazard. The lock's reason doubles as the stopped card's explanation. */
   async logout(patchbayAgentId: PatchbayAgentId): Promise<void> {

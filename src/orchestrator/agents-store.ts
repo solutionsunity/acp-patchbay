@@ -580,7 +580,7 @@ export class AgentsStore implements ConnectionOperations {
    * successful logout IS the auth state; no probe) — then the agent's
    * process is disconnected. Policy, not a quirk workaround: a process that
    * has held credentials is never trusted to shed them (spawn-time-only
-   * auth reads are live behavior — auggie dossier), so killing it is the
+   * auth reads are live behavior — observed in auggie), so killing it is the
    * only clear-out that needs no agent cooperation. The card lands on
    * stopped + the logout reason, and the lock persists (auth-evidence.ts) —
    * a reconnect carries it until real login evidence clears it. */
@@ -894,7 +894,7 @@ export class AgentsStore implements ConnectionOperations {
     if (outcome === "auth_required") {
       // The recipe wrote credentials *outside* the running process, and the
       // process still answers auth_required: a CLI that reads auth state at
-      // spawn never re-reads it (observed: auggie 0.32.0, dossier). The only
+      // spawn never re-reads it (observed: auggie 0.32.0). The only
       // honest re-check is the one the user would do by hand — a fresh
       // spawn. One restart per login attempt, no loop: if the new process
       // still needs auth, the wire chokepoint re-raises it and the card

@@ -665,10 +665,8 @@ export interface DeclaredCapabilities {
 /** One agent of the official ACP registry, as patchbay presents it — the
  * registry record enriched with platform launch resolution and patchbay's
  * own code-table curation (asset locations, bypass-bridge observations).
- * The registry is the one source of agents (the pre-registry roster overlay
- * is gone — terminology followed: roster = registry, so the word "roster"
- * no longer exists in this codebase); custom commands remain the escape
- * hatch for anything it doesn't list. */
+ * The registry is the one source of agents; custom commands remain the
+ * escape hatch for anything it doesn't list. */
 export interface RegistryAgentView {
   /** The registry's own id — also the config id an Add mints. */
   id: string;

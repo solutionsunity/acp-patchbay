@@ -41,8 +41,8 @@ const modelsFieldSchema = z.object({
  *
  * The executor: this axis has NO confirmation channel on the wire (no
  * model update notification, no model in usage_update, empty set_model
- * response — dossier), so — this knob alone — the displayed value advances
- * optimistically from the user's own pick: the sole fact in existence, and
+ * response — all observed), so — this knob alone — the displayed value
+ * advances optimistically from the user's own pick: the sole fact in existence, and
  * no agent state is being trusted (there is none). */
 export function sessionModelsExtras(response: unknown): KnobExtra[] {
   if (typeof response !== "object" || response === null) return [];
