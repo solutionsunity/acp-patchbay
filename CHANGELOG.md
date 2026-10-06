@@ -163,6 +163,11 @@
   (#58)
 - Removing an agent also takes it off every MCP server's list of agents
   it reaches.
+- Dependency advisory on code that ships: dompurify 3.4.15 → 3.4.16 (a
+  sanitizer bypass in its in-place mode — mermaid never sanitizes in
+  place, and the webview CSP blocks inline handlers anyway). The other
+  alert, markdown-it, lives in the packaging tool and never reaches the
+  VSIX.
 
 ## 0.84.1 — 2026-09-29
 
