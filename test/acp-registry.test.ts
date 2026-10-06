@@ -144,7 +144,7 @@ describe("binary digests", () => {
 
 // The registry store is the one holder of the registry (issue #54): read at
 // the moments that matter, one read at a time, a conditional read by its
-// validator, the raw registry cached as received, and every failed refresh
+// validator, the raw registry cached as received, and every failed read
 // recorded and logged — never a stale copy passing as current.
 describe("AcpRegistryStore", () => {
   const DIGEST = "c".repeat(64);
@@ -178,7 +178,7 @@ describe("AcpRegistryStore", () => {
     const fetchSpy = vi.fn(async () => json(payload));
     vi.stubGlobal("fetch", fetchSpy);
     const store = new AcpRegistryStore(dir, () => {});
-    const [a, b] = await Promise.all([store.refresh("manual"), store.refresh("manual")]);
+    const [a, b] = await Promise.all([store.read("manual"), store.read("manual")]);
     expect(a).toBe(b);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -198,9 +198,9 @@ describe("AcpRegistryStore", () => {
     const infos: string[] = [];
     const log: Logger = { trace: () => {}, debug: () => {}, info: (m) => infos.push(m), warn: () => {}, error: () => {} };
     const store = new AcpRegistryStore(dir, () => updates++, log);
-    await store.refresh("manual");
+    await store.read("manual");
     const before = store.current();
-    expect(await store.refresh("manual")).toMatchObject({ ok: true });
+    expect(await store.read("manual")).toMatchObject({ ok: true });
     expect(seen).toEqual([null, '"v1"']);
     expect(store.current().agents).toBe(before.agents);
     expect(updates).toBe(2); // confirmed current is news too — the "last checked" line moves
@@ -208,23 +208,23 @@ describe("AcpRegistryStore", () => {
     expect(infos).toEqual(["ACP registry: fetched — 1 agent (refresh requested)", "ACP registry: up to date — 1 agent (refresh requested)"]);
   });
 
-  it("a failed refresh is recorded and logged, and the copy it has stays", async () => {
+  it("a failed read is recorded and logged, and the copy it has stays", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
     const { log, lines } = warnings();
     const store = new AcpRegistryStore(dir, () => {}, log);
-    await store.refresh("manual");
+    await store.read("manual");
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("fetch failed"))));
-    const outcome = await store.refresh("manual");
+    const outcome = await store.read("manual");
     expect(outcome).toMatchObject({ ok: false, reason: expect.stringContaining("network error") });
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
-    expect(lines.some((l) => l.startsWith("ACP registry: refresh failed (refresh requested) — network error"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("ACP registry: read failed (refresh requested) — network error"))).toBe(true);
   });
 
   it("caches the registry as received — a later read parses it whole, digests included", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(payload, { etag: '"v1"' })));
-    await new AcpRegistryStore(dir, () => {}).refresh("manual");
+    await new AcpRegistryStore(dir, () => {}).read("manual");
     const cached = JSON.parse(await readFile(join(dir, "acp-registry-cache.json"), "utf8"));
     expect(cached.raw).toEqual(payload);
     expect(cached.etag).toBe('"v1"');
@@ -238,13 +238,13 @@ describe("AcpRegistryStore", () => {
   it("a read that lands before the cache loads is never replaced by the older disk copy", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json({ ...payload, agents: [] })));
-    await new AcpRegistryStore(dir, () => {}).refresh("manual"); // disk: an empty registry
+    await new AcpRegistryStore(dir, () => {}).read("manual"); // disk: an empty registry
     vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
     const store = new AcpRegistryStore(dir, () => {});
     // the startup load and a restored view's read overlap: the load reads
     // the old disk copy, the read lands in memory first
     const loading = store.load();
-    await store.refresh("settings");
+    await store.read("settings");
     await loading;
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
   });
@@ -262,7 +262,7 @@ describe("AcpRegistryStore", () => {
     );
     const store = new AcpRegistryStore(dir, () => {});
     await store.load();
-    await store.refresh("manual");
+    await store.read("manual");
     expect(asked[0]).toBeNull(); // never a conditional read against a copy it can't use
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
   });

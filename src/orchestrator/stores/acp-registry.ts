@@ -7,8 +7,11 @@
 // the standing one). Cached to disk (globalStorageUri —
 // per-machine, never synced) so a cold start or an offline CDN still has
 // agents to show. Read at the moments the registry matters
-// (`RegistryReadMoment`), never on a clock: a cheap conditional read, a 304
-// when nothing changed.
+// (`RegistryReadMoment`), never on a clock — and always right before
+// anything acts on what it says: a cheap conditional read, a 304 when
+// nothing changed. Between reads the copy is shown with the date it was
+// last confirmed; it stands in for the registry only while the registry
+// can't answer.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -78,7 +81,7 @@ export interface AcpRegistryData {
   /** "" = never successfully fetched — cold start with no cache and no network. */
   fetchedAt: string;
   agents: readonly RegistryAgent[];
-  /** registryId → data URI, fetched host-side at refresh and cached with the
+  /** registryId → data URI, fetched host-side at each read and cached with the
    * registry snapshot. Data URIs on purpose: the authored webview CSP already
    * allows `img-src data:`, so icons render with zero CSP widening and no
    * webview ever talks to the CDN. Version-keyed reuse — an unchanged agent
@@ -197,19 +200,21 @@ export function binaryDigestFor(
 
 /** The moments the registry is read — the one list. A moment is added
  * here, and every site that reads names one. */
-export type RegistryReadMoment = "startup" | "new-session" | "settings" | "download" | "manual";
+export type RegistryReadMoment = "startup" | "new-session" | "settings" | "add" | "upgrade" | "download" | "manual";
 
 const MOMENT_TEXT: Record<RegistryReadMoment, string> = {
   startup: "startup",
   "new-session": "new session",
   settings: "Settings opened",
+  add: "before an add",
+  upgrade: "before an upgrade",
   download: "before a download",
   manual: "refresh requested",
 };
 
-/** How the last refresh ended: the registry confirmed current (fetched or
+/** How a read ended: the registry confirmed current (fetched or
  * unchanged), or the reason it couldn't be. */
-export type RegistryRefresh = { ok: true; at: string } | { ok: false; at: string; reason: string };
+export type RegistryRead = { ok: true; at: string } | { ok: false; at: string; reason: string };
 
 export class AcpRegistryStore {
   private cache: AcpRegistryData = EMPTY;
@@ -220,7 +225,7 @@ export class AcpRegistryStore {
   /** Version-keyed icon cache (registryId → {version, dataUri}) — the reuse
    * ledger behind `AcpRegistryData.icons`; persisted in the one cache file. */
   private iconCache: Record<string, { version: string; dataUri: string }> = {};
-  private inflight: Promise<RegistryRefresh> | null = null;
+  private inflight: Promise<RegistryRead> | null = null;
 
   constructor(
     private readonly cacheDir: string,
@@ -236,24 +241,28 @@ export class AcpRegistryStore {
     await this.readCacheFile();
   }
 
+  /** What the store holds — the last reading, dated by `fetchedAt`. Never
+   * goes to the registry: it answers at once, for what only shows the
+   * registry. Whatever acts on it calls `read` first. */
   current(): AcpRegistryData {
     return this.cache;
   }
 
-  /** Reads the registry now, at `moment` — the log line names it.
-   * Overlapping moments share one read (named by the first). */
-  refresh(moment: RegistryReadMoment): Promise<RegistryRefresh> {
-    this.inflight ??= this.doRefresh(MOMENT_TEXT[moment]).finally(() => {
+  /** The one way to the registry: reads it now, at `moment` — the log line
+   * names it — and what it held becomes what it answered. Overlapping
+   * moments share one read (named by the first). */
+  read(moment: RegistryReadMoment): Promise<RegistryRead> {
+    this.inflight ??= this.doRead(MOMENT_TEXT[moment]).finally(() => {
       this.inflight = null;
     });
     return this.inflight;
   }
 
-  private async doRefresh(moment: string): Promise<RegistryRefresh> {
+  private async doRead(moment: string): Promise<RegistryRead> {
     const at = new Date().toISOString();
-    const fail = (reason: string): RegistryRefresh => {
+    const fail = (reason: string): RegistryRead => {
       this.log.warn(
-        `ACP registry: refresh failed (${moment}) — ${reason}; keeping the copy from ${this.cache.fetchedAt || "never"}`,
+        `ACP registry: read failed (${moment}) — ${reason}; keeping the copy from ${this.cache.fetchedAt || "never"}`,
       );
       return { ok: false, at, reason };
     };

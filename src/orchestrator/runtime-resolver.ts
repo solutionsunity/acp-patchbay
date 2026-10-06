@@ -328,7 +328,7 @@ export interface LaunchResolveDeps {
   digestFor?: (distribution: string, version: string, pinned: string | null) => string | null;
   /** Reads the registry now — before a download and again after a
    * mismatch — answering whether it could be read. */
-  refreshRegistry?: () => Promise<boolean>;
+  readRegistry?: () => Promise<boolean>;
   /** Test seams. `probes.launcher` replaces spec.command in the gate;
    * `probes.interpreter` replaces bare `node`. */
   probes?: { launcher?: string; interpreter?: string };
@@ -501,7 +501,7 @@ export async function resolveBinaryLaunch(
   // Read the registry at the moment it matters — right before the bytes
   // arrive — so the digest is today's, never a stale cache's silence.
   const digest = async (): Promise<Digest> => {
-    const reachable = (await deps.refreshRegistry?.()) ?? true;
+    const reachable = (await deps.readRegistry?.()) ?? true;
     const raw = deps.digestFor === undefined ? pinned : deps.digestFor(distribution, version, pinned);
     if (raw === null) return { sha256: null, check: reachable ? "none-published" : "registry-unreachable" };
     const sha256 = parseSha256(raw);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Adding an agent from the registry and upgrading one now read the
+  registry first. Before, both used patchbay's last copy of it, which in a
+  window left open for days could be out of date, so an add or an upgrade
+  could install a version the registry had already moved past. (#75)
 - Nothing hides off the edge of a narrow panel anymore. A long root path
   in the roots popover no longer pushes its Remove button out of view —
   every menu, popover, list and tooltip now fits the space it opens into,

@@ -1671,8 +1671,8 @@ export type AgentViewEvent =
       /** Present only on the updates that carry a fresh plan reading. */
       plan?: PlanUsageInfo;
     }
-  /** Full replace — the registry × overlay merge changed (refresh, or a new
-   * version landed upstream). */
+  /** Full replace — what the registry store holds changed: its copy loaded
+   * at start, or a read landed. `fetchedAt` dates it. */
   | { kind: "registryChanged"; agents: readonly RegistryAgentView[]; fetchedAt: string }
   /** The complete stored preferences (never a patch) — one event, both
    * channels: the Preferences page renders it, the agent view gates its

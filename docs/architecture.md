@@ -299,8 +299,8 @@ flowchart TD
   none derives it. A
   registry read landing (never the cached copy loaded at start) announces
   each newer version once per window. Upgrade is always the user's click, through the one upgrade
-  path: it re-resolves the registry version like a first add — before
-  anything stops, so a registry that no longer lists the agent leaves it
+  path: it reads the registry and re-resolves the version like a first
+  add — before anything stops, so a registry that no longer lists the agent leaves it
   running — and asks before a stop that would disconnect open
   conversations.
 - **Agent operations take turns** — one line per agent, a repeat joining,
@@ -967,10 +967,13 @@ mechanism — MCP servers routed to agents:
   change, not code; the files are the record, no doc restates them.
 - **The agent list is NOT shipped data**: the official ACP registry is the one
   agent source (identity, launch, icon, live-fetched + disk-cached), and the
-  registry store is its one holder — nothing else keeps a copy. It is read
-  at the moments it matters (startup, a new session, Settings opening, a
-  download; never on a clock), one read at a time, conditionally by its
-  ETag (an unchanged registry costs a bodiless 304). The disk cache holds
+  registry store is its one holder — nothing else keeps a copy — and the
+  one way to the registry. It is read at the moments it matters (startup,
+  a new session, Settings opening; never on a clock) and always right
+  before anything acts on it (an Add, an Upgrade, a download), one read at
+  a time, conditionally by its ETag (an unchanged registry costs a
+  bodiless 304). Between reads the copy is shown with the date it was last
+  confirmed. The disk cache holds
   the registry *as served*, never patchbay's parse of it: a build that
   reads more of the format sees everything, where a parsed copy would keep
   what an older build dropped. A failed read is logged with its reason and

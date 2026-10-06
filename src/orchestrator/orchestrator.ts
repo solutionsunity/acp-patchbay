@@ -538,7 +538,7 @@ export class Orchestrator {
           confirmDownload: (ask) => this.confirmDownload(ask),
           digestFor: (distribution, version, pinned) =>
             binaryDigestFor(this.acpRegistry.current().agents, distribution, version, pinned),
-          refreshRegistry: async () => (await this.acpRegistry.refresh("download")).ok,
+          readRegistry: async () => (await this.acpRegistry.read("download")).ok,
         }),
     });
     // The socket answers only through what each attach was given: its
@@ -767,7 +767,7 @@ export class Orchestrator {
     // The editor's sessions exist only to serve the open panel — they end
     // with it.
     this.settings.onAttachment((attached) => {
-      if (attached) void this.acpRegistry.refresh("settings");
+      if (attached) void this.acpRegistry.read("settings");
       else void this.defaultsEditor.closeAll();
     });
     this.asks = new AsksStore(this.decisionAudit, {
@@ -806,7 +806,7 @@ export class Orchestrator {
     void this.mcpServers.refresh();
     void this.acpRegistry.load().then(() => {
       this.publishRegistry();
-      void this.acpRegistry.refresh("startup");
+      void this.acpRegistry.read("startup");
     });
 
     // Projections of canonical Agent View state via ChannelHost.onChange —
@@ -1779,7 +1779,7 @@ export class Orchestrator {
         void this.gates.upgrade(action.patchbayAgentId).catch(this.logCatch(`upgrade ${action.patchbayAgentId}`));
         break;
       case "refreshRegistry":
-        void this.acpRegistry.refresh("manual");
+        void this.acpRegistry.read("manual");
         break;
       case "addCommandRule": {
         if (action.layer === "machine") {
@@ -2208,7 +2208,7 @@ export class Orchestrator {
    * specific reason and a Retry — never a silent bounce to the empty
    * state. */
   private async startChat(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    void this.acpRegistry.refresh("new-session");
+    void this.acpRegistry.read("new-session");
     const agentName = this.agents.name(patchbayAgentId);
     if (agentName === undefined) return; // unknown agent — nothing to start
     // A still-new (never-prompted) session for this agent already IS the

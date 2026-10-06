@@ -24,7 +24,10 @@ let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "patchbay-agents-"));
 });
-afterEach(() => rm(dir, { recursive: true, force: true }));
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await rm(dir, { recursive: true, force: true });
+});
 
 function fakeConfig(id: string, script: FakeAgentScript, over: Partial<AgentConfigView> = {}): AgentConfigView {
   return {
@@ -61,18 +64,33 @@ async function stored(h: AgentsHarness, config: AgentConfigView): Promise<void> 
 /** The shape of an id patchbay mints. */
 const MINTED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** The registry as its disk cache holds it, one npx agent per entry. */
-async function seedRegistry(h: AgentsHarness, ...agents: { id: string; version: string }[]): Promise<void> {
-  const raw = {
-    version: "1.0.0",
-    agents: agents.map((a) => ({ ...a, name: a.id, distribution: { npx: { package: `${a.id}@${a.version}` } } })),
-  };
+/** A registry file, one npx agent per entry. */
+const registryFile = (agents: { id: string; version: string }[]) => ({
+  version: "1.0.0",
+  agents: agents.map((a) => ({ ...a, name: a.id, distribution: { npx: { package: `${a.id}@${a.version}` } } })),
+});
+
+/** What the CDN serves from now on. */
+function serveRegistry(...agents: { id: string; version: string }[]): void {
+  vi.stubGlobal("fetch", async () =>
+    new Response(JSON.stringify(registryFile(agents)), { headers: { "content-type": "application/json" } }),
+  );
+}
+
+/** The registry's copy on disk, loaded into the store. */
+async function cacheRegistry(h: AgentsHarness, ...agents: { id: string; version: string }[]): Promise<void> {
   await mkdir(join(dir, "registry"), { recursive: true });
   await writeFile(
     join(dir, "registry", "acp-registry-cache.json"),
-    JSON.stringify({ fetchedAt: new Date().toISOString(), etag: null, raw, icons: {} }),
+    JSON.stringify({ fetchedAt: new Date().toISOString(), etag: null, raw: registryFile(agents), icons: {} }),
   );
   await h.deps.registry.load();
+}
+
+/** The registry as both its copy and the CDN hold it. */
+async function seedRegistry(h: AgentsHarness, ...agents: { id: string; version: string }[]): Promise<void> {
+  serveRegistry(...agents);
+  await cacheRegistry(h, ...agents);
 }
 
 /** A running registry agent pinned at 1.0.0 — by default with 2.0.0 on
@@ -281,6 +299,24 @@ describe("agents store", () => {
     expect(await h.agents.startupSources("reg")).toEqual([{ patchbayAgentId: added }]);
     expect(h.agents.config(added!)?.autoConnect).toBe(true);
     expect(h.deps.configs.list()).toHaveLength(1);
+  });
+
+  // The copy a list or an update chip was shown from may be days old in a
+  // window left open: Add and Upgrade act on the registry's word now.
+  it("Add and Upgrade act on a fresh read of the registry, not on the copy they were shown from", async () => {
+    const h = agentsHarness(dir, { resolveLaunch: () => Promise.reject(new Error("offline")) });
+    await cacheRegistry(h, { id: "reg", version: "2.0.0" }); // the copy
+    serveRegistry({ id: "reg", version: "3.0.0" }); // the registry moved on since
+    const added = await h.agents.saveFrom({ registryId: "reg" });
+    expect(h.agents.config(added!)?.registrySource?.pinnedVersion).toBe("3.0.0");
+
+    // the store now holds 3.0.0 — what an update chip would show
+    await stored(h,
+      fakeConfig("old", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+    );
+    serveRegistry({ id: "reg", version: "4.0.0" });
+    await h.agents.upgrade("old" as PatchbayAgentId);
+    expect(h.agents.config("old" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("4.0.0");
   });
 
   it("an Upgrade the registry can't serve asks nothing and leaves the agent as it is", async () => {

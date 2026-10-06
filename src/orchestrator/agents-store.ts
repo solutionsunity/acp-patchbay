@@ -395,8 +395,9 @@ export class AgentsStore implements ConnectionOperations {
   /** Re-resolves the registry's current (possibly newer) pinned version and
    * reconnects — the same launch a first Add takes, so the version-keyed
    * used-capability cache and the launch phase's download confirmation
-   * both apply exactly as they would for a brand-new agent. Resolved before
-   * anything stops: a registry that no longer lists the agent, or lists
+   * both apply exactly as they would for a brand-new agent. Resolved from a
+   * fresh read before anything stops — never from the copy an update chip
+   * was shown from: a registry that no longer lists the agent, or lists
    * nothing this platform can run, leaves it as it is. A running agent is
    * stopped only on `consent`, asked at that moment — the caller's
    * question, so it is never asked for an upgrade that can't happen.
@@ -405,6 +406,7 @@ export class AgentsStore implements ConnectionOperations {
     const config = this.config(patchbayAgentId);
     const registryId = config?.registrySource?.registryId;
     if (config === undefined || registryId === undefined) return;
+    await this.deps.registry.read("upgrade");
     const listed = this.deps.registry.current().agents.find((a) => a.id === registryId);
     const launch = listed === undefined ? null : this.registryLaunch(listed, patchbayAgentId);
     if (launch === null) return;
@@ -449,15 +451,17 @@ export class AgentsStore implements ConnectionOperations {
    * new agent under an id patchbay mints — one registry entry or one
    * executable added twice is two agents — and a saved agent is taken as
    * it stands. Returns the agent to connect — nothing when the source names
-   * nothing this machine can run. Like every save it never waits: the card
-   * exists from the click, and every download the launch needs then
-   * happens on it as a connect phase. */
+   * nothing this machine can run. A registry entry is resolved from a
+   * fresh read of the registry, never from the copy the list was shown
+   * from. Beyond that one read the save never waits: every download the
+   * launch needs happens on the card as a connect phase. */
   async saveFrom(source: ConnectAgentSource): Promise<PatchbayAgentId | undefined> {
     if ("patchbayAgentId" in source) return this.config(source.patchbayAgentId)?.id;
     const patchbayAgentId = mintPatchbayAgentId();
     let spec: LaunchSpec;
     let registrySource: AgentConfig["registrySource"] = null;
     if ("registryId" in source) {
+      await this.deps.registry.read("add");
       const agent = this.deps.registry.current().agents.find((a) => a.id === source.registryId);
       if (agent === undefined) return undefined;
       const resolved = this.registryLaunch(agent, patchbayAgentId);

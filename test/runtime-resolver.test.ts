@@ -543,7 +543,7 @@ describe("resolveBinaryLaunch", () => {
         log: nullLogger,
         install: checkingInstall([], []),
         digestFor: () => current,
-        refreshRegistry: async () => {
+        readRegistry: async () => {
           order.push("read");
           current = A; // the live registry publishes one
           return true;
@@ -562,7 +562,7 @@ describe("resolveBinaryLaunch", () => {
         cacheRoot: root,
         log,
         install: checkingInstall(seen, []),
-        refreshRegistry: async () => false,
+        readRegistry: async () => false,
         confirmDownload: async (ask: DownloadAsk) => (asks.push(ask), true),
       });
       await resolveBinaryLaunch(pinnedSpec(join(tmp, "digest-unreachable")), deps(join(tmp, "digest-unreachable")));
@@ -612,7 +612,7 @@ describe("resolveBinaryLaunch", () => {
         log: nullLogger,
         install: checkingInstall(seen, [1]),
         digestFor: () => current,
-        refreshRegistry: async () => {
+        readRegistry: async () => {
           refreshed++;
           if (refreshed === 2) current = B; // re-read after the mismatch: the vendor re-published
           return true;
@@ -645,7 +645,7 @@ describe("resolveBinaryLaunch", () => {
         log: nullLogger,
         install: checkingInstall(seen, [1]),
         digestFor: () => current,
-        refreshRegistry: async () => {
+        readRegistry: async () => {
           if (current === A && seen.length > 0) current = null;
           return true;
         },
