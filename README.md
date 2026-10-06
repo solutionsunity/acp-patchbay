@@ -45,8 +45,8 @@ orchestrator layer on top:
 
 - **🧭 Capabilities you can trust.** An agent's handshake tells you what it
   *claims*, not what works on the wire. Patchbay tracks every capability as
-  **declared vs. used** and only lights up a feature once the path has genuinely
-  fired — "session resume" or "MCP servers" means *verified*, not *promised*.
+  **declared vs. used**, so you see what an agent claims beside what has
+  genuinely fired — "used" means *seen working*, not *promised*.
 - **🛡️ One permission model.** A single permission broker across every agent. You
   review and approve what an agent does — file writes, terminal, tools — the same
   way regardless of which agent is driving.

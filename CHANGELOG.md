@@ -17,9 +17,11 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   command by guessing its counter id. A request naming a session patchbay
   doesn't hold is refused or answered at once. (#76)
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
-  (asks first; a refusal keeps the session and says why) where the agent
-  can delete, and **Close** where it keeps no session list. Close no longer
-  deletes the session from the agent's history. (#77)
+  (asks first; a refusal keeps the session and says why) and **Close**
+  wherever the agent declares them. Close no longer deletes the session from
+  the agent's history: it stops the session's work and takes it off the list
+  until the history is read again, keeping everything patchbay saved for
+  it. (#77)
 - **Files given to a session live with it,** in patchbay's storage instead
   of the system temp folder, which a reboot could empty while a chip or the
   agent's link still pointed at the file. They leave with the session, and

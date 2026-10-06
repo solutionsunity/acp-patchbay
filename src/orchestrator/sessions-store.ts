@@ -788,7 +788,7 @@ export class SessionsStore {
 
   /** The session leaves the agent's history (`session/delete`) — once its
    * turn has ended (the gates end it first: never a delete under a live
-   * turn), and only where the agent proved the method. The agent goes
+   * turn), and only where the agent offers it. The agent goes
    * first: a delete it refuses leaves the session where it was, and the
    * caller tells why. */
   async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
@@ -800,17 +800,21 @@ export class SessionsStore {
     if (this.known.get(patchbaySessionId) === row) this.leave(patchbaySessionId, row);
   }
 
-  /** The session ends here, where its agent lists no sessions: nothing can
-   * bring it back, so it leaves for good. `session/close` then frees what
-   * the agent holds for it, where declared and attached — after the
-   * session has left, so a hung agent never keeps it open, and a failure
-   * only means the agent frees it when its process ends. */
+  /** The session closes: it leaves the list, whatever it still asks is
+   * cancelled, and `session/close` stops its work and frees what the agent
+   * holds for it, where attached — after the session has left, so a hung
+   * agent never keeps it open, and a failure only means the agent frees it
+   * when its process ends. Nothing patchbay saved for it goes: an agent
+   * that lists its sessions lists it again at the next read, and it comes
+   * back with its draft, settings, roots and files. */
   async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) return;
     this.requireEnd(patchbaySessionId, "close");
     const attached = this.sessions.has(patchbaySessionId);
-    this.leave(patchbaySessionId, row);
+    this.hooks.cancelAsks?.(patchbaySessionId);
+    this.forget(patchbaySessionId);
+    this.entomb(row);
     const agent = this.pool.get(row.patchbayAgentId);
     if (!attached || agent?.status !== "running" || agent.declared?.sessionClose !== true) return;
     await this.pool.closeSession(row.patchbayAgentId, row.sessionId).catch((err: Error) => {
@@ -826,15 +830,13 @@ export class SessionsStore {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined || sessionEnds(this.hooks.capabilities(row.patchbayAgentId))[end]) return;
     throw new Error(
-      end === "delete"
-        ? "the agent doesn't offer session/delete"
-        : "the agent lists its sessions — a close would only hide this one until its next list",
+      end === "delete" ? "the agent doesn't offer session/delete" : "the agent doesn't offer session/close",
     );
   }
 
-  /** What leaves with a deleted or closed session: whatever it still asks
-   * — it asks no one now — its rows, what the user staged on it, and the
-   * files it was given. */
+  /** What leaves with a deleted session: whatever it still asks — it asks
+   * no one now — its rows, what the user staged on it, and the files it
+   * was given. */
   private leave(patchbaySessionId: PatchbaySessionId, row: KnownSession): void {
     this.hooks.cancelAsks?.(patchbaySessionId);
     this.forget(patchbaySessionId);
@@ -847,8 +849,8 @@ export class SessionsStore {
 
   /** The one way a session leaves for good: its attachment, its diff texts,
    * its row in both indexes, its view row. The continuity row is the
-   * caller's — a delete or close forgets it, a prune leaves it to the
-   * reconcile, and a removed agent's go together. */
+   * caller's — a delete forgets it, a close and a prune leave it, and a
+   * removed agent's go together. */
   private forget(patchbaySessionId: PatchbaySessionId): void {
     this.sessions.delete(patchbaySessionId);
     this.stream.forget(patchbaySessionId);

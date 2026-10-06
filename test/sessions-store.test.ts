@@ -460,7 +460,11 @@ describe("SessionsStore", () => {
     const h = harness();
     await h.pool.connect(
       spec(
-        { turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }, { type: "chunk", text: "c" }], stepDelayMs: 150 },
+        {
+          turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }, { type: "chunk", text: "c" }],
+          stepDelayMs: 150,
+          declare: { sessionCapabilities: { close: {} } },
+        },
         "sm3c",
       ),
     );
@@ -539,7 +543,7 @@ describe("SessionsStore", () => {
 
   it("closes sessions — row and transcript leave the view", async () => {
     const h = harness();
-    await h.pool.connect(spec({}, "sm4"));
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sm4"));
     const patchbaySessionId = await h.sessions.createSession("sm4" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "some words" });
 
@@ -2331,12 +2335,12 @@ describe("SessionsStore", () => {
 
     it("a Close while the dead row is minted again leaves it closed — the fresh session is freed, nothing comes back", async () => {
       const h = harness();
-      await h.pool.connect(spec({ exitAfterMs: 150 }, "c30c"));
+      await h.pool.connect(spec({ exitAfterMs: 150, declare: { sessionCapabilities: { close: {} } } }, "c30c"));
       const patchbaySessionId = await h.sessions.createSession("c30c" as PatchbayAgentId, "Fake Agent", cwd);
       await untilStatus(h, "c30c" as PatchbayAgentId, "crashed");
 
       // the agent answers a creation late, so the Close lands mid-mint
-      await h.pool.connect(spec({ newSessionReplyDelayMs: 200 }, "c30c"));
+      await h.pool.connect(spec({ newSessionReplyDelayMs: 200, declare: { sessionCapabilities: { close: {} } } }, "c30c"));
       const prompt = h.gates.prompt(patchbaySessionId, { text: "first words" });
       await h.gates.close(patchbaySessionId);
       await expect(prompt).rejects.toThrow();
@@ -2824,12 +2828,9 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh14" as PatchbayAgentId);
   });
 
-  it("delete removes the session from the agent's own list once session.delete is used — no resurrection on resync", async () => {
+  it("delete removes the session from the agent's own list where the agent declares it — no resurrection on resync", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh6"));
-    // the probe's own delete round-trip proves the row (connect-time hygiene)
-    await h.capabilityTracker.verify("sh6" as PatchbayAgentId);
-    expect(h.capabilityTracker.matrix("sh6" as PatchbayAgentId)?.["session.delete"]).toMatchObject({ declared: true, used: true });
 
     const patchbaySessionId = await h.sessions.createSession("sh6" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "leave a durable record" });
@@ -2847,20 +2848,42 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh6" as PatchbayAgentId);
   });
 
-  it("close never deletes: an agent that lists its sessions refuses it, and keeps the session", async () => {
-    const h = harness();
-    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh7"));
-    await h.capabilityTracker.verify("sh7" as PatchbayAgentId);
-    const patchbaySessionId = await h.sessions.createSession("sh7" as PatchbayAgentId, "Fake Agent", cwd);
+  it("close, where the agent lists its sessions: the session leaves the list and the agent frees it, patchbay keeps what it saved, and the next read brings it back", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    const h = harness({ continuityStore: store });
+    const agent = "sh7" as PatchbayAgentId;
+    await h.pool.connect(spec({ declare: { loadSession: true, sessionCapabilities: { list: {}, close: {} } } }, "sh7"));
+    const patchbaySessionId = await h.sessions.createSession(agent, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "keep me" });
-    const sessionId = h.sessions.sessionIdOf(patchbaySessionId);
+    h.sessions.saveDraft(patchbaySessionId, "half-typed thought");
+    await h.sessions.addDroppedFile(patchbaySessionId, { chipId: "chip-1", name: "notes.txt", mimeType: "text/plain", base64: "aGk=" });
+    const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
+    expect(h.pool.get(agent)?.sessions).toContain(sessionId);
 
-    await expect(h.gates.close(patchbaySessionId)).rejects.toThrow(/lists its sessions/);
+    await h.gates.close(patchbaySessionId);
 
-    const listed = await h.pool.listSessions("sh7" as PatchbayAgentId, { cwd });
-    expect(listed.sessions.map((s) => s.sessionId)).toContain(sessionId);
+    expect(h.state().sessions.map((s) => s.id)).not.toContain(patchbaySessionId);
+    expect(h.pool.get(agent)?.sessions).not.toContain(sessionId); // session/close freed the agent's side
+    expect(store.read(agent, sessionId)?.draft).toBe("half-typed thought");
+    expect(existsSync(h.files.dirOf(agent, sessionId, cwd))).toBe(true);
+    // the agent still lists it: the next read of its history brings it back
+    expect((await h.pool.listSessions(agent, { cwd })).sessions.map((s) => s.sessionId)).toContain(sessionId);
+    await h.sessions.syncAgentSessions(agent);
+    const back = h.sessions.rowFor(agent, sessionId)!;
+    expect(back).toBeDefined();
+    expect(h.state().drafts[back]).toBe("half-typed thought");
+    await h.pool.stop(agent);
+  });
+
+  it("close is refused where the agent doesn't offer it — nothing of the session ends", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: LIST_CAPS }, "sh7b"));
+    const patchbaySessionId = await h.sessions.createSession("sh7b" as PatchbayAgentId, "Fake Agent", cwd);
+
+    await expect(h.gates.close(patchbaySessionId)).rejects.toThrow(/doesn't offer session\/close/);
     expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
-    await h.pool.stop("sh7" as PatchbayAgentId);
+    expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
+    await h.pool.stop("sh7b" as PatchbayAgentId);
   });
 
   it("delete is refused where the agent never offered it — nothing of the session ends", async () => {
@@ -2889,7 +2912,7 @@ describe("session history (list / resume / delete)", () => {
     expect(h.sessions.sessionIdOf(patchbaySessionId)).toBeDefined();
   });
 
-  it("close, where the agent lists no sessions: the session leaves for good, and session/close frees the agent's side", async () => {
+  it("close, where the agent lists no sessions: the session leaves, and session/close frees the agent's side", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sh10"));
     await h.capabilityTracker.verify("sh10" as PatchbayAgentId);
@@ -3150,7 +3173,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
   it("a token outlives its session's close while the connection is up, and ends with the connection", async () => {
     const c = composer();
     const h = harness({ mcpServersFor: c.mcpServersFor });
-    await h.pool.connect(spec({}, "ct3"));
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "ct3"));
     const patchbaySessionId = await h.sessions.createSession("ct3" as PatchbayAgentId, "Fake Agent", cwd);
     const [token] = c.minted;
     await h.gates.close(patchbaySessionId);
@@ -3217,7 +3240,7 @@ describe("a session's work enters behind its agent's", () => {
   it("a prompt sent meanwhile is underway at once and reaches the wire after it; a close waits on nothing", async () => {
     const agents = agentsQueue();
     const h = harness({ agentSettled: agents.settled });
-    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sw2"));
+    await h.pool.connect(spec({ turn: [{ type: "chunk", text: "hi" }], declare: { sessionCapabilities: { close: {} } } }, "sw2"));
     const patchbaySessionId = await h.sessions.createSession("sw2" as PatchbayAgentId, "Fake Agent", cwd);
     const restart = agents.hold("sw2" as PatchbayAgentId);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
@@ -3694,26 +3717,30 @@ describe("a session's files live with the session", () => {
     await h.pool.stop("f78c" as PatchbayAgentId);
   });
 
-  it("the folder leaves with its session — closed for good, or its agent removed", async () => {
+  it("the folder leaves with its session — deleted, or its agent removed — and stays through a close", async () => {
     const h = harness();
-    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78d"));
-    const closed = await h.sessions.createSession("f78d" as PatchbayAgentId, "Fake Agent", cwd);
-    const removed = await h.sessions.createSession("f78d" as PatchbayAgentId, "Fake Agent", cwd);
-    const folderOf = (patchbaySessionId: PatchbaySessionId) =>
-      h.files.dirOf("f78d" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd);
-    for (const patchbaySessionId of [closed, removed]) {
+    const agent = "f78d" as PatchbayAgentId;
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }], declare: { sessionCapabilities: { list: {}, delete: {}, close: {} } } }, "f78d"));
+    const deleted = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const closed = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const removed = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const folderOf = (patchbaySessionId: PatchbaySessionId) => h.files.dirOf(agent, h.sessions.sessionIdOf(patchbaySessionId)!, cwd);
+    for (const patchbaySessionId of [deleted, closed, removed]) {
       await h.sessions.addContext(patchbaySessionId, { id: `chip-${patchbaySessionId}`, kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
     }
-    const closedFolder = folderOf(closed);
-    const removedFolder = folderOf(removed);
+    await h.gates.prompt(deleted, { text: "a record the agent keeps" }); // the agent deletes what it stored
+    const [deletedFolder, closedFolder, removedFolder] = [deleted, closed, removed].map(folderOf);
 
+    await h.gates.delete(deleted);
+    expect(await gone(deletedFolder!)).toBe(true);
     await h.gates.close(closed);
-    expect(await gone(closedFolder)).toBe(true);
-    expect(existsSync(removedFolder)).toBe(true);
+    expect(existsSync(closedFolder!)).toBe(true);
+    expect(existsSync(removedFolder!)).toBe(true);
 
-    h.sessions.forgetAgentSessions("f78d" as PatchbayAgentId);
-    expect(await gone(removedFolder)).toBe(true);
-    await h.pool.stop("f78d" as PatchbayAgentId);
+    h.sessions.forgetAgentSessions(agent);
+    expect(await gone(removedFolder!)).toBe(true);
+    expect(await gone(closedFolder!)).toBe(true);
+    await h.pool.stop(agent);
   });
 
   it("a session gone from its agent's list loses its folder at the walk — even one no window held", async () => {

@@ -473,7 +473,13 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
   it("a Close answers the turn's open ask as cancelled before the session goes", async () => {
     const h = harness();
     await h.pool.connect(
-      spec({ turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }] }, "p4" as PatchbayAgentId),
+      spec(
+        {
+          turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test" }],
+          declare: { sessionCapabilities: { close: {} } },
+        },
+        "p4" as PatchbayAgentId,
+      ),
     );
     const patchbaySessionId = await h.sessions.createSession("p4" as PatchbayAgentId, "Fake Agent", workspaceRoot);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" }).catch((err: unknown) => err);

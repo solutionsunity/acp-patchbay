@@ -251,10 +251,12 @@ ones), reads the session again, then lets the held words go. **Delete** and
 **Close** end the turn and drop the attach work, then the session leaves —
 Delete once the agent has removed it from its history (a refused delete
 leaves it where it was), Close at once. Each is offered only as the agent
-offers it (`src/shared/session-ends.ts`): Delete where the agent proved
-`session/delete`, Close where the agent lists no sessions, so nothing could
-bring one back; an agent that lists its sessions but can't delete them
-offers neither, and patchbay stands in for neither. A turn told to
+declares it (`src/shared/session-ends.ts`), and patchbay stands in for
+neither: Delete where the agent declares `session/delete`, and what
+patchbay kept for the session goes with it; Close where it declares
+`session/close`, and what patchbay saved for the session stays — an agent
+that lists its sessions lists it again at the next read, and it comes back
+with its draft, settings, roots and files. A turn told to
 stop while on the wire sends `session/cancel`, answers the asks it leaves open
 as cancelled, and gives the agent 3 s to end it before ending it here — an
 agent that ignores the cancel never holds a session; a turn still waiting for
@@ -368,7 +370,7 @@ ask; the store holds it.
 | Last-open pointer | `workspaceState` | The session the Agent View returns to on the next activate, named by its agent and the agent's own id for it. Looked up in what the startup connects' own `session/list` syncs brought back: found, it opens; not found, the view lands on its default screen, whatever the reason. A miss never clears it — not found is not gone: a failed connect must not erase where a later window could return |
 | Decision audit | JSONL in workspace storage | Append-only; what happened in patchbay belongs to patchbay. Written by the asks store when an ask ends, before the agent hears the answer; a question is never recorded. An entry about a session names it by its pair — the agent and the agent's `sessionId` — which a later window can still match |
 | ACP registry | A copy of the last read in the extension's `globalStorage` directory, with the date it was last confirmed | A dated reading of an outside source: loaded at start, shown with its date while a read is out or failing, replaced whole by every read that lands; Add and Upgrade read the registry first, acting on the copy only when the registry can't be reached; a copy in an older shape reads as none |
-| Files a session was given — pasted or picked images, dropped files | The session's own folder in the extension's `globalStorage` directory, under its agent and workspace (`stores/session-files.ts`) | Kept as long as the session lives: its staged chips name them, and an agent may follow a link to one in any later turn — so never the OS temp directory, which a reboot can empty. They leave with the session (deleted or closed, gone from its agent's list, its agent removed) and move with it when a never-prompted session is minted again. A folder's name is a short hash of its ids: no id an agent mints can steer a path, or stretch one past what a Windows path holds |
+| Files a session was given — pasted or picked images, dropped files | The session's own folder in the extension's `globalStorage` directory, under its agent and workspace (`stores/session-files.ts`) | Kept as long as the session lives: its staged chips name them, and an agent may follow a link to one in any later turn — so never the OS temp directory, which a reboot can empty. They leave with the session (deleted, gone from its agent's list, its agent removed) and stay through a close and move with it when a never-prompted session is minted again. A folder's name is a short hash of its ids: no id an agent mints can steer a path, or stretch one past what a Windows path holds |
 | Image previews | The attachments stash, a temp directory | Ephemeral: the OS owns cleanup, and a preview whose file is gone degrades to a label chip |
 | Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers) | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |
 

@@ -189,10 +189,10 @@ export class SessionGates {
     });
   }
 
-  /** Close, where the agent lists no sessions — refused before anything
-   * ends anywhere else: everything the session's lines hold ends, then the
-   * session leaves for good. It waits on nothing its agent does: a hung
-   * restart never keeps a session open. */
+  /** Close, where the agent offers it — refused before anything ends
+   * anywhere else: everything the session's lines hold ends, then the
+   * session closes. It waits on nothing its agent does: a hung restart
+   * never keeps a session open. */
   async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
     this.sessions.requireEnd(patchbaySessionId, "close");
     this.rootsWaiting.delete(patchbaySessionId);

@@ -313,14 +313,17 @@ certified correct). Used is **version-keyed**, not connect-keyed
 (`stores/used-capabilities.ts`): a reconnect at the *same* `agentInfo.version`
 restores what was already proven immediately, from the persisted cache — it does
 not re-run the check. Only an actual version change earns a fresh,
-honestly-unused matrix. UI affordances gate on *used*, not declared: real bridges have been observed silently dropping `mcpServers`,
-collapsing stop reasons, and reporting rejected mode changes as succeeded.
+honestly-unused matrix. The matrix is a view of what was collected about an
+agent, and decides nothing: every feature follows what the agent declares.
+What it shows is worth seeing because real bridges have been observed
+silently dropping `mcpServers`, collapsing stop reasons, and reporting
+rejected mode changes as succeeded.
 Four honest states per row: not declared / declared-but-not-used / used /
 **suspect** — declared, not used, and implicated in at least one failed
 request (a wire fact that would have proven the row rode a request that
 rejected). Suspicion, not conviction: the failure may not be the row's fault,
-so it renders as a warning triangle, never an error, and gates nothing — UI
-features still gate on used only. First success acquits (used drops the
+so it renders as a warning triangle, never an error, and gates nothing.
+First success acquits (used drops the
 flag); `auth_required` never indicts (it's the honest pre-login state, with
 its own surface: pool.ts's wire chokepoint raises `needsAuth` on any -32000 —
 probe, connect, or a mid-session prompt after credentials expired — one

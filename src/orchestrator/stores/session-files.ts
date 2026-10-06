@@ -7,9 +7,9 @@
 // history links them after: a dropped file always, an image for an agent
 // that takes none inline — a link the agent may follow in any later turn.
 // One folder per session, under its agent and its workspace. It leaves
-// with the session — deleted or closed, gone from its agent's list, its
-// agent removed — and moves with it when a never-prompted session is
-// minted again. What the transcript previews stays in the temp stash: a
+// with the session — deleted, gone from its agent's list, its agent
+// removed — stays through a close, and moves with it when a
+// never-prompted session is minted again. What the transcript previews stays in the temp stash: a
 // preview is ephemeral, a file the agent was handed is not.
 //
 // A folder's name is a short hash of an id, never the id: the agent mints

@@ -112,9 +112,10 @@ export type Action =
    * window — detached from the sidebar, multi-screen usable. Does not touch
    * the shared active-session pointer. */
   | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId }
-  /** The session menu's two ends (session-ends.ts): Delete removes the
-   * session from the agent's history, after the user confirms; Close
-   * ends it here, where the agent lists no sessions. */
+  /** The session menu's two ends (session-ends.ts), each where the agent
+   * declares it: Delete removes the session from the agent's history,
+   * after the user confirms; Close stops its work and takes it off the
+   * list. */
   | { kind: "deleteSession"; patchbaySessionId: PatchbaySessionId }
   | { kind: "closeSession"; patchbaySessionId: PatchbaySessionId }
   /** Copy the agent's own id for the session — the one its own tools know
@@ -637,7 +638,8 @@ export interface AuthMethodView {
 
 /**
  * What the agent *claims* at `initialize` — normalized from the handshake,
- * refreshed on every connect. A claim, not a fact: UI gates on used.
+ * refreshed on every connect. A claim, not a fact — and what every feature
+ * follows; the matrix only shows how it has held up on the wire.
  */
 export interface DeclaredCapabilities {
   loadSession: boolean;

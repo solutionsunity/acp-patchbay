@@ -40,9 +40,9 @@ export class UsedCapabilityStore extends GlobalRecordStore<UsedCacheEntry> {
    * an honest reset (all cells declared-but-not-used) otherwise, same
    * shape `matrixFromDeclared` already produces.
    *
-   * The fresh declaration outranks the cache for USED — features gate on
-   * used, and a restored mark on an undeclared row would light up a call
-   * the spec now forbids. Exception: the rows whose proof may legitimately
+   * The fresh declaration outranks the cache for USED — a restored mark on
+   * an undeclared row would show as working a path the agent no longer
+   * claims. Exception: the rows whose proof may legitimately
    * outrun any claim (USED_MAY_OUTRUN_CLAIM, capabilities.ts) — for those
    * the mark itself carried the claim when earned, and it restores the
    * same way. SUSPECT deliberately restores regardless of the fresh

@@ -88,7 +88,8 @@ export function MatrixSection({ state }: { state: SettingsState }) {
     <section className="section">
       <h1>Capability matrix</h1>
       <div className="sub">
-        Declared is a claim; used is what happened on the wire. UI features gate on used.
+        Declared is a claim; used is what happened on the wire. The matrix shows them — patchbay
+        follows what the agent declares.
       </div>
       <div className="sub">
         Rows are hand-picked against the ACP spec's declared capability surface, not derived
