@@ -35,10 +35,7 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   MCP-servers store (`McpServerConfig` stored, `McpServerView` on screen). Not
   the ACP SDK's `McpServer`, which is the *wire entry* an attach composes from
   a record into a session's `mcpServers` — two different things, told apart by
-  their type names. *(Supersedes 2026-10-05 the internal name `integration`
-  for the record, which kept clear of the SDK's type while the UI already
-  said "MCP Servers": one thing had two names, and the record's types now
-  carry their own.)* Lifecycle is two-state: active/inactive (the mute switch — everything kept,
+  their type names. Lifecycle is two-state: active/inactive (the mute switch — everything kept,
   nothing routed) and disconnect = full clear (credential + env + config; the
   catalog entry stays). One catalog entry can be connected more than once —
   two accounts, two servers, each with a minted id and a name of its own: the
@@ -124,13 +121,13 @@ above is about state and lifecycle, never visual identity.
 One protocol, one shared TypeScript module (`src/shared/protocol.ts`) both sides
 import. No diffing library, no CRDT, no partial hydration:
 
-- **Actions** (webview → orchestrator): a discriminated union — `prompt`, `stopTurn`,
-  `switchSession`, `grantPermission`, `connectAgent`, … Fire-and-forget; results come
+- **Actions** (webview → orchestrator): a discriminated union — `sendPrompt`, `stopTurn`,
+  `switchSession`, `resolvePermission`, `connectAgent`, … Fire-and-forget; results come
   back as state, never as replies.
 - **Snapshot** (orchestrator → webview): the complete view model for that webview,
   tagged with a monotonic revision. Sent on mount and whenever the webview asks.
 - **Patch** (orchestrator → webview): `{ rev, events[] }` — semantically named events
-  (`sessionUpdated`, `agentUpserted`, `permissionRequested`, …) applied by pure
+  (`agentUpserted`, `permissionRequested`, `permissionResolved`, …) applied by pure
   reducers in the webview. A webview that sees a revision gap discards its state and
   requests a fresh snapshot. Recovery is always "resnapshot," never "repair."
 - **Coalescing**: the orchestrator buffers high-frequency `session/update` streaming
@@ -165,11 +162,6 @@ fact lives — is [the stores architecture](store-architecture.md).
   (or a fork) proves it, a failed second `session/new` marks it suspect. An
   agent ever reproduced failing to hold two sessions gets a curated
   wire-extension entry; the default does not turn pessimistic again.
-  *(Supersedes 2026-10-03 the per-agent process policy — `auto`, isolating a
-  new session until concurrent use was proven; `shared`; `isolated`, a process
-  per top-level session. It drew a per-session process boundary ACP never
-  defines, and `auto`'s proof could only arrive through a side door. Stored
-  configs lose the field in a one-time migration; #62.)*
 - Crash → visible immediately; restart is one action. After reconnect: the
   attach ladder — a never-prompted session is minted again on the agent's
   side (nothing agent-side to open; the agent hands it a fresh id, and the
@@ -911,8 +903,8 @@ delivers what the spec allows and does not guess at what a server will do
 with it.
 
 - **Image paste is never disabled**: `promptCapabilities.image` →
-  `ContentBlock::Image`; otherwise the image is written to a temp file and sent as a
-  `ResourceLink`. Same data, best form the agent accepts (features §1).
+  `ContentBlock::Image`; otherwise the image is written to the session's own folder
+  and sent as a `ResourceLink`. Same data, best form the agent accepts (features §1).
 - **One attachment admission table** (shared/attachment-policy.ts): every byte
   that becomes a chip passes one decision, whichever runtime produced it — the
   webview ingress (composer/ingress.ts: paste and external drop) or the extension
@@ -938,8 +930,8 @@ with it.
   real path, the agent reading it itself. A picked file is at rest, hence a link;
   the inline text chip is for the editor buffer, which may be dirty. Paste and
   drop carry bytes only (browsers hide paths; a client path means nothing to a
-  remote host), so non-images are staged to a temp file at add time and linked
-  from there. Directory drops are refused in the current release — a deliberate scope decision:
+  remote host), so non-images are written to the session's own folder at add
+  time and linked from there. Directory drops are refused in the current release — a deliberate scope decision:
   expanding a tree is policy (depth, excludes), not a default. What a
   webview can receive, as observed 2026-09-19 on VS Code 1.10x–1.138 and
   verified in its sources: an OS file drop reaches the composer only while
@@ -1050,7 +1042,8 @@ supplies each agent in its own standard — and ACP carries no channel for it
 
 - **One rule set, one approval path** — ACP `session/request_permission`, local MCP
   tool calls, and terminal execution all route through the same broker evaluating
-  the same command allowlists and file-write scopes from `workspaceState`.
+  the same command rules (workspace rules, then machine rules) and file-write
+  scope.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target. An agent's own `session/request_permission` is judged only
   when it is an edit — by the file-write scope over every location it names;

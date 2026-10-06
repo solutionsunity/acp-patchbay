@@ -722,7 +722,7 @@ export class AgentPool {
     this.entries.delete(patchbayAgentId);
   }
 
-  /** One-action recovery. Fresh connect ⇒ declared re-captured, used resets.
+  /** One-action recovery. Fresh connect ⇒ declared re-captured; used carries over at the same agent version.
    * `spec`, when given, replaces the entry's connect-time snapshot — the
    * caller read current config and secrets; a restart is a spawn and must
    * not resurrect stale command/args/env. `signal` is the connect's. */

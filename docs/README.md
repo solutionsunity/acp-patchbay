@@ -49,3 +49,5 @@ Deep dives:
 - **[store-architecture.md](store-architecture.md)** — how patchbay holds what
   it knows: the stores, where each fact's truth is, and the queue and gates
   that order the work on them.
+- **[localization.md](localization.md)** — the landed design for translating
+  patchbay's UI; planned, no code ships yet.

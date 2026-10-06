@@ -199,6 +199,10 @@
   place, and the webview CSP blocks inline handlers anyway). The other
   alert, markdown-it, lives in the packaging tool and never reaches the
   VSIX.
+- The capability matrix's per-agent chip now reads `handshake <time>`: the
+  last time the agent's declared capabilities were read. It used to say
+  `reset` and claim used marks reset on every reconnect; they carry over
+  while the agent's version stays the same.
 - KaTeX 0.17 → 0.19, one copy for chat math and diagrams (a
   prototype-pollution gadget; patchbay pollutes no prototype).
 

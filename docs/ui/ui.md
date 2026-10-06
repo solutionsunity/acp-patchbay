@@ -157,7 +157,7 @@ readable without the Output panel.
 
 ## Settings (editor tab)
 
-Left nav + cards, grouped in three non-collapsing headers that *are* the placement
+Left nav + cards, grouped in two non-collapsing headers that *are* the placement
 contract: **This machine** (Agents · Capability matrix · MCP Servers · Preferences
 · Saved roots — everything global to this machine, plus Saved roots' own
 per-workspace list beside its machine one), **Trust** (Permissions · Audit · Data — the
@@ -227,8 +227,9 @@ that would only wait behind it (Log in, Log out, Verify); Stop never dims.
 
 ### Capability matrix
 
-Legend ● ◌ — · one column per agent · a reconnected agent wears a `reset <time>`
-chip (used resets on every reconnect). Protocol rows from the handshake. Rows are
+Legend ● ◌ — · one column per agent · a reconnected agent wears a `handshake <time>`
+chip: the time of its last handshake, when declared was read again (used carries
+over while the agent's version stays the same). Protocol rows from the handshake. Rows are
 hand-picked against the ACP spec's declared capability surface, not derived
 automatically — noted above the table. Cell tooltips explain consequences ("not
 declared — this capability is unavailable"). Footer note: behavior rows get marked
@@ -329,9 +330,17 @@ that writes surface as diffs regardless — file-write scope has no machine laye
 it's defined relative to the session's granted roots (every workspace folder plus
 the roots added to the session), judged by where a write lands. The placement statement in
 green: **workspace rules and machine rules live in developer-owned storage, never
-in the repo either way; a cloned repository cannot arrive pre-authorized.** Decision
-audit: recent entries, mono, append-only. Last card: **Disconnect & erase all
-data** — AlertDialog-confirmed; states what dies (every process now; configs,
+in the repo either way; a cloned repository cannot arrive pre-authorized.**
+
+### Audit
+
+Decision audit: recent entries, mono, append-only. Wire log below it, off until
+confirmed.
+
+### Data
+
+Storage inventory: what patchbay holds on this machine. Last card, the danger zone:
+**Disconnect & erase all data** — AlertDialog-confirmed; states what dies (every process now; configs,
 credentials, caches, rules, saved roots, session records permanently) and the reach limit (other
 workspaces' records need their own window). Explicit and user-triggered, never a
 lifecycle side effect.

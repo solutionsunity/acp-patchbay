@@ -140,8 +140,8 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                           </Badge>
                         )}
                         {resetAt !== undefined && (
-                          <Badge className="ml-1.5" title="used resets on every reconnect">
-                            reset {new Date(resetAt).toLocaleTimeString()}
+                          <Badge className="ml-1.5" title="last handshake: declared was read again; used carries over while the agent's version stays the same">
+                            handshake {new Date(resetAt).toLocaleTimeString()}
                           </Badge>
                         )}
                       </TableHead>

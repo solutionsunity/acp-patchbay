@@ -68,8 +68,6 @@ deliverable.
 - Multiple sessions run concurrently — same agent or different agents, side by side.
 - Sessions are cheap to create and never a process-management chore: all of an
   agent's sessions share its one process in the window, as ACP intends.
-  *(Supersedes 2026-10-03 the per-agent process policy — auto / shared /
-  isolated; #62.)*
 - A brand-new session knows it is new: clicking "new session" for an agent that
   already has a never-prompted session focuses that one instead of minting a
   sibling — after a crash too: the row is still the new session, and its next

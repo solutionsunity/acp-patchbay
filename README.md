@@ -46,7 +46,7 @@ orchestrator layer on top:
 - **🧭 Capabilities you can trust.** An agent's handshake tells you what it
   *claims*, not what works on the wire. Patchbay tracks every capability as
   **declared vs. used** and only lights up a feature once the path has genuinely
-  fired — "native fork" or "MCP servers" means *verified*, not *promised*.
+  fired — "session resume" or "MCP servers" means *verified*, not *promised*.
 - **🛡️ One permission model.** A single permission broker across every agent. You
   review and approve what an agent does — file writes, terminal, tools — the same
   way regardless of which agent is driving.
@@ -55,16 +55,16 @@ orchestrator layer on top:
   and can ask *you* for input mid-turn. The agent sees what you see.
 - **🎛️ Sessions in parallel.** Run many sessions at once, on one agent or across
   several, each with its own history. A live dot marks a turn in flight, an unseen
-  dot marks a session that finished while you were elsewhere, and a chime — or a
-  native OS notification when the view is hidden — tells you the moment a turn
-  lands. Detached panels and prompt queueing included.
+  dot marks a session that finished while you were elsewhere, an optional chime
+  tells you the moment a turn lands, and a native OS notification tells you when
+  an agent is waiting on your answer. Detached panels and prompt queueing included.
 
 ![Settings — the capability matrix, MCP servers, and permissions](https://raw.githubusercontent.com/solutionsunity/acp-patchbay/main/media/recordings/settings.gif)
 
 ## Everything you'd expect from a great client
 
 - Polished chat composer with inline `/` commands and `@`-mentions of workspace files
-- Full session history — list, resume, and fork, backed by the agent's own store
+- Full session history — list, reopen and delete, as far as the agent offers, backed by its own store
 - Faithful replay of past sessions (no "last message only" gaps)
 - A live plan and a touched-files read-out while the agent works
 - MCP servers, including remote ones over Streamable HTTP, added and verified in-client
@@ -86,7 +86,7 @@ rules, and agent / session management live.
 ## Uninstalling cleanly
 
 VS Code has no uninstall hook, and secrets can survive uninstall — so a clean
-slate is an explicit act: **Settings → Permissions → "Disconnect & erase all
+slate is an explicit act: **Settings → Data → "Disconnect & erase all
 data"** stops every agent and deletes everything patchbay stored on this machine
 (configs, credentials, caches, rules, saved roots, the audit). Run it *before* uninstalling. It
 covers the current window's workspace records and deletes by the current config
