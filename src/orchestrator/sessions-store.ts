@@ -37,7 +37,7 @@ import {
   type TurnUsage,
   type UserPart,
 } from "../shared/protocol";
-import { imageFileName, readStashedImage, stashedPath, stashImage } from "./attachments";
+import { imageFileName, readStashedImage, stashedPath, stashFile } from "./attachments";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -1378,7 +1378,7 @@ export class SessionsStore {
     if (!this.known.has(patchbaySessionId)) return;
     if (chip.kind === "image") {
       try {
-        await stashImage(imageFileName(chip.id, chip.mimeType), chip.content);
+        await stashFile(imageFileName(chip.id, chip.mimeType), chip.content);
       } catch (err) {
         this.log.info(`session ${patchbaySessionId}: image not staged — the stash refused it: ${(err as Error).message}`);
         return;

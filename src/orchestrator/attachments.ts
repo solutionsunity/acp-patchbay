@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The prompt-attachment stash: one temp directory where image bytes that
-// ride a prompt (sent or replayed) land as real files. Two consumers, one
-// truth: the orchestrator writes here (and hands agents file:// links on
-// the no-image-capability fallback), and the webview host mounts this
-// directory as a resource root so the transcript can preview the same
-// files. Ephemeral by design — the OS owns temp cleanup; a missing file
-// degrades to a label chip, never an error.
+// The prompt-attachment stash: one temp directory where the bytes that
+// ride a prompt (sent or replayed) land as real files — images, and files
+// dropped on the composer. Two consumers, one truth: the orchestrator
+// writes here (and hands agents file:// links — a dropped file's, and an
+// image's on the no-image-capability fallback), and the webview host
+// mounts this directory as a resource root so the transcript can preview
+// the same files. Ephemeral by design — the OS owns temp cleanup; a
+// missing file degrades to a label chip, never an error.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,8 +51,8 @@ export function stashedPath(fileName: string): string {
   return join(ATTACHMENTS_DIR, fileName);
 }
 
-/** Writes an image's bytes into the stash; returns the absolute path. */
-export async function stashImage(fileName: string, base64: string): Promise<string> {
+/** Writes a file's bytes into the stash; returns the absolute path. */
+export async function stashFile(fileName: string, base64: string): Promise<string> {
   await mkdir(ATTACHMENTS_DIR, { recursive: true });
   const file = stashedPath(fileName);
   await writeFile(file, Buffer.from(base64, "base64"));

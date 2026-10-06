@@ -8,7 +8,7 @@
 // resources) fall to a labeled placeholder.
 import type { ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
 import type { ContentPart, ToolContentPart } from "../shared/protocol";
-import { imageFileName, stashImage } from "./attachments";
+import { imageFileName, stashFile } from "./attachments";
 
 /** Agent-sized text rides every state snapshot — bounded here, with an
  * honest marker, never a silent cut. */
@@ -35,7 +35,7 @@ export function contentPartOf(content: ContentBlock, images: ImageStash): Conten
     case "image": {
       if (content.data === "") return { kind: "image", mimeType: content.mimeType };
       const file = imageFileName(images.id(), content.mimeType);
-      void stashImage(file, content.data).catch(images.onError);
+      void stashFile(file, content.data).catch(images.onError);
       return { kind: "image", mimeType: content.mimeType, file };
     }
     case "resource":

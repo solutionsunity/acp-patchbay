@@ -4,6 +4,7 @@
 // Orchestrator: the Node process in the extension host — single source of
 // truth for sessions, capability tables, permission rules, secrets,
 // configuration. Webviews only ever see its snapshots and patches.
+import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,7 +35,7 @@ import {
 import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
-import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
+import { ATTACHMENTS_DIR, pickedFileForm, stashFile } from "./attachments";
 import { applyFileWrite, PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
@@ -91,12 +92,11 @@ import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 
-/** Context-chip id mint. The timestamp alone collided once a multi-file
- * drop started dispatching several adds in the same millisecond (duplicate
- * React keys; removeContextChip pulling the wrong chip) — the counter makes
- * every id unique for the process's lifetime, which is exactly a chip's. */
-let chipSeq = 0;
-const chipId = () => `chip-${Date.now()}-${chipSeq++}`;
+/** Context-chip id mint. A staged chip is saved with its session, so it
+ * outlives the window, and a chip names its stash file in the one folder
+ * every window shares — so the id is random: a timestamp collides within a
+ * multi-file drop, and a counter restarts with every window. */
+const chipId = () => `chip-${randomUUID()}`;
 
 /** What the download prompt says of the check — only what is known: held
  * to a published digest, nothing published, or the registry unreadable. */
@@ -2111,18 +2111,14 @@ export class Orchestrator {
     mimeType: string;
     base64: string;
   }): Promise<void> {
-    // Same stash as image parts (attachments.ts) — one directory, one
-    // webview resource root.
-    await mkdir(ATTACHMENTS_DIR, { recursive: true });
-    const dir = ATTACHMENTS_DIR;
+    // The stash images ride too — one directory, one webview resource root.
     // The original name stays visible in the staged filename (the agent sees
-    // it in the resource_link) — id-prefixed so two drops of "notes.txt"
-    // never overwrite each other.
-    const safe = action.name.replace(/[^\w.-]+/g, "_");
-    const path = join(dir, `${chipId()}-${safe}`);
-    await writeFile(path, Buffer.from(action.base64, "base64"));
+    // it in the resource_link), prefixed by the chip's id so two drops of
+    // "notes.txt" never overwrite each other.
+    const id = chipId();
+    const path = await stashFile(`${id}-${action.name.replace(/[^\w.-]+/g, "_")}`, action.base64);
     await this.sessions.addContext(action.patchbaySessionId, {
-      id: chipId(),
+      id,
       kind: "attachment",
       label: `File: ${action.name}`,
       path,
