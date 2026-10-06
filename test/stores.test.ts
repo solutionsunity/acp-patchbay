@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ATTACHMENTS_DIR } from "../src/orchestrator/attachments";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { GlobalRecordStore } from "../src/orchestrator/stores/global-record-store";
 import { MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
@@ -449,6 +450,32 @@ describe("SessionContinuityStore", () => {
     expect(store.read("claude" as PatchbayAgentId, "s1")).toEqual({ draft: "kept words" });
     expect(store.read("auggie" as PatchbayAgentId, "s2")).toEqual({ draft: "already paired" });
     expect(JSON.stringify(kv.get("acpPatchbay.sessionContinuity"))).not.toContain("agentId\"");
+  });
+
+  it("an image chip stored by its name in the temp stash reads by that file's path — nothing dropped, nothing left to fold", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.sessionContinuity", [
+      {
+        patchbayAgentId: "claude",
+        sessionId: "s1",
+        cwd: "/ws",
+        chips: [
+          { kind: "image", id: "chip-1", label: "Image", mimeType: "image/png", file: "chip-1.png" },
+          { kind: "attachment", id: "chip-2", label: "File: a.txt", path: "/home/u/a.txt" },
+        ],
+      },
+      // both older shapes in one row: each is rewritten
+      { id: "auggie\u0000s2", agentId: "auggie", chips: [{ kind: "image", id: "chip-3", label: "Image", mimeType: "image/png", file: "chip-3.png" }] },
+    ]);
+    const store = new SessionContinuityStore(kv);
+    expect(store.read("claude" as PatchbayAgentId, "s1")?.chips).toEqual([
+      { kind: "image", id: "chip-1", label: "Image", mimeType: "image/png", path: join(ATTACHMENTS_DIR, "chip-1.png") },
+      { kind: "attachment", id: "chip-2", label: "File: a.txt", path: "/home/u/a.txt" },
+    ]);
+    expect(store.read("auggie" as PatchbayAgentId, "s2")?.chips).toEqual([
+      { kind: "image", id: "chip-3", label: "Image", mimeType: "image/png", path: join(ATTACHMENTS_DIR, "chip-3.png") },
+    ]);
+    expect(JSON.stringify(kv.get("acpPatchbay.sessionContinuity"))).not.toContain("\"file\"");
   });
 
   const ws = "/ws/a";

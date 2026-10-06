@@ -292,14 +292,14 @@ export interface QueuedPrompt {
   draft?: string;
 }
 
-/** A context chip as persisted in the session-continuity store. Image
- * bytes never enter the store — they are stashed to the attachments dir at
- * ingress and the row carries the file reference; a reference whose file
- * the OS reclaimed drops on rehydration (the stash is temp-dir ephemeral
- * by design), logged, never an error. */
+/** A context chip as persisted in the session-continuity store. Bytes never
+ * enter the store: an image's, and a dropped file's, land in the session's
+ * own folder at ingress, and the row carries the path; a picked file is
+ * linked where it is. A path whose file is gone drops on rehydration,
+ * logged, never an error. */
 export type PersistedChip =
   | { kind: "selection" | "file" | "diagnostics"; id: string; label: string; content: string; sourceUri?: string }
-  | { kind: "image"; id: string; label: string; mimeType: string; file: string }
+  | { kind: "image"; id: string; label: string; mimeType: string; path: string }
   | { kind: "attachment"; id: string; label: string; path: string; mimeType?: string };
 
 /** The survives-reload family: session-scoped state the wire cannot

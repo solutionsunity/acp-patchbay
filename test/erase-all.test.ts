@@ -24,6 +24,7 @@ import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { PatchbayAgentId } from "../src/shared/ids";
@@ -60,6 +61,7 @@ describe("eraseAllData", () => {
     const preferences = new PreferencesStore(globalKv);
     const composerKnobs = new ComposerKnobsStore(globalKv);
     const sessionContinuity = new SessionContinuityStore(globalKv);
+    const sessionFiles = new SessionFilesStore(join(dir, "session-files"));
     const workspaceSavedRoots = new SavedRootsStore(workspaceKv, "workspace");
     const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
@@ -82,6 +84,7 @@ describe("eraseAllData", () => {
     await composerKnobs.record("claude" as PatchbayAgentId, { mode: "code" });
     await authLocks.upsert({ id: "claude" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
     await sessionContinuity.patch("claude" as PatchbayAgentId, "s1", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
+    const sessionFile = await sessionFiles.put("claude" as PatchbayAgentId, "s1", "/ws", "chip-1.png", "cG5n");
     await workspaceSavedRoots.add("/src/lib");
     await machineSavedRoots.add("/src/odoo");
     let stashWiped = false;
@@ -91,7 +94,7 @@ describe("eraseAllData", () => {
       authLocks, spawnRegistry, agentEnv, mcpServerEnv,
       mcpServerTokens, permissionRules, machineRules,
       decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
-      preferences, composerKnobs, sessionContinuity,
+      preferences, composerKnobs, sessionContinuity, sessionFiles,
       workspaceSavedRoots, machineSavedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
     });
@@ -101,6 +104,7 @@ describe("eraseAllData", () => {
     expect(usedCapabilities.list()).toEqual([]); // ghost gone too
     expect(authLocks.list()).toEqual([]);
     expect(sessionContinuity.list()).toEqual([]);
+    await expect(stat(sessionFile)).rejects.toThrow(); // the files sessions were given go too
     expect(stashWiped).toBe(true);
     expect(spawnRegistry.list()).toEqual([]);
     expect(await agentEnv.get("claude")).toEqual({});

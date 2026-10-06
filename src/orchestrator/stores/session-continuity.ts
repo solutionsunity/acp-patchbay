@@ -3,9 +3,10 @@
 
 // Per-session continuity — what the user staged and steered on a session,
 // in one row: the last agent-confirmed knob combination, user-added context
-// roots, the held prompt queue, prepared-but-unsent context chips (image
-// bytes stay in the attachments stash; the row carries the file reference),
-// and the composer draft. None of it is a cache of readable reality: agents
+// roots, the held prompt queue, prepared-but-unsent context chips (an
+// image's or a dropped file's bytes live in the session's own folder,
+// stores/session-files.ts; the row carries the path), and the composer
+// draft. None of it is a cache of readable reality: agents
 // reset knob state on session/load; the roots are the list this client
 // intends to send at the next open (a session/list row may report the list
 // the last writer set, and a reported list replaces the intended one, but
@@ -20,8 +21,10 @@
 // and for an agent that cannot list, its next connect drops the rows of
 // this workspace no session of the window holds — no list will ever name
 // them again. A zero-turn re-mint moves the row to the session's new id.
+import { join } from "node:path";
 import { z } from "zod";
 import type { SessionContinuity } from "../../shared/protocol";
+import { ATTACHMENTS_DIR } from "../attachments";
 import { RecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 import type { PatchbayAgentId } from "../../shared/ids";
@@ -57,7 +60,7 @@ const persistedChipSchema = z.discriminatedUnion("kind", [
     id: z.string().min(1),
     label: z.string(),
     mimeType: z.string(),
-    file: z.string(),
+    path: z.string(),
   }),
   z.object({
     kind: z.literal("attachment"),
@@ -107,11 +110,14 @@ const isRow = (row: SessionContinuityEntry, patchbayAgentId: PatchbayAgentId, se
 export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> {
   constructor(kv: KV) {
     super(kv, KEY, sessionContinuityEntrySchema);
-    // Once, at construction: a row stored before the pair had fields of its
-    // own carries it as one composite `id` — the agent, a NUL, the agent's
-    // id for the session — next to an `agentId`. Rewritten as
-    // `patchbayAgentId` and `sessionId`, every other field as stored. Read
-    // as it was, the row would fail its schema and be dropped.
+    // Once, at construction, two older shapes are rewritten — read as they
+    // were, the rows would fail their schema and be dropped. A row stored
+    // before the pair had fields of its own carries it as one composite
+    // `id` — the agent, a NUL, the agent's id for the session — next to an
+    // `agentId`: rewritten as `patchbayAgentId` and `sessionId`. A row
+    // stored before a session kept its own files names an image chip's
+    // file in the temp stash (`file`): rewritten as that file's `path`.
+    // Every other field as stored.
     const stored = kv.get<unknown>(KEY);
     const composite = (r: unknown): r is { id: string; agentId: string } =>
       typeof r === "object" &&
@@ -121,13 +127,26 @@ export class SessionContinuityStore extends RecordStore<SessionContinuityEntry> 
       typeof r.id === "string" &&
       typeof r.agentId === "string" &&
       r.id.startsWith(`${r.agentId}\u0000`);
-    if (Array.isArray(stored) && stored.some(composite)) {
+    const stashedImage = (c: unknown): c is { kind: "image"; file: string } =>
+      typeof c === "object" && c !== null && "kind" in c && c.kind === "image" && "file" in c && typeof c.file === "string";
+    const chipsOf = (r: unknown): unknown[] =>
+      typeof r === "object" && r !== null && "chips" in r && Array.isArray(r.chips) ? r.chips : [];
+    if (Array.isArray(stored) && stored.some((r) => composite(r) || chipsOf(r).some(stashedImage))) {
       void kv.update(
         KEY,
         stored.map((r: unknown) => {
-          if (!composite(r)) return r;
-          const { id, agentId, ...rest } = r;
-          return { patchbayAgentId: agentId, sessionId: id.slice(agentId.length + 1), ...rest };
+          let row = r;
+          if (composite(row)) {
+            const { id, agentId, ...rest } = row;
+            row = { patchbayAgentId: agentId, sessionId: id.slice(agentId.length + 1), ...rest };
+          }
+          if (!chipsOf(row).some(stashedImage)) return row;
+          const chips = chipsOf(row).map((c) => {
+            if (!stashedImage(c)) return c;
+            const { file, ...chip } = c;
+            return { ...chip, path: join(ATTACHMENTS_DIR, file) };
+          });
+          return { ...(row as object), chips };
         }),
       );
     }

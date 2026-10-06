@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A file you give a session — a pasted or picked image, a file dropped on
+  the composer — now lives with the session, in patchbay's own storage,
+  instead of the system's temp folder. Before, a reboot or a temp cleanup
+  could delete it while its chip still waited in a draft (sending then
+  dropped the image, or handed the agent a link to nothing), or after the
+  agent was handed a link to it. The files now leave with the session —
+  deleted or closed, gone from its agent's list, or its agent removed — and
+  files staged before this version move in on the first start. (#78)
 - **Close in the session menu no longer deletes the session from the
   agent's history.** The menu now offers what the agent offers: **Delete…**
   where the agent can delete sessions — it asks first, and if the agent

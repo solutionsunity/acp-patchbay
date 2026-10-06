@@ -714,9 +714,10 @@ every open re-sends the whole list, so losing it would overwrite the
 agent's own copy; a `session/list` row that reports the session's roots
 replaces it, see the roots bullet under the local MCP server), the **held
 prompt queue**, prepared **context chips**
-(image bytes stay in the attachments stash; the row carries the file
-reference, and a reference whose temp file the OS reclaimed drops honestly
-on rehydration), and the **composer draft**. Not a cache of readable
+(an image's or a dropped file's bytes live in the session's own folder, the
+row carrying the path, and a chip whose file is gone drops honestly on
+rehydration — see [where saved facts live](store-architecture.md#where-saved-facts-live)),
+and the **composer draft**. Not a cache of readable
 reality — the same justification as the auth locks. The row is these facts'
 one home, in the window as across a reload: the sessions store reads it
 whenever it needs one (`saved`) and keeps no copy, and every change writes
@@ -725,7 +726,7 @@ whatever its agent declares, and a chip staged while its session is
 detached waits there for the next prompt. When `session/list` names a
 session the window didn't know, the row's roots, held words and draft go
 to the view at once and its chips once their image bytes are read back
-from the stash. Each row carries its workspace cwd, since `session/list` is
+from the session's folder. Each row carries its workspace cwd, since `session/list` is
 read per cwd: after every complete walk the agent's rows for that
 workspace are reconciled against what the walk reported (live sessions
 exempt), which also reclaims a session deleted while no window was open;

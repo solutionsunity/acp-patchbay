@@ -10,6 +10,7 @@ import type { SessionGates } from "../src/orchestrator/session-gates";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   initialAgentViewState,
@@ -88,6 +89,7 @@ function harness(extraHooks: {
       ...extraHooks,
     },
     new SessionContinuityStore(new MemoryKV()),
+    new SessionFilesStore(join(cwd, "session-files")),
     () => cwd,
   );
   return { pool, sessions, gates: gatesFor(sessions, (event) => events.push(event)), capabilityTracker, state };
@@ -336,6 +338,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         seedFor: () => ({ mode: "code", "model-opt": "opus" }),
       },
       new SessionContinuityStore(new MemoryKV()),
+      new SessionFilesStore(join(cwd, "session-files")),
       () => cwd,
     );
     await pool.connect(

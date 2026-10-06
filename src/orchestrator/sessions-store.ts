@@ -16,7 +16,7 @@
 // view state, updated only through the shared reducer — disposable, rebuilt
 // by replay, never merged.
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
   ContentBlock,
@@ -39,7 +39,7 @@ import {
   type TurnUsage,
   type UserPart,
 } from "../shared/protocol";
-import { imageFileName, readStashedImage, stashedPath, stashFile } from "./attachments";
+import { imageFileName, readBase64, stashPreview } from "./attachments";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -60,6 +60,7 @@ import type { AgentPool } from "./pool";
 import { newBlockId } from "./block-ids";
 import { SessionStream, type StreamState } from "./session-stream";
 import type { SessionContinuityStore } from "./stores/session-continuity";
+import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 import { sessionEnds, type SessionEnds } from "../shared/session-ends";
@@ -170,18 +171,9 @@ function deriveTitle(promptText: string): string {
   return flat.length > 48 ? `${flat.slice(0, 47)}…` : flat;
 }
 
-/** ContextChip → its durable encoding: image bytes stay in the stash (the
- * chip's deterministic file name), everything else rides the row as-is. */
-function persistChip(chip: ContextChip): PersistedChip {
-  if (chip.kind === "image") {
-    return {
-      kind: "image",
-      id: chip.id,
-      label: chip.label,
-      mimeType: chip.mimeType,
-      file: imageFileName(chip.id, chip.mimeType),
-    };
-  }
+/** ContextChip → its durable encoding, riding the row as-is. An image's is
+ * written where its bytes land (`addContext`). */
+function persistChip(chip: Exclude<ContextChip, { kind: "image" }>): PersistedChip {
   if (chip.kind === "attachment") {
     return {
       kind: "attachment",
@@ -351,6 +343,9 @@ export class SessionsStore {
     /** Every session's saved facts, one continuity row each — the truth
      * for them, read when needed (see `saved`). */
     private readonly continuity: SessionContinuityStore,
+    /** The files each session was given, in its own folder — kept for as
+     * long as the session lives, and gone with it. */
+    private readonly files: SessionFilesStore,
     /** cwd for (re)connecting a session — v1 has one cwd per workspace. */
     private readonly cwd: () => string,
     /** A session's mcpServers for an attach, given the context token to
@@ -838,11 +833,15 @@ export class SessionsStore {
   }
 
   /** What leaves with a deleted or closed session: whatever it still asks
-   * — it asks no one now — its rows, and what the user staged on it. */
+   * — it asks no one now — its rows, what the user staged on it, and the
+   * files it was given. */
   private leave(patchbaySessionId: PatchbaySessionId, row: KnownSession): void {
     this.hooks.cancelAsks?.(patchbaySessionId);
     this.forget(patchbaySessionId);
     this.write(row, null);
+    void this.files
+      .forget(row.patchbayAgentId, row.sessionId, this.cwd())
+      .catch((err: Error) => this.log.error(`session files ${row.sessionId} — ${err.message}`));
     this.entomb(row);
   }
 
@@ -892,6 +891,9 @@ export class SessionsStore {
     void this.continuity
       .forgetAgent(patchbayAgentId)
       .catch((err: Error) => this.log.error(`session continuity drop ${patchbayAgentId} — ${err.message}`));
+    void this.files
+      .forgetAgent(patchbayAgentId)
+      .catch((err: Error) => this.log.error(`session files drop ${patchbayAgentId} — ${err.message}`));
   }
 
   /** Sessions ride their agent's connection: any status but running — a
@@ -946,18 +948,22 @@ export class SessionsStore {
       // No list will ever name a session of this agent again, so a row of
       // this workspace that no session of this window holds has no reader
       // left — an earlier window's go; this window's stay with its sessions.
-      this.reconcile(patchbayAgentId, (sessionId) => this.rowFor(patchbayAgentId, sessionId) !== undefined);
+      this.reconcile(patchbayAgentId, new Set(this.ofAgent(patchbayAgentId).flatMap((id) => this.known.get(id)?.sessionId ?? [])));
       return;
     }
     await this.walkAgentSessions(patchbayAgentId);
   }
 
-  /** The agent's continuity rows for this workspace, held against what
-   * names them: `keep` false, the row leaves. */
-  private reconcile(patchbayAgentId: PatchbayAgentId, keep: (sessionId: string) => boolean): void {
+  /** The agent's sessions of this workspace — their continuity rows and
+   * their folders — held against what still names them: a session not
+   * `kept` loses its row and its folder. */
+  private reconcile(patchbayAgentId: PatchbayAgentId, kept: ReadonlySet<string>): void {
     void this.continuity
-      .reconcile(patchbayAgentId, this.cwd(), keep)
+      .reconcile(patchbayAgentId, this.cwd(), (sessionId) => kept.has(sessionId))
       .catch((err: Error) => this.log.error(`session continuity reconcile ${patchbayAgentId} — ${err.message}`));
+    void this.files
+      .reconcile(patchbayAgentId, this.cwd(), kept)
+      .catch((err: Error) => this.log.error(`session files reconcile ${patchbayAgentId} — ${err.message}`));
   }
 
   /** The user is about to read the list (drawer opening, palette pick):
@@ -1045,7 +1051,7 @@ export class SessionsStore {
     const attached = new Set(
       this.sessionsOn(patchbayAgentId).flatMap((patchbaySessionId) => this.known.get(patchbaySessionId)?.sessionId ?? []),
     );
-    this.reconcile(patchbayAgentId, (sessionId) => seen.has(sessionId) || attached.has(sessionId));
+    this.reconcile(patchbayAgentId, new Set([...seen, ...attached]));
   }
 
   /** One listed session into the view. Title rule: the agent's title wins
@@ -1406,21 +1412,59 @@ export class SessionsStore {
 
   /** Stages a chip for the session's next prompt — on its continuity row,
    * whether the session is attached right now or not. An image's bytes
-   * land in the stash first: the row carries only the file, and names it
-   * once it exists. */
+   * land in the session's folder first, the row naming them once they
+   * exist; a copy goes to the attachments stash for the transcript to show. */
   async addContext(patchbaySessionId: PatchbaySessionId, chip: ContextChip): Promise<void> {
-    if (!this.known.has(patchbaySessionId)) return;
+    const row = this.known.get(patchbaySessionId);
+    if (row === undefined) return;
+    let persisted: PersistedChip;
     if (chip.kind === "image") {
+      const name = imageFileName(chip.id, chip.mimeType);
       try {
-        await stashFile(imageFileName(chip.id, chip.mimeType), chip.content);
+        const path = await this.files.put(row.patchbayAgentId, row.sessionId, this.cwd(), name, chip.content);
+        persisted = { kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, path };
       } catch (err) {
-        this.log.info(`session ${patchbaySessionId}: image not staged — the stash refused it: ${(err as Error).message}`);
+        this.log.info(`session ${patchbaySessionId}: image not staged — its folder refused it: ${(err as Error).message}`);
         return;
       }
+      void stashPreview(name, chip.content).catch((err: Error) =>
+        this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${err.message}`),
+      );
       if (!this.known.has(patchbaySessionId)) return; // closed while the bytes landed
+    } else {
+      persisted = persistChip(chip);
     }
-    this.save(patchbaySessionId, { chips: [...(this.saved(patchbaySessionId).chips ?? []), persistChip(chip)] });
+    this.save(patchbaySessionId, { chips: [...(this.saved(patchbaySessionId).chips ?? []), persisted] });
     this.hooks.emit({ kind: "contextChipAdded", patchbaySessionId, chip });
+  }
+
+  /** A file dropped on the composer: the view holds its bytes and no host
+   * path — browsers hide dropped files' paths, and in a remote setup the
+   * client-side path would be meaningless here anyway. It lands in the
+   * session's folder once, its own name kept visible behind the chip's id
+   * (two drops of "notes.txt" never meet), and the chip links it there. */
+  async addDroppedFile(
+    patchbaySessionId: PatchbaySessionId,
+    file: { chipId: string; name: string; mimeType: string; base64: string },
+  ): Promise<void> {
+    const row = this.known.get(patchbaySessionId);
+    if (row === undefined) return;
+    const stored = `${file.chipId}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+    let path: string;
+    try {
+      path = await this.files.put(row.patchbayAgentId, row.sessionId, this.cwd(), stored, file.base64);
+    } catch (err) {
+      this.log.info(`session ${patchbaySessionId}: dropped file not staged — its folder refused it: ${(err as Error).message}`);
+      return;
+    }
+    await this.addContext(patchbaySessionId, {
+      id: file.chipId,
+      kind: "attachment",
+      label: `File: ${file.name}`,
+      path,
+      // "" = the platform didn't know the type; absent stays absent.
+      ...(file.mimeType !== "" ? { mimeType: file.mimeType } : {}),
+    });
   }
 
   removeContext(patchbaySessionId: PatchbaySessionId, chipId: string): void {
@@ -1611,9 +1655,13 @@ export class SessionsStore {
     row.sessionId = sessionId;
     this.bind(patchbaySessionId, row);
     this.bindToken(contextToken, patchbaySessionId);
-    // The continuity row follows the session to its new id.
+    // The continuity row follows the session to its new id, and so does its
+    // folder, with the paths its staged chips name in it.
+    const from = this.files.dirOf(patchbayAgentId, was, this.cwd());
+    const moved = this.files.move(patchbayAgentId, was, sessionId, this.cwd());
+    const to = this.files.dirOf(patchbayAgentId, sessionId, this.cwd());
     this.write({ patchbayAgentId, sessionId: was }, null);
-    if (Object.keys(carried).length > 0) this.write(row, carried);
+    if (Object.keys(carried).length > 0) this.write(row, moved ? rebased(carried, from, to) : carried);
     // Same shield as a session leaving: an in-flight session/list walk's
     // stale page must not resurrect the retired shell.
     this.entomb({ patchbayAgentId, sessionId: was });
@@ -1739,9 +1787,9 @@ export class SessionsStore {
     }
     // The transcript's copy of the prompt, in the part vocabulary — chips
     // first, then prose, the same order the wire blocks below carry. An
-    // image is the file its chip staged in the attachments dir.
+    // image is previewed from the copy its chip left in the attachments stash.
     const userParts: UserPart[] = chips.map((c): UserPart => {
-      if (c.kind === "image") return { kind: "image", mimeType: c.mimeType, file: c.file };
+      if (c.kind === "image") return { kind: "image", mimeType: c.mimeType, file: imageFileName(c.id, c.mimeType) };
       if (c.kind === "attachment") {
         return { kind: "attachment", name: basename(c.path), path: c.path };
       }
@@ -1785,11 +1833,11 @@ export class SessionsStore {
     for (const c of chips) {
       if (c.kind === "image") {
         if (acceptsImages) {
-          // The bytes are the staged file's; one the OS reclaimed since
-          // leaves the prompt without it, said in the log.
-          const data = await readStashedImage(c.file);
+          // The bytes are the staged file's; one gone since leaves the
+          // prompt without it, said in the log.
+          const data = await readBase64(c.path);
           if (data === null) {
-            this.log.info(`session ${patchbaySessionId}: pasted image "${c.label}" not sent — its stash file is gone`);
+            this.log.info(`session ${patchbaySessionId}: pasted image "${c.label}" not sent — its file is gone`);
           } else {
             prompt.push({ type: "image", data, mimeType: c.mimeType });
           }
@@ -1928,21 +1976,24 @@ export class SessionsStore {
     this.hooks.emit({ kind: "sessionDraftChanged", patchbaySessionId, draft });
   }
 
-  /** Decodes saved chips for the view (image bytes read from the
-   * attachments stash). A chip whose stash file the OS reclaimed drops
-   * honestly, logged, and leaves the row too, so the husk doesn't return
-   * next reload. */
+  /** Decodes saved chips for the view (image bytes read from the session's
+   * folder, their preview stashed again — a reboot may have emptied the
+   * stash). A chip whose file is gone drops honestly, logged, and leaves the
+   * row too, so the husk doesn't return next reload. */
   private async rehydrateChips(patchbaySessionId: PatchbaySessionId, persisted: readonly PersistedChip[]): Promise<void> {
     const chips: ContextChip[] = [];
     const gone = new Set<string>();
     for (const chip of persisted) {
       if (chip.kind === "image") {
-        const content = await readStashedImage(chip.file);
+        const content = await readBase64(chip.path);
         if (content === null) {
-          this.log.info(`session ${patchbaySessionId}: pasted image "${chip.label}" not rehydrated — stash file gone`);
+          this.log.info(`session ${patchbaySessionId}: pasted image "${chip.label}" not rehydrated — its file is gone`);
           gone.add(chip.id);
           continue;
         }
+        void stashPreview(imageFileName(chip.id, chip.mimeType), content).catch((err: Error) =>
+          this.log.info(`session ${patchbaySessionId}: image preview not stashed — ${err.message}`),
+        );
         chips.push({ kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, content });
       } else if (chip.kind === "attachment") {
         chips.push({
@@ -2092,15 +2143,27 @@ export class SessionsStore {
 }
 
 /** The image-paste fallback for agents that never declared
- * `promptCapabilities.image`: the chip's stashed file, sent as a
- * ResourceLink (with ContentBlock::Text, the baseline every agent must
- * accept). The same file backs the transcript's preview. */
+ * `promptCapabilities.image`: the chip's file in the session's folder,
+ * sent as a ResourceLink (with ContentBlock::Text, the baseline every agent
+ * must accept) — the agent may read it in any later turn, and the folder
+ * keeps it for as long as the session lives. */
 function imageAsResourceLink(chip: Extract<PersistedChip, { kind: "image" }>): ContentBlock {
   return {
     type: "resource_link",
-    uri: pathToFileURL(stashedPath(chip.file)).toString(),
-    name: chip.file,
+    uri: pathToFileURL(chip.path).toString(),
+    name: basename(chip.path),
     mimeType: chip.mimeType,
+  };
+}
+
+/** Saved fields with every chip path under a session's old folder moved
+ * under its new one. */
+function rebased(fields: SessionContinuity, from: string, to: string): SessionContinuity {
+  if (fields.chips === undefined) return fields;
+  const move = (path: string) => (path.startsWith(from + sep) ? to + path.slice(from.length) : path);
+  return {
+    ...fields,
+    chips: fields.chips.map((c) => (c.kind === "image" || c.kind === "attachment" ? { ...c, path: move(c.path) } : c)),
   };
 }
 

@@ -30,6 +30,8 @@ export interface EraseTargets {
   usedCapabilities: Wipeable;
   authLocks: Wipeable;
   sessionContinuity: Wipeable;
+  /** The files sessions were given, each in its session's folder. */
+  sessionFiles: Wipeable;
   spawnRegistry: Wipeable;
   agentEnv: SecretsById;
   mcpServerEnv: SecretsById;
@@ -44,7 +46,7 @@ export interface EraseTargets {
   composerKnobs: Wipeable;
   workspaceSavedRoots: Wipeable;
   machineSavedRoots: Wipeable;
-  /** The attachment/diff temp stashes: pasted-image bytes and diff
+  /** The preview and diff temp stashes: image previews and diff
    * snapshots are user content — "deletes everything patchbay ever
    * stored" includes them, not just the rows that referenced them. */
   tempStashes: Wipeable;
@@ -89,5 +91,6 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.composerKnobs.wipe();
   await targets.workspaceSavedRoots.wipe();
   await targets.machineSavedRoots.wipe();
+  await targets.sessionFiles.wipe();
   await targets.tempStashes.wipe();
 }

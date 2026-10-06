@@ -21,6 +21,7 @@ import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import {
   initialAgentViewState,
@@ -307,6 +308,7 @@ function wireHarness() {
     pool,
     { emit: (...evs) => events.push(...evs), capabilities: () => undefined },
     new SessionContinuityStore(new MemoryKV()),
+    new SessionFilesStore(join(dir, "session-files")),
     () => dir,
   );
   return {

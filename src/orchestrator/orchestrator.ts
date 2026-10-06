@@ -35,7 +35,7 @@ import {
 import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
-import { ATTACHMENTS_DIR, pickedFileForm, stashFile } from "./attachments";
+import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
 import { AsksStore } from "./asks-store";
 import { PermissionBroker } from "./broker";
 import { applyFileWrite, ClientHost, clientRequestHooks } from "./client-host";
@@ -87,6 +87,7 @@ import { loadCatalog } from "./stores/mcp-catalog";
 import { SpawnRegistryStore } from "./stores/spawn-registry";
 import { AuthLockStore } from "./stores/auth-locks";
 import { SessionContinuityStore } from "./stores/session-continuity";
+import { adoptStashedChips, SessionFilesStore } from "./stores/session-files";
 import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
@@ -156,6 +157,7 @@ export class Orchestrator {
   readonly preferences: PreferencesStore;
   readonly composerKnobs: ComposerKnobsStore;
   readonly sessionContinuity: SessionContinuityStore;
+  private readonly sessionFiles: SessionFilesStore;
   /** The updates already announced this window ("patchbayAgentId@version") — each
    * newer version is told once. */
   private readonly announcedUpdates = new Set<string>();
@@ -261,6 +263,7 @@ export class Orchestrator {
     this.preferences = new PreferencesStore(machineKV);
     this.composerKnobs = new ComposerKnobsStore(machineKV);
     this.sessionContinuity = new SessionContinuityStore(machineKV);
+    this.sessionFiles = new SessionFilesStore(join(context.globalStorageUri.fsPath, "session-files"));
     this.usedCapabilities = new UsedCapabilityStore(machineKV);
     this.authLocks = new AuthLockStore(machineKV);
     this.spawnRegistry = new SpawnRegistryStore(machineKV);
@@ -647,6 +650,7 @@ export class Orchestrator {
         },
       },
       this.sessionContinuity,
+      this.sessionFiles,
       () => this.workspaceCwd,
       // A session's MCP servers, composed by their store; the agent's
       // mcp.http claim is read here, where the stores meet. Declared, not
@@ -822,8 +826,13 @@ export class Orchestrator {
     this.syncDetachContext();
 
     // Orphan reaping strictly before any startup agent spawns: the
-    // registry must be settled before new pids start landing in it.
+    // registry must be settled before new pids start landing in it. Chips
+    // staged before sessions kept their own files move into them before
+    // any session can read its chips back.
     void this.reapLeftoverProcesses()
+      .then(() =>
+        adoptStashedChips(this.sessionContinuity, this.sessionFiles, ATTACHMENTS_DIR).catch(this.logCatch("adopt stashed chips")),
+      )
       .then(() => this.connectStartupAgents())
       // Settles the view's restore hold no matter how the connects went —
       // the loading page must never outlive the startup sequence.
@@ -879,6 +888,7 @@ export class Orchestrator {
       preferences: this.preferences,
       composerKnobs: this.composerKnobs,
       sessionContinuity: this.sessionContinuity,
+      sessionFiles: this.sessionFiles,
       workspaceSavedRoots: this.workspaceSavedRoots,
       machineSavedRoots: this.machineSavedRoots,
       tempStashes: {
@@ -1975,9 +1985,9 @@ export class Orchestrator {
           .catch(this.logCatch(`add context ${action.patchbaySessionId}`));
         break;
       case "addDroppedFileContext":
-        void this.addDroppedFileContext(action).catch(
-          this.logCatch(`addDroppedFileContext ${action.name}`),
-        );
+        void this.sessions
+          .addDroppedFile(action.patchbaySessionId, { chipId: chipId(), name: action.name, mimeType: action.mimeType, base64: action.base64 })
+          .catch(this.logCatch(`addDroppedFileContext ${action.name}`));
         break;
       case "addFilePickerContext":
         void this.addFilePickerContext(action.patchbaySessionId);
@@ -2101,34 +2111,6 @@ export class Orchestrator {
     const event = { kind: "savedRootsChanged", savedRoots: this.savedRootsView() } as const;
     this.settings.emit(event);
     this.agentView.emit(event);
-  }
-
-  /** Composer drop of an external non-image file: the webview holds
-   * bytes with no host path — browsers hide dropped files' paths, and in a
-   * remote setup the client-side path would be meaningless here anyway.
-   * Staged to a temp file once, at add time; the chip rides the prompt as a
-   * resource_link to it (the sessions store's attachment arm). The ingress
-   * processor already validated and size-capped the bytes webview-side. */
-  private async addDroppedFileContext(action: {
-    patchbaySessionId: PatchbaySessionId;
-    name: string;
-    mimeType: string;
-    base64: string;
-  }): Promise<void> {
-    // The stash images ride too — one directory, one webview resource root.
-    // The original name stays visible in the staged filename (the agent sees
-    // it in the resource_link), prefixed by the chip's id so two drops of
-    // "notes.txt" never overwrite each other.
-    const id = chipId();
-    const path = await stashFile(`${id}-${action.name.replace(/[^\w.-]+/g, "_")}`, action.base64);
-    await this.sessions.addContext(action.patchbaySessionId, {
-      id,
-      kind: "attachment",
-      label: `File: ${action.name}`,
-      path,
-      // "" = the platform didn't know the type; absent stays absent.
-      ...(action.mimeType !== "" ? { mimeType: action.mimeType } : {}),
-    });
   }
 
   /** "Attach file" picker — the host-side byte producer: the file already

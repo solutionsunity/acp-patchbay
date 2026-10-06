@@ -2,12 +2,15 @@
 // stop turn; close; slash-command advertisement; render cache rebuilt
 // wholesale from session/load replay after a crash. Sessions are the
 // agent's truth: patchbay persists no index and no transcripts.
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import type { McpServer } from "@agentclientprotocol/sdk";
+import { ATTACHMENTS_DIR, imageFileName } from "../src/orchestrator/attachments";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import type { AttachedServer } from "../src/orchestrator/mcp-servers-store";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
@@ -18,6 +21,7 @@ import { Queue } from "../src/orchestrator/queue";
 import { sessionsActiveToday } from "../src/orchestrator/session-stats";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   attaching,
@@ -99,6 +103,7 @@ function harness(opts?: {
    * session's connection goes through them. */
   gates: SessionGates;
   capabilityTracker: CapabilityTracker;
+  files: SessionFilesStore;
   events: AgentViewEvent[];
   /** Events delivered through the silent (replay-window) path — also in
    * `events`, so `state()` stays the full canonical reduction. */
@@ -121,6 +126,7 @@ function harness(opts?: {
   const missingRoots = [...(opts?.missingRoots ?? [])];
   const rootsMissing: string[][] = [];
   const continuity = opts?.continuityStore ?? new SessionContinuityStore(new MemoryKV());
+  const files = new SessionFilesStore(join(cwd, "session-files"));
   let resyncs = 0;
   let sessions!: SessionsStore;
   let capabilityTracker!: CapabilityTracker;
@@ -162,6 +168,7 @@ function harness(opts?: {
       authLocked: (patchbayAgentId) => opts?.authLocked?.(patchbayAgentId) ?? false,
     },
     continuity,
+    files,
     () => cwd,
     opts?.mcpServersFor,
   );
@@ -175,6 +182,7 @@ function harness(opts?: {
     sessions,
     gates,
     capabilityTracker,
+    files,
     events,
     silentEvents,
     resyncCount: () => resyncs,
@@ -3620,5 +3628,125 @@ describe("harnessEnvelopeTag — injected user-role envelope classification", ()
     expect(harnessEnvelopeTag("<div>some pasted html</div> plus my question")).toBeNull();
     expect(harnessEnvelopeTag("<unclosed>never ends")).toBeNull();
     expect(harnessEnvelopeTag("")).toBeNull();
+  });
+});
+
+// ── a session's files live with it (#78): what the user gives a session —
+// a pasted image, a dropped file — sits in the session's own folder on
+// patchbay's disk, not the OS temp directory, and leaves with the session.
+describe("a session's files live with the session", () => {
+  const PNG = Buffer.from("fake-png-bytes").toString("base64");
+  /** Folder removals are fire-and-forget from the store's operations. */
+  const gone = async (path: string) => {
+    for (let i = 0; i < 100 && existsSync(path); i++) await new Promise((r) => setTimeout(r, 10));
+    return !existsSync(path);
+  };
+  const echoedKinds = (h: ReturnType<typeof harness>, patchbaySessionId: PatchbaySessionId) => {
+    const echoed = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
+    return JSON.parse(echoed?.kind === "text" ? echoed.text : "[]") as Array<Record<string, string>>;
+  };
+
+  it("a staged image is sent from the session's folder — a temp cleanup meanwhile costs only its preview", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: { promptCapabilities: { image: true } }, turn: [{ type: "echoBlockKinds" }] }, "f78a"));
+    const patchbaySessionId = await h.sessions.createSession("f78a" as PatchbayAgentId, "Fake Agent", cwd);
+    const chipId = `chip-f78a-${Date.now()}`;
+    await h.sessions.addContext(patchbaySessionId, { id: chipId, kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
+    // the OS empties its temp directory while the chip waits
+    await rm(join(ATTACHMENTS_DIR, imageFileName(chipId, "image/png")), { force: true });
+
+    await h.gates.prompt(patchbaySessionId, { text: "what is this?" });
+    expect(echoedKinds(h, patchbaySessionId)).toEqual([{ type: "image", mimeType: "image/png" }, { type: "text" }]);
+    await h.pool.stop("f78a" as PatchbayAgentId);
+  });
+
+  it("an image an agent takes only as a link points at the session's own copy, which outlives the turn", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78b"));
+    const patchbaySessionId = await h.sessions.createSession("f78b" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(patchbaySessionId, { id: "chip-f78b", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
+    const path = join(h.files.dirOf("f78b" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd), "chip-f78b.png");
+
+    await h.gates.prompt(patchbaySessionId, { text: "look" });
+    expect(echoedKinds(h, patchbaySessionId)[0]).toMatchObject({ type: "resource_link", uri: pathToFileURL(path).toString() });
+    expect(existsSync(path)).toBe(true);
+    await h.pool.stop("f78b" as PatchbayAgentId);
+  });
+
+  it("a dropped file lands in the session's folder, and its chip links it there", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78c"));
+    const patchbaySessionId = await h.sessions.createSession("f78c" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addDroppedFile(patchbaySessionId, {
+      chipId: "chip-f78c",
+      name: "my notes.txt",
+      mimeType: "text/plain",
+      base64: Buffer.from("notes").toString("base64"),
+    });
+    const path = join(h.files.dirOf("f78c" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd), "chip-f78c-my_notes.txt");
+    expect(await readFile(path, "utf8")).toBe("notes");
+    expect(h.state().contextChips[patchbaySessionId]).toEqual([
+      { id: "chip-f78c", kind: "attachment", label: "File: my notes.txt", path, mimeType: "text/plain" },
+    ]);
+
+    await h.gates.prompt(patchbaySessionId, { text: "read it" });
+    expect(echoedKinds(h, patchbaySessionId)[0]).toMatchObject({ type: "resource_link", uri: pathToFileURL(path).toString() });
+    await h.pool.stop("f78c" as PatchbayAgentId);
+  });
+
+  it("the folder leaves with its session — closed for good, or its agent removed", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78d"));
+    const closed = await h.sessions.createSession("f78d" as PatchbayAgentId, "Fake Agent", cwd);
+    const removed = await h.sessions.createSession("f78d" as PatchbayAgentId, "Fake Agent", cwd);
+    const folderOf = (patchbaySessionId: PatchbaySessionId) =>
+      h.files.dirOf("f78d" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd);
+    for (const patchbaySessionId of [closed, removed]) {
+      await h.sessions.addContext(patchbaySessionId, { id: `chip-${patchbaySessionId}`, kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
+    }
+    const closedFolder = folderOf(closed);
+    const removedFolder = folderOf(removed);
+
+    await h.gates.close(closed);
+    expect(await gone(closedFolder)).toBe(true);
+    expect(existsSync(removedFolder)).toBe(true);
+
+    h.sessions.forgetAgentSessions("f78d" as PatchbayAgentId);
+    expect(await gone(removedFolder)).toBe(true);
+    await h.pool.stop("f78d" as PatchbayAgentId);
+  });
+
+  it("a session gone from its agent's list loses its folder at the walk — even one no window held", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "f78e"));
+    // a session the agent no longer has, whose folder an earlier window left
+    const stray = await h.files.put("f78e" as PatchbayAgentId, "deleted-elsewhere", cwd, "chip.png", PNG);
+    const kept = await h.sessions.createSession("f78e" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.sessions.addContext(kept, { id: "chip-f78e", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
+
+    await h.sessions.syncAgentSessions("f78e" as PatchbayAgentId);
+    expect(await gone(stray)).toBe(true);
+    expect(existsSync(join(h.files.dirOf("f78e" as PatchbayAgentId, h.sessions.sessionIdOf(kept)!, cwd), "chip-f78e.png"))).toBe(true);
+    await h.pool.stop("f78e" as PatchbayAgentId);
+  });
+
+  it("a never-prompted session minted again keeps its staged file, now under its new id", async () => {
+    const continuity = new SessionContinuityStore(new MemoryKV());
+    const h = harness({ continuityStore: continuity });
+    await h.pool.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "f78f"));
+    const patchbaySessionId = await h.sessions.createSession("f78f" as PatchbayAgentId, "Fake Agent", cwd);
+    const before = h.sessions.sessionIdOf(patchbaySessionId)!;
+    await h.sessions.addContext(patchbaySessionId, { id: "chip-f78f", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
+
+    await h.gates.addRoot(patchbaySessionId, "/repo/backend"); // a zero-turn session takes new roots by a fresh mint
+    const after = h.sessions.sessionIdOf(patchbaySessionId)!;
+    expect(after).not.toBe(before);
+    const path = join(h.files.dirOf("f78f" as PatchbayAgentId, after, cwd), "chip-f78f.png");
+    expect(continuity.read("f78f" as PatchbayAgentId, after)?.chips).toEqual([
+      { kind: "image", id: "chip-f78f", label: "Image", mimeType: "image/png", path },
+    ]);
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(h.files.dirOf("f78f" as PatchbayAgentId, before, cwd))).toBe(false);
+    await h.pool.stop("f78f" as PatchbayAgentId);
   });
 });

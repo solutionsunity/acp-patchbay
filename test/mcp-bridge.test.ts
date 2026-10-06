@@ -22,6 +22,7 @@ import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
+import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -290,6 +291,7 @@ function harness(mcpServers: McpServer[]) {
     pool,
     { emit: (...evs) => events.push(...evs), capabilities: () => undefined },
     new SessionContinuityStore(new MemoryKV()),
+    new SessionFilesStore(join(dir, "session-files")),
     () => dir,
     async () => ({ servers: mcpServers, given: [] }),
   );
