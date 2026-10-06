@@ -8,6 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AsksStore } from "../src/orchestrator/asks-store";
 import { PermissionBroker } from "../src/orchestrator/broker";
 import {
   elicitationResponseOf,
@@ -273,18 +274,13 @@ function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): Launch
 function wireHarness() {
   const events: AgentViewEvent[] = [];
   const opened: string[] = [];
-  const broker = new PermissionBroker(
-    new PermissionRulesStore(new MemoryKV()),
-    new DecisionAuditStore(dir),
-    {
-      emit: (...evs) => events.push(...evs),
-      onAuditWritten: () => {},
-      pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
-      redact: (text) => text,
-      openLink: (href) => opened.push(href),
-    },
-    () => [dir],
-  );
+  const asks = new AsksStore(new DecisionAuditStore(dir), {
+    emit: (...evs) => events.push(...evs),
+    onAuditWritten: () => {},
+    pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
+    openLink: (href) => opened.push(href),
+  });
+  const broker = new PermissionBroker(new PermissionRulesStore(new MemoryKV()), asks, () => [dir], (text) => text);
   let sessions!: SessionsStore;
   const pool = new AgentPool({
     onStatusChanged: () => {},
@@ -305,7 +301,7 @@ function wireHarness() {
       );
       return elicitationResponseOf(ask, answer, signal);
     },
-    onElicitationComplete: (patchbayAgentId, elicitationId) => broker.completeLink(patchbayAgentId, elicitationId),
+    onElicitationComplete: (patchbayAgentId, elicitationId) => asks.completeLink(patchbayAgentId, elicitationId),
   });
   sessions = new SessionsStore(
     pool,
@@ -316,6 +312,7 @@ function wireHarness() {
   return {
     pool,
     broker,
+    asks,
     sessions,
     gates: gatesFor(sessions, (event) => events.push(event)),
     events,
@@ -360,7 +357,7 @@ describe("elicitation on the wire", () => {
     expect(card.kind === "elicitation" && card.mode === "form" && card.fields).toEqual([
       { name: "db", type: "select", required: true, options: [{ value: "prod", label: "Production" }] },
     ]);
-    h.broker.resolveElicitation(card.id, { action: "accept", content: { db: "prod" } });
+    h.asks.answerQuestion(card.id, { action: "accept", content: { db: "prod" } });
     await turn;
 
     const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
@@ -376,7 +373,7 @@ describe("elicitation on the wire", () => {
     const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
-    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "decline" });
+    h.asks.answerQuestion(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "decline" });
     await turn;
     const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: decline null");
@@ -391,7 +388,7 @@ describe("elicitation on the wire", () => {
     const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
-    h.broker.resolveElicitation(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "cancel" });
+    h.asks.answerQuestion(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "cancel" });
     await turn;
     expect(
       h.state().transcripts[patchbaySessionId]!.some(
@@ -420,7 +417,7 @@ describe("url elicitation on the wire", () => {
     const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
     expect(card.kind === "elicitation" && card.mode === "url" && card.link.href).toBe(SIGN_IN);
     expect(h.opened).toEqual([]); // shown, never fetched or opened before consent
-    h.broker.resolveElicitation(card.id, { action: "accept", content: {} });
+    h.asks.answerQuestion(card.id, { action: "accept", content: {} });
     expect(h.opened).toEqual([SIGN_IN]);
     await turn;
 
@@ -431,7 +428,7 @@ describe("url elicitation on the wire", () => {
       return settled?.kind === "elicitation" && settled.linkState === "completed";
     });
     // A completed link no longer re-opens.
-    h.broker.reopenLink(card.id);
+    h.asks.reopenLink(card.id);
     expect(h.opened).toEqual([SIGN_IN]);
     await h.pool.stop("u1" as PatchbayAgentId);
   });
@@ -465,7 +462,7 @@ describe("url elicitation on the wire", () => {
     const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && echoed.text).toBe("elicitation: withdrawn -32800");
     // the user's late click is a no-op: nothing opens for a withdrawn question
-    h.broker.resolveElicitation(card.id, { action: "accept", content: {} });
+    h.asks.answerQuestion(card.id, { action: "accept", content: {} });
     expect(h.opened).toEqual([]);
     await h.pool.stop("u3" as PatchbayAgentId);
   });

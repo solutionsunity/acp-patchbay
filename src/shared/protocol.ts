@@ -6,7 +6,7 @@
 // apply patches with the pure reducers defined here. The orchestrator applies the
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
-import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
 
 // ── envelope ─────────────────────────────────────────────────────────────────
 
@@ -144,8 +144,8 @@ export type Action =
    * orchestrator's defaults editor opens/ends the throwaway session that
    * reads the agent's surface for the defaults being edited. */
   | { kind: "editAgentDefaults"; patchbayAgentId: PatchbayAgentId; open: boolean }
-  | { kind: "resolvePermission"; blockId: string; optionId: string }
-  | { kind: "resolveDiff"; blockId: string; accept: boolean }
+  | { kind: "resolvePermission"; patchbayAskId: PatchbayAskId; optionId: string }
+  | { kind: "resolveDiff"; patchbayAskId: PatchbayAskId; accept: boolean }
   | { kind: "authenticateAgent"; patchbayAgentId: PatchbayAgentId; methodId: string }
   /** Only ever offered when the agent declared `auth.logout` — the spec's
    * "Clients MUST NOT call it" otherwise holds by construction. */
@@ -170,10 +170,10 @@ export type Action =
    * vocabulary: accept carries what they typed (reviewed and editable
    * until they press it), decline is a refusal, cancel is a dismissal.
    * Decline and cancel are different answers and the agent is told which. */
-  | { kind: "resolveElicitation"; blockId: string; answer: ElicitationAnswer }
+  | { kind: "resolveElicitation"; patchbayAskId: PatchbayAskId; answer: ElicitationAnswer }
   /** Open an accepted link's page again (the tab was closed mid-flow).
    * Names the card, never the address: the host opens the link it holds. */
-  | { kind: "reopenElicitationLink"; blockId: string }
+  | { kind: "reopenElicitationLink"; patchbayAskId: PatchbayAskId }
   | { kind: "addSelectionContext"; patchbaySessionId: PatchbaySessionId }
   | { kind: "addFileContext"; patchbaySessionId: PatchbaySessionId }
   | { kind: "addDiagnosticsContext"; patchbaySessionId: PatchbaySessionId }
@@ -226,7 +226,7 @@ export type Action =
   | { kind: "openToolCallDiff"; patchbaySessionId: PatchbaySessionId; toolCallId: string; path: string }
   /** Open a pending write proposal — the diff card's full change — in VS
    * Code's native diff editor; a no-op once the proposal has resolved. */
-  | { kind: "openProposedDiff"; blockId: string }
+  | { kind: "openProposedDiff"; patchbayAskId: PatchbayAskId }
   /** Open a file in the editor by absolute path — the read-out strip's
    * files-panel rows (the view never touches fs). `line` is the location's
    * 1-based line — absent opens at the top. */
@@ -1094,7 +1094,7 @@ export interface PermissionFact {
 
 export interface PermissionBlock {
   kind: "permission";
-  id: string;
+  id: PatchbayAskId;
   title: string;
   detail: string;
   facts: readonly PermissionFact[];
@@ -1107,7 +1107,7 @@ export type DiffLineKind = "context" | "add" | "del";
 
 export interface DiffBlock {
   kind: "diff";
-  id: string;
+  id: PatchbayAskId;
   file: string;
   additions: number;
   deletions: number;
@@ -1195,7 +1195,7 @@ export type ElicitationAnswer =
 
 export type ElicitationBlock = {
   kind: "elicitation";
-  id: string;
+  id: PatchbayAskId;
   message: string;
   resolution: { outcome: ElicitationOutcome } | null;
   /** A url ask's follow-up — absent until the user opens the page. */
@@ -1573,7 +1573,7 @@ export type AgentViewEvent =
   | { kind: "toolCallDenied"; patchbaySessionId: PatchbaySessionId; blockId: string }
   /** The owning turn ended (non-end_turn stop reason, or error) while this
    * call was still open — the sessions store's turn-end sweep, the tool-call
-   * analogue of broker.cancelPending for permission requests. */
+   * analogue of the asks store's stop for the asks a turn left open. */
   | { kind: "toolCallInterrupted"; patchbaySessionId: PatchbaySessionId; blockId: string }
   /** Replaces the session's pinned plan snapshot — never a transcript block. */
   | { kind: "planUpdated"; patchbaySessionId: PatchbaySessionId; entries: readonly PlanEntry[] }
@@ -1596,31 +1596,31 @@ export type AgentViewEvent =
   | {
       kind: "permissionRequested";
       patchbaySessionId: PatchbaySessionId;
-      blockId: string;
+      patchbayAskId: PatchbayAskId;
       title: string;
       detail: string;
       facts: readonly PermissionFact[];
       options: readonly PermissionOptionView[];
     }
-  | { kind: "permissionResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; label: string; auto: boolean }
+  | { kind: "permissionResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; label: string; auto: boolean }
   | {
       kind: "diffProposed";
       patchbaySessionId: PatchbaySessionId;
-      blockId: string;
+      patchbayAskId: PatchbayAskId;
       file: string;
       additions: number;
       deletions: number;
       lines: readonly { kind: DiffLineKind; text: string }[];
     }
-  | { kind: "diffResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; accepted: boolean; auto: boolean }
+  | { kind: "diffResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; accepted: boolean; auto: boolean }
   | { kind: "terminalStarted"; patchbaySessionId: PatchbaySessionId; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; chunk: string }
   | { kind: "terminalExited"; patchbaySessionId: PatchbaySessionId; blockId: string; exitCode: number | null }
-  | ({ kind: "elicitationRequested"; patchbaySessionId: PatchbaySessionId; blockId: string; message: string } & ElicitationAsk)
-  | { kind: "elicitationResolved"; patchbaySessionId: PatchbaySessionId; blockId: string; outcome: ElicitationOutcome }
+  | ({ kind: "elicitationRequested"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; message: string } & ElicitationAsk)
+  | { kind: "elicitationResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; outcome: ElicitationOutcome }
   /** An opened link's follow-up moved: the agent reported the page done,
    * or the session stopped waiting on it. */
-  | { kind: "elicitationLinkSettled"; patchbaySessionId: PatchbaySessionId; blockId: string; state: "completed" | "ended" }
+  | { kind: "elicitationLinkSettled"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; state: "completed" | "ended" }
   | { kind: "contextChipAdded"; patchbaySessionId: PatchbaySessionId; chip: ContextChip }
   | { kind: "contextChipRemoved"; patchbaySessionId: PatchbaySessionId; chipId: string }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
@@ -2056,7 +2056,7 @@ export function reduceAgentView(
     case "permissionRequested":
       return appendBlock(state, event.patchbaySessionId, {
         kind: "permission",
-        id: event.blockId,
+        id: event.patchbayAskId,
         title: event.title,
         detail: event.detail,
         facts: event.facts,
@@ -2064,14 +2064,14 @@ export function reduceAgentView(
         resolution: null,
       });
     case "permissionResolved":
-      return patchBlock<PermissionBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
+      return patchBlock<PermissionBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) => ({
         ...b,
         resolution: { label: event.label, auto: event.auto },
       }));
     case "diffProposed":
       return appendBlock(state, event.patchbaySessionId, {
         kind: "diff",
-        id: event.blockId,
+        id: event.patchbayAskId,
         file: event.file,
         additions: event.additions,
         deletions: event.deletions,
@@ -2079,7 +2079,7 @@ export function reduceAgentView(
         resolution: null,
       });
     case "diffResolved":
-      return patchBlock<DiffBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
+      return patchBlock<DiffBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) => ({
         ...b,
         resolution: { accepted: event.accepted, auto: event.auto },
       }));
@@ -2104,11 +2104,11 @@ export function reduceAgentView(
         exitCode: event.exitCode,
       }));
     case "elicitationRequested": {
-      const { kind: _kind, patchbaySessionId, blockId, ...asked } = event;
-      return appendBlock(state, patchbaySessionId, { kind: "elicitation", id: blockId, ...asked, resolution: null });
+      const { kind: _kind, patchbaySessionId, patchbayAskId, ...asked } = event;
+      return appendBlock(state, patchbaySessionId, { kind: "elicitation", id: patchbayAskId, ...asked, resolution: null });
     }
     case "elicitationResolved":
-      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
+      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) => ({
         ...b,
         resolution: { outcome: event.outcome },
         // An accepted link opened in the browser; the agent's page is now
@@ -2118,7 +2118,7 @@ export function reduceAgentView(
         ...(b.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
       }));
     case "elicitationLinkSettled":
-      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.blockId, (b) =>
+      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) =>
         b.mode === "url" ? { ...b, linkState: event.state } : b,
       );
     case "contextChipAdded":

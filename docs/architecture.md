@@ -1053,6 +1053,14 @@ supplies each agent in its own standard — and ACP carries no channel for it
   ACP gives an execute request no command field a rule could match, so it always
   asks, and command rules apply where the command actually runs
   (`terminal/create`).
+- **The asks store holds every ask** (`asks-store.ts`) from the moment it is
+  asked until it ends, and its one writer resolves the card, writes the
+  decision audit, and only then answers the agent — an action never runs
+  ahead of its record. Which end may move an ask — a rule, the user, a stop,
+  the agent's withdrawal, a page reported done — is one declared table; an
+  answer that doesn't fit its ask moves nothing. The broker judges: the
+  rules, the write scope, and one small policy per kind of ask
+  ([the stores architecture](store-architecture.md#asks)).
 - **Rules never ride the repo.** Agent and MCP server configs are global,
   developer-owned stores — nothing config-shaped lives in the repo at all, so
   no repo-authored launch command exists to adopt.
@@ -1073,7 +1081,8 @@ supplies each agent in its own standard — and ACP carries no channel for it
   the asking session, the same request surfaces as a native notification. One
   approval surface, wherever the user is looking.
 - "Waiting on the user" is one derived fact: the open asks (permission, write,
-  terminal, question cards not yet answered) in the canonical transcripts. The
+  terminal, question cards not yet answered) in the canonical transcripts —
+  cards only the asks store writes, so none reads open after its ask ended. The
   view badge, the header read-out of the other sessions and the drawer's marks
   read it, so an answer anywhere clears them all. The native notification is
   raised from it — every ask that starts off screen raises one, whatever its

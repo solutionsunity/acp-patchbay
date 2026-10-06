@@ -36,6 +36,7 @@ import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm, stashFile } from "./attachments";
+import { AsksStore } from "./asks-store";
 import { PermissionBroker } from "./broker";
 import { applyFileWrite, ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
@@ -90,7 +91,7 @@ import { UsedCapabilityStore } from "./stores/used-capabilities";
 import { sessionsActiveToday } from "./session-stats";
 import { statusBarContent } from "./status-bar";
 import { editorLineOf } from "./tool-locations";
-import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
 
 /** Context-chip id mint. A staged chip is saved with its session, so it
  * outlives the window, and a chip names its stash file in the one folder
@@ -170,6 +171,7 @@ export class Orchestrator {
   readonly capabilityTracker: CapabilityTracker;
   private readonly defaultsEditor: DefaultsEditor;
   readonly broker: PermissionBroker;
+  private readonly asks: AsksStore;
   readonly editorStateHost: EditorStateHost;
   readonly mcpServerTokens: McpServerTokenStore;
   /** The MCP-servers store without the operations that take time — those
@@ -387,7 +389,7 @@ export class Orchestrator {
         // did any completion notice still waiting for its question.
         if (status !== "running") {
           this.defaultsEditor.forget(patchbayAgentId);
-          this.broker.forgetAgent(patchbayAgentId);
+          this.asks.forgetAgent(patchbayAgentId);
         }
         // Every connect of a list-capable agent syncs its own session
         // history into the list — the wire is the ONLY list (patchbay
@@ -462,7 +464,7 @@ export class Orchestrator {
         );
         return elicitationResponseOf(ask, answer, signal);
       },
-      onElicitationComplete: (patchbayAgentId, elicitationId) => this.broker.completeLink(patchbayAgentId, elicitationId),
+      onElicitationComplete: (patchbayAgentId, elicitationId) => this.asks.completeLink(patchbayAgentId, elicitationId),
       onPermissionRequest: async (patchbayAgentId, params) => {
         const options = optionViewsFromAcp(params.options);
         const title = params.toolCall.title ?? "Permission request";
@@ -637,7 +639,7 @@ export class Orchestrator {
           this.pinnedSessions().includes(patchbaySessionId),
         isUnseen: (patchbaySessionId) =>
           this.agentView.current.sessions.find((s) => s.id === patchbaySessionId)?.unseen === true,
-        cancelAsks: (patchbaySessionId) => this.broker.cancelPending(patchbaySessionId),
+        cancelAsks: (patchbaySessionId) => this.asks.stopSession(patchbaySessionId),
         authLocked: (patchbayAgentId) => this.agents.authLocked(patchbayAgentId),
         // the pointer names the session the agent's way, which a re-mint moves
         sessionIdChanged: (patchbaySessionId) => {
@@ -764,17 +766,17 @@ export class Orchestrator {
       if (attached) void this.acpRegistry.refresh("settings");
       else void this.defaultsEditor.closeAll();
     });
+    this.asks = new AsksStore(this.decisionAudit, {
+      emit: (...events) => this.agentView.emit(...events),
+      onAuditWritten: () => void this.refreshAuditTail(),
+      pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
+      openLink: (href) => void openInBrowser(href),
+    });
     this.broker = new PermissionBroker(
       this.permissionRules,
-      this.decisionAudit,
-      {
-        emit: (...events) => this.agentView.emit(...events),
-        onAuditWritten: () => void this.refreshAuditTail(),
-        pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
-        redact: (text) => this.wireLog.redact(text),
-        openLink: (href) => void openInBrowser(href),
-      },
+      this.asks,
       (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
+      (text) => this.wireLog.redact(text),
       this.machinePermissionRules,
     );
     this.clientHost = new ClientHost({
@@ -1302,16 +1304,16 @@ export class Orchestrator {
    * the decision deserves the whole change. Left: the file as it is on disk
    * at proposal time (the gate's own reading — a new file diffs against
    * empty); right: what the agent wants to write. Both are snapshots the
-   * broker holds only while the decision is open, so a stale click after
-   * resolution is a no-op, like the other openers. */
-  private async openProposedDiff(blockId: string): Promise<void> {
-    const proposal = this.broker.proposedDiff(blockId);
+   * asks store holds only while the decision is open, so a stale click
+   * after resolution is a no-op, like the other openers. */
+  private async openProposedDiff(patchbayAskId: PatchbayAskId): Promise<void> {
+    const proposal = this.asks.proposal(patchbayAskId);
     if (proposal === null) return;
     const name = basename(proposal.path);
     await vscode.commands.executeCommand(
       "vscode.diff",
-      await this.diffTempFile(blockId, `current-${name}`, proposal.oldText),
-      await this.diffTempFile(blockId, `proposed-${name}`, proposal.newText),
+      await this.diffTempFile(patchbayAskId, `current-${name}`, proposal.oldText),
+      await this.diffTempFile(patchbayAskId, `proposed-${name}`, proposal.newText),
       `${name} — proposed write (accept or reject on the card)`,
     );
   }
@@ -1350,7 +1352,7 @@ export class Orchestrator {
    * so no card, and no "waiting" mark, outlives the process it was asked
    * on. Read before the sessions are invalidated. */
   private settleAsksOn(patchbayAgentId: PatchbayAgentId): void {
-    for (const patchbaySessionId of this.sessions.sessionsOn(patchbayAgentId)) this.broker.cancelPending(patchbaySessionId);
+    for (const patchbaySessionId of this.sessions.sessionsOn(patchbayAgentId)) this.asks.stopSession(patchbaySessionId);
   }
 
   /** The native notification is raised from the waiting fact, not by a
@@ -1383,12 +1385,12 @@ export class Orchestrator {
       ask.kind === "permission"
         ? ask.options.map((o) => ({
             label: o.label,
-            action: { kind: "resolvePermission", blockId: ask.id, optionId: o.optionId },
+            action: { kind: "resolvePermission", patchbayAskId: ask.id, optionId: o.optionId },
           }))
         : ask.kind === "diff"
           ? [
-              { label: "Accept", action: { kind: "resolveDiff", blockId: ask.id, accept: true } },
-              { label: "Reject", action: { kind: "resolveDiff", blockId: ask.id, accept: false } },
+              { label: "Accept", action: { kind: "resolveDiff", patchbayAskId: ask.id, accept: true } },
+              { label: "Reject", action: { kind: "resolveDiff", patchbayAskId: ask.id, accept: false } },
             ]
           : [];
     const what =
@@ -1740,10 +1742,10 @@ export class Orchestrator {
         void (action.open ? this.defaultsEditor.open(action.patchbayAgentId) : this.defaultsEditor.close(action.patchbayAgentId));
         break;
       case "resolvePermission":
-        this.broker.resolve(action.blockId, action.optionId);
+        this.asks.answerOption(action.patchbayAskId, action.optionId);
         break;
       case "resolveDiff":
-        this.broker.resolve(action.blockId, action.accept ? "accept" : "reject");
+        this.asks.answerWrite(action.patchbayAskId, action.accept);
         break;
       case "authenticateAgent":
         // failure leaves needsAuth set — the honest signal, no separate reply channel
@@ -1813,10 +1815,10 @@ export class Orchestrator {
         playDoneSound(this.log, action.sound);
         break;
       case "resolveElicitation":
-        this.broker.resolveElicitation(action.blockId, action.answer);
+        this.asks.answerQuestion(action.patchbayAskId, action.answer);
         break;
       case "reopenElicitationLink":
-        this.broker.reopenLink(action.blockId);
+        this.asks.reopenLink(action.patchbayAskId);
         break;
       case "addSelectionContext": {
         const selection = this.editorStateHost.getSelection();
@@ -1911,7 +1913,7 @@ export class Orchestrator {
         void this.copyMcpServerJson(action.patchbayMcpServerId);
         break;
       case "openProposedDiff":
-        void this.openProposedDiff(action.blockId).catch(this.logCatch(`openProposedDiff ${action.blockId}`));
+        void this.openProposedDiff(action.patchbayAskId).catch(this.logCatch(`openProposedDiff ${action.patchbayAskId}`));
         break;
       case "openToolCallDiff":
         void this.openToolCallDiff(action.patchbaySessionId, action.toolCallId, action.path).catch(

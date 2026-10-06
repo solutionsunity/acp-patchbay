@@ -221,7 +221,7 @@ export class Patchbay {
   /** A proposed write answered on its card; settles once the card shows
    * the answer. */
   async answerDiff(patchbaySessionId: string, card: Block, accept: boolean): Promise<void> {
-    this.act({ kind: "resolveDiff", blockId: card.id, accept });
+    this.act({ kind: "resolveDiff", patchbayAskId: card.id, accept });
     await waitFor(
       () => ((this.view.transcripts[patchbaySessionId] ?? []).find((b) => b.id === card.id)?.resolution != null ? true : undefined),
       8000,

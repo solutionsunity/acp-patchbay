@@ -132,9 +132,9 @@ export interface SessionsStoreHooks {
    * an unseen result (reducer-derived `unseen` on the session summary). */
   isUnseen?(patchbaySessionId: PatchbaySessionId): boolean;
   /** The session's open asks (permission, file write, terminal command,
-   * elicitation — the broker holds them) are answered cancelled: a turn
-   * told to stop owes the agent that answer (an ACP MUST), and so does a
-   * session that closes. */
+   * elicitation — the asks store holds them) are answered cancelled: a
+   * turn told to stop owes the agent that answer (an ACP MUST), and so
+   * does a session that leaves. */
   cancelAsks?(patchbaySessionId: PatchbaySessionId): void;
   /** Standing auth lock on this agent (the orchestrator's persisted,
    * evidence-gated auth state). While it holds, no turn may start: the

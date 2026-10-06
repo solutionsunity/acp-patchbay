@@ -21,7 +21,7 @@ import {
   type ChatBlock,
   type ToolCallBlock,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 const S = "sess" as PatchbaySessionId;
 
@@ -269,7 +269,7 @@ describe("deriveTranscript: per-turn rollups", () => {
 
   it("edited files: edit calls by location, gate writes only once accepted", () => {
     const diff = (id: string, file: string, accepted: boolean | null): ChatBlock => ({
-      kind: "diff", id, file, additions: 1, deletions: 0, lines: [],
+      kind: "diff", id: id as PatchbayAskId, file, additions: 1, deletions: 0, lines: [],
       resolution: accepted === null ? null : { accepted, auto: false },
     });
     const blocks: ChatBlock[] = [

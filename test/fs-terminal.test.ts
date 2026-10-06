@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
+import { AsksStore } from "../src/orchestrator/asks-store";
 import { PermissionBroker } from "../src/orchestrator/broker";
 import { applyFileWrite, ClientHost, clientRequestHooks, type ClientHostDeps } from "../src/orchestrator/client-host";
 import { matrixFromDeclared } from "../src/orchestrator/capabilities";
@@ -63,17 +64,12 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
   const events: AgentViewEvent[] = [];
   const evidence: string[] = [];
 
-  const broker = new PermissionBroker(
-    rules,
-    audit,
-    {
-      emit: (...evs) => events.push(...evs),
-      onAuditWritten: () => {},
-      pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
-      redact: (text) => text,
-    },
-    (patchbaySessionId) => sessions.grantedRoots(patchbaySessionId),
-  );
+  const asks = new AsksStore(audit, {
+    emit: (...evs) => events.push(...evs),
+    onAuditWritten: () => {},
+    pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
+  });
+  const broker = new PermissionBroker(rules, asks, (patchbaySessionId) => sessions.grantedRoots(patchbaySessionId), (text) => text);
 
   let sessions!: SessionsStore;
   const pool = new AgentPool({
@@ -109,7 +105,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     {
       emit: (...evs) => events.push(...evs),
       workspaceRoots: () => [workspaceRoot],
-      cancelAsks: (patchbaySessionId) => broker.cancelPending(patchbaySessionId),
+      cancelAsks: (patchbaySessionId) => asks.stopSession(patchbaySessionId),
       capabilities: (patchbayAgentId) => {
         const declared = pool.get(patchbayAgentId)?.declared;
         return declared == null ? undefined : matrixFromDeclared(declared);
@@ -133,6 +129,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     pool,
     host,
     broker,
+    asks,
     gates: gatesFor(sessions, (event) => events.push(event)),
     rules,
     sessions,
@@ -184,7 +181,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     // resolve the diff card as a reject once it appears
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "diff"));
     const diffBlock = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff")!;
-    h.broker.resolve(diffBlock.id, "reject");
+    h.asks.answerWrite(diffBlock.id, false);
     await turn;
 
     // the agent hears the rejection — never a success for a write that didn't land
@@ -210,7 +207,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "diff"));
     const diffBlock = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "diff")!;
     expect(diffBlock.kind === "diff" && diffBlock.resolution).toBeNull(); // waiting on the user, not auto-accepted
-    h.broker.resolve(diffBlock.id, "reject");
+    h.asks.answerWrite(diffBlock.id, false);
     await turn;
     await expect(readFile(join(dir, "escaped.txt"), "utf8")).rejects.toThrow();
     await h.pool.stop("w2e" as PatchbayAgentId);
@@ -324,7 +321,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
       { label: "cwd", value: dir },
       { label: "env", value: "PB_PROBE=set by agent" },
     ]);
-    h.broker.resolve(card.id, "allow_once");
+    h.asks.answerOption(card.id, "allow_once");
     await turn;
     expect(textOf(patchbaySessionId, h.events).some((t) => t.includes(`${dir}|set by agent`))).toBe(true);
     await h.pool.stop("c57" as PatchbayAgentId);
@@ -340,7 +337,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
     const card = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission"), "permission");
     expect(card.facts).toEqual([{ label: "cwd", value: workspaceRoot }]);
-    h.broker.resolve(card.id, "allow_once");
+    h.asks.answerOption(card.id, "allow_once");
     await turn;
     expect(textOf(patchbaySessionId, h.events).some((t) => t.includes(`cwd=${workspaceRoot}`))).toBe(true);
     await h.pool.stop("c64" as PatchbayAgentId);
@@ -424,7 +421,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
     const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
-    h.broker.resolve(card.id, "reject_once");
+    h.asks.answerOption(card.id, "reject_once");
     await turn;
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: reject_once");
     await h.pool.stop("p1m" as PatchbayAgentId);
@@ -442,7 +439,7 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
     const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
-    h.broker.resolve(card.id, "allow_once");
+    h.asks.answerOption(card.id, "allow_once");
     await turn;
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: allow_once");
     await h.pool.stop("p2" as PatchbayAgentId);

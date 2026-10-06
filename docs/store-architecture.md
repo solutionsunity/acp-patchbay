@@ -11,9 +11,10 @@ file is the model they share.
 
 - **A store is the one home of one kind of thing.** Three hold what patchbay
   works with — agents (`agents-store.ts`), sessions (`sessions-store.ts`), MCP
-  servers (`mcp-servers-store.ts`) — and small saved stores sit beside them
-  (`stores/`: preferences, rules, auth locks, saved roots, …). One row per
-  item, holding everything known about it, saved and live.
+  servers (`mcp-servers-store.ts`) — one holds what patchbay asks the user
+  on an agent's behalf (`asks-store.ts`), and small saved stores sit beside
+  them (`stores/`: preferences, rules, auth locks, saved roots, …). One row
+  per item, holding everything known about it, saved and live.
 - **Each store allows a fixed set of operations on its rows**, and nothing
   writes a row from outside its store. Every door — a webview action, a
   palette command, a notification's button, startup, an internal flow — calls
@@ -26,7 +27,8 @@ file is the model they share.
   list names agents, a context token names the attach it was minted at.
 - **An id says whose it is.** A row's own id is its `id`; anywhere else one
   of patchbay's ids is named for its store — `patchbayAgentId`,
-  `patchbaySessionId`, `patchbayMcpServerId` — and has that store's own type
+  `patchbaySessionId`, `patchbayMcpServerId`, `patchbayAskId` — and has that
+  store's own type
   (`src/shared/ids.ts`), so one store's id can't stand in for another's, nor
   a string from elsewhere for one of ours. An id an agent mints keeps ACP's
   name and the SDK's type — `sessionId`, `toolCallId`: it is the agent's.
@@ -315,6 +317,32 @@ store holds what the attach was given — its agent, its session, every server
 and how it went. The editor-state socket answers through that record only:
 [one socket, admitted by token](architecture.md#local-mcp-server--editor-depth).
 
+## Asks
+
+**The row** — one per ask: a permission the agent asked for, a file write or
+a command patchbay gates, a question — from the moment it is asked until it
+ends. Live only: an ask dies with the connection it was asked on, and
+nothing can ask it again after a reload. It names its session by
+`patchbaySessionId`; its card in the transcript carries the ask's own id,
+and every answer names it as `patchbayAskId`. Its saved half is the
+decision audit.
+
+**Operations:** open, show its card, answer (an option, a write's accept,
+a question's answer), a rule's allow, stop (every ask of a session), the
+agent's withdrawal, a page reported done, open a page again. Asks need no
+queue: they are concurrent by nature, and each ends once.
+
+**One writer, one table.** An ask can end several ways, and they race — a
+rule, the user on its card or its notification, a stop, the agent
+withdrawing, a page reported done, which can even overtake its question.
+Which end may move an ask from which state is declared once (`MOVES`), and
+one writer applies it, writing what the end owes in order: the card's
+resolution, the record, then the answer the caller waits for — no end
+answers the agent and leaves the card open, and no action runs ahead of its
+record. An answer that doesn't fit its ask — an option it doesn't offer, a
+write's answer at a permission card — moves nothing. The broker judges the
+ask; the store holds it.
+
 ## Where saved facts live
 
 | Fact | Where | Why |
@@ -325,7 +353,7 @@ and how it went. The editor-state socket answers through that record only:
 | Permission rules | `workspaceState` (workspace rules) + machine store (machine command rules) + built-in defaults | Workspace rules first, machine rules the floor, then ask. Per user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Last-connected stamp | `workspaceState` | The agents still running at shutdown, with the stamp's time. The next activate consumes it — read and cleared, spent either way — and honors it only within 60 s: deactivate fires the same for a reload and a quit, so the stamp's age tells them apart. Stale or absent, only the agents set to connect on window open start |
 | Last-open pointer | `workspaceState` | The session the Agent View returns to on the next activate, named by its agent and the agent's own id for it. Looked up in what the startup connects' own `session/list` syncs brought back: found, it opens; not found, the view lands on its default screen, whatever the reason. A miss never clears it — not found is not gone: a failed connect must not erase where a later window could return |
-| Decision audit | JSONL in workspace storage | Append-only; what happened in patchbay belongs to patchbay. An entry about a session names it by its pair — the agent and the agent's `sessionId` — which a later window can still match |
+| Decision audit | JSONL in workspace storage | Append-only; what happened in patchbay belongs to patchbay. Written by the asks store when an ask ends, before the agent hears the answer; a question is never recorded. An entry about a session names it by its pair — the agent and the agent's `sessionId` — which a later window can still match |
 | ACP registry | A copy of the last fetch in the extension's `globalStorage` directory | Read at start, shown while a fetch is out or failing, replaced whole by every fetch that lands; a copy in an older shape reads as none |
 | Image bytes, and files dropped on the composer | The attachments stash, a temp directory | Ephemeral: the OS owns cleanup, and a reference whose file is gone degrades to a label chip. Staged chips carry the file's reference |
 | Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers) | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |

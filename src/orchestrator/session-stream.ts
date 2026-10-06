@@ -84,7 +84,7 @@ export interface StreamState {
   /** A prompt turn is in flight — release/reap must never close under it. */
   inFlight: boolean;
   /** toolCallIds seen pending/in_progress and not yet resolved — the turn-end
-   * sweep's worklist (tool-call analogue of broker.cancelPending). Cleared
+   * sweep's worklist (tool-call analogue of the asks store's stop). Cleared
    * per id on a terminal status, swept wholesale when the turn ends any way
    * but end_turn. */
   openToolCalls: Set<string>;
@@ -468,8 +468,8 @@ export class SessionStream {
     return { diffs };
   }
 
-  /** Worklist maintenance for the sweep (tool-call analogue of
-   * broker.cancelPending) — an open status adds, a terminal one removes. */
+  /** Worklist maintenance for the sweep (tool-call analogue of the asks
+   * store's stop) — an open status adds, a terminal one removes. */
   private trackOpenToolCall(session: StreamState, toolCallId: string, status: ToolCallStatus): void {
     if (isToolCallOpen(status)) session.openToolCalls.add(toolCallId);
     else session.openToolCalls.delete(toolCallId);

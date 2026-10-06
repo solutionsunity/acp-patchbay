@@ -13,5 +13,6 @@ declare const store: unique symbol;
 type Id<Store extends string> = string & { readonly [store]: Store };
 
 export type PatchbayAgentId = Id<"agent">;
+export type PatchbayAskId = Id<"ask">;
 export type PatchbayMcpServerId = Id<"mcpServer">;
 export type PatchbaySessionId = Id<"session">;

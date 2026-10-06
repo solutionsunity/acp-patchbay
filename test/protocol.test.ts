@@ -16,7 +16,7 @@ import {
   type AgentViewState,
   type SettingsEvent,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 const claude: AgentSummary = { id: "claude" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
 const gemini: AgentSummary = { id: "gemini" as PatchbayAgentId, name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
@@ -497,7 +497,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
     const asked: AgentViewEvent = {
       kind: "elicitationRequested",
       patchbaySessionId: "s1" as PatchbaySessionId,
-      blockId: "e1",
+      patchbayAskId: "e1" as PatchbayAskId,
       message: "Which database?",
       mode: "form",
       fields: [{ name: "db", type: "string", required: true }],
@@ -505,7 +505,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
     for (const outcome of ["accepted", "declined", "cancelled", "withdrawn", "completed"] as const) {
       const state = replay(initialAgentViewState, [
         asked,
-        { kind: "elicitationResolved", patchbaySessionId: "s1" as PatchbaySessionId, blockId: "e1", outcome },
+        { kind: "elicitationResolved", patchbaySessionId: "s1" as PatchbaySessionId, patchbayAskId: "e1" as PatchbayAskId, outcome },
       ]);
       const block = state.transcripts.s1!.find((b) => b.kind === "elicitation");
       expect(block?.kind === "elicitation" && block.resolution).toEqual({ outcome });
@@ -516,7 +516,7 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
     const asked: AgentViewEvent = {
       kind: "elicitationRequested",
       patchbaySessionId: "s1" as PatchbaySessionId,
-      blockId: "e1",
+      patchbayAskId: "e1" as PatchbayAskId,
       message: "Sign in",
       mode: "url",
       link: { href: "https://auth.example.com/", host: "auth.example.com", warnings: [] },
@@ -526,13 +526,13 @@ describe("elicitation blocks (#36) — the answer's own vocabulary", () => {
     const resolved = (outcome: "accepted" | "declined" | "completed"): AgentViewEvent => ({
       kind: "elicitationResolved",
       patchbaySessionId: "s1" as PatchbaySessionId,
-      blockId: "e1",
+      patchbayAskId: "e1" as PatchbayAskId,
       outcome,
     });
     const settled = (state: "completed" | "ended"): AgentViewEvent => ({
       kind: "elicitationLinkSettled",
       patchbaySessionId: "s1" as PatchbaySessionId,
-      blockId: "e1",
+      patchbayAskId: "e1" as PatchbayAskId,
       state,
     });
     expect(card([])?.kind === "elicitation" && card([])?.linkState).toBeFalsy();

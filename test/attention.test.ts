@@ -9,7 +9,7 @@ import {
   type AgentViewEvent,
   type AgentViewState,
 } from "../src/shared/protocol";
-import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewState): AgentViewState {
   return evs.reduce(reduceAgentView, state);
@@ -20,39 +20,39 @@ const created = (id: string): AgentViewEvent => ({
   session: { id: id as PatchbaySessionId, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
 });
 
-const permission = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
+const permission = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({
   kind: "permissionRequested",
   patchbaySessionId,
-  blockId,
+  patchbayAskId: id as PatchbayAskId,
   title: "Terminal",
   detail: "npm test",
   facts: [],
   options: [{ optionId: "allow_once", label: "Allow once", kind: "allow_once" }],
 });
 
-const diff = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
+const diff = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({
   kind: "diffProposed",
   patchbaySessionId,
-  blockId,
+  patchbayAskId: id as PatchbayAskId,
   file: "/w/a.ts",
   additions: 1,
   deletions: 0,
   lines: [],
 });
 
-const question = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
+const question = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({
   kind: "elicitationRequested",
   patchbaySessionId,
-  blockId,
+  patchbayAskId: id as PatchbayAskId,
   message: "Which branch?",
   mode: "form",
   fields: [],
 });
 
-const link = (patchbaySessionId: PatchbaySessionId, blockId: string): AgentViewEvent => ({
+const link = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({
   kind: "elicitationRequested",
   patchbaySessionId,
-  blockId,
+  patchbayAskId: id as PatchbayAskId,
   message: "Sign in",
   mode: "url",
   link: { href: "https://example.com", host: "example.com", warnings: [] },
@@ -71,11 +71,11 @@ describe("open asks — what a session is blocked on", () => {
 
     const answered = replay(
       [
-        { kind: "permissionResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "p1", label: "Allow once", auto: false },
-        { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "d1", accepted: true, auto: false },
-        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "q1", outcome: "declined" },
+        { kind: "permissionResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "p1" as PatchbayAskId, label: "Allow once", auto: false },
+        { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "d1" as PatchbayAskId, accepted: true, auto: false },
+        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "q1" as PatchbayAskId, outcome: "declined" },
         // an accepted link waits on the page, not on patchbay
-        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "l1", outcome: "accepted" },
+        { kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "l1" as PatchbayAskId, outcome: "accepted" },
       ],
       s,
     );
@@ -86,7 +86,7 @@ describe("open asks — what a session is blocked on", () => {
     const s = replay([
       created("a"),
       diff("a" as PatchbaySessionId, "d1"),
-      { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "d1", accepted: true, auto: true },
+      { kind: "diffResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "d1" as PatchbayAskId, accepted: true, auto: true },
     ]);
     expect(waitingCount(s)).toBe(0);
   });
@@ -107,7 +107,7 @@ describe("session marks — most urgent first", () => {
     ]);
     const mark = () => sessionMark(s, s.sessions[0]!);
     expect(mark()).toBe("waiting");
-    const running = replay([{ kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, blockId: "q1", outcome: "accepted" }], s);
+    const running = replay([{ kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "q1" as PatchbayAskId, outcome: "accepted" }], s);
     expect(sessionMark(running, running.sessions[0]!)).toBe("running");
   });
 });
