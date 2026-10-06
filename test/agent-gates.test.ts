@@ -34,7 +34,6 @@ function stubStore() {
     },
     login: (_patchbayAgentId, methodId, signal) => op(`login:${methodId}`, signal),
     logout: () => op("logout"),
-    verify: () => op("verify").then(() => "ok" as const),
     stop: () => op("stop"),
     remove: () => op("remove"),
     stopAll: () => op("stopAll"),
@@ -85,7 +84,7 @@ function asking(work = { conversations: 2, turns: 1 }) {
 describe("AgentGates", () => {
   it("connection work takes its turn on the agent, in arrival order", async () => {
     const { gates, ran, finish } = gated();
-    const work = [gates.connect("a" as PatchbayAgentId), gates.upgrade("a" as PatchbayAgentId), gates.verify("a" as PatchbayAgentId)];
+    const work = [gates.connect("a" as PatchbayAgentId), gates.upgrade("a" as PatchbayAgentId), gates.restart("a" as PatchbayAgentId)];
     await tick();
     expect(ran).toEqual(["connect"]);
     finish("connect");
@@ -93,8 +92,8 @@ describe("AgentGates", () => {
     expect(ran).toEqual(["connect", "upgrade"]);
     finish("upgrade");
     await tick();
-    expect(ran).toEqual(["connect", "upgrade", "verify"]);
-    finish("verify");
+    expect(ran).toEqual(["connect", "upgrade", "restart"]);
+    finish("restart");
     await Promise.all(work);
   });
 
@@ -111,7 +110,7 @@ describe("AgentGates", () => {
   it("Stop cuts in: the process goes down at once, what runs is told to stop, what waits is dropped", async () => {
     const { gates, queue, ran, signals, finish } = gated();
     const connect = gates.connect("a" as PatchbayAgentId);
-    const verify = gates.verify("a" as PatchbayAgentId);
+    const restart = gates.restart("a" as PatchbayAgentId);
     await tick();
     const stop = gates.stop("a" as PatchbayAgentId);
     // Never behind the work it cuts — that work may be waiting on a hung
@@ -120,14 +119,14 @@ describe("AgentGates", () => {
     expect(signals.get("connect")?.aborted).toBe(true);
     // Both settle at once, before anything has unwound.
     await expect(connect).rejects.toBeInstanceOf(Cancelled);
-    await expect(verify).rejects.toBeInstanceOf(Cancelled);
+    await expect(restart).rejects.toBeInstanceOf(Cancelled);
     // The connect is still unwinding; the Stop's own run waits for it.
     expect(queue.held("a" as PatchbayAgentId)).toEqual(["connect", "stop"]);
     await tick();
     expect(ran).toEqual(["connect", "stop"]);
     finish("connect");
     await tick();
-    // The dropped verify never ran.
+    // The dropped restart never ran.
     expect(ran).toEqual(["connect", "stop", "stop"]);
     finish("stop");
     await stop;
@@ -191,7 +190,7 @@ describe("AgentGates", () => {
   it("stopAll ends every agent's work and takes every process down", async () => {
     const { gates, queue, ran, finish } = gated();
     const a = gates.connect("a" as PatchbayAgentId);
-    const b = gates.verify("b" as PatchbayAgentId);
+    const b = gates.restart("b" as PatchbayAgentId);
     const bWaiting = gates.upgrade("b" as PatchbayAgentId);
     await tick();
     const all = gates.stopAll();
@@ -201,7 +200,7 @@ describe("AgentGates", () => {
     await expect(bWaiting).rejects.toBeInstanceOf(Cancelled);
     finish("stopAll");
     finish("connect");
-    finish("verify");
+    finish("restart");
     await all;
     expect(queue.held("a" as PatchbayAgentId)).toEqual([]);
     expect(queue.held("b" as PatchbayAgentId)).toEqual([]);
@@ -302,17 +301,17 @@ describe("the one question before a connection ends", () => {
   it("Log out asks when its turn comes — the counts it would cut off, then", async () => {
     const user = asking();
     const { gates, ran, finish } = gated(user.asks);
-    const verify = gates.verify("a" as PatchbayAgentId);
+    const restart = gates.restart("a" as PatchbayAgentId);
     const logout = gates.logout("a" as PatchbayAgentId);
     await tick();
     expect(user.asked).toEqual([]);
-    finish("verify");
-    await verify;
+    finish("restart");
+    await restart;
     await tick();
     expect(user.asked).toHaveLength(1);
     user.answer(true);
     await tick();
-    expect(ran).toEqual(["verify", "logout"]);
+    expect(ran).toEqual(["restart", "logout"]);
     finish("logout");
     await logout;
   });

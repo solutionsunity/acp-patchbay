@@ -1,6 +1,6 @@
 // The agents-card action cluster's derivation (card-controls.ts) — the state
 // matrix and the cross-control invariants, including regressions for the
-// three logout/verify bugs (ui-rendering-strategy.md § Control logic).
+// three logout bugs.
 import { describe, expect, it } from "vitest";
 import { agentCardControls, type AgentCardInputs } from "../src/webview/settings/card-controls";
 import type {
@@ -79,13 +79,7 @@ describe("agentCardControls", () => {
     expect(agentCardControls(inputs()).logout.show).toBe(false);
   });
 
-  // Regression: logged-out card with a runnable Log in must NOT offer
-  // Verify — a lazy-auth agent (Claude) passes session/new without
-  // credentials, so Verify would wipe the logged-out state. Must hold
-  // even with the probe still unused (the realistic fresh-connect shape:
-  // auth.used=false, fork declared-unused) — the OR form leaked Verify
-  // through hasUnusedProbe exactly there.
-  it("needsAuth + runnable login: login only — no verify, no logout", () => {
+  it("needsAuth + runnable login: login only — no logout", () => {
     const probeStates = [
       matrixOf({ "auth.logout": { declared: true, used: true }, auth: { declared: true, used: true } }),
       matrixOf({ auth: { declared: true, used: false }, "session.fork": { declared: true, used: false } }),
@@ -97,22 +91,17 @@ describe("agentCardControls", () => {
         authMethods: [agentMethod],
       }));
       expect(c.login.show).toBe(true);
-      expect(c.verify.show).toBe(false);
       expect(c.logout.show).toBe(false);
     }
   });
 
-  // The escape hatch survives: auth resolvable only out of band (the only
-  // offer is a method patchbay cannot drive — the user logs in the agent's
-  // own way) still gets a manual re-check.
-  it("needsAuth without a runnable login method: verify offered as the escape hatch", () => {
+  it("needsAuth without a runnable login method: the login control renders its note", () => {
     const c = agentCardControls(inputs({
       agent: summary({ needsAuth: true }),
       matrix: matrixOf({ auth: { declared: true, used: true } }),
       authMethods: [undrivable],
     }));
     expect(c.login.show).toBe(true); // renders the no-runnable-method note
-    expect(c.verify.show).toBe(true);
   });
 
   // A typed terminal method (adopted typed-auth extension) is runnable —
@@ -124,33 +113,11 @@ describe("agentCardControls", () => {
       authMethods: [typedTerminal],
     }));
     expect(c.login.show).toBe(true);
-    expect(c.verify.show).toBe(false);
-  });
-
-  it("unused probe (fresh fork claim) still gates verify on", () => {
-    const c = agentCardControls(inputs({ matrix: matrixOf({ "session.fork": { declared: true, used: false } }) }));
-    expect(c.verify.show).toBe(true);
-    expect(c.verify.busy).toBe(false);
-  });
-
-  // Regression: in-flight disables — never unmounts — and covers login too.
-  it("verifying: login/logout/verify disabled, stop still offered", () => {
-    const c = agentCardControls(inputs({
-      agent: summary({ needsAuth: true }),
-      matrix: matrixOf({ auth: { declared: true, used: true } }),
-      authMethods: [typedTerminal],
-      busy: [{ kind: "verify" }],
-    }));
-    expect(c.login.disabled).toBe(true);
-    expect(c.logout.disabled).toBe(true);
-    expect(c.verify.disabled).toBe(true);
-    expect(c.verify.busy).toBe(true);
-    expect(c.stop.show).toBe(true);
   });
 
   // Whatever the queue holds dims the controls that would only wait behind
-  // it — but only the check itself spins Verify, and Stop never dims.
-  it("busy with other work: controls dim, Verify doesn't spin, stop still offered", () => {
+  // it — in-flight disables, never unmounts — and Stop never dims.
+  it("busy with work: controls dim, stop still offered", () => {
     for (const kind of ["connect", "restart", "login", "logout"] as const) {
       const c = agentCardControls(inputs({
         agent: summary({ needsAuth: true }),
@@ -158,26 +125,23 @@ describe("agentCardControls", () => {
         busy: [{ kind }],
       }));
       expect(c.login.disabled).toBe(true);
-      expect(c.verify.disabled).toBe(true);
-      expect(c.verify.busy).toBe(false);
+      expect(c.logout.disabled).toBe(true);
       expect(c.stop.show).toBe(true);
     }
     const idle = agentCardControls(inputs({ agent: summary({ needsAuth: true }), authMethods: [typedTerminal] }));
     expect(idle.login.disabled).toBe(false);
-    expect(idle.verify.disabled).toBe(false);
   });
 
   // Logout disconnects the agent's process (the agents store's logout),
   // leaving a stopped card with needsAuth still set — it must offer
   // Connect, never a dead Log in: authenticate is an RPC on the live
   // connection, and the fresh connect re-derives auth state anyway.
-  it("stopped + needsAuth (post-logout): connect only — no login, no verify", () => {
+  it("stopped + needsAuth (post-logout): connect only — no login", () => {
     const c = agentCardControls(inputs({
       agent: summary({ status: "stopped", needsAuth: true }),
       authMethods: [agentMethod],
     }));
     expect(c.login.show).toBe(false);
-    expect(c.verify.show).toBe(false);
     expect(c.connect.show).toBe(true);
   });
 
@@ -206,12 +170,11 @@ describe("agentCardControls", () => {
     expect(removing.connect.show).toBe(false);
   });
 
-  it("not running: connect (config present), no logout/stop/verify", () => {
+  it("not running: connect (config present), no logout/stop", () => {
     const c = agentCardControls(inputs({ agent: summary({ status: "stopped" }) }));
     expect(c.connect.show).toBe(true);
     expect(c.logout.show).toBe(false);
     expect(c.stop.show).toBe(false);
-    expect(c.verify.show).toBe(false);
   });
 
   it("never-seen config (no summary): untested — connect offered, nothing running-only", () => {

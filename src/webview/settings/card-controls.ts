@@ -6,9 +6,8 @@
 // entry here; the JSX reads `controls.x` and stays dumb. Cross-control
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
-// predicates, which is how the logout/verify regressions happened.
+// predicates, which is how the logout regressions happened.
 import type { AgentConfigView, AgentSummary, AgentWork, AuthMethodView } from "../../shared/protocol";
-import { hasUnusedProbe } from "../../shared/protocol";
 import { upgradeOffer, type UpgradeOffer } from "../shared/agent-work";
 
 export interface AgentCardInputs {
@@ -27,7 +26,6 @@ export interface AgentCardControls {
   logout: { show: boolean; disabled: boolean };
   /** Never disabled — it cuts in on whatever the agent's queue holds. */
   stop: { show: boolean; busy: boolean };
-  verify: { show: boolean; disabled: boolean; busy: boolean };
   connect: { show: boolean };
   /** Non-null when the registry is ahead of the pinned version, or while an
    * upgrade runs — drives the upgrade chip, which is both the indicator and
@@ -53,12 +51,11 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   const { agent, config } = inputs;
   const matrix = agent?.capabilities;
   // Anything the agent's queue holds dims the controls that would only
-  // queue behind it; Verify, Stop and Remove each spin while their own
+  // queue behind it; Stop and Remove each spin while their own
   // operation runs or waits.
   const busy = agent?.busy ?? [];
   const working = busy.length > 0;
   const holds = (kind: AgentWork["kind"]) => busy.some((w) => w.kind === kind);
-  const authMethods = agent?.authMethods ?? [];
   // No summary at all = the orchestrator never saw this config — the honest
   // unknown is "untested", never a claimed "stopped".
   const status = agent?.status ?? "untested";
@@ -66,20 +63,6 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   // Something to stop: the process, its launch, or work its queue holds.
   const live = running || status === "reconnecting" || working;
   const needsAuth = agent?.needsAuth === true;
-  const hasRunnableLogin = runnableLoginMethods(authMethods).length > 0;
-  // Verify gates on hasUnusedProbe (protocol.ts): fork-declared-unproven
-  // is the one thing the free check can still resolve — the auth clause is
-  // gone with the auth row's proof redefinition, or the button would
-  // promise a check it structurally cannot perform. On a needsAuth card,
-  // Verify appears solely as the escape hatch when no runnable login
-  // method exists (auth resolved out of band; the probe heals a lock its
-  // own method raised, a prompt heals the rest). Never both — UX clarity,
-  // not the invariant holder: the authority table already refuses
-  // non-bearing clears, so a stray Verify can no longer "verify away" a
-  // logged-out state.
-  const needsVerify = needsAuth
-    ? !hasRunnableLogin
-    : matrix !== undefined && hasUnusedProbe(matrix);
 
   return {
     // Running-gated: authenticate is an RPC on the live connection, so a
@@ -99,7 +82,6 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // the launch on — a download included — whatever the queue holds;
     // Connect only while there is nothing to stop.
     stop: { show: live, busy: holds("stop") },
-    verify: { show: running && needsVerify, disabled: working, busy: holds("verify") },
     connect: { show: !live && config !== undefined },
     upgrade: upgradeOffer(agent),
     edit: { show: true },

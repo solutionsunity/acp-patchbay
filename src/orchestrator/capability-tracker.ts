@@ -145,10 +145,9 @@ export class CapabilityTracker {
   onDeclared(patchbayAgentId: PatchbayAgentId): void {
     this.unversionedMarks.delete(patchbayAgentId);
     this.hooks.changed(patchbayAgentId);
-    // Every connect probes: the session/new is the concurrency/close/
-    // delete/fork proof opportunity — deliberately NOT an auth proof; its
-    // success is non-bearing evidence (auth-evidence.ts). Only the fork
-    // sub-check keeps a version-keyed skip, inside probe() itself.
+    // Every connect probes: the session/new and its close are free
+    // round-trips — deliberately NOT an auth proof; the session/new's
+    // success is non-bearing evidence (auth-evidence.ts).
     // Exception: a latched agent's probe waits for the first real session
     // (extensions/first-session-mcp-latch — the probe must not spend the
     // process's one honored mcpServers slot); re-armed on every connect
@@ -158,7 +157,7 @@ export class CapabilityTracker {
       this.log.info(`${patchbayAgentId}: connect-time probe deferred until first real session (first-session-mcp-latch)`);
       return;
     }
-    this.log.debug(`${patchbayAgentId}: connect-time probe starting (fork where still unproven)`);
+    this.log.debug(`${patchbayAgentId}: connect-time probe starting`);
     void this.probe(patchbayAgentId);
   }
 
@@ -202,66 +201,35 @@ export class CapabilityTracker {
     return this.deferredProbes.has(patchbayAgentId);
   }
 
-  /** Free RPC round-trip: session/new (+ session/fork, while still
-   * declared-but-unused) in a throwaway session rooted at the agent's
-   * standing probe dir (hooks.probeRoot), never the workspace, never
-   * surfaced as a real session; the raw session/new response is announced
-   * via onProbeSession. Marking `auth`/`session.fork` used happens inside pool.ts
-   * itself, right where each call succeeds — this only has to make the
-   * calls. A declared-but-broken fork (a lying bridge) fails here and the
-   * row stays honestly at declared-but-unused. An `auth_required` error is
-   * not "broken" — it's the honest, expected outcome for an agent that
-   * needs `authenticate` first, surfaced as its own state rather than
-   * folded into "check failed". */
+  /** Free RPC round-trip: a session/new in a throwaway session rooted at
+   * the agent's standing probe dir (hooks.probeRoot), never the workspace,
+   * never surfaced as a real session, then its session/close where the
+   * agent declares close; the raw session/new response is announced via
+   * onProbeSession. Marking rows used happens inside pool.ts itself, right
+   * where each call succeeds — this only has to make the calls. Fork and
+   * delete are not tried: a never-prompted session is no fair subject for
+   * either (an agent may know none until its first message), so real use
+   * proves them, like every other row. An `auth_required` error is not
+   * "broken" — it's the honest, expected outcome for an agent that needs
+   * `authenticate` first, surfaced as its own state rather than folded
+   * into "check failed". */
   private async probe(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
     const declared = this.pool.get(patchbayAgentId)?.declared;
     if (declared === undefined || declared === null) return "skipped";
     const probes = new Set<string>();
     this.probeSessions.set(patchbayAgentId, probes);
     const dir = await this.hooks.probeRoot(patchbayAgentId);
-    const probeSessionIds: string[] = [];
+    let probeSessionId: string | undefined;
     try {
       const response = await this.pool.newSession(patchbayAgentId, dir);
-      probeSessionIds.push(response.sessionId);
-      probes.add(response.sessionId);
+      probeSessionId = response.sessionId;
+      probes.add(probeSessionId);
       this.hooks.onProbeSession?.(patchbayAgentId, response);
       // Deliberately NO auth-state write here: session/new succeeding is
       // non-bearing evidence on lazy-auth agents (Claude passes it while
       // logged out), so what it means is the authority table's call
       // (auth-evidence.ts, fed by pool's wire chokepoint) — a probe can
       // clear only a lock its own method raised, never a witnessed logout.
-      const forkStillUnproven =
-        declared.sessionFork && !(this.matrix(patchbayAgentId)?.["session.fork"].used ?? false);
-      if (forkStillUnproven) {
-        const forked = await this.pool.fork(patchbayAgentId, response.sessionId, dir);
-        probeSessionIds.push(forked.sessionId);
-      }
-      // Close, then delete, the throwaway sessions where the agent supports
-      // each — probe hygiene first (a list-capable agent's own history must
-      // not accrete one junk session per connect), with the session.close
-      // and session.delete used-proofs falling out of the same free
-      // round-trips (delete is spec-idempotent; close frees what delete
-      // doesn't cover on close-only agents).
-      // Each successful round-trip also retires the id from probeSessions:
-      // once the agent-side session is ended, the id belongs to the agent
-      // again and may legally be re-minted for a future real session — a
-      // lingering registration would silently swallow that real session's
-      // updates and auto-deny its permission requests. Close-incapable
-      // agents keep their entries (their probe session genuinely lives on
-      // agent-side, so late traffic on it must still be routed here).
-      if (declared.sessionClose) {
-        for (const id of probeSessionIds) {
-          await this.pool.closeSession(patchbayAgentId, id);
-          probes.delete(id);
-        }
-      }
-      if (declared.sessionDelete) {
-        for (const id of probeSessionIds) {
-          await this.pool.deleteSession(patchbayAgentId, id);
-          probes.delete(id);
-        }
-      }
-      return "ok";
     } catch (err) {
       if (authRequiredReasonOf(err) !== null) {
         // needsAuth itself was already raised through pool.ts's wire
@@ -273,6 +241,27 @@ export class CapabilityTracker {
       // declared but the round-trip failed — an honest state, not an error to surface
       this.log.debug(`${patchbayAgentId}: probe round-trip failed — ${(err as Error).message}`);
       return "failed";
+    }
+    // Close the throwaway session where the agent supports it — probe
+    // hygiene (a list-capable agent's own history must not accrete one junk
+    // session per connect), the session.close proof falling out of the same
+    // free round-trip. A close that fails fails nothing else: the
+    // session/new already answered what the check asks.
+    // A successful close also retires the id from probeSessions: once the
+    // agent-side session is ended, the id belongs to the agent again and
+    // may legally be re-minted for a future real session — a lingering
+    // registration would silently swallow that real session's updates and
+    // auto-deny its permission requests. A close-incapable agent keeps the
+    // entry (its probe session genuinely lives on agent-side, so late
+    // traffic on it must still be routed here).
+    try {
+      if (declared.sessionClose) {
+        await this.pool.closeSession(patchbayAgentId, probeSessionId).then(
+          () => probes.delete(probeSessionId),
+          (err: Error) => this.log.debug(`${patchbayAgentId}: probe session/close failed — ${err.message}`),
+        );
+      }
+      return "ok";
     } finally {
       // Probe sessions must not linger in the connection's session set:
       // the concurrent-sessions proof counts that set, and the user's own
@@ -280,22 +269,18 @@ export class CapabilityTracker {
       // patchbay's throwaway, not by real use.
       // The probe root itself is NOT cleaned here — its lifetime is the
       // agent's config, not this call (see hooks.probeRoot).
-      for (const id of probeSessionIds) this.pool.forgetSession(patchbayAgentId, id);
+      this.pool.forgetSession(patchbayAgentId, probeSessionId);
     }
   }
 
-  /** User-run Verify, also the "Verify
-   * after add" default: cost disclosed first. Today that cost is genuinely
-   * zero — behavior-level probes need real handlers before there's
-   * anything honest to exercise, so running them now would spend a real
-   * agent turn probing capabilities patchbay itself doesn't implement yet.
-   * Re-runs the free checks only. */
-  async verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
-    // A latched agent's probe stays parked (first-session-mcp-latch): a
-    // user-run Verify must not spend the process's one honored mcpServers
-    // slot on a throwaway session — same deferral onDeclared honors.
+  /** Re-runs the free check now — the terminal-login flow's way to see
+   * whether a login took. A latched agent's check stays parked
+   * (first-session-mcp-latch): it must not spend the process's one honored
+   * mcpServers slot on a throwaway session — the same deferral onDeclared
+   * honors. */
+  async recheck(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
     if (this.deferredProbes.has(patchbayAgentId)) {
-      this.log.info(`${patchbayAgentId}: verify skipped — probe deferred until first real session`);
+      this.log.info(`${patchbayAgentId}: recheck skipped — probe deferred until first real session`);
       return "skipped";
     }
     return await this.probe(patchbayAgentId);
@@ -306,7 +291,7 @@ export class CapabilityTracker {
    * next real session attempt. Failure (rejected, cancelled, agent-side
    * error) surfaces plainly — the auth lock stays set, never silently
    * cleared on a failed attempt. The trailing probe honors the same latch
-   * deferral as verify; auth state doesn't need it (the authenticate
+   * deferral as recheck; auth state doesn't need it (the authenticate
    * success itself is the authority's clearing evidence). */
   async authenticate(patchbayAgentId: PatchbayAgentId, methodId: string): Promise<void> {
     await this.pool.authenticate(patchbayAgentId, methodId);

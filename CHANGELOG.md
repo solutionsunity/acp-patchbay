@@ -35,7 +35,7 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   collide, and a never-prompted session created again stays the same one.
 - **One process per agent per window**, shared by its sessions as ACP
   intends; the auto/shared/isolated setting is gone. (#62)
-- **Work takes turns.** Upgrade, Restart, Log in and Verify on an agent,
+- **Work takes turns.** Upgrade, Restart and Log in on an agent,
   and opens, reloads, messages and knob changes on a session, wait for each
   other instead of racing; a session's work also waits for its agent's
   (#69). A
@@ -52,6 +52,13 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
 - **Fork a session** from its ⋯ menu where the agent offers it: a new
   session carrying the original's history opens, and the original stays as
   it is. The fork's title row names its original and opens it.
+- **The capability check no longer forks or deletes its throwaway
+  session.** A never-prompted session can't fairly prove either (Claude's
+  refused both), so a failed fork marked Claude's fork with a false warning
+  and stopped the check before its close. Fork, delete and close are now
+  proven by real use; the check only opens and closes its session. The
+  Settings card's Verify button and the Add form's "Verify after add" are
+  gone: every connect already runs the check. (#82)
 - **Upgrade and Add read the registry first,** so they no longer install
   a version the registry has moved past (the saved copy stands in only when
   the registry can't be reached); an agent the registry no longer

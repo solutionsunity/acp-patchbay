@@ -2985,7 +2985,6 @@ describe("session history (list / resume / delete)", () => {
   it("delete is refused where the agent never offered it — nothing of the session ends", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sh8"));
-    await h.capabilityTracker.verify("sh8" as PatchbayAgentId);
     const patchbaySessionId = await h.sessions.createSession("sh8" as PatchbayAgentId, "Fake Agent", cwd);
 
     await expect(h.gates.delete(patchbaySessionId)).rejects.toThrow(/doesn't offer session\/delete/);
@@ -2997,7 +2996,6 @@ describe("session history (list / resume / delete)", () => {
   it("a delete that fails leaves the session where it was — the agent goes first", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: LIST_CAPS }, "sh9"));
-    await h.capabilityTracker.verify("sh9" as PatchbayAgentId);
     const patchbaySessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "still mine" });
     await h.pool.stop("sh9" as PatchbayAgentId);
@@ -3011,7 +3009,6 @@ describe("session history (list / resume / delete)", () => {
   it("close, where the agent lists no sessions: the session leaves, and session/close frees the agent's side", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sh10"));
-    await h.capabilityTracker.verify("sh10" as PatchbayAgentId);
     const patchbaySessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "done here" });
     const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;

@@ -271,12 +271,12 @@ describe("settings projections (ui.md § Settings Agents)", () => {
   // Busy is a row fact, not a side map: each upsert carries what the
   // agent's queue holds, idle included, so nothing is left to clear.
   it("busy rides the row — an upsert replaces it whole", () => {
-    const verifying = reduceSettings(initialSettingsState, {
+    const restarting = reduceSettings(initialSettingsState, {
       kind: "agentUpserted",
-      agent: { ...claude, busy: [{ kind: "verify" }] },
+      agent: { ...claude, busy: [{ kind: "restart" }] },
     });
-    expect(verifying.agents[0]!.busy).toEqual([{ kind: "verify" }]);
-    expect(reduceSettings(verifying, { kind: "agentUpserted", agent: claude }).agents[0]!.busy).toEqual([]);
+    expect(restarting.agents[0]!.busy).toEqual([{ kind: "restart" }]);
+    expect(reduceSettings(restarting, { kind: "agentUpserted", agent: claude }).agents[0]!.busy).toEqual([]);
   });
 });
 

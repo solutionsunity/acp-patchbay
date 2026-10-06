@@ -142,12 +142,12 @@ as the add.
 
 An agent runs one process per window, holding all its sessions, so a row has
 exactly one connection. **Operations:** connect, stop, restart, upgrade,
-remove, save, reorder, log in, log out, verify. Add and startup are the
+remove, save, reorder, log in, log out. Add and startup are the
 orchestrator's features over them: the store saves (or reads what to open),
-and the connect and the free check pass the gates.
+and the connect — the free check with it — passes the gates.
 
-**One line per agent.** Connect, restart, upgrade, log in (per method), log
-out and verify wait their turn. A request for one the row already holds
+**One line per agent.** Connect, restart, upgrade, log in (per method) and
+log out wait their turn. A request for one the row already holds
 joins it — a chat started while the agent auto-connects shares that connect,
 a second Upgrade shares the first's question and restart — and a connect
 whose turn finds the agent running is already done. Agents never wait on each
@@ -180,7 +180,7 @@ their attaches minted end with it. Remove also lets go of the agent's live
 state: the pool's entry, the tracker's marks, a chat pane on it.
 
 **Busy, in the views.** The Settings card dims the controls that would only
-wait (never Stop) and spins Verify, Stop or Remove while its own operation
+wait (never Stop) and spins Stop or Remove while its own operation
 runs; the upgrade chip reads `upgrading to x.y.z…`; the chat pane says what the
 agent is busy with while a chat waits on it, and closes when a Stop or Remove
 ends that chat's connect.

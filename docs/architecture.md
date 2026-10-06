@@ -388,14 +388,15 @@ Verification cost splits the triggers:
 
 | Trigger | Protocol-level (free RPC) | Behavior-level (costs real LLM turns) |
 |---|---|---|
-| Connect/reconnect: `session/new` always (the concurrency/close/delete proof opportunity); the `session/fork` half only while still declared-but-not-used for the current version | Automatic | Opportunistic only — used when naturally exercised |
-| User-run diagnostics (Settings › Agents' `Verify…`, itself only shown while a checkable row is still outstanding) | Instant | Allowed; cost disclosed first |
+| Connect/reconnect: `session/new`, then its `session/close` where declared | Automatic | Opportunistic only — used when naturally exercised |
 | Background schedule | Fine, cheap | Never |
 
 Connect therefore always implies one throwaway probe session — an accepted
-behavioral contract, not an accident: `session/new` is free, and the
-concurrency, close, and delete proofs fall out of the one round-trip
-opportunistically. (The Settings defaults editor opens its own throwaway
+behavioral contract, not an accident: `session/new` is free, and the close
+proof falls out of the same round-trip; a close that fails fails nothing
+else. Fork and delete are not tried: a never-prompted session is no fair
+subject for either (Claude's adapter knows a session only after its first
+message), so real use proves them, like every other row. (The Settings defaults editor opens its own throwaway
 session on the same standing probe directory — see § Session model — but
 only while a card's knob editor is expanded, never at connect.) (Auth proof deliberately does
 NOT — see § Auth evidence below: `session/new` succeeding is non-bearing on
@@ -406,11 +407,7 @@ with the agent's config: a workspace-aware agent may validate or index that
 root *after* replying to `session/new` (observed: Auggie, where a vanished
 root is CLI-fatal), so the root's lifetime must cover the agent's use of it,
 not patchbay's RPCs — an ephemeral per-probe temp dir was a promise patchbay
-deleted while the other process still held it. The *verification* gates keep
-their version-keyed skip: `hasUnusedProbe` (protocol.ts) remains the single
-predicate for "a checkable row is still outstanding" — the `session/fork`
-sub-check and the manual `Verify…` control's visibility both gate on it, so
-the two can't drift on what still needs a check.
+deleted while the other process still held it.
 
 Synthetic behavior probes run in an **ephemeral session scoped to a temp directory**
 — never the user's workspace roots, never silently.

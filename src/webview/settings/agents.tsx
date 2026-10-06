@@ -18,14 +18,6 @@ import { SortableItem, SortableList } from "./sortable";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -241,7 +233,7 @@ function RegistryCombobox(props: {
  * never two half-filled fields at once. */
 function AddAgentRow(props: {
   state: SettingsState;
-  onAdd(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
+  onAdd(source: { registryId: string } | { command: string }): void;
   onRefreshRegistry(): void;
 }) {
   const added = new Set(props.state.agentConfigs.flatMap((c) => (c.registrySource === null ? [] : [c.registrySource.registryId])));
@@ -250,7 +242,6 @@ function AddAgentRow(props: {
   const [registryQuery, setRegistryQuery] = useState("");
   const [registryId, setRegistryId] = useState("");
   const [customCommand, setCustomCommand] = useState("");
-  const [verifyAfterAdd, setVerifyAfterAdd] = useState(true);
 
   const canAdd = mode === "registry" ? registryId !== "" : customCommand.trim() !== "";
 
@@ -262,9 +253,9 @@ function AddAgentRow(props: {
 
   const add = () => {
     if (mode === "registry" && registryId !== "") {
-      props.onAdd({ registryId }, verifyAfterAdd);
+      props.onAdd({ registryId });
     } else if (mode === "custom" && customCommand.trim() !== "") {
-      props.onAdd({ command: customCommand.trim() }, verifyAfterAdd);
+      props.onAdd({ command: customCommand.trim() });
     } else {
       return;
     }
@@ -323,11 +314,6 @@ function AddAgentRow(props: {
         >
           {mode === "registry" ? "Add custom…" : "Add from registry"}
         </Button>
-        <Toggle
-          checked={verifyAfterAdd}
-          label="Verify after add"
-          onChange={setVerifyAfterAdd}
-        />
       </div>
     </div>
   );
@@ -494,9 +480,8 @@ function StoredDefaultsLine({ defaults }: { defaults: AgentConfigView["defaults"
 
 export function AgentsSection(props: {
   state: SettingsState;
-  onVerify(patchbayAgentId: PatchbayAgentId): void;
   onConnectConfigured(patchbayAgentId: PatchbayAgentId): void;
-  onAddAgent(source: { registryId: string } | { command: string }, verifyAfterConnect: boolean): void;
+  onAddAgent(source: { registryId: string } | { command: string }): void;
   onSave(config: AgentConfigView): void;
   onRemove(patchbayAgentId: PatchbayAgentId): void;
   onStop(patchbayAgentId: PatchbayAgentId): void;
@@ -512,7 +497,6 @@ export function AgentsSection(props: {
 }) {
   const { state } = props;
   const [editing, setEditing] = useState<PatchbayAgentId | null>(null); // the agent being edited
-  const [diagFor, setDiagFor] = useState<PatchbayAgentId | null>(null);
   // Card body (command line, capabilities, knobs) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
@@ -577,8 +561,8 @@ export function AgentsSection(props: {
       {addOpen && (
         <AddAgentRow
           state={state}
-          onAdd={(source, verifyAfterConnect) => {
-            props.onAddAgent(source, verifyAfterConnect);
+          onAdd={(source) => {
+            props.onAddAgent(source);
             setAddOpen(false);
           }}
           onRefreshRegistry={props.onRefreshRegistry}
@@ -680,17 +664,6 @@ export function AgentsSection(props: {
                         onClick={() => props.onStop(patchbayAgentId)}
                       >
                         <Icon name={controls.stop.busy ? "loading" : "debug-stop"} spin={controls.stop.busy} />
-                      </Button>
-                    )}
-                    {controls.verify.show && (
-                      <Button
-                        variant="outline" size="icon" className="size-8"
-                        title={controls.verify.busy ? "Verifying…" : "Verify…"}
-                        aria-label="Verify"
-                        disabled={controls.verify.disabled}
-                        onClick={() => setDiagFor(patchbayAgentId)}
-                      >
-                        <Icon name={controls.verify.busy ? "loading" : "beaker"} spin={controls.verify.busy} />
                       </Button>
                     )}
                     {controls.connect.show && (
@@ -833,34 +806,6 @@ export function AgentsSection(props: {
           );
         })}
       </SortableList>
-      <Dialog open={diagFor !== null} onOpenChange={(open) => { if (!open) setDiagFor(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Verify — cost disclosed first</DialogTitle>
-            <DialogDescription>
-              Re-runs the free protocol checks (a session/new + session/fork round-trip in an
-              ephemeral temp-directory session — never your workspace). Today
-              this consumes <b>no agent turns</b>. Behavior-level probes that
-              would spend real turns don't exist yet; when they ship, their
-              cost appears here before anything runs.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              size="sm"
-              onClick={() => {
-                props.onVerify(diagFor!);
-                setDiagFor(null);
-              }}
-            >
-              Run
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setDiagFor(null)}>
-              Cancel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </section>
   );
 }

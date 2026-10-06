@@ -14,10 +14,8 @@ import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
 import {
   capabilityState,
-  hasUnusedProbe,
   initialAgentViewState,
   reduceAgentView,
-  type AuthMethodView,
   type DeclaredCapabilities,
 } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
@@ -205,33 +203,6 @@ describe("rowsProvenBy — the one used-proof table", () => {
   it("usage_update is the only session/update kind that proves a row", () => {
     expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "usage_update" })).toEqual(["usage"]);
     expect(rowsProvenBy({ via: "sessionUpdate", updateKind: "agent_message_chunk" })).toEqual([]);
-  });
-});
-
-describe("hasUnusedProbe — the auto-retry and manual-Verify predicate", () => {
-  const agentAuth: readonly AuthMethodView[] = [
-    { id: "login", name: "Log in", description: null, kind: "agent" },
-  ];
-
-  it("false when nothing is declared — nothing for the free check to resolve", () => {
-    const matrix = matrixFromDeclared(noDeclared);
-    expect(hasUnusedProbe(matrix)).toBe(false);
-  });
-
-  it("true while a declared fork hasn't been used yet", () => {
-    const matrix = matrixFromDeclared({ ...noDeclared, sessionFork: true });
-    expect(hasUnusedProbe(matrix)).toBe(true);
-  });
-
-  it("false once the declared fork is used", () => {
-    const matrix = matrixFromDeclared({ ...noDeclared, sessionFork: true });
-    const used = { ...matrix, "session.fork": { declared: true, used: true } };
-    expect(hasUnusedProbe(used)).toBe(false);
-  });
-
-  it("auth never gates the predicate — the probe is not an auth proof, so an auth clause would light Verify forever", () => {
-    const matrix = matrixFromDeclared({ ...noDeclared, authMethods: agentAuth });
-    expect(hasUnusedProbe(matrix)).toBe(false);
   });
 });
 

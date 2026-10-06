@@ -46,7 +46,6 @@ describe("chatPaneProgress", () => {
     expect(line([{ kind: "upgrade" }])).toBe("Upgrading Claude…");
     expect(line([{ kind: "login" }])).toBe("Logging in to Claude…");
     expect(line([{ kind: "logout" }])).toBe("Logging out of Claude…");
-    expect(line([{ kind: "verify" }, { kind: "connect" }])).toBe("Verifying Claude…");
     expect(line([{ kind: "stop" }])).toBe("Stopping Claude…");
     expect(line([{ kind: "remove" }])).toBe("Removing Claude…");
   });
@@ -62,7 +61,7 @@ describe("chatPaneProgress", () => {
 
   it("once the agent runs, says the chat itself is opening — whatever else the agent is busy with", () => {
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, agent())).toBe("Starting a chat with Claude…");
-    expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, agent({ busy: [{ kind: "verify" }] }))).toBe("Starting a chat with Claude…");
+    expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, agent({ busy: [{ kind: "login" }] }))).toBe("Starting a chat with Claude…");
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId, forPatchbaySessionId: "s1" as PatchbaySessionId }, agent())).toBe("Opening the session…");
     // The row gone mid-start (removed in Settings): the id stands in.
     expect(chatPaneProgress({ patchbayAgentId: "a1" as PatchbayAgentId }, undefined)).toBe("Starting a chat with a1…");

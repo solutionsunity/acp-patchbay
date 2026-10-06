@@ -87,13 +87,10 @@ export function App({ state }: { state: SettingsState }) {
         {section === "agents" && (
           <AgentsSection
             state={state}
-            onVerify={(patchbayAgentId) => send({ kind: "verifyAgent", patchbayAgentId })}
             onConnectConfigured={(patchbayAgentId) =>
               send({ kind: "connectAgent", source: { patchbayAgentId } })
             }
-            onAddAgent={(source, verifyAfterConnect) =>
-              send({ kind: "connectAgent", source, verifyAfterConnect })
-            }
+            onAddAgent={(source) => send({ kind: "connectAgent", source })}
             onSave={(config) => send({ kind: "addOrUpdateAgentConfig", config })}
             onRemove={(patchbayAgentId) => send({ kind: "removeAgentConfig", patchbayAgentId })}
             onStop={(patchbayAgentId) => send({ kind: "stopAgent", patchbayAgentId })}

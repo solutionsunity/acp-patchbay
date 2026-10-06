@@ -183,7 +183,7 @@ Add Agent card: one mode at a time behind a toggle, never a registry field and a
 command field half-filled together — a searchable combobox (type to filter, click
 to pick, ✕ to clear) or a custom command line. Buttons in order: `Add` (submits
 whichever mode is active) · the mode toggle itself (`Add custom…` in registry
-mode, `Add from list` in custom mode) · `Verify after add` checkbox. A
+mode, `Add from list` in custom mode). A
 registry agent already added is listed with `— added`; adding it again adds a
 second agent under a numbered name.
 
@@ -220,15 +220,8 @@ stderr tail (mono, scrolling); an initialize timeout names interactive first-run
 setup as the likely cause. A never-connected config shows the hollow `untested`
 dot with a `Connect` button, never a claimed `stopped`.
 
-`Diagnostics…`'s card-level trigger (`Verify…`) shows only while a checkable row is
-still outstanding for this agent's version, or the agent needs auth — the same
-predicate the connect/reconnect auto-retry gates on, so the manual control can't
-drift from what the automatic one already covers. Once a version is fully used,
-reconnecting restores that instantly and the button stays hidden — nothing to do.
-While the agent's queue holds a Verify (manual or "Verify after add"), the
-trigger spins and reads `Verifying…` — no separate status line, the button
-itself is the state. Anything the queue holds for the agent dims the controls
-that would only wait behind it (Log in, Log out, Verify); Stop never dims.
+Anything the queue holds for the agent dims the controls that would only wait
+behind it (Log in, Log out); Stop never dims.
 
 ### Capability matrix
 

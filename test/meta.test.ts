@@ -7,8 +7,6 @@ import {
   declaredFromInitialize,
 } from "../src/orchestrator/capabilities";
 import { clientMetaWire, planUsageOf, terminalAuthRecipeOf } from "../src/orchestrator/meta";
-import { hasUnusedProbe, type CapabilityMatrix } from "../src/shared/protocol";
-import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 
 const recipe = {
   command: "/usr/bin/node",
@@ -157,15 +155,5 @@ describe("auth method kind classification", () => {
       initWith([{ id: "x", name: "X", _meta: { "terminal-auth": { args: [] } } }]),
     );
     expect(declared.authMethods[0]!.kind).toBe("agent");
-  });
-});
-
-describe("hasUnusedProbe", () => {
-  const matrix: CapabilityMatrix = matrixFromDeclared(
-    declaredFromInitialize(initWith([])),
-  );
-
-  it("auth methods of any kind leave nothing to probe — the free check is not an auth proof", () => {
-    expect(hasUnusedProbe(matrix)).toBe(false);
   });
 });

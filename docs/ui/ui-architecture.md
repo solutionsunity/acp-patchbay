@@ -168,8 +168,9 @@ conditionals. The chat view already votes for the alternative:
 chat components — components consume the result and stay dumb. The settings agents
 card was the surface that never got this, and it produced three bugs from the same
 structural failure: rules about *one* cluster scattered across *N* inline
-predicates with no place to state cross-control invariants (Verify surviving
-logout, an `AlertDialog` unmounted mid-close, Verify offered as a logout bypass).
+predicates with no place to state cross-control invariants (a control
+surviving logout, an `AlertDialog` unmounted mid-close, a check offered as a
+logout bypass).
 So the rule:
 
 - **Every control whose rules read domain state goes through the surface's
@@ -193,8 +194,8 @@ So the rule:
   accordion, a form draft, which row is editing — does not thread through the
   derivation; forcing it there inverts the pattern (the derivation stops being
   pure over domain state).
-- Shared predicates the **orchestrator also gates on** stay in `shared/protocol.ts`
-  (e.g. `hasUnusedProbe`) and the derivation calls them; webview-only derivations
+- Shared predicates the **orchestrator also gates on** stay in `shared/`
+  (e.g. `sessionOffers`) and the derivation calls them; webview-only derivations
   live next to their surface, parallel to chat's `view-model.ts`.
 
 Flag as an architecture violation, in review: a JSX conditional in a control

@@ -45,7 +45,7 @@ const STRICT: FakeAgentScript = {
 /** A lazy-auth agent: declares login methods but passes session/new without
  * credentials (the Claude shape). */
 const LAZY: FakeAgentScript = {
-  declare: { sessionCapabilities: { fork: {} } },
+  declare: { sessionCapabilities: { close: {} } },
   authMethods: [{ id: "default", name: "Default" }],
 };
 
@@ -144,8 +144,8 @@ describe("auth flows on the wire", () => {
     });
 
     await h.pool.connect(spec(LAZY, "lazy" as PatchbayAgentId));
-    await waitFor(() => (h.row("lazy" as PatchbayAgentId)?.capabilities?.["session.fork"]?.used ? true : undefined));
-    // initialize, session/new, session/fork all succeeded — none of them
+    await waitFor(() => (h.row("lazy" as PatchbayAgentId)?.capabilities?.["session.close"]?.used ? true : undefined));
+    // initialize, session/new, session/close all succeeded — none of them
     // contradicts a logout, so the lock must stand untouched.
     expect(h.authFlips("lazy" as PatchbayAgentId).resolved).toBe(0);
     expect(h.locks.get("lazy" as PatchbayAgentId)).toMatchObject({ kind: "loggedOut" });
@@ -228,7 +228,7 @@ describe("auth flows on the wire", () => {
         "expired" as PatchbayAgentId,
       ),
     );
-    await waitFor(() => (h.row("expired" as PatchbayAgentId)?.capabilities?.["session.fork"]?.used ? true : undefined));
+    await waitFor(() => (h.row("expired" as PatchbayAgentId)?.capabilities?.["session.close"]?.used ? true : undefined));
     expect(h.locks.get("expired" as PatchbayAgentId)).toBeUndefined();
 
     const { sessionId } = await h.pool.newSession("expired" as PatchbayAgentId, cwd);

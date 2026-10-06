@@ -79,11 +79,7 @@ export type Action =
   /** The Settings nav itself — section state lives host-side so a disposed
    * webview (hidden tab) comes back where the user left it. */
   | { kind: "setSettingsSection"; section: SettingsSectionId }
-  /** `verifyAfterConnect` (Settings Agents' "Verify after add", default
-   * checked) auto-runs the free protocol-level Verify once the connection —
-   * and any required login — succeeds. Absent → false (existing callers:
-   * Agent View drawer, command palette, default-agent bootstrap). */
-  | { kind: "connectAgent"; source: ConnectAgentSource; verifyAfterConnect?: boolean }
+  | { kind: "connectAgent"; source: ConnectAgentSource }
   | { kind: "restartAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "stopAgent"; patchbayAgentId: PatchbayAgentId }
   /** One intent, one click: connect if needed — inside the chat pane
@@ -142,7 +138,6 @@ export type Action =
   | { kind: "reclaimQueuedPrompt"; patchbaySessionId: PatchbaySessionId; promptId: string }
   /** Debounced durable save of the composer's per-session draft. */
   | { kind: "setSessionDraft"; patchbaySessionId: PatchbaySessionId; draft: string }
-  | { kind: "verifyAgent"; patchbayAgentId: PatchbayAgentId }
   /** A Settings card's knob editor expanded (open) or collapsed — the
    * orchestrator's defaults editor opens/ends the throwaway session that
    * reads the agent's surface for the defaults being edited. */
@@ -596,7 +591,7 @@ export interface AgentSummary {
 
 /** One operation an agent's queue holds, as the views show it. */
 export type AgentWork =
-  | { kind: "connect" | "restart" | "login" | "logout" | "verify" | "stop" | "remove" }
+  | { kind: "connect" | "restart" | "login" | "logout" | "stop" | "remove" }
   | {
       kind: "upgrade";
       /** The version it installs: the registry's while the update is on
@@ -753,25 +748,6 @@ function dropKey<V>(record: Readonly<Record<string, V>>, key: string): Readonly<
   if (!(key in record)) return record;
   const { [key]: _dropped, ...rest } = record;
   return rest;
-}
-
-/**
- * True while the free protocol check (session/new + session/fork probe)
- * still has something it can RESOLVE for this agent — the manual Verify
- * control's visibility predicate. One clause: a declared fork not yet
- * proven (the probe's fork round-trip resolves it). The auth row is
- * deliberately absent: the probe's session/new is never an auth proof
- * (non-bearing evidence — auth-evidence.ts), so an auth clause would keep
- * Verify lit forever on every healthy agent, promising a check the button
- * structurally cannot perform. Auth surfaces its own re-check paths: every
- * connect probes anyway (a locked agent re-raises at the chokepoint), and
- * the needsAuth card offers Log in / the out-of-band escape hatch. Every
- * other row is opportunistic or has no active check to retry — the
- * verification-cost split: protocol-level checks are free, behavior probes
- * cost real agent turns.
- */
-export function hasUnusedProbe(matrix: CapabilityMatrix): boolean {
-  return matrix["session.fork"].declared && !matrix["session.fork"].used;
 }
 
 export interface SessionSummary {

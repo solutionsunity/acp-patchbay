@@ -500,7 +500,7 @@ describe("the gates", () => {
       fakeConfig("tl", { authMethods: [{ id: "tl", name: "Terminal login", _meta: { "terminal-auth": { command: "fake-login" } } }] }),
     );
     await h.gates.connect("tl" as PatchbayAgentId);
-    const probes = vi.spyOn(h.tracker, "verify");
+    const probes = vi.spyOn(h.tracker, "recheck");
     const restarts = vi.spyOn(h.pool, "restart");
     const login = h.gates.login("tl" as PatchbayAgentId, "tl");
     await vi.waitFor(() => expect(close).toBeDefined());

@@ -6,7 +6,7 @@
 // choices), live facts from the pool and the capability tracker, what the
 // orchestrator's queue holds for it, and what follows from them worked out
 // on the spot — and every operation on an agent: connect, stop, restart,
-// upgrade, remove, save, reorder, log in, log out, verify.
+// upgrade, remove, save, reorder, log in, log out.
 // A store only: its operations are plain, and nothing else starts or stops
 // an agent's process. When an operation on an agent's connection runs is
 // the orchestrator's call — every door reaches those through its gates;
@@ -37,7 +37,7 @@ import { unlessAborted } from "./abort";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { terminalAuthOf, type TerminalAuth } from "./capabilities";
-import type { CapabilityTracker, ProbeOutcome } from "./capability-tracker";
+import type { CapabilityTracker } from "./capability-tracker";
 import { checkPathDivergence } from "./launcher-health";
 import { nullLogger, type Logger } from "./logger";
 import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
@@ -109,7 +109,6 @@ export interface ConnectionOperations {
   upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
   login(patchbayAgentId: PatchbayAgentId, methodId: string, signal?: AbortSignal): Promise<void>;
   logout(patchbayAgentId: PatchbayAgentId): Promise<void>;
-  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome>;
   stop(patchbayAgentId: PatchbayAgentId): Promise<void>;
   remove(patchbayAgentId: PatchbayAgentId): Promise<void>;
   stopAll(): Promise<void>;
@@ -589,13 +588,6 @@ export class AgentsStore implements ConnectionOperations {
     await this.deps.pool.stop(patchbayAgentId);
   }
 
-  /** The free protocol check (Settings Verify, "Verify after add") —
-   * returns what the probe observed, so the terminal-login flow can react
-   * to a still-locked agent. */
-  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
-    return this.deps.tracker.verify(patchbayAgentId);
-  }
-
   // ── window lifecycle ──────────────────────────────────────────────────────
 
   /** What this window connects at startup, as the sources Add takes: the
@@ -837,8 +829,7 @@ export class AgentsStore implements ConnectionOperations {
    * The command's *result* is listened to, never guessed: the task's
    * process-end exit code is real evidence. Zero → the affirmative fact the
    * authority table clears on (noteAuthEvidence loginOk), then a re-probe
-   * as corroboration and offering re-read (same span as Verify, so the
-   * card reads "Verifying…") — and if the probe *still* says auth_required,
+   * as corroboration and offering re-read — and if the probe *still* says auth_required,
    * restart the process: the recipe wrote credentials outside it, and a CLI
    * that reads auth at spawn never re-reads them. Non-zero → loginFailed
    * evidence, locking with the exit code as the card's reason. An unknown
@@ -879,7 +870,8 @@ export class AgentsStore implements ConnectionOperations {
     const exitCode = await unlessAborted(reported, signal);
     signal?.throwIfAborted();
     if (exitCode !== undefined && exitCode !== 0) return;
-    const outcome = await this.verify(patchbayAgentId);
+    // the free check again: whether the login took
+    const outcome = await this.deps.tracker.recheck(patchbayAgentId);
     // "skipped" = the probe is latch-deferred (first-session-mcp-latch) —
     // no corroboration is possible without spending the latch slot, and
     // the latched vendor is also the spawn-time-credential-read vendor:

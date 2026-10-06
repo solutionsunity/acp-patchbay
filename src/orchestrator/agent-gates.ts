@@ -10,7 +10,6 @@
 // what an agent's own facts allow stays the store's to enforce.
 import { count } from "../shared/count";
 import type { ConnectionOperations } from "./agents-store";
-import type { ProbeOutcome } from "./capability-tracker";
 import type { Queue } from "./queue";
 import type { OpenWork } from "./sessions-store";
 import type { PatchbayAgentId } from "../shared/ids";
@@ -32,7 +31,6 @@ const GATES = {
   upgrade: "waits",
   login: "waits",
   logout: "waits",
-  verify: "waits",
   stop: "cuts in",
   remove: "cuts in",
 } as const satisfies Record<AgentOperation, "waits" | "cuts in">;
@@ -111,10 +109,6 @@ export class AgentGates implements ConnectionOperations {
    * off, and a repeat shares the question. */
   logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
     return this.pass("logout", patchbayAgentId, () => this.unlessDeclined("logout", patchbayAgentId, () => this.agents.logout(patchbayAgentId)));
-  }
-
-  verify(patchbayAgentId: PatchbayAgentId): Promise<ProbeOutcome> {
-    return this.pass("verify", patchbayAgentId, () => this.agents.verify(patchbayAgentId));
   }
 
   /** Asks before cutting in — nothing is cut while the question is open. */

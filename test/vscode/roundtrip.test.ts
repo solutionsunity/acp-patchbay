@@ -73,20 +73,20 @@ suite("snapshot/patch round-trip through real webviews", () => {
     await vscode.commands.executeCommand("acpPatchbay.openSettings");
     await ch.waitForApplied(ch.revision);
 
-    // Needs-auth so the card's Verify control actually renders, then the
-    // rows a real "Verify" click and an Upgrade send while the queue holds
-    // them — this exercises the real bundled AgentsSection JS, not just the
-    // pure reducer, catching anything a plain reducer test can't (a
-    // render-time throw in the verify button or the upgrade chip).
-    ch.emit(upsert("dummy-verify", { needsAuth: true }));
+    // Needs-auth so the card's Log in control actually renders, then the
+    // rows a real Log in and an Upgrade send while the queue holds them —
+    // this exercises the real bundled AgentsSection JS, not just the pure
+    // reducer, catching anything a plain reducer test can't (a render-time
+    // throw in a busy control or the upgrade chip).
+    ch.emit(upsert("dummy-busy", { needsAuth: true }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    ch.emit(upsert("dummy-verify", { needsAuth: true, busy: [{ kind: "verify" }, { kind: "upgrade", to: "2.0.0" }] }));
+    ch.emit(upsert("dummy-busy", { needsAuth: true, busy: [{ kind: "login" }, { kind: "upgrade", to: "2.0.0" }] }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    ch.emit(upsert("dummy-verify", { needsAuth: true }));
+    ch.emit(upsert("dummy-busy", { needsAuth: true }));
     ch.flushNow();
     const acked = await ch.waitForApplied(ch.revision);
     assert.ok(acked >= ch.revision, `webview acked ${acked}, wanted ${ch.revision}`);

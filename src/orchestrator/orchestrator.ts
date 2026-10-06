@@ -1658,7 +1658,7 @@ export class Orchestrator {
         this.settings.emit({ kind: "sectionChanged", section: action.section });
         break;
       case "connectAgent":
-        void this.connectFrom(action.source, action.verifyAfterConnect ?? false);
+        void this.connectFrom(action.source);
         break;
       case "restartAgent":
         // failure surfaces as a crashed status patch — no reply channel by design
@@ -1756,9 +1756,6 @@ export class Orchestrator {
         break;
       case "stopTurn":
         void this.sessionGates.stop(action.patchbaySessionId).catch(this.logCatch(`stop turn ${action.patchbaySessionId}`));
-        break;
-      case "verifyAgent":
-        void this.gates.verify(action.patchbayAgentId).catch(this.logCatch(`verify ${action.patchbayAgentId}`));
         break;
       case "editAgentDefaults":
         void (action.open ? this.defaultsEditor.open(action.patchbayAgentId) : this.defaultsEditor.close(action.patchbayAgentId));
@@ -2191,13 +2188,12 @@ export class Orchestrator {
 
   /** Add — and every connect a door names by its source (Settings Connect,
    * the palette, startup): the store saves what is new, then the connect
-   * and, when asked, the free check pass the gates. */
-  private async connectFrom(source: ConnectAgentSource, verifyAfterConnect = false): Promise<void> {
+   * passes the gates (and runs the free check, as every connect does). */
+  private async connectFrom(source: ConnectAgentSource): Promise<void> {
     const patchbayAgentId = await this.agents.saveFrom(source);
     if (patchbayAgentId === undefined) return;
     try {
       await this.gates.connect(patchbayAgentId);
-      if (verifyAfterConnect) void this.gates.verify(patchbayAgentId).catch(this.logCatch(`verify ${patchbayAgentId}`));
     } catch {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
