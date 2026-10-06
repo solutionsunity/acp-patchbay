@@ -188,7 +188,8 @@
     }
   },
   "overrides": {
-    "serialize-javascript": ">=7.0.5"
+    "serialize-javascript": ">=7.0.5",
+    "katex": "$katex"
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -225,7 +226,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "katex": "^0.17.0",
+    "katex": "^0.19.0",
     "lexical": "^0.46.0",
     "mermaid": "^11.17.2",
     "react": "^19.2.7",

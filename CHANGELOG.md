@@ -199,6 +199,8 @@
   place, and the webview CSP blocks inline handlers anyway). The other
   alert, markdown-it, lives in the packaging tool and never reaches the
   VSIX.
+- KaTeX 0.17 → 0.19, one copy for chat math and diagrams (a
+  prototype-pollution gadget; patchbay pollutes no prototype).
 
 ## 0.84.1 — 2026-09-29
 
