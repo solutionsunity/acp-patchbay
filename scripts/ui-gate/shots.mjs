@@ -669,6 +669,125 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── nothing hides at a narrow width (#67): with long unbreakable content
+// everywhere — paths, names, titles — every control stays in view, none
+// behind a sideways scroll, and every overlay opens inside the panel.
+// Theme-independent: run once. ──
+{
+  const LONG = "an-extremely-long-unbreakable-name-that-keeps-going-and-going-without-one-space";
+  const longPath = `/home/someone/projects/${LONG}/src/${LONG}`;
+  const outOfView = (p) =>
+    p.evaluate(() => {
+      const W = document.documentElement.clientWidth;
+      const scrollsX = (el) => {
+        for (let a = el.parentElement; a !== null; a = a.parentElement) {
+          const o = getComputedStyle(a).overflowX;
+          if (o === "auto" || o === "scroll") return true;
+        }
+        return false;
+      };
+      const off = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && (r.right > W + 1 || r.left < -1);
+      };
+      const name = (el) => (el.getAttribute("aria-label") ?? el.textContent ?? el.tagName).trim().slice(0, 40);
+      const controls = document.querySelectorAll(
+        'button, [role="button"], [role="switch"], [role="combobox"], [role="menuitem"], [role="option"], input, select, textarea, a[href]',
+      );
+      const overlays = document.querySelectorAll(
+        '[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"]',
+      );
+      return [
+        ...[...controls].filter((el) => off(el)).map((el) => `control "${name(el)}"${scrollsX(el) ? " (in a scroller)" : ""}`),
+        ...[...overlays].filter(off).map((el) => `overlay ${el.getAttribute("data-slot")}`),
+      ];
+    });
+  const sweep = async (p, where) => {
+    const off = await outOfView(p);
+    check(`[narrow] ${where}: every control and overlay in view${off.length > 0 ? ` — ${off.join(", ")}` : ""}`, off.length === 0);
+  };
+  const opened = async (p, trigger, slot, where) => {
+    // a trigger pushed out of view can't be clicked: that fails the check
+    // below rather than ending the run
+    await p.click(trigger, { timeout: 3000 }).catch(() => {});
+    const shown = await p.waitForSelector(`[data-slot="${slot}"]`, { timeout: 3000 }).then(() => true, () => false);
+    check(`[narrow] ${where} opens`, shown);
+    if (shown) await sweep(p, where);
+  };
+  const theme0 = Object.keys(THEMES)[0];
+
+  // the Agent View in a narrow sidebar
+  const av = agentViewState({ live: false });
+  av.agents = av.agents.map((a) => ({ ...a, name: `${a.name} ${LONG}` }));
+  av.sessions = av.sessions.map((x) => ({ ...x, title: `${x.title} ${LONG}` }));
+  av.workspaceRoots = [`/ws/${LONG}`];
+  av.contextRoots = { s1: [longPath] };
+  av.savedRoots = { workspace: [], machine: [], missing: [] };
+  av.sessionKnobs = {
+    s1: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "a",
+        options: [
+          { value: "a", name: `Model ${LONG}` },
+          { value: "b", name: "Short" },
+        ],
+      },
+    ],
+  };
+  let p = await page(browser, theme0, { width: 260, height: 800 });
+  await renderView(p, "agent-view", av);
+  await p.waitForSelector(".prompt-editor");
+  await sweep(p, "agent view");
+  await opened(p, '.ctx-chip:has-text("root")', "popover-content", "roots popover");
+  await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "a root's Save menu");
+  await p.keyboard.press("Escape");
+  await p.keyboard.press("Escape");
+  await opened(p, ".ctx-add", "popover-content", "context adder");
+  await p.keyboard.press("Escape");
+  await opened(p, '.sess-row button[aria-label="Session actions"]', "dropdown-menu-content", "session actions");
+  await p.keyboard.press("Escape");
+  await opened(p, 'button[aria-label^="Other sessions"]', "popover-content", "other sessions");
+  await p.keyboard.press("Escape");
+  await opened(p, '.input-foot [role="combobox"]', "select-content", "a knob's options");
+  await p.keyboard.press("Escape");
+  await p.screenshot({ path: `${OUT}/narrow-agent-view.png` });
+  await p.close();
+  // a sidebar a little wider: the composer's row wraps, nothing outgrows it
+  p = await page(browser, theme0, { width: 340, height: 800 });
+  await renderView(p, "agent-view", av);
+  await p.waitForSelector(".prompt-editor");
+  await sweep(p, "agent view at 340px");
+  await p.close();
+
+  // Settings in a narrow editor
+  const st = settingsState();
+  st.agents = st.agents.map((a) => ({ ...a, name: `${a.name} ${LONG}`, command: longPath }));
+  st.agentConfigs = st.agentConfigs.map((c) => ({ ...c, name: `${c.name} ${LONG}`, command: longPath }));
+  st.commandRules = [{ pattern: `npm run ${LONG}`, verdict: "allow" }];
+  st.savedRoots = { workspace: [longPath], machine: [`/srv/${LONG}`], missing: [] };
+  p = await page(browser, theme0, { width: 520, height: 800 });
+  await renderView(p, "settings", st);
+  await p.waitForSelector(".section h1");
+  for (const section of ["Agents", "Capability matrix", "MCP Servers", "Preferences", "Saved roots", "Permissions", "Audit", "Data"]) {
+    await p.click(`.nav .it:has-text("${section}")`);
+    await p.waitForTimeout(150);
+    // a section that failed to render shows no controls at all — never a pass
+    check(`[narrow] settings › ${section} renders`, (await p.$(".section h1")) !== null);
+    await sweep(p, `settings › ${section}`);
+    await p.screenshot({ path: `${OUT}/narrow-settings-${section.replace(/\W+/g, "-").toLowerCase()}.png`, fullPage: true });
+  }
+  await opened(p, 'button:has-text("Erase all data")', "alert-dialog-content", "the erase dialog");
+  await p.keyboard.press("Escape");
+  await p.click('.nav .it:has-text("Preferences")');
+  await opened(p, '.section [role="combobox"]', "select-content", "a preference's options");
+  await p.keyboard.press("Escape");
+  await p.close();
+}
+
 await browser.close();
 console.log(failures === 0 ? `\nui-gate: all checks passed → ${OUT}/` : `\nui-gate: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

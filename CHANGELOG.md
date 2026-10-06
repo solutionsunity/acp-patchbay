@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Nothing hides off the edge of a narrow panel anymore. A long root path
+  in the roots popover no longer pushes its Remove button out of view —
+  every menu, popover, list and tooltip now fits the space it opens into,
+  and scrolls when that runs out. In a narrow Settings editor, rows wrap and
+  a field's label sits above its control instead of squeezing it off the
+  page; a long model name on a composer pill shortens with an ellipsis.
+  (#67)
 - Opening a chat puts the cursor in the composer. New Session, Connect
   agent…, adding a selection from the editor, revealing a session and the
   status bar item now focus the text box, not just the view, so you can

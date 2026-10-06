@@ -51,22 +51,22 @@ export function RootsChip({
           <Icon name="root-folder" /> {count(total, "root")}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" side="top" className="w-auto min-w-56">
+      <PopoverContent align="start" side="top" className="w-auto min-w-[min(14rem,var(--radix-popover-content-available-width))]">
         {workspaceRoots.map((r, i) => (
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
-            <code>{r}</code>
+            <code className="min-w-0 flex-1">{r}</code>
             <span className="text-muted-foreground">{rootHolders(controls.agent, i === 0)}</span>
           </div>
         ))}
         {roots.map((r) => (
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
-            <code>{r}</code>
+            <code className="min-w-0 flex-1">{r}</code>
             <span className="text-muted-foreground">{rootHolders(controls.agent, false)}</span>
             <SaveControl path={r} saved={savedRoots} />
             <Button
               variant="ghost"
               size="sm"
-              className="h-5 px-1 text-destructive hover:text-destructive"
+              className="h-5 shrink-0 px-1 text-destructive hover:text-destructive"
               title="Remove root"
               aria-label={`Remove root ${r}`}
               onClick={() => send({ kind: "removeContextRoot", patchbaySessionId, path: r })}
@@ -120,7 +120,7 @@ function SaveControl({ path, saved }: { path: string; saved: SavedRootsView }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-5 px-1" title="Save for new sessions">
+        <Button variant="ghost" size="sm" className="h-5 shrink-0 px-1" title="Save for new sessions">
           Save
         </Button>
       </DropdownMenuTrigger>

@@ -1035,6 +1035,18 @@ button.more,
   }
 }
 
+/* A knob never outgrows the composer: a long value (a model's full name)
+ * ellipsizes — the trigger's own line-clamp takes over once its width
+ * binds — instead of running past the edge. */
+.knob {
+  min-width: 0;
+  max-width: 100%;
+}
+.knob [data-slot="select-trigger"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Deep-narrow: the knob row itself degrades by truncation — labels
  * ellipsize (the trigger's own line-clamp takes over once max-width binds),
  * never by pushing Send off-screen. */

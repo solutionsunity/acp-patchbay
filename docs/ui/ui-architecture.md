@@ -95,6 +95,23 @@ primitive layer, not the component styling. So the rule:
   ladder below 50 (agent-view `style.css` § Z LADDER); the boundary is enforced
   by `test/z-ladder.test.ts` — a new violation fails CI, not a reviewer's memory.
 
+- **An overlay is bounded by the space it opens into.** Placement keeps an
+  overlay's corner on screen; its size is a second problem. Each anchored
+  content primitive in `components/ui` — popover, dropdown menu, select,
+  tooltip — caps its width and height with the available-space variables
+  Radix measures for it (`--radix-…-content-available-width` / `-height`),
+  and scrolls inside when the space runs out; a centered dialog keeps a margin
+  inside the view and scrolls when tall. The bound lives in the shared
+  primitive, not at each call site, and a call site never gives an overlay a
+  minimum width that could outgrow it — CSS lets a `min-width` beat a
+  `max-width`, so it clamps instead: `min-w-[min(14rem,var(--radix-popover-content-available-width))]`.
+  Inside a bounded overlay, a row with a long path lets the path wrap and keeps
+  its controls whole. Two gates hold it: `test/overlay-bounds.test.ts` scans
+  every primitive and call site, and the ui-gate's narrow sweep opens the
+  views at a narrow width with long unbreakable content and fails on any
+  control or overlay outside the panel — none may hide behind a sideways
+  scroll.
+
 - **Sibling overlays coordinate through one controlled open-state**, never N
   independent uncontrolled instances. A list of row-action menus rendered as N
   self-managed `DropdownMenu`s races on a cross-row click — Radix defers an

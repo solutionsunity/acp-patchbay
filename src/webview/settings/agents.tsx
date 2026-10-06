@@ -403,7 +403,7 @@ function StatTiles({ state, children }: { state: SettingsState; children?: React
     { n: state.sessionsActiveToday, label: "active today", icon: "comment-discussion" },
   ];
   return (
-    <div className="mb-3.5 flex gap-2.5">
+    <div className="mb-3.5 flex flex-wrap gap-2.5">
       {tiles.map((t) => (
         <Card className={TILE} key={t.label}>
           <div className="flex items-center justify-center gap-1.5 text-[22px] font-semibold">

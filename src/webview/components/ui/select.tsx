@@ -38,7 +38,7 @@ function SelectContent({ className, children, position = "popper", ...props }: R
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          "relative z-50 max-h-96 min-w-32 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md",
+          "relative z-50 max-h-[min(24rem,var(--radix-select-content-available-height))] min-w-[min(8rem,var(--radix-select-content-available-width))] max-w-[var(--radix-select-content-available-width)] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md",
           position === "popper" && "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
           className,
         )}

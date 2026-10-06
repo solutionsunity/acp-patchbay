@@ -235,7 +235,7 @@ export function Composer(props: {
                   <Icon name="add" />
                 </span>
               </PopoverTrigger>
-              <PopoverContent align="start" side="top" className="w-auto min-w-56 p-0">
+              <PopoverContent align="start" side="top" className="w-auto min-w-[min(14rem,var(--radix-popover-content-available-width))] p-0">
                 {(
                   [
                     { icon: "target", label: "Selection", hint: "current editor selection", run: addSelection },
