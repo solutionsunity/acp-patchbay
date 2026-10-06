@@ -13,7 +13,7 @@
 // crash/restart, not an in-memory shortcut).
 //
 // Script arrives as JSON in the FAKE_AGENT_SCRIPT env var.
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -762,6 +762,10 @@ const app = acp
     const parent = sessions.get(ctx.params.sessionId);
     if (!parent) throw acp.RequestError.invalidRequest("unknown session");
     const id = `${parent.id}-fork-${++sessionCounter}`;
+    // "Based on the context of an existing one": the fork carries the
+    // original's recorded history, so a session/load of it replays that.
+    const record = storeFile(parent.cwd, parent.id);
+    if (existsSync(record)) copyFileSync(record, storeFile(parent.cwd, id));
     sessions.set(id, {
       id,
       cwd: parent.cwd,

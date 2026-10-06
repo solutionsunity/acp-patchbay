@@ -805,6 +805,27 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── a fork names its original under the title row, and opens it; one
+// whose original the list no longer names says so. Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".sess-row");
+  check("a session that is no fork shows no fork line", (await p.$(".sess-fork")) === null);
+  await p.evaluate(() => window.__patch([{ kind: "sessionRefreshed", patchbaySessionId: "s1", forkedFrom: "s2" }]));
+  const link = await p.waitForSelector(".sess-fork button", { timeout: 3000 }).then((el) => el.textContent(), () => "");
+  check(`a fork names its original under the title row ("${link}")`, link === "refactor bar");
+  await p.click(".sess-fork button");
+  const opened = await p.evaluate(() => window.__actions.at(-1));
+  check("the fork line opens the original", JSON.stringify(opened) === JSON.stringify({ kind: "switchSession", patchbaySessionId: "s2" }));
+  await p.evaluate(() => window.__patch([{ kind: "sessionRefreshed", patchbaySessionId: "s1", forkedFrom: "gone" }]));
+  check(
+    "a fork whose original is no longer listed says so",
+    await p.waitForFunction(() => document.querySelector(".sess-fork")?.textContent === "Forked from a session no longer listed", null, { timeout: 3000 }).then(() => true, () => false),
+  );
+  await p.close();
+}
+
 // ── nothing hides at a narrow width (#67): with long unbreakable content
 // everywhere — paths, names, titles — every control stays in view, none
 // behind a sideways scroll, and every overlay opens inside the panel.

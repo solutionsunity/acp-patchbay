@@ -418,6 +418,17 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
     expect(s.sessions.find((x) => x.id === "a")!.updatedAt).toBe("2026-07-09T10:00:00Z");
   });
 
+  it("sessionRefreshed names a fork's original, and a refresh that doesn't mention it keeps it", () => {
+    const s = replay(initialAgentViewState, [
+      mk("a"),
+      mk("b"),
+      { kind: "sessionRefreshed", patchbaySessionId: "b" as PatchbaySessionId, forkedFrom: "a" as PatchbaySessionId },
+      { kind: "sessionRefreshed", patchbaySessionId: "b" as PatchbaySessionId, title: "renamed" },
+    ]);
+    expect(s.sessions.find((x) => x.id === "b")).toMatchObject({ title: "renamed", forkedFrom: "a" });
+    expect(s.sessions.find((x) => x.id === "a")!.forkedFrom).toBeUndefined();
+  });
+
   it("sessionRefreshed without a stamp is the wire saying nothing — the row keeps its own", () => {
     const s = replay(initialAgentViewState, [
       mk("a"),

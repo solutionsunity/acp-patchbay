@@ -112,10 +112,12 @@ export type Action =
    * window — detached from the sidebar, multi-screen usable. Does not touch
    * the shared active-session pointer. */
   | { kind: "detachSession"; patchbaySessionId: PatchbaySessionId }
-  /** The session menu's two ends (session-ends.ts), each where the agent
-   * declares it: Delete removes the session from the agent's history,
+  /** What the session menu offers (session-offers.ts), each where the
+   * agent declares it: Fork opens a new session the agent seeds with this
+   * one's context; Delete removes the session from the agent's history,
    * after the user confirms; Close stops its work and takes it off the
    * list. */
+  | { kind: "forkSession"; patchbaySessionId: PatchbaySessionId }
   | { kind: "deleteSession"; patchbaySessionId: PatchbaySessionId }
   | { kind: "closeSession"; patchbaySessionId: PatchbaySessionId }
   /** Copy the agent's own id for the session — the one its own tools know
@@ -316,6 +318,9 @@ export interface SessionContinuity {
   queue?: readonly QueuedPrompt[];
   chips?: readonly PersistedChip[];
   draft?: string;
+  /** The agent's own id for the session this one was forked from — no
+   * list or session info carries it, so it is kept from the fork on. */
+  forkedFrom?: string;
 }
 
 /** One positional piece of a composed prompt (sendPrompt `parts`). */
@@ -786,12 +791,16 @@ export interface SessionSummary {
    * visible surface renders it; never persisted — a reload starts with
    * nothing unread. */
   unseen?: boolean;
+  /** The session this one was forked from, as a row of this window —
+   * absent when it is no fork. A row no longer in the list leaves the
+   * view nothing to open. */
+  forkedFrom?: PatchbaySessionId;
 }
 
 /** What a session's lines can hold: the attachment line's open (an attach,
  * the ladder), reload, roots (re-applied to the agent), knob (a set), release
  * (idle), close — and the turn line's prompt. */
-export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "close" | "delete" | "prompt";
+export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "fork" | "close" | "delete" | "prompt";
 
 /** A turn underway on the session — running, or waiting for its session to
  * attach: what Stop ends, the running mark. Not the same as a live turn,
@@ -1540,8 +1549,15 @@ export type AgentViewEvent =
    * sync, the agent's `session_info_update`) or patchbay's own derived
    * first-prompt title. Each field rides only when its witness said
    * something: an absent title or stamp is silence, never a clear. The
-   * agent's title wins; the stamp only moves forward. */
-  | { kind: "sessionRefreshed"; patchbaySessionId: PatchbaySessionId; title?: string; updatedAt?: string }
+   * agent's title wins; the stamp only moves forward. `forkedFrom` names
+   * the row its original has in this window, once the list has named it. */
+  | {
+      kind: "sessionRefreshed";
+      patchbaySessionId: PatchbaySessionId;
+      title?: string;
+      updatedAt?: string;
+      forkedFrom?: PatchbaySessionId;
+    }
   | { kind: "sessionActivated"; patchbaySessionId: PatchbaySessionId }
   /** The visible surfaces changed — shown, hidden, opened, or closed. */
   | ({ kind: "screenChanged" } & ScreenView)
@@ -1897,6 +1913,7 @@ export function reduceAgentView(
             ? {
                 ...s,
                 title: event.title ?? s.title,
+                ...(event.forkedFrom !== undefined ? { forkedFrom: event.forkedFrom } : {}),
                 updatedAt:
                   event.updatedAt !== undefined && event.updatedAt > s.updatedAt
                     ? event.updatedAt

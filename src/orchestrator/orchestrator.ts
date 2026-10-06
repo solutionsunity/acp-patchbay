@@ -1691,6 +1691,9 @@ export class Orchestrator {
         // otherwise (sessions-store `idle`).
         this.sessionGates.open(action.patchbaySessionId);
         break;
+      case "forkSession":
+        void this.forkSession(action.patchbaySessionId);
+        break;
       case "deleteSession":
         void this.deleteSession(action.patchbaySessionId);
         break;
@@ -2258,6 +2261,20 @@ export class Orchestrator {
     } catch (err) {
       this.logCatch(`connect for session ${patchbaySessionId} (${patchbayAgentId})`)(err);
       this.chatPaneFailed(patchbayAgentId, err, patchbaySessionId);
+    }
+  }
+
+  /** The menu's Fork: its agent connected if it is off, then the fork —
+   * which opens in the view; one the agent refuses says why. */
+  private async forkSession(patchbaySessionId: PatchbaySessionId): Promise<void> {
+    const session = this.agentView.current.sessions.find((s) => s.id === patchbaySessionId);
+    if (session === undefined) return;
+    try {
+      if (this.agents.row(session.patchbayAgentId)?.status !== "running") await this.gates.connect(session.patchbayAgentId);
+      await this.sessionGates.fork(patchbaySessionId, session.title);
+    } catch (err) {
+      this.logCatch(`fork ${patchbaySessionId}`)(err);
+      void vscode.window.showWarningMessage(`"${session.title}" was not forked — ${(err as Error).message}`);
     }
   }
 

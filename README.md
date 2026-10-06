@@ -64,7 +64,7 @@ orchestrator layer on top:
 ## Everything you'd expect from a great client
 
 - Polished chat composer with inline `/` commands and `@`-mentions of workspace files
-- Full session history — list, reopen and delete, as far as the agent offers, backed by its own store
+- Full session history — list, reopen, fork and delete, as far as the agent offers, backed by its own store
 - Faithful replay of past sessions (no "last message only" gaps)
 - A live plan and a touched-files read-out while the agent works
 - MCP servers, including remote ones over Streamable HTTP, added and verified in-client

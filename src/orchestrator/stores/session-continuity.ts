@@ -88,12 +88,24 @@ const sessionContinuityEntrySchema = z.object({
   queue: z.array(queuedPromptSchema).optional(),
   chips: z.array(persistedChipSchema).optional(),
   draft: z.string().optional(),
+  forkedFrom: z.string().min(1).optional(),
 });
 export type SessionContinuityEntry = z.infer<typeof sessionContinuityEntrySchema>;
 
 const KEY = "acpPatchbay.sessionContinuity";
 
-const FIELDS = ["knobs", "roots", "queue", "chips", "draft"] as const;
+/** Every field a row saves — keyed by the type, so a field added to
+ * `SessionContinuity` and missing here fails the build instead of being
+ * silently never saved. */
+const SAVED: Record<keyof SessionContinuity, true> = {
+  knobs: true,
+  roots: true,
+  queue: true,
+  chips: true,
+  draft: true,
+  forkedFrom: true,
+};
+const FIELDS = Object.keys(SAVED) as (keyof SessionContinuity)[];
 
 /** True when a field value carries nothing worth a row: absorbing these as
  * deletions keeps drained queues, sent chips, and cleared drafts from

@@ -86,8 +86,10 @@ deliverable.
 - Renaming lives in the agent, not patchbay: ACP has no rename request, so
   agents with an in-chat `/rename` round-trip the title through their own
   `session/list` / `session_info_update` — which patchbay always honors.
-- Branching is out of the current release. `session/fork` stays a
-  capability-matrix row; no UI feature rides it yet.
+- A session can be forked from its menu where the agent offers it
+  (`session/fork`): a new session carrying the original's history opens, and
+  the original stays as it is. Forking at an earlier turn, or editing a sent
+  prompt to fork from there, waits for ACP to name a point in a session.
 - The agent owns the sessions — 100%. The agent's own `session/list` is the
   only session list; patchbay persists no session index and no transcripts.
   What patchbay holds: a **decision audit** (permissions

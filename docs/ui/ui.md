@@ -49,7 +49,8 @@ never split panels.
 | Control | Behavior |
 |---|---|
 | Title | click → Sessions drawer |
-| Kebab ⋯ | open in new window (when detached windows are on) · reload from agent (rejoin truth) · copy session ID · **Delete…** where the agent declares `session/delete` — asks first, then the agent removes the session from its history and patchbay forgets what it kept for it; a refusal says why and keeps it · **Close** where the agent declares `session/close` — its work stops and it leaves the list, keeping everything patchbay saved for it; an agent that lists its sessions lists it again the next time the history is read. The same menu sits on every row of the Sessions drawer |
+| Forked from | a fork's line under the title row: `Forked from ‹original›` opens the original; `Forked from a session no longer listed` once the list no longer names it |
+| Kebab ⋯ | open in new window (when detached windows are on) · reload from agent (rejoin truth) · copy session ID · **Fork** where the agent declares `session/fork` — a new session carrying this one's history opens, and this one stays as it is · **Delete…** where the agent declares `session/delete` — asks first, then the agent removes the session from its history and patchbay forgets what it kept for it; a refusal says why and keeps it · **Close** where the agent declares `session/close` — its work stops and it leaves the list, keeping everything patchbay saved for it; an agent that lists its sessions lists it again the next time the history is read. The same menu sits on every row of the Sessions drawer |
 
 ### 3 · Read-out strip
 

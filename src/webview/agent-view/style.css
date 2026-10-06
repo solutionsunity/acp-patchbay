@@ -182,6 +182,34 @@ body {
   border-bottom: 1px solid var(--pb-border);
 }
 
+/* A fork's link back to its original — a quiet line under the title row */
+.sess-fork {
+  padding: 0 12px 6px;
+  margin-top: -4px;
+  border-bottom: 1px solid var(--pb-border);
+  font-size: 11px;
+  color: var(--pb-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.sess-fork button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--pb-text-dim);
+  cursor: pointer;
+}
+
+.sess-fork button:hover {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}
+
+.sess-row:has(+ .sess-fork) {
+  border-bottom: 0;
+}
+
 .sess-title {
   font-size: 13.5px;
   font-weight: 600;

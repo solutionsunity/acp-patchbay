@@ -76,7 +76,7 @@ chapters (see §19).
 | `session/new` | ✅ | `pool.ts:newSession`; cwd, mcpServers, and `additionalDirectories` only when the agent advertises `sessionCapabilities.additionalDirectories` (client MUST — `pool.ts:dirsIfAdvertised`, one gate for new/load/resume/fork). |
 | `session/load` full-replay consumption | ✅ | Every replayed update kind is consumed (§9), with message-boundary fidelity per `messageId` (§8). Replay reduces silently into canonical state and lands in the webview as one wholesale swap (`loadSilently`/`ChannelHost.resync`); an `inFlight` guard keeps live prompt echoes from double-rendering. |
 | `session/resume` | ✅ | `pool.ts:resumeSession`; capability-gated on declared + used per the capability rule; an honest seam notice marks where the cached view ends and the agent's unreplayed memory continues (`sessions-store.ts:resumeReattach`). |
-| `session/fork` | ✅ | Same adoption posture; `session.fork` capability row; native fork gates on *used*. |
+| `session/fork` | ✅ | `pool.ts:fork`, through the one attach chokepoint (`sessions-store.ts:attachSession`); offered by the session menu where declared (`session-offers.ts`); the `session.fork` capability row only shows how it held up. |
 | Roots re-apply (`additionalDirectories` set-complete-list) | ✅ | `sessions-store.ts:reapplyRoots` — the three-case rung (recreate on a zero-turn session / in place via `session/resume` only, never `load` / deferred to turn end and awaited before the held queue drains) is a recorded design; where no rung applies the list is still recorded and the session's MCP servers told (they read `sessions-store.ts:rootsOf`), and the roots chip says the agent takes it at the next open, or never. |
 | Roots read-back (`SessionInfo.additionalDirectories` on `session/list`) | ✅ | `sessions-store.ts:adoptReportedRoots` — a present list replaces the intended user-added list (never merged: spec MUST NOT), workspace folders subtracted, for sessions not open here; a malformed list degrades to not reported (`response-guards.ts:guardListedSession`). **Deliberate departure:** an omitted field is read as *not reported*, not as *no roots* — the spec makes the report a MAY, so omission cannot distinguish the two, and it lets the client's list differ from any reported list. Observed: claude-agent-acp 0.81.0 and codex-acp declare the field and omit it on every row. A proposal to restore the RFD's earlier wording (#1227) was declined upstream (agentclientprotocol/agent-client-protocol#2212, 2026-09-23): the published spec keeps "omitted and empty are equivalent". |
 
@@ -89,7 +89,7 @@ silently on unknown id). Close: frees resources, history intact.
 | Duty | Verdict | Notes |
 |---|---|---|
 | `session/list` pagination, opaque cursor | ✅ | `sessions-store.ts` sync walk (`MAX_LIST_PAGES` guard); stricter than spec: a *truncated* walk never prunes local rows — "a truncated read must never erase". |
-| Capability gating | ✅ | Every session op follows what the agent declares; the capability matrix decides nothing. The session menu offers what the agent declares, and the store refuses anything else (`session-ends.ts`): Delete where `session/delete` is declared — the agent removes the session from its history, then patchbay forgets what it kept for it; Close where `session/close` is declared — the session leaves the list and the agent frees it, patchbay keeps what it saved, and an agent that lists its sessions lists it again at the next read. |
+| Capability gating | ✅ | Every session op follows what the agent declares; the capability matrix decides nothing. The session menu offers what the agent declares, and the store refuses anything else (`session-offers.ts`): Fork where `session/fork` is declared — a new session the agent seeds with this one's context; Delete where `session/delete` is declared — the agent removes the session from its history, then patchbay forgets what it kept for it; Close where `session/close` is declared — the session leaves the list and the agent frees it, patchbay keeps what it saved, and an agent that lists its sessions lists it again at the next read. |
 | `session/delete` idempotency tolerance | ✅ | The agent goes first: the session leaves patchbay only once the delete succeeds — an unknown id included, as the spec has it — and a refused delete leaves it where it was, with the reason shown to the user. |
 | `session/close` | ✅ | `pool.ts:closeSession`, sent by the idle release and by the menu's Close (after the session leaves; a failure only means the agent frees it when its process ends); `release()` additionally requires declared `session/load` — **deliberately not** `load || resume`: patchbay persists no transcripts, so closing anything less than fully-replayable would destroy the only history there is. Recorded guard, do not relax. |
 
@@ -245,12 +245,12 @@ The per-command input hint rides through to the slash menu.
 ## 19. Unstable SDK surface — adoption stances
 
 Stability markers as of SDK **1.5.0**. Stance: adopt only what has a proven consumer,
-always gated on declared (+ used where it gates UI), never silently.
+always offered on what the agent declares, never silently.
 
 | Surface | 1.5.0 marker | Stance |
 |---|---|---|
 | `session/resume` | stable | **Adopted** — real agents declare it; capability-gated and used-tracked. |
-| `session/fork` | UNSTABLE (the SDK method is still `unstable_forkSession`) | **Adopted** — same posture; native fork gates on *used*. |
+| `session/fork` | UNSTABLE (the SDK method is still `unstable_forkSession`) | **Adopted** — the session menu's Fork, offered where declared. |
 | `session/close` | stable | **Adopted** (§5). |
 | `session.configOptions` client capability | stable | **Declared** (§2, §16). |
 | `session_info_update`, `usage_update` | stable | **Adopted** — purely additive notifications with visible value. |

@@ -5,10 +5,10 @@
 // the sessions drawer). Actions are sent per session id; only drawer-opening
 // stays a shell callback. No rename here: ACP has no rename request — agents
 // with an in-chat /rename push the new title back via session_info_update.
-// How a session can end is its agent's offer (session-ends.ts): an agent
-// that lists sessions but can't delete them offers no end here at all.
+// Fork, Delete and Close are offered as the agent declares them
+// (session-offers.ts).
 import type { AgentSummary, SessionSummary } from "../../shared/protocol";
-import { sessionEnds } from "../../shared/session-ends";
+import { sessionOffers } from "../../shared/session-offers";
 import { useActions } from "../shared/actions";
 import { Icon } from "../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export function SessionActions({
   onOpenChange,
 }: {
   session: SessionSummary;
-  /** The session's agent — its capabilities decide how the session ends. */
+  /** The session's agent — what it declares decides what the menu offers. */
   agent: AgentSummary | undefined;
   detach: boolean;
   /** The session is being attached (an open or a reload on its attachment
@@ -48,7 +48,7 @@ export function SessionActions({
   onOpenChange?: (open: boolean) => void;
 }) {
   const send = useActions();
-  const ends = sessionEnds(agent?.capabilities);
+  const offers = sessionOffers(agent?.capabilities);
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
@@ -73,13 +73,18 @@ export function SessionActions({
         <DropdownMenuItem onSelect={() => send({ kind: "copySessionId", patchbaySessionId: session.id })}>
           Copy session ID
         </DropdownMenuItem>
+        {offers.fork && (
+          <DropdownMenuItem onSelect={() => send({ kind: "forkSession", patchbaySessionId: session.id })}>
+            Fork
+          </DropdownMenuItem>
+        )}
         {/* The host asks before the agent deletes — nothing brings it back. */}
-        {ends.delete && (
+        {offers.delete && (
           <DropdownMenuItem onSelect={() => send({ kind: "deleteSession", patchbaySessionId: session.id })}>
             Delete…
           </DropdownMenuItem>
         )}
-        {ends.close && (
+        {offers.close && (
           <DropdownMenuItem onSelect={() => send({ kind: "closeSession", patchbaySessionId: session.id })}>
             Close
           </DropdownMenuItem>
@@ -92,20 +97,41 @@ export function SessionActions({
 export function SessionRow(props: {
   session: SessionSummary;
   agent: AgentSummary | undefined;
+  /** The row this session was forked from, when it is a fork whose
+   * original the list still names. */
+  original: SessionSummary | undefined;
   onTitle(): void;
   detach: boolean;
   reloading: boolean;
 }) {
+  const send = useActions();
+  const { original } = props;
   return (
-    <div className="sess-row">
-      <span className="sess-title" onClick={props.onTitle}>
-        {props.session.title}
-      </span>
-      {/* Replay in flight (reload or re-attach) — mirrors the rendering
-          area's loading page so the title row says busy too. */}
-      {props.reloading && <Icon name="loading" spin />}
-      <div className="spacer flex-1" />
-      <SessionActions session={props.session} agent={props.agent} detach={props.detach} reloading={props.reloading} />
-    </div>
+    <>
+      <div className="sess-row">
+        <span className="sess-title" onClick={props.onTitle}>
+          {props.session.title}
+        </span>
+        {/* Replay in flight (reload or re-attach) — mirrors the rendering
+            area's loading page so the title row says busy too. */}
+        {props.reloading && <Icon name="loading" spin />}
+        <div className="spacer flex-1" />
+        <SessionActions session={props.session} agent={props.agent} detach={props.detach} reloading={props.reloading} />
+      </div>
+      {props.session.forkedFrom !== undefined && (
+        <div className="sess-fork">
+          {original !== undefined ? (
+            <>
+              Forked from{" "}
+              <button type="button" onClick={() => send({ kind: "switchSession", patchbaySessionId: original.id })}>
+                {original.title}
+              </button>
+            </>
+          ) : (
+            "Forked from a session no longer listed"
+          )}
+        </div>
+      )}
+    </>
   );
 }

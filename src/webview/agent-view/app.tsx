@@ -125,6 +125,7 @@ export function App({
         <SessionRow
           session={active}
           agent={activeAgent ?? undefined}
+          original={active.forkedFrom === undefined ? undefined : state.sessions.find((s) => s.id === active.forkedFrom)}
           onTitle={pinned ? () => {} : openSessions}
           detach={detach && !pinned}
           reloading={attaching(active)}

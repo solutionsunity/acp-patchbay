@@ -49,6 +49,9 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   stopping disconnects its conversations at once, and they reopen later
   with their knobs, roots and held prompts. Stop on a message works from
   the moment it is sent.
+- **Fork a session** from its ⋯ menu where the agent offers it: a new
+  session carrying the original's history opens, and the original stays as
+  it is. The fork's title row names its original and opens it.
 - **Upgrade and Add read the registry first,** so they no longer install
   a version the registry has moved past (the saved copy stands in only when
   the registry can't be reached); an agent the registry no longer

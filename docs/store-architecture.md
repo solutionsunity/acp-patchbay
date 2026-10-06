@@ -49,7 +49,8 @@ tell us this fact again?**
   server's last probe.
 - **Nobody can — a saved fact, and disk is the truth.** Agent configs and
   MCP-server records, preferences, rules, auth locks; per session the knob
-  combination, roots, held words, staged chips and draft. Read from disk when
+  combination, roots, held words, staged chips, draft, and a fork's original.
+  Read from disk when
   asked and written one row at a time, with no copy kept: the machine store
   reads its file again whenever another window has written it, and builds
   every write from what the file holds at that moment, so a window overwrites
@@ -206,8 +207,9 @@ the pair: the session's saved row, and the last-open pointer.
   transcript and the title have one holder, the Agent View's canonical state,
   which the store reads through a hook and never copies;
 - saved — the continuity row (`stores/session-continuity.ts`, machine store):
-  the knob combination, user-added roots, held words, staged chips and the
-  draft. It is these facts' one home: read whenever one is needed, written
+  the knob combination, user-added roots, held words, staged chips, the
+  draft, and a fork's original (its agent id — nothing on the wire carries
+  it). It is these facts' one home: read whenever one is needed, written
   field by field before the view hears of it, kept for every session whatever
   its agent declares. What each field carries and when the row leaves:
   [the session model](architecture.md#session-model-mode-effort); and the
@@ -217,7 +219,7 @@ the pair: the session's saved row, and the last-open pointer.
   history;
 - busy — what the session's two lines hold.
 
-**Operations:** create, open, prompt, stop, reload, delete, close, set a knob,
+**Operations:** create, open, prompt, stop, reload, fork, delete, close, set a knob,
 release, list, and the saves — roots, chips, the draft, held-word edits. Those that
 ride the session's connection pass the session gates; a saved root list is
 re-applied to the agent's copy on the attachment line. A duty lives in its
@@ -228,8 +230,9 @@ the held words.
 **Two lines per session.**
 
 - **The attachment line** orders what binds the session to its connection or
-  rides it between turns: an open's attach (the zero-turn re-mint with it), a
-  reload, a roots re-apply, a knob set, an idle release, a delete, a close.
+  rides it between turns (a fork rides its original's): an open's attach (the
+  zero-turn re-mint with it), a reload, a roots re-apply, a knob set, an idle
+  release, a delete, a close.
 - **The turn line** holds the session's turn, one at a time, as ACP has it.
   Held words wait on the continuity row and enter the line one by one — after
   a turn that ended by itself, an open or a reload, a login that clears the
@@ -251,7 +254,7 @@ ones), reads the session again, then lets the held words go. **Delete** and
 **Close** end the turn and drop the attach work, then the session leaves —
 Delete once the agent has removed it from its history (a refused delete
 leaves it where it was), Close at once. Each is offered only as the agent
-declares it (`src/shared/session-ends.ts`), and patchbay stands in for
+declares it (`src/shared/session-offers.ts`), and patchbay stands in for
 neither: Delete where the agent declares `session/delete`, and what
 patchbay kept for the session goes with it; Close where it declares
 `session/close`, and what patchbay saved for the session stays — an agent

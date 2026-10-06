@@ -63,7 +63,7 @@ import type { SessionContinuityStore } from "./stores/session-continuity";
 import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
-import { sessionEnds, type SessionEnds } from "../shared/session-ends";
+import { sessionOffers, type SessionOffers } from "../shared/session-offers";
 
 export interface SessionsStoreHooks {
   emit(...events: AgentViewEvent[]): void;
@@ -119,8 +119,8 @@ export interface SessionsStoreHooks {
    * resume rung shows it behind the seam notice: it's the only history
    * there is (patchbay persists no transcripts). */
   currentTranscript?(patchbaySessionId: PatchbaySessionId): readonly ChatBlock[];
-  /** The agent's capability matrix as it reads now — what decides how its
-   * sessions can end (session-ends.ts). */
+  /** The agent's capability matrix as it reads now — its declared column
+   * is what the session menu offers (session-offers.ts). */
   capabilities(patchbayAgentId: PatchbayAgentId): CapabilityMatrix | undefined;
   /** Whether this session is on view — the sidebar's active one or a
    * pinned window's. The idle sweep exempts it (the visible chat's state
@@ -558,16 +558,20 @@ export class SessionsStore {
   }
 
   /** The one attach chokepoint: every wire call that binds a session to a
-   * connection (`session/new`, `session/load`, `session/resume`) rides
-   * through here, so the ceremony — the context token and what it was
-   * given, the MCP server list, canonical roots, knob normalization —
-   * exists exactly once. Callers own *policy*: which rung, LiveSession
-   * bookkeeping, what the transcript shows, and where the returned knob
-   * state is published (event order is theirs, not this method's). A
-   * `session/new` has no row to name in its token yet: its caller files
-   * the agent's id it returns, then binds the token. */
+   * connection (`session/new`, `session/fork`, `session/load`,
+   * `session/resume`) rides through here, so the ceremony — the context
+   * token and what it was given, the MCP server list, canonical roots, knob
+   * normalization — exists exactly once. Callers own *policy*: which rung,
+   * LiveSession bookkeeping, what the transcript shows, and where the
+   * returned knob state is published (event order is theirs, not this
+   * method's). A `session/new` or `session/fork` has no row to name in its
+   * token yet: its caller files the agent's id it returns, then binds the
+   * token. */
   private async attachSession(
-    target: { via: "new" } | { via: "load" | "resume"; patchbaySessionId: PatchbaySessionId },
+    target:
+      | { via: "new" }
+      | { via: "fork"; from: PatchbaySessionId }
+      | { via: "load" | "resume"; patchbaySessionId: PatchbaySessionId },
     patchbayAgentId: PatchbayAgentId,
     opts: { cwd?: string; roots?: readonly string[] } = {},
     signal?: AbortSignal,
@@ -578,7 +582,7 @@ export class SessionsStore {
     this.tokens.set(contextToken, {
       patchbayAgentId,
       given,
-      ...(target.via !== "new" ? { patchbaySessionId: target.patchbaySessionId } : {}),
+      ...(target.via === "load" || target.via === "resume" ? { patchbaySessionId: target.patchbaySessionId } : {}),
     });
     const cwd = opts.cwd ?? this.cwd();
     // Roots: an explicit list wins (every session/new — a birth seeded
@@ -586,12 +590,21 @@ export class SessionsStore {
     // composition — workspace folders beyond the cwd, then the session's
     // canonical user-added list. A folder gone from disk is skipped, never
     // sent: the list stays the user's, the wire carries what exists.
-    const composed = opts.roots ?? this.rootsFor(target.via !== "new" ? target.patchbaySessionId : null, cwd);
+    const composed =
+      opts.roots ??
+      this.rootsFor(target.via === "load" || target.via === "resume" ? target.patchbaySessionId : target.via === "fork" ? target.from : null, cwd);
     const missing = composed.filter((p) => !this.onDisk(p));
     const roots = composed.filter((p) => !missing.includes(p));
     if (missing.length > 0) this.hooks.rootsMissing?.(missing);
-    if (target.via === "new") {
-      const r = await unlessAborted(this.pool.newSession(patchbayAgentId, cwd, mcpServers, roots), signal);
+    if (target.via === "new" || target.via === "fork") {
+      const from = target.via === "fork" ? this.known.get(target.from)?.sessionId : undefined;
+      if (target.via === "fork" && from === undefined) throw new Error(`unknown session ${target.from}`);
+      const r = await unlessAborted(
+        from === undefined
+          ? this.pool.newSession(patchbayAgentId, cwd, mcpServers, roots)
+          : this.pool.fork(patchbayAgentId, from, cwd, mcpServers, roots),
+        signal,
+      );
       this.hooks.onRealSessionAttached?.(patchbayAgentId, r.sessionId);
       // the session isn't in the view yet — its caller says what was skipped
       return {
@@ -740,6 +753,68 @@ export class SessionsStore {
     return patchbaySessionId;
   }
 
+  /** A fork (`session/fork`, where the agent declares it): a new session
+   * the agent seeds with this one's context — this one stays as it is.
+   * The fork takes this one's roots, a title naming it until its agent
+   * names it, and the link back to it (`forkedFrom`), kept in its saved
+   * facts since no list carries it. Its earlier messages are the agent's to show: where the
+   * agent replays a session (`session/load`) the fork is read back from
+   * it, and where it can't, the fork says so — patchbay copies no
+   * transcript. */
+  async fork(patchbaySessionId: PatchbaySessionId, title: string, signal: AbortSignal): Promise<PatchbaySessionId> {
+    this.requireOffer(patchbaySessionId, "fork");
+    const parent = this.known.get(patchbaySessionId);
+    if (parent === undefined) throw new Error(`unknown session ${patchbaySessionId}`);
+    const { patchbayAgentId } = parent;
+    const added = this.addedRootsOf(patchbaySessionId);
+    const { sessionId, contextToken, knobs, missing } = await this.attachSession(
+      { via: "fork", from: patchbaySessionId },
+      patchbayAgentId,
+      {},
+      signal,
+    );
+    const forkId = mintPatchbaySessionId();
+    this.bind(forkId, { patchbayAgentId, sessionId, titled: true, everPrompted: parent.everPrompted });
+    this.bindToken(contextToken, forkId);
+    this.sessions.set(forkId, liveSession());
+    const named = `${title} (fork)`;
+    this.hooks.emit({
+      kind: "sessionCreated",
+      session: {
+        id: forkId,
+        patchbayAgentId,
+        title: named,
+        busy: [],
+        updatedAt: new Date().toISOString(),
+        forkedFrom: patchbaySessionId,
+      },
+    });
+    this.save(forkId, { forkedFrom: parent.sessionId, ...(added.length > 0 ? { roots: added } : {}) });
+    if (added.length > 0) this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId: forkId, roots: added });
+    this.noticeMissingRoots(forkId, missing);
+    this.hooks.rootsChanged?.(forkId);
+    this.log.info(`session ${forkId} forked from ${patchbaySessionId} with ${patchbayAgentId}`);
+    this.publishKnobs(forkId, knobs);
+    // A fork of a never-prompted session has no messages to show.
+    if (!parent.everPrompted) return forkId;
+    if (this.pool.get(patchbayAgentId)?.declared?.loadSession === true) {
+      await this.reload(forkId, signal);
+    } else {
+      this.hooks.emit({
+        kind: "transcriptSeeded",
+        patchbaySessionId: forkId,
+        blocks: [
+          {
+            kind: "notice",
+            id: newBlockId("notice"),
+            text: `Forked from "${title}". This agent can't replay a session, so the earlier messages aren't shown here — the fork carries them.`,
+          },
+        ],
+      });
+    }
+    return forkId;
+  }
+
   /** Points the sidebar at a session — the view's pointer, nothing more;
    * the attach that opening runs is the session gates'. */
   point(patchbaySessionId: PatchbaySessionId): void {
@@ -794,7 +869,7 @@ export class SessionsStore {
   async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) return;
-    this.requireEnd(patchbaySessionId, "delete");
+    this.requireOffer(patchbaySessionId, "delete");
     await this.pool.deleteSession(row.patchbayAgentId, row.sessionId);
     // Gone some other way meanwhile — a removed agent's sessions leave too.
     if (this.known.get(patchbaySessionId) === row) this.leave(patchbaySessionId, row);
@@ -810,7 +885,7 @@ export class SessionsStore {
   async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
     const row = this.known.get(patchbaySessionId);
     if (row === undefined) return;
-    this.requireEnd(patchbaySessionId, "close");
+    this.requireOffer(patchbaySessionId, "close");
     const attached = this.sessions.has(patchbaySessionId);
     this.hooks.cancelAsks?.(patchbaySessionId);
     this.forget(patchbaySessionId);
@@ -822,16 +897,14 @@ export class SessionsStore {
     });
   }
 
-  /** Refuses an end the session's agent doesn't offer (session-ends.ts).
-   * The gates ask before anything of the session ends — a refused end
-   * stops nothing — and the end asks again at the write. A session no
+  /** Refuses what the session's agent doesn't offer (session-offers.ts).
+   * The gates ask before anything of the session moves — a refused offer
+   * stops nothing — and the store asks again at the write. A session no
    * longer known refuses nothing: it has already left. */
-  requireEnd(patchbaySessionId: PatchbaySessionId, end: keyof SessionEnds): void {
+  requireOffer(patchbaySessionId: PatchbaySessionId, offer: keyof SessionOffers): void {
     const row = this.known.get(patchbaySessionId);
-    if (row === undefined || sessionEnds(this.hooks.capabilities(row.patchbayAgentId))[end]) return;
-    throw new Error(
-      end === "delete" ? "the agent doesn't offer session/delete" : "the agent doesn't offer session/close",
-    );
+    if (row === undefined || sessionOffers(this.hooks.capabilities(row.patchbayAgentId))[offer]) return;
+    throw new Error(`the agent doesn't offer session/${offer}`);
   }
 
   /** What leaves with a deleted session: whatever it still asks — it asks
@@ -1054,6 +1127,17 @@ export class SessionsStore {
       this.sessionsOn(patchbayAgentId).flatMap((patchbaySessionId) => this.known.get(patchbaySessionId)?.sessionId ?? []),
     );
     this.reconcile(patchbayAgentId, new Set([...seen, ...attached]));
+    this.linkForks(patchbayAgentId);
+  }
+
+  /** Each of the agent's forks named to its original's row — after the
+   * walk, since the list may name a fork before its original. */
+  private linkForks(patchbayAgentId: PatchbayAgentId): void {
+    for (const patchbaySessionId of this.ofAgent(patchbayAgentId)) {
+      const from = this.saved(patchbaySessionId).forkedFrom;
+      const forkedFrom = from === undefined ? undefined : this.rowFor(patchbayAgentId, from);
+      if (forkedFrom !== undefined) this.hooks.emit({ kind: "sessionRefreshed", patchbaySessionId, forkedFrom });
+    }
   }
 
   /** One listed session into the view. Title rule: the agent's title wins

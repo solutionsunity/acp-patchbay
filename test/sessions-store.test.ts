@@ -2886,6 +2886,102 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh7b" as PatchbayAgentId);
   });
 
+  it("fork, where the agent declares it: a new session carrying the original's history and roots opens — the original stays as it is", async () => {
+    const h = harness();
+    const agent = "sf1" as PatchbayAgentId;
+    await h.pool.connect(
+      spec({ declare: { loadSession: true, sessionCapabilities: { fork: {}, list: {}, additionalDirectories: {} } }, turn: [{ type: "chunk", text: "an answer" }] }, "sf1"),
+    );
+    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    await h.gates.addRoot(original, "/repo/extra");
+    await h.gates.prompt(original, { text: "the first question" });
+    const originalId = h.sessions.sessionIdOf(original);
+    const before = h.state().transcripts[original];
+
+    const forked = await h.gates.fork(original, "find foo");
+
+    expect(forked).not.toBe(original);
+    expect(h.sessions.sessionIdOf(forked)).toMatch(/-fork-/);
+    expect(h.state().sessions.find((s) => s.id === forked)?.title).toBe("find foo (fork)");
+    expect(h.state().activePatchbaySessionId).toBe(forked);
+    expect(h.state().contextRoots[forked]).toEqual(["/repo/extra"]);
+    // its earlier messages, read back from the agent
+    const users = (h.state().transcripts[forked] ?? []).filter((b) => b.kind === "user");
+    expect(users.map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual(["the first question"]);
+    // the original, untouched
+    expect(h.sessions.sessionIdOf(original)).toBe(originalId);
+    expect(h.state().transcripts[original]).toEqual(before);
+    expect(h.pool.get(agent)?.sessions).toEqual(expect.arrayContaining([originalId, h.sessions.sessionIdOf(forked)]));
+    await h.pool.stop(agent);
+  });
+
+  it("a fork keeps the link to its original — saved, and named to the original's row again after a later window's list read", async () => {
+    const store = new SessionContinuityStore(new MemoryKV());
+    const agent = "sf5" as PatchbayAgentId;
+    const script: FakeAgentScript = {
+      declare: { loadSession: true, sessionCapabilities: { fork: {}, list: {} } },
+      turn: [{ type: "chunk", text: "an answer" }],
+    };
+    const h1 = harness({ continuityStore: store });
+    await h1.pool.connect(spec(script, "sf5"));
+    const original = await h1.sessions.createSession(agent, "Fake Agent", cwd);
+    await h1.gates.prompt(original, { text: "the first question" });
+    const forked = await h1.gates.fork(original, "first");
+    expect(h1.state().sessions.find((s) => s.id === forked)?.forkedFrom).toBe(original);
+    const originalId = h1.sessions.sessionIdOf(original)!;
+    expect(store.read(agent, h1.sessions.sessionIdOf(forked)!)?.forkedFrom).toBe(originalId);
+    const forkId = h1.sessions.sessionIdOf(forked)!;
+    await h1.pool.stop(agent);
+
+    // a later window: both rows minted again from the agent's own list
+    const h2 = harness({ continuityStore: store });
+    await h2.pool.connect(spec(script, "sf5"));
+    await h2.sessions.syncAgentSessions(agent);
+    const fork2 = h2.sessions.rowFor(agent, forkId)!;
+    const original2 = h2.sessions.rowFor(agent, originalId)!;
+    expect(h2.state().sessions.find((s) => s.id === fork2)?.forkedFrom).toBe(original2);
+    expect(h2.state().sessions.find((s) => s.id === original2)?.forkedFrom).toBeUndefined();
+    await h2.pool.stop(agent);
+  });
+
+  it("a fork waits for a running turn to end, and never ends it", async () => {
+    const h = harness();
+    const agent = "sf2" as PatchbayAgentId;
+    await h.pool.connect(
+      spec({ declare: { loadSession: true, sessionCapabilities: { fork: {} } }, turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 }, "sf2"),
+    );
+    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const turn = h.gates.prompt(original, { text: "go" }).then(() => "finished", (err: unknown) => err);
+    await new Promise((r) => setTimeout(r, 50)); // the turn is underway
+    const forked = await h.gates.fork(original, "go");
+    expect(await turn).toBe("finished");
+    expect(h.state().sessions.map((s) => s.id)).toContain(forked);
+    await h.pool.stop(agent);
+  });
+
+  it("a fork where the agent can't replay a session says so — patchbay copies no transcript", async () => {
+    const h = harness();
+    const agent = "sf3" as PatchbayAgentId;
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { fork: {} } }, turn: [{ type: "chunk", text: "x" }] }, "sf3"));
+    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    await h.gates.prompt(original, { text: "go" });
+    const forked = await h.gates.fork(original, "go");
+    const blocks = h.state().transcripts[forked] ?? [];
+    expect(blocks.filter((b) => b.kind === "user")).toEqual([]);
+    expect(blocks.some((b) => b.kind === "notice" && b.text.includes("can't replay a session"))).toBe(true);
+    await h.pool.stop(agent);
+  });
+
+  it("fork is refused where the agent doesn't offer it — nothing moves", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sf4"));
+    const original = await h.sessions.createSession("sf4" as PatchbayAgentId, "Fake Agent", cwd);
+    const sessionsBefore = h.state().sessions.length;
+    await expect(h.gates.fork(original, "x")).rejects.toThrow(/doesn't offer session\/fork/);
+    expect(h.state().sessions).toHaveLength(sessionsBefore);
+    await h.pool.stop("sf4" as PatchbayAgentId);
+  });
+
   it("delete is refused where the agent never offered it — nothing of the session ends", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sh8"));

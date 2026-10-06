@@ -42,9 +42,9 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   name rides the wire as the server's name, so no two servers share one.
   Nothing is stored until it can work — a cancelled OAuth consent adds
   nothing.
-- **Branch** — the user-level concept: continue an alternate path from a session.
-  Out of the current release (§ Branching); "fork" only ever names the protocol
-  method `session/fork`, which remains a capability-matrix row.
+- **Fork** — the session menu's Fork, named for the protocol method
+  `session/fork`: a new session the agent seeds with another's context (§ Fork).
+  Only the agent's native fork; patchbay emulates none.
 - **Routing** — the user's per-agent selection of which MCP servers that agent
   receives.
 
@@ -576,13 +576,26 @@ The pilot is Auggie's removed-draft models surface (the Auggie dossier),
 refactored into `extensions/session-models-field.ts` — precisely the shape this
 rule exists to keep out of core files.
 
-## Branching
+## Fork
 
-**Out of the current release.** Standard-ACP-only is the line: an emulated
-branch would be a cache presented as a conversation, so it is declined.
-`session/fork` remains a capability-matrix row (declared/used honesty about the
-agent), with no UI feature riding it. Native-fork-only branching is the visible
-extension point when a features bullet demands it.
+**The agent's native fork, nothing emulated.** The session menu offers Fork
+where the agent declares `session/fork` (`src/shared/session-offers.ts`). The
+fork runs on the original's attachment line, behind its agent's work: a
+running turn is waited for, never ended, and the original attaches first, so
+its agent holds the context it forks. The new session rides the one attach
+chokepoint like any other (its own token, MCP servers, the original's roots),
+takes a title naming the original until its agent names it, and opens. No
+list or session info carries a fork's original, so the link is a saved fact
+of the fork's own (its original's agent id), named to the original's row
+again after every list read; the session row shows it as "Forked from
+‹original›". Its
+earlier messages are the agent's to show: where the agent declares
+`session/load` the fork is read back from it; where it can't, the fork says
+so. Patchbay copies no transcript — an emulated branch would be a cache
+presented as a conversation. `session/fork` takes no point to fork at, so
+forking at an earlier turn, and editing a sent prompt to fork from there,
+wait for ACP to name points in a session (the session-cursor and rewind
+proposals).
 
 ## Session model, mode, effort
 

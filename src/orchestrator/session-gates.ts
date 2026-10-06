@@ -6,7 +6,7 @@
 // the queue keeps. The attachment line orders what binds the session to its
 // connection or rides it between turns: an open's attach (the ladder, the
 // zero-turn re-mint with it), a reload, a roots re-apply, a knob set, an
-// idle release, a delete, a close. The turn line holds the session's turn — one at a
+// idle release, a fork, a delete, a close. The turn line holds the session's turn — one at a
 // time, ACP's own rule; held words wait on the session's row and enter the
 // line one by one. A turn starts only once the attachment line is idle, so
 // nothing re-binds the session under a turn and no prompt fires into a
@@ -174,13 +174,38 @@ export class SessionGates {
     this.drain(patchbaySessionId);
   }
 
+  /** Fork: a new session the agent seeds with this one's context — this
+   * one stays as it is. On this session's attachment line, behind what its
+   * agent's row holds; a running turn is waited for, never ended (the fork
+   * takes what is complete), and this session attaches first, so its agent
+   * holds the context it forks. The fork then opens like any session. An
+   * agent that doesn't offer it refuses before anything moves. */
+  async fork(patchbaySessionId: PatchbaySessionId, title: string): Promise<PatchbaySessionId> {
+    this.sessions.requireOffer(patchbaySessionId, "fork");
+    const forkId = await this.attachLine.run(
+      patchbaySessionId,
+      "fork",
+      async (signal) => {
+        await unlessAborted(this.turnLine.settled(patchbaySessionId), signal);
+        if (!(await this.sessions.hydrate(patchbaySessionId, signal))) {
+          throw new Error("the session couldn't be opened to fork it");
+        }
+        return this.sessions.fork(patchbaySessionId, title, signal);
+      },
+      "fork",
+      this.agentWork(patchbaySessionId),
+    );
+    this.open(forkId);
+    return forkId;
+  }
+
   /** Delete: everything the session's lines hold ends — its turn told to
    * stop, its attach work dropped — then, once what its agent's row holds
    * has settled, the agent removes it from its history. An agent that
    * doesn't offer it refuses before anything ends; one that refuses the
    * delete itself leaves the session where it was. */
   async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
-    this.sessions.requireEnd(patchbaySessionId, "delete");
+    this.sessions.requireOffer(patchbaySessionId, "delete");
     await this.attachLine.cut(patchbaySessionId, "delete", async () => {
       await this.turnLine.end(patchbaySessionId, "delete");
       await this.agentWork(patchbaySessionId);
@@ -194,7 +219,7 @@ export class SessionGates {
    * session closes. It waits on nothing its agent does: a hung restart
    * never keeps a session open. */
   async close(patchbaySessionId: PatchbaySessionId): Promise<void> {
-    this.sessions.requireEnd(patchbaySessionId, "close");
+    this.sessions.requireOffer(patchbaySessionId, "close");
     this.rootsWaiting.delete(patchbaySessionId);
     await this.attachLine.cut(patchbaySessionId, "close", async () => {
       await this.turnLine.end(patchbaySessionId, "close");
