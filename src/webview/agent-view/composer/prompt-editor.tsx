@@ -285,8 +285,8 @@ function EditorCore(props: PromptEditorProps) {
   useEffect(() => {
     if (props.focusRequest === seenRequest.current) return;
     seenRequest.current = props.focusRequest;
-    if (document.hasFocus()) takeKeyboard(editor);
-    else awaitingFocus.current = true;
+    awaitingFocus.current = !document.hasFocus();
+    if (!awaitingFocus.current) takeKeyboard(editor);
   }, [editor, props.focusRequest]);
   useEffect(() => {
     const onFocus = () => {

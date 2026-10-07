@@ -54,16 +54,16 @@ export async function runLoginTask(
   name: string,
   recipe: TerminalAuthRecipe,
 ): Promise<number | undefined> {
-  // A per-run id in the definition: VS Code keys task identity on the
-  // definition literal, and an identical definition still running would be
-  // "already active" (a restart prompt) instead of a second login. It is
-  // also what the events are matched on, subscribed before execution so a
-  // process that exits in the same beat as it starts cannot be missed.
   if ([recipe.command, ...recipe.args, ...Object.values(recipe.env ?? {})].some((v) => TASK_VARIABLE.test(v))) {
     throw new Error(
       "the login command holds a `${…}` pattern, which VS Code's task runner would replace — it can't be run as written; run it in your own terminal",
     );
   }
+  // A per-run id in the definition: VS Code keys task identity on the
+  // definition literal, and an identical definition still running would be
+  // "already active" (a restart prompt) instead of a second login. It is
+  // also what the events are matched on, subscribed before execution so a
+  // process that exits in the same beat as it starts cannot be missed.
   const run = randomUUID();
   const task = new vscode.Task(
     { type: LOGIN_TASK_TYPE, run },

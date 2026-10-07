@@ -277,7 +277,10 @@ export class McpServersStore {
     flow: (bound: OAuthUserAgent) => Promise<T>,
     signal: AbortSignal | undefined,
   ): Promise<T> {
-    const running = flow({ ...userAgent, authorize: (url, state) => userAgent.authorize(url, state, signal) });
+    const running = flow({
+      redirectUri: () => userAgent.redirectUri(),
+      authorize: (url, state) => userAgent.authorize(url, state, signal),
+    });
     running.catch(() => {}); // given up, it may still reject — never unhandled
     return unlessAborted(running, signal);
   }
