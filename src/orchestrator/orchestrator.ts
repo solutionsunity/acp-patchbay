@@ -26,12 +26,12 @@ import {
   type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
-  type PermissionBlock,
   type SavedRootScope,
   type SavedRootsView,
   type SettingsEvent,
   type SettingsState,
 } from "../shared/protocol";
+import { askNotice } from "../shared/ask-notice";
 import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
@@ -123,13 +123,6 @@ async function askModal(message: string, choice: string): Promise<boolean> {
 /** A permission card's title when neither the request nor the call it
  * asks about named one. */
 const PERMISSION_UNTITLED = "Permission request";
-
-/** A permission card on one line: its title and subject — the command, or
- * the files the call names. */
-function permissionLine(ask: PermissionBlock): string {
-  const subject = ask.detail !== "" ? ask.detail : (ask.call?.locations.map((l) => l.path).join(", ") ?? "");
-  return subject === "" ? ask.title : `${ask.title}: ${subject}`;
-}
 
 export class Orchestrator {
   readonly agentView: ChannelHost<AgentViewState, AgentViewEvent>;
@@ -1370,27 +1363,14 @@ export class Orchestrator {
     this.knownAsks = open;
   }
 
-  /** Mirrors the inline card: its own answers where a button can give them
-   * (the same actions the card sends, so whichever surface the user acts
-   * on first wins — a second answer is a no-op), and Open, which brings
-   * the session up. A question is answered only in its card. */
+  /** Mirrors the inline card: its own answers where the line shows all the
+   * card does (the same actions the card sends, so whichever surface the
+   * user acts on first wins — a second answer is a no-op), and Open, which
+   * brings the session up (askNotice decides which). */
   private notifyAsk(patchbaySessionId: PatchbaySessionId, title: string, ask: OpenAsk): void {
-    const answers: { label: string; action: Action }[] =
-      ask.kind === "permission"
-        ? ask.options.map((o) => ({
-            label: o.label,
-            action: { kind: "resolvePermission", patchbayAskId: ask.id, optionId: o.optionId },
-          }))
-        : ask.kind === "diff"
-          ? [
-              { label: "Accept", action: { kind: "resolveDiff", patchbayAskId: ask.id, accept: true } },
-              { label: "Reject", action: { kind: "resolveDiff", patchbayAskId: ask.id, accept: false } },
-            ]
-          : [];
-    const what =
-      ask.kind === "permission" ? permissionLine(ask) : ask.kind === "diff" ? `File write: ${ask.file}` : ask.message;
+    const { line, answers } = askNotice(ask);
     const labels = [...answers.map((a) => a.label), "Open"];
-    void vscode.window.showWarningMessage(`${title} — ${what}`, ...labels).then((picked) => {
+    void vscode.window.showWarningMessage(`${title} — ${line}`, ...labels).then((picked) => {
       if (picked === "Open") void this.revealSession(patchbaySessionId);
       else {
         const answer = answers.find((a) => a.label === picked);

@@ -1156,7 +1156,9 @@ supplies each agent in its own standard — and ACP carries no channel for it
   conduct row by row rather than silently trusting any of it.
 - Allow-once / allow-always / reject inline in chat; when no visible surface shows
   the asking session, the same request surfaces as a native notification. One
-  approval surface, wherever the user is looking.
+  approval surface, wherever the user is looking — and a notification answers
+  only when its one line shows everything the card does; otherwise it offers
+  Open, and the decision is made at the card (`shared/ask-notice.ts`).
 - "Waiting on the user" is one derived fact: the open asks (permission, write,
   terminal, question cards not yet answered) in the canonical transcripts —
   cards only the asks store writes, so none reads open after its ask ended. The

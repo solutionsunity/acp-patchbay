@@ -23,7 +23,9 @@ security fixes and the bugs the refactors surfaced.
   click away, what it produced, and the input it will run with — where the
   card used to show only a title. An edit is judged by its diff's own path
   as well as the files it names, an edit a rule allows still shows its
-  card (settled), a request the agent takes back can no longer be answered, and the write card's diff is taken against the open
+  card (settled), a notification answers a request only when its line shows
+  everything the card does (otherwise it opens the card), a request the
+  agent takes back can no longer be answered, and the write card's diff is taken against the open
   editor, unsaved edits included. (#80)
 - **What the agent says is shown as it says it.** One reader per kind of
   agent message replaces the places that each read the wire their own way
