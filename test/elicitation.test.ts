@@ -15,7 +15,7 @@ import {
   formFieldsOf,
   linkOf,
   readElicitationRequest,
-} from "../src/orchestrator/elicitation";
+} from "../src/orchestrator/readers/elicitation";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import { SessionsStore } from "../src/orchestrator/sessions-store";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
@@ -288,9 +288,8 @@ function wireHarness() {
     onDeclaredCaptured: () => {},
     onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     ...stubFsTerminalHooks(),
-    onElicitation: async (patchbayAgentId, params, signal) => {
-      const reading = readElicitationRequest(params);
-      if (reading.kind !== "ask") return { action: "decline" };
+    onElicitation: async (patchbayAgentId, reading, signal) => {
+      if (reading.kind !== "ask") return { action: "cancel" };
       const { message, ask, elicitationId } = reading;
       // the session the agent names its own way, as patchbay holds it
       const patchbaySessionId = sessions.rowFor(patchbayAgentId, reading.sessionId);

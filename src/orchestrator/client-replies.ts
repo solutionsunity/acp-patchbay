@@ -66,6 +66,12 @@ export function relativeCwd(cwd: string): RequestError {
   return RequestError.invalidParams({ cwd }, `cwd must be an absolute path: ${cwd}`);
 }
 
+/** A file path that is not absolute — the spec requires one, and a
+ * relative one would land wherever the extension host happens to run. */
+export function relativePath(path: string): RequestError {
+  return RequestError.invalidParams({ path }, `path must be absolute: ${path}`);
+}
+
 /** A terminal id the agent never got from `terminal/create`, or already
  * released — the agent's mistake, answered as bad params, never as the
  * client breaking. */

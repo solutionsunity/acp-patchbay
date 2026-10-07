@@ -1148,6 +1148,8 @@ export interface TerminalBlock {
   output: string;
   running: boolean;
   exitCode: number | null;
+  /** The signal that ended it, when one did (a kill). */
+  signal?: string;
 }
 
 /** One form field. Two producers, one card: the agent's own
@@ -1662,7 +1664,7 @@ export type AgentViewEvent =
   | { kind: "diffResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; accepted: boolean; auto: boolean }
   | { kind: "terminalStarted"; patchbaySessionId: PatchbaySessionId; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; chunk: string }
-  | { kind: "terminalExited"; patchbaySessionId: PatchbaySessionId; blockId: string; exitCode: number | null }
+  | { kind: "terminalExited"; patchbaySessionId: PatchbaySessionId; blockId: string; exitCode: number | null; signal?: string }
   | ({ kind: "elicitationRequested"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; message: string } & ElicitationAsk)
   | { kind: "elicitationResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; outcome: ElicitationOutcome }
   /** An opened link's follow-up moved: the agent reported the page done,
@@ -2163,6 +2165,7 @@ export function reduceAgentView(
         ...b,
         running: false,
         exitCode: event.exitCode,
+        ...(event.signal !== undefined ? { signal: event.signal } : {}),
       }));
     case "elicitationRequested": {
       const { kind: _kind, patchbaySessionId, patchbayAskId, ...asked } = event;

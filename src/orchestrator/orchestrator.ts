@@ -49,7 +49,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { McpServerGates } from "./mcp-server-gates";
 import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
 import { OAuthCallbackRegistry } from "./oauth-callback";
-import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
+import { elicitationResponseOf, formFieldsOf } from "./readers/elicitation";
 import { runLoginTask } from "./login-task";
 import { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
@@ -436,12 +436,13 @@ export class Orchestrator {
       // end (crash, OS kill) leaves exactly what the next activate reaps.
       onProcessSpawned: (pid, command) => void this.spawnRegistry.add(pid, command, "agent"),
       onProcessEnded: (pid) => void this.spawnRegistry.removePid(pid),
-      onElicitation: async (patchbayAgentId, params, signal) => {
-        const reading = readElicitationRequest(params);
+      onElicitation: async (patchbayAgentId, reading, signal) => {
         if (reading.kind === "invalid") throw RequestError.invalidParams({ reason: reading.why });
+        // A question patchbay can't present reaches no one: no user declined
+        // it, so it is answered as dismissed — `decline` is the user's own no.
         if (reading.kind === "refuse") {
-          this.log.info(`${patchbayAgentId}: declined an elicitation — ${reading.why}`);
-          return { action: "decline" };
+          this.log.info(`${patchbayAgentId}: cancelled an elicitation no one could be shown — ${reading.why}`);
+          return { action: "cancel" };
         }
         const { message, ask, elicitationId } = reading;
         // A throwaway session — the probe's or the defaults editor's — is

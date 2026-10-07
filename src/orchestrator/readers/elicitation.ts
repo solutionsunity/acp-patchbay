@@ -9,8 +9,8 @@
 //
 // Refusal is part of the contract. A property this cannot present (an
 // unknown type, a choice with no options) makes the whole form null: the
-// caller then declines the request, which is a legal answer. Dropping the
-// field instead would send the agent content the user never gave, and
+// caller then answers cancel — no user saw it, so none declined it. Dropping
+// the field instead would send the agent content the user never gave, and
 // guessing a control for an unknown type would be worse.
 import type { CreateElicitationResponse } from "@agentclientprotocol/sdk";
 import type {
@@ -19,7 +19,7 @@ import type {
   ElicitationField,
   ElicitationLink,
   LinkWarning,
-} from "../shared/protocol";
+} from "../../shared/protocol";
 
 interface Option {
   value: string;
@@ -207,7 +207,8 @@ export function linkOf(url: unknown): ElicitationLink | null {
 /** What an agent's `elicitation/create` asks for, decided in one place:
  *  - `ask`: present it — a form, or a link carrying the id the agent's
  *    completion notice will name;
- *  - `refuse`: a legal decline, with the reason for the log;
+ *  - `refuse`: nothing a user can be shown — answered cancel, with the
+ *    reason for the log;
  *  - `invalid`: a mode patchbay never declared — the spec's answer is an
  *    invalid-params error, not a decline.
  * Request-scoped asks (no session, e.g. during login) are refused: no agent

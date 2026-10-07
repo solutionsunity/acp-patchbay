@@ -11,11 +11,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
+import { randomUUID } from "node:crypto";
 import { formatCommandLine } from "../shared/command-line";
 import { terminalBlockId, type AgentViewEvent } from "../shared/protocol";
 import type { PermissionBroker } from "./broker";
-import { gateRefusal, readFailure, relativeCwd, unknownSession, unknownTerminal } from "./client-replies";
+import { gateRefusal, readFailure, relativeCwd, relativePath, unknownSession, unknownTerminal } from "./client-replies";
 import type { PoolHooks } from "./pool";
+import type { FileReadFact, FileWriteFact, TerminalCreateFact, TerminalRefFact } from "./readers/client-requests";
 import { NodeTerminalRunner, type CreateTerminalParams, type TerminalHandle, type TerminalRunner } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
@@ -38,34 +40,29 @@ export class ClientHost {
    * answers: another session's request, or another agent's, finds no such
    * terminal. */
   private readonly terminals = new Map<string, { handle: TerminalHandle; owner: PatchbaySessionId }>();
-  private terminalCounter = 0;
   private readonly runner: TerminalRunner = new NodeTerminalRunner();
 
   constructor(private readonly deps: ClientHostDeps) {}
 
   /** `patchbaySessionId` is patchbay's id for the session the agent named —
    * undefined when patchbay holds no such session, which reads nothing. */
-  async readTextFile(
-    patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.ReadTextFileRequest,
-  ): Promise<acp.ReadTextFileResponse> {
-    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
-    const content = await this.deps.readLive(params.path).catch((err: unknown) => {
-      throw readFailure(err, params.path);
+  async readTextFile(patchbaySessionId: PatchbaySessionId | undefined, request: FileReadFact): Promise<acp.ReadTextFileResponse> {
+    if (patchbaySessionId === undefined) throw unknownSession(request.sessionId);
+    if (!isAbsolute(request.path)) throw relativePath(request.path);
+    const content = await this.deps.readLive(request.path).catch((err: unknown) => {
+      throw readFailure(err, request.path);
     });
-    return { content: sliceTextFileRead(content, params.line, params.limit) };
+    return { content: sliceTextFileRead(content, request.line, request.limit) };
   }
 
   /** `patchbaySessionId` is patchbay's id for the session the agent named —
    * undefined when patchbay holds no such session, which asks no one. */
-  async writeTextFile(
-    patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.WriteTextFileRequest,
-  ): Promise<acp.WriteTextFileResponse> {
-    if (patchbaySessionId === undefined) throw unknownSession(params.sessionId);
-    const outcome = await this.deps.broker.gateFileWrite(patchbaySessionId, params.path, params.content);
-    if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${params.path}`);
-    await this.deps.writeLive(params.path, params.content);
+  async writeTextFile(patchbaySessionId: PatchbaySessionId | undefined, request: FileWriteFact): Promise<acp.WriteTextFileResponse> {
+    if (patchbaySessionId === undefined) throw unknownSession(request.sessionId);
+    if (!isAbsolute(request.path)) throw relativePath(request.path);
+    const outcome = await this.deps.broker.gateFileWrite(patchbaySessionId, request.path, request.content);
+    if (outcome !== "accepted") throw gateRefusal(outcome, `write to ${request.path}`);
+    await this.deps.writeLive(request.path, request.content);
     return {};
   }
 
@@ -74,26 +71,29 @@ export class ClientHost {
    * runs, since that is the directory the agent was told it works in. Null
    * when the connection never opened it. */
   async createTerminal(
-    params: acp.CreateTerminalRequest,
+    request: TerminalCreateFact,
     session: { id: PatchbaySessionId; cwd: string } | null,
   ): Promise<acp.CreateTerminalResponse> {
-    if (session === null) throw unknownSession(params.sessionId);
-    if (params.cwd != null && !isAbsolute(params.cwd)) throw relativeCwd(params.cwd);
+    if (session === null) throw unknownSession(request.sessionId);
+    if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw relativeCwd(request.cwd);
     // One description of the run: the gate judges and shows exactly what
     // the runner then spawns.
     const run: CreateTerminalParams = {
-      command: params.command,
-      args: params.args ?? [],
-      env: Object.fromEntries((params.env ?? []).map((e) => [e.name, e.value])),
-      cwd: params.cwd ?? session.cwd,
-      outputByteLimit: params.outputByteLimit ?? null,
+      command: request.command,
+      args: [...request.args],
+      env: { ...request.env },
+      cwd: request.cwd ?? session.cwd,
+      outputByteLimit: request.outputByteLimit ?? null,
     };
     const command = formatCommandLine(run.command, run.args);
     const outcome = await this.deps.broker.gateCommand(session.id, run);
     if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
 
     const handle = this.runner.create(run);
-    const terminalId = `term-${++this.terminalCounter}`;
+    // Unique beyond this window: a replayed call naming a terminal of an
+    // earlier window must never bind to a new one that happens to share
+    // its number.
+    const terminalId = `term-${randomUUID()}`;
     this.terminals.set(terminalId, { handle, owner: session.id });
     this.deps.trackProcess(handle);
     const blockId = terminalBlockId(terminalId);
@@ -101,16 +101,19 @@ export class ClientHost {
     this.deps.emit({ kind: "terminalStarted", patchbaySessionId, blockId, command });
     handle.onData((chunk) => this.deps.emit({ kind: "terminalOutputAppended", patchbaySessionId, blockId, chunk }));
     handle.onExit((status) =>
-      this.deps.emit({ kind: "terminalExited", patchbaySessionId, blockId, exitCode: status.exitCode }),
+      this.deps.emit({
+        kind: "terminalExited",
+        patchbaySessionId,
+        blockId,
+        exitCode: status.exitCode,
+        ...(status.signal !== null ? { signal: status.signal } : {}),
+      }),
     );
     return { terminalId };
   }
 
-  async terminalOutput(
-    patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.TerminalOutputRequest,
-  ): Promise<acp.TerminalOutputResponse> {
-    const handle = this.terminal(patchbaySessionId, params);
+  async terminalOutput(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.TerminalOutputResponse> {
+    const handle = this.terminal(patchbaySessionId, request);
     const { output, truncated } = handle.currentOutput();
     const exit = handle.exitStatus();
     return {
@@ -122,30 +125,27 @@ export class ClientHost {
 
   async waitForTerminalExit(
     patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.WaitForTerminalExitRequest,
+    request: TerminalRefFact,
   ): Promise<acp.WaitForTerminalExitResponse> {
-    return this.terminal(patchbaySessionId, params).waitForExit();
+    const { exitCode, signal } = await this.terminal(patchbaySessionId, request).waitForExit();
+    return { exitCode, signal };
   }
 
-  async killTerminal(
-    patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.KillTerminalRequest,
-  ): Promise<acp.KillTerminalResponse> {
-    this.owned(patchbaySessionId, params)?.kill();
+  /** A terminal the session never got — or already released — is the
+   * agent's mistake, answered like output and wait: never an untrue
+   * "killed". */
+  async killTerminal(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.KillTerminalResponse> {
+    this.terminal(patchbaySessionId, request).kill();
     return {};
   }
 
-  async releaseTerminal(
-    patchbaySessionId: PatchbaySessionId | undefined,
-    params: acp.ReleaseTerminalRequest,
-  ): Promise<acp.ReleaseTerminalResponse> {
+  async releaseTerminal(patchbaySessionId: PatchbaySessionId | undefined, request: TerminalRefFact): Promise<acp.ReleaseTerminalResponse> {
     // ACP release semantics: a still-running command is killed — before
     // this, releasing dropped the handle and left the process running
     // with nothing pointing at it.
-    const handle = this.owned(patchbaySessionId, params);
-    if (handle === undefined) return {};
+    const handle = this.terminal(patchbaySessionId, request);
     if (handle.exitStatus() === null) handle.kill();
-    this.terminals.delete(params.terminalId);
+    this.terminals.delete(request.terminalId);
     return {};
   }
 
@@ -222,16 +222,16 @@ export function clientRequestHooks(
   | "onReleaseTerminal"
 > {
   return {
-    onReadTextFile: (patchbayAgentId, params) => host().readTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
-    onWriteTextFile: (patchbayAgentId, params) => host().writeTextFile(sessionFor(patchbayAgentId, params.sessionId), params),
-    onCreateTerminal: (patchbayAgentId, params, sessionCwd) => {
-      const patchbaySessionId = sessionFor(patchbayAgentId, params.sessionId);
-      return host().createTerminal(params, patchbaySessionId === undefined || sessionCwd === null ? null : { id: patchbaySessionId, cwd: sessionCwd });
+    onReadTextFile: (patchbayAgentId, request) => host().readTextFile(sessionFor(patchbayAgentId, request.sessionId), request),
+    onWriteTextFile: (patchbayAgentId, request) => host().writeTextFile(sessionFor(patchbayAgentId, request.sessionId), request),
+    onCreateTerminal: (patchbayAgentId, request, sessionCwd) => {
+      const patchbaySessionId = sessionFor(patchbayAgentId, request.sessionId);
+      return host().createTerminal(request, patchbaySessionId === undefined || sessionCwd === null ? null : { id: patchbaySessionId, cwd: sessionCwd });
     },
-    onTerminalOutput: (patchbayAgentId, params) => host().terminalOutput(sessionFor(patchbayAgentId, params.sessionId), params),
-    onWaitForTerminalExit: (patchbayAgentId, params) =>
-      host().waitForTerminalExit(sessionFor(patchbayAgentId, params.sessionId), params),
-    onKillTerminal: (patchbayAgentId, params) => host().killTerminal(sessionFor(patchbayAgentId, params.sessionId), params),
-    onReleaseTerminal: (patchbayAgentId, params) => host().releaseTerminal(sessionFor(patchbayAgentId, params.sessionId), params),
+    onTerminalOutput: (patchbayAgentId, request) => host().terminalOutput(sessionFor(patchbayAgentId, request.sessionId), request),
+    onWaitForTerminalExit: (patchbayAgentId, request) =>
+      host().waitForTerminalExit(sessionFor(patchbayAgentId, request.sessionId), request),
+    onKillTerminal: (patchbayAgentId, request) => host().killTerminal(sessionFor(patchbayAgentId, request.sessionId), request),
+    onReleaseTerminal: (patchbayAgentId, request) => host().releaseTerminal(sessionFor(patchbayAgentId, request.sessionId), request),
   };
 }

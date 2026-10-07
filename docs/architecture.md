@@ -342,8 +342,8 @@ is caught, by the one error reader: its message and what its `data` adds
 (where agents put the reason), and whether it bears on auth. A failure the
 user caused — a turn, a log-in, a knob change, a fork — says it where they
 are, in those words; a background one says it in the Output channel. The
-agent's file, terminal and elicitation requests are still read by their
-consumers — the move is tracked in #80.
+agent's own requests — files, terminals, elicitation — are read at the pool
+the same way, and their hooks hand on the reading.
 
 ## Agent capability matrix
 

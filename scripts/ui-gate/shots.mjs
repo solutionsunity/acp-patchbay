@@ -906,6 +906,18 @@ for (const theme of Object.keys(THEMES)) {
   );
   const line = await p.waitForSelector(".turn-error", { timeout: 3000 }).then((el) => el.textContent(), () => "");
   check(`a failed turn says why under its line ("${line}")`, line === "Internal error — process exited with code 1");
+  // a terminal patchbay never ran says so, never "not started"; one a kill
+  // ended names its signal, never "exit ?" (#80)
+  await p.evaluate(() =>
+    window.__patch([
+      { kind: "toolCallUpserted", patchbaySessionId: "s1", blockId: "agent-run", title: "Run the agent's own command", status: "completed", toolKind: "execute", content: [{ kind: "terminal", terminalId: "agent-term-9" }] },
+      { kind: "terminalStarted", patchbaySessionId: "s1", blockId: "term-block-killed", command: "sleep 60" },
+      { kind: "terminalExited", patchbaySessionId: "s1", blockId: "term-block-killed", exitCode: null, signal: "SIGTERM" },
+    ]),
+  );
+  const ghost = await p.waitForSelector(".ghost-terminal", { timeout: 3000 }).then((el) => el.textContent(), () => "");
+  check(`a terminal patchbay didn't run says so ("${ghost}")`, ghost.includes("didn't run here"));
+  check("a killed terminal names its signal", (await p.locator(".card", { hasText: "sleep 60" }).locator(".st", { hasText: "SIGTERM" }).count()) === 1);
   await p.close();
 }
 

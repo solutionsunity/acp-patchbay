@@ -580,14 +580,15 @@ describe("ClientHost — a terminal answers only the session that made it (#76)"
     const h = harness();
     await h.rules.set({ commandRules: [{ pattern: `${process.execPath} *`, verdict: "allow" }], fileWriteScope: "workspace" });
     const { terminalId } = await h.host.createTerminal(
-      { sessionId: "agent-a", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"] },
+      { sessionId: "agent-a", command: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"], env: {} },
       { id: A, cwd: workspaceRoot },
     );
     const fromB = { sessionId: "agent-b", terminalId };
     await expect(h.host.terminalOutput(B, fromB)).rejects.toMatchObject({ code: -32602, message: expect.stringContaining(terminalId) });
     await expect(h.host.waitForTerminalExit(B, fromB)).rejects.toMatchObject({ code: -32602 });
-    await h.host.killTerminal(B, fromB);
-    await h.host.releaseTerminal(B, fromB);
+    // nor a kill or a release — never an untrue "killed" (#80)
+    await expect(h.host.killTerminal(B, fromB)).rejects.toMatchObject({ code: -32602 });
+    await expect(h.host.releaseTerminal(B, fromB)).rejects.toMatchObject({ code: -32602 });
     // still its own session's, still running
     const fromA = { sessionId: "agent-a", terminalId };
     expect((await h.host.terminalOutput(A, fromA)).exitStatus).toBeNull();
@@ -613,17 +614,40 @@ describe("ClientHost — a terminal answers only the session that made it (#76)"
 describe("ClientHost — a terminal's session and cwd (issue #64)", () => {
   it("a session the connection never opened is the agent's bad params — nothing asked, nothing spawned", async () => {
     const { host, events } = harness();
-    await expect(host.createTerminal({ sessionId: "never-opened", command: "true" }, null)).rejects.toMatchObject({
+    await expect(host.createTerminal({ sessionId: "never-opened", command: "true", args: [], env: {} }, null)).rejects.toMatchObject({
       code: -32602,
       message: expect.stringContaining("never-opened"),
     });
     expect(events).toEqual([]);
   });
 
+  it("a relative file path is the agent's bad params — read or write, nothing asked, nothing touched (#80)", async () => {
+    const { host, events } = harness();
+    const S = "s" as PatchbaySessionId;
+    await expect(host.readTextFile(S, { sessionId: "s", path: "rel/x.txt" })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("rel/x.txt") });
+    await expect(host.writeTextFile(S, { sessionId: "s", path: "rel/x.txt", content: "x" })).rejects.toMatchObject({ code: -32602 });
+    expect(events).toEqual([]);
+  });
+
+  it("a command that never starts says why in its own output, and terminal ids never repeat (#80)", async () => {
+    const h = harness();
+    await h.rules.set({ commandRules: [{ pattern: "*", verdict: "allow" }], fileWriteScope: "workspace" });
+    const S = "s" as PatchbaySessionId;
+    const create = () =>
+      h.host.createTerminal({ sessionId: "s", command: join(dir, "no-such-command"), args: [], env: {} }, { id: S, cwd: workspaceRoot });
+    const { terminalId } = await create();
+    const ref = { sessionId: "s", terminalId };
+    expect(await h.host.waitForTerminalExit(S, ref)).toEqual({ exitCode: null, signal: null });
+    expect((await h.host.terminalOutput(S, ref)).output).toMatch(/ENOENT/);
+    const again = await create();
+    expect(again.terminalId).not.toBe(terminalId);
+    expect(terminalId).toMatch(/^term-[0-9a-f-]{36}$/);
+  });
+
   it("a relative cwd is the agent's bad params — the spec requires an absolute path", async () => {
     const { host, events } = harness();
     await expect(
-      host.createTerminal({ sessionId: "s", command: "true", cwd: "sub/dir" }, { id: "s" as PatchbaySessionId, cwd: workspaceRoot }),
+      host.createTerminal({ sessionId: "s", command: "true", args: [], env: {}, cwd: "sub/dir" }, { id: "s" as PatchbaySessionId, cwd: workspaceRoot }),
     ).rejects.toMatchObject({ code: -32602, message: expect.stringContaining("sub/dir") });
     expect(events).toEqual([]);
   });

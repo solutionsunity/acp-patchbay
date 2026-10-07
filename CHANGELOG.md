@@ -36,8 +36,12 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   capability is declared only in its own shape. A failed turn says why
   under its turn line, and a failed log-in, log-out, knob change, fork or
   delete says why in a warning — with the reason agents put in an error's
-  data, which used to reach no one. Each case patchbay can't show is said
-  once in the Output channel.
+  data, which used to reach no one. A terminal patchbay didn't run (an
+  agent's own command) no longer reads "not started", a killed command
+  shows its signal, a command that never started says why, and an
+  agent's question patchbay can't present is answered "cancel", not a
+  "decline" no user gave. Each case patchbay can't show is said once in
+  the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**
   wherever the agent declares them. Close no longer deletes the session from

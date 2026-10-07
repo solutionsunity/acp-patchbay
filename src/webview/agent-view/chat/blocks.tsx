@@ -578,11 +578,17 @@ function RawSection({ input, output, initiallyOpen }: { input: string | null; ou
 export const TerminalBlocks = createContext<ReadonlyMap<string, TerminalBlock>>(new Map());
 
 /** A terminal the call runs in, always visible under its header — ACP: the
- * client displays an embedded terminal's output as it is generated. */
+ * client displays an embedded terminal's output as it is generated. One
+ * patchbay didn't run in this window — the agent's own, or an earlier
+ * window's — has nothing here to show, and says so. */
 function EmbeddedTerminal({ terminalId }: { terminalId: string }) {
   const block = useContext(TerminalBlocks).get(terminalBlockId(terminalId));
   if (block === undefined) {
-    return <div className="px-2.5 pb-2 text-[11px] italic text-muted-foreground">terminal {terminalId} — not started</div>;
+    return (
+      <div className="ghost-terminal px-2.5 pb-2 text-[11px] italic text-muted-foreground" title={terminalId}>
+        a terminal patchbay didn't run here — its output isn't shown
+      </div>
+    );
   }
   return (
     <div className="border-t border-[var(--pb-border)]">
@@ -680,6 +686,10 @@ export function TerminalView({ block }: { block: TerminalBlock }) {
           ) : block.exitCode != null ? (
             <span className="text-err">
               <Icon name="close" /> exit {block.exitCode}
+            </span>
+          ) : block.signal !== undefined ? (
+            <span className="text-warn">
+              <Icon name="circle-slash" /> {block.signal}
             </span>
           ) : (
             // exit code unknown — no verdict, no verdict color

@@ -19,6 +19,17 @@ import { isRefusal } from "./client-replies";
 import { clientCapabilitiesWire, rowsProvenBy, type WireFact } from "./capabilities";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
+import {
+  readFileRead,
+  readFileWrite,
+  readTerminalCreate,
+  readTerminalRef,
+  type FileReadFact,
+  type FileWriteFact,
+  type TerminalCreateFact,
+  type TerminalRefFact,
+} from "./readers/client-requests";
+import { readElicitationRequest, type ElicitationRequestReading } from "./readers/elicitation";
 import { readInitialize, type InitializeFact } from "./readers/initialize";
 import { NoteLog, type Note } from "./readers/notes";
 import { readPermissionRequest, type PermissionRequestFact } from "./readers/permission";
@@ -93,7 +104,7 @@ export interface PoolHooks {
    * `signal` aborts when the agent withdraws the request. */
   onElicitation?(
     patchbayAgentId: PatchbayAgentId,
-    params: acp.CreateElicitationRequest,
+    request: ElicitationRequestReading,
     signal: AbortSignal,
   ): Promise<acp.CreateElicitationResponse>;
   /** The agent reports a page it sent the user to is done. */
@@ -149,28 +160,19 @@ export interface PoolHooks {
    * required — a declared-but-unhandled method would be exactly the kind of
    * lie bet #2 exists to prevent. Live-buffer reads and pre-gated writes
    * live behind these hooks so the pool itself stays vscode-free. */
-  onReadTextFile(patchbayAgentId: PatchbayAgentId, params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse>;
-  onWriteTextFile(patchbayAgentId: PatchbayAgentId, params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse>;
+  onReadTextFile(patchbayAgentId: PatchbayAgentId, request: FileReadFact): Promise<acp.ReadTextFileResponse>;
+  onWriteTextFile(patchbayAgentId: PatchbayAgentId, request: FileWriteFact): Promise<acp.WriteTextFileResponse>;
   /** `sessionCwd`: the cwd the requesting session was opened with on this
    * connection — null when this connection never opened it. */
   onCreateTerminal(
     patchbayAgentId: PatchbayAgentId,
-    params: acp.CreateTerminalRequest,
+    request: TerminalCreateFact,
     sessionCwd: string | null,
   ): Promise<acp.CreateTerminalResponse>;
-  onTerminalOutput(
-    patchbayAgentId: PatchbayAgentId,
-    params: acp.TerminalOutputRequest,
-  ): Promise<acp.TerminalOutputResponse>;
-  onWaitForTerminalExit(
-    patchbayAgentId: PatchbayAgentId,
-    params: acp.WaitForTerminalExitRequest,
-  ): Promise<acp.WaitForTerminalExitResponse>;
-  onKillTerminal(patchbayAgentId: PatchbayAgentId, params: acp.KillTerminalRequest): Promise<acp.KillTerminalResponse>;
-  onReleaseTerminal(
-    patchbayAgentId: PatchbayAgentId,
-    params: acp.ReleaseTerminalRequest,
-  ): Promise<acp.ReleaseTerminalResponse>;
+  onTerminalOutput(patchbayAgentId: PatchbayAgentId, request: TerminalRefFact): Promise<acp.TerminalOutputResponse>;
+  onWaitForTerminalExit(patchbayAgentId: PatchbayAgentId, request: TerminalRefFact): Promise<acp.WaitForTerminalExitResponse>;
+  onKillTerminal(patchbayAgentId: PatchbayAgentId, request: TerminalRefFact): Promise<acp.KillTerminalResponse>;
+  onReleaseTerminal(patchbayAgentId: PatchbayAgentId, request: TerminalRefFact): Promise<acp.ReleaseTerminalResponse>;
 }
 
 interface Entry {
@@ -527,7 +529,7 @@ export class AgentPool {
       .onRequest(
         ...proven(acp.methods.client.elicitation.create, (ctx) => {
           const handler = this.hooks.onElicitation;
-          if (handler) return handler(patchbayAgentId, ctx.params, ctx.signal);
+          if (handler) return handler(patchbayAgentId, readElicitationRequest(ctx.params), ctx.signal);
           return Promise.resolve<acp.CreateElicitationResponse>({ action: "cancel" });
         }),
       )
@@ -559,37 +561,37 @@ export class AgentPool {
       })
       .onRequest(
         ...proven(acp.methods.client.fs.readTextFile, (ctx) =>
-          this.hooks.onReadTextFile(patchbayAgentId, ctx.params),
+          this.hooks.onReadTextFile(patchbayAgentId, readFileRead(ctx.params)),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.fs.writeTextFile, (ctx) =>
-          this.hooks.onWriteTextFile(patchbayAgentId, ctx.params),
+          this.hooks.onWriteTextFile(patchbayAgentId, readFileWrite(ctx.params)),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.create, (ctx) =>
-          this.hooks.onCreateTerminal(patchbayAgentId, ctx.params, entry.sessions.get(ctx.params.sessionId) ?? null),
+          this.hooks.onCreateTerminal(patchbayAgentId, readTerminalCreate(ctx.params), entry.sessions.get(ctx.params.sessionId) ?? null),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.output, (ctx) =>
-          this.hooks.onTerminalOutput(patchbayAgentId, ctx.params),
+          this.hooks.onTerminalOutput(patchbayAgentId, readTerminalRef(ctx.params)),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.waitForExit, (ctx) =>
-          this.hooks.onWaitForTerminalExit(patchbayAgentId, ctx.params),
+          this.hooks.onWaitForTerminalExit(patchbayAgentId, readTerminalRef(ctx.params)),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.kill, (ctx) =>
-          this.hooks.onKillTerminal(patchbayAgentId, ctx.params),
+          this.hooks.onKillTerminal(patchbayAgentId, readTerminalRef(ctx.params)),
         ),
       )
       .onRequest(
         ...proven(acp.methods.client.terminal.release, (ctx) =>
-          this.hooks.onReleaseTerminal(patchbayAgentId, ctx.params),
+          this.hooks.onReleaseTerminal(patchbayAgentId, readTerminalRef(ctx.params)),
         ),
       )
       .connect(stream);

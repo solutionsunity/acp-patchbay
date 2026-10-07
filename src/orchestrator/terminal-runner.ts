@@ -94,7 +94,12 @@ export class NodeTerminalRunner implements TerminalRunner {
       for (const waiter of exitWaiters.splice(0)) waiter(status);
     };
     child.on("exit", (code, signal) => finish({ exitCode: code, signal }));
-    child.on("error", () => finish({ exitCode: null, signal: null }));
+    // A command that never started says why in its own output — what the
+    // agent reads back and the transcript shows, never a bare "exit ?".
+    child.on("error", (err) => {
+      append(`${err.message}\n`);
+      finish({ exitCode: null, signal: null });
+    });
 
     return {
       pid: child.pid ?? null,
