@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { agentErrorText } from "../src/orchestrator/readers/agent-error";
-import { readContent } from "../src/orchestrator/readers/content";
+import { forModelOnly, readContent } from "../src/orchestrator/readers/content";
 import { NoteLog } from "../src/orchestrator/readers/notes";
 import { readSessionUpdate, sessionMetaOf } from "../src/orchestrator/readers/session-update";
 import { readToolCall, readToolCallAnnounced } from "../src/orchestrator/readers/tool-call";
@@ -96,6 +96,15 @@ describe("readContent", () => {
       blob: "b",
       mimeType: "image/png",
     });
+  });
+});
+
+describe("forModelOnly", () => {
+  it("content is for the model alone when its audience names no user; no audience is everyone's", () => {
+    expect(forModelOnly({ type: "text", text: "x", audience: ["assistant"] })).toBe(true);
+    expect(forModelOnly({ type: "text", text: "x", audience: ["user", "assistant"] })).toBe(false);
+    expect(forModelOnly({ type: "text", text: "x", audience: ["user"] })).toBe(false);
+    expect(forModelOnly({ type: "text", text: "x" })).toBe(false);
   });
 });
 

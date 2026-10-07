@@ -915,6 +915,14 @@ for (const theme of Object.keys(THEMES)) {
       { kind: "terminalExited", patchbaySessionId: "s1", blockId: "term-block-killed", exitCode: null, signal: "SIGTERM" },
     ]),
   );
+  // what the agent addressed to the model alone shows collapsed, a click away
+  await p.evaluate(() =>
+    window.__patch([{ kind: "agentPartAppended", patchbaySessionId: "s1", blockId: "part-model", part: { kind: "text", text: "context for the model", forModel: true }, thought: false }]),
+  );
+  const forModel = p.locator(".dim-line.for-model");
+  check("content meant for the model shows collapsed, labeled so", (await forModel.filter({ hasText: "meant for the model" }).count()) === 1 && (await forModel.locator(".rendered").count()) === 0);
+  await forModel.locator("button").click();
+  check("a click shows it as it renders", (await forModel.locator(".rendered", { hasText: "context for the model" }).count()) === 1);
   const ghost = await p.waitForSelector(".ghost-terminal", { timeout: 3000 }).then((el) => el.textContent(), () => "");
   check(`a terminal patchbay didn't run says so ("${ghost}")`, ghost.includes("didn't run here"));
   check("a killed terminal names its signal", (await p.locator(".card", { hasText: "sleep 60" }).locator(".st", { hasText: "SIGTERM" }).count()) === 1);

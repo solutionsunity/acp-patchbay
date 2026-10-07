@@ -4,7 +4,7 @@
 // Prose and tool-call blocks of the transcript. Each component consumes the
 // view-model's vocabulary (`live` = the one block receiving deltas) and
 // sends its own actions — no callback threading.
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import {
   isToolCallOpen,
   userPartsText,
@@ -208,15 +208,16 @@ export function CarriedUpdate({ updateKind, payload }: { updateKind: string; pay
 }
 
 /** A dim collapsed line beside the conversation, never part of it: a
- * label, and its text on a click. */
-function DimLine({ kind, icon, label, what, body }: { kind: string; icon: string; label: string; what: string; body: string }) {
+ * label, and on a click its body — raw text as it came, or content as it
+ * renders. */
+function DimLine({ kind, icon, label, what, body }: { kind: string; icon: string; label: string; what: string; body: string | ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={`dim-line ${kind} ${open ? "open" : ""}`}>
       <Disclosure open={open} onToggle={() => setOpen(!open)} label={open ? `Hide ${what}` : `Show ${what}`}>
         <Icon name={icon} /> {label}
       </Disclosure>
-      {open && <pre className="body">{body}</pre>}
+      {open && (typeof body === "string" ? <pre className="body">{body}</pre> : <div className="rendered">{body}</div>)}
     </div>
   );
 }
@@ -531,6 +532,12 @@ export function CallDetails({
  * output in fences, labels), rendered like its messages; every other kind
  * shares the user message's part renderers. */
 export function ContentPartView({ part }: { part: ContentPart }) {
+  // The one place agent content is shown: what the agent addressed to the
+  // model alone stays out of what it tells you — collapsed, a click away.
+  if (part.forModel === true) {
+    const { forModel: _forModel, ...shown } = part;
+    return <DimLine kind="for-model" icon="eye-closed" label="meant for the model" what="what the agent gave the model" body={<ContentPartView part={shown} />} />;
+  }
   if (part.kind === "text") {
     return (
       <div className="msg-agent min-w-0">

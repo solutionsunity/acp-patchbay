@@ -24,7 +24,7 @@ import { computeLineDiff } from "./diff";
 import { createProseRewriter, type ProseRewriter } from "./extensions";
 import type { Logger } from "./logger";
 import type { AgentTerminalReading } from "./meta";
-import type { ContentFact, ToolContentFact } from "./readers/content";
+import { forModelOnly, type ContentFact, type ToolContentFact } from "./readers/content";
 import type { SessionUpdateFact } from "./readers/session-update";
 import type { ToolCallFact } from "./readers/tool-call";
 import { randomUUID } from "node:crypto";
@@ -331,6 +331,12 @@ export class SessionStream {
     content: ContentFact,
     emit: (...events: AgentViewEvent[]) => void,
   ): void {
+    // Addressed to the model alone: its own part, shown collapsed — never
+    // woven into what the agent tells the user.
+    if (forModelOnly(content)) {
+      this.emitAgentPart(patchbaySessionId, session, content, false, emit);
+      return;
+    }
     if (content.type === "resource_link") {
       // Renderable, so render it: a markdown link into the prose run —
       // never a placeholder for content the reader can use. Rides through

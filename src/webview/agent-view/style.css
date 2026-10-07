@@ -594,6 +594,12 @@ body {
   font-size: 12px;
 }
 
+.dim-line .rendered {
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--pb-border);
+}
+
 .dim-line .body {
   margin-top: 4px;
   padding: 8px 10px;

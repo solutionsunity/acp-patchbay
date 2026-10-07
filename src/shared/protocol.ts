@@ -856,7 +856,12 @@ export function isToolCallOpen(status: ToolCallStatus): boolean {
  * mentions, images and context to placeholder text). Every surface that
  * shows agent or user content maps onto this one set: user messages (sent
  * and replayed alike), agent messages, and tool-call content. */
-export type ContentPart =
+export type ContentPart = ContentPartOf &
+  /** The agent addressed it to the model alone (its annotations name no
+   * user audience): shown collapsed, never as the agent's word to you. */
+  { forModel?: true };
+
+type ContentPartOf =
   | { kind: "text"; text: string }
   /** A resource_link — an `@file` mention in a user's message, a link
    * elsewhere — with the title and description the agent gave it. */

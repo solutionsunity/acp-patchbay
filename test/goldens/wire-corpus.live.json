@@ -75,9 +75,14 @@
       "thought": false
     },
     {
-      "kind": "text",
+      "kind": "agentPart",
       "id": "<id-11>",
-      "text": "For the model only."
+      "part": {
+        "kind": "text",
+        "text": "For the model only.",
+        "forModel": true
+      },
+      "thought": false
     },
     {
       "kind": "agentPart",

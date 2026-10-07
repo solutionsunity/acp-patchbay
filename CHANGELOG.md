@@ -48,7 +48,9 @@ security fixes and the bugs the refactors surfaced.
   "decline" no user gave. Model options with the same name are told apart
   by their descriptions, and what agents send beside their content now
   shows: a tool's own name, a plan entry's priority, a link's title,
-  thinking and cache-write tokens, a form's own title. Each case patchbay
+  thinking and cache-write tokens, a form's own title. What the agent
+  addresses to the model alone shows collapsed, "meant for the model",
+  instead of reading as its word to you. Each case patchbay
   can't show is said once in the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**

@@ -8,7 +8,7 @@
 // resources) fall to a labeled placeholder.
 import type { ContentPart, ToolContentPart } from "../shared/protocol";
 import { imageFileName, stashPreview } from "./attachments";
-import type { ContentFact, ToolContentFact } from "./readers/content";
+import { forModelOnly, type ContentFact, type ToolContentFact } from "./readers/content";
 
 /** Agent-sized text rides every state snapshot — bounded here, with an
  * honest marker, never a silent cut. */
@@ -27,6 +27,11 @@ export interface ImageStash {
 }
 
 export function contentPartOf(content: ContentFact, images: ImageStash): ContentPart {
+  const part = partOf(content, images);
+  return forModelOnly(content) ? { ...part, forModel: true } : part;
+}
+
+function partOf(content: ContentFact, images: ImageStash): ContentPart {
   switch (content.type) {
     case "text":
       return { kind: "text", text: content.text };
@@ -62,7 +67,7 @@ export function toolContentOf(content: readonly ToolContentFact[], images: Image
     switch (c.type) {
       case "content": {
         const part = contentPartOf(c.content, images);
-        return [part.kind === "text" ? { kind: "text", text: boundedText(part.text) } : part];
+        return [part.kind === "text" ? { ...part, text: boundedText(part.text) } : part];
       }
       case "terminal":
         return [{ kind: "terminal", terminalId: c.terminalId }];

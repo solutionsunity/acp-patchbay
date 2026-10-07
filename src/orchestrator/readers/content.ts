@@ -77,6 +77,13 @@ export function readContent(block: ContentBlock): ContentFact {
   }
 }
 
+/** Whether the agent addressed this content to the model alone — an
+ * audience that names no user. Shown collapsed, never as the agent's word
+ * to the user; content with no audience is everyone's. */
+export function forModelOnly(content: ContentFact): boolean {
+  return content.audience !== undefined && !content.audience.includes("user");
+}
+
 export function readToolContent(content: readonly ToolCallContent[]): ToolContentFact[] {
   return content.map((c): ToolContentFact => {
     switch (c.type) {

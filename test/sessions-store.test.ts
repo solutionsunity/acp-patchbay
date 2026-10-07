@@ -3445,6 +3445,24 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch-term" as PatchbayAgentId);
   });
 
+  it("what the agent addresses to the model alone is its own part, never woven into its prose (#80)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch-model" as PatchbayAgentId);
+    push({ sessionUpdate: "agent_message_chunk", messageId: "m", content: { type: "text", text: "Here is the plan. " } });
+    push({ sessionUpdate: "agent_message_chunk", messageId: "m", content: { type: "text", text: "context dump", annotations: { audience: ["assistant"] } } });
+    push({ sessionUpdate: "agent_message_chunk", messageId: "m", content: { type: "text", text: "Done.", annotations: { audience: ["user", "assistant"] } } });
+    push({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "Read",
+      content: [{ type: "content", content: { type: "text", text: "raw for the model", annotations: { audience: ["assistant"] } } }],
+    });
+    expect(blocks().map((b) => b.kind)).toEqual(["text", "agentPart", "text", "toolCall"]);
+    expect(blocks()[1]).toMatchObject({ part: { kind: "text", text: "context dump", forModel: true } });
+    expect(textOf(blocks()[2])).toBe("Done.");
+    expect(blocks()[3]).toMatchObject({ content: [{ kind: "text", text: "raw for the model", forModel: true }] });
+    await h.pool.stop("ch-model" as PatchbayAgentId);
+  });
+
   it("a link in an agent's message stays one link — brackets in its name, spaces in its target", async () => {
     const { h, push, blocks } = await chunkHarness("ch-link" as PatchbayAgentId);
     push({ sessionUpdate: "agent_message_chunk", content: { type: "resource_link", name: "notes [draft].md", uri: "file:///w/my notes (1).md" } });
