@@ -11,7 +11,7 @@ import { parseCommandLine } from "../src/shared/command-line";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
-import type { AgentViewEvent } from "../src/shared/protocol";
+import type { AgentViewEvent, PermissionCallView, PermissionOptionView, ToolCallKind } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 let dir: string;
@@ -191,7 +191,30 @@ describe("PermissionBroker.evaluateFileWrites", () => {
   });
 });
 
-describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged by every location it names", () => {
+/** An agent's permission request as the broker gets it: the call it asks
+ * about, naming `paths` as locations (and `diffs` as its diffs' paths). */
+function request(
+  title: string,
+  toolKind: ToolCallKind,
+  paths: readonly string[],
+  options: readonly PermissionOptionView[],
+  more: Partial<PermissionCallView> = {},
+): { title: string; call: PermissionCallView; options: readonly PermissionOptionView[] } {
+  return {
+    title,
+    call: { toolCallId: "t1", toolKind, locations: paths.map((path) => ({ path, line: null })), content: [], diffs: {}, input: null, ...more },
+    options,
+  };
+}
+
+async function cardOf(events: readonly AgentViewEvent[]): Promise<Extract<AgentViewEvent, { kind: "permissionRequested" }>> {
+  await new Promise((r) => setTimeout(r, 20));
+  const asked = events.find((e) => e.kind === "permissionRequested");
+  if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
+  return asked;
+}
+
+describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged by every file it names", () => {
   const options = [
     { optionId: "y", label: "Allow", kind: "allow_once" as const },
     { optionId: "n", label: "Reject", kind: "reject_once" as const },
@@ -200,7 +223,7 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
   it("auto-allows only when every location lands inside", async () => {
     const { broker, events } = harness();
     const inside = [join(workspaceRoot, "a.ts"), join(workspaceRoot, "b.ts")];
-    await expect(broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", inside, options)).resolves.toEqual({
+    await expect(broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Edit", "edit", inside, options))).resolves.toEqual({
       optionId: "y",
     });
     expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
@@ -208,11 +231,11 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
 
   it("only an edit is judged by its locations — any other kind asks, even when every one is inside", async () => {
     const { broker, asks, events } = harness();
-    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Delete", "delete", [join(workspaceRoot, "a.ts")], options);
-    await new Promise((r) => setTimeout(r, 20));
-    const asked = events.find((e) => e.kind === "permissionRequested");
-    if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
-    expect(asked.detail).toBe("Delete");
+    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Delete", "delete", [join(workspaceRoot, "a.ts")], options));
+    const asked = await cardOf(events);
+    expect(asked.title).toBe("Delete");
+    // the card names the file, whatever the kind
+    expect(asked.call?.locations.map((l) => l.path)).toEqual([join(workspaceRoot, "a.ts")]);
     asks.answerOption(asked.patchbayAskId, "n");
     await expect(pending).resolves.toEqual({ optionId: "n" });
   });
@@ -220,13 +243,53 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
   it("a first location inside never carries a later one outside — it asks, naming both", async () => {
     const { broker, asks, events } = harness();
     const mixed = [join(workspaceRoot, "a.ts"), `${workspaceRoot}/../escaped.txt`];
-    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", mixed, options);
-    await new Promise((r) => setTimeout(r, 20));
-    const asked = events.find((e) => e.kind === "permissionRequested");
-    if (asked?.kind !== "permissionRequested") throw new Error("no card — the request was auto-allowed");
-    expect(asked.detail).toBe(mixed.join(", "));
+    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Edit", "edit", mixed, options));
+    const asked = await cardOf(events);
+    expect(asked.call?.locations.map((l) => l.path)).toEqual(mixed);
     asks.answerOption(asked.patchbayAskId, "n");
     await expect(pending).resolves.toEqual({ optionId: "n" });
+  });
+
+  it("a diff writing outside is judged by its own path, whatever the locations say (#80)", async () => {
+    const { broker, asks, events } = harness();
+    const pending = broker.resolveAgentPermissionRequest(
+      "s1" as PatchbaySessionId,
+      request("Edit", "edit", [join(workspaceRoot, "a.ts")], options, { diffs: { "/etc/hosts": { additions: 1, deletions: 0 } } }),
+    );
+    const asked = await cardOf(events);
+    expect(asked.call?.diffs).toEqual({ "/etc/hosts": { additions: 1, deletions: 0 } });
+    asks.answerOption(asked.patchbayAskId, "n");
+    await expect(pending).resolves.toEqual({ optionId: "n" });
+  });
+
+  it("the card shows what the call will do — its content and input, handed-out values masked (#80)", async () => {
+    const { broker, asks, events } = harness();
+    const pending = broker.resolveAgentPermissionRequest(
+      "s1" as PatchbaySessionId,
+      request(`curl -H ${HANDED_OUT}`, "execute", [], options, {
+        content: [{ kind: "text", text: `will send ${HANDED_OUT}` }],
+        input: `{ "command": "curl -H ${HANDED_OUT}" }`,
+      }),
+    );
+    const asked = await cardOf(events);
+    expect(JSON.stringify(asked)).not.toContain(HANDED_OUT);
+    expect(asked.title).toBe("curl -H •••");
+    expect(asked.call).toMatchObject({ content: [{ kind: "text", text: "will send •••" }], input: '{ "command": "curl -H •••" }' });
+    asks.answerOption(asked.patchbayAskId, "y");
+    await expect(pending).resolves.toEqual({ optionId: "y" });
+  });
+
+  it("a request the agent takes back settles its card as withdrawn — no later click answers it (#80)", async () => {
+    const { broker, asks, events, audit } = harness();
+    const withdraw = new AbortController();
+    const pending = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Run", "execute", [], options), withdraw.signal);
+    const asked = await cardOf(events);
+    withdraw.abort();
+    await expect(pending).resolves.toEqual({ cancelled: true });
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Withdrawn by the agent", auto: true });
+    asks.answerOption(asked.patchbayAskId, "y"); // too late: nothing moves
+    expect(events.filter((e) => e.kind === "permissionResolved")).toHaveLength(1);
+    expect((await audit.tail(5)).some((e) => e.kind === "withdraw")).toBe(true);
   });
 });
 
@@ -289,10 +352,13 @@ describe("PermissionBroker audit trail", () => {
     const { broker, asks, events, audit } = harness();
     // an agent permission request and a command gate, both pending on s1;
     // an unrelated session's request must survive the sweep
-    const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit file", "edit", [], [
-      { optionId: "y", label: "Allow", kind: "allow_once" },
-      { optionId: "n", label: "Reject", kind: "reject_once" },
-    ]);
+    const agentReq = broker.resolveAgentPermissionRequest(
+      "s1" as PatchbaySessionId,
+      request("Edit file", "edit", [], [
+        { optionId: "y", label: "Allow", kind: "allow_once" },
+        { optionId: "n", label: "Reject", kind: "reject_once" },
+      ]),
+    );
     const commandGate = broker.gateCommand("s1" as PatchbaySessionId, run("curl example.com"));
     const otherSession = broker.gateCommand("s2" as PatchbaySessionId, run("npm run lint"));
     // the agent's request is judged before its card shows
@@ -323,7 +389,7 @@ describe("PermissionBroker audit trail", () => {
   it("a turn stopped while a request is still being judged answers it cancelled — no card, never a dangling request", async () => {
     const { broker, asks, events, audit } = harness();
     const options = [{ optionId: "y", label: "Allow", kind: "allow_once" as const }];
-    const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, "Edit", "edit", [join(workspaceRoot, "a.ts")], options);
+    const agentReq = broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Edit", "edit", [join(workspaceRoot, "a.ts")], options));
     const write = broker.gateFileWrite("s1" as PatchbaySessionId, join(workspaceRoot, "b.ts"), "x");
     asks.stopSession("s1" as PatchbaySessionId); // before either judge has read the disk
     await expect(agentReq).resolves.toEqual({ cancelled: true });

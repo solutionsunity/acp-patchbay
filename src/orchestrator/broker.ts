@@ -24,12 +24,12 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { formatCommandLine } from "../shared/command-line";
-import type { ElicitationAnswer, ElicitationAsk, PermissionOptionView } from "../shared/protocol";
+import type { ElicitationAnswer, ElicitationAsk, PermissionCallView, PermissionOptionView } from "../shared/protocol";
 import type { AsksStore, LinkCompletion } from "./asks-store";
 import { computeLineDiff } from "./diff";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import type { CreateTerminalParams } from "./terminal-runner";
-import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../shared/ids";
 
 /** How one of patchbay's own gates settled. `cancelled` is the turn
  * stopping under an open card — the user never decided, which is not the
@@ -86,6 +86,10 @@ export class PermissionBroker {
     /** Machine-layer command rules — absent in tests that don't exercise
      * layering; the workspace layer alone then behaves as before. */
     private readonly machineRules: MachineRulesStore | null = null,
+    /** A file's text as a write would replace it — the open editor's
+     * buffer, unsaved edits included, where one holds the file; the disk
+     * otherwise. */
+    private readonly currentText: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
   ) {}
 
   /** Two layers, workspace first (permission-rules.ts): the workspace's own
@@ -132,10 +136,7 @@ export class PermissionBroker {
     const link = question.ask.mode === "url" ? { href: question.ask.link.href, completion: question.completion ?? null } : null;
     const { id, ending } = this.asks.open(patchbaySessionId, "question", null, link);
     this.asks.show(id, { kind: "question", message: question.message, ask: question.ask });
-    if (signal !== undefined) {
-      if (signal.aborted) this.asks.withdraw(id);
-      else signal.addEventListener("abort", () => this.asks.withdraw(id), { once: true });
-    }
+    this.withdrawOn(id, signal);
     const ended = await ending;
     return ended.end === "user" && ended.choice.kind === "answer" ? ended.choice.answer : { action: "cancel" };
   }
@@ -161,33 +162,53 @@ export class PermissionBroker {
   }
 
   /** The agent's own session/request_permission call — shown with exactly
-   * the options the agent offered. An edit names its files in the tool
-   * call's `locations`, the one subject ACP guarantees, and is judged by
-   * all of them; any other kind carries nothing a rule can judge, so it
-   * asks. A rule's allow picks the agent's own allow-once option; an agent
-   * that offers none is asked. */
+   * the options the agent offered, and the call it asks about as the user
+   * must see it to decide: the files it names, what it produced, the input
+   * it will run with (agent text masked for values patchbay handed out). An
+   * edit is judged by every file it names — the locations it reports and
+   * the path of each diff it carries, the write's own target; any other kind
+   * carries nothing a rule can judge, so it asks. A rule's allow picks the
+   * agent's own allow-once option; an agent that offers none is asked. An
+   * aborted `signal` (the agent withdrew the request) settles the card as
+   * withdrawn. */
   async resolveAgentPermissionRequest(
     patchbaySessionId: PatchbaySessionId,
-    toolTitle: string,
-    toolKind: string,
-    locations: readonly string[],
-    options: readonly PermissionOptionView[],
+    request: { title: string; call: PermissionCallView; options: readonly PermissionOptionView[] },
+    signal?: AbortSignal,
   ): Promise<{ optionId: string } | { cancelled: true }> {
-    const files = toolKind === "edit" ? locations : [];
+    const { title, call, options } = request;
+    const files = call.toolKind === "edit" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
-    const { id, ending } = this.asks.open(patchbaySessionId, "permission", { tool: toolTitle, files });
+    const { id, ending } = this.asks.open(patchbaySessionId, "permission", { tool: title, files });
+    this.withdrawOn(id, signal);
     const verdict = await this.evaluateFileWrites(patchbaySessionId, files);
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
     if (auto !== undefined) this.asks.allow(id);
-    else {
-      const detail = files.length > 0 ? files.join(", ") : toolTitle;
-      this.asks.show(id, { kind: "options", title: toolTitle, detail, facts: [], options });
-    }
+    else this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call) });
     const ended = await ending;
     if (ended.end === "rule" && auto !== undefined) return { optionId: auto.optionId };
     if (ended.end === "user" && ended.choice.kind === "option") return { optionId: ended.choice.option.optionId };
     return { cancelled: true };
+  }
+
+  /** The agent took its request back: the ask settles as withdrawn. */
+  private withdrawOn(id: PatchbayAskId, signal: AbortSignal | undefined): void {
+    if (signal === undefined) return;
+    if (signal.aborted) this.asks.withdraw(id);
+    else signal.addEventListener("abort", () => this.asks.withdraw(id), { once: true });
+  }
+
+  /** A call as a card shows it, with every value patchbay handed an agent
+   * masked wherever the agent's own text carries it. */
+  private masked(call: PermissionCallView): PermissionCallView {
+    return {
+      ...call,
+      content: call.content.map((p) =>
+        p.kind === "text" || p.kind === "context" ? { ...p, text: this.redact(p.text) } : p,
+      ),
+      input: call.input === null ? null : this.redact(call.input),
+    };
   }
 
   private async persistAllowRule(pattern: string): Promise<void> {
@@ -207,12 +228,9 @@ export class PermissionBroker {
     // The place is held before the gate reads the disk: a turn stopped
     // meanwhile answers this write too, before any card was shown.
     const { id, ending } = this.asks.open(patchbaySessionId, "write", { file: path });
-    let oldContent = "";
-    try {
-      oldContent = await readFile(path, "utf8");
-    } catch {
-      // new file — diff against empty, honestly showing an all-additions diff
-    }
+    // What the write replaces — the buffer the user may have edited, not
+    // only the disk; a new file diffs against empty, all additions.
+    const oldContent = await this.currentText(path).catch(() => "");
     const allowed = (await this.evaluateFileWrites(patchbaySessionId, [path])) === "allow";
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
     const proposal = allowed ? null : { path, oldText: oldContent, newText: newContent };

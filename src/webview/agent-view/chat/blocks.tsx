@@ -14,6 +14,7 @@ import {
   type DiffStat,
   type TerminalBlock,
   type ToolCallBlock,
+  type ToolContentPart,
   type UserPart,
 } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
@@ -22,10 +23,9 @@ import { Disclosure } from "../../shared/disclosure";
 import { basename, filePathOf, splitPath } from "../../shared/path";
 import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
-import { TerminalView } from "./cards";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
-import { diffTotal, toolFileRows } from "./view-model";
+import { diffTotal, toolFileRows, type ToolFileRow } from "./view-model";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
@@ -424,62 +424,94 @@ export function ToolCallCard({
         <ToolCallStatusTag block={block} />
       </div>
       {open && (
-        <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
-          {listFiles && (
-            <div className="tool-files flex flex-col gap-0.5 text-[12px]">
-              {rows.map((r) => {
-                const { base, dir } = splitPath(r.path, roots);
-                return (
-                  <div key={r.path} className="flex min-w-0 items-center gap-1.5">
-                    <button
-                      type="button"
-                      className={`flex shrink-0 items-center gap-1 font-medium ${LINK}`}
-                      title={`Open ${r.path}${r.lines[0] === undefined ? "" : ` at line ${r.lines[0]}`}`}
-                      onClick={() => openAt(r.path, r.lines[0])}
-                    >
-                      <Icon name="go-to-file" />
-                      {base}
-                      {r.lines[0] !== undefined && `:${r.lines[0]}`}
-                    </button>
-                    {r.lines.slice(1).map((line) => (
-                      <button
-                        type="button"
-                        key={line}
-                        className={`shrink-0 font-mono text-[11px] text-muted-foreground ${LINK}`}
-                        title={`Open ${r.path} at line ${line}`}
-                        onClick={() => openAt(r.path, line)}
-                      >
-                        :{line}
-                      </button>
-                    ))}
-                    {dir !== "" && (
-                      <span className="min-w-0 truncate text-muted-foreground" title={r.path}>
-                        {dir}
-                      </span>
-                    )}
-                    {r.diff !== null && (
-                      <span className="ml-auto">
-                        <DiffCount
-                          stat={r.diff}
-                          title="Open this file's edit in VS Code's diff editor"
-                          onClick={() => openDiff(r.path)}
-                        />
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {shown.map((part, i) => (
-            <ContentPartView key={i} part={part} />
-          ))}
-          {hasRaw && <RawSection input={block.input} output={block.output} />}
-        </div>
+        <CallDetails
+          call={block}
+          rows={listFiles ? rows : []}
+          patchbaySessionId={patchbaySessionId}
+          roots={roots}
+          rawOpen={false}
+        />
       )}
       {terminals.map((id) => (
         <EmbeddedTerminal key={id} terminalId={id} />
       ))}
+    </div>
+  );
+}
+
+/** A tool call's details, one rendering for every card that shows a call
+ * (its own card, a permission request about it): one row per file — name,
+ * every line the agent reported in it, its folder, its ± when the call
+ * carried a diff for it, opening that diff — then what the call produced
+ * for the user, as the agent presented it, then the raw wire payload
+ * behind its own toggle. `rows` empty = no file list. */
+export function CallDetails({
+  call,
+  rows,
+  patchbaySessionId,
+  roots,
+  rawOpen,
+}: {
+  call: { id: string; content: readonly ToolContentPart[]; input: string | null; output: string | null };
+  rows: readonly ToolFileRow[];
+  patchbaySessionId: PatchbaySessionId;
+  roots: readonly string[];
+  /** The raw payload starts open — where it is what the user decides on. */
+  rawOpen: boolean;
+}) {
+  const send = useActions();
+  const shown = call.content.filter((p) => p.kind !== "terminal");
+  const openAt = (path: string, line: number | undefined) =>
+    send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
+  const openDiff = (path: string) => send({ kind: "openToolCallDiff", patchbaySessionId, toolCallId: call.id, path });
+  return (
+    <div className="flex flex-col gap-1.5 px-2.5 pb-2.5">
+      {rows.length > 0 && (
+        <div className="tool-files flex flex-col gap-0.5 text-[12px]">
+          {rows.map((r) => {
+            const { base, dir } = splitPath(r.path, roots);
+            return (
+              <div key={r.path} className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  className={`flex shrink-0 items-center gap-1 font-medium ${LINK}`}
+                  title={`Open ${r.path}${r.lines[0] === undefined ? "" : ` at line ${r.lines[0]}`}`}
+                  onClick={() => openAt(r.path, r.lines[0])}
+                >
+                  <Icon name="go-to-file" />
+                  {base}
+                  {r.lines[0] !== undefined && `:${r.lines[0]}`}
+                </button>
+                {r.lines.slice(1).map((line) => (
+                  <button
+                    type="button"
+                    key={line}
+                    className={`shrink-0 font-mono text-[11px] text-muted-foreground ${LINK}`}
+                    title={`Open ${r.path} at line ${line}`}
+                    onClick={() => openAt(r.path, line)}
+                  >
+                    :{line}
+                  </button>
+                ))}
+                {dir !== "" && (
+                  <span className="min-w-0 truncate text-muted-foreground" title={r.path}>
+                    {dir}
+                  </span>
+                )}
+                {r.diff !== null && (
+                  <span className="ml-auto">
+                    <DiffCount stat={r.diff} title="Open this file's edit in VS Code's diff editor" onClick={() => openDiff(r.path)} />
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {shown.map((part, i) => (
+        <ContentPartView key={i} part={part} />
+      ))}
+      {(call.input !== null || call.output !== null) && <RawSection input={call.input} output={call.output} initiallyOpen={rawOpen} />}
     </div>
   );
 }
@@ -506,8 +538,8 @@ export function ContentPartView({ part }: { part: ContentPart }) {
 /** The call's wire payload — the exact arguments that ran and the tool's
  * unformatted result. Kept for transparency and debugging, one click away
  * and never the main view: what the agent meant to show is its content. */
-function RawSection({ input, output }: { input: string | null; output: string | null }) {
-  const [open, setOpen] = useState(false);
+function RawSection({ input, output, initiallyOpen }: { input: string | null; output: string | null; initiallyOpen: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   return (
     <div>
       <Disclosure
@@ -626,5 +658,36 @@ export function ToolRunCard({
         </span>
       </div>
     </div>
+  );
+}
+
+/** A client terminal's command, live state and output — standalone as its
+ * own card, or inside the tool call that runs in it. */
+export function TerminalView({ block }: { block: TerminalBlock }) {
+  return (
+    <>
+      <div className="card-hd">
+        <Icon name="terminal" /> {block.command}
+        <span className="st">
+          {block.running ? (
+            <>
+              <span className="spin" /> live
+            </>
+          ) : block.exitCode === 0 ? (
+            <span className="text-ok">
+              <Icon name="check" /> exit 0
+            </span>
+          ) : block.exitCode != null ? (
+            <span className="text-err">
+              <Icon name="close" /> exit {block.exitCode}
+            </span>
+          ) : (
+            // exit code unknown — no verdict, no verdict color
+            <>exit ?</>
+          )}
+        </span>
+      </div>
+      <div className="term">{block.output || " "}</div>
+    </>
   );
 }

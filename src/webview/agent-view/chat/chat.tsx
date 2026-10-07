@@ -156,7 +156,7 @@ function Block({
     case "turnEnd":
       return null; // rendered by Chat as TurnLine, with its rollup
     case "permission":
-      return <PermissionCard block={block} />;
+      return <PermissionCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
     case "diff":
       return <DiffCard block={block} />;
     case "terminal":

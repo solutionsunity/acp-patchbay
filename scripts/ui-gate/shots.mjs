@@ -836,6 +836,54 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── an agent's permission card shows the call it asks about, in full,
+// before its buttons: the files (each diff openable), what the call
+// produced, the input it will run with — open while pending (#80). ──
+for (const theme of Object.keys(THEMES)) {
+  const p = await page(browser, theme, { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "permissionRequested",
+        patchbaySessionId: "s1",
+        patchbayAskId: "ask-perm",
+        title: "Edit config",
+        detail: "",
+        facts: [],
+        options: [
+          { optionId: "y", label: "Allow once", kind: "allow_once" },
+          { optionId: "n", label: "Reject", kind: "reject_once" },
+        ],
+        call: {
+          toolCallId: "e1",
+          toolKind: "edit",
+          locations: [{ path: "/ws/src/config.ts", line: 3 }],
+          content: [{ kind: "text", text: "Raise the retry limit." }],
+          diffs: { "/ws/src/config.ts": { additions: 2, deletions: 1 } },
+          input: '{\n  "file": "/ws/src/config.ts",\n  "retries": 5\n}',
+        },
+      },
+    ]),
+  );
+  const card = p.locator(".card.perm", { hasText: "Edit config" });
+  await card.waitFor({ timeout: 3000 });
+  check(`[${theme}] a permission card names the call's file`, (await card.locator(".tool-files", { hasText: "config.ts" }).count()) === 1);
+  check(`[${theme}] a permission card counts the call's diff, which opens it`, (await card.locator("button.diff-count").count()) === 1);
+  check(`[${theme}] a permission card shows what the call produced`, (await card.locator(".msg-agent", { hasText: "Raise the retry limit." }).count()) === 1);
+  check(`[${theme}] a pending permission card shows the input it will run with`, (await card.locator("pre", { hasText: '"retries": 5' }).count()) === 1);
+  await card.locator("button.diff-count").click();
+  const opened = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    `[${theme}] the card's ± opens the call's diff`,
+    JSON.stringify(opened) === JSON.stringify({ kind: "openToolCallDiff", patchbaySessionId: "s1", toolCallId: "e1", path: "/ws/src/config.ts" }),
+  );
+  await p.mouse.move(0, 0);
+  await card.screenshot({ path: `${OUT}/permission-call-${theme}.png` });
+  await p.close();
+}
+
 // ── a held prompt shows the chips it carries (#83). Theme-independent. ──
 {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });

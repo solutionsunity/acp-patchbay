@@ -26,7 +26,7 @@ import {
   type ConnectAgentSource,
   type DataInventoryRow,
   type ElicitationAnswer,
-  type PermissionOptionView,
+  type PermissionBlock,
   type SavedRootScope,
   type SavedRootsView,
   type SettingsEvent,
@@ -121,14 +121,15 @@ async function askModal(message: string, choice: string): Promise<boolean> {
   return (await vscode.window.showWarningMessage(message, { modal: true }, choice)) === choice;
 }
 
-function optionViewsFromAcp(
-  options: readonly { optionId: string; name: string; kind: string }[],
-): PermissionOptionView[] {
-  return options.map((o) => ({
-    optionId: o.optionId,
-    label: o.name,
-    kind: o.kind as PermissionOptionView["kind"],
-  }));
+/** A permission card's title when neither the request nor the call it
+ * asks about named one. */
+const PERMISSION_UNTITLED = "Permission request";
+
+/** A permission card on one line: its title and subject — the command, or
+ * the files the call names. */
+function permissionLine(ask: PermissionBlock): string {
+  const subject = ask.detail !== "" ? ask.detail : (ask.call?.locations.map((l) => l.path).join(", ") ?? "");
+  return subject === "" ? ask.title : `${ask.title}: ${subject}`;
 }
 
 export class Orchestrator {
@@ -468,9 +469,8 @@ export class Orchestrator {
         return elicitationResponseOf(ask, answer, signal);
       },
       onElicitationComplete: (patchbayAgentId, elicitationId) => this.asks.completeLink(patchbayAgentId, elicitationId),
-      onPermissionRequest: async (patchbayAgentId, params) => {
-        const options = optionViewsFromAcp(params.options);
-        const title = params.toolCall.title ?? "Permission request";
+      onPermissionRequest: async (patchbayAgentId, request, signal) => {
+        const { sessionId, call, options } = request;
         // A throwaway session — the probe's or the defaults editor's — can
         // trip real agent-side gates (Auggie's workspace-indexing question
         // rides session/new). No surface renders one, so the card/toast
@@ -478,34 +478,23 @@ export class Orchestrator {
         // request is always owed an answer. Least privilege instead: the
         // question re-asks on the user's first real session, and the probe
         // dir is never the workspace.
-        if (
-          this.capabilityTracker.isProbeSession(patchbayAgentId, params.sessionId) ||
-          this.defaultsEditor.owns(patchbayAgentId, params.sessionId)
-        ) {
+        if (this.capabilityTracker.isProbeSession(patchbayAgentId, sessionId) || this.defaultsEditor.owns(patchbayAgentId, sessionId)) {
+          const title = call.title ?? PERMISSION_UNTITLED;
           this.log.info(`${patchbayAgentId}: auto-declined "${title}" on a throwaway session`);
-          const auto = await this.broker.resolveProbePermissionRequest(
-            patchbayAgentId,
-            params.sessionId,
-            title,
-            options,
-          );
-          return "cancelled" in auto
-            ? { outcome: { outcome: "cancelled" as const } }
-            : { outcome: { outcome: "selected" as const, optionId: auto.optionId } };
+          return this.broker.resolveProbePermissionRequest(patchbayAgentId, sessionId, title, options);
         }
         // A session patchbay doesn't hold has no card to show — the request
         // is still owed an answer, and nobody saw it: cancelled.
-        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, params.sessionId);
+        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, sessionId);
         if (patchbaySessionId === undefined) {
-          this.log.info(`${patchbayAgentId}: cancelled "${title}" on session ${params.sessionId}, which patchbay doesn't hold`);
-          return { outcome: { outcome: "cancelled" } };
+          this.log.info(`${patchbayAgentId}: cancelled a permission request on session ${sessionId}, which patchbay doesn't hold`);
+          return { cancelled: true };
         }
+        const { title, view } = this.sessions.permissionCall(patchbaySessionId, call);
         const result = await this.broker.resolveAgentPermissionRequest(
           patchbaySessionId,
-          title,
-          params.toolCall.kind ?? "other",
-          params.toolCall.locations?.map((l) => l.path) ?? [],
-          options,
+          { title: title ?? PERMISSION_UNTITLED, call: view, options },
+          signal,
         );
         // A rejected request marks its tool-call block denied — "blocked by
         // permission" renders distinct from "failed".
@@ -514,11 +503,9 @@ export class Orchestrator {
         // own permission/diff cards inline.
         const chosen = "cancelled" in result ? undefined : options.find((o) => o.optionId === result.optionId);
         if (chosen !== undefined && chosen.kind.startsWith("reject")) {
-          this.agentView.emit({ kind: "toolCallDenied", patchbaySessionId, blockId: params.toolCall.toolCallId });
+          this.agentView.emit({ kind: "toolCallDenied", patchbaySessionId, blockId: call.toolCallId });
         }
-        return "cancelled" in result
-          ? { outcome: { outcome: "cancelled" } }
-          : { outcome: { outcome: "selected", optionId: result.optionId } };
+        return result;
       },
       ...clientRequestHooks(
         () => this.clientHost,
@@ -782,6 +769,7 @@ export class Orchestrator {
       (patchbaySessionId) => this.sessions.grantedRoots(patchbaySessionId),
       (text) => this.wireLog.redact(text),
       this.machinePermissionRules,
+      (path) => this.readTextFileLive(path),
     );
     this.clientHost = new ClientHost({
       broker: this.broker,
@@ -1404,7 +1392,7 @@ export class Orchestrator {
             ]
           : [];
     const what =
-      ask.kind === "permission" ? `${ask.title}: ${ask.detail}` : ask.kind === "diff" ? `File write: ${ask.file}` : ask.message;
+      ask.kind === "permission" ? permissionLine(ask) : ask.kind === "diff" ? `File write: ${ask.file}` : ask.message;
     const labels = [...answers.map((a) => a.label), "Open"];
     void vscode.window.showWarningMessage(`${title} — ${what}`, ...labels).then((picked) => {
       if (picked === "Open") void this.revealSession(patchbaySessionId);

@@ -9,7 +9,15 @@
 // and the window's closing resync delivers them wholesale. The sessions
 // store routes each update to its row and keeps what is the session's own —
 // its title, its knobs; everything here is the transcript's.
-import { isToolCallOpen, type AgentViewEvent, type DiffStat, type ToolCallStatus, userPartsText } from "../shared/protocol";
+import {
+  isToolCallOpen,
+  type AgentViewEvent,
+  type DiffStat,
+  type PermissionCallView,
+  type ToolCallBlock,
+  type ToolCallStatus,
+  userPartsText,
+} from "../shared/protocol";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 import { computeLineDiff } from "./diff";
 import { createProseRewriter, type ProseRewriter } from "./extensions";
@@ -379,6 +387,35 @@ export class SessionStream {
         : {}),
       ...this.stashToolDiffs(patchbaySessionId, call.toolCallId, call.content),
     });
+  }
+
+  /** The call a permission request asks about, as its card shows it: what
+   * the request says of the call over what this session's transcript
+   * already holds for it (`known`) — an absent field is unchanged, as in
+   * any update. A request carrying a diff stashes it under the call, so the
+   * card's ± opens it like the tool card's; one without leaves the call's
+   * own diff where it was. The title is undefined when neither named one. */
+  callView(
+    patchbaySessionId: PatchbaySessionId,
+    call: ToolCallFact,
+    known: ToolCallBlock | undefined,
+  ): { title: string | undefined; view: PermissionCallView } {
+    const stashed = call.content?.some((c) => c.type === "diff") === true ? this.stashToolDiffs(patchbaySessionId, call.toolCallId, call.content) : {};
+    const raw = boundedRaw("input", call.rawInput);
+    return {
+      title: call.title ?? (known?.title || undefined),
+      view: {
+        toolCallId: call.toolCallId,
+        toolKind: call.kind ?? known?.toolKind ?? "other",
+        locations: call.locations ?? known?.locations ?? [],
+        content:
+          call.content !== undefined
+            ? toolContentOf(call.content, this.imageStash(patchbaySessionId, "permission"))
+            : (known?.content ?? []),
+        diffs: "diffs" in stashed ? stashed.diffs : (known?.diffs ?? {}),
+        input: "input" in raw ? raw.input : (known?.input ?? null),
+      },
+    };
   }
 
   /** Pulls type:"diff" entries out of a tool call's content: texts stashed

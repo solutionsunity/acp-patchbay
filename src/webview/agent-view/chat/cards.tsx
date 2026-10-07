@@ -5,10 +5,12 @@
 // broker path, one card language.
 // Each resolves itself through useActions, naming its own block id.
 import { useState } from "react";
-import type { PatchbayAskId } from "../../../shared/ids";
+import type { PatchbayAskId, PatchbaySessionId } from "../../../shared/ids";
 import type { ChatBlock, LinkWarning } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
+import { CallDetails, TerminalView } from "./blocks";
 import { DiffStatText } from "./diff-stat";
+import { toolFileRows } from "./view-model";
 import { answerOf, initialDraft, linkCardPhase, type Draft } from "./elicitation-form";
 import { Icon } from "../../shared/icon";
 import { Button } from "@/components/ui/button";
@@ -34,21 +36,44 @@ const LINK_WARNING_TEXT: Record<LinkWarning, string> = {
   insecure: "The connection is not encrypted (http).",
 };
 
-export function PermissionCard({ block }: { block: Extract<ChatBlock, { kind: "permission" }> }) {
+/** What is being approved, in full, before the buttons: patchbay's own
+ * gates name their command and its facts; an agent's request shows the
+ * call it asks about — its files (each diff openable), what it produced,
+ * and the input it will run with, open while the decision is pending. */
+export function PermissionCard({
+  block,
+  patchbaySessionId,
+  roots,
+}: {
+  block: Extract<ChatBlock, { kind: "permission" }>;
+  patchbaySessionId: PatchbaySessionId;
+  roots: readonly string[];
+}) {
   const send = useActions();
   return (
     <div className="card perm">
       <div className="card-hd">
         <Icon name="shield" /> {block.title} — one broker, one rule set
       </div>
-      <div className="q">
-        <code>{block.detail}</code>
-        {block.facts.map((fact, i) => (
-          <div key={i} className="fact">
-            <span className="lbl">{fact.label}</span> <code>{fact.value}</code>
-          </div>
-        ))}
-      </div>
+      {(block.detail !== "" || block.facts.length > 0) && (
+        <div className="q">
+          {block.detail !== "" && <code>{block.detail}</code>}
+          {block.facts.map((fact, i) => (
+            <div key={i} className="fact">
+              <span className="lbl">{fact.label}</span> <code>{fact.value}</code>
+            </div>
+          ))}
+        </div>
+      )}
+      {block.call !== undefined && (
+        <CallDetails
+          call={{ id: block.call.toolCallId, content: block.call.content, input: block.call.input, output: null }}
+          rows={toolFileRows(block.call)}
+          patchbaySessionId={patchbaySessionId}
+          roots={roots}
+          rawOpen={block.resolution === null}
+        />
+      )}
       {block.resolution === null ? (
         <div className="acts">
           {block.options.map((o) => (
@@ -144,37 +169,6 @@ export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "ter
     <div className="card">
       <TerminalView block={block} />
     </div>
-  );
-}
-
-/** A client terminal's command, live state and output — standalone as its
- * own card, or inside the tool call that runs in it. */
-export function TerminalView({ block }: { block: Extract<ChatBlock, { kind: "terminal" }> }) {
-  return (
-    <>
-      <div className="card-hd">
-        <Icon name="terminal" /> {block.command}
-        <span className="st">
-          {block.running ? (
-            <>
-              <span className="spin" /> live
-            </>
-          ) : block.exitCode === 0 ? (
-            <span className="text-ok">
-              <Icon name="check" /> exit 0
-            </span>
-          ) : block.exitCode != null ? (
-            <span className="text-err">
-              <Icon name="close" /> exit {block.exitCode}
-            </span>
-          ) : (
-            // exit code unknown — no verdict, no verdict color
-            <>exit ?</>
-          )}
-        </span>
-      </div>
-      <div className="term">{block.output || " "}</div>
-    </>
   );
 }
 

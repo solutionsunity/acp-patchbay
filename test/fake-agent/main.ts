@@ -55,7 +55,18 @@ export type TurnStep =
   | { type: "writeFile"; path: string; content: string }
   | { type: "readFile"; path: string }
   | { type: "runCommand"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string }
-  | { type: "askPermission"; title: string; kind: "execute" | "edit"; subject: string | string[] }
+  | {
+      type: "askPermission";
+      title: string;
+      kind: "execute" | "edit";
+      subject: string | string[];
+      /** Fields sent in the request's tool call as-is, over the ones built
+       * from title, kind and subject — any id, content, rawInput. */
+      toolCall?: Partial<acp.ToolCallUpdate>;
+      /** Takes the request back this long after asking (the spec's
+       * cancel-request), unless answered first. */
+      withdrawAfterMs?: number;
+    }
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
   | { type: "echoRoots" }
@@ -404,22 +415,32 @@ async function runTurn(
         // honest broker behavior is to always ask for those (enforcement
         // happens for real at patchbay's own terminal/create gate instead).
         const locations: acp.ToolCallLocation[] = [step.subject].flat().map((path) => ({ path }));
-        const response = await cx.request(acp.methods.client.session.requestPermission, {
-          sessionId,
-          toolCall: {
-            toolCallId: `ask-${sessionId}`,
-            title: step.title,
-            kind: step.kind,
-            locations: step.kind === "edit" ? locations : undefined,
-          },
-          options: [
-            { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
-            { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
-            { optionId: "reject_once", name: "Reject", kind: "reject_once" },
-          ],
-        });
-        const outcome =
-          response.outcome.outcome === "cancelled" ? "cancelled" : response.outcome.optionId;
+        const withdraw = new AbortController();
+        if (step.withdrawAfterMs !== undefined) setTimeout(() => withdraw.abort(), step.withdrawAfterMs);
+        const outcome = await cx
+          .request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId,
+              toolCall: {
+                toolCallId: `ask-${sessionId}`,
+                title: step.title,
+                kind: step.kind,
+                locations: step.kind === "edit" ? locations : undefined,
+                ...step.toolCall,
+              },
+              options: [
+                { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+                { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
+                { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+              ],
+            },
+            { cancellationSignal: withdraw.signal },
+          )
+          .then(
+            (response) => (response.outcome.outcome === "cancelled" ? "cancelled" : response.outcome.optionId),
+            (err: unknown) => `withdrawn ${(err as { code?: number }).code ?? "?"}`,
+          );
         await emitUpdate(cx, sessionId, cwd, {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: `permission: ${outcome}` },

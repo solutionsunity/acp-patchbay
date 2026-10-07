@@ -30,11 +30,13 @@ import {
   type ChatBlock,
   type ContextChip,
   type KnobSeed,
+  type PermissionCallView,
   type PersistedChip,
   type PromptPart,
   type QueuedPrompt,
   type SessionContinuity,
   type SessionSummary,
+  type ToolCallBlock,
   type TurnUsage,
   type UserPart,
 } from "../shared/protocol";
@@ -60,6 +62,7 @@ import { newBlockId } from "./block-ids";
 import { SessionStream, type StreamState } from "./session-stream";
 import { NoteLog } from "./readers/notes";
 import { sessionMetaOf, type SessionUpdateFact } from "./readers/session-update";
+import type { ToolCallFact } from "./readers/tool-call";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
@@ -2149,6 +2152,15 @@ export class SessionsStore {
     if (!this.hasHeld(patchbaySessionId)) return;
     this.save(patchbaySessionId, { queue: [] });
     this.hooks.emit({ kind: "promptQueueCleared", patchbaySessionId });
+  }
+
+  /** The call a permission request in this session asks about, as its
+   * card shows it — over what the transcript already holds for that call. */
+  permissionCall(patchbaySessionId: PatchbaySessionId, call: ToolCallFact): { title: string | undefined; view: PermissionCallView } {
+    const known = (this.hooks.currentTranscript?.(patchbaySessionId) ?? []).find(
+      (b): b is ToolCallBlock => b.kind === "toolCall" && b.id === call.toolCallId,
+    );
+    return this.stream.callView(patchbaySessionId, call, known);
   }
 
   /** The stashed texts for one openToolCallDiff action — null when unknown

@@ -16,6 +16,13 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   before, any agent could read, wait on, kill or release another session's
   command by guessing its counter id. A request naming a session patchbay
   doesn't hold is refused or answered at once. (#76)
+- **Security: a permission card shows what it approves.** An agent's
+  request now shows the call it asks about — its files with each diff one
+  click away, what it produced, and the input it will run with — where the
+  card used to show only a title. An edit is judged by its diff's own path
+  as well as the files it names, a request the agent takes back can no
+  longer be answered, and the write card's diff is taken against the open
+  editor, unsaved edits included. (#80)
 - **What the agent says is shown as it says it.** One reader per kind of
   agent message replaces the places that each read the wire their own way
   (#80): a running tool call no longer reads finished when an update says

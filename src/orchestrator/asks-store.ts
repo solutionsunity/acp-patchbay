@@ -23,6 +23,7 @@ import type {
   ElicitationAnswer,
   ElicitationAsk,
   ElicitationOutcome,
+  PermissionCallView,
   PermissionFact,
   PermissionOptionView,
 } from "../shared/protocol";
@@ -85,7 +86,14 @@ export interface LinkCompletion {
 /** What an ask's card shows. A permission and a command share one card,
  * with the options an answer may pick. */
 export type AskCard =
-  | { kind: "options"; title: string; detail: string; facts: readonly PermissionFact[]; options: readonly PermissionOptionView[] }
+  | {
+      kind: "options";
+      title: string;
+      detail: string;
+      facts: readonly PermissionFact[];
+      options: readonly PermissionOptionView[];
+      call?: PermissionCallView;
+    }
   | {
       kind: "write";
       file: string;
@@ -184,7 +192,15 @@ export class AsksStore {
     switch (card.kind) {
       case "options":
         ask.options = card.options;
-        this.hooks.emit({ kind: "permissionRequested", ...at, title: card.title, detail: card.detail, facts: card.facts, options: card.options });
+        this.hooks.emit({
+          kind: "permissionRequested",
+          ...at,
+          title: card.title,
+          detail: card.detail,
+          facts: card.facts,
+          options: card.options,
+          ...(card.call !== undefined ? { call: card.call } : {}),
+        });
         return;
       case "write":
         ask.proposal = card.proposal;
@@ -382,7 +398,7 @@ function cardOf(ask: Ask, from: AskState, move: Move): AgentViewEvent | null {
   return {
     kind: "permissionResolved",
     ...at,
-    label: choice?.kind === "option" ? choice.option.label : "Cancelled — turn stopped",
+    label: choice?.kind === "option" ? choice.option.label : move.end === "withdraw" ? "Withdrawn by the agent" : "Cancelled — turn stopped",
     auto: choice === null,
   };
 }

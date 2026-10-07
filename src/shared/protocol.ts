@@ -1092,13 +1092,31 @@ export interface PermissionFact {
   value: string;
 }
 
+/** The tool call an agent's permission request asks about, as the user
+ * must see it to decide: what the request says of it over what the session
+ * already showed — the files it names (each diff openable), what it
+ * produced, and the input it will run with. */
+export interface PermissionCallView {
+  toolCallId: string;
+  toolKind: ToolCallKind;
+  locations: readonly ToolLocation[];
+  content: readonly ToolContentPart[];
+  diffs: Readonly<Record<string, DiffStat>>;
+  /** The call's raw input, bounded — null when none was sent. */
+  input: string | null;
+}
+
 export interface PermissionBlock {
   kind: "permission";
   id: PatchbayAskId;
   title: string;
+  /** The subject on one line — patchbay's own gates' command; empty when
+   * the card shows a call instead. */
   detail: string;
   facts: readonly PermissionFact[];
   options: readonly PermissionOptionView[];
+  /** An agent's own request: the call it asks about. */
+  call?: PermissionCallView;
   /** Set once resolved — by the user or by a rule. Never re-asked in place. */
   resolution: { label: string; auto: boolean } | null;
 }
@@ -1620,6 +1638,7 @@ export type AgentViewEvent =
       detail: string;
       facts: readonly PermissionFact[];
       options: readonly PermissionOptionView[];
+      call?: PermissionCallView;
     }
   | { kind: "permissionResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; label: string; auto: boolean }
   | {
@@ -2092,6 +2111,7 @@ export function reduceAgentView(
         detail: event.detail,
         facts: event.facts,
         options: event.options,
+        ...(event.call !== undefined ? { call: event.call } : {}),
         resolution: null,
       });
     case "permissionResolved":

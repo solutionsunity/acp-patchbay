@@ -26,6 +26,7 @@ import { turnAuthFailureReasonOf } from "./extensions";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { guardResponse } from "./response-guards";
 import { NoteLog } from "./readers/notes";
+import { readPermissionRequest, type PermissionRequestFact } from "./readers/permission";
 import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-update";
 import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
@@ -87,11 +88,13 @@ export interface PoolHooks {
   /** A `session/update`, read: what the agent said, as patchbay takes it,
    * for the session it named its own way. */
   onSessionUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void;
-  /** The permission broker replaces this; absent → reject-by-cancel. */
+  /** The permission broker replaces this; absent → reject-by-cancel.
+   * `signal` aborts when the agent withdraws the request. */
   onPermissionRequest?(
     patchbayAgentId: PatchbayAgentId,
-    params: acp.RequestPermissionRequest,
-  ): Promise<acp.RequestPermissionResponse>;
+    request: PermissionRequestFact,
+    signal: AbortSignal,
+  ): Promise<{ optionId: string } | { cancelled: true }>;
   /** The agent asks the user for structured input; absent → cancelled,
    * which is the honest answer when no surface exists to show it.
    * `signal` aborts when the agent withdraws the request. */
@@ -516,12 +519,16 @@ export class AgentPool {
     const connection = acp
       .client({ name: "acp-patchbay" })
       .onRequest(
-        ...proven(acp.methods.client.session.requestPermission, (ctx) => {
-          const handler = this.hooks.onPermissionRequest;
-          if (handler) return handler(patchbayAgentId, ctx.params);
-          return Promise.resolve<acp.RequestPermissionResponse>({
-            outcome: { outcome: "cancelled" },
-          });
+        ...proven(acp.methods.client.session.requestPermission, async (ctx): Promise<acp.RequestPermissionResponse> => {
+          const answer = (await this.hooks.onPermissionRequest?.(patchbayAgentId, readPermissionRequest(ctx.params), ctx.signal)) ?? {
+            cancelled: true,
+          };
+          // A request the agent took back is owed the request-cancelled
+          // error, not an answer.
+          if (ctx.signal.aborted) throw new DOMException("the agent withdrew the request", "AbortError");
+          return "cancelled" in answer
+            ? { outcome: { outcome: "cancelled" } }
+            : { outcome: { outcome: "selected", optionId: answer.optionId } };
         }),
       )
       .onRequest(

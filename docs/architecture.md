@@ -894,7 +894,8 @@ The differentiator (the PRD's current-release scope), shipped complete:
   appended; a relative path or a link to nowhere names no place and asks —
   against every root the session was given (workspace folders plus added
   roots; a fallback cwd with no folder open is not one). An agent's own edit
-  request is judged by every location it names; one outside asks. The gate
+  request is judged by every file it names — its locations and each diff's
+  path; one outside asks. The gate
   holds its pending slot before it reads the disk, so a turn stopped mid-judge
   still answers the request. Every "no" on the client side — a rejected write
   or command, a turn stopped under an open card, a missing file — is answered
@@ -1089,10 +1090,21 @@ supplies each agent in its own standard — and ACP carries no channel for it
   scope.
   A second, differently-scrutinized approval surface is exactly what a malicious
   prompt would target. An agent's own `session/request_permission` is judged only
-  when it is an edit — by the file-write scope over every location it names;
-  ACP gives an execute request no command field a rule could match, so it always
-  asks, and command rules apply where the command actually runs
+  when it is an edit — by the file-write scope over every file it names: the
+  locations it reports and the path of each diff it carries, the write's own
+  target; ACP gives an execute request no command field a rule could match, so
+  it always asks, and command rules apply where the command actually runs
   (`terminal/create`).
+- **A card shows what it approves.** An agent's request asks about a tool
+  call, read by the same reader as the session's stream and shown over what
+  the transcript already holds for that call (an absent field is unchanged):
+  its files, each diff openable in VS Code's diff editor, what the call
+  produced, and the input it will run with — open while the decision is
+  pending. Agent text on a card is masked for values patchbay handed out. A
+  request the agent takes back settles its card as withdrawn and is answered
+  request-cancelled; no later click answers it. Patchbay's own write gate
+  diffs against what the write replaces — the open editor's buffer, unsaved
+  edits included, where one holds the file.
 - **The asks store holds every ask** (`asks-store.ts`) from the moment it is
   asked until it ends, and its one writer resolves the card, writes the
   decision audit, and only then answers the agent — an action never runs

@@ -23,7 +23,6 @@ import {
   initialAgentViewState,
   reduceAgentView,
   type AgentViewEvent,
-  type PermissionOptionView,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { gatesFor } from "./support/session-gates";
@@ -49,12 +48,6 @@ function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): Launch
     env: { FAKE_AGENT_SCRIPT: JSON.stringify(script) },
     cwd: workspaceRoot,
   };
-}
-
-function optionViewsFromAcp(
-  options: readonly { optionId: string; name: string; kind: string }[],
-): PermissionOptionView[] {
-  return options.map((o) => ({ optionId: o.optionId, label: o.name, kind: o.kind as PermissionOptionView["kind"] }));
 }
 
 /** orchestrator.ts's fs/terminal wiring without vscode. `live` swaps the
@@ -84,20 +77,16 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       () => host,
       (patchbayAgentId, sessionId) => sessions.rowFor(patchbayAgentId, sessionId),
     ),
-    onPermissionRequest: async (patchbayAgentId, params) => {
+    onPermissionRequest: async (patchbayAgentId, request, signal) => {
       // the session the agent names its own way, as patchbay holds it
-      const patchbaySessionId = sessions.rowFor(patchbayAgentId, params.sessionId);
-      if (patchbaySessionId === undefined) return { outcome: { outcome: "cancelled" } };
-      const result = await broker.resolveAgentPermissionRequest(
+      const patchbaySessionId = sessions.rowFor(patchbayAgentId, request.sessionId);
+      if (patchbaySessionId === undefined) return { cancelled: true };
+      const { title, view } = sessions.permissionCall(patchbaySessionId, request.call);
+      return broker.resolveAgentPermissionRequest(
         patchbaySessionId,
-        params.toolCall.title ?? "Permission request",
-        params.toolCall.kind ?? "other",
-        params.toolCall.locations?.map((l) => l.path) ?? [],
-        optionViewsFromAcp(params.options),
+        { title: title ?? "Permission request", call: view, options: request.options },
+        signal,
       );
-      return "cancelled" in result
-        ? { outcome: { outcome: "cancelled" } }
-        : { outcome: { outcome: "selected", optionId: result.optionId } };
     },
   });
 
@@ -107,6 +96,8 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       emit: (...evs) => events.push(...evs),
       workspaceRoots: () => [workspaceRoot],
       cancelAsks: (patchbaySessionId) => asks.stopSession(patchbaySessionId),
+      currentTranscript: (patchbaySessionId) =>
+        events.reduce(reduceAgentView, initialAgentViewState).transcripts[patchbaySessionId] ?? [],
       capabilities: (patchbayAgentId) => {
         const declared = pool.get(patchbayAgentId)?.declared;
         return declared == null ? undefined : matrixFromDeclared(declared);
@@ -445,6 +436,75 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     await turn;
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: allow_once");
     await h.pool.stop("p2" as PatchbayAgentId);
+  });
+
+  it("the card shows the call it asks about — over what the session already showed of it — and an edit is judged by its diff's own path (#80)", async () => {
+    const h = harness();
+    const inside = join(workspaceRoot, "cfg.json");
+    const outside = join(dir, "outside.txt");
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            {
+              type: "update",
+              update: { sessionUpdate: "tool_call", toolCallId: "e1", title: "Edit cfg", kind: "edit", rawInput: { file: inside } },
+            },
+            {
+              type: "askPermission",
+              title: "unused",
+              kind: "edit",
+              subject: inside,
+              // the request names the call, its file inside, and carries a
+              // diff whose own path is outside — title and kind left to the call
+              toolCall: {
+                toolCallId: "e1",
+                title: null,
+                kind: null,
+                content: [{ type: "diff", path: outside, oldText: "a\n", newText: "b\n" }],
+              },
+            },
+          ],
+        },
+        "p2c" as PatchbayAgentId,
+      ),
+    );
+    const patchbaySessionId = await h.sessions.createSession("p2c" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
+    expect(card).toMatchObject({
+      title: "Edit cfg",
+      call: {
+        toolCallId: "e1",
+        toolKind: "edit",
+        locations: [{ path: inside, line: null }],
+        diffs: { [outside]: { additions: 1, deletions: 1 } },
+        input: `{\n  "file": ${JSON.stringify(inside)}\n}`,
+      },
+    });
+    // its diff opens like the tool card's
+    expect(h.sessions.toolCallDiff(patchbaySessionId, "e1", outside)).toEqual({ oldText: "a\n", newText: "b\n" });
+    h.asks.answerOption(card.id, "reject_once");
+    await turn;
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: reject_once");
+    await h.pool.stop("p2c" as PatchbayAgentId);
+  });
+
+  it("a request the agent takes back is withdrawn on its card, and the agent gets request-cancelled (#80)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        { turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test", withdrawAfterMs: 150 }] },
+        "p2w" as PatchbayAgentId,
+      ),
+    );
+    const patchbaySessionId = await h.sessions.createSession("p2w" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission");
+    expect(card).toMatchObject({ resolution: { label: "Withdrawn by the agent", auto: true } });
+    expect(textOf(patchbaySessionId, h.events)).toContain("permission: withdrawn -32800");
+    await h.pool.stop("p2w" as PatchbayAgentId);
   });
 
   // ACP: a client that cancels a turn MUST answer its pending permission
