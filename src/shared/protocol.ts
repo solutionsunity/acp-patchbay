@@ -1042,6 +1042,10 @@ export interface TurnUsage {
   output: number;
   /** Cache-read tokens, when the agent breaks them out. */
   cached?: number;
+  /** Cache-write tokens, when the agent breaks them out. */
+  cacheWrite?: number;
+  /** Reasoning tokens, when the agent breaks them out. */
+  thought?: number;
 }
 
 /** Appended when a turn resolves — the per-turn metadata line's source.

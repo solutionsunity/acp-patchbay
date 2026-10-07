@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultsEditor } from "../src/orchestrator/defaults-editor";
-import { normalizeKnobs } from "../src/orchestrator/knobs";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { KnobSeed, SettingsEvent } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
@@ -95,7 +94,6 @@ function harness(opts: { defaults?: Record<string, KnobSeed>; mayOpen?: boolean 
         return dir;
       },
       defaultsFor: (patchbayAgentId) => defaults.get(patchbayAgentId) ?? {},
-      normalize: (r) => normalizeKnobs(r.modes, r.configOptions, undefined, () => {}),
       mayOpen: () => opts.mayOpen ?? true,
       emit: (...evs) => events.push(...evs),
     },
@@ -144,7 +142,7 @@ describe("DefaultsEditor", () => {
     // the session embodies both: a fresh read of the fixture's state
     const sessionId = h.pool.get("order" as PatchbayAgentId)!.sessions[0]!;
     const r = await h.pool.setSessionConfigOption("order" as PatchbayAgentId, sessionId, "model", "pro");
-    expect(r.configOptions.find((o) => o.id === "effort")?.currentValue).toBe("high");
+    expect((r.configOptions as { id: string; currentValue: unknown }[]).find((o) => o.id === "effort")?.currentValue).toBe("high");
     await h.pool.stop("order" as PatchbayAgentId);
   });
 

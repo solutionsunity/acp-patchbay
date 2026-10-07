@@ -1,82 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Normalizes an agent's initialize response into the declared table, and
-// owns the used-proof table — the one place that knows how each row gets
-// marked used. Declared ≠ used: declared is what the agent claims, refreshed
-// every connect; used is proven by CAPABILITY_PROOFS below, consulted at
-// pool.ts's wire chokepoints.
-import {
-  methods,
-  type ClientCapabilities,
-  type InitializeResponse,
-  type PromptRequest,
-} from "@agentclientprotocol/sdk";
-import { z } from "zod";
+// What patchbay declares to every agent, and the used-proof table — the one
+// place that knows how each row gets marked used. Declared ≠ used: declared
+// is what the agent claims at initialize (its reader fills the declared
+// table), refreshed every connect; used is proven by CAPABILITY_PROOFS
+// below, consulted at pool.ts's wire chokepoints.
+import { methods, type ClientCapabilities, type PromptRequest } from "@agentclientprotocol/sdk";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
-import { clientMetaWire, terminalAuthRecipeOf } from "./meta";
-
-/** The executable half of the spec's terminal auth method — what the login
- * executor composes with the agent's own spawn spec at click time. The
- * method cannot name a command: the client re-runs the agent's OWN spawn
- * command ("the exact same binary with the exact same setup", the spec's
- * security floor) with these args appended and this env layered over. Wire
- * data, no command and no machine paths, so holding it between connect and
- * click persists nothing sensitive. */
-export interface TerminalAuth {
-  args: string[];
-  env: Record<string, string>;
-}
-
-const terminalAuthSchema = z.object({
-  type: z.literal("terminal"),
-  args: z.array(z.string()).default([]),
-  env: z.record(z.string(), z.string()).default({}),
-});
-
-/** A method's executable half, or null when patchbay cannot run it (any
- * other type, or a terminal whose args/env didn't parse). The SDK types
- * these fields but validates no response, so this is the one place they are
- * parsed — and the one rule both the kind below and the login executor
- * read, so a button can never appear over a shape that didn't parse. */
-export function terminalAuthOf(method: unknown): TerminalAuth | null {
-  const parsed = terminalAuthSchema.safeParse(method);
-  return parsed.success ? { args: parsed.data.args, env: parsed.data.env } : null;
-}
-
-export function declaredFromInitialize(
-  init: InitializeResponse,
-): DeclaredCapabilities {
-  const caps = init.agentCapabilities ?? {};
-  const session = caps.sessionCapabilities ?? {};
-  const prompt = caps.promptCapabilities ?? {};
-  const mcp = caps.mcpCapabilities ?? {};
-  return {
-    loadSession: caps.loadSession === true,
-    sessionFork: session.fork != null,
-    sessionResume: session.resume != null,
-    sessionList: session.list != null,
-    sessionDelete: session.delete != null,
-    sessionClose: session.close != null,
-    sessionAdditionalDirectories: session.additionalDirectories != null,
-    promptImage: prompt.image === true,
-    promptAudio: prompt.audio === true,
-    promptEmbeddedContext: prompt.embeddedContext === true,
-    mcpHttp: mcp.http === true,
-    mcpSse: mcp.sse === true,
-    authMethods: (init.authMethods ?? []).map((m) => ({
-      id: m.id,
-      name: m.name,
-      description: m.description ?? null,
-      // A parseable `_meta["terminal-auth"]` recipe wins over the wire's
-      // own type: Auggie ships its recipe on a type-less method (schema
-      // default "agent") whose `authenticate` is a no-op, so type-first
-      // would wire a button to nothing.
-      kind: terminalAuthRecipeOf(m._meta) !== null ? "terminal-recipe" : authMethodKind(m),
-    })),
-    authLogout: caps.auth?.logout != null,
-  };
-}
+import { clientMetaWire } from "./meta";
 
 /**
  * What patchbay itself declares to every agent — the single source for both
@@ -133,21 +65,6 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
-}
-
-/** What patchbay can do with one declared method, from the wire's own
- * `type`: the spec's set is `terminal | agent`, and an absent type means
- * agent (the schema default). Anything else — a type outside the spec, or a
- * terminal whose executable half didn't parse — is shown and never run:
- * `authenticate` is the agent type's call alone (spec MUST NOT), so there
- * is no honest fallback to it. */
-function authMethodKind(method: object): "agent" | "terminal" | "unsupported" {
-  // The union types `type` only on its terminal arm; the wire may carry any
-  // string, which is exactly what this classifies.
-  const { type } = method as { type?: string };
-  if (type === undefined || type === "agent") return "agent";
-  if (type !== "terminal") return "unsupported";
-  return terminalAuthOf(method) !== null ? "terminal" : "unsupported";
 }
 
 /** The declared modes, exactly as they ride initialize. */

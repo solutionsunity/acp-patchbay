@@ -297,5 +297,25 @@
       "currency": "USD"
     }
   },
-  "knobs": []
+  "knobs": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "fast",
+      "options": [
+        {
+          "value": "fast",
+          "name": "Sonnet",
+          "description": "Fast"
+        },
+        {
+          "value": "deep",
+          "name": "Sonnet",
+          "description": "Deep"
+        }
+      ]
+    }
+  ]
 }

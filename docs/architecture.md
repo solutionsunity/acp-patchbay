@@ -305,11 +305,15 @@ flowchart TD
 
 ## Message readers
 
-The pool is the one place an agent's messages enter, and it owns their
-validity: the SDK's schema layer, the response guards, the proof tables. What
-a message *means* is owned by one reader per ACP message type
-(`src/orchestrator/readers/`), run at the pool's chokepoint where the message
-arrives; what leaves the pool is the reader's fact, never the raw wire object.
+The pool is the one place an agent's messages enter. What a message *means*
+is owned by one reader per ACP message type (`src/orchestrator/readers/`),
+run at the pool's chokepoint where the message arrives; what leaves the pool
+is the reader's fact, never the raw wire object. The SDK validates the
+agent's notifications and requests; a response arrives exactly as the agent
+shaped it, so its reader checks what it takes — identity is structural (a
+`session/new` without a sessionId fails its call), everything else degrades
+to absent, noted. A capability is declared only in its own shape (an object,
+or true), and an agent's malformed name never costs its version.
 
 - **One rule.** An absent field is unchanged — never a default — except where
   the spec names one (an announced tool call is pending, of kind other, until
@@ -329,9 +333,12 @@ arrives; what leaves the pool is the reader's fact, never the raw wire object.
   place and note: the one way a user sees it without the wire log.
 
 Read this way today: `session/update` (content, tool calls, plans, commands,
-usage, title, knobs). Responses, the agent's requests and errors are still
-read by their consumers behind the response guards — the move is tracked in
-#80.
+usage, title, knobs), `session/request_permission`, and the answers to every
+request patchbay sends (`initialize`, the session lifecycle, `session/list`,
+`session/prompt`, `session/set_config_option`) — a session response's knobs
+through the one normalizer with the extension doors, where the raw response
+is read. The agent's file, terminal and elicitation requests and its errors
+are still read by their consumers — the move is tracked in #80.
 
 ## Agent capability matrix
 
@@ -575,9 +582,9 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   (knobs.ts) runs extension routes through one generic branch forever (the
   route executes itself and returns the next state to publish, or null to
   wait for a notification) — the one place a routed set meets the wire,
-  shared by the user set, seeding, and the defaults editor; offering
-  chokepoints pass the raw response through, so a
-  new surface never ripples a hook signature.
+  shared by the user set, seeding, and the defaults editor; the session
+  response readers hand the raw response to the extension doors at the one
+  place it is read, so a new surface never ripples a hook signature.
 - **Shape-gated wherever shape exists; id-keyed only where it can't.** A
   silent behavioral quirk (nothing on the wire announces it before it bites
   — e.g. Auggie's first-session mcpServers latch) cannot be shape-gated, so

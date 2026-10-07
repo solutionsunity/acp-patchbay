@@ -26,7 +26,7 @@
 // cache — so a reconnect at the *same* version restores what was already
 // proven, and only an actual version change earns a fresh, honestly-unused
 // matrix.
-import type { NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { SessionOpenedFact } from "./readers/responses";
 import type { CapabilityCell, CapabilityMatrix, CapabilityRowId } from "../shared/protocol";
 import { matrixFromDeclared } from "./capabilities";
 import { probeDeferredFor } from "./extensions";
@@ -50,11 +50,11 @@ export interface CapabilityTrackerHooks {
    * marked. */
   changed(patchbayAgentId: PatchbayAgentId): void;
   /** Announces each throwaway probe session as its session/new lands —
-   * the raw response, so an observer (a test, a diagnostic) learns the
-   * id the agent minted and what it answered. The tracker itself routes
-   * the probe's later traffic via `isProbeSession`; settings offerings
-   * come from the defaults editor's own session, never from here. */
-  onProbeSession?(patchbayAgentId: PatchbayAgentId, response: NewSessionResponse): void;
+   * the session the agent made, so an observer (a test, a diagnostic)
+   * learns the id it minted. The tracker itself routes the probe's later
+   * traffic via `isProbeSession`; settings offerings come from the defaults
+   * editor's own session, never from here. */
+  onProbeSession?(patchbayAgentId: PatchbayAgentId, session: SessionOpenedFact): void;
   /** The agent's standing probe workspace — a real, existing directory,
    * never the user's workspace roots. Owned by the orchestrator and deleted
    * only when the agent's config is removed: a probe session may hold this
@@ -204,7 +204,7 @@ export class CapabilityTracker {
   /** Free RPC round-trip: a session/new in a throwaway session rooted at
    * the agent's standing probe dir (hooks.probeRoot), never the workspace,
    * never surfaced as a real session, then its session/close where the
-   * agent declares close; the raw session/new response is announced via
+   * agent declares close; the session/new answer is announced via
    * onProbeSession. Marking rows used happens inside pool.ts itself, right
    * where each call succeeds — this only has to make the calls. Fork and
    * delete are not tried: a never-prompted session is no fair subject for

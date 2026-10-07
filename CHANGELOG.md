@@ -28,8 +28,13 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   (#80): a running tool call no longer reads finished when an update says
   nothing of its status, the session's cost stays when a reading leaves it
   out, and a kind patchbay has no view for yet appears as a line naming it,
-  its content a click away — never dropped. Each such case is said once in
-  the Output channel.
+  its content a click away — never dropped. A reply missing its knobs no
+  longer wipes them (or saves the empty set over the agent's defaults), a
+  reopened session keeps the knobs its history set, a session listed
+  without a title takes its first prompt's, a page of the session list that
+  can't be followed no longer prunes the sessions it didn't reach, and a
+  capability is declared only in its own shape. Each such case is said once
+  in the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**
   wherever the agent declares them. Close no longer deletes the session from

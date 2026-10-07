@@ -2465,6 +2465,25 @@ describe("session history (list / resume / delete)", () => {
     await h.pool.stop("sh3" as PatchbayAgentId);
   });
 
+  it("a listed session the agent gave no title takes its first prompt's, like one made here (#80)", async () => {
+    const first = harness();
+    await first.pool.connect(spec({ declare: { ...LIST_CAPS, loadSession: true } }, "sh3u"));
+    const made = await first.sessions.createSession("sh3u" as PatchbayAgentId, "Fake Agent", cwd);
+    await first.gates.prompt(made, { text: "first" });
+    const wireId = first.sessions.sessionIdOf(made)!;
+    await first.pool.stop("sh3u" as PatchbayAgentId);
+
+    // another window: the agent lists the session, with no title
+    const h = harness();
+    await h.pool.connect(spec({ declare: { ...LIST_CAPS, loadSession: true } }, "sh3u"));
+    await h.sessions.syncAgentSessions("sh3u" as PatchbayAgentId);
+    const listed = h.sessions.rowFor("sh3u" as PatchbayAgentId, wireId)!;
+    expect(h.state().sessions.find((s) => s.id === listed)?.title).toBe("Untitled session");
+    await h.gates.prompt(listed, { text: "name me after this" });
+    expect(h.state().sessions.find((s) => s.id === listed)?.title).toBe("name me after this");
+    await h.pool.stop("sh3u" as PatchbayAgentId);
+  });
+
   it("session_info_update retitles live", async () => {
     const h = harness();
     await h.pool.connect(
@@ -3092,7 +3111,7 @@ describe("session activity stamp — one home", () => {
     const createOnWire = h.pool.newSession.bind(h.pool);
     vi.spyOn(h.pool, "newSession").mockImplementation(async (...args) => {
       const reply = await createOnWire(...args);
-      vi.spyOn(h.pool, "listSessions").mockResolvedValueOnce({ sessions: [{ sessionId: reply.sessionId, cwd }] });
+      vi.spyOn(h.pool, "listSessions").mockResolvedValueOnce({ sessions: [{ sessionId: reply.sessionId, cwd }], next: { kind: "end" } });
       await h.sessions.syncAgentSessions("st-cross" as PatchbayAgentId);
       listedFirst = h.state().sessions[0]?.id;
       return reply;

@@ -17,12 +17,13 @@
 // does. A dead or stale session is thrown away and the surface recomputed
 // from the store — never reconciled. vscode-free; the orchestrator wires
 // the store, the normalizer, and the latch.
-import type { NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { SessionOpenedFact } from "./readers/responses";
 import type { SessionUpdateFact } from "./readers/session-update";
 import {
   applyConfigUpdate,
   applyModeUpdate,
   applySeedToFixedPoint,
+  NO_KNOBS,
   performKnobSet,
   toOfferedKnobs,
   type KnobSetRoute,
@@ -39,9 +40,6 @@ export interface DefaultsEditorHooks {
   probeRoot(patchbayAgentId: PatchbayAgentId): Promise<string>;
   /** The stored defaults — the one durable fact the session is seeded from. */
   defaultsFor(patchbayAgentId: PatchbayAgentId): KnobSeed;
-  /** The one normalizer (spec surfaces plus extension extras), so the editor
-   * offers exactly what the composer would. */
-  normalize(response: NewSessionResponse): NormalizedKnobs;
   /** Whether a throwaway session may open on this agent right now — false
    * while a latched agent's first-session privilege is unspent. */
   mayOpen(patchbayAgentId: PatchbayAgentId): boolean;
@@ -158,7 +156,7 @@ export class DefaultsEditor {
       return;
     }
     const dir = await this.hooks.probeRoot(patchbayAgentId);
-    let response: NewSessionResponse;
+    let response: SessionOpenedFact;
     try {
       response = await this.pool.newSession(patchbayAgentId, dir);
     } catch (err) {
@@ -174,7 +172,9 @@ export class DefaultsEditor {
     }
     const entry: Editing = {
       sessionId: response.sessionId,
-      knobs: this.hooks.normalize(response),
+      // read by the pool's one normalizer, so the editor offers exactly
+      // what the composer would
+      knobs: response.knobs ?? NO_KNOBS,
       applied: {},
     };
     this.editing.set(patchbayAgentId, entry);

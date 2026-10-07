@@ -329,10 +329,11 @@ export function applyConfigUpdate(
   prior?: NormalizedKnobs,
   log?: DropLog,
 ): NormalizedKnobs {
-  return withExtras(
-    { surface: "config", knobs: sanitizeConfigOptions(configOptions, log) },
-    prior?.extras,
-  );
+  const options = sanitizeConfigOptions(configOptions, log);
+  // An empty config list offers nothing to set: a modes surface stands —
+  // the same exclusivity rule a session response's reading applies.
+  if (options.length === 0 && prior?.surface === "modes") return prior;
+  return withExtras({ surface: "config", knobs: options }, prior?.extras);
 }
 
 /** A `current_mode_update` notification. Only meaningful on the modes
@@ -398,11 +399,13 @@ export function routeKnobSet(
  * session's connection; the three paths a KnobSetRoute can take. */
 export interface KnobWire {
   setMode(sessionId: string, modeId: string): Promise<void>;
+  /** The config surface the agent answered with — absent when the answer
+   * carried none. */
   setConfigOption(
     sessionId: string,
     configId: string,
     value: string | boolean,
-  ): Promise<{ configOptions: unknown }>;
+  ): Promise<{ configOptions?: unknown }>;
   /** Raw sender for extension-owned methods (pool.unstableRequest bound). */
   send: KnobExecuteDeps["send"];
 }
@@ -435,6 +438,9 @@ export async function performKnobSet(
     return route.extra.execute({ sessionId, send: wire.send, current: current() }, value);
   }
   const response = await wire.setConfigOption(sessionId, route.configId, value);
+  // An answer without its required surface says nothing of the new state —
+  // display waits for the agent's own update, as for set_mode.
+  if (response.configOptions === undefined) return null;
   return applyConfigUpdate(response.configOptions, current(), log);
 }
 

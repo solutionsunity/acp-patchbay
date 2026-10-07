@@ -104,6 +104,13 @@ describe("agent-driven updates", () => {
     expect(upgraded.surface).toBe("config");
     expect(upgraded.knobs).toHaveLength(1);
   });
+
+  it("an empty config list never displaces a modes surface — the session response's own rule (#80)", () => {
+    const modes = normalizeKnobs(MODES, []);
+    expect(modes.surface).toBe("modes");
+    expect(applyConfigUpdate([], modes)).toBe(modes);
+    expect(applyConfigUpdate([{ broken: true }], modes)).toBe(modes);
+  });
 });
 
 describe("routeKnobSet", () => {
@@ -234,7 +241,7 @@ describe("extension extras (the wire-extension door)", () => {
 });
 
 describe("performKnobSet — one routed set, three wire paths", () => {
-  function wire(response: SessionConfigOption[], onConfigSet?: () => void) {
+  function wire(response: SessionConfigOption[] | undefined, onConfigSet?: () => void) {
     const calls: string[] = [];
     const w: KnobWire = {
       setMode: async (sessionId, modeId) => {
@@ -243,7 +250,7 @@ describe("performKnobSet — one routed set, three wire paths", () => {
       setConfigOption: async (sessionId, configId, value) => {
         calls.push(`set_config_option ${sessionId} ${configId}=${String(value)}`);
         onConfigSet?.();
-        return { configOptions: response };
+        return response === undefined ? {} : { configOptions: response };
       },
       send: async (method, params) => {
         calls.push(`${method} ${JSON.stringify(params)}`);
@@ -272,6 +279,13 @@ describe("performKnobSet — one routed set, three wire paths", () => {
     expect(calls).toEqual(["set_config_option s1 model=opus"]);
     expect(next?.knobs.find((k) => k.id === "model")?.currentValue).toBe("opus");
     expect(next?.extras).toEqual([extra]);
+  });
+
+  it("set_config_option answered without its options: null — the knobs aren't wiped, display waits for the agent (#80)", async () => {
+    const { w, calls } = wire(undefined);
+    const next = await performKnobSet(w, "s1", () => normalizeKnobs(undefined, [MODEL_OPTION]), { via: "setConfigOption", configId: "model" }, "opus");
+    expect(calls).toEqual(["set_config_option s1 model=opus"]);
+    expect(next).toBeNull();
   });
 
   it("extension: executes with the state at execute time and returns the executor's next state", async () => {

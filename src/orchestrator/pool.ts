@@ -16,17 +16,25 @@ import { formatCommandLine } from "../shared/command-line";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import { isRefusal } from "./client-replies";
-import {
-  clientCapabilitiesWire,
-  declaredFromInitialize,
-  rowsProvenBy,
-  type WireFact,
-} from "./capabilities";
+import { clientCapabilitiesWire, rowsProvenBy, type WireFact } from "./capabilities";
 import { turnAuthFailureReasonOf } from "./extensions";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
-import { guardResponse } from "./response-guards";
-import { NoteLog } from "./readers/notes";
+import { readInitialize, type InitializeFact } from "./readers/initialize";
+import { NoteLog, type Note } from "./readers/notes";
 import { readPermissionRequest, type PermissionRequestFact } from "./readers/permission";
+import {
+  readConfigSet,
+  readNothing,
+  readSessionAttached,
+  readSessionList,
+  readSessionOpened,
+  readTurnEnd,
+  type ConfigSetFact,
+  type SessionAttachedFact,
+  type SessionListFact,
+  type SessionOpenedFact,
+  type TurnEndFact,
+} from "./readers/responses";
 import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-update";
 import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
@@ -185,7 +193,7 @@ interface Entry {
   process: ChildProcess | null;
   connection: acp.ClientConnection | null;
   declared: DeclaredCapabilities | null;
-  initializeRaw: acp.InitializeResponse | null;
+  initialize: InitializeFact | null;
   /** When `initialize` answered — the start of what this connection
    * declared. */
   initializedAt: string | null;
@@ -211,10 +219,10 @@ export interface PooledAgentView {
   status: AgentStatus;
   detail?: string;
   declared: DeclaredCapabilities | null;
-  /** The connection's `initialize` answer (guarded at the trust boundary)
-   * — its version, protocol version and raw auth methods — and when it
-   * came. Kept past a stop, like `declared`. */
-  initialize: acp.InitializeResponse | null;
+  /** The connection's `initialize` answer, read — its version, protocol
+   * version and how each log-in method runs — and when it came. Kept past a
+   * stop, like `declared`. */
+  initialize: InitializeFact | null;
   initializedAt: string | null;
   sessions: readonly string[];
   stderrTail: readonly string[];
@@ -349,7 +357,7 @@ export class AgentPool {
       status: e.status,
       detail: e.detail,
       declared: e.declared,
-      initialize: e.initializeRaw,
+      initialize: e.initialize,
       initializedAt: e.initializedAt,
       sessions: [...e.sessions.keys()],
       stderrTail: [...e.stderrTail],
@@ -387,7 +395,7 @@ export class AgentPool {
       process: null,
       connection: null,
       declared: null,
-      initializeRaw: null,
+      initialize: null,
       initializedAt: null,
       status: "reconnecting",
       sessions: new Map(),
@@ -602,14 +610,19 @@ export class AgentPool {
       .connect(stream);
     entry.connection = connection;
 
-    let init: acp.InitializeResponse;
+    let init: InitializeFact;
     try {
       init = await this.withTimeout(
-        this.request(entry, acp.methods.agent.initialize, {
-          protocolVersion: acp.PROTOCOL_VERSION,
-          clientInfo: { name: "acp-patchbay", version: "0.0.1" },
-          clientCapabilities: clientCapabilitiesWire(),
-        }),
+        this.request(
+          entry,
+          acp.methods.agent.initialize,
+          {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientInfo: { name: "acp-patchbay", version: "0.0.1" },
+            clientCapabilities: clientCapabilitiesWire(),
+          },
+          readInitialize,
+        ),
         this.initializeTimeoutMs,
         // The classic silent hang is a CLI doing first-run setup against a
         // TTY it doesn't have — name that instead of a bare timeout.
@@ -668,12 +681,12 @@ export class AgentPool {
       throw new Error(reason);
     }
 
-    entry.initializeRaw = init;
+    entry.initialize = init;
     entry.initializedAt = new Date().toISOString();
-    entry.declared = declaredFromInitialize(init);
+    entry.declared = init.declared;
     this.log.info(
-      `${patchbayAgentId}: initialized — ${init.agentInfo?.name ?? "unnamed"}` +
-        `${init.agentInfo?.version !== undefined ? ` v${init.agentInfo.version}` : ""}` +
+      `${patchbayAgentId}: initialized — ${init.agentInfo.name ?? "unnamed"}` +
+        `${init.agentInfo.version !== undefined ? ` v${init.agentInfo.version}` : ""}` +
         `, protocol ${init.protocolVersion}`,
     );
     this.hooks.onDeclaredCaptured(patchbayAgentId);
@@ -771,13 +784,14 @@ export class AgentPool {
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
-  ): Promise<acp.NewSessionResponse> {
+  ): Promise<SessionOpenedFact> {
     const entry = this.running(patchbayAgentId);
-    const response = await this.request(entry, acp.methods.agent.session.new, {
-      cwd,
-      mcpServers,
-      ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
-    });
+    const response = await this.request(
+      entry,
+      acp.methods.agent.session.new,
+      { cwd, mcpServers, ...this.dirsIfAdvertised(entry.declared, additionalDirectories) },
+      readSessionOpened("session/new"),
+    );
     entry.sessions.set(response.sessionId, cwd);
     this.log.debug(`${patchbayAgentId}: session/new -> ${response.sessionId}`);
     return response;
@@ -790,7 +804,7 @@ export class AgentPool {
    * once this resolves. */
   async authenticate(patchbayAgentId: PatchbayAgentId, methodId: string): Promise<void> {
     const entry = this.running(patchbayAgentId);
-    await this.request(entry, acp.methods.agent.authenticate, { methodId });
+    await this.request(entry, acp.methods.agent.authenticate, { methodId }, readNothing);
   }
 
   /** Stable `logout` — callers gate on the declared `auth.logout`
@@ -798,7 +812,7 @@ export class AgentPool {
    * itself just makes the round trip. */
   async logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
     const entry = this.running(patchbayAgentId);
-    await this.request(entry, acp.methods.agent.logout, {});
+    await this.request(entry, acp.methods.agent.logout, {}, readNothing);
   }
 
   /** Also used for the automatic, ephemeral fork-verification round-trip
@@ -810,14 +824,14 @@ export class AgentPool {
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
-  ): Promise<acp.ForkSessionResponse> {
+  ): Promise<SessionOpenedFact> {
     const entry = this.running(patchbayAgentId);
-    const response = await this.request(entry, acp.methods.agent.session.fork, {
-      sessionId,
-      cwd,
-      mcpServers,
-      ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
-    });
+    const response = await this.request(
+      entry,
+      acp.methods.agent.session.fork,
+      { sessionId, cwd, mcpServers, ...this.dirsIfAdvertised(entry.declared, additionalDirectories) },
+      readSessionOpened("session/fork"),
+    );
     entry.sessions.set(response.sessionId, cwd);
     this.log.debug(`${patchbayAgentId}: session/fork ${sessionId} -> ${response.sessionId}`);
     return response;
@@ -827,9 +841,14 @@ export class AgentPool {
     patchbayAgentId: PatchbayAgentId,
     sessionId: string,
     prompt: acp.ContentBlock[],
-  ): Promise<acp.PromptResponse> {
+  ): Promise<TurnEndFact> {
     const entry = this.running(patchbayAgentId);
-    return this.request(entry, acp.methods.agent.session.prompt, { sessionId, prompt });
+    // A cancelled prompt is auth-non-bearing: a bridge may short-circuit
+    // cancellation before its backend ever touches credentials, so the
+    // resolved RPC proves nothing a lock should clear on.
+    return this.request(entry, acp.methods.agent.session.prompt, { sessionId, prompt }, readTurnEnd, {
+      authBearing: (turn) => turn.stopReason !== "cancelled",
+    });
   }
 
   async cancel(patchbayAgentId: PatchbayAgentId, sessionId: string): Promise<void> {
@@ -851,17 +870,13 @@ export class AgentPool {
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
-  ): Promise<acp.LoadSessionResponse> {
+  ): Promise<SessionAttachedFact> {
     const entry = this.running(patchbayAgentId);
     const response = await this.request(
       entry,
       acp.methods.agent.session.load,
-      {
-        sessionId,
-        cwd,
-        mcpServers,
-        ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
-      },
+      { sessionId, cwd, mcpServers, ...this.dirsIfAdvertised(entry.declared, additionalDirectories) },
+      readSessionAttached("session/load"),
       { failureIsRoutine: true },
     );
     entry.sessions.set(sessionId, cwd);
@@ -876,9 +891,9 @@ export class AgentPool {
   async listSessions(
     patchbayAgentId: PatchbayAgentId,
     params: acp.ListSessionsRequest = {},
-  ): Promise<acp.ListSessionsResponse> {
+  ): Promise<SessionListFact> {
     const entry = this.running(patchbayAgentId);
-    return this.request(entry, acp.methods.agent.session.list, params);
+    return this.request(entry, acp.methods.agent.session.list, params, readSessionList);
   }
 
   /** Deletes a session from the agent's own history (`session/delete`).
@@ -886,7 +901,7 @@ export class AgentPool {
    * succeed silently. Only meaningful when declared.sessionDelete is true. */
   async deleteSession(patchbayAgentId: PatchbayAgentId, sessionId: string): Promise<void> {
     const entry = this.running(patchbayAgentId);
-    await this.request(entry, acp.methods.agent.session.delete, { sessionId });
+    await this.request(entry, acp.methods.agent.session.delete, { sessionId }, readNothing);
     entry.sessions.delete(sessionId);
     this.log.debug(`${patchbayAgentId}: session/delete ${sessionId}`);
   }
@@ -896,7 +911,7 @@ export class AgentPool {
    * destructive sibling). Only meaningful when declared.sessionClose. */
   async closeSession(patchbayAgentId: PatchbayAgentId, sessionId: string): Promise<void> {
     const entry = this.running(patchbayAgentId);
-    await this.request(entry, acp.methods.agent.session.close, { sessionId });
+    await this.request(entry, acp.methods.agent.session.close, { sessionId }, readNothing);
     entry.sessions.delete(sessionId);
     this.log.debug(`${patchbayAgentId}: session/close ${sessionId}`);
   }
@@ -914,17 +929,13 @@ export class AgentPool {
     cwd: string,
     mcpServers: acp.McpServer[] = [],
     additionalDirectories: string[] = [],
-  ): Promise<acp.ResumeSessionResponse> {
+  ): Promise<SessionAttachedFact> {
     const entry = this.running(patchbayAgentId);
     const response = await this.request(
       entry,
       acp.methods.agent.session.resume,
-      {
-        sessionId,
-        cwd,
-        mcpServers,
-        ...this.dirsIfAdvertised(entry.declared, additionalDirectories),
-      },
+      { sessionId, cwd, mcpServers, ...this.dirsIfAdvertised(entry.declared, additionalDirectories) },
+      readSessionAttached("session/resume"),
       { failureIsRoutine: true },
     );
     entry.sessions.set(sessionId, cwd);
@@ -938,7 +949,7 @@ export class AgentPool {
    * response is discarded. */
   async setSessionMode(patchbayAgentId: PatchbayAgentId, sessionId: string, modeId: string): Promise<void> {
     const entry = this.running(patchbayAgentId);
-    await this.request(entry, acp.methods.agent.session.setMode, { sessionId, modeId });
+    await this.request(entry, acp.methods.agent.session.setMode, { sessionId, modeId }, readNothing);
   }
 
   /** Unlike `setSessionMode` (whose response carries no state), the spec
@@ -952,11 +963,11 @@ export class AgentPool {
     sessionId: string,
     configId: string,
     value: string | boolean,
-  ): Promise<acp.SetSessionConfigOptionResponse> {
+  ): Promise<ConfigSetFact> {
     const entry = this.running(patchbayAgentId);
     const params: acp.SetSessionConfigOptionRequest =
       typeof value === "boolean" ? { sessionId, configId, type: "boolean", value } : { sessionId, configId, value };
-    return this.request(entry, acp.methods.agent.session.setConfigOption, params);
+    return this.request(entry, acp.methods.agent.session.setConfigOption, params, readConfigSet);
   }
 
   /** The one untracked escape hatch for wire-extension modules:
@@ -1052,18 +1063,23 @@ export class AgentPool {
    * is captured before the await: "a second session on a connection already
    * serving one" must count the sessions as they stood when the call was
    * made. */
-  private async request<M extends acp.AgentRequestMethod>(
+  private async request<M extends acp.AgentRequestMethod, T>(
     entry: Entry,
     method: M,
     params: acp.AgentRequestParamsByMethod[M],
+    /** The answer's reader (readers/) — what leaves here is its fact. */
+    read: (raw: unknown, note: Note) => T,
     opts?: {
       /** This call fails as part of normal operation (the attach ladder's
        * stale-id descent) — its failure bears nothing on the capability,
        * so no suspect is raised. Success still proves, auth facts still
        * flow. */
       failureIsRoutine?: boolean;
+      /** Whether this answer bears on the agent's credentials — every
+       * success does, unless this says otherwise. */
+      authBearing?: (fact: T) => boolean;
     },
-  ): Promise<acp.AgentRequestResponsesByMethod[M]> {
+  ): Promise<T> {
     const patchbayAgentId = entry.spec.patchbayAgentId;
     const priorSessionCount = entry.sessions.size;
     const fact: WireFact = {
@@ -1075,21 +1091,15 @@ export class AgentPool {
     };
     const startedAt = new Date().toISOString();
     try {
-      const result = await entry.connection!.agent.request(method, params);
-      // The response trust boundary (response-guards.ts): validated and
-      // degraded before "used" is marked or any caller reads it. A guard
-      // throw is a structurally unusable response — it rides the same catch
-      // as any RPC failure, so the rows go suspect, not used.
-      const guarded = guardResponse(method, result, (m) => this.log.info(`${patchbayAgentId}: ${m}`));
+      const result: unknown = await entry.connection!.agent.request(method, params);
+      // The response trust boundary: read before "used" is marked or any
+      // caller sees it. A reader's throw is a structurally unusable answer —
+      // it rides the same catch as any RPC failure, so the rows go suspect,
+      // not used.
+      const answer = read(result, entry.notes.at(patchbayAgentId, method));
       this.markProven(patchbayAgentId, fact);
-      // A cancelled prompt is auth-non-bearing: a bridge may short-circuit
-      // cancellation before its backend ever touches credentials, so the
-      // resolved RPC proves nothing a lock should clear on.
-      const cancelled =
-        method === acp.methods.agent.session.prompt &&
-        (guarded as { stopReason?: string }).stopReason === "cancelled";
-      if (!cancelled) this.hooks.onAuthWireFact?.(patchbayAgentId, method, "ok", startedAt);
-      return guarded;
+      if (opts?.authBearing?.(answer) !== false) this.hooks.onAuthWireFact?.(patchbayAgentId, method, "ok", startedAt);
+      return answer;
     } catch (err) {
       const auth = authRequiredReasonOf(err);
       if (auth !== null) {

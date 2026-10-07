@@ -49,9 +49,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { McpServerGates } from "./mcp-server-gates";
 import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
 import { OAuthCallbackRegistry } from "./oauth-callback";
-import { normalizeKnobs } from "./knobs";
 import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
-import { sessionKnobExtras } from "./extensions";
 import { runLoginTask } from "./login-task";
 import { AgentPool, authRequiredReasonOf } from "./pool";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
@@ -691,10 +689,6 @@ export class Orchestrator {
       {
         probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
         defaultsFor: (patchbayAgentId) => this.agents.spec(patchbayAgentId)?.defaults ?? {},
-        normalize: (response) =>
-          normalizeKnobs(response.modes, response.configOptions, sessionKnobExtras(response), (m) =>
-            this.log.info(m),
-          ),
         mayOpen: (patchbayAgentId) => !this.capabilityTracker.isProbeDeferred(patchbayAgentId),
         emit: (...events) => this.settings.emit(...events),
       },

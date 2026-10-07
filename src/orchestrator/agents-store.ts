@@ -36,11 +36,11 @@ import { formatCommandLine, parseCommandLine } from "../shared/command-line";
 import { unlessAborted } from "./abort";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
-import { terminalAuthOf, type TerminalAuth } from "./capabilities";
+import type { TerminalAuth } from "./readers/initialize";
 import type { CapabilityTracker } from "./capability-tracker";
 import { checkPathDivergence } from "./launcher-health";
 import { nullLogger, type Logger } from "./logger";
-import { terminalAuthRecipeOf, type TerminalAuthRecipe } from "./meta";
+import type { TerminalAuthRecipe } from "./meta";
 import type { AgentPool, LaunchSpec } from "./pool";
 import { resolveExecutableWin32 } from "./spawn-resolve";
 import { type AcpRegistryStore, type RegistryAgent, resolveDistribution } from "./stores/acp-registry";
@@ -542,34 +542,30 @@ export class AgentsStore implements ConnectionOperations {
    * honest signal, no separate reply channel. `signal` stops the wait on a
    * terminal login — never its terminal. */
   async login(patchbayAgentId: PatchbayAgentId, methodId: string, signal?: AbortSignal): Promise<void> {
-    // The method as the connection's own `initialize` declared it — its
-    // kind (capabilities.ts's one classification), and the raw entry a
-    // terminal recipe or typed terminal method is read from. Command paths
-    // are machine-absolute and stay host-side; the webview only ever sees
-    // the kind.
+    // The method as the connection's own `initialize` was read — its kind,
+    // and how patchbay runs it (a recipe wins over the wire's type, the
+    // same precedence the kind is classified by). Command paths are
+    // machine-absolute and stay host-side; the webview only ever sees the
+    // kind.
     const live = this.deps.pool.get(patchbayAgentId);
     if (live?.declared?.authMethods.find((m) => m.id === methodId)?.kind === "unsupported") {
       this.log.warn(`${patchbayAgentId}: ignored a login on "${methodId}" — patchbay can't run this method's type`);
       return;
     }
-    const method = live?.initialize?.authMethods?.find((m) => m.id === methodId);
-    // A recipe wins over the wire's type, the same precedence the kind is
-    // classified by.
-    const recipe = method === undefined ? null : terminalAuthRecipeOf(method._meta);
-    if (recipe !== null) {
+    const run = live?.initialize?.logins.get(methodId);
+    if (run?.via === "recipe") {
       // terminal-recipe method: the login runs in a visible terminal,
       // `authenticate` is never called on it (meta.ts).
-      await this.loginViaTerminal(patchbayAgentId, recipe, signal);
+      await this.loginViaTerminal(patchbayAgentId, run.recipe, signal);
       return;
     }
-    const typed = method === undefined ? null : terminalAuthOf(method);
-    if (typed !== null) {
+    if (run?.via === "terminal") {
       // the spec's terminal auth method: same executor,
       // recipe composed from the agent's own spawn spec at click time —
       // `authenticate` is never called on it either, so a login's
       // success is always terminal-ran-plus-reprobe, never the RPC's
       // word for it.
-      await this.typedLoginViaTerminal(patchbayAgentId, typed, signal);
+      await this.typedLoginViaTerminal(patchbayAgentId, run.auth, signal);
       return;
     }
     await this.deps.tracker.authenticate(patchbayAgentId, methodId);

@@ -1,11 +1,8 @@
 // _meta extension table (meta.ts): declared and parsed halves come from one
 // table, payloads are trust-boundary data — malformed degrades to absent.
 import { describe, expect, it } from "vitest";
-import type { InitializeResponse } from "@agentclientprotocol/sdk";
-import {
-  clientCapabilitiesWire,
-  declaredFromInitialize,
-} from "../src/orchestrator/capabilities";
+import { clientCapabilitiesWire } from "../src/orchestrator/capabilities";
+import { readInitialize } from "../src/orchestrator/readers/initialize";
 import { clientMetaWire, planUsageOf, terminalAuthRecipeOf } from "../src/orchestrator/meta";
 
 const recipe = {
@@ -94,20 +91,25 @@ describe("client _meta declaration", () => {
   });
 });
 
-function initWith(authMethods: unknown): InitializeResponse {
-  return { protocolVersion: 1, authMethods } as InitializeResponse;
+function initWith(authMethods: unknown): unknown {
+  return { protocolVersion: 1, authMethods };
+}
+
+/** The declared table an initialize answer is read into. */
+function declaredOf(raw: unknown) {
+  return readInitialize(raw, () => {}).declared;
 }
 
 describe("auth method kind classification", () => {
   it("a parseable recipe wins over the type field (Auggie ships one on a type-less method)", () => {
-    const declared = declaredFromInitialize(
+    const declared = declaredOf(
       initWith([{ id: "auggie-login", name: "Log in with Auggie", _meta: { "terminal-auth": recipe } }]),
     );
     expect(declared.authMethods[0]!.kind).toBe("terminal-recipe");
   });
 
   it('type: "terminal" with a recipe is still terminal-recipe (Claude labels honestly)', () => {
-    const declared = declaredFromInitialize(
+    const declared = declaredOf(
       initWith([
         { id: "claude-ai-login", name: "Claude Subscription", type: "terminal", args: ["--cli"], _meta: { "terminal-auth": recipe } },
       ]),
@@ -116,12 +118,12 @@ describe("auth method kind classification", () => {
   });
 
   it("type-less without a recipe stays the schema default: agent", () => {
-    const declared = declaredFromInitialize(initWith([{ id: "login", name: "Log in" }]));
+    const declared = declaredOf(initWith([{ id: "login", name: "Log in" }]));
     expect(declared.authMethods[0]!.kind).toBe("agent");
   });
 
   it("recipe-less methods classify by the wire's own type", () => {
-    const declared = declaredFromInitialize(
+    const declared = declaredOf(
       initWith([
         { id: "t", name: "Terminal", type: "terminal", args: ["--cli"] },
         { id: "a", name: "Agent", type: "agent" },
@@ -141,7 +143,7 @@ describe("auth method kind classification", () => {
   });
 
   it("a malformed typed terminal is never a runnable kind", () => {
-    const declared = declaredFromInitialize(
+    const declared = declaredOf(
       initWith([
         { id: "t", name: "Terminal", type: "terminal", args: "login" },
         { id: "e", name: "Env", type: "terminal", env: ["A"] },
@@ -151,7 +153,7 @@ describe("auth method kind classification", () => {
   });
 
   it("a malformed recipe falls back to the type field, honestly", () => {
-    const declared = declaredFromInitialize(
+    const declared = declaredOf(
       initWith([{ id: "x", name: "X", _meta: { "terminal-auth": { args: [] } } }]),
     );
     expect(declared.authMethods[0]!.kind).toBe("agent");

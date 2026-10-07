@@ -4,7 +4,6 @@
 // for every suite that drives agents over the real fake agent, so none of
 // them carries its own copy of a writer.
 import { join } from "node:path";
-import type * as acp from "@agentclientprotocol/sdk";
 import { AgentGates, type AgentOperation, type GateAsks } from "../../src/orchestrator/agent-gates";
 import { AgentsStore, type AgentsStoreDeps, type AgentsStoreHooks } from "../../src/orchestrator/agents-store";
 import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
@@ -44,9 +43,9 @@ export interface AgentsHarness {
   row(patchbayAgentId: PatchbayAgentId): AgentSummary | undefined;
   /** Agents the store reported removed — the sessions side's cue. */
   removed: string[];
-  /** Every onProbeSession announcement, in order — the probe's raw
-   * session/new response (spec-pure-core: raw, tests reach into it). */
-  probes: { patchbayAgentId: PatchbayAgentId; sessionId: string; modes: unknown; configOptions: unknown }[];
+  /** Every onProbeSession announcement, in order — the session each probe
+   * opened. */
+  probes: { patchbayAgentId: PatchbayAgentId; sessionId: string }[];
   /** A saved config — and so a row in the views — for an agent a suite
    * connects through the pool directly: the store acts only on agents that
    * exist (auth evidence for an unknown one is dropped). */
@@ -89,13 +88,7 @@ export function agentsHarness(
   const tracker = new CapabilityTracker(pool, usedCapabilities, {
     changed: (patchbayAgentId) => agents.publish(patchbayAgentId),
     registryIdOf: (patchbayAgentId) => agents.config(patchbayAgentId)?.registrySource?.registryId ?? null,
-    onProbeSession: (patchbayAgentId, response: acp.NewSessionResponse) =>
-      probes.push({
-        patchbayAgentId,
-        sessionId: response.sessionId,
-        modes: response.modes,
-        configOptions: response.configOptions,
-      }),
+    onProbeSession: (patchbayAgentId, session) => probes.push({ patchbayAgentId, sessionId: session.sessionId }),
     probeRoot: (patchbayAgentId) => agents.probeRoot(patchbayAgentId),
   });
   const deps: AgentsStoreDeps = {

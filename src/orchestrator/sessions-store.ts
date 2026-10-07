@@ -18,11 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { basename, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type {
-  ContentBlock,
-  McpServer,
-  SessionInfo,
-} from "@agentclientprotocol/sdk";
+import type { ContentBlock, McpServer } from "@agentclientprotocol/sdk";
 import {
   type AgentStatus,
   type AgentViewEvent,
@@ -47,13 +43,11 @@ import {
   applySeedToFixedPoint,
   confirmedFromKnobs,
   NO_KNOBS,
-  normalizeKnobs,
   routeKnobSet,
   type KnobWire,
   performKnobSet,
   type NormalizedKnobs,
 } from "./knobs";
-import { sessionKnobExtras } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted, untilGivenUp } from "./abort";
 import type { AttachedServer } from "./mcp-servers-store";
@@ -63,6 +57,7 @@ import { SessionStream, type StreamState } from "./session-stream";
 import { NoteLog } from "./readers/notes";
 import { sessionMetaOf, type SessionUpdateFact } from "./readers/session-update";
 import type { ToolCallFact } from "./readers/tool-call";
+import type { ListedSessionFact } from "./readers/responses";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
@@ -169,9 +164,12 @@ export function normalizeRootPath(path: string): string {
   return path.replace(/(?<=.)[\\/]+$/, "");
 }
 
+/** A session's name until it has one — never taken for a title. */
+const UNTITLED = "Untitled session";
+
 function deriveTitle(promptText: string): string {
   const flat = promptText.trim().replace(/\s+/g, " ");
-  if (flat === "") return "Untitled session";
+  if (flat === "") return UNTITLED;
   return flat.length > 48 ? `${flat.slice(0, 47)}…` : flat;
 }
 
@@ -566,7 +564,14 @@ export class SessionsStore {
     patchbayAgentId: PatchbayAgentId,
     opts: { cwd?: string; roots?: readonly string[] } = {},
     signal?: AbortSignal,
-  ): Promise<{ sessionId: string; contextToken: string; knobs: NormalizedKnobs; missing: string[] }> {
+  ): Promise<{
+    sessionId: string;
+    contextToken: string;
+    /** The knobs the answer offers — undefined when it names none: a new
+     * session then has none, a reattached one keeps what it holds. */
+    knobs: NormalizedKnobs | undefined;
+    missing: string[];
+  }> {
     // Unguessable: the token is what the IPC socket admits a request by.
     const contextToken = randomUUID();
     const { servers: mcpServers, given } = await unlessAborted(this.mcpServersFor(contextToken, patchbayAgentId), signal);
@@ -601,7 +606,7 @@ export class SessionsStore {
       return {
         sessionId: r.sessionId,
         contextToken,
-        knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
+        knobs: r.knobs,
         missing,
       };
     }
@@ -620,7 +625,7 @@ export class SessionsStore {
     return {
       sessionId,
       contextToken,
-      knobs: normalizeKnobs(r.modes, r.configOptions, sessionKnobExtras(r), this.knobDropLog),
+      knobs: r.knobs,
       missing,
     };
   }
@@ -683,7 +688,11 @@ export class SessionsStore {
    * blank flash, no patch flood) until the closing resync swaps the webview
    * wholesale. The window closes on failure too: canonical was reset, and
    * the webview must not keep showing blocks canonical no longer holds. */
-  private async loadSilently(patchbaySessionId: PatchbaySessionId, patchbayAgentId: PatchbayAgentId, signal: AbortSignal): Promise<NormalizedKnobs> {
+  private async loadSilently(
+    patchbaySessionId: PatchbaySessionId,
+    patchbayAgentId: PatchbayAgentId,
+    signal: AbortSignal,
+  ): Promise<NormalizedKnobs | undefined> {
     this.stream.openReplay(patchbaySessionId);
     try {
       const { knobs } = await this.attachSession({ via: "load", patchbaySessionId }, patchbayAgentId, {}, signal);
@@ -739,7 +748,7 @@ export class SessionsStore {
     this.noticeMissingRoots(patchbaySessionId, missing);
     this.hooks.rootsChanged?.(patchbaySessionId);
     this.log.info(`session ${patchbaySessionId} created with ${patchbayAgentId}`);
-    this.publishKnobs(patchbaySessionId, knobs);
+    this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
     await this.applySeedFor(patchbayAgentId, patchbaySessionId);
     return patchbaySessionId;
   }
@@ -785,7 +794,7 @@ export class SessionsStore {
     this.noticeMissingRoots(forkId, missing);
     this.hooks.rootsChanged?.(forkId);
     this.log.info(`session ${forkId} forked from ${patchbaySessionId} with ${patchbayAgentId}`);
-    this.publishKnobs(forkId, knobs);
+    this.publishKnobs(forkId, knobs ?? NO_KNOBS);
     // A fork of a never-prompted session has no messages to show.
     if (!parent.everPrompted) return forkId;
     if (this.pool.get(patchbayAgentId)?.declared?.loadSession === true) {
@@ -1075,28 +1084,25 @@ export class SessionsStore {
         cwd,
         ...(cursor !== undefined ? { cursor } : {}),
       });
-      // Rows arrive through the response trust boundary (pool's chokepoint):
-      // identity-less rows are already dropped, bad sort keys degraded.
+      // Rows arrive read (pool's chokepoint): identity-less rows already
+      // dropped, bad sort keys degraded.
       for (const info of response.sessions) {
         // Re-filter defensively: the cwd param is a request, not a contract.
         if (info.cwd !== cwd) continue;
         seen.add(info.sessionId);
         this.noteListedSession(patchbayAgentId, info);
       }
-      if (response.nextCursor == null) {
+      if (response.next.kind === "end") {
         complete = true;
         break;
       }
-      if (typeof response.nextCursor !== "string") {
-        // A cursor that can't be sent back truncates the walk — same rule as
+      if (response.next.kind === "unreadable") {
+        // A page that can't be followed truncates the walk — same rule as
         // the page cap: merge what arrived, never prune on a partial read.
-        // Deliberately judged here, not at the response boundary: degrading
-        // the cursor to absent there would read as "complete" and license a
-        // wrongful prune — pagination policy is this walk's, not the wire's.
-        this.log.info(`${patchbayAgentId}: session/list nextCursor is malformed — sync merged, prune skipped`);
+        this.log.info(`${patchbayAgentId}: session/list can't be followed past this page — sync merged, prune skipped`);
         return;
       }
-      cursor = response.nextCursor;
+      cursor = response.next.cursor;
     }
     if (!complete) {
       this.log.info(`${patchbayAgentId}: session/list still paging after ${MAX_LIST_PAGES} pages — sync merged, prune skipped`);
@@ -1135,7 +1141,7 @@ export class SessionsStore {
    * (patchbay-side rename is gone — ACP has no rename request; in-chat
    * agent commands like /rename round-trip through the agent's own list
    * and session_info_update). */
-  private noteListedSession(patchbayAgentId: PatchbayAgentId, info: SessionInfo): void {
+  private noteListedSession(patchbayAgentId: PatchbayAgentId, info: ListedSessionFact): void {
     if (this.closedDuringSync.get(patchbayAgentId)?.has(info.sessionId) === true) return;
     const existing = this.rowFor(patchbayAgentId, info.sessionId);
     const now = new Date().toISOString();
@@ -1144,7 +1150,7 @@ export class SessionsStore {
       // editor) or in a previous window. The wire's stamp orders it; an
       // agent that sends none leaves first sight as the only honest stamp.
       const meta = sessionMetaOf(info, this.notes.at(patchbayAgentId, "session/list"));
-      const title = meta.title ?? "Untitled session";
+      const title = meta.title ?? UNTITLED;
       const at = meta.updatedAt ?? now;
       // The durable continuity row re-enters with the session — the fields
       // the wire list cannot carry stay there, read as they are needed; the
@@ -1154,7 +1160,9 @@ export class SessionsStore {
       this.bind(patchbaySessionId, {
         patchbayAgentId,
         sessionId: info.sessionId,
-        titled: true,
+        // Titled only by a title the agent gave — an untitled row still takes
+        // the first prompt's, like a session made here.
+        titled: meta.title !== undefined,
         everPrompted: true, // listed = persisted agent-side = prior turns
       });
       const saved = this.saved(patchbaySessionId);
@@ -1244,7 +1252,7 @@ export class SessionsStore {
       );
     }
     this.sessions.set(patchbaySessionId, liveSession());
-    let knobs: NormalizedKnobs;
+    let knobs: NormalizedKnobs | undefined;
     try {
       knobs = await this.loadSilently(patchbaySessionId, patchbayAgentId, signal);
     } catch (err) {
@@ -1257,7 +1265,9 @@ export class SessionsStore {
     // pool.ts's loadSession already marked "session.load" used the instant
     // the RPC succeeded — this only has to update the render state.
     this.log.info(`session ${patchbaySessionId} reopened via session/load on ${patchbayAgentId}`);
-    this.publishKnobs(patchbaySessionId, knobs);
+    // An answer naming no knobs leaves what the replay's own updates set —
+    // the attachment is fresh, so that is all it holds.
+    this.publishKnobs(patchbaySessionId, knobs ?? this.sessions.get(patchbaySessionId)?.knobs ?? NO_KNOBS);
   }
 
   /** THE attach ladder — the rung order exists here and nowhere else.
@@ -1365,7 +1375,8 @@ export class SessionsStore {
     };
     this.hooks.emit({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, notice] });
     this.log.info(`session ${patchbaySessionId} resumed (no replay) on ${patchbayAgentId}`);
-    this.publishKnobs(patchbaySessionId, knobs);
+    // A fresh attachment holds nothing yet: an answer naming no knobs is none.
+    this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
   }
 
   /** The user's knob-set entry point (knobs.ts routes and performs it). A
@@ -1685,7 +1696,7 @@ export class SessionsStore {
     const seed = confirmedFromKnobs(session.knobs);
     try {
       const { knobs } = await this.attachSession({ via: "resume", patchbaySessionId }, this.agentOfLive(patchbaySessionId), {}, signal);
-      this.publishKnobs(patchbaySessionId, knobs);
+      if (knobs !== undefined) this.publishKnobs(patchbaySessionId, knobs);
       await this.applySeed(patchbaySessionId, seed, signal);
       this.log.info(`session ${patchbaySessionId}: roots re-applied via session/resume`);
     } catch (err) {
@@ -1751,7 +1762,7 @@ export class SessionsStore {
     // The empty shell, only while its process still exists — a dead
     // connection took it along.
     if (old !== undefined) this.retire(patchbayAgentId, was);
-    this.publishKnobs(patchbaySessionId, knobs);
+    this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
     await this.applySeed(patchbaySessionId, seed, signal);
     this.log.info(`session ${patchbaySessionId}: zero-turn — minted again (agent id ${was} → ${sessionId})`);
   }
@@ -2005,10 +2016,17 @@ export class SessionsStore {
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      const response = await untilGivenUp(this.pool.prompt(known.patchbayAgentId, sessionId, prompt), signal, CANCEL_SETTLE_MS);
+      const answer = this.pool.prompt(known.patchbayAgentId, sessionId, prompt);
+      const response = await untilGivenUp(answer, signal, CANCEL_SETTLE_MS);
       if (response === null) {
         this.log.info(
           `session ${patchbaySessionId}: turn told to stop, still unanswered after ${CANCEL_SETTLE_MS} ms — ended here`,
+        );
+        // The agent's own answer may still come: said when it does, never
+        // dropped unheard.
+        void answer.then(
+          (late) => this.log.info(`session ${patchbaySessionId}: the stopped turn's answer came late — ${late.stopReason}`),
+          (err: unknown) => this.log.info(`session ${patchbaySessionId}: the stopped turn ended late in an error — ${(err as Error).message}`),
         );
         endTurn("cancelled", null);
         return;
@@ -2019,7 +2037,7 @@ export class SessionsStore {
       } else {
         this.log.info(`session ${patchbaySessionId}: turn stopped — ${response.stopReason}`);
       }
-      endTurn(response.stopReason, toTurnUsage(response.usage));
+      endTurn(response.stopReason, response.usage ?? null);
     } catch (err) {
       // The turn still ended — as an error, said as such, never silently.
       endTurn("error", null);
@@ -2270,19 +2288,6 @@ function rebased(fields: SessionContinuity, from: string, to: string): SessionCo
   return {
     ...fields,
     chips: fields.chips.map((c) => (c.kind === "image" || c.kind === "attachment" ? { ...c, path: move(c.path) } : c)),
-  };
-}
-
-/** PromptResponse.usage (UNSTABLE in ACP, optional per agent) → the view's
- * TurnUsage — null when unreported, so the UI omits the row entirely
- * (absence over fake). */
-function toTurnUsage(usage: { totalTokens: number; inputTokens: number; outputTokens: number; cachedReadTokens?: number | null } | null | undefined): TurnUsage | null {
-  if (usage == null) return null;
-  return {
-    total: usage.totalTokens,
-    input: usage.inputTokens,
-    output: usage.outputTokens,
-    ...(usage.cachedReadTokens != null ? { cached: usage.cachedReadTokens } : {}),
   };
 }
 

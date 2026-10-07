@@ -6,8 +6,8 @@ import {
   clientCapabilitiesWire,
   matrixFromDeclared,
   rowsProvenBy,
-  terminalAuthOf,
 } from "../src/orchestrator/capabilities";
+import { terminalAuthOf } from "../src/orchestrator/readers/initialize";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import type { AgentPool } from "../src/orchestrator/pool";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
