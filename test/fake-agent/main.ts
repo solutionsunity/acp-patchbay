@@ -71,7 +71,10 @@ export type TurnStep =
    * request, with no pause, so the notice can overtake it; then withdraws. */
   | { type: "elicitUrl"; url: string; elicitationId: string; then?: "complete" | "withdraw" | "finishFirst" }
   | { type: "callMcpTool"; tool: string; args?: Record<string, unknown> }
-  | { type: "infoUpdate"; title: string };
+  | { type: "infoUpdate"; title: string }
+  /** Any session/update, sent as-is and recorded like the rest — the
+   * whole update surface, every field and variant, for corpus tests. */
+  | { type: "update"; update: acp.SessionUpdate };
 
 export interface FakeAgentScript {
   name?: string;
@@ -154,7 +157,13 @@ export interface FakeAgentScript {
   };
 }
 
-const script: FakeAgentScript = JSON.parse(process.env.FAKE_AGENT_SCRIPT ?? "{}");
+// A script too large for the environment (a long recorded turn) comes as a
+// file instead.
+const script: FakeAgentScript = JSON.parse(
+  process.env.FAKE_AGENT_SCRIPT_FILE !== undefined
+    ? readFileSync(process.env.FAKE_AGENT_SCRIPT_FILE, "utf8")
+    : (process.env.FAKE_AGENT_SCRIPT ?? "{}"),
+);
 const stepDelay = script.stepDelayMs ?? 5;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -535,6 +544,9 @@ async function runTurn(
           title: step.title,
           updatedAt: new Date().toISOString(),
         });
+        break;
+      case "update":
+        await emitUpdate(cx, sessionId, cwd, step.update);
         break;
       case "callMcpTool": {
         let result: string;

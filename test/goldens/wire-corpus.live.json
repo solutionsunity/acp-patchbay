@@ -1,0 +1,269 @@
+{
+  "title": "Corpus session",
+  "transcript": [
+    {
+      "kind": "user",
+      "id": "<id-1>",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "go"
+        }
+      ]
+    },
+    {
+      "kind": "thought",
+      "id": "<id-2>",
+      "text": "Thinking about the request."
+    },
+    {
+      "kind": "text",
+      "id": "<id-3>",
+      "text": "First message, continued."
+    },
+    {
+      "kind": "text",
+      "id": "<id-4>",
+      "text": "Second message.[README.md](file:///w/README.md)"
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-5>",
+      "part": {
+        "kind": "image",
+        "mimeType": "image/png",
+        "file": "<file-6>"
+      },
+      "thought": false
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-7>",
+      "part": {
+        "kind": "image",
+        "mimeType": "image/png"
+      },
+      "thought": false
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-8>",
+      "part": {
+        "kind": "unrendered",
+        "type": "audio"
+      },
+      "thought": false
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-9>",
+      "part": {
+        "kind": "context",
+        "label": "file:///w/notes.txt",
+        "text": "embedded notes"
+      },
+      "thought": false
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-10>",
+      "part": {
+        "kind": "unrendered",
+        "type": "blob resource"
+      },
+      "thought": false
+    },
+    {
+      "kind": "text",
+      "id": "<id-11>",
+      "text": "For the model only."
+    },
+    {
+      "kind": "agentPart",
+      "id": "<id-12>",
+      "part": {
+        "kind": "mention",
+        "name": "spec.md",
+        "uri": "file:///w/spec.md"
+      },
+      "thought": true
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-13>",
+      "title": "Read src/a.ts",
+      "status": "completed",
+      "toolKind": "read",
+      "input": "{\n  \"path\": \"/w/src/a.ts\",\n  \"limit\": 40\n}",
+      "output": "{\n  \"lines\": 40\n}",
+      "locations": [
+        {
+          "path": "/w/src/a.ts",
+          "line": 12
+        }
+      ],
+      "content": [
+        {
+          "kind": "text",
+          "text": "export const a = 1;"
+        }
+      ],
+      "diffs": {},
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-14>",
+      "title": "Edit src/b.ts",
+      "status": "completed",
+      "toolKind": "edit",
+      "input": null,
+      "output": null,
+      "locations": [
+        {
+          "path": "/w/src/b.ts",
+          "line": null
+        }
+      ],
+      "content": [],
+      "diffs": {
+        "/w/src/b.ts": {
+          "additions": 2,
+          "deletions": 1
+        }
+      },
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-15>",
+      "title": "Run npm test",
+      "status": "completed",
+      "toolKind": "execute",
+      "input": "{\n  \"command\": [\n    \"npm\",\n    \"test\"\n  ]\n}",
+      "output": "{\n  \"exit_code\": 0,\n  \"stdout\": \"1 passed\\n\"\n}",
+      "locations": [],
+      "content": [
+        {
+          "kind": "terminal",
+          "terminalId": "agent-term-1"
+        }
+      ],
+      "diffs": {},
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-16>",
+      "title": "Fetch https://example.com",
+      "status": "failed",
+      "toolKind": "fetch",
+      "input": null,
+      "output": null,
+      "locations": [],
+      "content": [
+        {
+          "kind": "text",
+          "text": "403 Forbidden"
+        }
+      ],
+      "diffs": {},
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-17>",
+      "title": "Orphan",
+      "status": "completed",
+      "toolKind": "other",
+      "input": null,
+      "output": "late output",
+      "locations": [],
+      "content": [],
+      "diffs": {},
+      "denied": false,
+      "interrupted": false
+    },
+    {
+      "kind": "toolCall",
+      "id": "<id-18>",
+      "title": "Thinking",
+      "status": "in_progress",
+      "toolKind": "think",
+      "input": null,
+      "output": null,
+      "locations": [],
+      "content": [],
+      "diffs": {},
+      "denied": false,
+      "interrupted": true
+    },
+    {
+      "kind": "text",
+      "id": "<id-19>",
+      "text": "Done."
+    },
+    {
+      "kind": "turnEnd",
+      "id": "<id-20>",
+      "startedAt": "<time>",
+      "endedAt": "<time>",
+      "stopReason": "end_turn",
+      "usage": null
+    }
+  ],
+  "plan": [
+    {
+      "content": "Read the code",
+      "status": "completed"
+    },
+    {
+      "content": "Make the change",
+      "status": "in_progress"
+    },
+    {
+      "content": "Run the tests",
+      "status": "pending"
+    }
+  ],
+  "commands": [
+    {
+      "name": "review",
+      "description": "Review the changes"
+    },
+    {
+      "name": "test",
+      "description": "Run tests",
+      "inputHint": "which suite"
+    }
+  ],
+  "usage": {
+    "used": 1800,
+    "size": 200000
+  },
+  "knobs": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "fast",
+      "options": [
+        {
+          "value": "fast",
+          "name": "Sonnet",
+          "description": "Fast"
+        },
+        {
+          "value": "deep",
+          "name": "Sonnet",
+          "description": "Deep"
+        }
+      ]
+    }
+  ]
+}
