@@ -286,7 +286,7 @@ function wireHarness() {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     ...stubFsTerminalHooks(),
     onElicitation: async (patchbayAgentId, params, signal) => {
       const reading = readElicitationRequest(params);

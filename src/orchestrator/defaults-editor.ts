@@ -17,7 +17,8 @@
 // does. A dead or stale session is thrown away and the surface recomputed
 // from the store — never reconciled. vscode-free; the orchestrator wires
 // the store, the normalizer, and the latch.
-import type { NewSessionResponse, SessionNotification } from "@agentclientprotocol/sdk";
+import type { NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { SessionUpdateFact } from "./readers/session-update";
 import {
   applyConfigUpdate,
   applyModeUpdate,
@@ -128,13 +129,12 @@ export class DefaultsEditor {
   /** The editing session's own notifications — the agent's transition duty
    * confirms sets out of band (mode changes; config updates some agents
    * send in addition to the response). */
-  handleUpdate(patchbayAgentId: PatchbayAgentId, notification: SessionNotification): void {
+  handleUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void {
     const entry = this.editing.get(patchbayAgentId);
-    if (entry === undefined || entry.sessionId !== notification.sessionId) return;
-    const update = notification.update;
-    if (update.sessionUpdate === "config_option_update") {
+    if (entry === undefined || entry.sessionId !== sessionId) return;
+    if (update.kind === "configOptions") {
       entry.knobs = applyConfigUpdate(update.configOptions, entry.knobs, (m) => this.log.info(m));
-    } else if (update.sessionUpdate === "current_mode_update") {
+    } else if (update.kind === "mode") {
       const next = applyModeUpdate(entry.knobs, update.currentModeId);
       if (next === null) return;
       entry.knobs = next;

@@ -16,6 +16,13 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   before, any agent could read, wait on, kill or release another session's
   command by guessing its counter id. A request naming a session patchbay
   doesn't hold is refused or answered at once. (#76)
+- **What the agent says is shown as it says it.** One reader per kind of
+  agent message replaces the places that each read the wire their own way
+  (#80): a running tool call no longer reads finished when an update says
+  nothing of its status, the session's cost stays when a reading leaves it
+  out, and a kind patchbay has no view for yet appears as a line naming it,
+  its content a click away — never dropped. Each such case is said once in
+  the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**
   wherever the agent declares them. Close no longer deletes the session from

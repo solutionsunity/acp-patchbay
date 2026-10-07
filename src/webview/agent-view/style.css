@@ -585,15 +585,16 @@ body {
   color: var(--pb-text-dim);
 }
 
-/* harness-injected user-role envelope (UserBlock.injected) — dim collapsed
-   line like a thought, never a prompt bubble */
-.injected {
+/* a dim collapsed line beside the conversation — a harness-injected
+   user-role envelope (never a prompt bubble), an update kind shown as the
+   agent sent it */
+.dim-line {
   color: var(--pb-text-faint);
   cursor: pointer;
   font-size: 12px;
 }
 
-.injected .body {
+.dim-line .body {
   margin-top: 4px;
   padding: 8px 10px;
   border-left: 2px solid var(--pb-border);

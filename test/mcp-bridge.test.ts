@@ -284,7 +284,7 @@ function harness(mcpServers: McpServer[]) {
   const pool = new AgentPool({
     onStatusChanged: () => {},
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     ...stubFsTerminalHooks(),
   });
   const sessions = new SessionsStore(

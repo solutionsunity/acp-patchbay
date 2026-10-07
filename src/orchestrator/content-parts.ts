@@ -6,9 +6,9 @@
 // call's content — so a mention, an image or an embedded resource looks the
 // same wherever it arrives. Only kinds nothing can show yet (audio, binary
 // resources) fall to a labeled placeholder.
-import type { ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
 import type { ContentPart, ToolContentPart } from "../shared/protocol";
 import { imageFileName, stashPreview } from "./attachments";
+import type { ContentFact, ToolContentFact } from "./readers/content";
 
 /** Agent-sized text rides every state snapshot — bounded here, with an
  * honest marker, never a silent cut. */
@@ -26,31 +26,31 @@ export interface ImageStash {
   onError(err: Error): void;
 }
 
-export function contentPartOf(content: ContentBlock, images: ImageStash): ContentPart {
+export function contentPartOf(content: ContentFact, images: ImageStash): ContentPart {
   switch (content.type) {
     case "text":
       return { kind: "text", text: content.text };
     case "resource_link":
       return { kind: "mention", name: content.name, uri: content.uri };
     case "image": {
-      if (content.data === "") return { kind: "image", mimeType: content.mimeType };
+      if (content.data === undefined) return { kind: "image", mimeType: content.mimeType };
       const file = imageFileName(images.id(), content.mimeType);
       void stashPreview(file, content.data).catch(images.onError);
       return { kind: "image", mimeType: content.mimeType, file };
     }
     case "resource":
-      return "text" in content.resource
-        ? { kind: "context", label: content.resource.uri, text: boundedText(content.resource.text) }
+      return content.text !== undefined
+        ? { kind: "context", label: content.uri, text: boundedText(content.text) }
         : { kind: "unrendered", type: "blob resource" };
-    default:
-      return { kind: "unrendered", type: content.type };
+    case "audio":
+      return { kind: "unrendered", type: "audio" };
   }
 }
 
 /** A tool call's `content` as its card shows it, in the agent's order. Text
  * is bounded like the raw fields (a tool's output can be a whole file);
  * diffs are left out — they are the card's file rows. */
-export function toolContentOf(content: readonly ToolCallContent[], images: ImageStash): ToolContentPart[] {
+export function toolContentOf(content: readonly ToolContentFact[], images: ImageStash): ToolContentPart[] {
   return content.flatMap((c): ToolContentPart[] => {
     switch (c.type) {
       case "content": {
@@ -59,7 +59,7 @@ export function toolContentOf(content: readonly ToolCallContent[], images: Image
       }
       case "terminal":
         return [{ kind: "terminal", terminalId: c.terminalId }];
-      default:
+      case "diff":
         return [];
     }
   });

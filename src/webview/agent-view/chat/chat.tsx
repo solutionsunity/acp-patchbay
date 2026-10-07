@@ -21,7 +21,7 @@ import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
 import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
 import { Disclosure } from "../../shared/disclosure";
-import { ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
+import { CarriedUpdate, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
 import { StatePage } from "./state-page";
@@ -149,6 +149,8 @@ function Block({
           <ContentPartView part={block.part} />
         </div>
       );
+    case "carried":
+      return <CarriedUpdate updateKind={block.updateKind} payload={block.payload} />;
     case "toolCall":
       return <ToolCallCard block={block} patchbaySessionId={patchbaySessionId} roots={roots} />;
     case "turnEnd":

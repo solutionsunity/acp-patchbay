@@ -25,6 +25,8 @@ import {
 import { turnAuthFailureReasonOf } from "./extensions";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
 import { guardResponse } from "./response-guards";
+import { NoteLog } from "./readers/notes";
+import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-update";
 import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 import type { PatchbayAgentId } from "../shared/ids";
@@ -82,7 +84,9 @@ export interface PoolHooks {
   onStatusChanged(patchbayAgentId: PatchbayAgentId, status: AgentStatus, detail?: string): void;
   /** A fresh connection's `initialize` answer is in — readable from `get`. */
   onDeclaredCaptured(patchbayAgentId: PatchbayAgentId): void;
-  onSessionUpdate(patchbayAgentId: PatchbayAgentId, notification: acp.SessionNotification): void;
+  /** A `session/update`, read: what the agent said, as patchbay takes it,
+   * for the session it named its own way. */
+  onSessionUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void;
   /** The permission broker replaces this; absent → reject-by-cancel. */
   onPermissionRequest?(
     patchbayAgentId: PatchbayAgentId,
@@ -195,6 +199,8 @@ interface Entry {
    * for the same end. */
   stopped: Promise<void> | null;
   stderrTail: string[];
+  /** The readers' notes for this connection — each said once. */
+  notes: NoteLog;
 }
 
 export interface PooledAgentView {
@@ -385,6 +391,7 @@ export class AgentPool {
       stopping: false,
       stopped: null,
       stderrTail: [],
+      notes: new NoteLog(this.log),
     };
     this.entries.set(patchbayAgentId, entry);
     this.setStatus(entry, "reconnecting");
@@ -539,7 +546,11 @@ export class AgentPool {
         // the tap is on.
         try {
           this.markProven(patchbayAgentId, { via: "sessionUpdate", updateKind: ctx.params.update.sessionUpdate });
-          this.hooks.onSessionUpdate(patchbayAgentId, ctx.params);
+          this.hooks.onSessionUpdate(
+            patchbayAgentId,
+            ctx.params.sessionId,
+            readSessionUpdate(ctx.params.update, entry.notes.at(patchbayAgentId, "session/update")),
+          );
         } catch (err) {
           this.log.info(
             `${patchbayAgentId}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${(err as Error).message}`,

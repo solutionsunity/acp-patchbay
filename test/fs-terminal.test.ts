@@ -78,7 +78,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
     // session the new process never opened (the extension wires the same).
     onStatusChanged: (patchbayAgentId, status) => sessions.agentStatusChanged(patchbayAgentId, status),
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     onCapabilityEvidence: (_patchbayAgentId, row, ev) => evidence.push(`${row}:${ev}`),
     ...clientRequestHooks(
       () => host,

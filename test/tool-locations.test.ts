@@ -1,25 +1,7 @@
-// A tool call's location line: kept from the wire 1-based, and landed on a
-// real editor line however far it points (issue #41).
+// A tool call's location line lands on a real editor line however far it
+// points (issue #41); how the wire's line is read is the reader tests'.
 import { describe, expect, it } from "vitest";
-import { editorLineOf, toolLocationsOf } from "../src/orchestrator/tool-locations";
-
-describe("toolLocationsOf", () => {
-  it("keeps the path and the line; 0 reads as the first line; no line stays none", () => {
-    expect(
-      toolLocationsOf([
-        { path: "/ws/a.ts", line: 42 },
-        { path: "/ws/b.ts", line: 0 },
-        { path: "/ws/c.ts", line: null },
-        { path: "/ws/d.ts" },
-      ]),
-    ).toEqual([
-      { path: "/ws/a.ts", line: 42 },
-      { path: "/ws/b.ts", line: 1 },
-      { path: "/ws/c.ts", line: null },
-      { path: "/ws/d.ts", line: null },
-    ]);
-  });
-});
+import { editorLineOf } from "../src/orchestrator/tool-locations";
 
 describe("editorLineOf", () => {
   it("a 1-based line lands on the 0-based editor line", () => {

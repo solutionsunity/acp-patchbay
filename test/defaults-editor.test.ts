@@ -79,8 +79,8 @@ function harness(opts: { defaults?: Record<string, KnobSeed>; mayOpen?: boolean 
       if (status !== "running") editor.forget(patchbayAgentId);
     },
     onDeclaredCaptured: () => {},
-    onSessionUpdate: (patchbayAgentId, notification) => {
-      if (editor.owns(patchbayAgentId, notification.sessionId)) editor.handleUpdate(patchbayAgentId, notification);
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => {
+      if (editor.owns(patchbayAgentId, sessionId)) editor.handleUpdate(patchbayAgentId, sessionId, update);
     },
     onCapabilityEvidence: () => {},
     onAuthWireFact: () => {},

@@ -187,14 +187,26 @@ export function Thought({ text, live }: { text: string; live: boolean }) {
  * something the human typed: a dim collapsed line, never a prompt bubble.
  * The tag slice is display-only; the classification itself never happens here. */
 export function InjectedUser({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
   const tag = /^<([a-z][a-z0-9-]*)/.exec(text.trim())?.[1] ?? "envelope";
+  return <DimLine kind="injected" icon="gear" label={`${tag} — injected by the agent harness`} what="the message" body={text} />;
+}
+
+/** Something the agent sent that no surface renders yet (CarriedBlock):
+ * its kind, and what it sent one click away — shown, never dropped. */
+export function CarriedUpdate({ updateKind, payload }: { updateKind: string; payload: string }) {
+  return <DimLine kind="carried" icon="info" label={unrenderedLabel(updateKind)} what="what the agent sent" body={payload} />;
+}
+
+/** A dim collapsed line beside the conversation, never part of it: a
+ * label, and its text on a click. */
+function DimLine({ kind, icon, label, what, body }: { kind: string; icon: string; label: string; what: string; body: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`injected ${open ? "open" : ""}`}>
-      <Disclosure open={open} onToggle={() => setOpen(!open)} label={open ? "Hide the message" : "Show the message"}>
-        <Icon name="gear" /> {tag} — injected by the agent harness
+    <div className={`dim-line ${kind} ${open ? "open" : ""}`}>
+      <Disclosure open={open} onToggle={() => setOpen(!open)} label={open ? `Hide ${what}` : `Show ${what}`}>
+        <Icon name={icon} /> {label}
       </Disclosure>
-      {open && <pre className="body">{text}</pre>}
+      {open && <pre className="body">{body}</pre>}
     </div>
   );
 }

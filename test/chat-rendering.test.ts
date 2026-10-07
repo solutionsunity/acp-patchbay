@@ -122,7 +122,7 @@ describe("toolCallDenied (P13b permission-denied ≠ failed)", () => {
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "rm -rf", status: "in_progress", toolKind: "execute" },
       { kind: "toolCallDenied", patchbaySessionId: S, blockId: "t1" },
-      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "failed" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", status: "failed" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     const block = state.transcripts[S]![0];
@@ -167,7 +167,7 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
     const events: AgentViewEvent[] = [
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-09T00:00:00Z" } },
       { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Read", status: "in_progress", toolKind: "read", input: "{ path }" },
-      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "completed", output: "contents" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", status: "completed", output: "contents" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     expect(state.transcripts[S]![0]).toMatchObject({
@@ -186,7 +186,7 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
     };
     const next: AgentViewEvent = {
       kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1",
-      title: "", status: "completed", output: "contents",
+      status: "completed", output: "contents",
     };
     expect(coalesceAgentViewEvent(prev, next)).toMatchObject({
       title: "Read",
@@ -195,6 +195,28 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
       input: "{ path }",
       output: "contents",
     });
+  });
+
+  it("an update without a status keeps the status — in the reducer and through the bus (#80)", () => {
+    const running: AgentViewEvent = { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Run", status: "in_progress" };
+    const progress: AgentViewEvent = { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", output: "partial" };
+    expect(coalesceAgentViewEvent(running, progress)).toMatchObject({ status: "in_progress", title: "Run", output: "partial" });
+    const state = [
+      { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" } } as AgentViewEvent,
+      running,
+      progress,
+    ].reduce(reduceAgentView, initialAgentViewState);
+    expect(state.transcripts[S]![0]).toMatchObject({ status: "in_progress", title: "Run", output: "partial" });
+  });
+});
+
+describe("usage cost (#80)", () => {
+  it("an update without a cost keeps the standing cost — in the reducer and through the bus", () => {
+    const costed: AgentViewEvent = { kind: "usageReported", patchbaySessionId: S, used: 1, size: 9, cost: { amount: 0.5, currency: "USD" } };
+    const tick: AgentViewEvent = { kind: "usageReported", patchbaySessionId: S, used: 2, size: 9 };
+    expect(coalesceAgentViewEvent(costed, tick)).toMatchObject({ used: 2, cost: { amount: 0.5, currency: "USD" } });
+    const state = [costed, tick].reduce(reduceAgentView, initialAgentViewState);
+    expect(state.sessionUsage[S]).toMatchObject({ used: 2, cost: { amount: 0.5, currency: "USD" } });
   });
 });
 
@@ -366,7 +388,7 @@ describe("turn lifecycle reducer (P13c)", () => {
       { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: ["prompt"], updatedAt: "2026-07-11T00:00:00Z" } },
       { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Write", status: "in_progress", toolKind: "edit" },
       { kind: "toolCallInterrupted", patchbaySessionId: S, blockId: "t1" },
-      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "completed" },
+      { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", status: "completed" },
     ];
     const state = events.reduce(reduceAgentView, initialAgentViewState);
     const t1 = assertKind(state.transcripts[S]!.find((b) => b.id === "t1")!, "toolCall");
@@ -466,7 +488,7 @@ describe("deriveTranscript: embedded terminals", () => {
 // leaves it alone — through the reducer and the bus coalescer alike (#44).
 describe("tool-call content merge", () => {
   const upsert = (content?: ToolCallBlock["content"]): AgentViewEvent => ({
-    kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "", status: "in_progress",
+    kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", status: "in_progress",
     ...(content !== undefined ? { content } : {}),
   });
   const first: ToolCallBlock["content"] = [{ kind: "text", text: "a" }];

@@ -178,7 +178,7 @@
       "kind": "toolCall",
       "id": "<id-17>",
       "title": "Orphan",
-      "status": "completed",
+      "status": "pending",
       "toolKind": "other",
       "input": null,
       "output": "late output",
@@ -186,7 +186,7 @@
       "content": [],
       "diffs": {},
       "denied": false,
-      "interrupted": false
+      "interrupted": true
     },
     {
       "kind": "toolCall",
@@ -203,13 +203,43 @@
       "interrupted": true
     },
     {
-      "kind": "text",
+      "kind": "carried",
       "id": "<id-19>",
+      "updateKind": "plan_update",
+      "payload": "{\n  \"plan\": {\n    \"planId\": \"p-1\",\n    \"content\": \"# Plan\",\n    \"type\": \"markdown\"\n  }\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-20>",
+      "updateKind": "plan_removed",
+      "payload": "{\n  \"planId\": \"p-1\"\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-21>",
+      "updateKind": "notice",
+      "payload": "{\n  \"severity\": \"warning\",\n  \"title\": \"Rate limit near\",\n  \"description\": \"80% used\"\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-22>",
+      "updateKind": "compaction_update",
+      "payload": "{\n  \"compactionId\": \"c-1\",\n  \"status\": \"completed\"\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-23>",
+      "updateKind": "compaction_summary_chunk",
+      "payload": "{\n  \"compactionId\": \"c-1\",\n  \"content\": {\n    \"text\": \"summary\",\n    \"type\": \"text\"\n  }\n}"
+    },
+    {
+      "kind": "text",
+      "id": "<id-24>",
       "text": "Done."
     },
     {
       "kind": "turnEnd",
-      "id": "<id-20>",
+      "id": "<id-25>",
       "startedAt": "<time>",
       "endedAt": "<time>",
       "stopReason": "end_turn",
@@ -243,7 +273,11 @@
   ],
   "usage": {
     "used": 1800,
-    "size": 200000
+    "size": 200000,
+    "cost": {
+      "amount": 0.42,
+      "currency": "USD"
+    }
   },
   "knobs": [
     {

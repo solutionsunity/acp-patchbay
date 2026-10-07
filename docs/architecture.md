@@ -303,6 +303,36 @@ flowchart TD
   turn:
   [the stores architecture](store-architecture.md#sessions).
 
+## Message readers
+
+The pool is the one place an agent's messages enter, and it owns their
+validity: the SDK's schema layer, the response guards, the proof tables. What
+a message *means* is owned by one reader per ACP message type
+(`src/orchestrator/readers/`), run at the pool's chokepoint where the message
+arrives; what leaves the pool is the reader's fact, never the raw wire object.
+
+- **One rule.** An absent field is unchanged — never a default — except where
+  the spec names one (an announced tool call is pending, of kind other, until
+  it says otherwise). A field patchbay renders is rendered; one nothing
+  renders yet rides the fact, so a surface can take it up without going back
+  to the wire; a vendor's field stays in `_meta`, read by its extension
+  module.
+- **One message type, one reader.** Every consumer of a type reads the same
+  fact: a tool call is read once, for the session's stream and for a
+  permission request alike.
+- **Nothing dropped without a word.** Every `session/update` kind has one
+  fate, decided at compile time: read into a fact, or *carried* — shown in
+  the transcript as the agent sent it, its kind on a dim line and its payload
+  a click away, until a surface of its own is decided. What a reader can't
+  take — a kind with no surface, a value it ignores, an update for a session
+  not open here — is a note in the Output channel, said once per agent,
+  place and note: the one way a user sees it without the wire log.
+
+Read this way today: `session/update` (content, tool calls, plans, commands,
+usage, title, knobs). Responses, the agent's requests and errors are still
+read by their consumers behind the response guards — the move is tracked in
+#80.
+
 ## Agent capability matrix
 
 Two states per capability, per agent — **declared** (from `initialize`, refreshed
@@ -359,8 +389,8 @@ Record is exhaustive) and nothing else. One `onCapabilityEvidence` hook
 carries every hit, called synchronously and never awaited so it can't block
 the RPC it's reporting on. `capability-tracker.ts` only decides *when* to run
 the synthetic probe below and persists whatever pool.ts reports — it does not
-mark anything itself. session-stream.ts, which decodes `session/update` payloads for
-rendering, marks nothing either; the wire-level fact and the render-level
+mark anything itself. session-stream.ts, which turns `session/update` facts into
+the transcript, marks nothing either; the wire-level fact and the render-level
 interpretation are two different concerns living at two different layers.
 
 ```mermaid

@@ -72,7 +72,7 @@ function harness(extraHooks: {
   const pool = new AgentPool({
     onStatusChanged: (patchbayAgentId, status) => sessions.agentStatusChanged(patchbayAgentId, status),
     onDeclaredCaptured: (patchbayAgentId) => capabilityTracker.onDeclared(patchbayAgentId),
-    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     onCapabilityEvidence: (patchbayAgentId, row, evidence) => capabilityTracker.noteEvidence(patchbayAgentId, row, evidence),
     ...stubFsTerminalHooks(),
   });
@@ -321,7 +321,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
     const pool = new AgentPool({
       onStatusChanged: () => {},
       onDeclaredCaptured: (patchbayAgentId) => capabilityTracker.onDeclared(patchbayAgentId),
-      onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+      onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
       ...stubFsTerminalHooks(),
     });
     capabilityTracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {

@@ -190,6 +190,7 @@ for (const theme of Object.keys(THEMES)) {
   for (const [what, where] of [
     ["thought", ".thought"],
     ["injected envelope", ".injected"],
+    ["update shown as sent", ".carried"],
     ["embedded-file snapshot", ".user-context"],
   ]) {
     check(`[${theme}] ${what} toggles with a keyboard-reachable button`, (await p.locator(`${where} button[aria-expanded]`).count()) > 0);
@@ -228,6 +229,15 @@ for (const theme of Object.keys(THEMES)) {
   // ── injected user-role envelope: dim collapsed line, never a bubble,
   // and it must not tick the prompt count (stats row stays "2 6") ──
   check(`[${theme}] injected envelope renders collapsed, labeled by tag`, (await p.$('.injected:has-text("task-notification")')) !== null);
+  // ── an update kind with no surface: a dim line naming it, what the agent
+  // sent one click away — shown, never dropped ──
+  const carried = p.locator(".carried");
+  check(`[${theme}] an update with no surface is a line naming its kind`, (await carried.filter({ hasText: "notice · not shown here" }).count()) === 1);
+  await carried.locator("button").click();
+  check(`[${theme}] the line opens to what the agent sent`, (await carried.locator("pre", { hasText: "Rate limit near" }).count()) === 1);
+  await p.mouse.move(0, 0);
+  await carried.screenshot({ path: `${OUT}/carried-open-${theme}.png` });
+  await carried.locator("button").click();
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
   // user-message part model: the sent bubble renders its mention and

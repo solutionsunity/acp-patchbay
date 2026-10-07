@@ -22,7 +22,6 @@ import type {
   ContentBlock,
   McpServer,
   SessionInfo,
-  SessionNotification,
 } from "@agentclientprotocol/sdk";
 import {
   type AgentStatus,
@@ -59,6 +58,8 @@ import type { AttachedServer } from "./mcp-servers-store";
 import type { AgentPool } from "./pool";
 import { newBlockId } from "./block-ids";
 import { SessionStream, type StreamState } from "./session-stream";
+import { NoteLog } from "./readers/notes";
+import { sessionMetaOf, type SessionUpdateFact } from "./readers/session-update";
 import type { SessionContinuityStore } from "./stores/session-continuity";
 import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
@@ -192,23 +193,6 @@ function persistChip(chip: Exclude<ContextChip, { kind: "image" }>): PersistedCh
   };
 }
 
-/** What the wire's session metadata may move on a row, read one way for
- * every witness (a `session/list` row, `session_info_update`): a title when
- * one came (null is a clear, treated as silence — blank rows help no one),
- * a stamp when one came and parses. An absent field is the wire saying
- * nothing — it rides as nothing, never as a reset. */
-function wireMeta(info: { title?: string | null; updatedAt?: string | null }): {
-  title?: string;
-  updatedAt?: string;
-} {
-  const updatedAt =
-    info.updatedAt != null && !Number.isNaN(Date.parse(info.updatedAt)) ? info.updatedAt : undefined;
-  return {
-    ...(info.title != null ? { title: info.title } : {}),
-    ...(updatedAt !== undefined ? { updatedAt } : {}),
-  };
-}
-
 /** One session patchbay currently knows to exist — created here this
  * window, or reported by the agent's own `session/list` — under patchbay's
  * own id for it, minted when it enters and kept for the window's life.
@@ -272,6 +256,7 @@ function liveSession(): LiveSession {
     inFlight: false,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
+    toolCalls: new Set(),
     replayTurnDirty: false,
     userModeSetPending: false,
   };
@@ -336,6 +321,8 @@ export class SessionsStore {
   /** The sessions' transcripts as their updates arrive — prose runs, tool
    * calls and their diffs, replay windows. */
   private readonly stream: SessionStream;
+  /** What arrived with nowhere to go, said once a window. */
+  private readonly notes: NoteLog;
 
   constructor(
     private readonly pool: AgentPool,
@@ -359,6 +346,7 @@ export class SessionsStore {
     private readonly log: Logger = nullLogger,
   ) {
     this.stream = new SessionStream(hooks, log);
+    this.notes = new NoteLog(log);
   }
 
   isLive(patchbaySessionId: PatchbaySessionId): boolean {
@@ -1152,7 +1140,7 @@ export class SessionsStore {
       // A session patchbay never saw — created externally (CLI, another
       // editor) or in a previous window. The wire's stamp orders it; an
       // agent that sends none leaves first sight as the only honest stamp.
-      const meta = wireMeta(info);
+      const meta = sessionMetaOf(info, this.notes.at(patchbayAgentId, "session/list"));
       const title = meta.title ?? "Untitled session";
       const at = meta.updatedAt ?? now;
       // The durable continuity row re-enters with the session — the fields
@@ -1195,7 +1183,7 @@ export class SessionsStore {
     // Only what the wire carried rides — the row's own is the truth
     // otherwise (silence is no event at all), and the reducer's newest-wins
     // keeps a local prompt ahead of a trailing wire read.
-    const meta = wireMeta(info);
+    const meta = sessionMetaOf(info, this.notes.at(patchbayAgentId, "session/list"));
     if (meta.title === undefined && meta.updatedAt === undefined) return;
     this.hooks.emit({ kind: "sessionRefreshed", patchbaySessionId: existing, ...meta });
   }
@@ -2172,24 +2160,30 @@ export class SessionsStore {
   /** Routed from AgentPool's onSessionUpdate hook, live and replayed alike:
    * the session's own facts — its title, its knobs — are kept here; the
    * rest is its transcript's, through the stream. */
-  handleUpdate(patchbayAgentId: PatchbayAgentId, notification: SessionNotification): void {
-    const { update } = notification;
+  handleUpdate(patchbayAgentId: PatchbayAgentId, sessionId: string, update: SessionUpdateFact): void {
     // The one door every inbound update rides through names the session the
     // agent's way; with its agent, that id finds the one row it means — two
     // agents minting one id are two rows, and nothing deeper re-checks.
-    const patchbaySessionId = this.rowFor(patchbayAgentId, notification.sessionId);
-    if (patchbaySessionId === undefined) return; // a session patchbay isn't tracking
+    const patchbaySessionId = this.rowFor(patchbayAgentId, sessionId);
+    if (patchbaySessionId === undefined) {
+      this.notes.at(patchbayAgentId, "session/update")("an update for a session patchbay doesn't know — dropped");
+      return;
+    }
     // Session metadata, not transcript — handled before the live guard: the
     // agent may retitle any session it knows, live in patchbay or not.
-    if (update.sessionUpdate === "session_info_update") {
-      void this.noteInfoUpdate(patchbaySessionId, update);
+    if (update.kind === "info") {
+      const { kind: _info, ...meta } = update;
+      this.noteInfoUpdate(patchbaySessionId, meta);
       return;
     }
     const session = this.sessions.get(patchbaySessionId);
-    if (!session) return; // known, but not attached here
+    if (!session) {
+      this.notes.at(patchbayAgentId, "session/update")("an update for a session not open in this window — dropped");
+      return;
+    }
     session.lastActivityAt = Date.now(); // any update is activity — the reaper's basis
-    switch (update.sessionUpdate) {
-      case "current_mode_update": {
+    switch (update.kind) {
+      case "mode": {
         // Meaningful only on the modes surface; on the config surface it's
         // dropped by the normalizer (knobs.ts: mapping it onto an option
         // would need category as a correctness key — spec-forbidden; the
@@ -2209,7 +2203,7 @@ export class SessionsStore {
         }
         break;
       }
-      case "config_option_update":
+      case "configOptions":
         // Spec: the notification carries the complete configuration state.
         // (`session.knobs` prior keeps accepted extension extras — they ride
         // the session response, not config updates.)
@@ -2229,12 +2223,8 @@ export class SessionsStore {
    * with blank rows helps no one). Both facts ride one refresh to the row
    * they live on — the drawer's title and sort key move now, not at the
    * next full list sync. */
-  private async noteInfoUpdate(
-    patchbaySessionId: PatchbaySessionId,
-    update: { title?: string | null; updatedAt?: string | null },
-  ): Promise<void> {
+  private noteInfoUpdate(patchbaySessionId: PatchbaySessionId, meta: { title?: string; updatedAt?: string }): void {
     if (!this.known.has(patchbaySessionId)) return;
-    const meta = wireMeta(update);
     if (meta.title !== undefined) {
       // An agent-authored title marks the session titled even when the text
       // matches what's shown — the first prompt's auto-title must never

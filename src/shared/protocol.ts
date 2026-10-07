@@ -956,6 +956,16 @@ export interface AgentPartBlock {
   thought: boolean;
 }
 
+/** Something the agent sent that no surface renders yet — a session/update
+ * kind patchbay hasn't given a home — shown as the agent sent it: its kind,
+ * and its payload as bounded text. Shown, never dropped. */
+export interface CarriedBlock {
+  kind: "carried";
+  id: string;
+  updateKind: string;
+  payload: string;
+}
+
 /** ACP's own tool-call taxonomy (ToolKind) — carried verbatim so the card
  * icon can pattern-match by kind instead of a generic spinner-only look. */
 export type ToolCallKind =
@@ -1206,6 +1216,7 @@ export type ChatBlock =
   | TextBlock
   | ThoughtBlock
   | AgentPartBlock
+  | CarriedBlock
   | ToolCallBlock
   | TurnEndBlock
   | PermissionBlock
@@ -1557,16 +1568,18 @@ export type AgentViewEvent =
   | { kind: "agentTextDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
   | { kind: "agentThoughtDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
   | { kind: "agentPartAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart; thought: boolean }
+  | { kind: "carriedAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; updateKind: string; payload: string }
   | {
       kind: "toolCallUpserted";
       patchbaySessionId: PatchbaySessionId;
       blockId: string;
-      /** Empty string = unspecified; reducer keeps the existing title. */
-      title: string;
-      status: ToolCallStatus;
-      /** Absent = unspecified; reducer keeps the existing value (tool_call
-       * carries these, tool_call_update only sometimes repeats them).
-       * `locations`, when present, *replaces* — ACP defines the update's
+      /** Absent = unspecified, like every field below: the reducer keeps
+       * the existing value (a tool_call carries them, a tool_call_update
+       * only what changed). A new block takes an empty title and the
+       * spec's pending status for what the event leaves out. */
+      title?: string;
+      status?: ToolCallStatus;
+      /** `locations`, when present, *replaces* — ACP defines the update's
        * locations field as a replacement of the collection. */
       toolKind?: ToolCallKind;
       input?: string;
@@ -1664,6 +1677,7 @@ export type AgentViewEvent =
       patchbaySessionId: PatchbaySessionId;
       used: number;
       size: number;
+      /** Absent when the agent didn't say — the standing cost stays. */
       cost?: { amount: number; currency: string };
       /** Present only on the updates that carry a fresh plan reading. */
       plan?: PlanUsageInfo;
@@ -1789,8 +1803,8 @@ function upsertToolCall(
     return appendBlock(state, patchbaySessionId, {
       kind: "toolCall",
       id: event.blockId,
-      title: event.title,
-      status: event.status,
+      title: event.title ?? "",
+      status: event.status ?? "pending",
       toolKind: event.toolKind ?? "other",
       input: event.input ?? null,
       output: event.output ?? null,
@@ -1806,8 +1820,8 @@ function upsertToolCall(
   // must never erase the kind or the input already shown.
   const updated: ToolCallBlock = {
     ...existing,
-    status: event.status,
-    title: event.title || existing.title,
+    status: event.status ?? existing.status,
+    title: event.title ?? existing.title,
     toolKind: event.toolKind ?? existing.toolKind,
     input: event.input ?? existing.input,
     output: event.output ?? existing.output,
@@ -1990,6 +2004,13 @@ export function reduceAgentView(
         part: event.part,
         thought: event.thought,
       });
+    case "carriedAppended":
+      return appendBlock(state, event.patchbaySessionId, {
+        kind: "carried",
+        id: event.blockId,
+        updateKind: event.updateKind,
+        payload: event.payload,
+      });
     case "toolCallUpserted":
       return upsertToolCall(state, event.patchbaySessionId, event);
     case "toolCallDenied":
@@ -2047,9 +2068,10 @@ export function reduceAgentView(
       };
     case "usageReported": {
       // A fresh reading lands under its own window key; every other
-      // window's standing reading survives (parallel axes), and a plain
-      // usage update (no reading) erases nothing.
-      const priorPlan = state.sessionUsage[event.patchbaySessionId]?.plan;
+      // window's standing reading survives (parallel axes). What an update
+      // leaves out — a plan reading, the cost — stays as it was.
+      const prior = state.sessionUsage[event.patchbaySessionId];
+      const priorPlan = prior?.plan;
       const plan =
         event.plan === undefined
           ? priorPlan
@@ -2058,7 +2080,7 @@ export function reduceAgentView(
         ...state,
         sessionUsage: {
           ...state.sessionUsage,
-          [event.patchbaySessionId]: { used: event.used, size: event.size, cost: event.cost, plan },
+          [event.patchbaySessionId]: { used: event.used, size: event.size, cost: event.cost ?? prior?.cost, plan },
         },
       };
     }
@@ -2257,7 +2279,8 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   ) {
     return {
       ...next,
-      title: next.title || prev.title,
+      title: next.title ?? prev.title,
+      status: next.status ?? prev.status,
       toolKind: next.toolKind ?? prev.toolKind,
       input: next.input ?? prev.input,
       output: next.output ?? prev.output,
@@ -2267,20 +2290,22 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
     };
   }
   // Usage can report mid-stream (claude-agent-acp does) — only the latest
-  // counters matter, but a plan-window reading is sticky state the reducer
-  // deliberately keeps: a plain tick collapsing over it would erase a
-  // reading at the transport layer that the reducer would have preserved.
+  // counters matter, but a plan-window reading and the cost are sticky
+  // state the reducer deliberately keeps: a plain tick collapsing over them
+  // would erase at the transport layer what the reducer would have kept.
   if (
     prev.kind === "usageReported" &&
     next.kind === "usageReported" &&
     prev.patchbaySessionId === next.patchbaySessionId
   ) {
+    const cost = next.cost ?? prev.cost;
+    const merged = cost === undefined ? next : { ...next, cost };
     if (next.plan === undefined) {
-      return prev.plan === undefined ? next : { ...next, plan: prev.plan };
+      return prev.plan === undefined ? merged : { ...merged, plan: prev.plan };
     }
     // Different windows are parallel axes — both readings must reach the
     // reducer's per-window merge; don't coalesce.
-    if (prev.plan === undefined || prev.plan.window === next.plan.window) return next;
+    if (prev.plan === undefined || prev.plan.window === next.plan.window) return merged;
     return null;
   }
   // Editor context changes on every cursor move — only the latest matters.

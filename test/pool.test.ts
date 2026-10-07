@@ -3,7 +3,7 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import type { SessionUpdateFact } from "../src/orchestrator/readers/session-update";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AgentPool, type LaunchSpec } from "../src/orchestrator/pool";
 import type { AgentStatus } from "../src/shared/protocol";
@@ -23,7 +23,11 @@ interface Recorded {
   statuses: Array<{ status: AgentStatus; detail?: string }>;
   /** One entry per fresh `initialize` answer captured. */
   declared: string[];
-  updates: SessionNotification[];
+  updates: { sessionId: string; update: SessionUpdateFact }[];
+}
+
+function agentText(update: SessionUpdateFact): string {
+  return update.kind === "chunk" && update.channel === "agent" && update.content.type === "text" ? update.content.text : "";
 }
 
 function makePool(): { pool: AgentPool; rec: Recorded } {
@@ -31,7 +35,7 @@ function makePool(): { pool: AgentPool; rec: Recorded } {
   const pool = new AgentPool({
     onStatusChanged: (_id, status, detail) => rec.statuses.push({ status, detail }),
     onDeclaredCaptured: (id) => rec.declared.push(id),
-    onSessionUpdate: (_id, n) => rec.updates.push(n),
+    onSessionUpdate: (_id, sessionId, update) => rec.updates.push({ sessionId, update }),
     ...stubFsTerminalHooks(),
   });
   return { pool, rec };
@@ -109,12 +113,7 @@ describe("AgentPool", () => {
     expect(response.stopReason).toBe("end_turn");
     const texts = rec.updates
       .filter((u) => u.sessionId === sessionId)
-      .map((u) =>
-        u.update.sessionUpdate === "agent_message_chunk" &&
-        u.update.content.type === "text"
-          ? u.update.content.text
-          : "",
-      );
+      .map((u) => agentText(u.update));
     expect(texts.join("")).toBe("part one part two");
     await pool.stop("fake" as PatchbayAgentId);
   });
@@ -182,12 +181,7 @@ describe("AgentPool", () => {
     for (const id of [a.sessionId, b.sessionId]) {
       const text = rec.updates
         .filter((u) => u.sessionId === id)
-        .map((u) =>
-          u.update.sessionUpdate === "agent_message_chunk" &&
-          u.update.content.type === "text"
-            ? u.update.content.text
-            : "",
-        )
+        .map((u) => agentText(u.update))
         .join("");
       expect(text).toBe("tick tock");
     }

@@ -44,6 +44,8 @@ export const chatTranscript = [
     kind: "user", id: "inj1", injected: true,
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
+  // an update kind with no surface yet, shown as the agent sent it
+  { kind: "carried", id: "car1", updateKind: "notice", payload: '{\n  "severity": "warning",\n  "title": "Rate limit near"\n}' },
   // non-text pieces of an agent's message: rendered by the message part
   // renderers, never a placeholder line (an embedded file expands;
   // audio keeps a labeled placeholder — nothing plays it)

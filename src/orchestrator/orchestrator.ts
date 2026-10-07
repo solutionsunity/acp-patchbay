@@ -417,15 +417,15 @@ export class Orchestrator {
         // above, and an expanded card reopens one once running.
       },
       onDeclaredCaptured: (patchbayAgentId) => this.agents.noteDeclared(patchbayAgentId),
-      onSessionUpdate: (patchbayAgentId, notification) => {
+      onSessionUpdate: (patchbayAgentId, sessionId, update) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
-        if (this.capabilityTracker.isProbeSession(patchbayAgentId, notification.sessionId)) return;
-        if (this.defaultsEditor.owns(patchbayAgentId, notification.sessionId)) {
-          this.defaultsEditor.handleUpdate(patchbayAgentId, notification);
+        if (this.capabilityTracker.isProbeSession(patchbayAgentId, sessionId)) return;
+        if (this.defaultsEditor.owns(patchbayAgentId, sessionId)) {
+          this.defaultsEditor.handleUpdate(patchbayAgentId, sessionId, update);
           return;
         }
-        this.sessions.handleUpdate(patchbayAgentId, notification);
+        this.sessions.handleUpdate(patchbayAgentId, sessionId, update);
       },
       onCapabilityEvidence: (patchbayAgentId, row, evidence) => this.agents.noteEvidence(patchbayAgentId, row, evidence),
       onAuthWireFact: (patchbayAgentId, method, settled, startedAt, reason) =>

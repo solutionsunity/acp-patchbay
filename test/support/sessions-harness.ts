@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { McpServer } from "@agentclientprotocol/sdk";
+import type { McpServer, SessionUpdate } from "@agentclientprotocol/sdk";
 import { CapabilityTracker } from "../../src/orchestrator/capability-tracker";
 import type { AttachedServer } from "../../src/orchestrator/mcp-servers-store";
 import { AgentPool } from "../../src/orchestrator/pool";
@@ -11,8 +11,14 @@ import { SessionFilesStore } from "../../src/orchestrator/stores/session-files";
 import { UsedCapabilityStore } from "../../src/orchestrator/stores/used-capabilities";
 import { initialAgentViewState, reduceAgentView, type AgentViewEvent, type AgentViewState } from "../../src/shared/protocol";
 import type { PatchbayAgentId, PatchbaySessionId } from "../../src/shared/ids";
+import { readSessionUpdate, type SessionUpdateFact } from "../../src/orchestrator/readers/session-update";
 import { gatesFor } from "./session-gates";
 import { stubFsTerminalHooks } from "./stub-hooks";
+
+/** A session/update as the pool hands it on — read, its notes dropped. */
+export function readUpdate(update: unknown): SessionUpdateFact {
+  return readSessionUpdate(update as SessionUpdate, () => {});
+}
 
 /** Wires a pool + sessions store the way Orchestrator does, minus vscode —
  * `cwd` is the test's own folder: the session files and every session's cwd. */
@@ -89,7 +95,7 @@ export function sessionsHarness(cwd: string, opts?: {
   const pool = new AgentPool({
     onStatusChanged: (patchbayAgentId, status) => sessions.agentStatusChanged(patchbayAgentId, status),
     onDeclaredCaptured: (patchbayAgentId) => capabilityTracker.onDeclared(patchbayAgentId),
-    onSessionUpdate: (patchbayAgentId, notification) => sessions.handleUpdate(patchbayAgentId, notification),
+    onSessionUpdate: (patchbayAgentId, sessionId, update) => sessions.handleUpdate(patchbayAgentId, sessionId, update),
     onCapabilityEvidence: (patchbayAgentId, row, evidence) => capabilityTracker.noteEvidence(patchbayAgentId, row, evidence),
     ...stubFsTerminalHooks(),
   });

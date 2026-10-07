@@ -22,7 +22,7 @@ import {
   userPartsText,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
-import { sessionsHarness } from "./support/sessions-harness";
+import { readUpdate, sessionsHarness } from "./support/sessions-harness";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
@@ -3000,10 +3000,11 @@ describe("session activity stamp — one home", () => {
     const patchbaySessionId = await h.sessions.createSession("st2n" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "derive me" });
     const before = h.events.length;
-    await h.sessions.handleUpdate("st2n" as PatchbayAgentId, {
-      sessionId: patchbaySessionId,
-      update: { sessionUpdate: "session_info_update", title: null },
-    });
+    h.sessions.handleUpdate(
+      "st2n" as PatchbayAgentId,
+      h.sessions.sessionIdOf(patchbaySessionId)!,
+      readUpdate({ sessionUpdate: "session_info_update", title: null }),
+    );
     expect(h.events.slice(before).some((e) => e.kind === "sessionRefreshed")).toBe(false);
     expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("derive me");
 
@@ -3045,10 +3046,11 @@ describe("session activity stamp — one home", () => {
     const patchbaySessionId = await h.sessions.createSession("st5" as PatchbayAgentId, "Fake Agent", cwd);
     const before = h.sessions.sessionIdOf(patchbaySessionId);
     // an agent-pushed title lands on the row only (session_info_update path)
-    h.sessions.handleUpdate("st5" as PatchbayAgentId, {
-      sessionId: before!,
-      update: { sessionUpdate: "session_info_update", title: "agent named me" },
-    });
+    h.sessions.handleUpdate(
+      "st5" as PatchbayAgentId,
+      before!,
+      readUpdate({ sessionUpdate: "session_info_update", title: "agent named me" }),
+    );
     await vi.waitFor(() =>
       expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("agent named me"),
     );
@@ -3367,11 +3369,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
     // the agent names its session its own way on the wire
     const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
-    const push = (update: Record<string, unknown>) =>
-      h.sessions.handleUpdate(patchbayAgentId, {
-        sessionId,
-        update,
-      } as Parameters<typeof h.sessions.handleUpdate>[1]);
+    const push = (update: Record<string, unknown>) => h.sessions.handleUpdate(patchbayAgentId, sessionId, readUpdate(update));
     return { h, patchbaySessionId, handle: sessionId, push, blocks: () => h.state().transcripts[patchbaySessionId] ?? [] };
   }
 
@@ -3381,12 +3379,34 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     expect(blocks()).toHaveLength(1);
     // Same agent id string, different agent: spec-legal collision — must
     // never write into this transcript.
-    h.sessions.handleUpdate("intruder" as PatchbayAgentId, {
+    h.sessions.handleUpdate(
+      "intruder" as PatchbayAgentId,
       sessionId,
-      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not mine" } },
-    } as Parameters<typeof h.sessions.handleUpdate>[1]);
+      readUpdate({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not mine" } }),
+    );
     expect(blocks()).toHaveLength(1);
     await h.pool.stop("ch-owner" as PatchbayAgentId);
+  });
+
+  it("an update without a status leaves the call's status as it was; one for a call never announced is pending (#80)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch-status" as PatchbayAgentId);
+    push({ sessionUpdate: "tool_call", toolCallId: "t1", title: "Run", kind: "execute", status: "in_progress" });
+    // progress only — input streaming in, output arriving: still running
+    push({ sessionUpdate: "tool_call_update", toolCallId: "t1", rawInput: { command: "ls" } });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "t1", rawOutput: "a\nb" });
+    expect(blocks()[0]).toMatchObject({ kind: "toolCall", status: "in_progress", title: "Run", toolKind: "execute", output: "a\nb" });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" });
+    expect(blocks()[0]).toMatchObject({ status: "completed" });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "never-announced", title: "Late" });
+    expect(blocks()[1]).toMatchObject({ kind: "toolCall", title: "Late", status: "pending", toolKind: "other" });
+    await h.pool.stop("ch-status" as PatchbayAgentId);
+  });
+
+  it("a link in an agent's message stays one link — brackets in its name, spaces in its target", async () => {
+    const { h, push, blocks } = await chunkHarness("ch-link" as PatchbayAgentId);
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "resource_link", name: "notes [draft].md", uri: "file:///w/my notes (1).md" } });
+    expect(textOf(blocks()[0])).toBe("[notes \\[draft\\].md](<file:///w/my notes (1).md>)");
+    await h.pool.stop("ch-link" as PatchbayAgentId);
   });
 
   it("replayed image and embedded-resource chunks land as structured parts in the SAME bubble", async () => {
