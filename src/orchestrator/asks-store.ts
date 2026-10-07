@@ -398,7 +398,14 @@ function cardOf(ask: Ask, from: AskState, move: Move): AgentViewEvent | null {
   return {
     kind: "permissionResolved",
     ...at,
-    label: choice?.kind === "option" ? choice.option.label : move.end === "withdraw" ? "Withdrawn by the agent" : "Cancelled — turn stopped",
+    label:
+      choice?.kind === "option"
+        ? choice.option.label
+        : move.end === "rule"
+          ? "Allowed"
+          : move.end === "withdraw"
+            ? "Withdrawn by the agent"
+            : "Cancelled — turn stopped",
     auto: choice === null,
   };
 }

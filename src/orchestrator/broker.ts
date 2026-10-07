@@ -168,7 +168,8 @@ export class PermissionBroker {
    * edit is judged by every file it names — the locations it reports and
    * the path of each diff it carries, the write's own target; any other kind
    * carries nothing a rule can judge, so it asks. A rule's allow picks the
-   * agent's own allow-once option; an agent that offers none is asked. An
+   * agent's own allow-once option, and the card shows the call settled by
+   * the rule; an agent that offers none is asked. An
    * aborted `signal` (the agent withdrew the request) settles the card as
    * withdrawn. */
   async resolveAgentPermissionRequest(
@@ -184,8 +185,10 @@ export class PermissionBroker {
     this.withdrawOn(id, signal);
     const verdict = await this.evaluateFileWrites(patchbaySessionId, files);
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
+    // The card shows either way — a rule changes who answers, never what is
+    // visible — and a rule's answer settles it at once.
+    this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call) });
     if (auto !== undefined) this.asks.allow(id);
-    else this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call) });
     const ended = await ending;
     if (ended.end === "rule" && auto !== undefined) return { optionId: auto.optionId };
     if (ended.end === "user" && ended.choice.kind === "option") return { optionId: ended.choice.option.optionId };

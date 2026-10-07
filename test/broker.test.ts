@@ -220,13 +220,15 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
     { optionId: "n", label: "Reject", kind: "reject_once" as const },
   ];
 
-  it("auto-allows only when every location lands inside", async () => {
+  it("auto-allows only when every location lands inside — and the card shows, settled by the rule", async () => {
     const { broker, events } = harness();
     const inside = [join(workspaceRoot, "a.ts"), join(workspaceRoot, "b.ts")];
     await expect(broker.resolveAgentPermissionRequest("s1" as PatchbaySessionId, request("Edit", "edit", inside, options))).resolves.toEqual({
       optionId: "y",
     });
-    expect(events.some((e) => e.kind === "permissionRequested")).toBe(false);
+    // a rule changes who answers, never what is visible
+    expect(events.find((e) => e.kind === "permissionRequested")).toMatchObject({ title: "Edit", call: { toolKind: "edit" } });
+    expect(events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Allowed", auto: true });
   });
 
   it("only an edit is judged by its locations — any other kind asks, even when every one is inside", async () => {

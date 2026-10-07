@@ -1124,7 +1124,8 @@ supplies each agent in its own standard — and ACP carries no channel for it
   the transcript already holds for that call (an absent field is unchanged):
   its files, each diff openable in VS Code's diff editor, what the call
   produced, and the input it will run with — open while the decision is
-  pending. Agent text on a card is masked for values patchbay handed out. A
+  pending. A request a rule allows shows its card too, settled by the rule:
+  a rule changes who answers, never what is visible. Agent text on a card is masked for values patchbay handed out. A
   request the agent takes back settles its card as withdrawn and is answered
   request-cancelled; no later click answers it. Patchbay's own write gate
   diffs against what the write replaces — the open editor's buffer, unsaved

@@ -399,8 +399,10 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const patchbaySessionId = await h.sessions.createSession("p1" as PatchbayAgentId, "Fake Agent", workspaceRoot);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: allow_once");
-    // auto-resolved — no card should have been shown
-    expect(h.state().transcripts[patchbaySessionId]!.some((b) => b.kind === "permission")).toBe(false);
+    // auto-resolved — the card still shows, settled by the rule
+    expect(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")).toMatchObject({
+      resolution: { label: "Allowed", auto: true },
+    });
     await h.pool.stop("p1" as PatchbayAgentId);
   });
 
