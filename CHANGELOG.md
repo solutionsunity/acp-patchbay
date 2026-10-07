@@ -1,12 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.84.2 — 2026-10-07
 
-Two refactors. How patchbay holds its state: agents, sessions, MCP servers
-and asks each live in one store with one writer, and work on them takes
-turns (#69). And how it reads what agents send: one reader per kind of
-message, so nothing is invented, dropped or read two ways (#80). Plus three
-security fixes and the bugs the refactors surfaced.
+One store per kind of state (#69) and one reader per kind of agent message (#80),
+three security fixes, no more clocks cutting downloads, starts or stops (#85, #86),
+and the bugs the refactors surfaced.
 
 - **Security:** patchbay's local socket now answers only the processes an
   agent was started with for a session. Before, any program running as the
