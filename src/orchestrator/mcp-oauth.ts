@@ -40,8 +40,9 @@ export interface OAuthUserAgent {
   /** Sends the user to `authorizationUrl` (browser) and resolves with the
    * callback's query parameters once the redirect lands. `state` is the
    * correlation value embedded in the URL — implementations key pending
-   * callbacks by it. */
-  authorize(authorizationUrl: string, state: string): Promise<URLSearchParams>;
+   * callbacks by it. `signal` is the attempt's own end: aborted, the wait
+   * is given up and rejects with its reason. */
+  authorize(authorizationUrl: string, state: string, signal?: AbortSignal): Promise<URLSearchParams>;
 }
 
 export interface ClientInfo {

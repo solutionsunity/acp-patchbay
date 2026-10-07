@@ -103,6 +103,9 @@ export interface FakeAgentScript {
   /** Steps streamed per prompt turn (default: two text chunks). */
   turn?: TurnStep[];
   stepDelayMs?: number;
+  /** After session/cancel, the turn takes this long to wind down before it
+   * answers `cancelled` — slow, still the spec's answer. */
+  cancelDelayMs?: number;
   /** session/new holds its reply this long after the session exists — its
    * own list names it meanwhile, as an agent that persists at creation
    * does while the reply is still on the way. */
@@ -248,10 +251,14 @@ async function runTurn(
   if (promptText.includes("__crash__")) process.exit(1);
 
   const steps = script.turn ?? defaultTurn;
+  const windDown = async (): Promise<acp.StopReason> => {
+    await sleep(script.cancelDelayMs ?? 0);
+    return "cancelled";
+  };
   for (const step of steps) {
-    if (signal.aborted) return "cancelled";
+    if (signal.aborted) return windDown();
     await sleep(stepDelay);
-    if (signal.aborted) return "cancelled";
+    if (signal.aborted) return windDown();
 
     switch (step.type) {
       case "crash":

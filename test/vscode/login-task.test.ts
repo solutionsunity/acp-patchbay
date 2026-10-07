@@ -54,4 +54,22 @@ suite("login task executor", () => {
     // the window VS Code refuses any other task cwd in.
     assert.strictEqual(await realpath(seen.cwd), await realpath(homedir()));
   });
+
+  // No clock on the login: it ends on the task's own events. Measured on
+  // the real engine — a dedicated task whose process can't start still ends
+  // with them, while a `${…}` the engine can't resolve ends it with none,
+  // ever; so that one is refused before anything runs.
+  test("a command that can't start ends the login as unknown, on the task's own events", async () => {
+    const { runLoginTask } = await internals<Internal>();
+    const code = await runLoginTask("login-task missing", { command: "patchbay-no-such-login-cmd", args: [] });
+    assert.strictEqual(code, undefined);
+  });
+
+  test("a recipe the task engine would rewrite is refused before anything runs", async () => {
+    const { runLoginTask } = await internals<Internal>();
+    await assert.rejects(
+      runLoginTask("login-task variable", { command: "node", args: ["-e", "0", "${workspaceFolder}"] }),
+      /can't be run as written/,
+    );
+  });
 });

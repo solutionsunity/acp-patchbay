@@ -85,6 +85,10 @@ export function Composer(props: {
   // names nothing the host holds, and it ignores it.
   const patchbaySessionId = props.session?.id ?? ("" as PatchbaySessionId);
   const underway = props.session !== null && turnUnderway(props.session);
+  // Told to stop, the turn waits for its agent's answer; Stop again ends it
+  // here, and the button says so while it waits.
+  const stopping = props.session?.busy.includes("stopping") === true;
+  const stopLabel = stopping ? "Stopping — waiting for the agent. Stop again to end the turn here" : "Stop";
 
   const sendOrStop = () => {
     if (underway) send({ kind: "stopTurn", patchbaySessionId });
@@ -301,11 +305,11 @@ export function Composer(props: {
           size="icon"
           className="ml-auto size-[26px] rounded-[7px]"
           disabled={underway ? !stop : !enabled}
-          title={underway ? "Stop" : "Send"}
-          aria-label={underway ? "Stop" : "Send"}
+          title={underway ? stopLabel : "Send"}
+          aria-label={underway ? stopLabel : "Send"}
           onClick={sendOrStop}
         >
-          <Icon name={underway ? "debug-stop" : "arrow-up"} />
+          <Icon name={stopping ? "loading" : underway ? "debug-stop" : "arrow-up"} spin={stopping} />
         </Button>
       </div>
     </div>

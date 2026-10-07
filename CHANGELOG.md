@@ -99,6 +99,17 @@ security fixes and the bugs the refactors surfaced.
   launch, a package whose install never finished is removed and installed
   fresh. A failed install shows npm's own words on the agent's card, and
   testing an MCP server started with npx works the same way. (#85)
+- **Waits end on what they wait for, not on a clock.** A stopped turn now
+  waits for the agent's answer, so its last words and its real stop reason
+  stay. It shows as stopping meanwhile, and pressing Stop again ends it at
+  once. Before, it was cut after 3 seconds. Deleting or closing the session
+  doesn't wait at all. A browser sign-in for an MCP server takes as long as
+  you need, where it used to fail after 10 minutes, and Cancel still ends
+  it. A login whose terminal is slow to start keeps its result, where after
+  15 seconds the result used to be dropped. A login command containing
+  `${…}`, which VS Code's task runner would rewrite, is refused before it
+  runs, saying why. A chat opened for typing gets the cursor however late
+  its view takes focus. (#86)
 - **Fork a session** from its ⋯ menu where the agent offers it: a new
   session carrying the original's history opens, and the original stays as
   it is. The fork's title row names its original and opens it.

@@ -49,7 +49,7 @@ import {
   type NormalizedKnobs,
 } from "./knobs";
 import { nullLogger, type Logger } from "./logger";
-import { unlessAborted, untilGivenUp } from "./abort";
+import { unlessAborted } from "./abort";
 import type { AttachedServer } from "./mcp-servers-store";
 import type { AgentPool } from "./pool";
 import { newBlockId } from "./block-ids";
@@ -152,11 +152,6 @@ export interface SessionsStoreHooks {
 /** session/list pagination guard: 50 pages of history for one workspace is
  * beyond any honest agent — past it, merge what arrived but never prune. */
 const MAX_LIST_PAGES = 50;
-
-/** How long a turn told to stop waits, after its cancel, for the agent to
- * end it — then it ends here, so a Stop, a Reload, a Delete or a Close never
- * waits on an agent that ignores the cancel. */
-const CANCEL_SETTLE_MS = 3000;
 
 /** A root path as agents and saved lists receive it: folder pickers hand
  * back "/x/y/", and a directory is never spelled with a trailing
@@ -326,6 +321,9 @@ export class SessionsStore {
   private readonly stream: SessionStream;
   /** What arrived with nowhere to go, said once a window. */
   private readonly notes: NoteLog;
+  /** Per session, the turn told to stop and still owed its agent's answer:
+   * how to end it here instead. */
+  private readonly stoppedTurns = new Map<PatchbaySessionId, () => void>();
 
   constructor(
     private readonly pool: AgentPool,
@@ -1837,14 +1835,40 @@ export class SessionsStore {
     return patchbayAgentId !== undefined && this.pool.get(patchbayAgentId)?.status === "running" && !this.locked(patchbaySessionId);
   }
 
+  /** Ends here the session's turn that was told to stop and is still owed
+   * its agent's answer — the user's second Stop, or the session itself
+   * going away. Nothing such: nothing happens. */
+  endStoppedTurn(patchbaySessionId: PatchbaySessionId): void {
+    this.stoppedTurns.get(patchbaySessionId)?.();
+  }
+
+  /** The turn's answer — or null once it has been told to stop and is then
+   * ended here (`endStoppedTurn`) before the agent answers. */
+  private answerOrEnd<T>(patchbaySessionId: PatchbaySessionId, answer: Promise<T>, signal: AbortSignal): Promise<T | null> {
+    return new Promise<T | null>((resolve, reject) => {
+      const endHere = () => {
+        this.stoppedTurns.delete(patchbaySessionId);
+        resolve(null);
+      };
+      const stopped = () => this.stoppedTurns.set(patchbaySessionId, endHere);
+      if (signal.aborted) stopped();
+      else signal.addEventListener("abort", stopped, { once: true });
+      answer.then(resolve, reject).finally(() => {
+        signal.removeEventListener("abort", stopped);
+        if (this.stoppedTurns.get(patchbaySessionId) === endHere) this.stoppedTurns.delete(patchbaySessionId);
+      });
+    });
+  }
+
   /** One turn: the transcript write, the wire call, the turn's end. The
    * session is attached first (the gates attach it); a turn that cannot
    * start throws before anything is rendered or sent — the words still the
    * user's. `spent` hears the moment they become a user message. Told to
    * stop mid-turn, it sends the cancel, answers the asks the turn leaves
-   * open (an ACP MUST), and waits at most CANCEL_SETTLE_MS for the agent to
-   * end the turn — a hung agent must not hold the session — then ends it
-   * here; an answer that comes later changes nothing. */
+   * open (an ACP MUST), and waits for the agent's answer that ends the turn
+   * (the agent's own MUST) — however long its winding down takes, so its
+   * last updates and its real stop reason are kept. `endStoppedTurn` ends
+   * it here instead; an answer that comes later then changes nothing. */
   async runTurn(
     patchbaySessionId: PatchbaySessionId,
     words: { text: string; parts?: readonly PromptPart[]; chips?: readonly PersistedChip[] },
@@ -2027,11 +2051,9 @@ export class SessionsStore {
     signal.addEventListener("abort", cancel, { once: true });
     try {
       const answer = this.pool.prompt(known.patchbayAgentId, sessionId, prompt);
-      const response = await untilGivenUp(answer, signal, CANCEL_SETTLE_MS);
+      const response = await this.answerOrEnd(patchbaySessionId, answer, signal);
       if (response === null) {
-        this.log.info(
-          `session ${patchbaySessionId}: turn told to stop, still unanswered after ${CANCEL_SETTLE_MS} ms — ended here`,
-        );
+        this.log.info(`session ${patchbaySessionId}: turn told to stop, ended here before its agent answered`);
         // The agent's own answer may still come: said when it does, never
         // dropped unheard.
         void answer.then(

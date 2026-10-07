@@ -780,14 +780,15 @@ export interface SessionSummary {
 
 /** What a session's lines can hold: the attachment line's open (an attach,
  * the ladder), reload, roots (re-applied to the agent), knob (a set), release
- * (idle), close — and the turn line's prompt. */
-export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "fork" | "close" | "delete" | "prompt";
+ * (idle), close — and the turn line's prompt, which reads stopping once told
+ * to stop while its agent still owes the answer that ends it. */
+export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "fork" | "close" | "delete" | "prompt" | "stopping";
 
 /** A turn underway on the session — running, or waiting for its session to
  * attach: what Stop ends, the running mark. Not the same as a live turn,
  * which is on the wire (`activeTurn`). */
 export function turnUnderway(session: SessionSummary): boolean {
-  return session.busy.includes("prompt");
+  return session.busy.includes("prompt") || session.busy.includes("stopping");
 }
 
 /** The session being attached — an open or a reload on its attachment

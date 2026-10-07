@@ -547,7 +547,13 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" }).catch((err: unknown) => err);
     await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
     await h.gates.close(patchbaySessionId);
-    expect(textOf(patchbaySessionId, h.events)).toContain("permission: cancelled");
+    // A close waits on nothing the agent does, so the agent's own echo of
+    // the answer may come after the session has gone — the answer itself
+    // is patchbay's, given before the session goes.
+    const kinds = h.events.map((e) => e.kind);
+    expect(kinds).toContain("permissionResolved");
+    expect(kinds.indexOf("permissionResolved")).toBeLessThan(kinds.indexOf("sessionClosed"));
+    expect(h.events.find((e) => e.kind === "permissionResolved")).toMatchObject({ label: "Cancelled — turn stopped" });
     expect(await turn).toMatchObject({ by: "close" });
     await h.pool.stop("p4" as PatchbayAgentId);
   });

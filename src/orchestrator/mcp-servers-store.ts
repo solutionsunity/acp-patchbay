@@ -101,8 +101,6 @@ const CLIENT_INFO = {
   clientUri: "https://github.com/solutionsunity/acp-patchbay",
 };
 
-const BROWSER_FLOW_TIMEOUT_MS = 10 * 60_000;
-
 /** One entry of the well-known `mcpServers` JSON (Claude Desktop / Cursor /
  * VS Code shape) — the interchange format users already have on disk.
  * Unknown fields are ignored rather than rejected (the format grows). */
@@ -269,20 +267,19 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  /** A browser flow, given up when told to stop or after
-   * BROWSER_FLOW_TIMEOUT_MS — an abandoned tab may never answer. The flow
-   * left behind dies quietly; its result is never stored. */
-  private async browserFlow<T>(flow: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-    flow.catch(() => {}); // given up, it may still reject — never unhandled
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const capped = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("timed out waiting for browser authorization")), BROWSER_FLOW_TIMEOUT_MS);
-    });
-    try {
-      return await unlessAborted(Promise.race([flow, capped]), signal);
-    } finally {
-      clearTimeout(timer);
-    }
+  /** A browser flow: the user agent handed to it waits on the browser for
+   * as long as the user takes, and ends with the attempt's signal — told to
+   * stop (Cancel, the window's end), the wait for the tab is given up, and
+   * the flow with it, so a tab finished later changes nothing. Its result
+   * is never stored then. */
+  private async browserFlow<T>(
+    userAgent: OAuthUserAgent,
+    flow: (bound: OAuthUserAgent) => Promise<T>,
+    signal: AbortSignal | undefined,
+  ): Promise<T> {
+    const running = flow({ ...userAgent, authorize: (url, state) => userAgent.authorize(url, state, signal) });
+    running.catch(() => {}); // given up, it may still reject — never unhandled
+    return unlessAborted(running, signal);
   }
 
   catalogViews(): CatalogEntryView[] {
@@ -457,8 +454,9 @@ export class McpServersStore {
 
   /** MCP-spec OAuth connect: URL-only — discovery, dynamic client
    * registration, PKCE, browser redirect via the injected user agent.
-   * Failure (gated DCR, non-compliant server, denied consent, timeout) is
-   * immediate and labeled. Returns the server's id. */
+   * Failure (gated DCR, non-compliant server, denied consent) is immediate
+   * and labeled; an abandoned tab waits until the connect is cancelled.
+   * Returns the server's id. */
   connectCatalogOAuth(catalogId: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
       const entry = this.entryFor(catalogId);
@@ -467,7 +465,7 @@ export class McpServersStore {
       if ("error" in endpoint) throw new Error(endpoint.error);
       if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
       this.log.info(`${catalogId}: browser OAuth starting (endpoint ${loggableUrl(endpoint.url)})`);
-      const result = await this.browserFlow(connectMcpOAuth(endpoint.url, CLIENT_INFO, this.oauthUserAgent), signal);
+      const result = await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(endpoint.url, CLIENT_INFO, ua), signal);
       const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.tokens.set(patchbayMcpServerId, {
         accessToken: result.accessToken,
@@ -537,7 +535,7 @@ export class McpServersStore {
         }
         if (source.authType === "oauth") {
           if (this.oauthUserAgent === null) throw new Error("OAuth is unavailable in this environment");
-          const result = await this.browserFlow(connectMcpOAuth(source.url, CLIENT_INFO, this.oauthUserAgent), signal);
+          const result = await this.browserFlow(this.oauthUserAgent, (ua) => connectMcpOAuth(source.url, CLIENT_INFO, ua), signal);
           await this.tokens.set(patchbayMcpServerId, {
             accessToken: result.accessToken,
             refreshToken: result.refreshToken,

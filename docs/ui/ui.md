@@ -132,7 +132,7 @@ Action row (below):
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic. Each option's description shows under it in the list; options sharing a name carry their description in the label (`Sonnet · Deep`), so the pill tells them apart — the Settings defaults list too |
 | Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover or keyboard focus: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
-| Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach |
+| Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach. A stopped turn waits for its agent's answer, the button spinning ("Stopping"); pressed again, it ends the turn here |
 
 ### 6 · Drawers
 
@@ -269,9 +269,10 @@ Supabase, Augment — prefill the custom form; nothing runs until the user adds 
 Per-account services label the URL field as what it is: the account's MCP endpoint,
 used by both connect paths. Every entry stays in the catalog: connecting one again
 adds a second server (two accounts), named with a number. A pending browser flow
-shows `Cancel` (an abandoned tab
-must not mean forever-pending — cancel clears with no outcome invented, and a
-10-minute timeout backstops it); failed notes carry `Dismiss`.
+shows `Cancel` — the browser is waited on as long as the user takes (an MFA
+prompt, a password reset, an approval step), and an abandoned tab is ended by
+Cancel, which clears with no outcome invented and drops the waiting callback,
+so a tab finished later changes nothing; failed notes carry `Dismiss`.
 
 Lifecycle, two-state: **active/inactive** is the mute switch (config and credential
 intact, the server reaches no agent until toggled back); **Disconnect is the full

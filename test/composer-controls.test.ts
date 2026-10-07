@@ -79,6 +79,8 @@ describe("composerControls", () => {
   it("Stop follows the turn, not the lock: closed with no turn underway, closed on a dead process", () => {
     expect(composerControls(session, agent({}), false).stop).toBe(false);
     expect(composerControls({ ...session, busy: ["prompt"] }, agent({}), false).stop).toBe(true);
+    // Told to stop and still owed its agent's answer: Stop again ends it here.
+    expect(composerControls({ ...session, busy: ["stopping"] }, agent({}), false).stop).toBe(true);
     // The process is gone, so there is nothing to cancel — the turn will
     // settle on its own teardown path.
     expect(composerControls({ ...session, busy: ["prompt"] }, agent({ status: "stopped" }), false).stop).toBe(false);

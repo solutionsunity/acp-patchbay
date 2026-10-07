@@ -164,15 +164,19 @@ describe("Queue — cutting in", () => {
     void q.run("a", "connect", running.body).catch(() => {});
     void q.run("a", "verify", async () => {}).catch(() => {});
     await tick();
+    expect(q.windingDown("a")).toBe(false);
     const stop = q.cut("a", "stop", async () => {});
     await tick();
     expect(q.held("a")).toEqual(["connect", "stop"]);
+    expect(q.windingDown("a")).toBe(true);
     running.resolve();
     await stop;
     await tick();
+    expect(q.windingDown("a")).toBe(false);
     expect(moves).toEqual([
       ["connect"],
       ["connect", "verify"],
+      ["connect", "verify"], // the running one told to stop: it winds down
       ["connect", "verify", "stop"],
       ["connect", "stop"],
       ["stop"],

@@ -697,6 +697,22 @@ for (const theme of Object.keys(THEMES)) {
     window.dispatchEvent(new Event("focus"));
   });
   check("the view's focus arriving puts the cursor in the composer", await inComposer(p));
+  // no clock on the wait: a focus that comes late still finds the request —
+  // and takes it once, never again on a later focus
+  await blur(p);
+  await p.evaluate(() => {
+    document.hasFocus = () => false;
+    window.__patch([{ kind: "composerFocusRequested" }]);
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+  await p.evaluate(() => {
+    document.hasFocus = () => true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  check("a request still takes the view's focus when it comes late", await inComposer(p));
+  await blur(p);
+  await p.evaluate(() => window.dispatchEvent(new Event("focus")));
+  check("a request is taken once — a later focus leaves the cursor alone", !(await inComposer(p)));
   await p.close();
 }
 

@@ -5,25 +5,27 @@
 // vscode glue is one line in extension.ts: registerUriHandler routes every
 // incoming `vscode://solutionsunity.acp-patchbay/...` URI's query string to
 // `handle()`. Kept vscode-free so flow tests can drive callbacks directly.
-const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000; // user is off in a browser — generous, not infinite
-
 export class OAuthCallbackRegistry {
-  private pending = new Map<
-    string,
-    { resolve(params: URLSearchParams): void; reject(err: Error): void; timer: NodeJS.Timeout }
-  >();
+  private pending = new Map<string, (params: URLSearchParams) => void>();
 
-  /** Resolves when a callback carrying this `state` arrives; rejects on
-   * timeout so an abandoned browser tab can't leave a connect card
-   * spinning forever. */
-  wait(state: string, timeoutMs = CALLBACK_TIMEOUT_MS): Promise<URLSearchParams> {
+  /** Resolves when a callback carrying this `state` arrives — however long
+   * the user takes in the browser (a sign-in can hold an MFA prompt, a
+   * password reset, an organization's approval). The wait ends with its
+   * attempt: the attempt's signal (Cancel, the window's end) drops the
+   * pending callback and rejects with the signal's reason, so a tab
+   * finished later finds nothing waiting. */
+  wait(state: string, signal?: AbortSignal): Promise<URLSearchParams> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const abort = () => {
         this.pending.delete(state);
-        reject(new Error("authorization timed out — no callback received"));
-      }, timeoutMs);
-      timer.unref?.();
-      this.pending.set(state, { resolve, reject, timer });
+        reject(signal!.reason);
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      this.pending.set(state, (params) => {
+        signal?.removeEventListener("abort", abort);
+        resolve(params);
+      });
     });
   }
 
@@ -38,8 +40,7 @@ export class OAuthCallbackRegistry {
     const waiter = this.pending.get(state);
     if (waiter === undefined) return false;
     this.pending.delete(state);
-    clearTimeout(waiter.timer);
-    waiter.resolve(params);
+    waiter(params);
     return true;
   }
 }

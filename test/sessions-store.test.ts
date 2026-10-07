@@ -159,6 +159,65 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm3" as PatchbayAgentId);
   });
 
+  // ACP: after session/cancel the agent MUST answer the prompt — the turn
+  // waits for that answer, however long the agent takes to wind down; no
+  // clock ends it. It reads "stopping" meanwhile.
+  it("a stopped turn waits for its agent's answer, reading stopping meanwhile", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150, cancelDelayMs: 1200 }, "slowstop"),
+    );
+    const patchbaySessionId = await h.sessions.createSession("slowstop" as PatchbayAgentId, "Fake Agent", cwd);
+    const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
+    await new Promise((r) => setTimeout(r, 80));
+    const stopped = Date.now();
+    const stop = h.gates.stop(patchbaySessionId);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.state().sessions[0]?.busy).toEqual(["stopping"]);
+    await stop;
+    expect(Date.now() - stopped).toBeGreaterThanOrEqual(1200);
+    expect(await promptDone).toMatchObject({ by: "stop" });
+    expect(h.events.filter((e) => e.kind === "turnEnded").at(-1)).toMatchObject({ stopReason: "cancelled" });
+    expect(h.state().sessions[0]?.busy).toEqual([]);
+    await h.pool.stop("slowstop" as PatchbayAgentId);
+  });
+
+  it("Stop again ends a stopping turn here — and a close never waits for the agent's answer", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }],
+          stepDelayMs: 150,
+          cancelDelayMs: 30_000,
+          declare: { sessionCapabilities: { close: {} } },
+        },
+        "nostop",
+      ),
+    );
+    const first = await h.sessions.createSession("nostop" as PatchbayAgentId, "Fake Agent", cwd);
+    const firstDone = h.gates.prompt(first, { text: "long turn" }).catch((err: unknown) => err);
+    await new Promise((r) => setTimeout(r, 80));
+    void h.gates.stop(first);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.state().sessions.find((s) => s.id === first)?.busy).toEqual(["stopping"]);
+    let at = Date.now();
+    await h.gates.stop(first);
+    expect(Date.now() - at).toBeLessThan(1000);
+    expect(await firstDone).toMatchObject({ by: "stop" });
+
+    const second = await h.sessions.createSession("nostop" as PatchbayAgentId, "Fake Agent", cwd);
+    const secondDone = h.gates.prompt(second, { text: "long turn" }).catch((err: unknown) => err);
+    await new Promise((r) => setTimeout(r, 80));
+    at = Date.now();
+    await h.gates.close(second);
+    expect(Date.now() - at).toBeLessThan(1000);
+    expect(await secondDone).toMatchObject({ by: "close" });
+    const kinds = h.events.map((e) => e.kind);
+    expect(kinds.lastIndexOf("turnEnded")).toBeLessThan(kinds.lastIndexOf("sessionClosed"));
+    await h.pool.stop("nostop" as PatchbayAgentId);
+  });
+
   // ACP is one prompt per turn: a send landing mid-turn queues (removable
   // row), drains one per turn end, and Stop clears the whole queue.
   it("a prompt sent mid-turn queues and fires when the turn ends", async () => {

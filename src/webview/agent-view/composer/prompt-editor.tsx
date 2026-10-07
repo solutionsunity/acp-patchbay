@@ -95,11 +95,6 @@ export interface PromptEditorProps {
   focusRequest: number;
 }
 
-/** How long a request to take the keyboard waits for its view's focus —
- * the host focuses the view just before asking, so the two land within a
- * moment of each other in either order. */
-const FOCUS_REQUEST_GRACE_MS = 1000;
-
 /** Puts the cursor in the composer: DOM focus first — Lexical's own focus
  * only moves a selection inside an editor that already has it, and does
  * nothing in an empty one — then the caret after what the editor holds. */
@@ -282,20 +277,21 @@ function EditorCore(props: PromptEditorProps) {
 
   // The host's request that the composer take the keyboard. It focused the
   // view first, so the view normally has focus by now; a request that lands
-  // just ahead of that focus waits for it — briefly, so a request nobody
-  // followed up never moves the cursor out of something clicked later.
+  // ahead of that focus is taken up by the view's next focus, once — however
+  // late it comes. A click that brings focus later still wins: the window's
+  // focus lands before the click focuses what it hit.
   const seenRequest = useRef(props.focusRequest);
-  const awaitingFocus = useRef(0);
+  const awaitingFocus = useRef(false);
   useEffect(() => {
     if (props.focusRequest === seenRequest.current) return;
     seenRequest.current = props.focusRequest;
     if (document.hasFocus()) takeKeyboard(editor);
-    else awaitingFocus.current = Date.now() + FOCUS_REQUEST_GRACE_MS;
+    else awaitingFocus.current = true;
   }, [editor, props.focusRequest]);
   useEffect(() => {
     const onFocus = () => {
-      if (Date.now() > awaitingFocus.current) return;
-      awaitingFocus.current = 0;
+      if (!awaitingFocus.current) return;
+      awaitingFocus.current = false;
       takeKeyboard(editor);
     };
     window.addEventListener("focus", onFocus);

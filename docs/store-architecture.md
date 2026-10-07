@@ -162,7 +162,12 @@ terminal login is not waited on once its agent is stopped: the terminal stays
 the user's to finish, use or close, and its return code — the login's only
 word — still counts by the same rules when it comes; only the probe and
 restart that follow a login, which need the process the stop ended, don't
-run. The window's end and erase cut every agent's work the same way.
+run. A login waits on its task's own events, however long it takes: its
+process's exit, or the task ending without one (an unknown outcome). VS Code's
+task runner rewrites `${…}` in a task's command, args and env, and ends a task
+whose variable it can't resolve with no event at all — so a login recipe
+carrying the pattern is refused before it runs, saying why. The window's end
+and erase cut every agent's work the same way.
 
 **One question before a connection ends.** Stop, Upgrade, Remove and Log out
 follow one rule, the gates': nothing in hand, the operation runs; work in hand
@@ -262,9 +267,12 @@ patchbay kept for the session goes with it; Close where it declares
 that lists its sessions lists it again at the next read, and it comes back
 with its draft, settings, roots and files. A turn told to
 stop while on the wire sends `session/cancel`, answers the asks it leaves open
-as cancelled, and gives the agent 3 s to end it before ending it here — an
-agent that ignores the cancel never holds a session; a turn still waiting for
-its attach just ends.
+as cancelled, and waits for the agent's answer that ends it — the agent's own
+MUST, however long its winding down takes, so its last updates and its real
+stop reason are kept. It reads **stopping** meanwhile, and a second Stop ends
+it here; a delete, a close, an erase or the window's end ends it here at once,
+the cancel still sent — nothing is left to show that answer. A turn still
+waiting for its attach just ends.
 
 **Waits across rows.** Sessions never wait on each other, but every session's
 work except a delete or a close enters behind what its agent's row holds at
@@ -274,7 +282,8 @@ waits for its agent after — it needs the agent. A close waits on nothing: a
 hung restart never keeps a session open.
 
 **Busy, in the views.** A turn on the turn line is a turn **underway** — the
-running mark, the composer's Stop. An open or a reload on the attachment line
+running mark, the composer's Stop — and **stopping** once told to stop while
+its agent still owes its answer. An open or a reload on the attachment line
 is the session **attaching** — the loading page, Reload's wait. A turn is
 **live** only once it is on the wire: a turn still waiting for its attach
 streams nothing.

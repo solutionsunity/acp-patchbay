@@ -803,6 +803,25 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
     expect(h.configs.list()).toEqual([]);
   });
 
+  it("no clock gives a browser flow up — the wait ends with the connect, at the tab itself", async () => {
+    let waitSignal: AbortSignal | undefined;
+    const h = harness([entry()], {
+      userAgent: {
+        ...silentTab,
+        authorize: (_url, _state, signal) => {
+          waitSignal = signal;
+          return new Promise(() => {});
+        },
+      },
+    });
+    const flow = h.gates.connectOAuth("svc").catch((err: unknown) => err);
+    for (let i = 0; i < 200 && waitSignal === undefined; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(waitSignal?.aborted).toBe(false);
+    await h.gates.cancel("catalog:svc");
+    expect(await flow).toMatchObject({ by: "cancel" });
+    expect(waitSignal?.aborted).toBe(true);
+  });
+
   it("a second Connect while a card's browser flow is out is that flow — one tab, one outcome", async () => {
     let tabs = 0;
     const h = harness([entry()], { userAgent: { ...silentTab, authorize: () => (tabs++, new Promise(() => {})) } });

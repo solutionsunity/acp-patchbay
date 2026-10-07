@@ -42,6 +42,12 @@ export class Queue<Work extends string, Row extends string = string> {
     return (this.rows.get(row) ?? []).map((h) => h.work);
   }
 
+  /** Whether the row holds work told to stop and still winding down —
+   * cut, but not yet left. */
+  windingDown(row: Row): boolean {
+    return (this.rows.get(row) ?? []).some((h) => h.signal.aborted);
+  }
+
   /** Every row holding work now. */
   holding(): Row[] {
     return [...this.rows.keys()];
@@ -142,7 +148,12 @@ export class Queue<Work extends string, Row extends string = string> {
         signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       }),
       cancel: (by) => {
-        if (!cuts) controller.abort(new Cancelled(by));
+        if (cuts || signal.aborted) return;
+        controller.abort(new Cancelled(by));
+        // A running one told to stop is a move of the row's holdings too:
+        // it winds down, and reads that way. One dropped before its turn
+        // leaves at once — that is its move.
+        if (started) this.changed(row);
       },
       left,
     };

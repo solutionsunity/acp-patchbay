@@ -29,7 +29,7 @@ import type { PatchbayAgentId, PatchbaySessionId } from "../shared/ids";
 
 /** The attachment line's work — everything a session's lines hold but its
  * turn. */
-export type AttachWork = Exclude<SessionWork, "prompt">;
+export type AttachWork = Exclude<SessionWork, "prompt" | "stopping">;
 
 /** Attached-but-idle sessions release their agent-side resources after an
  * hour — the row stays listed and re-attaches on the next open/prompt. */
@@ -84,7 +84,12 @@ export class SessionGates {
 
   /** What the session's lines hold — its busy state for the views. */
   busy(patchbaySessionId: PatchbaySessionId): SessionWork[] {
-    return [...this.attachLine.held(patchbaySessionId), ...this.turnLine.held(patchbaySessionId)];
+    const turn = this.turnLine.held(patchbaySessionId);
+    const stopping = this.turnLine.windingDown(patchbaySessionId);
+    return [
+      ...this.attachLine.held(patchbaySessionId),
+      ...(stopping ? turn.map((w): SessionWork => (w === "prompt" ? "stopping" : w)) : turn),
+    ];
   }
 
   /** The user opened a session — drawer click, palette pick, "Open in new
@@ -148,9 +153,11 @@ export class SessionGates {
   /** Stop: the session's turn ends, and its held words go with it — Stop
    * means stop; draining them after a deliberate stop would restart what
    * the user just ended. Words asked after the Stop go once the stopped
-   * turn has wound down. */
+   * turn has wound down. A turn already told to stop, still owed its
+   * agent's answer, ends here at this Stop. */
   stop(patchbaySessionId: PatchbaySessionId): Promise<void> {
     this.sessions.clearHeld(patchbaySessionId);
+    this.sessions.endStoppedTurn(patchbaySessionId);
     return this.turnLine.end(patchbaySessionId, "stop");
   }
 
@@ -206,7 +213,7 @@ export class SessionGates {
   async delete(patchbaySessionId: PatchbaySessionId): Promise<void> {
     this.sessions.requireOffer(patchbaySessionId, "delete");
     await this.attachLine.cut(patchbaySessionId, "delete", async () => {
-      await this.turnLine.end(patchbaySessionId, "delete");
+      await this.endTurnHere(patchbaySessionId, "delete");
       await this.agentWork(patchbaySessionId);
       await this.sessions.delete(patchbaySessionId);
       this.rootsWaiting.delete(patchbaySessionId);
@@ -221,7 +228,7 @@ export class SessionGates {
     this.sessions.requireOffer(patchbaySessionId, "close");
     this.rootsWaiting.delete(patchbaySessionId);
     await this.attachLine.cut(patchbaySessionId, "close", async () => {
-      await this.turnLine.end(patchbaySessionId, "close");
+      await this.endTurnHere(patchbaySessionId, "close");
       await this.sessions.close(patchbaySessionId);
     });
   }
@@ -263,10 +270,23 @@ export class SessionGates {
     for (const patchbaySessionId of this.sessions.ofAgent(patchbayAgentId)) this.drain(patchbaySessionId);
   }
 
+  /** Ends the session's turn without waiting for its agent's answer: the
+   * session itself is going away (deleted, closed, erased, the window's
+   * end), so nothing is left to show that answer. Its cancel still goes
+   * out first. */
+  private endTurnHere(patchbaySessionId: PatchbaySessionId, by: string): Promise<void> {
+    const ended = this.turnLine.end(patchbaySessionId, by);
+    this.sessions.endStoppedTurn(patchbaySessionId);
+    return ended;
+  }
+
   /** Ends every session's work — erase, the window's end. */
   endAll(): Promise<void> {
     this.rootsWaiting.clear();
-    return Promise.all([this.attachLine.cutAll("close"), this.turnLine.cutAll("close")]).then(() => {});
+    return Promise.all([
+      this.attachLine.cutAll("close"),
+      ...this.turnLine.holding().map((patchbaySessionId) => this.endTurnHere(patchbaySessionId, "close")),
+    ]).then(() => {});
   }
 
   /** An open's attach: held words go once the session is attached — opening

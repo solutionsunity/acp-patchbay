@@ -27,17 +27,21 @@ import type { TerminalAuthRecipe } from "./meta";
  * tasks.json or the Run Task picker. */
 const LOGIN_TASK_TYPE = "acpPatchbay.login";
 
-/** How long a task may take to reach its process-start event. A task that
- * fails before its process exists (the engine could not resolve something)
- * is reported to the user by VS Code and then swallowed: `executeTask`
- * still resolves and no end event ever follows. Without a bound the login
- * would wait forever; with it the outcome is honestly "unknown". */
-const START_TIMEOUT_MS = 15_000;
+/** VS Code's task engine replaces `${…}` in a task's command, args and env
+ * with its variables — so such a value never reaches the process as
+ * written — and a variable it can't resolve (`${workspaceFolder}` in a
+ * window with no folder) ends the task silently: no process, and no event
+ * of any kind, ever. Every other way a task fails to start still ends it
+ * with its events. A recipe carrying the pattern is refused before
+ * anything runs, so no login waits on a task that will never say. */
+const TASK_VARIABLE = /\$\{[^}]*\}/;
 
 /** Runs the recipe front and center and resolves with its exit code —
- * `undefined` only when the answer is honestly unknown: the process never
- * started, or the task ended without its process reporting a code
- * (terminated by the user, terminal closed mid-run).
+ * `undefined` only when the answer is honestly unknown: the task ended
+ * without its process reporting a code (a process that never started,
+ * terminated by the user, terminal closed mid-run). It waits for that end
+ * however long the login takes; the agent's Stop is what stops waiting.
+ * A recipe the task engine would rewrite rejects, saying why.
  *
  * The process runs in the user's home directory. A login is user-scoped —
  * credentials land in the home directory, never the project — and home is
@@ -55,6 +59,11 @@ export async function runLoginTask(
   // "already active" (a restart prompt) instead of a second login. It is
   // also what the events are matched on, subscribed before execution so a
   // process that exits in the same beat as it starts cannot be missed.
+  if ([recipe.command, ...recipe.args, ...Object.values(recipe.env ?? {})].some((v) => TASK_VARIABLE.test(v))) {
+    throw new Error(
+      "the login command holds a `${…}` pattern, which VS Code's task runner would replace — it can't be run as written; run it in your own terminal",
+    );
+  }
   const run = randomUUID();
   const task = new vscode.Task(
     { type: LOGIN_TASK_TYPE, run },
@@ -74,15 +83,10 @@ export async function runLoginTask(
     const mine = (e: { execution: vscode.TaskExecution }): boolean =>
       e.execution.task.definition.run === run;
     const settle = (code: number | undefined): void => {
-      clearTimeout(startWatchdog);
       for (const sub of subs) sub.dispose();
       resolve(code);
     };
-    const startWatchdog = setTimeout(() => settle(undefined), START_TIMEOUT_MS);
     const subs = [
-      vscode.tasks.onDidStartTaskProcess((e) => {
-        if (mine(e)) clearTimeout(startWatchdog);
-      }),
       // Process end fires first and carries the code; the task end that
       // follows finds the listeners gone. A task end with no process end
       // before it is the unknown case.

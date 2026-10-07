@@ -299,8 +299,8 @@ export class Orchestrator {
           );
           return callback.toString(true);
         },
-        authorize: async (authorizationUrl, state) => {
-          const pending = this.oauthCallbacks.wait(state);
+        authorize: async (authorizationUrl, state, signal) => {
+          const pending = this.oauthCallbacks.wait(state, signal);
           await openInBrowser(authorizationUrl);
           return pending;
         },
