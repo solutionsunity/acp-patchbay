@@ -621,7 +621,11 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   wait for a notification) — the one place a routed set meets the wire,
   shared by the user set, seeding, and the defaults editor; the session
   response readers hand the raw response to the extension doors at the one
-  place it is read, so a new surface never ripples a hook signature.
+  place it is read, so a new surface never ripples a hook signature; the
+  session stream passes an agent's prose through `createProseRewriter` and
+  its tool-call facts through `createToolCallRewriter` — opaque filters that
+  may hold something back, and are flushed (prose, at the run's close) or
+  released (tool calls, at the turn-end sweep) so nothing held vanishes.
 - **Shape-gated wherever shape exists; id-keyed only where it can't.** A
   silent behavioral quirk (nothing on the wire announces it before it bites
   — e.g. Auggie's first-session mcpServers latch) cannot be shape-gated, so
@@ -633,7 +637,8 @@ methods, removed-draft surfaces, behavioral quirk workarounds):
   module ecosystems; patchbay's deviations are first-party and curated —
   the `_meta` table (meta.ts) plus the modules in `orchestrator/extensions/`
   (removed-draft models surface, first-session mcpServers latch, render
-  directive rewriter, turn-time auth failure code at this writing).
+  directive rewriter, turn-time auth failure code, to-do list read as the
+  plan at this writing).
   Retirement is the same mechanism in reverse: the typed auth-method module
   left when its RFD landed in the published schema — its parse moved into
   core (capabilities.ts), where the spec's own surface belongs. Free interception

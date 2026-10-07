@@ -43,6 +43,7 @@ Identity: package, distribution, version(s) tested, vendor channel
 - [claude-agent-acp.md](claude-agent-acp.md) — the Claude Agent SDK bridge
 - [codex-acp.md](codex-acp.md) — the Codex bridge
 - [gemini-cli.md](gemini-cli.md) — Google's Gemini CLI
+- [opencode.md](opencode.md) — OpenCode
 
 ## Reports
 

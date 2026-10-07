@@ -215,7 +215,11 @@ block and shows as the card icon's tooltip: the card names the call by its
 
 Whole-replace consumed (§9). The pinned strip mirrors only what the agent reports and
 dies with `transcriptReset` — a stale plan never outlives its source. An entry's
-priority shows beside it when the agent gives one.
+priority shows beside it when the agent gives one. Status and priority are carried
+as the agent said them: `cancelled` (in the v2 draft's vocabulary) has its own mark,
+and a word outside the known ones shows beside its entry, never coerced. An agent
+that keeps its plan in a to-do tool instead (OpenCode's `todowrite`) is read as its
+plan by a wire-extension module (`extensions/todowrite-plan.ts`).
 
 ## 15. Session modes — ✅
 

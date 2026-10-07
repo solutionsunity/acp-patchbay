@@ -69,7 +69,8 @@ A chip opens its panel overlaying the chat, growing up from the strip at the
 strip's full width (the drawers' mechanic, mirrored) — X, Escape, re-click, or a
 click elsewhere closes; one panel is open at a time, so opening the other chip's
 panel closes this one. Plan panel: the full checklist (✓ done, ▸ active, ○
-pending). Files panel: one row per file the agent edited, click opens it in the
+pending, ⊘ cancelled; any other status word shows beside its task). Files
+panel: one row per file the agent edited, click opens it in the
 editor; a dot marks a file whose open editor holds unsaved changes — editor
 reality, never a stored flag. It lists files and never counts lines: a change is
 counted only on the tool card of the edit that reported it, because a file the

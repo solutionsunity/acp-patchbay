@@ -6,8 +6,10 @@
 // registry, no loader — a spread of hand-named calls is the whole
 // mechanism until ≥3 extensions demand shared machinery.
 import type { KnobExtra } from "../knobs";
+import type { SessionUpdateFact } from "../readers/session-update";
 import { createAugmentSnippetRewriter } from "./augment-code-snippet";
 import { sessionModelsExtras } from "./session-models-field";
+import { createTodoWritePlanRewriter } from "./todowrite-plan";
 
 /** Every extension-synthesized knob a raw session response carries
  * (session/new, /load, /resume). Each module degrades to absent on its
@@ -36,4 +38,24 @@ export interface ProseRewriter {
  * stream. */
 export function createProseRewriter(): ProseRewriter {
   return createAugmentSnippetRewriter();
+}
+
+/** A tool-call fact as it arrives, and what one can stand for. */
+export type ToolCallReading = Extract<SessionUpdateFact, { kind: "toolCall" | "plan" }>;
+
+/** A stateful filter over one session's tool-call facts. `push` may hold a
+ * call back, or hand out the fact it stands for; whoever ends a turn or a
+ * replay MUST `release`, so a held call lands as the agent sent it instead
+ * of vanishing. */
+export interface ToolCallRewriter {
+  push(fact: Extract<SessionUpdateFact, { kind: "toolCall" }>): ToolCallReading[];
+  release(): Extract<SessionUpdateFact, { kind: "toolCall" }>[];
+}
+
+/** The rewriter a session's tool-call facts pass through (the session
+ * stream's toolCall arm). Each module is shape-gated: a call that isn't its
+ * deviation passes through untouched, so this is safe on any agent's
+ * stream. */
+export function createToolCallRewriter(): ToolCallRewriter {
+  return createTodoWritePlanRewriter();
 }

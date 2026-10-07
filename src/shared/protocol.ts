@@ -1086,10 +1086,14 @@ export interface TurnEndBlock {
   error?: string;
 }
 
+/** A plan entry, its words as the agent said them. ACP names pending,
+ * in_progress and completed; its draft adds cancelled and leaves both sets
+ * open, so a word outside them is carried and shown as said. Priority: high,
+ * medium, low. */
 export interface PlanEntry {
   content: string;
-  status: "pending" | "in_progress" | "completed";
-  priority?: "high" | "medium" | "low";
+  status: string;
+  priority?: string;
 }
 
 /** One broker path for every gated action — ACP session/request_permission,

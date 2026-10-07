@@ -64,6 +64,15 @@ export function ReadoutStrip(props: {
   );
 }
 
+/** The statuses a plan entry's icon knows. Any other word the agent sends
+ * is shown as said, beside the entry. */
+const PLAN_STATUS_ICONS = new Map([
+  ["pending", "circle-large"],
+  ["in_progress", "circle-large-filled"],
+  ["completed", "check"],
+  ["cancelled", "circle-slash"],
+]);
+
 function PlanChip({
   plan,
   open,
@@ -108,17 +117,16 @@ function PlanChip({
         </button>
       }
     >
-      {plan.map((e, i) => (
-        <div key={i} className={e.status}>
-          <Icon
-            name={
-              e.status === "completed" ? "check" : e.status === "in_progress" ? "circle-large-filled" : "circle-large"
-            }
-          />{" "}
-          {e.content}
-          {e.priority !== undefined && <span className="prio"> · {e.priority}</span>}
-        </div>
-      ))}
+      {plan.map((e, i) => {
+        const icon = PLAN_STATUS_ICONS.get(e.status);
+        return (
+          <div key={i} className={icon !== undefined ? e.status : undefined}>
+            <Icon name={icon ?? "circle-large"} /> {e.content}
+            {icon === undefined && <span className="prio"> · {e.status}</span>}
+            {e.priority !== undefined && <span className="prio"> · {e.priority}</span>}
+          </div>
+        );
+      })}
     </ReadoutPanel>
   );
 }

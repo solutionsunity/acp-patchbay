@@ -118,6 +118,7 @@ export const chatPlan = [
   { content: "locate the unanchored pattern", status: "completed" },
   { content: "fix and add a regression test", status: "in_progress" },
   { content: "run the suite", status: "pending" },
+  { content: "publish a release", status: "cancelled" },
 ];
 
 /** A full capability matrix for an agent that declared session/load but no

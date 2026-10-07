@@ -21,7 +21,7 @@ import {
 } from "../shared/protocol";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
 import { computeLineDiff } from "./diff";
-import { createProseRewriter, type ProseRewriter } from "./extensions";
+import { createProseRewriter, createToolCallRewriter, type ProseRewriter, type ToolCallReading, type ToolCallRewriter } from "./extensions";
 import type { Logger } from "./logger";
 import type { AgentTerminalReading } from "./meta";
 import { forModelOnly, type ContentFact, type ToolContentFact } from "./readers/content";
@@ -97,6 +97,10 @@ export interface StreamState {
   /** Terminals the agent runs itself, by id, and whether each still runs —
    * the turn-end sweep settles any the agent never reported ended. */
   agentTerminals: Map<string, boolean>;
+  /** The wire-extension filter this attachment's tool-call facts pass
+   * through (extensions/index.ts — opaque to this file), attached on the
+   * first call. It may hold a call back; the sweep releases what it holds. */
+  toolCallRewriter?: ToolCallRewriter;
   /** Replay-window only: agent activity observed since the last turn
    * boundary. A replayed user message arriving with this set means a turn
    * just ended structurally — synthesize its TurnEndBlock (nullable timing;
@@ -216,12 +220,11 @@ export class SessionStream {
         else this.applyThoughtChunk(patchbaySessionId, session, update.messageId, update.content, emit);
         break;
       case "toolCall":
-        this.applyToolCall(patchbaySessionId, session, update.call, update.announced, emit);
+        session.toolCallRewriter ??= createToolCallRewriter();
+        for (const read of session.toolCallRewriter.push(update)) this.applyReading(patchbaySessionId, session, read, emit);
         break;
       case "plan":
-        // Session-level state, not a transcript event — replaces the pinned
-        // widget's snapshot; it neither appends a block nor interrupts a run.
-        emit({ kind: "planUpdated", patchbaySessionId, entries: update.entries });
+        this.applyReading(patchbaySessionId, session, update, emit);
         break;
       case "commands":
         emit({ kind: "commandsAdvertised", patchbaySessionId, commands: update.commands });
@@ -253,6 +256,23 @@ export class SessionStream {
         });
         break;
     }
+  }
+
+  /** A tool call or a plan — as the agent sent it, or as the tool-call
+   * rewriter read it. */
+  private applyReading(
+    patchbaySessionId: PatchbaySessionId,
+    session: StreamState,
+    read: ToolCallReading,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    if (read.kind === "toolCall") {
+      this.applyToolCall(patchbaySessionId, session, read.call, read.announced, emit);
+      return;
+    }
+    // Session-level state, not a transcript event — replaces the pinned
+    // widget's snapshot; it neither appends a block nor interrupts a run.
+    emit({ kind: "planUpdated", patchbaySessionId, entries: read.entries });
   }
 
   /** A user message's chunk. Replay-only by design: a live send appends its
@@ -526,6 +546,9 @@ export class SessionStream {
    * the mark. */
   sweep(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
     const emit = this.emitter(patchbaySessionId);
+    // A call the tool-call rewriter still holds never ended: it lands as the
+    // agent sent it, and the loop below marks it stranded with the rest.
+    for (const read of session.toolCallRewriter?.release() ?? []) this.applyReading(patchbaySessionId, session, read, emit);
     // An agent's own terminal still running when nothing runs is no longer
     // live; how it ended was never said — "exit ?", not a spinner.
     for (const [terminalId, running] of session.agentTerminals) {

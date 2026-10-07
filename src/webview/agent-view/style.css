@@ -344,6 +344,10 @@ body {
   text-decoration: line-through;
 }
 
+.overlay-panel .items .cancelled {
+  color: var(--pb-text-faint);
+}
+
 .overlay-panel .items .in_progress {
   color: var(--pb-accent);
 }

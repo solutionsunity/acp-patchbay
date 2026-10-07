@@ -261,12 +261,14 @@ for (const theme of Object.keys(THEMES)) {
   await p.click(".readout-strip .chip.plan");
   check(`[${theme}] plan chip reads open once clicked`, (await p.locator('.readout-strip .chip.plan[aria-expanded="true"]').count()) === 1);
   check(`[${theme}] plan panel opens with checklist`, (await p.waitForSelector(".plan-panel .items .in_progress", { timeout: 3000 })) !== null);
+  check(`[${theme}] a cancelled task carries its own mark`, (await p.$(".plan-panel .items .cancelled .codicon-circle-slash")) !== null);
   await p.waitForTimeout(250); // the panel's entry animation (rise) settles
   const [strip, panel] = await Promise.all([
     p.$eval(".readout-strip", (el) => el.getBoundingClientRect().toJSON()),
     p.$eval(".plan-panel", (el) => el.getBoundingClientRect().toJSON()),
   ]);
   check(`[${theme}] plan panel grows up from the strip at its width`, Math.abs(panel.bottom - strip.top) <= 1 && Math.abs(panel.width - strip.width) <= 1);
+  await p.locator(".plan-panel").screenshot({ path: `${OUT}/plan-panel-${theme}.png` });
   await p.click(".plan-panel .head .close");
   check(`[${theme}] X closes the plan panel`, (await p.$(".plan-panel")) === null);
 

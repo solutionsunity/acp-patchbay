@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **OpenCode's to-do list is its plan.** OpenCode keeps its plan in its own
+  to-do tool and sends no ACP plan, so its list used to appear as "N todos"
+  tool cards and the plan chip stayed empty. A to-do write that completes
+  now fills the plan chip, cancelled tasks included, and shows no card; a
+  write that fails or is rejected still shows as the card it is. A plan
+  task's status and priority show as the agent said them. (#87)
+
 ## 0.84.2 — 2026-10-07
 
 One store per kind of state (#69) and one reader per kind of agent message (#80),
