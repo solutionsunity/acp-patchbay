@@ -337,8 +337,13 @@ usage, title, knobs), `session/request_permission`, and the answers to every
 request patchbay sends (`initialize`, the session lifecycle, `session/list`,
 `session/prompt`, `session/set_config_option`) — a session response's knobs
 through the one normalizer with the extension doors, where the raw response
-is read. The agent's file, terminal and elicitation requests and its errors
-are still read by their consumers — the move is tracked in #80.
+is read. An agent's error is thrown, not handed over, so it is read where it
+is caught, by the one error reader: its message and what its `data` adds
+(where agents put the reason), and whether it bears on auth. A failure the
+user caused — a turn, a log-in, a knob change, a fork — says it where they
+are, in those words; a background one says it in the Output channel. The
+agent's file, terminal and elicitation requests are still read by their
+consumers — the move is tracked in #80.
 
 ## Agent capability matrix
 

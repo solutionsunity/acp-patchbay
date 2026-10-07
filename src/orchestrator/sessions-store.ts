@@ -54,6 +54,7 @@ import type { AttachedServer } from "./mcp-servers-store";
 import type { AgentPool } from "./pool";
 import { newBlockId } from "./block-ids";
 import { SessionStream, type StreamState } from "./session-stream";
+import { agentErrorText } from "./readers/agent-error";
 import { NoteLog } from "./readers/notes";
 import { sessionMetaOf, type SessionUpdateFact } from "./readers/session-update";
 import type { ToolCallFact } from "./readers/tool-call";
@@ -507,7 +508,7 @@ export class SessionsStore {
     } catch (err) {
       // Failure means the agent still holds it — the next open re-attaches
       // either way; the suspect mark already landed at the chokepoint.
-      this.log.info(`session ${patchbaySessionId}: release failed — ${(err as Error).message}`);
+      this.log.info(`session ${patchbaySessionId}: release failed — ${agentErrorText(err)}`);
     }
   }
 
@@ -839,16 +840,22 @@ export class SessionsStore {
    * attached at the end; an agent not running attaches nothing — its
    * coming up attaches what is on view. */
   async hydrate(patchbaySessionId: PatchbaySessionId, signal: AbortSignal): Promise<boolean> {
-    if (this.sessions.has(patchbaySessionId)) return true;
+    return (await this.hydration(patchbaySessionId, signal)).attached;
+  }
+
+  /** hydrate, with why a session stayed closed — for a caller that says it. */
+  async hydration(patchbaySessionId: PatchbaySessionId, signal: AbortSignal): Promise<{ attached: true } | { attached: false; why: string }> {
+    if (this.sessions.has(patchbaySessionId)) return { attached: true };
     const patchbayAgentId = this.known.get(patchbaySessionId)?.patchbayAgentId;
-    if (patchbayAgentId === undefined) return false;
-    if (this.pool.get(patchbayAgentId)?.status !== "running") return false;
+    if (patchbayAgentId === undefined) return { attached: false, why: "patchbay no longer knows the session" };
+    if (this.pool.get(patchbayAgentId)?.status !== "running") return { attached: false, why: "its agent isn't running" };
     const outcome = await this.attach(patchbaySessionId, patchbayAgentId, signal);
-    if (outcome.attached) return true;
-    if (outcome.reason === "failed") return false;
+    if (outcome.attached) return { attached: true };
+    if (outcome.reason === "failed") return { attached: false, why: agentErrorText(outcome.error) };
+    const why = "the agent can neither load nor resume it";
     // No rung declared: this session cannot be reopened. Reachable only
     // after a crash/reload (the reaper never closes these).
-    if ((this.hooks.currentTranscript?.(patchbaySessionId) ?? []).length > 0) return false;
+    if ((this.hooks.currentTranscript?.(patchbaySessionId) ?? []).length > 0) return { attached: false, why };
     this.hooks.emit({
       kind: "transcriptSeeded",
       patchbaySessionId,
@@ -858,7 +865,7 @@ export class SessionsStore {
         text: "This agent supports neither session/load nor session/resume — this session's history lives only in the agent and can't be reopened here.",
       }],
     });
-    return false;
+    return { attached: false, why };
   }
 
   /** The session leaves the agent's history (`session/delete`) — once its
@@ -1484,15 +1491,16 @@ export class SessionsStore {
     await applySeedToFixedPoint(
       seed,
       () => (signal?.aborted === true ? NO_KNOBS : (this.sessions.get(patchbaySessionId)?.knobs ?? NO_KNOBS)),
-      async (route, _knobId, value) => {
+      async (route, knobId, value) => {
         const session = this.sessions.get(patchbaySessionId);
         const sessionId = this.known.get(patchbaySessionId)?.sessionId;
         if (!session || sessionId === undefined || signal?.aborted === true) return;
         try {
           const next = await performKnobSet(this.knobWire(this.agentOfLive(patchbaySessionId)), sessionId, () => session.knobs, route, value, this.knobDropLog);
           if (next !== null) this.publishKnobs(patchbaySessionId, next);
-        } catch {
-          // rejected seed entry — the agent's state stands, nothing to repair
+        } catch (err) {
+          // a rejected seed entry — the agent's state stands, nothing to repair
+          this.log.info(`session ${patchbaySessionId}: the agent didn't take the remembered ${knobId} — ${agentErrorText(err)}`);
         }
       },
     );
@@ -1704,7 +1712,7 @@ export class SessionsStore {
       const dying = this.sessions.get(patchbaySessionId);
       if (dying !== undefined) this.dropLiveSession(patchbaySessionId, dying);
       this.log.info(
-        `session ${patchbaySessionId}: root re-apply failed (${(err as Error).message}) — detached; next prompt re-enters the continuation ladder`,
+        `session ${patchbaySessionId}: root re-apply failed (${agentErrorText(err)}) — detached; next prompt re-enters the continuation ladder`,
       );
     }
   }
@@ -1977,7 +1985,7 @@ export class SessionsStore {
     } else {
       prompt.push({ type: "text", text });
     }
-    const endTurn = (stopReason: string, usage: TurnUsage | null) => {
+    const endTurn = (stopReason: string, usage: TurnUsage | null, error?: string) => {
       // Whatever the stop reason — cancelled, error, even a claimed clean
       // end_turn — the turn is over and nothing runs on: any still-open
       // call is stranded. Sweep before the turnEnd block lands, so the
@@ -1999,6 +2007,7 @@ export class SessionsStore {
         at: new Date().toISOString(),
         stopReason,
         usage,
+        ...(error !== undefined ? { error } : {}),
       });
     };
     // Told to stop while the blocks were read, the turn ends before it
@@ -2026,7 +2035,7 @@ export class SessionsStore {
         // dropped unheard.
         void answer.then(
           (late) => this.log.info(`session ${patchbaySessionId}: the stopped turn's answer came late — ${late.stopReason}`),
-          (err: unknown) => this.log.info(`session ${patchbaySessionId}: the stopped turn ended late in an error — ${(err as Error).message}`),
+          (err: unknown) => this.log.info(`session ${patchbaySessionId}: the stopped turn ended late in an error — ${agentErrorText(err)}`),
         );
         endTurn("cancelled", null);
         return;
@@ -2039,8 +2048,9 @@ export class SessionsStore {
       }
       endTurn(response.stopReason, response.usage ?? null);
     } catch (err) {
-      // The turn still ended — as an error, said as such, never silently.
-      endTurn("error", null);
+      // The turn still ended — as an error, said as such with its reason,
+      // never silently.
+      endTurn("error", null, agentErrorText(err));
       throw err;
     } finally {
       signal.removeEventListener("abort", cancel);

@@ -31,7 +31,8 @@ import type { CapabilityCell, CapabilityMatrix, CapabilityRowId } from "../share
 import { matrixFromDeclared } from "./capabilities";
 import { probeDeferredFor } from "./extensions";
 import { nullLogger, type Logger } from "./logger";
-import { authRequiredReasonOf, type AgentPool } from "./pool";
+import type { AgentPool } from "./pool";
+import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import type { UsedCapabilityStore } from "./stores/used-capabilities";
 import type { PatchbayAgentId } from "../shared/ids";
 
@@ -239,7 +240,7 @@ export class CapabilityTracker {
         return "auth_required";
       }
       // declared but the round-trip failed — an honest state, not an error to surface
-      this.log.debug(`${patchbayAgentId}: probe round-trip failed — ${(err as Error).message}`);
+      this.log.debug(`${patchbayAgentId}: probe round-trip failed — ${agentErrorText(err)}`);
       return "failed";
     }
     // Close the throwaway session where the agent supports it — probe

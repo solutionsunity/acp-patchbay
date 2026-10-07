@@ -17,8 +17,8 @@ import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import { isRefusal } from "./client-replies";
 import { clientCapabilitiesWire, rowsProvenBy, type WireFact } from "./capabilities";
-import { turnAuthFailureReasonOf } from "./extensions";
 import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
+import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import { readInitialize, type InitializeFact } from "./readers/initialize";
 import { NoteLog, type Note } from "./readers/notes";
 import { readPermissionRequest, type PermissionRequestFact } from "./readers/permission";
@@ -39,21 +39,6 @@ import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-upd
 import { resolveSpawn } from "./spawn-resolve";
 import { commandOf, killTree, treeSpawnOptions } from "./process-tree";
 import type { PatchbayAgentId } from "../shared/ids";
-
-/** The auth-required reading of a failed RPC, or null when the failure
- * bears nothing on auth: the spec's -32000 (reason = the agent's own
- * message, null when blank), and through the extensions door, a rejection
- * whose shape an adopted module reads as an auth failure. The one reading
- * — the wire chokepoints report on it, and every consumer that classifies
- * a caught RPC error (probe outcome, connect-failure wording) asks here
- * rather than re-testing the code. */
-export function authRequiredReasonOf(err: unknown): { reason: string | null } | null {
-  if (err instanceof acp.RequestError && err.code === -32000) {
-    return { reason: err.message.trim() === "" ? null : err.message };
-  }
-  const reason = turnAuthFailureReasonOf(err);
-  return reason === null ? null : { reason };
-}
 
 /** Launch-phase seam (runtime-resolver.ts): given the spec about to spawn,
  * returns the spec that actually spawns — the same spec when the system
@@ -635,7 +620,7 @@ export class AgentPool {
       // swallowing the detail — the exact silent failure crash reporting exists to
       // kill. markDead runs before the kill so the 'exit' handler can't
       // relabel it "exited N" either.
-      this.markDead(entry, `initialize failed: ${(err as Error).message}`);
+      this.markDead(entry, `initialize failed: ${agentErrorText(err)}`);
       if (child.pid !== undefined) {
         const pid = child.pid;
         killTree(pid, "SIGTERM");

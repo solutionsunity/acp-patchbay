@@ -413,7 +413,9 @@ a subtle metadata line under that turn — not loud, but present:
   a broken feature; just don't show the row.
 - **Stop reason chip** — only surface this when it's *not* a clean `end_turn`:
   `max_tokens`, `refusal`, `cancelled`, etc. are meaningfully different completion
-  states the user should notice, not silently identical to a normal finish.
+  states the user should notice, not silently identical to a normal finish. A
+  turn that failed (`error`) says why on a line under it — the error's own
+  words, with what its `data` adds.
 - **Cost estimate** — only if you maintain your own per-agent/per-model price table
   client-side; ACP does not give you cost directly in most agents (the
   `context_update`/`usage_update` cost field is itself optional and inconsistently

@@ -18,6 +18,7 @@
 // from the store — never reconciled. vscode-free; the orchestrator wires
 // the store, the normalizer, and the latch.
 import type { SessionOpenedFact } from "./readers/responses";
+import { agentErrorText } from "./readers/agent-error";
 import type { SessionUpdateFact } from "./readers/session-update";
 import {
   applyConfigUpdate,
@@ -166,7 +167,7 @@ export class DefaultsEditor {
       this.hooks.emit({
         kind: "agentKnobsObserved",
         patchbayAgentId,
-        knobs: { knobs: [], unavailable: `couldn't open a session to read knobs — ${(err as Error).message}` },
+        knobs: { knobs: [], unavailable: `couldn't open a session to read knobs — ${agentErrorText(err)}` },
       });
       return;
     }
@@ -202,7 +203,7 @@ export class DefaultsEditor {
       );
       if (next !== null) entry.knobs = next;
     } catch (err) {
-      this.log.info(`${patchbayAgentId}: defaults editor set rejected — ${(err as Error).message}`);
+      this.log.info(`${patchbayAgentId}: defaults editor set rejected — ${agentErrorText(err)}`);
     }
   }
 

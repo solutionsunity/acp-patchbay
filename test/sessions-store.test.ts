@@ -3407,6 +3407,16 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch-owner" as PatchbayAgentId);
   });
 
+  it("a failed turn says why on its turn line — the error's data included (#80)", async () => {
+    const h = harness();
+    await h.pool.connect(spec({ promptError: { code: -32603, message: "Internal error", data: { details: "process exited with code 1" } } }, "ch-err"));
+    const patchbaySessionId = await h.sessions.createSession("ch-err" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" }).catch(() => {});
+    const end = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "turnEnd");
+    expect(end).toMatchObject({ stopReason: "error", error: "Internal error — process exited with code 1" });
+    await h.pool.stop("ch-err" as PatchbayAgentId);
+  });
+
   it("an update without a status leaves the call's status as it was; one for a call never announced is pending (#80)", async () => {
     const { h, push, blocks } = await chunkHarness("ch-status" as PatchbayAgentId);
     push({ sessionUpdate: "tool_call", toolCallId: "t1", title: "Run", kind: "execute", status: "in_progress" });

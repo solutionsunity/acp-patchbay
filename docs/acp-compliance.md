@@ -103,6 +103,7 @@ recognized.
 |---|---|---|
 | Capability-gated prompt content | ✅ | `sessions-store.ts:runTurn` — images ride as `ImageContent` only when `promptCapabilities.image` is declared, else bytes go to a temp file sent as `resource_link` (baseline every agent MUST accept). Mentions ride as positional `resource_link` parts. |
 | Stop reason handling | ✅ | `stopReason` flows through `turnEnded` verbatim and renders; non-`end_turn` reasons logged. No per-reason branching is required by spec; display is honest. Stop reasons exist only on the live prompt response — replay carries no turn resolution anywhere in the protocol, so a replayed turn's boundary renders with `stopReason: null` (absence over fake; wire-verified on claude-agent-acp and auggie, 2026-07-12). |
+| A failed prompt | ✅ | The turn ends as `error`, its reason on a line under the turn — the error's message and what its `data` adds (`readers/agent-error.ts:agentErrorText`, the one reading every catch site shares: a failed log-in, log-out, knob change, fork or delete says it in a warning the same way). |
 | Usage on response (`usage`) | ✅ | `readers/responses.ts:readTurnEnd` on the prompt response + `usage_update` notifications both feed the ticker; every count the agent breaks out rides along. |
 
 ## 7. Cancellation

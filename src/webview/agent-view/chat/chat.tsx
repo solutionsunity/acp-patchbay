@@ -44,6 +44,7 @@ function TurnLine({
   endedAt,
   stopReason,
   usage,
+  error,
   rollup,
 }: {
   live: boolean;
@@ -51,6 +52,8 @@ function TurnLine({
   endedAt: string | null;
   stopReason: string | null;
   usage: TurnUsage | null;
+  /** Why the turn failed, in the error's own words. */
+  error?: string;
   rollup: TurnRollup;
 }) {
   const [open, setOpen] = useState(false);
@@ -94,6 +97,7 @@ function TurnLine({
           </span>
         )}
       </Disclosure>
+      {error !== undefined && <div className="turn-error whitespace-pre-wrap text-err">{error}</div>}
       {open && (
         <div className="pt-0.5">
           {breakdown !== "" ? breakdown : "no tool calls this turn"}
@@ -453,6 +457,7 @@ export function Chat(props: {
             endedAt={item.block.endedAt}
             stopReason={item.block.stopReason}
             usage={item.block.usage}
+            error={item.block.error}
             rollup={rollups.get(item.block.id)!}
           />
         ) : (

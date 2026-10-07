@@ -1072,6 +1072,9 @@ export interface TurnEndBlock {
    * not a clean end_turn. null = unknown (replay-synthesized). */
   stopReason: string | null;
   usage: TurnUsage | null;
+  /** Why the turn failed — the error's own words, its data's reason
+   * included; present only on an "error" stop. */
+  error?: string;
 }
 
 export interface PlanEntry {
@@ -1632,6 +1635,8 @@ export type AgentViewEvent =
       at: string | null;
       stopReason: string | null;
       usage: TurnUsage | null;
+      /** Why the turn failed — present only on an "error" stop. */
+      error?: string;
     }
   | { kind: "commandsAdvertised"; patchbaySessionId: PatchbaySessionId; commands: readonly AvailableCommand[] }
   | {
@@ -2066,6 +2071,7 @@ export function reduceAgentView(
         endedAt: event.at,
         stopReason: event.stopReason,
         usage: event.usage,
+        ...(event.error !== undefined ? { error: event.error } : {}),
       });
       // Replay-synthesized boundary (at: null): history landing, not news —
       // the block appends, but "latest activity" and the unseen dot are

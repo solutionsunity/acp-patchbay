@@ -4,6 +4,8 @@
 // carried, and what a reader can't take is noted — once.
 import { describe, expect, it, vi } from "vitest";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk";
+import { agentErrorText } from "../src/orchestrator/readers/agent-error";
 import { readContent } from "../src/orchestrator/readers/content";
 import { NoteLog } from "../src/orchestrator/readers/notes";
 import { readSessionUpdate, sessionMetaOf } from "../src/orchestrator/readers/session-update";
@@ -137,5 +139,23 @@ describe("NoteLog", () => {
     notes.at("codex", "session/update")("x");
     a("y");
     expect(info.mock.calls).toEqual([["claude: session/update: x"], ["codex: session/update: x"], ["claude: session/update: y"]]);
+  });
+});
+
+describe("agentErrorText", () => {
+  it("an agent's error says what its data adds — a string, a reason field, else the data itself, bounded (#80)", () => {
+    expect(agentErrorText(new RequestError(-32603, "Internal error", "process exited with code 1"))).toBe(
+      "Internal error — process exited with code 1",
+    );
+    expect(agentErrorText(new RequestError(-32603, "Internal error", { details: "model overloaded" }))).toBe("Internal error — model overloaded");
+    expect(agentErrorText(new RequestError(-32603, "Internal error", { status: 529 }))).toBe('Internal error — {"status":529}');
+    expect(agentErrorText(new RequestError(-32603, "Internal error", { blob: "x".repeat(400) })).length).toBeLessThan(330);
+  });
+
+  it("data the message already says, no data, or not an agent's error: the message alone", () => {
+    expect(agentErrorText(new RequestError(-32603, "quota exceeded", "quota exceeded"))).toBe("quota exceeded");
+    expect(agentErrorText(new RequestError(-32602, "Invalid params"))).toBe("Invalid params");
+    expect(agentErrorText(new Error("agent x is not running"))).toBe("agent x is not running");
+    expect(agentErrorText("plain")).toBe("plain");
   });
 });

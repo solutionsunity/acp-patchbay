@@ -884,6 +884,31 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── a failed turn says why under its turn line, in the error's own
+// words (#80). Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "turnEnded",
+        patchbaySessionId: "s1",
+        blockId: "turn-err",
+        startedAt: "2026-07-07T10:00:00Z",
+        at: "2026-07-07T10:00:05Z",
+        stopReason: "error",
+        usage: null,
+        error: "Internal error — process exited with code 1",
+      },
+    ]),
+  );
+  const line = await p.waitForSelector(".turn-error", { timeout: 3000 }).then((el) => el.textContent(), () => "");
+  check(`a failed turn says why under its line ("${line}")`, line === "Internal error — process exited with code 1");
+  await p.close();
+}
+
 // ── a held prompt shows the chips it carries (#83). Theme-independent. ──
 {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });

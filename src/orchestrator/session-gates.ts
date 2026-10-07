@@ -187,9 +187,8 @@ export class SessionGates {
       "fork",
       async (signal) => {
         await unlessAborted(this.turnLine.settled(patchbaySessionId), signal);
-        if (!(await this.sessions.hydrate(patchbaySessionId, signal))) {
-          throw new Error("the session couldn't be opened to fork it");
-        }
+        const opened = await this.sessions.hydration(patchbaySessionId, signal);
+        if (!opened.attached) throw new Error(`the session couldn't be opened to fork it: ${opened.why}`);
         return this.sessions.fork(patchbaySessionId, title, signal);
       },
       "fork",

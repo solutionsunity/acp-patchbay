@@ -33,8 +33,11 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   reopened session keeps the knobs its history set, a session listed
   without a title takes its first prompt's, a page of the session list that
   can't be followed no longer prunes the sessions it didn't reach, and a
-  capability is declared only in its own shape. Each such case is said once
-  in the Output channel.
+  capability is declared only in its own shape. A failed turn says why
+  under its turn line, and a failed log-in, log-out, knob change, fork or
+  delete says why in a warning — with the reason agents put in an error's
+  data, which used to reach no one. Each case patchbay can't show is said
+  once in the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**
   wherever the agent declares them. Close no longer deletes the session from

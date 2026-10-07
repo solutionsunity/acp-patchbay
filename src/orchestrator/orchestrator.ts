@@ -51,7 +51,8 @@ import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-sto
 import { OAuthCallbackRegistry } from "./oauth-callback";
 import { elicitationResponseOf, formFieldsOf, readElicitationRequest } from "./elicitation";
 import { runLoginTask } from "./login-task";
-import { AgentPool, authRequiredReasonOf } from "./pool";
+import { AgentPool } from "./pool";
+import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import { commandOf, killTree, reapOrphans } from "./process-tree";
 import { Cancelled, Queue } from "./queue";
 import type { McpServerWork } from "../shared/protocol";
@@ -1581,11 +1582,10 @@ export class Orchestrator {
     const fresh = [...this.agents.updates()].filter(([patchbayAgentId, u]) => !this.announcedUpdates.has(`${patchbayAgentId}@${u.to}`));
     if (fresh.length === 0) return;
     for (const [patchbayAgentId, u] of fresh) this.announcedUpdates.add(`${patchbayAgentId}@${u.to}`);
-    const nameOf = (patchbayAgentId: PatchbayAgentId) => this.agents.name(patchbayAgentId) ?? patchbayAgentId;
     if (fresh.length === 1) {
       const [patchbayAgentId, u] = fresh[0]!;
       const picked = await vscode.window.showInformationMessage(
-        `${nameOf(patchbayAgentId)} ${u.to} is available — you run ${u.from}.`,
+        `${this.agentName(patchbayAgentId)} ${u.to} is available — you run ${u.from}.`,
         "Upgrade",
       );
       if (picked === "Upgrade" && this.agents.updates().has(patchbayAgentId)) {
@@ -1599,7 +1599,7 @@ export class Orchestrator {
     );
     if (picked !== "Upgrade…") return;
     const chosen = await vscode.window.showQuickPick(
-      fresh.map(([patchbayAgentId, u]) => ({ label: nameOf(patchbayAgentId), description: `${u.from} → ${u.to}`, picked: true, patchbayAgentId })),
+      fresh.map(([patchbayAgentId, u]) => ({ label: this.agentName(patchbayAgentId), description: `${u.from} → ${u.to}`, picked: true, patchbayAgentId })),
       { canPickMany: true, placeHolder: "Upgrade which agents?" },
     );
     for (const item of chosen ?? []) {
@@ -1696,7 +1696,7 @@ export class Orchestrator {
         void this.sessionGates
           .setKnob(action.patchbaySessionId, action.knobId, action.value)
           .catch((err) => {
-            this.logCatch(`setKnob ${action.patchbaySessionId}`)(err);
+            this.warnCatch(`setKnob ${action.patchbaySessionId}`, "The agent didn't take the change")(err);
             const knobs = this.agentView.current.sessionKnobs[action.patchbaySessionId];
             if (knobs !== undefined) {
               this.agentView.emit({ kind: "sessionKnobsSet", patchbaySessionId: action.patchbaySessionId, knobs: [...knobs] });
@@ -1749,13 +1749,17 @@ export class Orchestrator {
         this.asks.answerWrite(action.patchbayAskId, action.accept);
         break;
       case "authenticateAgent":
-        // failure leaves needsAuth set — the honest signal, no separate reply channel
-        void this.gates.login(action.patchbayAgentId, action.methodId).catch(this.logCatch(`login ${action.patchbayAgentId}`));
+        // a failure leaves needsAuth set, and says why where the user is
+        void this.gates
+          .login(action.patchbayAgentId, action.methodId)
+          .catch(this.warnCatch(`login ${action.patchbayAgentId}`, `Log in to ${this.agentName(action.patchbayAgentId)} failed`));
         break;
       case "logoutAgent":
         // the UI only offers this on a declared auth.logout; a successful
         // logout raises needsAuth directly (capability-tracker.logout)
-        void this.gates.logout(action.patchbayAgentId).catch(this.logCatch(`logout ${action.patchbayAgentId}`));
+        void this.gates
+          .logout(action.patchbayAgentId)
+          .catch(this.warnCatch(`logout ${action.patchbayAgentId}`, `Log out of ${this.agentName(action.patchbayAgentId)} failed`));
         break;
       case "upgradeAgent":
         void this.gates.upgrade(action.patchbayAgentId).catch(this.logCatch(`upgrade ${action.patchbayAgentId}`));
@@ -2251,8 +2255,7 @@ export class Orchestrator {
       if (this.agents.row(session.patchbayAgentId)?.status !== "running") await this.gates.connect(session.patchbayAgentId);
       await this.sessionGates.fork(patchbaySessionId, session.title);
     } catch (err) {
-      this.logCatch(`fork ${patchbaySessionId}`)(err);
-      void vscode.window.showWarningMessage(`"${session.title}" was not forked — ${(err as Error).message}`);
+      this.warnCatch(`fork ${patchbaySessionId}`, `"${session.title}" was not forked`)(err);
     }
   }
 
@@ -2273,8 +2276,7 @@ export class Orchestrator {
       if (this.agents.row(agent.id)?.status !== "running") await this.gates.connect(agent.id);
       await this.sessionGates.delete(patchbaySessionId);
     } catch (err) {
-      this.logCatch(`delete ${patchbaySessionId}`)(err);
-      void vscode.window.showWarningMessage(`"${session.title}" was not deleted — ${(err as Error).message}`);
+      this.warnCatch(`delete ${patchbaySessionId}`, `"${session.title}" was not deleted`)(err);
     }
   }
 
@@ -2287,11 +2289,10 @@ export class Orchestrator {
       this.agentView.emit({ kind: "chatConnectResolved" });
       return;
     }
-    const raw = err instanceof Error ? err.message : String(err);
     this.agentView.emit({
       kind: "chatConnectFailed",
       patchbayAgentId,
-      reason: this.connectFailureReason(patchbayAgentId, err, raw),
+      reason: this.connectFailureReason(patchbayAgentId, err, agentErrorText(err)),
       forPatchbaySessionId,
     });
   }
@@ -2321,6 +2322,19 @@ export class Orchestrator {
     return this.agents.row(patchbayAgentId)?.detail ?? raw;
   }
 
+  /** logCatch for what the user asked for themselves: the failure is also
+   * said where they are — what didn't happen, and the reason. */
+  private warnCatch(context: string, what: string): (err: unknown) => void {
+    return (err) => {
+      this.logCatch(context)(err);
+      if (!(err instanceof Cancelled)) void vscode.window.showWarningMessage(`${what} — ${agentErrorText(err)}`);
+    };
+  }
+
+  private agentName(patchbayAgentId: PatchbayAgentId): string {
+    return this.agents.name(patchbayAgentId) ?? patchbayAgentId;
+  }
+
   /** Formats a swallowed action failure for the Output channel — these
    * actions have no reply channel by design (state itself is the only
    * signal back to the UI), but silently dropping the error entirely left
@@ -2330,7 +2344,7 @@ export class Orchestrator {
       // Ended by the user's own hand — an agent's Stop or Remove, a
       // session's Stop, Reload or Close — no failure.
       if (err instanceof Cancelled) this.log.info(`${context}: ${err.message}`);
-      else this.log.error(`${context}: ${err instanceof Error ? err.message : String(err)}`);
+      else this.log.error(`${context}: ${agentErrorText(err)}`);
     };
   }
 
