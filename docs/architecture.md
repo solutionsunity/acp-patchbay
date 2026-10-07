@@ -213,18 +213,33 @@ flowchart TD
   session, and its next use by any door (new-session focus, drawer click,
   a prompt) re-mints it. A second ask while the first new session is still
   on the wire gets that same session.
-- **Launcher health** (launcher-health.ts — one central module, consulted at
-  the chokepoints, never inlined): npx/uvx stay the installers — a
+- **Launcher health** (launcher-health.ts — one central module, used by
+  every launch of a launcher package, an agent's connect and an MCP
+  server's probe alike, never inlined): npx/uvx stay the installers — a
   patchbay-owned install store was **considered and rejected** (it fixes
   cache corruption by owning atomicity, but the price is reimplementing the
   package manager's lifecycle: GC with in-use guards, single-flight,
   stale-fallback policy, bin resolution; the price exceeds the defect).
-  Instead: (a) an interrupted npx install leaves a partial `_npx` entry that
-  npx forever treats as installed — the bin-missing death (exit 127 /
-  "not found", the launcher-shell's own words in the stderr tail) triggers a
-  purge of *attributable* entries and exactly one retry; the warmup's own
-  180s-cap SIGKILL — itself the poison mechanism — cleans up the entry it
-  interrupted before the real spawn runs. (b) The binary installer, where
+  Instead: (a) **the package is made ready before it runs, judged by state,
+  never by how a launch died.** npm never rolls back a killed install, and
+  every npm reads the half-written `_npx` entry as installed — npm 10 then
+  dies on a bin that was never linked, npm ≥ 11.2 on the entry's missing
+  package.json. So before each launch the entry npm itself would use (its
+  own naming: sha512 of the package spec) is read by the marker arborist
+  writes after everything else an install does, the hidden lockfile
+  `node_modules/.package-lock.json` — present whatever the user's npm
+  config. An entry without it is removed; one whose npm `concurrency.lock`
+  is held is waited out the way npm waits (released, or stale by npm's own
+  one-minute rule). Then the registry-shaped package is installed as a
+  labeled phase (`npx -y --package <pkg> node --version`), run to its exit:
+  a failed install fails the connect in the launcher's own words, shown in
+  the card's output tail. **No clock bounds a download or a launch** — a
+  slow link is a working one, and cutting the install is exactly what
+  poisons the cache (the field case: a 112 MB Windows package on a slow
+  link, cut by limits patchbay used to set). `initialize` waits for the
+  agent's answer or its exit; an agent that writes something other than
+  ACP before answering is named on its card (most likely a CLI asking for
+  first-run setup); Stop ends any of these waits. (b) The binary installer, where
   patchbay *does* own the disk, prevents rather than repairs: staging dir +
   rename-on-success, so nothing ever exists at the installed-check path
   unless the whole install succeeded. (c) **Two installs, one memory**: a
@@ -266,7 +281,10 @@ flowchart TD
   The gate is a real `--version` round-trip through the same spawn rules as
   the launch (presence on PATH proves nothing — the declared≠used instinct
   applied to interpreters), plus a version floor for node; re-run fresh
-  every connect, never persisted. Only a failed gate downloads a
+  every connect, never persisted, and waited on until the program answers
+  (a first-touch node.exe under a virus scan is slow, not missing — reading
+  it as missing would download a runtime over a working one). Only a failed
+  gate downloads a
   pin-versioned runtime (curated catalog: nodejs.org / uv release CDN) into
   the same bin-cache as binary agents — same staging+rename integrity, same
   explicit-confirmation-before-download ethos, and held to its publisher's
@@ -276,7 +294,7 @@ flowchart TD
   use (a glibc build on musl fails the connect with a real reason). The
   applied decision is PATH-prepending into that one agent's spawn env —
   the command is never rewritten, so every downstream spelling (warmup,
-  Windows .cmd shim handling, cache repair) works unchanged, and nothing
+  Windows .cmd shim handling, the cache check) works unchanged, and nothing
   is installed system-wide. Deliberate pairing with the data stance:
   **runtime = ours when needed, state = always the agent's own** — the
   managed runtime changes which interpreter runs, never where the agent
@@ -1083,7 +1101,9 @@ flowchart TD
   project-local config finds it in both places or neither); a failure names the
   directory tried. No per-server cwd exists, by construction: the ACP
   `mcpServers` entry carries none, so a probe-only cwd could pass where the real
-  run fails.
+  run fails. A stdio server run by npx/uvx has its package made ready first
+  (launcher health, above), and the handshake has no limit of patchbay's own: it
+  ends with the server's answer, its exit, a network failure, or Stop.
 - **Routing is the user's, per agent.** "auto" (default) = every agent; an
   explicit id list pins exactly; "except" = every agent minus the listed. Routing
   is reach, not consent: which servers an agent receives is separate from whether

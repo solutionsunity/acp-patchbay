@@ -153,6 +153,25 @@ describe("probeVersion", () => {
   it("a command that doesn't exist is null, not a throw", async () => {
     expect(await probeVersion("patchbay-definitely-not-a-command", process.env)).toBeNull();
   });
+
+  // A runtime slow to answer is still a runtime: no clock reads it as
+  // missing (which would download one over it) — only a stop ends the wait,
+  // and it ends it as a stop, never as "no runtime".
+  it.skipIf(process.platform === "win32")("waits for a slow answer; a stop kills the probe and rejects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patchbay-probe-"));
+    const slow = join(dir, "slow-runtime");
+    await writeFile(slow, `#!${process.execPath}\nsetTimeout(() => console.log("v22.1.0"), 400);\n`);
+    await chmod(slow, 0o755);
+    expect(await probeVersion(slow, process.env)).toBe("v22.1.0");
+    const hung = join(dir, "hung-runtime");
+    await writeFile(hung, `#!${process.execPath}\nsetTimeout(() => {}, 30000);\n`);
+    await chmod(hung, 0o755);
+    const controller = new AbortController();
+    const probing = probeVersion(hung, process.env, controller.signal);
+    controller.abort(new Error("stopped by test"));
+    await expect(probing).rejects.toThrow("stopped by test");
+    await rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe("gateRuntime", () => {

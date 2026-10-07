@@ -2,22 +2,25 @@
 // Copyright 2026 Solutions Unity
 
 // Launcher health — patchbay's tools for the seams of ecosystem launchers
-// (npx/uvx), central on purpose: every chokepoint (connect crash, warmup
-// abort, future add/update flows) calls the same capability instead of
-// growing an inline copy. Two capabilities:
+// (npx/uvx), central on purpose: every launch of a launcher package (an
+// agent's connect, an MCP server's probe) prepares it through the same
+// molecule instead of growing an inline copy. Two capabilities:
 //
-// 1. **Corrupted-cache detect + repair.** An interrupted `npx` install
-//    (SIGKILL mid-download — warmup's own 180s cap, a host reload) leaves a
-//    partial `~/.npm/_npx/<hash>` dir that npx forever treats as installed:
-//    the real spawn then dies with "codex-acp: not found" (exit 127) before
-//    it can say an ACP byte, surfacing as "initialize failed: ACP connection
-//    closed" (observed 2026-07-11, Codex). npm neither rolls back nor
-//    self-heals; the repair purges attributable entries so the next connect
-//    reinstalls cleanly. *A patchbay-owned install store was considered and
-//    rejected*: it would fix this by owning atomicity, but the price is
-//    reimplementing the package manager's whole lifecycle (GC with in-use
-//    guards, single-flight, stale-fallback policy, bin resolution) — repair
-//    at the chokepoint is the right-sized answer.
+// 1. **The package made ready before it runs.** npm never rolls back an
+//    install it didn't get to finish — a forced kill (taskkill, SIGKILL, a
+//    host reload, a crash) leaves a half-written `_npx/<hash>` entry that
+//    every later `npx` reads as installed and dies on: npm 10 runs a bin
+//    that was never linked ("not found"), npm ≥ 11.2 fails reading the
+//    entry's package.json (ENOENT) before it gets that far. So the entry
+//    npm itself would use is read before every launch, by the marker npm
+//    writes last, and removed when its install never finished; then the
+//    package is installed as its own labeled phase, run to its exit with no
+//    clock on it — a slow link is still a working one, and cutting the
+//    download is exactly what poisons the cache. *A patchbay-owned install
+//    store was considered and rejected*: it would own atomicity, but the
+//    price is reimplementing the package manager's whole lifecycle (GC with
+//    in-use guards, single-flight, stale-fallback policy, bin resolution) —
+//    reading npm's own completion marker is the right-sized answer.
 //
 // 2. **PATH-sibling divergence probe.** A patchbay-launched agent and the
 //    user's own terminal CLI share one per-user state store (`~/.codex`,
@@ -28,15 +31,16 @@
 //    inside the launcher cache) against the PATH sibling — like with like,
 //    which is why the table maps per agent: an adapter's own version is NOT
 //    its CLI's version.
-import { spawn } from "node:child_process";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { unlessAborted } from "./abort";
 import type { Logger } from "./logger";
-import { resolveSpawn } from "./spawn-resolve";
+import { runToExit } from "./run-to-exit";
 
 /** Normalized launcher name from a command that may be a path or a Windows
- * shim — THE one spelling of "is this an ecosystem launcher", shared by
- * warmupSpawn (pool.ts) and every capability here. */
+ * shim — THE one spelling of "is this an ecosystem launcher", shared by the
+ * runtime resolver and every capability here. */
 export function launcherKind(command: string): "npx" | "uvx" | null {
   const cmd = basename(command).replace(/\.(cmd|bat|exe)$/i, "").toLowerCase();
   return cmd === "npx" || cmd === "uvx" ? cmd : null;
@@ -57,30 +61,29 @@ export function npxPackageSpec(spec: {
   return pkg;
 }
 
-/** The bare package name of an npx launch — what cache attribution and
- * manifest lookups key on. */
-export function npxPackageName(spec: {
-  command: string;
-  args: readonly string[];
-}): string | null {
-  const pkg = npxPackageSpec(spec);
-  if (pkg === null) return null;
-  // Strip a version suffix; the scope's leading @ is index 0, never a hit.
-  const at = pkg.lastIndexOf("@");
-  return at > 0 ? pkg.slice(0, at) : pkg;
-}
-
-/** The missing-bin death shape: the launcher's shell couldn't find the
- * package's bin — POSIX `sh` says "not found" and exits 127; cmd.exe says
- * "is not recognized" (exit code 1, so the text is the signal there). Only
- * meaningful for launcher spawns — callers gate on npxPackageName first. */
-export function isMissingBinSignature(
-  exitCode: number | null,
-  stderrTail: readonly string[],
-): boolean {
-  const text = stderrTail.join("\n");
-  if (exitCode === 127) return /(command )?not found/i.test(text);
-  return /is not recognized as an internal or external command/i.test(text);
+/** Cache-warm invocation for ecosystem launchers: a cold `npx`/`uvx`
+ * downloads the whole package before the agent can say a byte — in total
+ * silence (`npx -y` prints nothing while fetching), indistinguishable on the
+ * wire from a hung TUI. The warmup runs the download as its own labeled
+ * phase: the same launcher is asked to resolve the same package but run the
+ * runtime's `--version` instead of the agent, and its exit is the one
+ * reliable "package is ready" signal — or, failing, the launcher's own words
+ * on why. Registry arg shapes only (resolveDistribution builds them); a
+ * user-typed command downloads inside its own launch, as it would in a
+ * terminal. */
+export function warmupSpawn(spec: { command: string; args: readonly string[] }): { command: string; args: string[] } | null {
+  const kind = launcherKind(spec.command);
+  if (kind === "npx") {
+    const pkg = spec.args[0] === "-y" ? npxPackageSpec(spec) : null;
+    if (pkg === null) return null;
+    return { command: spec.command, args: ["-y", "--package", pkg, "node", "--version"] };
+  }
+  if (kind === "uvx") {
+    const pkg = spec.args[0];
+    if (pkg === undefined || pkg.startsWith("-")) return null;
+    return { command: spec.command, args: ["--from", pkg, "python", "--version"] };
+  }
+  return null;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -93,80 +96,147 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /** npm's `_npx` cache root, honoring any npm_config_cache override in the
- * agent's env — asked of npm itself (same env the launch uses, per pool.ts's
- * one-spelling rule) rather than hardcoding per-platform defaults. */
-export function npmNpxRoot(
+ * agent's env — asked of npm itself (same env the launch uses) rather than
+ * hardcoding per-platform defaults. Null when npm can't be asked. */
+async function npmNpxRoot(
   env: Readonly<Record<string, string | undefined>>,
+  signal?: AbortSignal,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
-  // Resolved like any launch (spawn-resolve.ts) — absolute path, shell
-  // only for a .cmd shim; fixed literal args, nothing registry-supplied.
-  const launch = resolveSpawn("npm", ["config", "get", "cache"], env, platform);
-  if (launch.error !== undefined) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const child = spawn(launch.command, launch.args, {
-      env: env as NodeJS.ProcessEnv,
-      shell: launch.shell,
-      timeout: 10_000,
-    });
-    let out = "";
-    child.stdout?.on("data", (c: Buffer) => (out += c.toString()));
-    child.on("error", () => resolve(null));
-    // "close", not "exit": exit can beat the delivery of buffered stdout,
-    // reading a fast answer as empty. close waits for the streams to drain.
-    child.on("close", (code) => {
-      const dir = out.trim();
-      resolve(code === 0 && dir !== "" ? join(dir, "_npx") : null);
-    });
-  });
+  const answer = await runToExit("npm", ["config", "get", "cache"], { env, signal, platform });
+  const dir = answer?.stdout.trim() ?? "";
+  return answer?.code === 0 && dir !== "" ? join(dir, "_npx") : null;
 }
 
-/** The `_npx` entries attributable to `pkgName`. Two matchers, both needed:
- * a healthy entry names the package in its root package.json dependencies;
- * a poisoned one may have no root package.json at all (the observed
- * corruption) but still holds `node_modules/<pkg>` — presence there is the
- * attribution. Unattributable dirs are never touched: they may be another
- * tool's, healthy or not. */
-export async function findNpxEntries(npxRoot: string, pkgName: string): Promise<string[]> {
-  let dirs: string[];
+/** The `_npx` entry npm installs `pkgSpec` into — npm's own naming: the
+ * first 16 hex characters of the sha512 of the launch's package specs,
+ * sorted and newline-joined; one spec here, so the spec itself (the same
+ * in npm 10 and 11). A local-directory spec, which npm names by its
+ * resolved path instead, names no entry npm uses — read as absent,
+ * nothing touched. */
+export function npxEntryDir(npxRoot: string, pkgSpec: string): string {
+  return join(npxRoot, createHash("sha512").update(pkgSpec).digest("hex").slice(0, 16));
+}
+
+export type NpxEntryState = "absent" | "finished" | "installing" | "unfinished";
+
+/** npm's own rules for its `concurrency.lock` (npm ≥ 11): a live holder
+ * touches it every second, and one untouched for a minute is stale — the
+ * holder died. Read here as npm defines them, never as patchbay's guess. */
+const NPM_LOCK_TOUCH_MS = 1_000;
+const NPM_LOCK_STALE_MS = 60_000;
+
+/** Where an `_npx` entry's install stands. The marker is the hidden
+ * lockfile, `node_modules/.package-lock.json`: arborist writes it after
+ * everything else an install does — unpack, install scripts, bins, the
+ * root package.json and lockfile — whatever the user's npm config (it is
+ * written for every local install, while `package-lock=false` or
+ * `save=false` drop the others). An entry without it never finished,
+ * unless an npm is installing into it right now. */
+export async function npxEntryState(dir: string, now: number = Date.now()): Promise<NpxEntryState> {
+  if (!(await pathExists(dir))) return "absent";
+  if (await pathExists(join(dir, "node_modules", ".package-lock.json"))) return "finished";
   try {
-    dirs = await readdir(npxRoot);
+    const lock = await stat(join(dir, "concurrency.lock"));
+    if (now - lock.mtimeMs <= NPM_LOCK_STALE_MS) return "installing";
   } catch {
-    return [];
+    // No lock: nobody is installing.
   }
-  const hits: string[] = [];
-  for (const d of dirs) {
-    const entry = join(npxRoot, d);
-    if (await pathExists(join(entry, "node_modules", ...pkgName.split("/")))) {
-      hits.push(entry);
-      continue;
-    }
-    try {
-      const manifest = JSON.parse(await readFile(join(entry, "package.json"), "utf8")) as {
-        dependencies?: Record<string, string>;
-      };
-      if (manifest.dependencies?.[pkgName] !== undefined) hits.push(entry);
-    } catch {
-      // No root package.json and no node_modules/<pkg> — not ours to judge.
-    }
-  }
-  return hits;
+  return "unfinished";
 }
 
-/** Removes every cache entry attributable to the package; returns what was
- * purged so callers can decide whether a retry is even warranted (nothing
- * purged = the cache wasn't the problem). */
-export async function purgeNpxEntries(
-  npxRoot: string,
-  pkgName: string,
-  log: Logger,
-): Promise<string[]> {
-  const entries = await findNpxEntries(npxRoot, pkgName);
-  for (const entry of entries) {
-    await rm(entry, { recursive: true, force: true });
-    log.info(`launcher-health: purged npx cache entry ${entry} (${pkgName})`);
+/** Before an npx launch: the entry npm would use, removed when its install
+ * never finished, so npm installs it fresh. Answers the entry's state after
+ * that — absent or finished, an install in progress waited out first; null
+ * when this isn't an npx package launch or npm can't say where its cache
+ * is. A stop ends the wait with its reason. A removal that fails rejects
+ * with why — a half-written entry left in place is a certain failure, said
+ * rather than skipped.
+ * npm 10 keeps no concurrency lock, so another window installing the same
+ * package this very moment reads as unfinished there: a deliberate scope
+ * decision — that install fails visibly, and its next connect heals. */
+export async function healNpxEntry(
+  spec: { command: string; args: readonly string[] },
+  env: Readonly<Record<string, string | undefined>>,
+  opts: { signal?: AbortSignal; log: Logger; onPhase?: (label: string) => void },
+): Promise<NpxEntryState | null> {
+  const pkgSpec = npxPackageSpec(spec);
+  if (pkgSpec === null) return null;
+  const npxRoot = await npmNpxRoot(env, opts.signal);
+  if (npxRoot === null) {
+    opts.log.info(`launcher-health: npm couldn't say where its cache is — ${pkgSpec}'s cache entry left unchecked`);
+    return null;
   }
-  return entries;
+  const dir = npxEntryDir(npxRoot, pkgSpec);
+  let state = await npxEntryState(dir);
+  // An npm holding the entry's lock is installing — another window's, or
+  // one just killed whose lock npm hasn't yet judged stale. Either way npm
+  // itself would wait on that lock, so this waits as npm does: until the
+  // lock is released or goes stale by npm's rule (its holder touches it
+  // every second), then reads the entry again.
+  if (state === "installing") opts.onPhase?.("waiting for another install of the agent package…");
+  while (state === "installing") {
+    await unlessAborted(new Promise<void>((r) => setTimeout(r, NPM_LOCK_TOUCH_MS)), opts.signal);
+    state = await npxEntryState(dir);
+  }
+  if (state !== "unfinished") return state;
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    throw new Error(
+      `the half-installed ${pkgSpec} in ${dir} couldn't be removed (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}) — close whatever holds it, or delete that folder, then connect again`,
+    );
+  }
+  opts.log.info(`launcher-health: removed ${pkgSpec}'s unfinished install (${dir}) — npm installs it fresh`);
+  return "absent";
+}
+
+/** A launcher that couldn't install its package: `detail` is the one line
+ * a card shows, `output` the launcher's own last words. */
+export class LauncherFailure extends Error {
+  constructor(
+    readonly detail: string,
+    readonly output: readonly string[],
+  ) {
+    super(output.length > 0 ? `${detail} — ${output.slice(-3).join(" · ")}` : detail);
+  }
+}
+
+/** How much of a failed launcher's output is kept — its error and the lines
+ * leading to it, never a whole install log. */
+const FAILURE_OUTPUT_LINES = 40;
+
+/** A launcher package made ready before it runs: the npx entry healed, then
+ * the package installed through warmupSpawn. `onPhase` hears a label for
+ * the install phase — "downloading" when the npx entry shows one is
+ * genuinely needed, "preparing" when nothing can say (uvx's cache isn't
+ * ours to read), nothing for an npx package already installed. Rejects
+ * with the signal's reason when stopped, and with a LauncherFailure
+ * carrying the launcher's words when the install fails. Anything that
+ * isn't a launcher package passes through untouched. */
+export async function prepareLauncher(
+  spec: { command: string; args: readonly string[]; cwd?: string },
+  env: Readonly<Record<string, string | undefined>>,
+  opts: { signal?: AbortSignal; log: Logger; who: string; onPhase?: (label: string) => void },
+): Promise<void> {
+  const state = await healNpxEntry(spec, env, opts);
+  const warm = warmupSpawn(spec);
+  if (warm === null) return;
+  if (state === null) opts.onPhase?.("preparing the agent package…");
+  else if (state !== "finished") opts.onPhase?.("downloading the agent package…");
+  opts.log.info(`${opts.who}: installing its launcher package (${warm.args.join(" ")})`);
+  const answer = await runToExit(warm.command, warm.args, { env, cwd: spec.cwd, signal: opts.signal });
+  // Couldn't run at all: the real spawn refuses with the reason.
+  if (answer === null || answer.code === 0) return;
+  const output = answer.stderr
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .slice(-FAILURE_OUTPUT_LINES);
+  for (const line of output) opts.log.info(`${opts.who} launcher: ${line}`);
+  throw new LauncherFailure(
+    `${launcherKind(spec.command)} couldn't install the package (${answer.code === null ? "killed" : `exit ${answer.code}`})`,
+    output,
+  );
 }
 
 /** Per-agent mapping for the divergence probe, keyed by registry agent id.
@@ -192,53 +262,36 @@ export function versionsDiverge(a: string, b: string): boolean {
   return pa[1] === "0" && pa[2] !== pb[2];
 }
 
-/** The version of `bundledPkg` inside the npx cache entry for `launchPkg` —
- * i.e. the CLI patchbay actually runs. Read-only inspection of npm's dir,
- * same access level as the repair. Null when not installed yet. */
+/** The version of `bundledPkg` inside the npx entry `launchSpec` runs from —
+ * i.e. the CLI patchbay actually runs. Read-only inspection of npm's dir.
+ * Null when not installed (yet). */
 export async function bundledVersionInNpxCache(
   npxRoot: string,
-  launchPkg: string,
+  launchSpec: string,
   bundledPkg: string,
 ): Promise<string | null> {
-  for (const entry of await findNpxEntries(npxRoot, launchPkg)) {
-    try {
-      const manifest = JSON.parse(
-        await readFile(join(entry, "node_modules", ...bundledPkg.split("/"), "package.json"), "utf8"),
-      ) as { version?: string };
-      if (typeof manifest.version === "string") return manifest.version;
-    } catch {
-      // partial entry — keep looking
-    }
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(npxEntryDir(npxRoot, launchSpec), "node_modules", ...bundledPkg.split("/"), "package.json"), "utf8"),
+    ) as { version?: string };
+    return typeof manifest.version === "string" ? manifest.version : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /** `<bin> --version` for the PATH sibling; null when absent (nothing to
  * compare — silence, not an error). Bin names come from PATH_SIBLINGS only,
  * never from registry data; resolution (spawn-resolve.ts) finds the npm
  * .cmd shims these CLIs usually are on Windows. */
-function pathSiblingVersion(
+async function pathSiblingVersion(
   bin: string,
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
-  const launch = resolveSpawn(bin, ["--version"], env, platform);
-  if (launch.error !== undefined) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const child = spawn(launch.command, launch.args, {
-      env: env as NodeJS.ProcessEnv,
-      shell: launch.shell,
-      timeout: 5_000,
-    });
-    let out = "";
-    child.stdout?.on("data", (c: Buffer) => (out += c.toString()));
-    child.on("error", () => resolve(null));
-    // "close", not "exit" — same stdout-drain reasoning as npmNpxRoot.
-    child.on("close", (code) => {
-      const m = /\d+\.\d+(\.\d+)?/.exec(out);
-      resolve(code === 0 && m !== null ? m[0] : null);
-    });
-  });
+  const answer = await runToExit(bin, ["--version"], { env, platform });
+  const m = answer === null ? null : /\d+\.\d+(\.\d+)?/.exec(answer.stdout);
+  return answer?.code === 0 && m != null ? m[0] : null;
 }
 
 export interface PathDivergence {
@@ -257,15 +310,15 @@ export async function checkPathDivergence(
 ): Promise<PathDivergence | null> {
   const sibling = registryId === null ? undefined : PATH_SIBLINGS[registryId];
   if (sibling === undefined) return null;
-  const launchPkg = npxPackageName(spec);
-  if (launchPkg === null) return null;
+  const launchSpec = npxPackageSpec(spec);
+  if (launchSpec === null) return null;
   const env = { ...process.env, ...spec.env };
   const [npxRoot, pathVersion] = await Promise.all([
     npmNpxRoot(env),
     pathSiblingVersion(sibling.bin, env),
   ]);
   if (npxRoot === null || pathVersion === null) return null;
-  const bundledVersion = await bundledVersionInNpxCache(npxRoot, launchPkg, sibling.bundledPkg);
+  const bundledVersion = await bundledVersionInNpxCache(npxRoot, launchSpec, sibling.bundledPkg);
   if (bundledVersion === null) return null;
   return versionsDiverge(pathVersion, bundledVersion)
     ? { bin: sibling.bin, pathVersion, bundledVersion }

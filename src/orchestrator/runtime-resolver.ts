@@ -27,14 +27,12 @@
 // cached yet — checked against the SHA-256 its registry entry publishes
 // when there is one, and always confirmed first, never a silent
 // fetch-and-run.
-import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
 import { launcherKind } from "./launcher-health";
 import type { Logger } from "./logger";
 import type { LaunchSpec } from "./pool";
-import { resolveSpawn } from "./spawn-resolve";
-import { killTree, treeSpawnOptions } from "./process-tree";
+import { runToExit } from "./run-to-exit";
 import {
   ChecksumMismatch,
   installBinary,
@@ -73,58 +71,22 @@ export function nodeMajor(version: string): number | null {
   return m === null ? null : Number(m[1]);
 }
 
-/** Generous: a warm `--version` answers in milliseconds, so a runtime that
- * needs longer than this is pathological — but Windows AV scanning a
- * first-touch node.exe can genuinely take seconds, and timing a *working*
- * system into a runtime download would be the worse failure. */
-const PROBE_TIMEOUT_MS = 10_000;
-
 /** One `--version` round-trip: the version string on success, null on any
- * failure (not found, non-zero exit, empty output, timeout). Goes through
+ * failure (not found, non-zero exit, empty output). Goes through
  * resolveSpawn so a Windows `npx` probe gets the same .cmd + shell
  * treatment the real launch would — probing a path the launch won't take
- * would prove nothing. */
-export function probeVersion(
+ * would prove nothing. Waited on until the program answers, however long
+ * that takes: a first-touch node.exe under a virus scan can take seconds,
+ * and reading a slow answer as "no runtime" would download a runtime over
+ * a working one. A stop ends the wait (the probe rejects with its reason). */
+export async function probeVersion(
   command: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const launch = resolveSpawn(command, ["--version"], env);
-  if (launch.error !== undefined) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const child = spawn(launch.command, launch.args, {
-      env,
-      shell: launch.shell,
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-      ...treeSpawnOptions,
-    });
-    let out = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      out += chunk;
-    });
-    // killTree, not child.kill: an npx probe rides cmd.exe on win32 and
-    // forks node children everywhere — killing the direct child alone
-    // leaks the subtree the timeout gave up on.
-    const timer = setTimeout(() => {
-      if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
-    }, timeoutMs);
-    timer.unref();
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-    // "close", not "exit": exit fires when the process dies, which can beat
-    // the delivery of its buffered stdout — a fast --version would then
-    // read as empty and fail the gate it should pass. close waits for the
-    // stdio streams to drain.
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      const version = out.trim().split(/\r?\n/)[0]?.trim() ?? "";
-      resolve(code === 0 && version !== "" ? version : null);
-    });
-  });
+  const answer = await runToExit(command, ["--version"], { env, signal });
+  const version = answer?.stdout.trim().split(/\r?\n/)[0]?.trim() ?? "";
+  return answer?.code === 0 && version !== "" ? version : null;
 }
 
 export interface RuntimeGate {
@@ -150,13 +112,14 @@ export async function gateRuntime(
   kind: RuntimeKind,
   env: NodeJS.ProcessEnv,
   opts?: { launcher?: string; interpreter?: string },
+  signal?: AbortSignal,
 ): Promise<RuntimeGate> {
   const launcher = opts?.launcher ?? (kind === "node" ? "npx" : "uvx");
   if (kind === "node") {
     const interpreter = opts?.interpreter ?? "node";
     const [nodeVersion, launcherVersion] = await Promise.all([
-      probeVersion(interpreter, env),
-      probeVersion(launcher, env),
+      probeVersion(interpreter, env, signal),
+      probeVersion(launcher, env, signal),
     ]);
     if (nodeVersion === null) {
       return { ok: false, failed: "interpreter", detail: "node did not answer --version" };
@@ -174,7 +137,7 @@ export async function gateRuntime(
     }
     return { ok: true, detail: `node ${nodeVersion}` };
   }
-  const uvxVersion = await probeVersion(launcher, env);
+  const uvxVersion = await probeVersion(launcher, env, signal);
   if (uvxVersion === null) {
     return { ok: false, failed: "launcher", detail: `${launcher} did not answer --version` };
   }
@@ -321,6 +284,10 @@ export interface LaunchResolveDeps {
   confirmDownload?: (ask: DownloadAsk) => Promise<boolean>;
   /** Connect-status label seam, live only while genuinely downloading. */
   onPhase?: (label: string) => void;
+  /** The connect's stop: ends the runtime gate's wait on a probe (the
+   * probe's process killed). A download already started is the cache's and
+   * goes on — the caller stops waiting for it. */
+  signal?: AbortSignal;
   /** The digest a registry binary's download is checked against (raw, as
    * published), given the one pinned with its version — the registry's
    * current word while it still lists that version. Absent → the pinned
@@ -412,7 +379,7 @@ function installOnce(
  * managed runtime and returns a copy with its bin dir PATH-prepended. The
  * command itself is never rewritten — `npx` stays `npx`, findable through
  * the injected PATH, so every downstream spelling (warmup, .cmd shim
- * handling, cache repair) keeps working unchanged. Throws when no runtime
+ * handling, the cache check) keeps working unchanged. Throws when no runtime
  * can be had; the caller surfaces that as the connect failure it is. */
 export async function resolveRuntime(
   spec: LaunchSpec,
@@ -422,7 +389,7 @@ export async function resolveRuntime(
   if (kind === null) return spec;
 
   const probes = { launcher: deps.probes?.launcher ?? spec.command, interpreter: deps.probes?.interpreter };
-  const system = await gateRuntime(kind, { ...process.env, ...spec.env }, probes);
+  const system = await gateRuntime(kind, { ...process.env, ...spec.env }, probes, deps.signal);
   if (system.ok) {
     deps.log.debug(`${spec.patchbayAgentId}: system runtime OK (${system.detail})`);
     return spec;
@@ -453,7 +420,7 @@ export async function resolveRuntime(
   // runtime that can't answer --version (glibc build on musl, truncated
   // archive) must fail the connect with a real reason, not crash the agent
   // spawn cryptically.
-  const verified = await gateRuntime(kind, { ...process.env, ...env }, probes);
+  const verified = await gateRuntime(kind, { ...process.env, ...env }, probes, deps.signal);
   if (!verified.ok) {
     // Evict only a failure the managed install could own: the bare
     // interpreter, or a bare-name launcher (both resolve through the

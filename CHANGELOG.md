@@ -90,6 +90,15 @@ security fixes and the bugs the refactors surfaced.
   everything staged at that moment, so a screenshot could go out with the
   wrong message. The held row shows its attachments, and taking it back
   returns them to the composer. (#83)
+- **An agent installed over a slow connection now connects.** Patchbay used
+  to stop a package download after 3 minutes and an agent's start after 15
+  seconds. On a slow link that cut the install part-way, and npm then read
+  the half-written package as installed, so every connect after failed at
+  once (on npm 11, with an ENOENT on its package.json). Downloads and starts
+  now take as long as they take, and Stop still ends them. Before each
+  launch, a package whose install never finished is removed and installed
+  fresh. A failed install shows npm's own words on the agent's card, and
+  testing an MCP server started with npx works the same way. (#85)
 - **Fork a session** from its ⋯ menu where the agent offers it: a new
   session carrying the original's history opens, and the original stays as
   it is. The fork's title row names its original and opens it.

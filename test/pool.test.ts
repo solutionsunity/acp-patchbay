@@ -238,33 +238,25 @@ describe("AgentPool", () => {
     expect(pool.get("doomed" as PatchbayAgentId)?.stderrTail.join("\n")).toContain("boom: config missing");
   });
 
-  // P16: the classic silent hang — a CLI doing first-run setup against a
-  // TTY it doesn't have — is named, not reported as a bare timeout.
-  it("initialize timeout names interactive first-run setup as the likely cause", async () => {
-    const details: Array<string | undefined> = [];
-    const pool = new AgentPool(
-      {
-        onStatusChanged: (_id, status, detail) => {
-          if (status === "crashed") details.push(detail);
-        },
-        onDeclaredCaptured: () => {},
-        onSessionUpdate: () => {},
-        ...stubFsTerminalHooks(),
-      },
-      undefined,
-      { initializeTimeoutMs: 250 },
-    );
-    await expect(
-      pool.connect({
-        patchbayAgentId: "mute" as PatchbayAgentId,
-        name: "Mute",
-        command: process.execPath,
-        args: ["-e", "process.stdin.resume(); setInterval(() => {}, 1 << 30);"],
-        env: {},
-        cwd,
-      }),
-    ).rejects.toThrow();
-    expect(details[0]).toContain("interactive first-run setup");
+  // The classic silent hang — a CLI doing first-run setup against a TTY it
+  // doesn't have — is told by what it writes, not by a clock: the card says
+  // so while the connect waits, and only a stop ends the wait.
+  it("an agent that writes something other than ACP before answering is named, and waits for its stop", async () => {
+    const { pool, rec } = makePool();
+    const connecting = pool.connect({
+      patchbayAgentId: "mute" as PatchbayAgentId,
+      name: "Mute",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("Welcome! Choose a theme:\\n"); process.stdin.resume();'],
+      env: {},
+      cwd,
+    });
+    const settled = connecting.then(() => "connected", () => "failed");
+    await waitFor(() => rec.statuses.find((s) => s.detail?.includes("first-run setup")));
+    expect(pool.get("mute" as PatchbayAgentId)?.status).toBe("reconnecting");
+    await pool.stop("mute" as PatchbayAgentId);
+    expect(await settled).toBe("failed");
+    expect(pool.get("mute" as PatchbayAgentId)?.status).toBe("stopped");
   });
 
   // Runtime seam: whatever the resolver returns IS what spawns — proven by
@@ -391,8 +383,8 @@ describe("AgentPool — stopping", () => {
       const { pool, rec } = makePool();
       const controller = new AbortController();
       const connecting = pool.connect(
-        // PATH holds only the stand-in, so the cache repair a killed
-        // warmup runs finds no npm to ask and touches nothing.
+        // PATH holds only the stand-in, so the cache check finds no npm to
+        // ask and touches nothing.
         { patchbayAgentId: "warm" as PatchbayAgentId, name: "Warm", command: join(bin, "npx"), args: ["-y", "fake-pkg@1.0.0"], env: { PATH: bin }, cwd },
         { signal: controller.signal },
       );
@@ -402,6 +394,34 @@ describe("AgentPool — stopping", () => {
       expect(() => process.kill(pid, 0)).toThrow();
       expect(pool.get("warm" as PatchbayAgentId)?.status).toBe("stopped");
       expect(rec.statuses.map((s) => s.status)).not.toContain("running");
+      await rm(bin, { recursive: true, force: true });
+    },
+  );
+
+  // A stand-in launcher that fails its install the way npm does: the
+  // connect fails with the launcher's own words on the card, and the agent
+  // is never spawned onto the failure.
+  it.skipIf(process.platform === "win32")(
+    "a launcher that can't install its package fails the connect in its own words",
+    async () => {
+      const bin = await mkdtemp(join(tmpdir(), "patchbay-warm-"));
+      const runs = join(bin, "runs");
+      await writeFile(
+        join(bin, "npx"),
+        `#!${process.execPath}\nrequire("fs").appendFileSync(${JSON.stringify(runs)}, "run\\n");\nprocess.stderr.write("npm error code ENOENT\\nnpm error enoent Could not read package.json\\n");\nprocess.exitCode = 1;\n`,
+      );
+      await chmod(join(bin, "npx"), 0o755);
+      const { pool, rec } = makePool();
+      await expect(
+        pool.connect({ patchbayAgentId: "broken" as PatchbayAgentId, name: "Broken", command: join(bin, "npx"), args: ["-y", "fake-pkg@1.0.0"], env: { PATH: bin }, cwd }),
+      ).rejects.toThrow("npm error enoent Could not read package.json");
+      expect(rec.statuses.at(-1)).toEqual({ status: "crashed", detail: "npx couldn't install the package (exit 1)" });
+      expect(pool.get("broken" as PatchbayAgentId)?.stderrTail).toEqual([
+        "npm error code ENOENT",
+        "npm error enoent Could not read package.json",
+      ]);
+      // The warmup ran; the agent itself never did.
+      expect((await readFile(runs, "utf8")).trim().split("\n")).toHaveLength(1);
       await rm(bin, { recursive: true, force: true });
     },
   );

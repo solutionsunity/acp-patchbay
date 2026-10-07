@@ -711,7 +711,7 @@ export class McpServersStore {
         // the card's connected flag already tells that story.
         this.probes.delete(patchbayMcpServerId);
       } else {
-        const outcome = await unlessAborted(this.probeFn(target, signal), signal);
+        const outcome = await unlessAborted(this.probeFn(target, signal, this.log), signal);
         this.probes.set(patchbayMcpServerId, {
           status: "ok",
           at: new Date().toISOString(),

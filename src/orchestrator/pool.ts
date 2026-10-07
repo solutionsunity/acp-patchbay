@@ -12,12 +12,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
-import { formatCommandLine } from "../shared/command-line";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import { isRefusal } from "./client-replies";
 import { clientCapabilitiesWire, rowsProvenBy, type WireFact } from "./capabilities";
-import { isMissingBinSignature, launcherKind, npmNpxRoot, npxPackageName, npxPackageSpec, purgeNpxEntries } from "./launcher-health";
+import { LauncherFailure, prepareLauncher } from "./launcher-health";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import {
   readFileRead,
@@ -55,11 +54,13 @@ import type { PatchbayAgentId } from "../shared/ids";
  * returns the spec that actually spawns — the same spec when the system
  * runtime passes its gate, a PATH-prepended copy when a managed runtime
  * backs the launch. `onPhase` surfaces a download in progress as the
- * connect's status detail. A throw is the connect failure: no runtime, no
- * agent. */
+ * connect's status detail; `signal` is the connect's stop, ending the
+ * resolver's waits on probes. A throw is the connect failure: no runtime,
+ * no agent. */
 export type LaunchResolver = (
   spec: LaunchSpec,
   onPhase: (label: string) => void,
+  signal?: AbortSignal,
 ) => Promise<LaunchSpec>;
 
 export interface LaunchSpec {
@@ -215,7 +216,6 @@ export interface PooledAgentView {
   stderrTail: readonly string[];
 }
 
-const INITIALIZE_TIMEOUT_MS = 15_000;
 const STDERR_TAIL_LINES = 40;
 
 /** Grace budgets for `stop`'s ladder: EOF → SIGTERM →
@@ -235,104 +235,52 @@ const INTERACTIVE_STOP: StopBudget = { eofMs: 500, termMs: 2000, killMs: 500 };
  * across agents (disposeAll). */
 const SHUTDOWN_STOP: StopBudget = { eofMs: 200, termMs: 700, killMs: 300 };
 
-/** The child's exit code once it has actually exited, waited on for at most
- * `ms` — null when it hasn't exited in time (or died to a signal). */
-function exitCodeWithin(child: ChildProcess, ms: number): Promise<number | null> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve(child.exitCode), ms);
-    t.unref?.();
-    child.once("exit", (code) => {
-      clearTimeout(t);
-      resolve(code);
-    });
-  });
-}
-
 function timeOfDay(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
-/** The one spawn-option assembly for anything launched in an agent's
- * environment — the agent itself and its launcher warmup. One spelling on
- * purpose, beyond DRY: the env merge MUST be identical in both, or the
- * warmup could warm a different package cache than the real launch reads
- * (npm/uv honor cache-location env vars). shell comes from resolveSpawn
- * (Windows .cmd shims only — stop() still reaches the whole tree there:
- * killTree is taskkill /T, wrapper included); treeSpawnOptions makes the
- * child a process-group leader on POSIX (process-tree.ts), what lets
- * stop() reach grandchildren. */
+/** The one env merge for anything launched in an agent's environment — the
+ * agent itself and its launcher package's install. One spelling on purpose,
+ * beyond DRY: both MUST see the same env, or the install could fill a
+ * different package cache than the real launch reads (npm/uv honor
+ * cache-location env vars). */
 function spawnEnv(spec: LaunchSpec): NodeJS.ProcessEnv {
   return { ...process.env, ...spec.env };
 }
 
-function spawnOptions(spec: LaunchSpec, shell: boolean, stdio: "pipe" | "ignore") {
+/** shell comes from resolveSpawn (Windows .cmd shims only — stop() still
+ * reaches the whole tree there: killTree is taskkill /T, wrapper included);
+ * treeSpawnOptions makes the child a process-group leader on POSIX
+ * (process-tree.ts), what lets stop() reach grandchildren. */
+function spawnOptions(spec: LaunchSpec, shell: boolean) {
   return {
     env: spawnEnv(spec),
     cwd: spec.cwd,
-    stdio: [stdio, stdio, stdio] as ["pipe", "pipe", "pipe"] | ["ignore", "ignore", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
     shell,
     ...treeSpawnOptions,
   };
 }
 
-/** A cold launcher download can outlive any honest initialize budget; this
- * caps the warmup phase itself so a dead npm registry can't hold connect
- * hostage forever. */
-const WARMUP_TIMEOUT_MS = 180_000;
-/** A warm cache resolves in about a second — the "downloading" label waits
- * this long so it's only ever shown when a download is plausibly happening,
- * never as a flash of a false claim on a cache hit. */
-const DOWNLOAD_LABEL_AFTER_MS = 1_500;
-
-/** Cache-warm invocation for ecosystem launchers: a cold `npx`/`uvx`
- * downloads the whole package before the agent can say a byte — in total
- * silence (`npx -y` prints nothing while fetching; measured 20s+ on a fast
- * network), which is indistinguishable on the wire from a hung TUI. The
- * warmup runs the download as its own labeled phase: the same launcher is
- * asked to resolve the same package but run the runtime's `--version`
- * instead of the agent, and its exit is the one reliable "cache is ready"
- * signal. The real spawn then starts warm, so the initialize timeout
- * measures the agent — not npm's network. Registry arg shapes only
- * (resolveDistribution builds them); anything unrecognized gets no warmup
- * and behaves exactly as before. Exported for tests. */
-export function warmupSpawn(spec: LaunchSpec): { command: string; args: string[] } | null {
-  const kind = launcherKind(spec.command);
-  if (kind === "npx") {
-    // Registry shape only (`-y` present) — user-typed commands get no
-    // warmup, a deliberate scope decision pinned by spawn-resolve tests.
-    const pkg = spec.args[0] === "-y" ? npxPackageSpec(spec) : null;
-    if (pkg === null) return null;
-    return { command: spec.command, args: ["-y", "--package", pkg, "node", "--version"] };
-  }
-  if (kind === "uvx") {
-    const pkg = spec.args[0];
-    if (pkg === undefined || pkg.startsWith("-")) return null;
-    return { command: spec.command, args: ["--from", pkg, "python", "--version"] };
-  }
-  return null;
+/** A launch that failed — its process has nothing to wind down, so its
+ * whole tree (npx → node → …) goes at once. */
+function killFailedLaunch(child: ChildProcess): void {
+  if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
 }
 
 export class AgentPool {
   private entries = new Map<PatchbayAgentId, Entry>();
-  private readonly initializeTimeoutMs: number;
   private readonly launchResolver?: LaunchResolver;
 
   constructor(
     private readonly hooks: PoolHooks,
     /** Output-channel seam (logger.ts) — argv and env values never logged. */
     private readonly log: Logger = nullLogger,
-    /** `initializeTimeoutMs` applies to the initialize round-trip only:
-     * cold `npx`/`uvx` package downloads happen in the labeled warmup phase
-     * before the real spawn (warmupSpawn), so this budget measures the
-     * agent, not the package manager's network. Tests inject a short one to
-     * exercise the timeout path itself. `resolveLaunch` is the launch-phase
-     * prerequisite seam (the agent's own binary, the launcher's runtime) —
-     * absent (tests, or a host without one) means specs spawn exactly as
-     * given. */
-    opts?: { initializeTimeoutMs?: number; resolveLaunch?: LaunchResolver },
+    /** `resolveLaunch` is the launch-phase prerequisite seam (the agent's
+     * own binary, the launcher's runtime) — absent (tests, or a host without
+     * one) means specs spawn exactly as given. */
+    opts?: { resolveLaunch?: LaunchResolver },
   ) {
-    this.initializeTimeoutMs = opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS;
     this.launchResolver = opts?.resolveLaunch;
   }
 
@@ -360,15 +308,7 @@ export class AgentPool {
    * connect. `signal` stops the launch before anything spawns — the launch
    * phase and the warmup — and the entry reads stopped; once the process
    * exists, a stop reaches the process itself. */
-  async connect(
-    spec: LaunchSpec,
-    opts?: {
-      signal?: AbortSignal;
-      /** Internal: set on the one retry after a launcher-cache repair, so a
-       * repair that didn't actually fix things can never loop. */
-      repairAttempted?: boolean;
-    },
-  ): Promise<DeclaredCapabilities> {
+  async connect(spec: LaunchSpec, opts?: { signal?: AbortSignal }): Promise<DeclaredCapabilities> {
     const patchbayAgentId = spec.patchbayAgentId;
     const signal = opts?.signal;
     signal?.throwIfAborted();
@@ -407,9 +347,13 @@ export class AgentPool {
     if (this.launchResolver !== undefined) {
       try {
         spec = await unlessAborted(
-          this.launchResolver(spec, (label) => {
-            if (!signal?.aborted) this.setStatus(entry, "reconnecting", label);
-          }),
+          this.launchResolver(
+            spec,
+            (label) => {
+              if (!signal?.aborted) this.setStatus(entry, "reconnecting", label);
+            },
+            signal,
+          ),
           signal,
         );
         entry.spec = spec;
@@ -422,11 +366,32 @@ export class AgentPool {
       }
     }
 
-    // Ecosystem launchers get their package cache warmed as its own phase —
-    // the "run it once manually" advice, done by patchbay itself, with the
-    // honest "downloading" label while it's genuinely fetching.
-    const warm = warmupSpawn(spec);
-    if (warm !== null && signal?.aborted !== true) await this.warmLauncherCache(entry, warm, spec, signal);
+    // A launcher package is made ready as its own phase (launcher-health.ts):
+    // a half-written npx entry healed, then the package installed to its
+    // exit — the "run it once manually" advice, done by patchbay itself,
+    // with the honest "downloading" label while it's genuinely fetching. A
+    // failed install is the connect failure, in the launcher's own words.
+    try {
+      await prepareLauncher(spec, spawnEnv(spec), {
+        signal,
+        log: this.log,
+        who: patchbayAgentId,
+        onPhase: (label) => {
+          if (!signal?.aborted) this.setStatus(entry, "reconnecting", label);
+        },
+      });
+      this.clearPhaseLabel(entry);
+    } catch (err) {
+      if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
+      if (err instanceof LauncherFailure) {
+        entry.stderrTail.push(...err.output.slice(-STDERR_TAIL_LINES));
+        this.markDead(entry, err.detail);
+        throw err;
+      }
+      const detail = `launcher package unavailable — ${(err as Error).message}`;
+      this.markDead(entry, detail);
+      throw new Error(detail);
+    }
     // The last moment the signal reaches the launch: from the spawn on, a
     // stop reaches the process.
     if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
@@ -437,7 +402,7 @@ export class AgentPool {
       this.markDead(entry, launch.error);
       throw new Error(launch.error);
     }
-    const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "pipe"));
+    const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell));
     entry.process = child;
 
     child.stderr!.setEncoding("utf8");
@@ -479,7 +444,18 @@ export class AgentPool {
     this.tapLines(patchbayAgentId, "→", toAgent);
     const fromAgent = new PassThrough();
     child.stdout!.pipe(fromAgent);
-    this.tapLines(patchbayAgentId, "←", child.stdout!);
+    // Before its first answer, an agent writing something other than ACP is
+    // most likely a CLI asking for first-run setup that a terminal would
+    // answer (a TTY it doesn't have here) — the card says so while it waits.
+    this.tapLines(patchbayAgentId, "←", child.stdout!, () => {
+      if (entry.initialize === null && entry.status === "reconnecting") {
+        this.setStatus(
+          entry,
+          "reconnecting",
+          "the agent wrote something other than ACP before answering — if it asks for first-run setup, run it once in a terminal",
+        );
+      }
+    });
     const stream = acp.ndJsonStream(
       Writable.toWeb(toAgent),
       Readable.toWeb(fromAgent) as ReadableStream<Uint8Array>,
@@ -599,22 +575,19 @@ export class AgentPool {
 
     let init: InitializeFact;
     try {
-      init = await this.withTimeout(
-        this.request(
-          entry,
-          acp.methods.agent.initialize,
-          {
-            protocolVersion: acp.PROTOCOL_VERSION,
-            clientInfo: { name: "acp-patchbay", version: "0.0.1" },
-            clientCapabilities: clientCapabilitiesWire(),
-          },
-          readInitialize,
-        ),
-        this.initializeTimeoutMs,
-        // The classic silent hang is a CLI doing first-run setup against a
-        // TTY it doesn't have — name that instead of a bare timeout.
-        // Reads as "initialize failed: timed out — …" through markDead.
-        "timed out — the CLI may need interactive first-run setup; run it once manually",
+      // Waited on until the agent answers or its process ends (the stream's
+      // close rejects it) — however long its start takes. An agent that
+      // stays alive and silent is stopped by the user; one that writes
+      // something other than ACP meanwhile says so on its card.
+      init = await this.request(
+        entry,
+        acp.methods.agent.initialize,
+        {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientInfo: { name: "acp-patchbay", version: "0.0.1" },
+          clientCapabilities: clientCapabilitiesWire(),
+        },
+        readInitialize,
       );
     } catch (err) {
       // Crash with the reason, never a silent "stopped": the stopping flag
@@ -623,32 +596,7 @@ export class AgentPool {
       // kill. markDead runs before the kill so the 'exit' handler can't
       // relabel it "exited N" either.
       this.markDead(entry, `initialize failed: ${agentErrorText(err)}`);
-      if (child.pid !== undefined) {
-        const pid = child.pid;
-        killTree(pid, "SIGTERM");
-        // Stragglers of a half-started launch (npx → node → …) get the
-        // sweep a moment later; unref'd so it never holds the host open.
-        setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
-      }
-      // Launcher-cache corruption chokepoint (launcher-health.ts): an npx
-      // launch dying because its bin doesn't exist means a poisoned _npx
-      // entry — npx treats "cache dir exists" as installed and never
-      // self-heals. Purge the attributable entries and retry exactly once;
-      // nothing purged (or any other death shape) rethrows untouched.
-      // The stream's close rejects initialize *before* the child's 'exit'
-      // event lands (observed live: exitCode still null here), so wait
-      // briefly for the real code — the timeout path's SIGTERM above makes
-      // an exit imminent either way.
-      // A stopped launch is never retried.
-      if (
-        opts?.repairAttempted !== true &&
-        !entry.stopping &&
-        isMissingBinSignature(await exitCodeWithin(child, 2_500), entry.stderrTail) &&
-        (await this.repairLauncherCache(spec))
-      ) {
-        this.log.info(`${patchbayAgentId}: launcher cache repaired — retrying connect`);
-        return this.connect(spec, { signal, repairAttempted: true });
-      }
+      killFailedLaunch(child);
       throw err;
     }
 
@@ -660,11 +608,7 @@ export class AgentPool {
         `agent negotiated unsupported ACP protocol v${init.protocolVersion} — ` +
         `patchbay speaks v${acp.PROTOCOL_VERSION}`;
       this.markDead(entry, reason);
-      if (child.pid !== undefined) {
-        const pid = child.pid;
-        killTree(pid, "SIGTERM");
-        setTimeout(() => killTree(pid, "SIGKILL"), 2_000).unref();
-      }
+      killFailedLaunch(child);
       throw new Error(reason);
     }
 
@@ -991,8 +935,14 @@ export class AgentPool {
    * Only the first character is tested — a line that doesn't open a JSON
    * object or array can't be a message; malformed JSON that does is left
    * to the wire log. Whenever nothing reads a direction, its partial-line
-   * buffer resets, as for the log being off. */
-  private tapLines(patchbayAgentId: PatchbayAgentId, direction: "→" | "←", stream: NodeJS.ReadableStream): void {
+   * buffer resets, as for the log being off. `onNoise` hears that first
+   * non-protocol line too. */
+  private tapLines(
+    patchbayAgentId: PatchbayAgentId,
+    direction: "→" | "←",
+    stream: NodeJS.ReadableStream,
+    onNoise?: () => void,
+  ): void {
     const { onWireFrame, wireLogActive } = this.hooks;
     const watchNoise = direction === "←";
     if (onWireFrame === undefined && !watchNoise) return;
@@ -1017,6 +967,7 @@ export class AgentPool {
           this.log.warn(
             `${patchbayAgentId}: the agent wrote output that isn't a protocol message — ignored, the session goes on. Turn on the wire log to see it.`,
           );
+          onNoise?.();
         }
       }
       // A runaway partial line (a frame far beyond any sane size) is not
@@ -1112,85 +1063,12 @@ export class AgentPool {
     return entry;
   }
 
-  /** Runs the warmup invocation to completion — best-effort by contract: a
-   * failed or capped warmup never fails the connect (the real spawn tells
-   * the real story with its own error surface); it only means the download
-   * time counts against initialize again, exactly the pre-warmup behavior.
-   * The status detail flips to "downloading…" only once the warmup outlives
-   * a warm-cache resolution, and clears the moment the phase ends. `signal`
-   * ends it the way the cap does. */
-  private warmLauncherCache(
-    entry: Entry,
-    warm: { command: string; args: string[] },
-    spec: LaunchSpec,
-    signal: AbortSignal | undefined,
-  ): Promise<void> {
-    const launch = resolveSpawn(warm.command, warm.args, spawnEnv(spec));
-    if (launch.error !== undefined) return Promise.resolve(); // the real spawn will refuse and say why
-    this.log.info(`${spec.patchbayAgentId}: warming launcher cache (${formatCommandLine(warm.command, warm.args)})`);
-    return new Promise<void>((resolve) => {
-      const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell, "ignore"));
-      const label = setTimeout(
-        () => this.setStatus(entry, "reconnecting", "downloading the agent package…"),
-        DOWNLOAD_LABEL_AFTER_MS,
-      );
-      /** Why the warmup was killed before it finished, if it was. */
-      let cut: string | null = null;
-      const kill = (why: string) => {
-        cut = why;
-        if (child.pid !== undefined) killTree(child.pid, "SIGKILL");
-      };
-      const cap = setTimeout(() => kill(`capped at ${WARMUP_TIMEOUT_MS}ms`), WARMUP_TIMEOUT_MS);
-      const stop = () => kill("stopped");
-      signal?.addEventListener("abort", stop, { once: true });
-      const settle = (outcome: string) => {
-        clearTimeout(label);
-        clearTimeout(cap);
-        signal?.removeEventListener("abort", stop);
-        this.clearPhaseLabel(entry);
-        this.log.debug(`${spec.patchbayAgentId}: launcher warmup ${outcome}`);
-        resolve();
-      };
-      child.on("error", (err) => settle(`spawn failed — ${err.message}`));
-      child.on("exit", (code, sig) => {
-        // A SIGKILL mid-install is itself the cache-poison mechanism (npm
-        // doesn't roll back) — clean up the entry we just interrupted,
-        // before any real spawn runs, so it never inherits a half-written
-        // cache that npx would forever treat as installed.
-        if (cut !== null) {
-          const why = cut;
-          void this.repairLauncherCache(spec).then(() => settle(`${why} — interrupted cache entry purged`));
-          return;
-        }
-        settle(code === 0 ? "done" : `ended (code=${code}, sig=${sig})`);
-      });
-    });
-  }
-
   /** A launch its signal stopped before anything spawned: the entry reads
    * stopped, and the signal's reason is what the connect throws. */
   private stoppedBeforeSpawn(entry: Entry, signal: AbortSignal): unknown {
     entry.stopping = true;
     this.setStatus(entry, "stopped");
     return signal.reason;
-  }
-
-  /** Purges the npx cache entries attributable to this spec's package
-   * (launcher-health.ts). True only when something was actually removed —
-   * the connect retry gates on that, so a cache that wasn't the problem
-   * never triggers a pointless second attempt. Non-npx specs are a no-op:
-   * uvx earns a repair when a corruption signature is observed, not before. */
-  private async repairLauncherCache(spec: LaunchSpec): Promise<boolean> {
-    const pkg = npxPackageName(spec);
-    if (pkg === null) return false;
-    try {
-      const npxRoot = await npmNpxRoot(spawnEnv(spec));
-      if (npxRoot === null) return false;
-      return (await purgeNpxEntries(npxRoot, pkg, this.log)).length > 0;
-    } catch (err) {
-      this.log.debug(`launcher cache repair failed: ${(err as Error).message}`);
-      return false;
-    }
   }
 
   /** Clears a transient phase label (binary or runtime download, launcher warmup)

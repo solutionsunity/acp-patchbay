@@ -510,11 +510,12 @@ export class Orchestrator {
       // and — detect-first, sandbox-fallback — the interpreter an npx/uvx
       // launcher needs, downloaded into bin-cache only on a failed gate.
       // Every download passes the same explicit confirmation.
-      resolveLaunch: (spec, onPhase) =>
+      resolveLaunch: (spec, onPhase, signal) =>
         resolveLaunch(spec, {
           cacheRoot: this.binaryCacheDir,
           log: this.log,
           onPhase,
+          signal,
           confirmDownload: (ask) => this.confirmDownload(ask),
           digestFor: (distribution, version, pinned) =>
             binaryDigestFor(this.acpRegistry.current().agents, distribution, version, pinned),
@@ -916,14 +917,29 @@ export class Orchestrator {
   }
 
   /** Startup: what the agents store says this window opens with is
-   * connected, then the last open session is restored. The raw
+   * connected, and the last open session is restored once its own agent's
+   * connect has settled — a connect waits for its agent's answer however
+   * long it takes, and another agent's slow download or silent start is no
+   * reason to keep the chat away. A bare id still to fold needs every
+   * startup list, so it (and a pointer at an agent nothing started) waits
+   * for them all. The raw
    * `acpPatchbay.defaultAgent` value stays readable after the
    * contribution's removal — unregistered keys still surface — and the
    * store folds it into the per-agent flag. */
   private async connectStartupAgents(): Promise<void> {
     const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
     const sources = await this.agents.startupSources(legacy);
-    await Promise.allSettled(sources.map((source) => this.connectFrom(source)));
+    const pointed = this.lastActiveSession.get()?.patchbayAgentId;
+    let pointedSettled!: () => void;
+    const pointedConnect = new Promise<void>((resolve) => (pointedSettled = resolve));
+    const all = Promise.allSettled(
+      sources.map((source) =>
+        this.connectFrom(source).then((patchbayAgentId) => {
+          if (patchbayAgentId !== undefined && patchbayAgentId === pointed) pointedSettled();
+        }),
+      ),
+    );
+    await Promise.race([pointedConnect, all]);
     await this.restoreLastActiveSession();
   }
 
@@ -2155,16 +2171,18 @@ export class Orchestrator {
 
   /** Add — and every connect a door names by its source (Settings Connect,
    * the palette, startup): the store saves what is new, then the connect
-   * passes the gates (and runs the free check, as every connect does). */
-  private async connectFrom(source: ConnectAgentSource): Promise<void> {
+   * passes the gates (and runs the free check, as every connect does).
+   * Answers which agent, once its connect has settled either way. */
+  private async connectFrom(source: ConnectAgentSource): Promise<PatchbayAgentId | undefined> {
     const patchbayAgentId = await this.agents.saveFrom(source);
-    if (patchbayAgentId === undefined) return;
+    if (patchbayAgentId === undefined) return undefined;
     try {
       await this.gates.connect(patchbayAgentId);
     } catch {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
     }
+    return patchbayAgentId;
   }
 
   /** One intent, one click: connect if needed, then create and

@@ -225,8 +225,10 @@ runs and never dims; `Connect` shows only when there is nothing to stop ·
 `Diagnostics…` → modal that **discloses cost before running**
 (behavior probes consume real turns; ephemeral session in a temp directory — never
 the workspace). Crashed card: red note with time + one `Restart` + the process's
-stderr tail (mono, scrolling); an initialize timeout names interactive first-run
-setup as the likely cause. A never-connected config shows the hollow `untested`
+stderr tail (mono, scrolling) — for a launcher package that couldn't install,
+the launcher's own words. A connecting agent that writes something other than
+ACP before its first answer names interactive first-run setup as the likely
+cause, and waits until it answers or is stopped. A never-connected config shows the hollow `untested`
 dot with a `Connect` button, never a claimed `stopped`.
 
 Anything the queue holds for the agent dims the controls that would only wait

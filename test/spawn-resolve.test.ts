@@ -4,7 +4,8 @@
 // CVE-2024-27980) with shell-active args refused rather than quoted-and-hoped.
 import { describe, expect, it } from "vitest";
 import { resolveSpawn, resolveExecutableWin32 } from "../src/orchestrator/spawn-resolve";
-import { warmupSpawn, type LaunchSpec } from "../src/orchestrator/pool";
+import { warmupSpawn } from "../src/orchestrator/launcher-health";
+import type { LaunchSpec } from "../src/orchestrator/pool";
 import type { PatchbayAgentId } from "../src/shared/ids";
 
 const NODE_DIR = "C:\\Program Files\\nodejs";
