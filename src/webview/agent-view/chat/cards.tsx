@@ -325,6 +325,12 @@ function FormQuestion({
         <Icon name="question" /> {agentName} asks: {block.message}
       </div>
       <div className="connect-form px-2.5 pb-2.5 pt-0">
+        {(block.title !== undefined || block.description !== undefined) && (
+          <div className="form-intro text-[12px]">
+            {block.title !== undefined && <div className="font-medium">{block.title}</div>}
+            {block.description !== undefined && <div className="text-muted-foreground">{block.description}</div>}
+          </div>
+        )}
         {block.fields.map((f) => {
           const value = draft[f.name];
           const picks = Array.isArray(value) ? value : [];
@@ -350,6 +356,7 @@ function FormQuestion({
                         }
                       />
                       {o.label}
+                      {o.description !== undefined && <span className="text-[11px] text-muted-foreground">— {o.description}</span>}
                     </label>
                   );
                 })
@@ -366,7 +373,7 @@ function FormQuestion({
                         ]
                       : (f.options ?? [])
                     ).map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
+                      <SelectItem key={o.value} value={o.value} description={"description" in o ? o.description : undefined}>
                         {o.label}
                       </SelectItem>
                     ))}

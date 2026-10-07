@@ -116,6 +116,7 @@ function PlanChip({
             }
           />{" "}
           {e.content}
+          {e.priority !== undefined && <span className="prio"> · {e.priority}</span>}
         </div>
       ))}
     </ReadoutPanel>

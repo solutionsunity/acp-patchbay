@@ -129,8 +129,8 @@ describe("SessionsStore", () => {
     // A plan is session-level state (ui-rendering-strategy § Plans): it
     // updates the pinned widget's snapshot and never enters the transcript.
     expect(state.activePlan[patchbaySessionId]).toEqual([
-      { content: "step one", status: "completed" },
-      { content: "step two", status: "in_progress" },
+      { content: "step one", status: "completed", priority: "medium" },
+      { content: "step two", status: "in_progress", priority: "medium" },
     ]);
     expect(state.commandsBySession[patchbaySessionId]).toEqual([
       { name: "review", description: "fake review" },

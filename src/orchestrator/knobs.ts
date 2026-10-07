@@ -510,11 +510,9 @@ export function toOfferedKnobs(knobs: readonly SessionKnobView[]): AgentKnobsVie
           name: k.name,
           category: k.category,
           type: "select" as const,
-          values: k.options.flatMap((o) =>
-            "group" in o
-              ? o.options.map((v) => ({ value: v.value, name: v.name }))
-              : [{ value: o.value, name: o.name }],
-          ),
+          values: k.options
+            .flatMap((o) => ("group" in o ? o.options : [o]))
+            .map((v) => ({ value: v.value, name: v.name, ...(v.description !== undefined ? { description: v.description } : {}) })),
         }
       : { id: k.id, name: k.name, category: k.category, type: "boolean" as const, values: [] },
   );

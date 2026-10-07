@@ -41,7 +41,8 @@
       "id": "<id-7>",
       "part": {
         "kind": "image",
-        "mimeType": "image/png"
+        "mimeType": "image/png",
+        "uri": "https://example.com/a.png"
       },
       "thought": false
     },
@@ -249,15 +250,18 @@
   "plan": [
     {
       "content": "Read the code",
-      "status": "completed"
+      "status": "completed",
+      "priority": "high"
     },
     {
       "content": "Make the change",
-      "status": "in_progress"
+      "status": "in_progress",
+      "priority": "medium"
     },
     {
       "content": "Run the tests",
-      "status": "pending"
+      "status": "pending",
+      "priority": "low"
     }
   ],
   "commands": [

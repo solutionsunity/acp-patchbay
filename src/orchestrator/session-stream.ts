@@ -377,6 +377,7 @@ export class SessionStream {
       patchbaySessionId,
       blockId: call.toolCallId,
       ...(call.title !== undefined ? { title: call.title } : {}),
+      ...(call.name !== undefined ? { name: call.name } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(call.kind !== undefined ? { toolKind: call.kind } : {}),
       ...boundedRaw("input", call.rawInput),

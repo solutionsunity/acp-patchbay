@@ -106,6 +106,8 @@ function TurnLine({
               {" · "}
               {usage.input.toLocaleString()} in · {usage.output.toLocaleString()} out
               {usage.cached !== undefined ? ` · ${usage.cached.toLocaleString()} cached` : ""}
+              {usage.cacheWrite !== undefined ? ` · ${usage.cacheWrite.toLocaleString()} cache written` : ""}
+              {usage.thought !== undefined ? ` · ${usage.thought.toLocaleString()} thinking` : ""}
             </>
           )}
         </div>

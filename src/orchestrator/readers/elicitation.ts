@@ -149,6 +149,15 @@ function fieldOf(name: string, schema: Record<string, unknown>, required: boolea
   }
 }
 
+/** What a form's schema says of itself — its title and description, when
+ * it gives them. */
+function formIntroOf(requestedSchema: unknown): { title?: string; description?: string } {
+  const schema = record(requestedSchema);
+  const title = str(schema?.title);
+  const description = str(schema?.description);
+  return { ...(title !== undefined ? { title } : {}), ...(description !== undefined ? { description } : {}) };
+}
+
 /** Every property as a field, in the schema's own order, or null when the
  * form cannot be presented honestly. */
 export function formFieldsOf(requestedSchema: unknown): ElicitationField[] | null {
@@ -229,7 +238,7 @@ export function readElicitationRequest(params: unknown): ElicitationRequestReadi
     const fields = formFieldsOf(p.requestedSchema);
     return fields === null
       ? { kind: "refuse", why: "its form has a field patchbay cannot present" }
-      : { kind: "ask", sessionId, message, ask: { mode: "form", fields } };
+      : { kind: "ask", sessionId, message, ask: { mode: "form", fields, ...formIntroOf(p.requestedSchema) } };
   }
   const link = linkOf(p.url);
   const elicitationId = str(p.elicitationId);

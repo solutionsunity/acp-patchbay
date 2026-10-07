@@ -210,6 +210,20 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
   });
 });
 
+describe("a tool's own name (#80)", () => {
+  it("rides the block and survives an update that leaves it out — in the reducer and through the bus", () => {
+    const named: AgentViewEvent = { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", title: "Run tests", status: "in_progress", name: "bash" };
+    const later: AgentViewEvent = { kind: "toolCallUpserted", patchbaySessionId: S, blockId: "t1", status: "completed" };
+    expect(coalesceAgentViewEvent(named, later)).toMatchObject({ name: "bash", status: "completed" });
+    const state = [
+      { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" } } as AgentViewEvent,
+      named,
+      later,
+    ].reduce(reduceAgentView, initialAgentViewState);
+    expect(state.transcripts[S]![0]).toMatchObject({ name: "bash", status: "completed" });
+  });
+});
+
 describe("usage cost (#80)", () => {
   it("an update without a cost keeps the standing cost — in the reducer and through the bus", () => {
     const costed: AgentViewEvent = { kind: "usageReported", patchbaySessionId: S, used: 1, size: 9, cost: { amount: 0.5, currency: "USD" } };

@@ -129,7 +129,7 @@ Action row (below):
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic |
+| Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic. Each option's description shows under it in the list; options sharing a name carry their description in the label (`Sonnet · Deep`), so the pill tells them apart — the Settings defaults list too |
 | Stats strip | 💬 🛠 counts + ring + plan usage | the one read-out in the dials row: whole-session prompt / tool-call counts, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover or keyboard focus: tokens + cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; counts hide at zero. Each of the four has its own switch (Preferences › Composer stats, all shown by default) |
 | Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach |
 

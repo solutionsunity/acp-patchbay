@@ -859,12 +859,13 @@ export function isToolCallOpen(status: ToolCallStatus): boolean {
 export type ContentPart =
   | { kind: "text"; text: string }
   /** A resource_link — an `@file` mention in a user's message, a link
-   * elsewhere. */
-  | { kind: "mention"; name: string; uri: string }
+   * elsewhere — with the title and description the agent gave it. */
+  | { kind: "mention"; name: string; uri: string; title?: string; description?: string }
   /** An image. `file` names its copy in the attachments stash
    * (previewable); absent when the bytes couldn't be stashed — degrades to
-   * a labeled chip, never an error. */
-  | { kind: "image"; mimeType: string; file?: string }
+   * a labeled chip, never an error. `uri`: where the agent says it lives,
+   * when it sent an address. */
+  | { kind: "image"; mimeType: string; file?: string; uri?: string }
   /** Labeled text snapshot (selection, problems, embedded resource) —
    * text bounded orchestrator-side, same rule as tool rawInput. */
   | { kind: "context"; label: string; text: string }
@@ -992,6 +993,8 @@ export interface ToolCallBlock {
   /** == the ACP toolCallId — one block, updated in place as status changes. */
   id: string;
   title: string;
+  /** The tool's own name, when the agent gave it (the title is the human one). */
+  name?: string;
   status: ToolCallStatus;
   toolKind: ToolCallKind;
   /** rawInput/rawOutput as bounded pretty-printed text (collapsed by
@@ -1080,6 +1083,7 @@ export interface TurnEndBlock {
 export interface PlanEntry {
   content: string;
   status: "pending" | "in_progress" | "completed";
+  priority?: "high" | "medium" | "low";
 }
 
 /** One broker path for every gated action — ACP session/request_permission,
@@ -1205,7 +1209,8 @@ export interface ElicitationLink {
 
 /** What is asked: fields to fill in, or a page to open in the browser. */
 export type ElicitationAsk =
-  | { mode: "form"; fields: readonly ElicitationField[] }
+  /** `title`, `description`: what the form's schema says of itself. */
+  | { mode: "form"; fields: readonly ElicitationField[]; title?: string; description?: string }
   | { mode: "url"; link: ElicitationLink };
 
 /** An opened link's follow-up: the agent is waiting on the page, reported
@@ -1606,6 +1611,7 @@ export type AgentViewEvent =
        * spec's pending status for what the event leaves out. */
       title?: string;
       status?: ToolCallStatus;
+      name?: string;
       /** `locations`, when present, *replaces* — ACP defines the update's
        * locations field as a replacement of the collection. */
       toolKind?: ToolCallKind;
@@ -1834,6 +1840,7 @@ function upsertToolCall(
       kind: "toolCall",
       id: event.blockId,
       title: event.title ?? "",
+      ...(event.name !== undefined ? { name: event.name } : {}),
       status: event.status ?? "pending",
       toolKind: event.toolKind ?? "other",
       input: event.input ?? null,
@@ -1852,6 +1859,7 @@ function upsertToolCall(
     ...existing,
     status: event.status ?? existing.status,
     title: event.title ?? existing.title,
+    ...(event.name !== undefined ? { name: event.name } : {}),
     toolKind: event.toolKind ?? existing.toolKind,
     input: event.input ?? existing.input,
     output: event.output ?? existing.output,
@@ -2314,6 +2322,7 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       ...next,
       title: next.title ?? prev.title,
       status: next.status ?? prev.status,
+      name: next.name ?? prev.name,
       toolKind: next.toolKind ?? prev.toolKind,
       input: next.input ?? prev.input,
       output: next.output ?? prev.output,
@@ -2394,7 +2403,7 @@ export interface AgentKnobsView {
     category?: string;
     type: "select" | "boolean";
     /** Offered values — empty for boolean options. */
-    values: readonly { value: string; name: string }[];
+    values: readonly { value: string; name: string; description?: string }[];
   }[];
   /** Why no surface can be read right now (a latched agent before its
    * first real session; a session the agent refused to open) — the card

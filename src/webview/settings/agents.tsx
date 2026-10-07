@@ -11,6 +11,7 @@ import { count } from "../../shared/count";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
+import { optionText } from "../shared/option-label";
 import { UpgradeChip } from "../shared/upgrade-chip";
 import { Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
@@ -425,7 +426,7 @@ const BOOL_OFF = "__off__";
 function DefaultKnob(props: {
   icon: string;
   label: string;
-  offered: readonly { value: string; name: string }[] | null;
+  offered: readonly { value: string; name: string; description?: string }[] | null;
   value: string | boolean;
   onChange(value: string | boolean): void;
 }) {
@@ -452,11 +453,14 @@ function DefaultKnob(props: {
               <SelectItem value={BOOL_OFF}>off</SelectItem>
             </>
           ) : (
-            props.offered.map((v) => (
-              <SelectItem key={v.value} value={v.value}>
-                {v.name}
-              </SelectItem>
-            ))
+            props.offered.map((v, _i, all) => {
+              const text = optionText(v, all);
+              return (
+                <SelectItem key={v.value} value={v.value} description={text.description}>
+                  {text.label}
+                </SelectItem>
+              );
+            })
           )}
         </SelectContent>
       </Select>

@@ -134,7 +134,7 @@ against this project's own honesty rules, which bind harder than the spec here.
 | Receive: text chunks | ✅ | `handleUpdate` text cases. |
 | Receive: `ContentChunk.messageId` (message identity on every chunk) | ✅ | Governs run continuation on all three chunk channels (one gate: `runBlockFor`, session-stream.ts): two non-null ids decide alone — equal continues, different splits (a fused agent-message boundary un-closes markdown fences). With an id missing on either side: user runs never merge (id-less agents replay whole messages per chunk; an agent splitting one message across id-less chunks would be unreconstructable by any client); agent/thought runs always merge — an id-less wire carries no boundary, and splitting on a guess would shred live stream deltas and chunk-log replays alike. Wire-verified 2026-07-12: claude-agent-acp 0.58.1 replays multi-part prompts as several chunks under ONE id and adjacent messages under distinct ids; auggie 0.32.0 omits the field (its agent-chunk replay granularity is uncaptured — until a capture lands, its agent message boundaries are invisible by honest necessity). |
 | Receive: non-text in message chunks (image/audio/resource_link/resource) | ✅ | Never a silent drop, and never a placeholder for content the chat can show. All three chunk paths (user/message/thought) go through the one content reader (`readers/content.ts`) and the one content mapping (`content-parts.ts:contentPartOf`), shared with tool-call content: images are stashed and previewed (the webview's `img-src` already trusts its own resource root — no CSP change), embedded text-formed `resource` renders as a labeled, expandable snapshot, `resource_link` as `@name` in user prose or a `[name](uri)` link in agent prose. An agent's non-text piece is its own block between prose runs (`agentPart`, `thought` kept). Audio and blob-formed resources keep a type-labeled placeholder — a recorded floor (decided 2026-09-25): nothing plays or saves them until a surface for that is justified. Whitespace-only chunks never *open* a run (an open run still takes them — mid-stream spacing is real content) and never sever a neighboring run. |
-| Annotations / `_meta` on content | ⛔ | Not rendered. The content reader carries the annotations' `audience` on the fact; nothing reads it yet. |
+| Annotations / `_meta` on content | ⛔ | Not rendered — a deliberate scope decision: no agent sends an audience today. The content reader carries `audience` on the fact, so a surface can take it up without going back to the wire. A resource link's title and description show on its token; an image sent by address only is a link to it, never fetched. |
 
 ## 9. Session updates — the full union
 
@@ -159,9 +159,9 @@ SDK 1.5.0 `sessionUpdate` union (16 kinds), read by `readers/session-update.ts` 
 ## 10. Tool calls
 
 `ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.5.0). The
-optional `ToolCall.name` (programmatic tool name, stabilized 2026-09-17) is read
-onto the call's fact but not rendered: the card names the call by its `title`,
-which every agent sends.
+optional `ToolCall.name` (programmatic tool name, stabilized 2026-09-17) rides the
+block and shows as the card icon's tooltip: the card names the call by its
+`title`, which every agent sends.
 
 | Duty | Verdict | Notes |
 |---|---|---|
@@ -214,7 +214,8 @@ which every agent sends.
 ## 14. Agent plan — ✅
 
 Whole-replace consumed (§9). The pinned strip mirrors only what the agent reports and
-dies with `transcriptReset` — a stale plan never outlives its source.
+dies with `transcriptReset` — a stale plan never outlives its source. An entry's
+priority shows beside it when the agent gives one.
 
 ## 15. Session modes — ✅
 

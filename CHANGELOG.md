@@ -40,8 +40,11 @@ turns (#69). Plus two security fixes and the bugs the refactor surfaced.
   agent's own command) no longer reads "not started", a killed command
   shows its signal, a command that never started says why, and an
   agent's question patchbay can't present is answered "cancel", not a
-  "decline" no user gave. Each case patchbay can't show is said once in
-  the Output channel.
+  "decline" no user gave. Model options with the same name are told apart
+  by their descriptions, and what agents send beside their content now
+  shows: a tool's own name, a plan entry's priority, a link's title,
+  thinking and cache-write tokens, a form's own title. Each case patchbay
+  can't show is said once in the Output channel.
 - **Sessions offer what the agent offers.** The menu shows **Delete…**
   (asks first; a refusal keeps the session and says why) and **Close**
   wherever the agent declares them. Close no longer deletes the session from

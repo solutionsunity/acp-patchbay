@@ -65,22 +65,30 @@ function SelectLabel({ className, ...props }: React.ComponentProps<typeof Select
   );
 }
 
-function SelectItem({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Item>) {
+/** `description`: a line under the option, in the list only — the chosen
+ * value shows its text alone. */
+function SelectItem({
+  className,
+  children,
+  description,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Item> & { description?: string }) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default select-none items-center rounded-sm py-1 pl-2 pr-7 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "relative flex w-full cursor-default select-none flex-col items-start rounded-sm py-1 pl-2 pr-7 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}
     >
-      <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+      <span className="absolute right-2 top-1.5 flex h-3.5 w-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
           <Icon name="check" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {description !== undefined && <span className="select-item-description text-[11px] text-muted-foreground">{description}</span>}
     </SelectPrimitive.Item>
   );
 }

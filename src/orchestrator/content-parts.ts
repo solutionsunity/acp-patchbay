@@ -31,12 +31,19 @@ export function contentPartOf(content: ContentFact, images: ImageStash): Content
     case "text":
       return { kind: "text", text: content.text };
     case "resource_link":
-      return { kind: "mention", name: content.name, uri: content.uri };
+      return {
+        kind: "mention",
+        name: content.name,
+        uri: content.uri,
+        ...(content.title !== undefined ? { title: content.title } : {}),
+        ...(content.description !== undefined ? { description: content.description } : {}),
+      };
     case "image": {
-      if (content.data === undefined) return { kind: "image", mimeType: content.mimeType };
+      const at = content.uri !== undefined ? { uri: content.uri } : {};
+      if (content.data === undefined) return { kind: "image", mimeType: content.mimeType, ...at };
       const file = imageFileName(images.id(), content.mimeType);
       void stashPreview(file, content.data).catch(images.onError);
-      return { kind: "image", mimeType: content.mimeType, file };
+      return { kind: "image", mimeType: content.mimeType, file, ...at };
     }
     case "resource":
       return content.text !== undefined

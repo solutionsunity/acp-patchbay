@@ -159,3 +159,21 @@ describe("agentErrorText", () => {
     expect(agentErrorText("plain")).toBe("plain");
   });
 });
+
+describe("optionText", () => {
+  it("folds the description in only where names are shared — an agent's same-named model variants (#80)", async () => {
+    const { optionText } = await import("../src/webview/shared/option-label");
+    const options = [
+      { name: "Sonnet", description: "Fast" },
+      { name: "Sonnet", description: "Deep" },
+      { name: "Opus", description: "Most capable" },
+      { name: "Haiku" },
+    ];
+    expect(options.map((o) => optionText(o, options))).toEqual([
+      { label: "Sonnet · Fast" },
+      { label: "Sonnet · Deep" },
+      { label: "Opus", description: "Most capable" },
+      { label: "Haiku" },
+    ]);
+  });
+});

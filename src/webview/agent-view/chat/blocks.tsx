@@ -62,7 +62,13 @@ function ImagePart({ part }: { part: Extract<UserPart, { kind: "image" }> }) {
   const [broken, setBroken] = useState(false);
   const src = part.file !== undefined ? attachmentUri(part.file) : null;
   if (src === null || broken) {
-    return (
+    // An image sent by address only is a link to it — never fetched into
+    // the view.
+    return part.uri !== undefined ? (
+      <a className={`prompt-token ${LINK}`} href={part.uri} title={part.uri}>
+        <Icon name="file-media" /> image
+      </a>
+    ) : (
       <span className="prompt-token" title={part.mimeType}>
         <Icon name="file-media" /> image
       </span>
@@ -95,7 +101,7 @@ function PartView({ part }: { part: UserPart }) {
     case "text":
       return <UserProse text={part.text} />;
     case "mention":
-      return <MentionToken name={part.name} uri={part.uri} />;
+      return <MentionToken part={part} />;
     case "image":
       return <ImagePart part={part} />;
     case "attachment":
@@ -114,16 +120,20 @@ function PartView({ part }: { part: UserPart }) {
 /** A resource_link, wherever it arrives — a user's `@file`, a link in a
  * thought or a tool's content. A local file opens in the editor; any other
  * address takes the same path as a link in the agent's prose. */
-function MentionToken({ name, uri }: { name: string; uri: string }) {
+function MentionToken({ part }: { part: Extract<UserPart, { kind: "mention" }> }) {
   const send = useActions();
+  const { name, uri } = part;
   const path = filePathOf(uri);
   const className = `prompt-token mention-token ${LINK}`;
+  // What the agent said of the link, above where it goes.
+  const said = [part.title, part.description].filter((t) => t !== undefined).join(" — ");
+  const tip = (target: string) => (said === "" ? target : `${said}\n${target}`);
   return path !== null ? (
-    <button type="button" className={className} title={`Open ${path}`} onClick={() => send({ kind: "openFile", path })}>
+    <button type="button" className={className} title={tip(`Open ${path}`)} onClick={() => send({ kind: "openFile", path })}>
       @{name}
     </button>
   ) : (
-    <a className={className} href={uri} title={uri}>
+    <a className={className} href={uri} title={tip(uri)}>
       @{name}
     </a>
   );
@@ -386,7 +396,7 @@ export function ToolCallCard({
         className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""}`}
         onClick={expandable ? headerClick(() => setOpen((v) => !v)) : undefined}
       >
-        <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]}>
+        <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]} title={block.name}>
           <Icon name={TOOL_ICON[block.toolKind]} />
         </span>
         <span className="min-w-0 flex-1 truncate">{block.title}</span>

@@ -921,6 +921,55 @@ for (const theme of Object.keys(THEMES)) {
   await p.close();
 }
 
+// ── what an agent says of its options and its plan reaches the user:
+// same-named options told apart, each option's description in the list,
+// a plan entry's priority (#80). Theme-independent. ──
+{
+  const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.evaluate(() =>
+    window.__patch([
+      {
+        kind: "sessionKnobsSet",
+        patchbaySessionId: "s1",
+        knobs: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "deep",
+            options: [
+              { value: "fast", name: "Sonnet", description: "Fast" },
+              { value: "deep", name: "Sonnet", description: "Deep" },
+              { value: "opus", name: "Opus", description: "Most capable" },
+            ],
+          },
+        ],
+      },
+      {
+        kind: "planUpdated",
+        patchbaySessionId: "s1",
+        entries: [
+          { content: "ship it", status: "in_progress", priority: "high" },
+          { content: "tell people", status: "pending" },
+        ],
+      },
+    ]),
+  );
+  const trigger = p.locator('.input-foot [role="combobox"]');
+  check(`a same-named option shows its description in the pill ("${(await trigger.textContent())?.trim()}")`, (await trigger.textContent())?.includes("Sonnet · Deep") === true);
+  await trigger.click();
+  const described = await p.locator('[data-slot="select-content"] .select-item-description').allTextContents();
+  check(`an option's description shows in the list, unless its label already carries it (${JSON.stringify(described)})`, JSON.stringify(described) === JSON.stringify(["Most capable"]));
+  await p.locator('[data-slot="select-content"]').screenshot({ path: `${OUT}/knob-options-described.png` });
+  await p.keyboard.press("Escape");
+  await p.click(".readout-strip .chip.plan");
+  check("a plan entry shows its priority", (await p.locator(".plan-panel .prio", { hasText: "high" }).count()) === 1);
+  await p.close();
+}
+
 // ── a held prompt shows the chips it carries (#83). Theme-independent. ──
 {
   const p = await page(browser, Object.keys(THEMES)[0], { width: 420, height: 900 });

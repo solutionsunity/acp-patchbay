@@ -49,7 +49,7 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
     case "tool_call_update":
       return { kind: "toolCall", announced: false, call: readToolCall(update) };
     case "plan":
-      return { kind: "plan", entries: update.entries.map((e) => ({ content: e.content, status: e.status })) };
+      return { kind: "plan", entries: update.entries.map((e) => ({ content: e.content, status: e.status, ...present("priority", e.priority) })) };
     case "available_commands_update":
       return {
         kind: "commands",

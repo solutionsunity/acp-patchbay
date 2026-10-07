@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import type { SessionKnobView } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
+import { optionText } from "../../shared/option-label";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -25,6 +26,19 @@ import {
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 const KNOB_TRIGGER = "h-5 border-0 px-1 text-[10.5px] shadow-none";
+
+function OptionItem({ value, text }: { value: string; text: { label: string; description?: string } }) {
+  return (
+    <SelectItem value={value} description={text.description}>
+      {text.label}
+    </SelectItem>
+  );
+}
+
+/** A select knob's options, out of their groups. */
+function allOptions(knob: Extract<SessionKnobView, { type: "select" }>): readonly { name: string }[] {
+  return knob.options.flatMap((e) => ("group" in e ? e.options : [e]));
+}
 
 function glyphFor(category: string | undefined): string {
   return category === "model" ? "sparkle" : category === "thought_level" ? "dashboard" : "gear";
@@ -75,15 +89,11 @@ export function Knobs(props: {
                       <SelectGroup key={entry.group}>
                         <SelectLabel>{entry.name}</SelectLabel>
                         {entry.options.map((v) => (
-                          <SelectItem key={v.value} value={v.value}>
-                            {v.name}
-                          </SelectItem>
+                          <OptionItem key={v.value} value={v.value} text={optionText(v, allOptions(k))} />
                         ))}
                       </SelectGroup>
                     ) : (
-                      <SelectItem key={entry.value} value={entry.value}>
-                        {entry.name}
-                      </SelectItem>
+                      <OptionItem key={entry.value} value={entry.value} text={optionText(entry, allOptions(k))} />
                     ),
                   )}
                 </SelectContent>

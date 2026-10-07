@@ -187,6 +187,16 @@ describe("linkOf — what a url ask may open, and what deserves a second look", 
 });
 
 describe("readElicitationRequest — one reading of what the agent asked", () => {
+  it("a form carries what its schema says of itself — title and description (#80)", () => {
+    const reading = readElicitationRequest({
+      mode: "form",
+      sessionId: "s",
+      message: "m",
+      requestedSchema: { type: "object", title: "Deploy", description: "Pick where", properties: { env: { type: "string" } } },
+    });
+    expect(reading).toMatchObject({ kind: "ask", ask: { mode: "form", title: "Deploy", description: "Pick where" } });
+  });
+
   const schema = { type: "object", properties: { a: { type: "string" } } };
 
   it("a session's form or link becomes an ask", () => {
