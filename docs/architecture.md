@@ -332,18 +332,30 @@ or true), and an agent's malformed name never costs its version.
   not open here — is a note in the Output channel, said once per agent,
   place and note: the one way a user sees it without the wire log.
 
-Read this way today: `session/update` (content, tool calls, plans, commands,
-usage, title, knobs), `session/request_permission`, and the answers to every
-request patchbay sends (`initialize`, the session lifecycle, `session/list`,
-`session/prompt`, `session/set_config_option`) — a session response's knobs
-through the one normalizer with the extension doors, where the raw response
-is read. An agent's error is thrown, not handed over, so it is read where it
-is caught, by the one error reader: its message and what its `data` adds
-(where agents put the reason), and whether it bears on auth. A failure the
-user caused — a turn, a log-in, a knob change, a fork — says it where they
-are, in those words; a background one says it in the Output channel. The
-agent's own requests — files, terminals, elicitation — are read at the pool
-the same way, and their hooks hand on the reading.
+Every message is read this way: `session/update` (content, tool calls,
+plans, commands, usage, title, knobs); the agent's own requests
+(`session/request_permission`, files, terminals, elicitation); and the
+answers to every request patchbay sends (`initialize`, the session
+lifecycle, `session/list`, `session/prompt`, `session/set_config_option`) —
+a session response's knobs through the one normalizer with the extension
+doors, where the raw response is read. An agent's error is thrown, not
+handed over, so it is read where it is caught, by the one error reader: its
+message and what its `data` adds (where agents put the reason), and whether
+it bears on auth. A failure the user caused — a turn, a log-in, a knob
+change, a fork — says it where they are, in those words; a background one
+says it in the Output channel.
+
+- **The boundary is held by the compiler.** A hook's parameter carries its
+  type with no import, so an import ban can't hold the line. A test does
+  (`test/wire-boundary.test.ts`): every property read in `src/` whose
+  property the protocol's schema declares must sit in the reader layer — the
+  pool, the readers, the extension modules, the `_meta` table. Building a
+  message to send is not reading one; the two files that read back only
+  what patchbay itself built are named in the test, each with why.
+- **Rendering is pinned.** A wire corpus (`test/wire-corpus.test.ts`) runs
+  the whole `session/update` surface through the real wire, live and as a
+  reload's replay, against golden files: a change to what any agent message
+  renders as is a reviewed diff of the goldens.
 
 ## Agent capability matrix
 

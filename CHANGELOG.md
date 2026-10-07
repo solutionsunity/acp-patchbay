@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-A refactor of how patchbay holds its state: agents, sessions, MCP servers
+Two refactors. How patchbay holds its state: agents, sessions, MCP servers
 and asks each live in one store with one writer, and work on them takes
-turns (#69). Plus two security fixes and the bugs the refactor surfaced.
+turns (#69). And how it reads what agents send: one reader per kind of
+message, so nothing is invented, dropped or read two ways (#80). Plus three
+security fixes and the bugs the refactors surfaced.
 
 - **Security:** patchbay's local socket now answers only the processes an
   agent was started with for a session. Before, any program running as the
