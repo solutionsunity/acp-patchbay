@@ -52,6 +52,25 @@ const rateLimitInfoSchema = z.object({
   resetsAt: z.number().optional(),
 });
 
+/** A command the agent runs itself, in the Zed display-only terminal
+ * convention: output chunks and the exit, each naming the terminal the
+ * tool call's content embeds (codex-acp 1.1.2 dist, checked 2026-10-07:
+ * `{ data, terminal_id }` and `{ exit_code, signal, terminal_id }`). */
+const terminalOutputDeltaSchema = z.object({ terminal_id: z.string().min(1), data: z.string() });
+const terminalExitSchema = z.object({
+  terminal_id: z.string().min(1),
+  exit_code: z.number().int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+});
+
+/** What a tool call's `_meta` says of a terminal the agent runs itself:
+ * output since the last reading, and how it ended once it has. */
+export interface AgentTerminalReading {
+  terminalId: string;
+  output?: string;
+  exit?: { exitCode: number | null; signal: string | null };
+}
+
 /** Where in the protocol a `_meta` blob may carry an extension patchbay
  * understands. Site-keyed: the same mechanism carries unrelated shapes for
  * unrelated consumers depending on where it appears. */
@@ -69,6 +88,16 @@ const META_EXTENSIONS = {
     // sibling readout). Consume-only — the bridge emits unconditionally,
     // nothing is gated on patchbay declaring it.
     "_claude/rateLimit": { schema: rateLimitInfoSchema, declare: false },
+  },
+  toolCall: {
+    // Adopted 2026-10-07: the output of a command the agent runs itself,
+    // which codex-acp sends nowhere else (not content, not rawOutput).
+    // Consume-only: codex-acp sends the delta channel to every client that
+    // doesn't ask for `terminal_output`, and declaring nothing keeps
+    // claude-agent-acp — which uses the convention only for a client that
+    // declares `terminal_output` — on its own rendering.
+    terminal_output_delta: { schema: terminalOutputDeltaSchema, declare: false },
+    terminal_exit: { schema: terminalExitSchema, declare: false },
   },
 } as const satisfies Record<string, Record<string, { schema: z.ZodType; declare: boolean }>>;
 
@@ -99,6 +128,24 @@ export function terminalAuthRecipeOf(meta: unknown): TerminalAuthRecipe | null {
   const entry = META_EXTENSIONS.authMethod["terminal-auth"];
   const parsed = entry.schema.safeParse(payloadOf(meta, "terminal-auth"));
   return parsed.success ? parsed.data : null;
+}
+
+/** toolCall-site processor: a terminal the agent runs itself — the output
+ * chunk this update carries and its exit, under the terminal's id; null
+ * when the call's `_meta` says nothing of one. */
+export function agentTerminalOf(meta: unknown): AgentTerminalReading | null {
+  const site = META_EXTENSIONS.toolCall;
+  const output = site.terminal_output_delta.schema.safeParse(payloadOf(meta, "terminal_output_delta"));
+  const exit = site.terminal_exit.schema.safeParse(payloadOf(meta, "terminal_exit"));
+  const terminalId = output.success ? output.data.terminal_id : exit.success ? exit.data.terminal_id : null;
+  if (terminalId === null) return null;
+  return {
+    terminalId,
+    ...(output.success && output.data.terminal_id === terminalId ? { output: output.data.data } : {}),
+    ...(exit.success && exit.data.terminal_id === terminalId
+      ? { exit: { exitCode: exit.data.exit_code ?? null, signal: exit.data.signal ?? null } }
+      : {}),
+  };
 }
 
 /** usageUpdate-site processor: `_meta["_claude/rateLimit"]` → the neutral

@@ -95,9 +95,14 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   counted as a prompt. Conservative on purpose: any text a human plausibly
   typed stays a normal user bubble. Likely generic across bridge-based
   harnesses, not vendor-gated.
+- `_claude/rateLimit` on `usage_update` is adopted — the plan-usage gauge
+  (`meta.ts` usageUpdate site).
 - Observed `_meta` conventions (unadopted — adopt via meta.ts when needed):
-  `_claude/sdkMessage`, `_claude/rateLimit`, `_claude/askUserQuestionOption`;
-  terminal-output `_meta` channel (convention shared with codex-acp).
+  `_claude/sdkMessage`, `_claude/askUserQuestionOption`; the terminal-output
+  `_meta` channel, which the bridge uses only for a client that declares
+  `_meta.terminal_output` — patchbay declares nothing, so Bash output keeps
+  arriving as a console code block at completion (patchbay reads only the
+  delta channel codex-acp sends unasked).
 - Session titles are SDK-generated in the background; the bridge polls at
   turn-end and pushes `session_info_update` when changed.
 - **`diff` content carries changed regions, not files** (0.81.2, 2026-09-25,

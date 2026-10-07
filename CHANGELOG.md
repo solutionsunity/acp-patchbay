@@ -40,8 +40,9 @@ security fixes and the bugs the refactors surfaced.
   capability is declared only in its own shape. A failed turn says why
   under its turn line, and a failed log-in, log-out, knob change, fork or
   delete says why in a warning — with the reason agents put in an error's
-  data, which used to reach no one. A terminal patchbay didn't run (an
-  agent's own command) no longer reads "not started", a killed command
+  data, which used to reach no one. A command the agent runs itself shows
+  its output as it arrives — Codex's commands showed none — and a terminal
+  patchbay knows nothing of no longer reads "not started"; a killed command
   shows its signal, a command that never started says why, and an
   agent's question patchbay can't present is answered "cancel", not a
   "decline" no user gave. Model options with the same name are told apart

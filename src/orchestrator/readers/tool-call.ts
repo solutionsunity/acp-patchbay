@@ -8,6 +8,7 @@
 // announcement (`tool_call`) has defaults, the spec's own: pending, other.
 import type { ToolCall, ToolCallUpdate } from "@agentclientprotocol/sdk";
 import type { ToolCallKind, ToolCallStatus, ToolLocation } from "../../shared/protocol";
+import { agentTerminalOf, type AgentTerminalReading } from "../meta";
 import { present, readToolContent, type ToolContentFact } from "./content";
 
 export interface ToolCallFact {
@@ -25,6 +26,8 @@ export interface ToolCallFact {
   content?: readonly ToolContentFact[];
   /** The call's `_meta`, for the extension modules that read vendor fields. */
   meta?: Readonly<Record<string, unknown>>;
+  /** A terminal the agent runs itself, as its `_meta` reports it. */
+  terminal?: AgentTerminalReading;
 }
 
 /** `tool_call`: the call announced whole — the spec's defaults fill what it
@@ -48,6 +51,7 @@ export function readToolCall(call: ToolCallUpdate | ToolCall): ToolCallFact {
     ...(call.locations != null ? { locations: readLocations(call.locations) } : {}),
     ...(call.content != null ? { content: readToolContent(call.content) } : {}),
     ...present("meta", call._meta),
+    ...present("terminal", agentTerminalOf(call._meta)),
   };
 }
 

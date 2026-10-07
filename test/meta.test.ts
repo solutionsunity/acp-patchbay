@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { clientCapabilitiesWire } from "../src/orchestrator/capabilities";
 import { readInitialize } from "../src/orchestrator/readers/initialize";
-import { clientMetaWire, planUsageOf, terminalAuthRecipeOf } from "../src/orchestrator/meta";
+import { agentTerminalOf, clientMetaWire, planUsageOf, terminalAuthRecipeOf } from "../src/orchestrator/meta";
 
 const recipe = {
   command: "/usr/bin/node",
@@ -157,5 +157,26 @@ describe("auth method kind classification", () => {
       initWith([{ id: "x", name: "X", _meta: { "terminal-auth": { args: [] } } }]),
     );
     expect(declared.authMethods[0]!.kind).toBe("agent");
+  });
+});
+
+describe("agentTerminalOf — a command the agent runs itself (#80)", () => {
+  it("reads an output chunk and the exit, under the terminal's id", () => {
+    expect(agentTerminalOf({ terminal_output_delta: { terminal_id: "c1", data: "1 passed\n" } })).toEqual({ terminalId: "c1", output: "1 passed\n" });
+    expect(agentTerminalOf({ terminal_exit: { terminal_id: "c1", exit_code: 0, signal: null } })).toEqual({
+      terminalId: "c1",
+      exit: { exitCode: 0, signal: null },
+    });
+    expect(
+      agentTerminalOf({ terminal_output_delta: { terminal_id: "c1", data: "x" }, terminal_exit: { terminal_id: "c1", exit_code: 1 } }),
+    ).toEqual({ terminalId: "c1", output: "x", exit: { exitCode: 1, signal: null } });
+  });
+
+  it("anything else is no terminal — and nothing is declared, so claude-agent-acp keeps its own rendering", () => {
+    expect(agentTerminalOf(undefined)).toBeNull();
+    expect(agentTerminalOf({ terminal_output_delta: { data: "no id" } })).toBeNull();
+    expect(agentTerminalOf({ terminal_info: { terminal_id: "c1" } })).toBeNull();
+    expect(clientMetaWire()).not.toHaveProperty("terminal_output");
+    expect(clientMetaWire()).not.toHaveProperty("terminal_output_delta");
   });
 });

@@ -175,6 +175,14 @@
       "interrupted": false
     },
     {
+      "kind": "terminal",
+      "id": "term-block-agent-term-1",
+      "command": "Run npm test",
+      "output": "1 passed\n",
+      "running": false,
+      "exitCode": 0
+    },
+    {
       "kind": "toolCall",
       "id": "<id-18>",
       "title": "Fetch https://example.com",

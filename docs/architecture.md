@@ -561,7 +561,9 @@ carry real surface there beyond core protocol; observed in `claude-agent-acp`:
 `_claude/sdkMessage` (tunnel of the raw Claude Agent SDK stream),
 `_claude/rateLimit` (subscription rate-limit windows), `_claude/askUserQuestionOption`
 (richer permission options), and a terminal-output `_meta` channel shared as a
-convention with `codex-acp` for live command output. The observed pattern:
+convention with `codex-acp` for live command output — adopted consume-only for
+the delta channel codex-acp sends unasked, the only place its command output
+rides. The observed pattern:
 extensions enrich standard updates in place — `_claude/rateLimit` rides the
 standard `usage_update` notification's `_meta` while `used`/`size` stay
 protocol-shaped — they don't fork the stream. Token and context reporting is

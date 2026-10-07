@@ -3431,6 +3431,20 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     await h.pool.stop("ch-status" as PatchbayAgentId);
   });
 
+  it("a command the agent runs itself fills a terminal inside its card, from the call's _meta (#80)", async () => {
+    const { h, push, blocks } = await chunkHarness("ch-term" as PatchbayAgentId);
+    push({ sessionUpdate: "tool_call", toolCallId: "c1", title: "npm test", kind: "execute", status: "in_progress", content: [{ type: "terminal", terminalId: "c1" }] });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "c1", _meta: { terminal_output_delta: { terminal_id: "c1", data: "running…\n" } } });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "c1", _meta: { terminal_output_delta: { terminal_id: "c1", data: "1 passed\n" } } });
+    const live = blocks().find((b) => b.kind === "terminal");
+    expect(live).toMatchObject({ id: "term-block-c1", command: "npm test", output: "running…\n1 passed\n", running: true });
+    push({ sessionUpdate: "tool_call_update", toolCallId: "c1", status: "completed", _meta: { terminal_exit: { terminal_id: "c1", exit_code: 0, signal: null } } });
+    expect(blocks().find((b) => b.kind === "terminal")).toMatchObject({ running: false, exitCode: 0 });
+    // the card still embeds it by the agent's id — no ghost line
+    expect(blocks().find((b) => b.kind === "toolCall")).toMatchObject({ content: [{ kind: "terminal", terminalId: "c1" }] });
+    await h.pool.stop("ch-term" as PatchbayAgentId);
+  });
+
   it("a link in an agent's message stays one link — brackets in its name, spaces in its target", async () => {
     const { h, push, blocks } = await chunkHarness("ch-link" as PatchbayAgentId);
     push({ sessionUpdate: "agent_message_chunk", content: { type: "resource_link", name: "notes [draft].md", uri: "file:///w/my notes (1).md" } });

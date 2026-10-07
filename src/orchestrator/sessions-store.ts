@@ -258,7 +258,8 @@ function liveSession(): LiveSession {
     inFlight: false,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
-    toolCalls: new Set(),
+    toolCalls: new Map(),
+    agentTerminals: new Map(),
     replayTurnDirty: false,
     userModeSetPending: false,
   };

@@ -11,6 +11,7 @@
 // its title, its knobs; everything here is the transcript's.
 import {
   isToolCallOpen,
+  terminalBlockId,
   type AgentViewEvent,
   type DiffStat,
   type PermissionCallView,
@@ -22,6 +23,7 @@ import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./co
 import { computeLineDiff } from "./diff";
 import { createProseRewriter, type ProseRewriter } from "./extensions";
 import type { Logger } from "./logger";
+import type { AgentTerminalReading } from "./meta";
 import type { ContentFact, ToolContentFact } from "./readers/content";
 import type { SessionUpdateFact } from "./readers/session-update";
 import type { ToolCallFact } from "./readers/tool-call";
@@ -88,10 +90,13 @@ export interface StreamState {
    * per id on a terminal status, swept wholesale when the turn ends any way
    * but end_turn. */
   openToolCalls: Set<string>;
-  /** Every toolCallId this attachment has seen — what tells an update for
-   * a known call (absent status = unchanged) from one standing in for an
-   * announcement it never saw. */
-  toolCalls: Set<string>;
+  /** Every toolCallId this attachment has seen, with the title it last
+   * gave — what tells an update for a known call (absent status =
+   * unchanged) from one standing in for an announcement it never saw. */
+  toolCalls: Map<string, string | undefined>;
+  /** Terminals the agent runs itself, by id, and whether each still runs —
+   * the turn-end sweep settles any the agent never reported ended. */
+  agentTerminals: Map<string, boolean>;
   /** Replay-window only: agent activity observed since the last turn
    * boundary. A replayed user message arriving with this set means a turn
    * just ended structurally — synthesize its TurnEndBlock (nullable timing;
@@ -370,7 +375,8 @@ export class SessionStream {
   ): void {
     if (announced) this.seal(patchbaySessionId, session); // the agent paused to act
     const status = call.status ?? (session.toolCalls.has(call.toolCallId) ? undefined : "pending");
-    session.toolCalls.add(call.toolCallId);
+    const title = call.title ?? session.toolCalls.get(call.toolCallId);
+    session.toolCalls.set(call.toolCallId, title);
     if (status !== undefined) this.trackOpenToolCall(session, call.toolCallId, status);
     emit({
       kind: "toolCallUpserted",
@@ -388,6 +394,37 @@ export class SessionStream {
         : {}),
       ...this.stashToolDiffs(patchbaySessionId, call.toolCallId, call.content),
     });
+    if (call.terminal !== undefined) this.applyAgentTerminal(patchbaySessionId, session, call.terminal, title, emit);
+  }
+
+  /** A terminal the agent runs itself, as its tool call's `_meta` reports
+   * it: a display-only terminal block the call's card embeds, under the
+   * call's title, filled as the output arrives and settled by the exit. */
+  private applyAgentTerminal(
+    patchbaySessionId: PatchbaySessionId,
+    session: StreamState,
+    reading: AgentTerminalReading,
+    title: string | undefined,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    const blockId = terminalBlockId(reading.terminalId);
+    if (!session.agentTerminals.has(reading.terminalId)) {
+      session.agentTerminals.set(reading.terminalId, true);
+      emit({ kind: "terminalStarted", patchbaySessionId, blockId, command: title || "the agent's command" });
+    }
+    if (reading.output !== undefined && reading.output !== "") {
+      emit({ kind: "terminalOutputAppended", patchbaySessionId, blockId, chunk: reading.output });
+    }
+    if (reading.exit !== undefined && session.agentTerminals.get(reading.terminalId) === true) {
+      session.agentTerminals.set(reading.terminalId, false);
+      emit({
+        kind: "terminalExited",
+        patchbaySessionId,
+        blockId,
+        exitCode: reading.exit.exitCode,
+        ...(reading.exit.signal !== null ? { signal: reading.exit.signal } : {}),
+      });
+    }
   }
 
   /** The call a permission request asks about, as its card shows it: what
@@ -482,8 +519,15 @@ export class SessionStream {
    * call). A trailing tool_call_update still wins — any fresh upsert clears
    * the mark. */
   sweep(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
-    if (session.openToolCalls.size === 0) return;
     const emit = this.emitter(patchbaySessionId);
+    // An agent's own terminal still running when nothing runs is no longer
+    // live; how it ended was never said — "exit ?", not a spinner.
+    for (const [terminalId, running] of session.agentTerminals) {
+      if (!running) continue;
+      session.agentTerminals.set(terminalId, false);
+      emit({ kind: "terminalExited", patchbaySessionId, blockId: terminalBlockId(terminalId), exitCode: null });
+    }
+    if (session.openToolCalls.size === 0) return;
     const ids = [...session.openToolCalls];
     session.openToolCalls.clear();
     for (const blockId of ids) {
