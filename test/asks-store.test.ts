@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { AsksStore, type AskEnding } from "../src/orchestrator/asks-store";
 import type { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
 import type { AgentViewEvent, PermissionOptionView, QuestionEvent } from "../src/shared/protocol";
-import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 const S1 = "s1" as PatchbaySessionId;
 const OPTIONS: readonly PermissionOptionView[] = [
@@ -41,14 +41,16 @@ function harness() {
   // the turn running on S1 — whatever a test sets
   let turn: string | null = null;
   const held = heldAudit();
+  const ended: PatchbayAskId[] = [];
   const asks = new AsksStore(held.audit, {
     emit: (...evs) => events.push(...evs),
     emitAgent: (patchbayAgentId, event) => agentEvents.push({ patchbayAgentId, event }),
     turnOf: () => turn,
     onAuditWritten: () => {},
     pairOf: () => ({ patchbayAgentId: "a1" as PatchbayAgentId, sessionId: "agent-s1" }),
+    ended: (id) => ended.push(id),
   });
-  return { asks, events, agentEvents, startTurn: (id: string | null) => (turn = id), ...held };
+  return { asks, events, agentEvents, ended, startTurn: (id: string | null) => (turn = id), ...held };
 }
 
 /** Whether a promise has settled by now. */
@@ -83,7 +85,7 @@ describe("AsksStore — an answer that doesn't fit its ask moves nothing", () =>
   it("an option answer at a write's card moves nothing either", async () => {
     const { asks, events } = harness();
     const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
-    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: null });
+    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, preview: [], proposals: [] });
     asks.answerOption(id, "y");
     expect(await settledYet(ending)).toBe(false);
     expect(events.map((e) => e.kind)).toEqual(["diffProposed"]);
@@ -110,7 +112,7 @@ describe("AsksStore — the record before the answer", () => {
   it("a record that fails fails the caller — the action never runs unrecorded", async () => {
     const { asks, pending } = harness();
     const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
-    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: null });
+    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, preview: [], proposals: [] });
     asks.answerWrite(id, true);
     pending[0]!.fail(new Error("disk full"));
     await expect(ending).rejects.toThrow("disk full");
@@ -131,13 +133,13 @@ describe("AsksStore — an ask that ends before its card shows", () => {
     const { asks, events, lines, pending } = harness();
     const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
     asks.stopSession(S1);
-    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: { path: "/w/a.ts", oldText: "", newText: "x" } });
+    asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, preview: [], proposals: [{ path: "/w/a.ts", oldText: "", newText: "x" }] });
     asks.allow(id); // a rule's verdict that comes too late
     pending[0]!.land();
     expect(await ending).toEqual({ end: "stop" });
     expect(events).toEqual([]);
     expect(lines).toEqual([{ kind: "turn-cancelled", patchbayAgentId: "a1", sessionId: "agent-s1", file: "/w/a.ts" }]);
-    expect(asks.proposal(id)).toBeNull();
+    expect(asks.proposals(id)).toEqual([]);
   });
 });
 
@@ -201,3 +203,32 @@ describe("AsksStore — an ask ends with its owner", () => {
     expect(agentEvents.at(-1)).toEqual({ patchbayAgentId: agent, event: { kind: "elicitationResolved", patchbayAskId: id, outcome: "cancelled" } });
   });
 });
+
+// What was opened to decide an ask — the diff editor's tabs — goes when the
+// ask does, however it ends (#90): the store says so once, as it leaves open.
+describe("AsksStore — an ask's end is said once", () => {
+  const change = { path: "/w/a.ts", oldText: "a", newText: "b" };
+  const card = { kind: "write" as const, file: "/w/a.ts", additions: 1, deletions: 1, preview: [], proposals: [change] };
+
+  it("each way out of open says it — the user, a rule, a stop, a withdrawal — and nothing after", async () => {
+    const { asks, ended, pending } = harness();
+    const user = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
+    asks.show(user.id, card);
+    expect(asks.proposals(user.id)).toEqual([change]);
+    asks.answerWrite(user.id, true);
+    asks.answerWrite(user.id, false); // a second click moves nothing
+    const rule = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
+    asks.show(rule.id, { ...card, proposals: [] });
+    asks.allow(rule.id);
+    const stopped = asks.open({ patchbaySessionId: S1 }, "permission", { tool: "Edit" });
+    asks.show(stopped.id, { kind: "options", title: "Edit", detail: "", facts: [], options: [], proposals: [change] });
+    asks.stopSession(S1);
+    const withdrawn = asks.open({ patchbaySessionId: S1 }, "permission", { tool: "Edit" });
+    asks.withdraw(withdrawn.id);
+    for (const p of pending) p.land();
+    expect(ended).toEqual([user.id, rule.id, stopped.id, withdrawn.id]);
+    expect(asks.proposals(user.id)).toEqual([]);
+    expect(asks.proposals(stopped.id)).toEqual([]);
+  });
+});
+

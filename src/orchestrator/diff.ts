@@ -5,7 +5,7 @@
 // correct for reordering-free edits, which covers the overwhelming majority
 // of agent file writes. No dependency: this is ~30 lines by hand and the
 // alternative (a diff library) buys nothing a pre-gated preview needs.
-import type { DiffLineKind, DiffStat } from "../shared/protocol";
+import type { DiffLineKind, DiffRow, DiffStat } from "../shared/protocol";
 
 export interface DiffResult extends DiffStat {
   lines: readonly { kind: DiffLineKind; text: string }[];
@@ -91,4 +91,31 @@ export function computeLineDiff(oldText: string, newText: string): DiffResult {
   for (const text of oldLines.slice(oldLines.length - tail)) lines.push({ kind: "context", text });
 
   return { additions, deletions, lines };
+}
+
+/** Unchanged lines shown on each side of a change — git's own default, the
+ * amount a reader expects around a hunk. */
+const PREVIEW_CONTEXT = 3;
+
+/** The most rows a card shows: about a two- or three-line edit with its
+ * context. A change that needs more is read in the diff editor instead. */
+const PREVIEW_ROWS = 12;
+
+/** What of a diff a card shows: every hunk — the changed lines and
+ * PREVIEW_CONTEXT unchanged ones each side, hunks whose context meets joined
+ * into one, a gap row between the rest — or null when that takes more than
+ * PREVIEW_ROWS rows. Never a cut: a card that showed part of a change would
+ * ask for a decision on what it hid. No change at all is no rows. */
+export function previewOf(lines: DiffResult["lines"]): DiffRow[] | null {
+  const hunks: { from: number; to: number }[] = [];
+  lines.forEach((line, i) => {
+    if (line.kind === "context") return;
+    const from = Math.max(0, i - PREVIEW_CONTEXT);
+    const to = Math.min(lines.length - 1, i + PREVIEW_CONTEXT);
+    const last = hunks.at(-1);
+    if (last !== undefined && from <= last.to + 1) last.to = to;
+    else hunks.push({ from, to });
+  });
+  const rows = hunks.flatMap((h, i): DiffRow[] => [...(i > 0 ? [{ kind: "gap" as const }] : []), ...lines.slice(h.from, h.to + 1)]);
+  return rows.length > PREVIEW_ROWS ? null : rows;
 }

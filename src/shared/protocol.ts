@@ -222,8 +222,10 @@ export type Action =
   | { kind: "copyMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId }
   /** Open an agent-reported tool-call diff in VS Code's native diff editor. */
   | { kind: "openToolCallDiff"; patchbaySessionId: PatchbaySessionId; toolCallId: string; path: string }
-  /** Open a pending write proposal — the diff card's full change — in VS
-   * Code's native diff editor; a no-op once the proposal has resolved. */
+  /** Open what a pending ask would change — a proposed write, or the diffs
+   * an agent's permission request carries — in VS Code's native diff
+   * editor, one tab per file, closed when the ask ends; a no-op once it
+   * has. */
   | { kind: "openProposedDiff"; patchbayAskId: PatchbayAskId }
   /** Open a file in the editor by absolute path — the read-out strip's
    * files-panel rows (the view never touches fs). `line` is the location's
@@ -1115,14 +1117,15 @@ export interface PermissionFact {
 
 /** The tool call an agent's permission request asks about, as the user
  * must see it to decide: what the request says of it over what the session
- * already showed — the files it names (each diff openable), what it
- * produced, and the input it will run with. */
+ * already showed — the files it names, the change it would make to each,
+ * what it produced, and the input it will run with. */
 export interface PermissionCallView {
   toolCallId: string;
   toolKind: ToolCallKind;
   locations: readonly ToolLocation[];
   content: readonly ToolContentPart[];
-  diffs: Readonly<Record<string, DiffStat>>;
+  /** Per path, the change the call carries a diff for. */
+  diffs: Readonly<Record<string, ChangePreview>>;
   /** The call's raw input, bounded — null when none was sent. */
   input: string | null;
 }
@@ -1144,13 +1147,22 @@ export interface PermissionBlock {
 
 export type DiffLineKind = "context" | "add" | "del";
 
-export interface DiffBlock {
+/** One row of a change's preview: a line it keeps, adds or removes, or the
+ * unchanged run between two of its hunks. */
+export type DiffRow = { kind: DiffLineKind; text: string } | { kind: "gap" };
+
+/** A change put to the user: its line counts, and the change itself when
+ * the whole of it fits on a card — every hunk with its context. Null when it
+ * doesn't: a card never shows part of a change, and the diff editor is where
+ * a larger one is read. */
+export interface ChangePreview extends DiffStat {
+  preview: readonly DiffRow[] | null;
+}
+
+export interface DiffBlock extends ChangePreview {
   kind: "diff";
   id: PatchbayAskId;
   file: string;
-  additions: number;
-  deletions: number;
-  lines: readonly { kind: DiffLineKind; text: string }[];
   /** null while awaiting the user; auto-accept still shows the diff. */
   resolution: { accepted: boolean; auto: boolean } | null;
 }
@@ -1735,7 +1747,7 @@ export type AgentViewEvent =
       file: string;
       additions: number;
       deletions: number;
-      lines: readonly { kind: DiffLineKind; text: string }[];
+      preview: readonly DiffRow[] | null;
     }
   | { kind: "diffResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; accepted: boolean; auto: boolean }
   | { kind: "terminalStarted"; patchbaySessionId: PatchbaySessionId; blockId: string; command: string }
@@ -2212,7 +2224,7 @@ export function reduceAgentView(
         file: event.file,
         additions: event.additions,
         deletions: event.deletions,
-        lines: event.lines,
+        preview: event.preview,
         resolution: null,
       });
     case "diffResolved":

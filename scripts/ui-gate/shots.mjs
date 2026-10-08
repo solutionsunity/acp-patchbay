@@ -119,18 +119,22 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] mermaid open-in-editor action present`, (await p.$('[data-streamdown="mermaid-block-actions"] button[title="Open in editor — full size"]')) !== null);
   check(`[${theme}] broken mermaid shows honest fallback`, (await p.$("text=diagram didn't parse")) !== null);
 
-  // ── write proposal cards: a bounded preview that says what it omits, and
-  // the full diff one click away in VS Code's own diff editor ──
-  const longDiff = await p.$(".card .diff-body .more");
-  const longDiffText = longDiff === null ? "" : (await longDiff.textContent()).trim();
-  check(`[${theme}] oversize proposal names its omitted lines ("${longDiffText}")`, longDiffText.startsWith("20 more lines"));
-  check(`[${theme}] pending proposal offers the full diff`, (await p.$(".card .diff-file .open-diff")) !== null);
-  const diffCards = await p.$$(".card .diff-body");
-  check(`[${theme}] both proposal cards rendered`, diffCards.length === 2);
-  check(`[${theme}] short proposal omits nothing`, (await p.$$(".card .diff-body .more")).length === 1);
+  // ── decision cards: the whole change or none of it on the card, Open diff
+  // beside the answers while pending — write gate and agent request alike ──
+  const tooLarge = await p.$(".card .diff-body.too-large");
+  check(`[${theme}] oversize proposal shows none of itself, and says why`, tooLarge !== null && (await p.$$(".card .diff-body.too-large .add")).length === 0);
+  const openDiffs = await p.$$('.card .acts button:has-text("Open diff")');
+  check(`[${theme}] each pending decision with a change offers Open diff beside its answers (${openDiffs.length})`, openDiffs.length === 2);
+  check(`[${theme}] Open diff left the file header`, (await p.$(".card .diff-file button")) === null);
+  check(`[${theme}] small changes show every row (write + request)`, (await p.$$(".card .diff-body:not(.too-large)")).length === 2);
+  check(`[${theme}] a request showing its change keeps its raw input closed`, (await p.$('.perm button[title="Show the raw wire payload"][aria-expanded="false"]')) !== null);
   // one rendering of a count everywhere: only the sides that moved
   const proposalCounts = await p.$$eval(".card .diff-file .diff-stat", (els) => els.map((el) => el.textContent.replace(/\s+/g, " ").trim()));
-  check(`[${theme}] write cards count like tool cards (${JSON.stringify(proposalCounts)})`, JSON.stringify(proposalCounts) === JSON.stringify(["+60", "+2 −1"]));
+  check(`[${theme}] decision cards count like tool cards (${JSON.stringify(proposalCounts)})`, JSON.stringify(proposalCounts) === JSON.stringify(["+60", "+2 −1", "+1 −1"]));
+  const decisions = p.locator(".card", { has: p.locator(".diff-file") });
+  for (const [i, name] of ["write-large", "write-small", "request"].entries()) {
+    await decisions.nth(i).screenshot({ path: `${OUT}/decision-${name}-${theme}.png` });
+  }
   check(`[${theme}] katex rendered`, (await p.$(".katex")) !== null);
   check(`[${theme}] currency $ not eaten by math`, (await p.$("text=$5 and $10 stay currency")) !== null);
   check(`[${theme}] stop-reason chip shown for max_tokens`, (await p.$("text=max_tokens")) !== null);
@@ -964,7 +968,19 @@ for (const theme of Object.keys(THEMES)) {
           toolKind: "edit",
           locations: [{ path: "/ws/src/config.ts", line: 3 }],
           content: [{ kind: "text", text: "Raise the retry limit." }],
-          diffs: { "/ws/src/config.ts": { additions: 2, deletions: 1 } },
+          diffs: {
+            "/ws/src/config.ts": {
+              additions: 2,
+              deletions: 1,
+              preview: [
+                { kind: "context", text: "export const config = {" },
+                { kind: "del", text: "  retries: 3," },
+                { kind: "add", text: "  retries: 5," },
+                { kind: "add", text: "  backoff: 200," },
+                { kind: "context", text: "};" },
+              ],
+            },
+          },
           input: '{\n  "file": "/ws/src/config.ts",\n  "retries": 5\n}',
         },
       },
@@ -972,15 +988,16 @@ for (const theme of Object.keys(THEMES)) {
   );
   const card = p.locator(".card.perm", { hasText: "Edit config" });
   await card.waitFor({ timeout: 3000 });
-  check(`[${theme}] a permission card names the call's file`, (await card.locator(".tool-files", { hasText: "config.ts" }).count()) === 1);
-  check(`[${theme}] a permission card counts the call's diff, which opens it`, (await card.locator("button.diff-count").count()) === 1);
+  check(`[${theme}] a permission card names the call's file at its line`, (await card.locator(".tool-files", { hasText: "config.ts:3" }).count()) === 1);
+  check(`[${theme}] a permission card shows the call's change and its count (#90)`, (await card.locator(".diff-body .add").count()) === 2 && (await card.locator(".diff-file .diff-stat").textContent()).replace(/\s+/g, " ").trim() === "+2 −1");
+  check(`[${theme}] the change's count lives once — no ± on the file row`, (await card.locator("button.diff-count").count()) === 0);
   check(`[${theme}] a permission card shows what the call produced`, (await card.locator(".msg-agent", { hasText: "Raise the retry limit." }).count()) === 1);
-  check(`[${theme}] a pending permission card shows the input it will run with`, (await card.locator("pre", { hasText: '"retries": 5' }).count()) === 1);
-  await card.locator("button.diff-count").click();
+  check(`[${theme}] with a change to read, the input waits behind its toggle`, (await card.locator("pre", { hasText: '"retries": 5' }).count()) === 0);
+  await card.locator('.acts button:has-text("Open diff")').click();
   const opened = await p.evaluate(() => window.__actions.at(-1));
   check(
-    `[${theme}] the card's ± opens the call's diff`,
-    JSON.stringify(opened) === JSON.stringify({ kind: "openToolCallDiff", patchbaySessionId: "s1", toolCallId: "e1", path: "/ws/src/config.ts" }),
+    `[${theme}] Open diff opens the ask's change`,
+    JSON.stringify(opened) === JSON.stringify({ kind: "openProposedDiff", patchbayAskId: "ask-perm" }),
   );
   await p.mouse.move(0, 0);
   await card.screenshot({ path: `${OUT}/permission-call-${theme}.png` });

@@ -1,5 +1,5 @@
 // P6 gate: automated broker tests — rule precedence, audit trail.
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -201,11 +201,12 @@ function request(
   paths: readonly string[],
   options: readonly PermissionOptionView[],
   more: Partial<PermissionCallView> = {},
-): { title: string; call: PermissionCallView; options: readonly PermissionOptionView[] } {
+): { title: string; call: PermissionCallView; options: readonly PermissionOptionView[]; proposals: [] } {
   return {
     title,
     call: { toolCallId: "t1", toolKind, locations: paths.map((path) => ({ path, line: null })), content: [], diffs: {}, input: null, ...more },
     options,
+    proposals: [],
   };
 }
 
@@ -258,10 +259,10 @@ describe("PermissionBroker.resolveAgentPermissionRequest — an edit is judged b
     const { broker, asks, events } = harness();
     const pending = broker.resolveAgentPermissionRequest(
       "s1" as PatchbaySessionId,
-      request("Edit", "edit", [join(workspaceRoot, "a.ts")], options, { diffs: { "/etc/hosts": { additions: 1, deletions: 0 } } }),
+      request("Edit", "edit", [join(workspaceRoot, "a.ts")], options, { diffs: { "/etc/hosts": { additions: 1, deletions: 0, preview: null } } }),
     );
     const asked = await cardOf(events);
-    expect(asked.call?.diffs).toEqual({ "/etc/hosts": { additions: 1, deletions: 0 } });
+    expect(asked.call?.diffs).toEqual({ "/etc/hosts": { additions: 1, deletions: 0, preview: null } });
     asks.answerOption(asked.patchbayAskId, "n");
     await expect(pending).resolves.toEqual({ optionId: "n" });
   });
@@ -555,10 +556,10 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     const path = join(dir, "outside.txt"); // outside the workspace → asks
     const pending = broker.gateFileWrite("s1" as PatchbaySessionId, path, "new content\n");
     const proposed = await proposedEvent(events);
-    expect(asks.proposal(proposed.patchbayAskId)).toEqual({ path, oldText: "", newText: "new content\n" });
+    expect(asks.proposals(proposed.patchbayAskId)).toEqual([{ path, oldText: "", newText: "new content\n" }]);
     asks.answerWrite(proposed.patchbayAskId, true);
     await expect(pending).resolves.toBe("accepted");
-    expect(asks.proposal(proposed.patchbayAskId)).toBeNull();
+    expect(asks.proposals(proposed.patchbayAskId)).toEqual([]);
   });
 
   it("a cancelled turn drops them too; an unknown id is null, never a throw", async () => {
@@ -567,8 +568,32 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     const proposed = await proposedEvent(events);
     asks.stopSession("s1" as PatchbaySessionId);
     await expect(pending).resolves.toBe("cancelled");
-    expect(asks.proposal(proposed.patchbayAskId)).toBeNull();
-    expect(asks.proposal("never-existed" as PatchbayAskId)).toBeNull();
+    expect(asks.proposals(proposed.patchbayAskId)).toEqual([]);
+    expect(asks.proposals("never-existed" as PatchbayAskId)).toEqual([]);
+  });
+
+  // The card previews the change itself (#90): an edit deep in a long file
+  // shows that edit with its context, not the file's opening lines; a change
+  // too large to read on a card shows none of itself there.
+  it("previews the change, not the file's start — and nothing of a change too large for the card", async () => {
+    const { broker, events } = harness();
+    const path = join(dir, "long.txt");
+    const original = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`);
+    await writeFile(path, `${original.join("\n")}\n`);
+    const edited = original.map((l, i) => (i === 199 ? "line 200 changed" : l));
+    void broker.gateFileWrite("s1" as PatchbaySessionId, path, `${edited.join("\n")}\n`);
+    const small = await proposedEvent(events);
+    expect(small.preview).toEqual([
+      ...["line 197", "line 198", "line 199"].map((text) => ({ kind: "context", text })),
+      { kind: "del", text: "line 200" },
+      { kind: "add", text: "line 200 changed" },
+      ...["line 201", "line 202", "line 203"].map((text) => ({ kind: "context", text })),
+    ]);
+    events.length = 0;
+    const rewritten = original.map((l, i) => (i >= 100 && i < 130 ? `${l} changed` : l));
+    void broker.gateFileWrite("s1" as PatchbaySessionId, path, `${rewritten.join("\n")}\n`);
+    const large = await proposedEvent(events);
+    expect(large).toMatchObject({ additions: 30, deletions: 30, preview: null });
   });
 
   it("an auto-allowed write never holds anything — there is no decision to inform", async () => {
@@ -576,7 +601,7 @@ describe("PermissionBroker.gateFileWrite — the proposal's full texts", () => {
     await broker.gateFileWrite("s1" as PatchbaySessionId, join(workspaceRoot, "inside.txt"), "x");
     const proposed = events.find((e) => e.kind === "diffProposed");
     if (proposed?.kind !== "diffProposed") throw new Error("unreachable");
-    expect(asks.proposal(proposed.patchbayAskId)).toBeNull();
+    expect(asks.proposals(proposed.patchbayAskId)).toEqual([]);
   });
 });
 

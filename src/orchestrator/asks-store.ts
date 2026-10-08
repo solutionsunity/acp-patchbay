@@ -26,7 +26,7 @@
 // action runs ahead of its record.
 import type {
   AgentViewEvent,
-  DiffLineKind,
+  DiffRow,
   ElicitationAnswer,
   ElicitationAsk,
   ElicitationOutcome,
@@ -80,8 +80,9 @@ export type AskEnding = { end: "rule" | "stop" | "withdraw" | "complete" } | { e
 
 type Move = { end: "rule" | "stop" | "withdraw" | "complete" } | { end: "user" | "linkOpened" | "linkAnswered"; choice: AskChoice };
 
-/** A write's full texts, held while the user decides — the card shows a
- * bounded preview, the editor's diff view the whole change. */
+/** One file's full texts in a change the user decides on, held while they
+ * decide — the card shows at most a preview, the editor's diff view the
+ * whole change. */
 export interface Proposal {
   path: string;
   oldText: string;
@@ -106,15 +107,17 @@ export type AskCard =
       facts: readonly PermissionFact[];
       options: readonly PermissionOptionView[];
       call?: PermissionCallView;
+      /** The changes the call carries, one per file — none for a command. */
+      proposals?: readonly Proposal[];
     }
   | {
       kind: "write";
       file: string;
       additions: number;
       deletions: number;
-      lines: readonly { kind: DiffLineKind; text: string }[];
-      /** Null when no one will decide — a rule already allowed it. */
-      proposal: Proposal | null;
+      preview: readonly DiffRow[] | null;
+      /** Empty when no one will decide — a rule already allowed it. */
+      proposals: readonly Proposal[];
     }
   | { kind: "question"; message: string; ask: ElicitationAsk };
 
@@ -137,7 +140,8 @@ interface Ask {
   shown: boolean;
   /** What an answer may pick, for a permission or a command. */
   options: readonly PermissionOptionView[];
-  proposal: Proposal | null;
+  /** What the ask would change, file by file, while it is open. */
+  proposals: readonly Proposal[];
   readonly reply: (ending: AskEnding) => void;
   readonly fail: (err: unknown) => void;
 }
@@ -160,6 +164,9 @@ export interface AsksHooks {
    * neither patchbay nor the agent's model can see the page or what the
    * user types into it. Called only on the user's own click. */
   openLink?(href: string): void;
+  /** The ask left open, however it ended — what was shown for deciding it,
+   * outside its card, can go. */
+  ended?(id: PatchbayAskId): void;
 }
 
 const PREFIX: Readonly<Record<AskKind, string>> = { permission: "perm", command: "perm", write: "diff", question: "elicit" };
@@ -215,7 +222,7 @@ export class AsksStore {
     const id = newBlockId(PREFIX[kind]) as PatchbayAskId;
     const turn = "patchbaySessionId" in at ? this.hooks.turnOf(at.patchbaySessionId) : null;
     const ending = new Promise<AskEnding>((reply, fail) => {
-      this.rows.set(id, { id, at, turn, kind, subject, link, state: "open", shown: false, options: [], proposal: null, reply, fail });
+      this.rows.set(id, { id, at, turn, kind, subject, link, state: "open", shown: false, options: [], proposals: [], reply, fail });
     });
     return { id, ending };
   }
@@ -228,6 +235,7 @@ export class AsksStore {
     switch (card.kind) {
       case "options":
         ask.options = card.options;
+        ask.proposals = card.proposals ?? [];
         this.emitAt(ask, {
           kind: "permissionRequested",
           patchbayAskId: id,
@@ -239,8 +247,8 @@ export class AsksStore {
         });
         return;
       case "write":
-        ask.proposal = card.proposal;
-        this.emitAt(ask, { kind: "diffProposed", patchbayAskId: id, file: card.file, additions: card.additions, deletions: card.deletions, lines: card.lines });
+        ask.proposals = card.proposals;
+        this.emitAt(ask, { kind: "diffProposed", patchbayAskId: id, file: card.file, additions: card.additions, deletions: card.deletions, preview: card.preview });
         return;
       case "question":
         this.emitAt(ask, { kind: "elicitationRequested", patchbayAskId: id, message: card.message, ...card.ask });
@@ -349,11 +357,11 @@ export class AsksStore {
     }
   }
 
-  /** A write's full texts while the user decides — null once it ended, when
-   * no one had to decide, or for an unknown id. */
-  proposal(id: PatchbayAskId): Proposal | null {
+  /** What an ask would change while the user decides — none once it ended,
+   * when no one had to decide, or for an unknown id. */
+  proposals(id: PatchbayAskId): readonly Proposal[] {
     const ask = this.rows.get(id);
-    return ask?.state === "open" ? ask.proposal : null;
+    return ask?.state === "open" ? ask.proposals : [];
   }
 
   /** A decision made before any ask was held — a rule's verdict on a
@@ -375,6 +383,7 @@ export class AsksStore {
     if (card !== null) this.emitAt(ask, card);
     if (move.end === "linkOpened" && ask.link !== null) this.hooks.openLink?.(ask.link.href);
     if (from !== "open") return;
+    this.hooks.ended?.(ask.id);
     const ending: AskEnding = "choice" in move ? { end: "user", choice: move.choice } : { end: move.end };
     if (ask.subject === null) {
       ask.reply(ending);

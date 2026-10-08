@@ -4,8 +4,9 @@
 // The broker-surface cards: permission, diff, terminal — one broker path,
 // one card language (the question card, shown in Settings too, is shared).
 // Each resolves itself through useActions, naming its own block id.
-import type { PatchbaySessionId } from "../../../shared/ids";
-import type { ChatBlock } from "../../../shared/protocol";
+import type { ReactNode } from "react";
+import type { PatchbayAskId, PatchbaySessionId } from "../../../shared/ids";
+import type { ChangePreview, ChatBlock } from "../../../shared/protocol";
 import { useActions } from "../../shared/actions";
 import { CallDetails, TerminalView } from "./blocks";
 import { DiffStatText } from "./diff-stat";
@@ -15,8 +16,9 @@ import { Button } from "@/components/ui/button";
 
 /** What is being approved, in full, before the buttons: patchbay's own
  * gates name their command and its facts; an agent's request shows the
- * call it asks about — its files (each diff openable), what it produced,
- * and the input it will run with, open while the decision is pending. */
+ * call it asks about — the change it would make to each file, what it
+ * produced, and the input it will run with, open while the decision is
+ * pending unless a change is there to read instead. */
 export function PermissionCard({
   block,
   patchbaySessionId,
@@ -27,6 +29,18 @@ export function PermissionCard({
   roots: readonly string[];
 }) {
   const send = useActions();
+  const pending = block.resolution === null;
+  const changes = Object.entries(block.call?.diffs ?? {});
+  const options = block.options.map((o) => (
+    <Button
+      key={o.optionId}
+      size="sm"
+      variant={o.kind === "allow_once" ? "default" : o.kind.startsWith("reject") ? "destructive" : "outline"}
+      onClick={() => send({ kind: "resolvePermission", patchbayAskId: block.id, optionId: o.optionId })}
+    >
+      {o.label}
+    </Button>
+  ));
   return (
     <div className="card perm">
       <div className="card-hd">
@@ -42,28 +56,26 @@ export function PermissionCard({
           ))}
         </div>
       )}
+      {changes.map(([path, change]) => (
+        <ChangeView key={path} file={path} change={change} pending={pending} />
+      ))}
       {block.call !== undefined && (
         <CallDetails
           call={{ id: block.call.toolCallId, content: block.call.content, input: block.call.input, output: null }}
-          rows={toolFileRows(block.call)}
+          // A file whose change shows above keeps only the lines the call
+          // named in it — its counts and its diff are the change's.
+          rows={toolFileRows(block.call).flatMap((r) => (r.diff === null ? [r] : r.lines.length > 0 ? [{ ...r, diff: null }] : []))}
           patchbaySessionId={patchbaySessionId}
           roots={roots}
-          rawOpen={block.resolution === null}
+          rawOpen={pending && changes.length === 0}
         />
       )}
       {block.resolution === null ? (
-        <div className="acts">
-          {block.options.map((o) => (
-            <Button
-              key={o.optionId}
-              size="sm"
-              variant={o.kind === "allow_once" ? "default" : o.kind.startsWith("reject") ? "destructive" : "outline"}
-              onClick={() => send({ kind: "resolvePermission", patchbayAskId: block.id, optionId: o.optionId })}
-            >
-              {o.label}
-            </Button>
-          ))}
-        </div>
+        changes.length > 0 ? (
+          <DecisionActions patchbayAskId={block.id}>{options}</DecisionActions>
+        ) : (
+          <div className="acts">{options}</div>
+        )
       ) : (
         <div className="resolved">
           <Icon name="check" /> {block.resolution.label}
@@ -74,57 +86,28 @@ export function PermissionCard({
   );
 }
 
-/** The card's body is a preview, not the change: a transcript card cannot
- * be the surface for an unbounded diff. Past this many lines the card says
- * exactly how many it is not showing — the decision is made against the
- * full change in VS Code's own diff editor, one click away while pending. */
-const DIFF_PREVIEW_LINES = 40;
-
 export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }> }) {
   const send = useActions();
   const { resolution } = block;
-  const pending = resolution === null;
-  const omitted = Math.max(0, block.lines.length - DIFF_PREVIEW_LINES);
-  const openFull = () => send({ kind: "openProposedDiff", patchbayAskId: block.id });
   return (
     <div className="card">
-      <div className="diff-file">
-        <Icon name="diff" /> <code>{block.file}</code>
-        <span className="diff-stat">
-          <DiffStatText stat={block} />
-        </span>
-        <span className="st ml-auto">
-          {resolution === null ? (
-            <button type="button" className="open-diff" onClick={openFull} title="Open the full change in the diff editor">
-              <Icon name="go-to-file" /> Open diff
-            </button>
-          ) : (
+      <ChangeView
+        file={block.file}
+        change={block}
+        pending={resolution === null}
+        status={
+          resolution !== null && (
             <span className={resolution.accepted ? "text-ok" : undefined}>
               <Icon name={resolution.accepted ? "check" : "close"} />{" "}
               {resolution.accepted
                 ? `${resolution.auto ? "accepted (rule)" : "accepted"} — written to disk`
                 : "rejected — disk untouched"}
             </span>
-          )}
-        </span>
-      </div>
-      <div className="diff-body">
-        {block.lines.slice(0, DIFF_PREVIEW_LINES).map((line, i) => (
-          <div key={i} className={line.kind === "add" ? "add" : line.kind === "del" ? "del" : ""}>
-            {line.text}
-          </div>
-        ))}
-        {omitted > 0 &&
-          (pending ? (
-            <button type="button" className="more" onClick={openFull}>
-              {omitted} more lines not shown — open the full diff
-            </button>
-          ) : (
-            <div className="more">{omitted} more lines not shown</div>
-          ))}
-      </div>
-      {block.resolution === null && (
-        <div className="acts">
+          )
+        }
+      />
+      {resolution === null && (
+        <DecisionActions patchbayAskId={block.id}>
           <Button size="sm" onClick={() => send({ kind: "resolveDiff", patchbayAskId: block.id, accept: true })}>
             Accept
           </Button>
@@ -135,11 +118,79 @@ export function DiffCard({ block }: { block: Extract<ChatBlock, { kind: "diff" }
           >
             Reject
           </Button>
-        </div>
+        </DecisionActions>
       )}
     </div>
   );
 }
+
+/** One change on a decision card, whoever proposes it — patchbay's own
+ * write gate or an agent's permission request: the file, its counts, and
+ * the whole change when it fits on the card. One that doesn't shows none
+ * of itself here; the diff editor is where it is read. */
+function ChangeView({
+  file,
+  change,
+  pending,
+  status,
+}: {
+  file: string;
+  change: ChangePreview;
+  pending: boolean;
+  /** What the header ends on — the card's outcome, once it has one. */
+  status?: ReactNode;
+}) {
+  return (
+    <>
+      <div className="diff-file">
+        <Icon name="diff" /> <code>{file}</code>
+        <span className="diff-stat">
+          <DiffStatText stat={change} />
+        </span>
+        {status && <span className="st ml-auto">{status}</span>}
+      </div>
+      {change.preview === null ? (
+        pending && <div className="diff-body too-large">Too large to show here — Open diff shows the whole change.</div>
+      ) : (
+        change.preview.length > 0 && (
+          <div className="diff-body">
+            {change.preview.map((row, i) =>
+              row.kind === "gap" ? (
+                <div key={i} className="gap">
+                  ⋯
+                </div>
+              ) : (
+                <div key={i} className={row.kind === "add" ? "add" : row.kind === "del" ? "del" : ""}>
+                  {row.text}
+                </div>
+              ),
+            )}
+          </div>
+        )
+      )}
+    </>
+  );
+}
+
+/** A pending decision card's buttons: Open diff first — reading the whole
+ * change is part of deciding — then the card's own answers. */
+function DecisionActions({ patchbayAskId, children }: { patchbayAskId: PatchbayAskId; children: ReactNode }) {
+  const send = useActions();
+  return (
+    <div className="acts">
+      <Button
+        variant="outline"
+        size="sm"
+        title="Open the whole change in VS Code's diff editor"
+        onClick={() => send({ kind: "openProposedDiff", patchbayAskId })}
+      >
+        <Icon name="go-to-file" /> Open diff
+      </Button>
+      {children}
+    </div>
+  );
+}
+
 
 export function TerminalCard({ block }: { block: Extract<ChatBlock, { kind: "terminal" }> }) {
   return (

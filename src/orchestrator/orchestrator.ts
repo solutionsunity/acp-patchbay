@@ -474,10 +474,10 @@ export class Orchestrator {
           return { cancelled: true };
         }
         const { patchbaySessionId } = owner;
-        const { title, view } = this.sessions.permissionCall(patchbaySessionId, call);
+        const { title, view, proposals } = this.sessions.permissionCall(patchbaySessionId, call);
         const result = await this.broker.resolveAgentPermissionRequest(
           patchbaySessionId,
-          { title: title ?? PERMISSION_UNTITLED, call: view, options },
+          { title: title ?? PERMISSION_UNTITLED, call: view, options, proposals },
           signal,
         );
         // A rejected request marks its tool-call block denied — "blocked by
@@ -750,6 +750,7 @@ export class Orchestrator {
       onAuditWritten: () => void this.refreshAuditTail(),
       pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
       openLink: (href) => void openInBrowser(href),
+      ended: (patchbayAskId) => void this.closeAskDiffs(patchbayAskId).catch(this.logCatch(`closeAskDiffs ${patchbayAskId}`)),
     });
     this.broker = new PermissionBroker(
       this.permissionRules,
@@ -1290,33 +1291,54 @@ export class Orchestrator {
 </html>`;
   }
 
+  /** Where one scope's diff texts are written — a tool call's, or an
+   * ask's. */
+  private diffDir(scope: string): string {
+    return join(tmpdir(), "acp-patchbay-diffs", scope.replace(/[^a-zA-Z0-9_-]/g, "_"));
+  }
+
   /** One stash text → one temp file with a real URI, for vscode.diff — both
    * native-diff openers share this (diffs always open in VS Code's own diff
    * editor, never an inline webview diff). */
   private async diffTempFile(scope: string, fileName: string, content: string): Promise<vscode.Uri> {
-    const dir = join(tmpdir(), "acp-patchbay-diffs", scope.replace(/[^a-zA-Z0-9_-]/g, "_"));
+    const dir = this.diffDir(scope);
     await mkdir(dir, { recursive: true });
     const file = join(dir, fileName);
     await writeFile(file, content, "utf8");
     return vscode.Uri.file(file);
   }
 
-  /** A pending write proposal, in full — the card is a bounded preview and
-   * the decision deserves the whole change. Left: the file as it is on disk
-   * at proposal time (the gate's own reading — a new file diffs against
-   * empty); right: what the agent wants to write. Both are snapshots the
-   * asks store holds only while the decision is open, so a stale click
-   * after resolution is a no-op, like the other openers. */
+  /** What a pending ask would change, in full, one tab per file — the card
+   * shows at most a preview, and the decision deserves the whole change.
+   * Left: the file as it was when asked (a new file diffs against empty);
+   * right: what the agent would write. Both are snapshots the asks store
+   * holds only while the ask is open, so a stale click after it ended is a
+   * no-op, like the other openers. */
   private async openProposedDiff(patchbayAskId: PatchbayAskId): Promise<void> {
-    const proposal = this.asks.proposal(patchbayAskId);
-    if (proposal === null) return;
-    const name = basename(proposal.path);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      await this.diffTempFile(patchbayAskId, `current-${name}`, proposal.oldText),
-      await this.diffTempFile(patchbayAskId, `proposed-${name}`, proposal.newText),
-      `${name} — proposed write (accept or reject on the card)`,
-    );
+    for (const [i, proposal] of this.asks.proposals(patchbayAskId).entries()) {
+      // numbered: two files of one name in different folders keep their own texts
+      const name = basename(proposal.path);
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        await this.diffTempFile(patchbayAskId, `${i}-current-${name}`, proposal.oldText),
+        await this.diffTempFile(patchbayAskId, `${i}-proposed-${name}`, proposal.newText),
+        `${name} — proposed change (decide on the card)`,
+      );
+    }
+  }
+
+  /** An ask ended: the tabs its card opened show a change that is no
+   * longer proposed, so they close, and their texts go. The open tabs are
+   * read, not remembered — a tab the user already closed is simply not
+   * there. */
+  private async closeAskDiffs(patchbayAskId: PatchbayAskId): Promise<void> {
+    const dir = this.diffDir(patchbayAskId);
+    const inDir = (uri: vscode.Uri) => uri.scheme === "file" && dirname(uri.fsPath) === dir;
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) => tab.input instanceof vscode.TabInputTextDiff && (inDir(tab.input.original) || inDir(tab.input.modified)));
+    if (tabs.length > 0) await vscode.window.tabGroups.close(tabs, true);
+    await rm(dir, { recursive: true, force: true });
   }
 
   /** Agent-reported tool-call diffs — the texts come back from the

@@ -367,6 +367,12 @@ asks, whenever it was asked — the spec owes each the cancelled outcome. The
 session leaving cancels all of its asks, the connection ending all of the
 agent's.
 
+**What it holds to be decided** — while it is open, the full texts of each
+change it would make (a gated write, or the diffs an agent's permission
+request carries): the card shows at most a preview, and the diff editor
+reads them from here. They go when the ask ends, and the store says that it
+ended — once, as it leaves open — so what was opened to decide it can close.
+
 **Operations:** open, show its card, answer (an option, a write's accept,
 a question's answer), a rule's allow, a turn's end, stop (every ask of a
 session, or of an agent asked on no session), the agent's withdrawal, a

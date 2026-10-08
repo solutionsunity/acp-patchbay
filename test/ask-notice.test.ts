@@ -31,7 +31,7 @@ describe("askNotice", () => {
 
   it("a call with a diff, content or input the line can't show offers only Open (#80)", () => {
     for (const more of [
-      { diffs: { "/ws/a.ts": { additions: 2, deletions: 1 } } },
+      { diffs: { "/ws/a.ts": { additions: 2, deletions: 1, preview: null } } },
       { content: [{ kind: "text" as const, text: "Raise the limit" }] },
       { input: '{ "command": "rm -rf build" }' },
     ]) {
@@ -42,7 +42,7 @@ describe("askNotice", () => {
   it("a command with its directory and environment beside it offers only Open; a write never fits a line", () => {
     expect(askNotice(permission({ title: "Terminal", detail: "npm test", facts: [{ label: "cwd", value: "/ws" }] })).answers).toEqual([]);
     expect(
-      askNotice({ kind: "diff", id: "ask-2" as PatchbayAskId, file: "/ws/a.ts", additions: 1, deletions: 0, lines: [], resolution: null }),
+      askNotice({ kind: "diff", id: "ask-2" as PatchbayAskId, file: "/ws/a.ts", additions: 1, deletions: 0, preview: [], resolution: null }),
     ).toEqual({ line: "File write: /ws/a.ts", answers: [] });
   });
 });

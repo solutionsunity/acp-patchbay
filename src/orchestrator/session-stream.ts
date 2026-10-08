@@ -20,7 +20,8 @@ import {
   userPartsText,
 } from "../shared/protocol";
 import { boundedText, contentPartOf, toolContentOf, type ImageStash } from "./content-parts";
-import { computeLineDiff } from "./diff";
+import type { Proposal } from "./asks-store";
+import { computeLineDiff, previewOf } from "./diff";
 import { createProseRewriter, createToolCallRewriter, type ProseRewriter, type ToolCallReading, type ToolCallRewriter } from "./extensions";
 import type { Logger } from "./logger";
 import type { AgentTerminalReading } from "./meta";
@@ -458,17 +459,25 @@ export class SessionStream {
   /** The call a permission request asks about, as its card shows it: what
    * the request says of the call over what this session's transcript
    * already holds for it (`known`) — an absent field is unchanged, as in
-   * any update. A request carrying a diff stashes it under the call, so the
-   * card's ± opens it like the tool card's; one without leaves the call's
-   * own diff where it was. The title is undefined when neither named one. */
+   * any update. A request carrying a diff stashes it under the call; one
+   * without leaves the call's own diff where it was. Either way each diff
+   * comes with its preview, read from the stashed texts, and `proposals`
+   * hands those texts on for the diff editor. The title is undefined when
+   * neither named one. */
   callView(
     patchbaySessionId: PatchbaySessionId,
     call: ToolCallFact,
     known: ToolCallBlock | undefined,
-  ): { title: string | undefined; view: PermissionCallView } {
+  ): { title: string | undefined; view: PermissionCallView; proposals: Proposal[] } {
     const stashed = call.content?.some((c) => c.type === "diff") === true ? this.stashToolDiffs(patchbaySessionId, call.toolCallId, call.content) : {};
+    const stats = "diffs" in stashed ? stashed.diffs : (known?.diffs ?? {});
+    const proposals = Object.keys(stats).flatMap((path) => {
+      const texts = this.toolCallDiff(patchbaySessionId, call.toolCallId, path);
+      return texts === null ? [] : [{ path, ...texts }];
+    });
     const raw = boundedRaw("input", call.rawInput);
     return {
+      proposals,
       title: call.title ?? (known?.title || undefined),
       view: {
         toolCallId: call.toolCallId,
@@ -478,7 +487,12 @@ export class SessionStream {
           call.content !== undefined
             ? toolContentOf(call.content, this.imageStash(patchbaySessionId, "permission"))
             : (known?.content ?? []),
-        diffs: "diffs" in stashed ? stashed.diffs : (known?.diffs ?? {}),
+        diffs: Object.fromEntries(
+          Object.entries(stats).map(([path, stat]) => {
+            const texts = proposals.find((p) => p.path === path);
+            return [path, { ...stat, preview: texts === undefined ? null : previewOf(computeLineDiff(texts.oldText, texts.newText).lines) }];
+          }),
+        ),
         input: "input" in raw ? raw.input : (known?.input ?? null),
       },
     };

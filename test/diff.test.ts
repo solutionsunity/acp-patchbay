@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeLineDiff } from "../src/orchestrator/diff";
+import { computeLineDiff, previewOf } from "../src/orchestrator/diff";
 
 describe("computeLineDiff", () => {
   it("an all-new file is all additions", () => {
@@ -98,5 +98,44 @@ describe("computeLineDiff", () => {
       additions: 1,
       deletions: 1,
     });
+  });
+});
+
+describe("previewOf — what of a change a card shows", () => {
+  const preview = (oldText: string, newText: string) => previewOf(computeLineDiff(oldText, newText).lines);
+  const file = (n: number, edit: (i: number) => string | null = () => null) =>
+    Array.from({ length: n }, (_, i) => edit(i + 1) ?? `l${i + 1}`).join("\n");
+
+  it("a change keeps three unchanged lines each side, and nothing beyond", () => {
+    expect(preview(file(20), file(20, (i) => (i === 10 ? "X" : null)))).toEqual([
+      ...["l7", "l8", "l9"].map((text) => ({ kind: "context", text })),
+      { kind: "del", text: "l10" },
+      { kind: "add", text: "X" },
+      ...["l11", "l12", "l13"].map((text) => ({ kind: "context", text })),
+    ]);
+  });
+
+  it("hunks whose context meets join; the rest are split by a gap", () => {
+    const joined = preview(file(20), file(20, (i) => (i === 5 || i === 7 ? "X" : null)));
+    expect(joined).toHaveLength(11); // l2–l10 once, and the two added lines
+    expect(joined?.some((r) => r.kind === "gap")).toBe(false);
+    const apart = preview(file(30), file(30, (i) => (i === 5 || i === 25 ? "X" : null)));
+    expect(apart).toBeNull(); // two hunks of 8 rows each, and a gap — over the card's 12
+    const near = preview("a\nb\nc\nd\ne\nf\ng\nh\ni", "A\nb\nc\nd\ne\nf\ng\nh\nI");
+    expect(near).toEqual([
+      { kind: "del", text: "a" },
+      { kind: "add", text: "A" },
+      ...["b", "c", "d"].map((text) => ({ kind: "context", text })),
+      { kind: "gap" },
+      ...["f", "g", "h"].map((text) => ({ kind: "context", text })),
+      { kind: "del", text: "i" },
+      { kind: "add", text: "I" },
+    ]);
+  });
+
+  it("a change over twelve rows shows nothing rather than part of itself; no change shows no rows", () => {
+    expect(preview("", file(12))).toHaveLength(12);
+    expect(preview("", file(13))).toBeNull();
+    expect(preview(file(5), file(5))).toEqual([]);
   });
 });

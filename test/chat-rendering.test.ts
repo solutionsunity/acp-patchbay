@@ -305,7 +305,7 @@ describe("deriveTranscript: per-turn rollups", () => {
 
   it("edited files: edit calls by location, gate writes only once accepted", () => {
     const diff = (id: string, file: string, accepted: boolean | null): ChatBlock => ({
-      kind: "diff", id: id as PatchbayAskId, file, additions: 1, deletions: 0, lines: [],
+      kind: "diff", id: id as PatchbayAskId, file, additions: 1, deletions: 0, preview: [],
       resolution: accepted === null ? null : { accepted, auto: false },
     });
     const blocks: ChatBlock[] = [

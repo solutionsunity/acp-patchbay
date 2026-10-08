@@ -25,8 +25,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { formatCommandLine } from "../shared/command-line";
 import type { ElicitationAnswer, ElicitationAsk, PermissionCallView, PermissionOptionView } from "../shared/protocol";
-import type { AskPlace, AsksStore, LinkCompletion } from "./asks-store";
-import { computeLineDiff } from "./diff";
+import type { AskPlace, AsksStore, LinkCompletion, Proposal } from "./asks-store";
+import { computeLineDiff, previewOf } from "./diff";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import type { CreateTerminalParams } from "./terminal-runner";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../shared/ids";
@@ -165,7 +165,9 @@ export class PermissionBroker {
   /** The agent's own session/request_permission call — shown with exactly
    * the options the agent offered, and the call it asks about as the user
    * must see it to decide: the files it names, what it produced, the input
-   * it will run with (agent text masked for values patchbay handed out). An
+   * it will run with (agent text masked for values patchbay handed out) —
+   * and, held while the card is open, the full texts of each change it
+   * carries (`proposals`), which the diff editor opens. An
    * edit is judged by every file it names — the locations it reports and
    * the path of each diff it carries, the write's own target; any other kind
    * carries nothing a rule can judge, so it asks. A rule's allow picks the
@@ -175,10 +177,10 @@ export class PermissionBroker {
    * withdrawn. */
   async resolveAgentPermissionRequest(
     patchbaySessionId: PatchbaySessionId,
-    request: { title: string; call: PermissionCallView; options: readonly PermissionOptionView[] },
+    request: { title: string; call: PermissionCallView; options: readonly PermissionOptionView[]; proposals: readonly Proposal[] },
     signal?: AbortSignal,
   ): Promise<{ optionId: string } | { cancelled: true }> {
-    const { title, call, options } = request;
+    const { title, call, options, proposals } = request;
     const files = call.toolKind === "edit" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
@@ -188,7 +190,7 @@ export class PermissionBroker {
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
     // The card shows either way — a rule changes who answers, never what is
     // visible — and a rule's answer settles it at once.
-    this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call) });
+    this.asks.show(id, { kind: "options", title: this.redact(title), detail: "", facts: [], options, call: this.masked(call), proposals });
     if (auto !== undefined) this.asks.allow(id);
     const ended = await ending;
     if (ended.end === "rule" && auto !== undefined) return { optionId: auto.optionId };
@@ -237,8 +239,8 @@ export class PermissionBroker {
     const oldContent = await this.currentText(path).catch(() => "");
     const allowed = (await this.evaluateFileWrites(patchbaySessionId, [path])) === "allow";
     const { additions, deletions, lines } = computeLineDiff(oldContent, newContent);
-    const proposal = allowed ? null : { path, oldText: oldContent, newText: newContent };
-    this.asks.show(id, { kind: "write", file: path, additions, deletions, lines, proposal });
+    const proposals = allowed ? [] : [{ path, oldText: oldContent, newText: newContent }];
+    this.asks.show(id, { kind: "write", file: path, additions, deletions, preview: previewOf(lines), proposals });
     if (allowed) this.asks.allow(id);
     const ended = await ending;
     if (ended.end === "rule") return "accepted";

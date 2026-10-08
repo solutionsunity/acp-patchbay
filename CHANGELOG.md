@@ -22,6 +22,15 @@
   line, the description cut short, and the selected row shows it in full
   under the name. The menu also stays inside the narrowest sidebar, where it
   used to slide the view sideways as it opened. (#89)
+- **An edit you approve shows the change, and its diff closes when you
+  decide.** An agent that asks before editing (Hermes Agent does) showed its
+  raw request, and its diff was a click on a small count; the diff tab then
+  stayed open after the answer. Its card now shows the change the way a
+  write card does, with **Open diff** beside the answers, and the tab closes
+  once the request is answered, on either card. A write card used to preview
+  the first 40 lines of the file, so an edit further down showed nothing of
+  itself; a card now shows a small change whole, with three lines of context,
+  and a larger one only as its counts. (#90)
 
 ## 0.84.2 — 2026-10-07
 

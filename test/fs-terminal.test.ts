@@ -83,10 +83,10 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       // the session the agent names its own way, as patchbay holds it
       const patchbaySessionId = sessions.rowFor(patchbayAgentId, request.sessionId);
       if (patchbaySessionId === undefined) return { cancelled: true };
-      const { title, view } = sessions.permissionCall(patchbaySessionId, request.call);
+      const { title, view, proposals } = sessions.permissionCall(patchbaySessionId, request.call);
       return broker.resolveAgentPermissionRequest(
         patchbaySessionId,
-        { title: title ?? "Permission request", call: view, options: request.options },
+        { title: title ?? "Permission request", call: view, options: request.options, proposals },
         signal,
       );
     },
@@ -484,16 +484,85 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
         toolCallId: "e1",
         toolKind: "edit",
         locations: [{ path: inside, line: null }],
-        diffs: { [outside]: { additions: 1, deletions: 1 } },
+        diffs: {
+          [outside]: {
+            additions: 1,
+            deletions: 1,
+            preview: [
+              { kind: "del", text: "a" },
+              { kind: "add", text: "b" },
+            ],
+          },
+        },
         input: `{\n  "file": ${JSON.stringify(inside)}\n}`,
       },
     });
-    // its diff opens like the tool card's
-    expect(h.sessions.toolCallDiff(patchbaySessionId, "e1", outside)).toEqual({ oldText: "a\n", newText: "b\n" });
+    // the diff editor opens the change from the ask, while it is open
+    expect(h.asks.proposals(card.id)).toEqual([{ path: outside, oldText: "a\n", newText: "b\n" }]);
     h.asks.answerOption(card.id, "reject_once");
     await turn;
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: reject_once");
+    expect(h.asks.proposals(card.id)).toEqual([]);
     await h.pool.stop("p2c" as PatchbayAgentId);
+  });
+
+  // Hermes Agent's edit approval (acp_adapter/edit_approval.py, 2026-09): a
+  // call of its own, never announced in the stream, no locations — the
+  // change rides only in the request's diff, its raw input beside it (#90).
+  it("an edit asked only by its diff shows the change itself, its raw input closed, and opens from the ask", async () => {
+    const h = harness();
+    const target = join(dir, "greet.ts");
+    const oldText = "a\nb\nc\nd\ne\nf\ng\nh\n";
+    const newText = "a\nb\nc\nd\nE\nf\ng\nh\n";
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            {
+              type: "askPermission",
+              title: `Approve edit: ${target}`,
+              kind: "execute", // keeps the fixture's locations off, as Hermes sends none
+              subject: target,
+              toolCall: {
+                toolCallId: "edit-approval-1",
+                title: `Approve edit: ${target}`,
+                kind: "edit",
+                status: "pending",
+                content: [{ type: "diff", path: target, oldText, newText }],
+                rawInput: { tool: "patch", arguments: { mode: "replace", path: target, old_string: "e", new_string: "E" } },
+              },
+            },
+          ],
+        },
+        "p2h" as PatchbayAgentId,
+      ),
+    );
+    const patchbaySessionId = await h.sessions.createSession("p2h" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
+    await waitFor(() => h.state().transcripts[patchbaySessionId]?.some((b) => b.kind === "permission"));
+    const card = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "permission")!;
+    expect(card).toMatchObject({
+      call: {
+        locations: [],
+        diffs: {
+          [target]: {
+            additions: 1,
+            deletions: 1,
+            preview: [
+              ...["b", "c", "d"].map((text) => ({ kind: "context", text })),
+              { kind: "del", text: "e" },
+              { kind: "add", text: "E" },
+              ...["f", "g", "h"].map((text) => ({ kind: "context", text })),
+            ],
+          },
+        },
+      },
+    });
+    expect(h.asks.proposals(card.id)).toEqual([{ path: target, oldText, newText }]);
+    h.asks.answerOption(card.id, "allow_once");
+    await turn;
+    expect(h.asks.proposals(card.id)).toEqual([]);
+    await h.pool.stop("p2h" as PatchbayAgentId);
   });
 
   it("a request the agent takes back is withdrawn on its card, and the agent gets request-cancelled (#80)", async () => {

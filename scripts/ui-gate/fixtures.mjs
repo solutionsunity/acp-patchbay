@@ -78,21 +78,46 @@ export const chatTranscript = [
     kind: "text", id: "x5",
     text: "## Sources\n\n- <https://raw.githubusercontent.com/odoo/odoo/17.0/addons/web/static/src/views/form/form_controller.scss>\n- api.github.com/repos/odoo/odoo/commits?path=addons/web/static/src/views/form/form_controller.scss&sha=17.0\n- `postgresql://user:password@localhost:5432/a_database_with_a_long_name?sslmode=require`",
   },
-  // A write proposal larger than the card's preview: the card must say how
-  // many lines it is not showing and offer the full diff; a short, resolved
-  // one shows everything and offers nothing (issue #27).
+  // Decision cards (issues #27, #90): a change too large for the card shows
+  // none of itself there, only that it is too large; a small one shows every
+  // hunk; a pending one offers Open diff beside its answers — patchbay's own
+  // write gate and an agent's edit request (Hermes's shape: no locations,
+  // the change only in the request's diff) alike.
   {
     kind: "diff", id: "d-long", file: "/ws/src/api.ts", additions: 60, deletions: 0,
-    lines: Array.from({ length: 60 }, (_, i) => ({ kind: "add", text: `line ${i + 1}` })),
+    preview: null,
     resolution: null,
   },
   {
     kind: "diff", id: "d-short", file: "/ws/src/api.ts", additions: 2, deletions: 1,
-    lines: [
+    preview: [
       { kind: "context", text: "a" }, { kind: "del", text: "b" },
       { kind: "add", text: "c" }, { kind: "add", text: "d" },
     ],
     resolution: { accepted: true, auto: false },
+  },
+  {
+    kind: "permission", id: "p-edit", title: "Approve edit: /ws/src/greet.ts", detail: "", facts: [],
+    options: [
+      { optionId: "allow_once", label: "Allow edit", kind: "allow_once" },
+      { optionId: "deny", label: "Deny", kind: "reject_once" },
+    ],
+    call: {
+      toolCallId: "edit-approval-1", toolKind: "edit", locations: [], content: [],
+      diffs: {
+        "/ws/src/greet.ts": {
+          additions: 1, deletions: 1,
+          preview: [
+            { kind: "context", text: "export function farewell(name: string): string {" },
+            { kind: "del", text: '  return "Bye, " + name;' },
+            { kind: "add", text: "  return `Goodbye, ${name}.`;" },
+            { kind: "context", text: "}" },
+          ],
+        },
+      },
+      input: '{\n  "tool": "patch",\n  "arguments": { "mode": "replace" }\n}',
+    },
+    resolution: null,
   },
 ];
 

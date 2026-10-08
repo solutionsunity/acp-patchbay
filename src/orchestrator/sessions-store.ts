@@ -26,7 +26,6 @@ import {
   type ChatBlock,
   type ContextChip,
   type KnobSeed,
-  type PermissionCallView,
   type PersistedChip,
   type PromptPart,
   type QueuedPrompt,
@@ -2214,8 +2213,9 @@ export class SessionsStore {
   }
 
   /** The call a permission request in this session asks about, as its
-   * card shows it — over what the transcript already holds for that call. */
-  permissionCall(patchbaySessionId: PatchbaySessionId, call: ToolCallFact): { title: string | undefined; view: PermissionCallView } {
+   * card shows it — over what the transcript already holds for that call —
+   * with the full texts of each change it carries. */
+  permissionCall(patchbaySessionId: PatchbaySessionId, call: ToolCallFact): ReturnType<SessionStream["callView"]> {
     const known = (this.hooks.currentTranscript?.(patchbaySessionId) ?? []).find(
       (b): b is ToolCallBlock => b.kind === "toolCall" && b.id === call.toolCallId,
     );

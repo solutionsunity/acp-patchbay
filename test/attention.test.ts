@@ -37,7 +37,7 @@ const diff = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent 
   file: "/w/a.ts",
   additions: 1,
   deletions: 0,
-  lines: [],
+  preview: [],
 });
 
 const question = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({
