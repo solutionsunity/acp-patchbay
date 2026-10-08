@@ -851,6 +851,70 @@ for (const theme of Object.keys(THEMES)) {
   // inside the prompt box's 1px border, as it always sat
   check(`the composer's menu spans the prompt box (${box.left}, ${box.width})`, Math.abs(box.left - 1) < 0.5 && Math.abs(box.width + 2) < 0.5);
   await p.screenshot({ path: `${OUT}/composer-menu-short-view.png` });
+  // arrows walk the list: it scrolls to the selected row, and one taller than
+  // the list (a description in full) keeps its name in view
+  const before = await p.evaluate(() => document.querySelector(".sidebar").scrollTop);
+  await p.keyboard.press("ArrowDown");
+  await p.keyboard.press("ArrowDown"); // create-plan → review → change-audit
+  const walked = await p.evaluate(() => {
+    const list = document.querySelector(".pop .rows").getBoundingClientRect();
+    const name = document.querySelector(".pop .it.sel b");
+    const r = name.getBoundingClientRect();
+    return { name: name.textContent, top: Math.round(r.top - list.top), bottom: Math.round(list.bottom - r.bottom), sidebar: document.querySelector(".sidebar").scrollTop };
+  });
+  // …scrolling the list alone, never the sidebar behind it
+  check(`walking the list keeps the selected name in view (${JSON.stringify(walked)})`, walked.name === "/change-audit" && walked.top >= 0 && walked.bottom >= 0 && walked.sidebar === before);
+  await p.close();
+}
+
+// ── the `/` menu with a paragraph-long description (#89): the name the user
+// is looking for stays whole on one line, every unselected row is one line
+// with its description cut short, the selected row shows its description in
+// full under the name — and the menu stays inside even the narrowest
+// sidebar. Theme-independent. ──
+// every row's shape, and where the menu sits
+const slashMenu = (p) =>
+  p.evaluate(() => {
+    // line boxes a text run lays out in: distinct tops of its rects
+    const lines = (el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+    };
+    const rows = [...document.querySelectorAll(".pop .it")].map((row) => {
+      const name = row.querySelector("b");
+      const desc = row.querySelector(".d:last-child");
+      return {
+        name: name.textContent,
+        sel: row.classList.contains("sel"),
+        nameLines: lines(name),
+        descLines: desc === null ? 0 : lines(desc),
+        descCut: desc !== null && desc.scrollWidth > desc.clientWidth,
+        descBelow: desc !== null && desc.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1,
+      };
+    });
+    const pop = document.querySelector(".pop").getBoundingClientRect();
+    return { rows, left: Math.round(pop.left), right: Math.round(pop.right), W: document.documentElement.clientWidth };
+  });
+for (const width of [420, 260, 180]) {
+  const p = await page(browser, Object.keys(THEMES)[0], { width, height: 800 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".prompt-editor");
+  await p.click(".prompt-editor");
+  await p.keyboard.type("/");
+  await p.waitForSelector(".pop .it.sel", { timeout: 3000 });
+  await p.keyboard.press("ArrowDown");
+  await p.keyboard.press("ArrowDown"); // create-plan → review → change-audit
+  const menu = await slashMenu(p);
+  const broken = menu.rows.filter((r) => r.nameLines !== 1).map((r) => `${r.name} (${r.nameLines} lines)`);
+  check(`[slash ${width}px] every command name stays on one line${broken.length > 0 ? ` — ${broken.join(", ")}` : ""}`, broken.length === 0);
+  const sel = menu.rows.find((r) => r.sel);
+  check(`[slash ${width}px] the selected row shows its description in full, under the name (${JSON.stringify(sel)})`, sel?.name === "/change-audit" && !sel.descCut && sel.descBelow);
+  check(`[slash ${width}px] the menu stays inside the panel (${menu.left}..${menu.right} of ${menu.W})`, menu.left >= 0 && menu.right <= menu.W);
+  await p.screenshot({ path: `${OUT}/composer-slash-${width}.png` });
+  await p.keyboard.press("ArrowUp"); // the long row unselected: one line, cut short
+  const long = (await slashMenu(p)).rows.at(-1);
+  check(`[slash ${width}px] unselected, the long description is one line cut short (${JSON.stringify(long)})`, !long.sel && long.descLines === 1 && long.descCut);
   await p.close();
 }
 

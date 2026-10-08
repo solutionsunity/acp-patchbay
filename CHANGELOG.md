@@ -16,6 +16,12 @@
   "ChatGPT (device code)" login, which asks outside any session, used to
   fail every time; its page to open now shows on the agent's card in
   Settings, where the login was started. (#81)
+- **A command's name stays whole in the `/` menu.** A command with a long
+  description, the way agents advertise skills, squeezed its own name onto
+  several lines, a letter per line in a narrow sidebar. Each row is now one
+  line, the description cut short, and the selected row shows it in full
+  under the name. The menu also stays inside the narrowest sidebar, where it
+  used to slide the view sideways as it opened. (#89)
 
 ## 0.84.2 — 2026-10-07
 

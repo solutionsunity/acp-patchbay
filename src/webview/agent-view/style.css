@@ -1130,7 +1130,9 @@ button.more,
   border-radius: var(--pb-radius);
   box-shadow: 0 6px 24px #000a;
   z-index: 30;
-  min-width: 210px;
+  /* a floor for a tiny prompt box, never wider than the window less the
+     8px edge padding Floating UI keeps — a min-width beats the width */
+  min-width: min(210px, 100vw - 16px);
   /* Cap the popover and scroll the rows, not the whole card: the `.src`
      provenance footer stays pinned while a long `/` or `@` list scrolls. */
   display: flex;
@@ -1165,6 +1167,37 @@ button.more,
   color: var(--pb-text-faint);
   font-size: 11px;
   margin-left: auto;
+}
+
+/* the `/` menu: the command's name is what the user scans for, so it and
+ * its input hint never shrink or wrap — the description takes what is left
+ * of the one line, cut short. Only the selected row shows it in full, on
+ * its own line under the name. */
+.pop.slash .it .d {
+  margin-left: 0;
+}
+
+.pop.slash .it b,
+.pop.slash .it .d {
+  flex: none;
+  white-space: nowrap;
+}
+
+.pop.slash .it .desc {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pop.slash .it.sel {
+  flex-wrap: wrap;
+  row-gap: 3px;
+}
+
+.pop.slash .it.sel .desc {
+  flex-basis: 100%;
+  white-space: normal;
 }
 
 .pop .src {

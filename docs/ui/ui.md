@@ -118,7 +118,9 @@ Context row (above):
 Input: placeholder teaches the two typed triggers; both menus navigate by
 arrow/Enter/Tab/Escape with focus never leaving the input. **`/`** →
 advertised-commands menu (typed-only — a `/` *button* is a vendor-menu pattern
-that doesn't apply here); an accepted command becomes an inline token. **`@`** →
+that doesn't apply here); each row is one line — the command's name and input hint
+whole, its description cut short — and the selected row shows the description in
+full under the name; an accepted command becomes an inline token. **`@`** →
 context mention picker: open editors first, then workspace files (queried from the
 orchestrator; the input never reads the filesystem), plus the adder's fixed rows.
 A picked file becomes an inline token sent at its position in the prompt; the fixed

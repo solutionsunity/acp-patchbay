@@ -114,6 +114,16 @@ export const longSelectionChip = {
   sourceUri: "file:///ws/addons/web/static/src/views/form/form_controller.scss#L12-L40",
 };
 
+/** A command whose description is a paragraph, the way agents advertise
+ * skills — the slash-menu shot gates that the name stays whole on one line
+ * and only the selected row shows the paragraph in full. */
+export const longCommand = {
+  name: "change-audit",
+  inputHint: "target",
+  description:
+    "Audit a change before it ships — DRY, no leftover, no dead code, no new bug, nothing existing broken, within the project's architecture. Reads the actual diff, its consumers, and the project's own docs and rules; runs the project's own gate; reports a verdict with findings.",
+};
+
 export const chatPlan = [
   { content: "locate the unanchored pattern", status: "completed" },
   { content: "fix and add a regression test", status: "in_progress" },
@@ -169,7 +179,7 @@ export function agentViewState({ live }) {
     },
     activePlan: { s1: chatPlan },
     activeTurn: live ? { s1: new Date(Date.now() - 42_000).toISOString() } : {},
-    commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }] },
+    commandsBySession: { s1: [{ name: "create-plan", description: "draft a plan" }, { name: "review" }, longCommand] },
     sessionUsage: {},
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,

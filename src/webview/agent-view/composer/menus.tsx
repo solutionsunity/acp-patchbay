@@ -16,12 +16,22 @@ import { basename } from "../../shared/path";
 /** Keeps the keyboard-selected row visible as arrows walk past the scroll
  * edge — the one navigation nicety a real combobox primitive would give for
  * free (these menus are the recorded hand-rolled exception, so it's wired by
- * hand). `block: "nearest"` scrolls the `.rows` container minimally and only
- * when the row is actually out of view. */
+ * hand). It scrolls the `.rows` list alone, minimally, and only when the row
+ * is out of view. Not `scrollIntoView`: that scrolls every ancestor too, and
+ * on the menu's first frame — before it is placed — it slid the sidebar
+ * sideways, though the sidebar never scrolls. */
 function useScrollSelectedIntoView(selected: number): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.scrollIntoView({ block: "nearest" });
+    const row = ref.current;
+    const list = row?.parentElement ?? null;
+    if (row === null || list === null) return;
+    const r = row.getBoundingClientRect();
+    const l = list.getBoundingClientRect();
+    if (r.top < l.top) list.scrollTop -= l.top - r.top;
+    // never past the row's top: a selected row taller than the list (its
+    // description in full) keeps its name in view
+    else if (r.bottom > l.bottom) list.scrollTop += Math.min(r.bottom - l.bottom, r.top - l.top);
   }, [selected]);
   return ref;
 }
@@ -91,7 +101,7 @@ export function SlashMenu(props: {
   const selRef = useScrollSelectedIntoView(props.selected);
   if (props.matches.length === 0) return null;
   return (
-    <div ref={props.containerRef} className="pop" style={props.style}>
+    <div ref={props.containerRef} className="pop slash" style={props.style}>
       <div className="rows">
         {props.matches.map((c, i) => (
           <div
@@ -103,7 +113,7 @@ export function SlashMenu(props: {
           >
             <b>/{c.name}</b>
             {c.inputHint !== undefined && <span className="d">&lt;{c.inputHint}&gt;</span>}
-            {c.description !== undefined && <span className="d">{c.description}</span>}
+            {c.description !== undefined && <span className="d desc">{c.description}</span>}
           </div>
         ))}
       </div>
