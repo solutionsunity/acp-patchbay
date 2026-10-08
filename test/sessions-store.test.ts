@@ -24,6 +24,7 @@ import {
 import type { FakeAgentScript } from "./fake-agent/main";
 import { readUpdate, sessionsHarness } from "./support/sessions-harness";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../src/shared/ids";
+import { deriveTranscript } from "../src/webview/agent-view/chat/view-model";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -3743,6 +3744,23 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     expect(textOf(blocks()[0])).toBe("first thought");
     expect(textOf(blocks()[1])).toBe("second thought");
     await h.pool.stop("ch8" as PatchbayAgentId);
+  });
+
+  it("a thought and its answer under one messageId stay two blocks — the answer folds the thought (Hermes shape, #92)", async () => {
+    // Hermes Agent draws one messageId per assistant message for both
+    // streams, so the reasoning and the answer after it share it: the kind
+    // change alone is the boundary.
+    const { h, push, blocks } = await chunkHarness("ch10" as PatchbayAgentId);
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Checking " }, messageId: "m1" });
+    push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the callers." }, messageId: "m1" });
+    expect(deriveTranscript(blocks(), true).liveBlockId).toBe(blocks()[0]!.id);
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Found " }, messageId: "m1" });
+    push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "it." }, messageId: "m1" });
+    expect(blocks().map((b) => b.kind)).toEqual(["thought", "text"]);
+    expect(textOf(blocks()[0])).toBe("Checking the callers.");
+    expect(textOf(blocks()[1])).toBe("Found it.");
+    expect(deriveTranscript(blocks(), true).liveBlockId).toBe(blocks()[1]!.id);
+    await h.pool.stop("ch10" as PatchbayAgentId);
   });
 
   it("id-less agent chunks keep merging — no boundary on the wire means no guessed split", async () => {
