@@ -54,7 +54,9 @@ const catalogEntrySchema = z.object({
    * without art doesn't build, so there is no fallback to render. */
   brandIcon: z.object({ viewBox: z.string(), path: z.string() }),
   /** Remote MCP endpoint. "" when `userUrl` — per-account/per-project
-   * services (Supabase, Augment) have no fixed public URL to ship. */
+   * services (Supabase, Augment) have no fixed public URL to ship — and
+   * for a local-only server (OdooSurface), which has no remote at all and
+   * is offered through `local` alone. */
   url: z.string(),
   /** The user supplies their own endpoint at connect time. */
   userUrl: z.boolean().default(false),

@@ -52,8 +52,12 @@ async function checkDocs(entry, f) {
   return finding(entry.id, "docs", "unclear", `docsUrl answers ${r.status}`);
 }
 
+/** Why an entry has no endpoint to probe: each user brings their own, or
+ * the server is local only. */
+const noEndpoint = (entry) => (entry.userUrl ? "per-account endpoint" : "local only");
+
 async function checkEndpoint(entry, f) {
-  if (entry.url === "") return finding(entry.id, "endpoint", "skipped", "per-account endpoint");
+  if (entry.url === "") return finding(entry.id, "endpoint", "skipped", noEndpoint(entry));
   const r = await probe(f, entry.url, { method: "GET", headers: { accept: "application/json, text/event-stream" } });
   if (r.error) return finding(entry.id, "endpoint", "unclear", `no response: ${r.error}`);
   if (goneStatus(r.status)) return finding(entry.id, "endpoint", "drift", `endpoint answers ${r.status}`);
@@ -63,7 +67,7 @@ async function checkEndpoint(entry, f) {
 
 async function checkOAuthMetadata(entry, f) {
   if (!entry.auth.oauth) return finding(entry.id, "oauth", "skipped", "no OAuth mode");
-  if (entry.url === "") return finding(entry.id, "oauth", "skipped", "per-account endpoint");
+  if (entry.url === "") return finding(entry.id, "oauth", "skipped", noEndpoint(entry));
   const u = new URL(entry.url);
   const path = u.pathname.replace(/\/$/, "");
   const candidates = [

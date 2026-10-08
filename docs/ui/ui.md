@@ -273,7 +273,9 @@ with the entry's one-line description dim underneath, whole — never truncated,
 never behind a hover), one row expanding at a time into its connect form — key
 paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— or run it
 locally —` (verified official local stdio servers — GitHub, Stripe, Sentry,
-Supabase, Augment — prefill the custom form; nothing runs until the user adds it).
+Supabase, Augment, OdooSurface — prefill the custom form; nothing runs until the
+user adds it; an entry with no remote, OdooSurface, opens straight to `run it
+locally:`).
 Per-account services label the URL field as what it is: the account's MCP endpoint,
 used by both connect paths. Every entry stays in the catalog: connecting one again
 adds a second server (two accounts). Every add names its server once — the

@@ -63,12 +63,12 @@ describe("catalog glyph gate", () => {
   it("the shipped icons pass the gate against the shipped catalog, one mark per entry", () => {
     const { json, files } = foldCatalog("data/mcp-catalog.json");
     const folded = JSON.parse(json);
-    expect(folded.servers).toHaveLength(8);
+    expect(folded.servers).toHaveLength(9);
     for (const e of folded.servers as { id: string; brandIcon: { viewBox: string; path: string } }[]) {
       expect(e.brandIcon.viewBox, e.id).toMatch(/^0 0 \d+ \d+$/);
       expect(e.brandIcon.path, e.id).toMatch(/^M/);
     }
     // watch inputs = the catalog plus every icon, so an icon edit rebuilds
-    expect(files).toHaveLength(1 + 8);
+    expect(files).toHaveLength(1 + 9);
   });
 });

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **OdooSurface joins the MCP catalog.** It gives an agent the same Odoo
+  access the signed-in user has in the browser, nothing more. It is the
+  catalog's first server with no remote endpoint: Connect… opens straight to
+  its local server, which fills in the custom form with the four values to
+  enter (the Odoo address, database, user and an API key). Add it once per
+  Odoo instance, each under its own name. (#63)
 - **Reasoning stays one row while it streams.** A thought opened on its own
   while it streamed, so a model that reasons at length scrolled the panel
   through reasoning nobody asked to read. It now stays collapsed, showing

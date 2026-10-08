@@ -699,16 +699,16 @@ for (const theme of Object.keys(THEMES)) {
   await p.click("text=MCP Servers");
   await p.waitForSelector(".cat-filter");
   const rowsShown = () => p.$$eval(".cat-row", (rows) => rows.length);
-  check(`[${theme}] catalog shows every entry unfiltered`, (await rowsShown()) === 3);
+  check(`[${theme}] catalog shows every entry unfiltered`, (await rowsShown()) === 4);
   await p.click('.cat-filter button[aria-pressed="false"]:has-text("local")');
-  check(`[${theme}] local toggle keeps the two local-bearing rows`, (await rowsShown()) === 2);
+  check(`[${theme}] local toggle keeps the three local-bearing rows`, (await rowsShown()) === 3);
   await p.fill('input[aria-label="Search the catalog"]', "design");
   check(`[${theme}] text matches description, never the caveat note`, (await rowsShown()) === 1);
   await p.screenshot({ path: `${OUT}/settings-catalog-${theme}.png` });
   await p.fill('input[aria-label="Search the catalog"]', "nothing");
   check(`[${theme}] empty filter offers a clear`, (await p.waitForSelector("text=Clear filter", { timeout: 3000 })) !== null);
   await p.click("text=Clear filter");
-  check(`[${theme}] clear restores every entry`, (await rowsShown()) === 3);
+  check(`[${theme}] clear restores every entry`, (await rowsShown()) === 4);
 
   // ── settings: an MCP server is named once, at its add (#88) ──
   const github = p.locator(".cat-row", { hasText: "GitHub" });
@@ -732,6 +732,24 @@ for (const theme of Object.keys(THEMES)) {
   await p.click('button:has-text("Add all")');
   const added = await p.evaluate(() => window.__actions.at(-1));
   check(`[${theme}] Add all sends the reviewed names`, added?.kind === "addImportedMcpServers" && added.importId === 1 && JSON.stringify(added.names) === JSON.stringify(["My Files", "My_Files"]));
+
+  // A server with no remote (#63) is still offered: Connect… opens straight
+  // to its local server, and that prefills the custom form with the values
+  // the user fills in — nothing runs until they add it.
+  const odoo = p.locator(".cat-row", { hasText: "OdooSurface" });
+  await odoo.locator('button:has-text("Connect…")').click();
+  check(
+    `[${theme}] a local-only entry opens to its local server alone — no name, key or OAuth form`,
+    (await odoo.locator("text=run it locally:").count()) === 1 && (await odoo.locator('input[placeholder="my-server"], input[type="password"]').count()) === 0,
+  );
+  await odoo.locator('button:has-text("Use local server…")').click();
+  const envBox = p.locator('textarea[placeholder="MY_API_KEY=…"]');
+  await envBox.waitFor({ timeout: 3000 });
+  check(
+    `[${theme}] its local server prefills the custom form, command and the four values to fill`,
+    (await p.locator('input[placeholder="npx"]').inputValue()) === "npx" && (await envBox.inputValue()) === "ODOO_URL=\nODOO_DB=\nODOO_USER=\nODOO_PASSWORD=",
+  );
+  await p.screenshot({ path: `${OUT}/settings-catalog-local-only-${theme}.png` });
 
   // ── settings: the destructive dialog (Data › Erase all data) ──
   await p.click('.nav .it:has-text("Data")');

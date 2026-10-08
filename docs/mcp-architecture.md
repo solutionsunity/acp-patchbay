@@ -97,7 +97,10 @@ restate it. Policy for what an entry is:
   pasted key, `auth.oauth` where it documents MCP-spec OAuth — set false when a
   failure was reproduced (Figma's allowlisted DCR, Pitfall §2). Per-account
   services ship `url: ""` with `userUrl: true` and the user pastes their own
-  endpoint at connect.
+  endpoint at connect. A server with no remote at all ships `url: ""` without
+  `userUrl` and is listed through its `local` server alone: the row offers the
+  local prefill and nothing else, and each instance the user runs (one per
+  Odoo database, say) is its own custom add under its own name.
 - **`description`** says what the server is for; **`note`** carries the caveats
   a user must know before connecting; **`local`** is the vendor's official local
   server when it documents one, offered as a prefill and never auto-run.

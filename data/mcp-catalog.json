@@ -1,5 +1,5 @@
 {
-  "$comment": "Curated MCP server catalog. Every entry offers a static-key header mode and/or MCP-spec OAuth 2.1 as the vendor documents it; userUrl entries (Supabase, Augment) have per-account endpoints the user pastes at connect. Facts are the vendor's public docs (docsUrl) — a wrong one is an issue, not a patchbay finding. Every entry also has its vendor mark at icons/<id>.svg, folded in at build; an entry without one does not build. Request an entry with the 'Curated MCP server request' issue form.",
+  "$comment": "Curated MCP server catalog. An entry connects to a remote endpoint with a static-key header mode and/or MCP-spec OAuth 2.1, and/or runs the vendor's own local server (prefilled into the custom add), as the vendor documents them; userUrl entries (Supabase, Augment) have per-account endpoints the user pastes at connect, and an entry with no endpoint at all (OdooSurface) is local only. Facts are the vendor's public docs (docsUrl) — a wrong one is an issue, not a patchbay finding. Every entry also has its vendor mark at icons/<id>.svg, folded in at build; an entry without one does not build. Request an entry with the 'Curated MCP server request' issue form.",
   "servers": [
     {
       "id": "github",
@@ -183,6 +183,32 @@
         ],
         "envKeys": [],
         "note": "Auggie CLI (npm i -g @augmentcode/auggie), authenticated via `auggie login` first"
+      }
+    },
+    {
+      "id": "odoo-surface",
+      "name": "OdooSurface",
+      "description": "OdooSurface — user-equivalent Odoo access: what the signed-in user can do in the browser, nothing more.",
+      "url": "",
+      "docsUrl": "https://github.com/solutionsunity/odoo-surface-mcp#readme",
+      "note": "Local only: no remote endpoint, it runs on your machine against one Odoo 15+ instance. Add it once per instance (local, staging, production), each with its own values. ODOO_PASSWORD takes an Odoo API key (Preferences → Account Security → API Keys), not the account password. Listed by Solutions Unity, which also maintains patchbay.",
+      "auth": {
+        "header": null,
+        "oauth": false
+      },
+      "local": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@suco/odoo-surface-mcp@latest"
+        ],
+        "envKeys": [
+          "ODOO_URL",
+          "ODOO_DB",
+          "ODOO_USER",
+          "ODOO_PASSWORD"
+        ],
+        "note": "official @suco/odoo-surface-mcp; needs Node 18+ and a running Odoo 15+"
       }
     }
   ]

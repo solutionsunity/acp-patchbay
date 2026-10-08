@@ -88,7 +88,7 @@ describe("catalog drift checker", () => {
     expect(findings.some((x: Finding) => x.status === "drift")).toBe(false);
   });
 
-  it("skips say why: per-account endpoint, key-only entry, docker launcher, desktop-app local", async () => {
+  it("skips say why: per-account endpoint, local-only entry, key-only entry, docker launcher, desktop-app local", async () => {
     const { f, calls } = fakeFetch({ "https://acme.test/docs": { status: 200 } });
     // raw-JSON shape: `local` absent, as the data file may leave it
     const perAccount: Finding[] = await checkCatalog(
@@ -97,6 +97,9 @@ describe("catalog drift checker", () => {
     );
     expect(verdict(perAccount, "endpoint")).toMatchObject({ status: "skipped", detail: "per-account endpoint" });
     expect(verdict(perAccount, "oauth")).toMatchObject({ status: "skipped", detail: "per-account endpoint" });
+    // no endpoint and no per-account one: a local-only server (#63)
+    const localOnly = await checkCatalog([entry({ url: "", auth: { header: null, oauth: false } })], f);
+    expect(verdict(localOnly, "endpoint")).toMatchObject({ status: "skipped", detail: "local only" });
 
     const docker = await checkCatalog([entry({ local: { command: "docker", args: ["run"], envKeys: [], note: "" } })], f);
     expect(verdict(docker, "npm").detail).toBe("launcher is docker, not npx");

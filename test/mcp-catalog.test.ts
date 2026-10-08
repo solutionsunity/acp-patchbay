@@ -20,6 +20,7 @@ describe("catalog", () => {
       "postman",
       "supabase",
       "augment-context-engine",
+      "odoo-surface",
     ]);
   });
 
@@ -34,7 +35,7 @@ describe("catalog", () => {
 
   it("verified local stdio servers ship for exactly the vendors we confirmed", () => {
     const byId = new Map(loadCatalog().map((e) => [e.id, e]));
-    for (const id of ["github", "stripe", "sentry", "supabase", "augment-context-engine"]) {
+    for (const id of ["github", "stripe", "sentry", "supabase", "augment-context-engine", "odoo-surface"]) {
       const local = byId.get(id)!.local;
       expect(local, id).not.toBeNull();
       expect("command" in local!, id).toBe(true);
@@ -42,6 +43,20 @@ describe("catalog", () => {
     // no official local server verified — honestly absent, never guessed
     expect(byId.get("stitch")!.local).toBeNull();
     expect(byId.get("postman")!.local).toBeNull();
+  });
+
+  it("OdooSurface is local only: no remote to connect, its stdio server and the four values it needs offered instead (#63)", () => {
+    const odoo = loadCatalog().find((e) => e.id === "odoo-surface")!;
+    expect(odoo.url).toBe("");
+    expect(odoo.userUrl).toBe(false);
+    expect(isConnectable(odoo)).toBe(false); // *remotely*; the row offers the local path alone
+    expect(odoo.local).toMatchObject({
+      command: "npx",
+      args: ["-y", "@suco/odoo-surface-mcp@latest"],
+      envKeys: ["ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASSWORD"],
+    });
+    expect(odoo.note).toMatch(/local only/i);
+    expect(odoo.note).toMatch(/API key/); // a key, not the account password
   });
 
   it("GitHub is key-only (PAT) with its documented endpoint — no OAuth claimed where DCR isn't open", () => {

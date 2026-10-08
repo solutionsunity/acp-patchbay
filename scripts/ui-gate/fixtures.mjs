@@ -215,9 +215,10 @@ export function agentViewState({ live }) {
   };
 }
 
-/** Three curated entries spanning the mechanism space — key+local,
- * key+OAuth, local-only-not-connectable — so the catalog filter's toggles
- * and text have distinct rows to keep and drop. Stripe's caveat note
+/** Four curated entries spanning the mechanism space — key+local,
+ * key+OAuth, a gated remote with a local server, local-only — so the
+ * catalog filter's toggles and text have distinct rows to keep and drop.
+ * Stripe's caveat note
  * carries the word the text probe types: the note must NOT match. */
 const catalogEntry = (id, name, description, over = {}) => ({
   id, name, description, brandIcon: { viewBox: "0 0 24 24", path: "M4 4h16v16H4z" }, connectable: true, note: "", docsUrl: "https://example.com/docs",
@@ -234,6 +235,11 @@ const catalogEntries = [
   catalogEntry("figma", "Figma", "design context — frames, components, variables", {
     connectable: false, note: "Remote gated on a client allowlist; the desktop server is open.",
     local: { kind: "http", url: "http://127.0.0.1:3845/mcp", note: "desktop app running" },
+  }),
+  // local only (#63): no remote at all, its stdio server offered alone
+  catalogEntry("odoo-surface", "OdooSurface", "user-equivalent Odoo access", {
+    connectable: false, note: "Local only: no remote endpoint.",
+    local: { kind: "stdio", command: "npx", args: ["-y", "@suco/odoo-surface-mcp@latest"], envKeys: ["ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASSWORD"], note: "needs a running Odoo" },
   }),
 ];
 
