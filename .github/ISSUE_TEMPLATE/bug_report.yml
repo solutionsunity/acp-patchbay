@@ -38,27 +38,14 @@ body:
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     id: agent
     attributes:
-      label: Which agent
-      description: The ACP agent connected when the bug occurred.
-      options:
-        - Auggie (augment)
-        - Claude (claude-agent-acp)
-        - Codex (codex-acp)
-        - Gemini CLI
-        - Other / multiple
-        - Not agent-specific
+      label: Agent & version
+      description: The ACP agent(s) connected when the bug occurred, with versions — mark one you added yourself as custom.
+      placeholder: 'e.g. OpenCode 1.4.4, Hermes 0.9.2 (custom), or "not agent-specific"'
     validations:
       required: true
-
-  - type: input
-    id: agent-version
-    attributes:
-      label: Agent version
-      description: Version of the agent above (skip if not agent-specific).
-      placeholder: "e.g. auggie 0.58.1"
 
   - type: input
     id: extension-version
