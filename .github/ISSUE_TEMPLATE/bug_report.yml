@@ -69,12 +69,28 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: vscode-version
+  - type: dropdown
+    id: editor
     attributes:
-      label: VS Code version & OS
+      label: Editor
+      description: Where Patchbay runs. Editors other than VS Code install it from Open VSX.
+      options:
+        - VS Code
+        - VSCodium
+        - Cursor
+        - Windsurf / Devin Desktop
+        - Trae
+        - Kiro
+        - Other VS Code–compatible editor
+    validations:
+      required: true
+
+  - type: input
+    id: editor-version
+    attributes:
+      label: Editor version & OS
       description: Help → About (or `code --version`), plus your OS.
-      placeholder: "e.g. VS Code 1.9x.x, Windows 11 / macOS 15 / Ubuntu 24.04"
+      placeholder: "e.g. 1.9x.x, Windows 11 / macOS 15 / Ubuntu 24.04"
     validations:
       required: true
 
