@@ -11,7 +11,7 @@
 // OAuth provider and a fake remote MCP endpoint — the same fixture
 // philosophy as the fake ACP agent.
 import { randomUUID } from "node:crypto";
-import type { McpServer } from "@agentclientprotocol/sdk";
+import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type {
   McpServerConnectView,
@@ -62,6 +62,21 @@ export interface McpServerWire {
  * server's. The id can't be a stored one's: no minted or slugged id holds
  * a colon. */
 const EDITOR_SERVER = { id: "patchbay:editor" as PatchbayMcpServerId, name: "patchbay" } as const;
+
+/** One of patchbay's own scripts as a server the agent spawns. On a desktop
+ * editor `process.execPath` is its Electron binary, which runs a script as
+ * Node only under ELECTRON_RUN_AS_NODE — and an agent that hands its servers
+ * a filtered environment drops the one the extension host passed down, so
+ * the editor opens the script as a file instead. The entry carries it; a
+ * plain node binary (a remote host) ignores it. */
+function ownScript(name: string, script: string, env: EnvVariable[]): McpServerStdio {
+  return {
+    name,
+    command: process.execPath,
+    args: [script],
+    env: [{ name: "ELECTRON_RUN_AS_NODE", value: "1" }, ...env],
+  };
+}
 
 /** The operations that take time — a connect, an add, a probe, a remove —
  * each reached only through the gates, which order them on their lines. */
@@ -851,15 +866,10 @@ export class McpServersStore {
     // McpServerStdio is the untagged union member — no discriminant needed
     // since it's the only variant every agent is guaranteed to accept.
     const servers: McpServer[] = [
-      {
-        name: EDITOR_SERVER.name,
-        command: process.execPath,
-        args: [this.wire.editorServerScript],
-        env: [
-          { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
-          { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
-        ],
-      },
+      ownScript(EDITOR_SERVER.name, this.wire.editorServerScript, [
+        { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
+        { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
+      ]),
     ];
     const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
     for (const config of this.configs.list()) {
@@ -909,11 +919,8 @@ export class McpServersStore {
         given.push({ id: config.id, delivery: "http" });
         continue;
       }
-      servers.push({
-        name: config.name,
-        command: process.execPath,
-        args: [this.wire.bridgeScript],
-        env: [
+      servers.push(
+        ownScript(config.name, this.wire.bridgeScript, [
           { name: "ACP_PATCHBAY_IPC", value: this.wire.socketPath() },
           { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
           { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: config.id },
@@ -924,8 +931,8 @@ export class McpServersStore {
                 { name: "ACP_PATCHBAY_AUTH_PREFIX", value: header.valuePrefix },
               ]
             : []),
-        ],
-      });
+        ]),
+      );
       given.push({ id: config.id, delivery: "bridge" });
     }
     // Env and header values are secrets by classification. Over-redaction

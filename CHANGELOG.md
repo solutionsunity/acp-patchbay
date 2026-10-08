@@ -31,6 +31,13 @@
   the first 40 lines of the file, so an edit further down showed nothing of
   itself; a card now shows a small change whole, with three lines of context,
   and a larger one only as its counts. (#90)
+- **Connecting an agent no longer opens patchbay's own script in the
+  editor.** Patchbay's editor server and its MCP bridge run on the editor's
+  own binary, which runs them as Node only when told to — and that word
+  reached them only when the agent passed its whole environment along. An
+  agent that hands its servers a filtered one (Hermes Agent does) launched
+  the editor instead, which opened `mcp-server.js` as a tab and kept taking
+  focus as the agent retried. Both now carry it themselves. (#94)
 
 ## 0.84.2 — 2026-10-07
 

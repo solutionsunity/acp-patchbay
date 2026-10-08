@@ -541,6 +541,7 @@ describe("McpServersStore — one composition of a session's set", () => {
       command: process.execPath,
       args: ["/mcp-server.js"],
       env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
         { name: "ACP_PATCHBAY_IPC", value: "/sock" },
         { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: "ctx-7" },
       ],
@@ -550,6 +551,15 @@ describe("McpServersStore — one composition of a session's set", () => {
       { id, delivery: "http" },
     ]);
     expect(h.crossed).toEqual(expect.arrayContaining(["/sock", "ctx-7", "Bearer key-9"]));
+  });
+
+  it("every server patchbay runs itself carries ELECTRON_RUN_AS_NODE — an agent that filters its environment would launch the editor", async () => {
+    const h = harness([entry()]);
+    await h.gates.connectWithKey("svc", "key-9");
+    const { servers } = await h.manager.mcpServersFor("agent-a" as PatchbayAgentId, "ctx-7", false);
+    const own = servers.filter((s) => "command" in s && s.command === process.execPath);
+    expect(own.map((s) => s.name)).toEqual(["patchbay", "Service"]);
+    for (const server of own) expect(envOf(server).ELECTRON_RUN_AS_NODE).toBe("1");
   });
 
   it("no configured server takes the built-in's name", async () => {
