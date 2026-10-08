@@ -170,6 +170,14 @@ describe("agents store", () => {
     await h.agents.stop("doomed" as PatchbayAgentId);
   });
 
+  it("an edit that takes another agent's name is refused — the record stays as it was", async () => {
+    const h = agentsHarness(dir);
+    await stored(h, fakeConfig("one", {}));
+    await stored(h, fakeConfig("two", {}));
+    await h.agents.save(fakeConfig("two", {}, { name: "Fake one", autoConnect: true }));
+    expect(h.agents.config("two" as PatchbayAgentId)).toMatchObject({ name: "Fake two", autoConnect: false });
+  });
+
   it("the row's command is what runs while a process runs, and what Connect would run otherwise", async () => {
     const h = agentsHarness(dir);
     await stored(h, fakeConfig("cmd", {}));

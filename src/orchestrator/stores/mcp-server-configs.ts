@@ -9,6 +9,7 @@
 // to workspaces (not repos) may return later as an opt-in. SecretStorage
 // (mcp-server-tokens.ts) keys credentials globally by server id.
 import { z } from "zod";
+import { addedMcpServerName, mcpServerName } from "../../shared/names";
 import { NamedRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
@@ -76,9 +77,8 @@ export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 /** Under the name the records were first stored by. */
 const KEY = "acpPatchbay.integrations";
 
-/** A server's name rides the wire as its name, so two of one name would
- * collide in an agent: adds take a name no record holds, and none takes the
- * built-in editor server's, which is never stored (the callers reserve it). */
+/** A server's name is the key it goes to agents under: cut to what agents
+ * keep, never the built-in editor server's, and never two of one. */
 export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   constructor(kv: KV) {
     super(kv, KEY, mcpServerConfigSchema);
@@ -105,6 +105,21 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
         }),
       );
     }
+  }
+
+  /** Throws for a name that cuts to nothing — refused by every add, and
+   * asked first by a connect that stores a credential before its add. */
+  static admitName(name: string): void {
+    if (mcpServerName(name) === "") throw new Error("the name is empty");
+  }
+
+  override async add(value: McpServerConfig): Promise<string> {
+    McpServerConfigStore.admitName(value.name);
+    return super.add(value);
+  }
+
+  protected override freeName(name: string, taken: readonly string[]): string {
+    return addedMcpServerName(name, taken);
   }
 
   /** A removed agent leaves every reach list that names it, in one write —

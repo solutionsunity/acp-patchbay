@@ -136,9 +136,9 @@ string passes for one. The registry id is a fact on the row, so one registry
 entry can be added more than once — two profiles, two agents — and what the
 registry speaks for goes by it: the update fact, a binary's download and its
 digest, and the tables that name a vendor (a wire-extension module's curated
-entry, the PATH-sibling check). An added agent takes a name no other agent
-holds: a taken name gets a number ("Gemini CLI 2"), picked in the same write
-as the add.
+entry, the PATH-sibling check). No two agents hold one name: an added agent
+whose name is taken gets a number ("Gemini CLI 2"), picked in the same write
+as the add, and an edit to a name another agent holds is refused.
 
 An agent runs one process per window, holding all its sessions, so a row has
 exactly one connection. **Operations:** connect, stop, restart, upgrade,
@@ -307,13 +307,19 @@ earlier keeps its own, since ids are opaque keys. Anywhere but its own row it
 is a `patchbayMcpServerId`, of its own type (`PatchbayMcpServerId`). The
 catalog id (`catalogId`) and the display name are facts on the row, so one
 curated entry can be connected more than once — two accounts, two servers. The
-display name rides the wire as the server's name, so no two servers share one:
-a taken name gets a number ("GitHub 2"), picked in the same write as the add,
-and "patchbay" is the built-in editor server's. Reach lists name agents by id;
-an agent's removal takes it off every list in one write.
+name is the key the server goes to agents under — they build its tool ids from
+it and keep "always allow" rules under it — so it is given once, at the add,
+and never changes. It is cut to what agents keep, `[a-zA-Z0-9_-]`, every other
+character becoming `_` as agents rewrite it themselves; a taken name gets `-N`
+("GitHub-2"), checked after the cut and picked in the same write as the add;
+and "patchbay" is the built-in editor server's. A name stored before the cut is
+rewritten once at load, to the form agents already used. Reach lists name
+agents by id; an agent's removal takes it off every list in one write.
 
 **Operations:** connect a curated entry (a pasted key, or the browser OAuth
-flow), add a custom server, import, probe, remove — disconnect is remove:
+flow), add a custom server, import (read into a review held in memory, its
+entries added under the names the user gives them), probe, remove — disconnect
+is remove:
 credential, env and record — and the saves: edit, reach, transport, order,
 mute.
 

@@ -667,6 +667,29 @@ for (const theme of Object.keys(THEMES)) {
   await p.click("text=Clear filter");
   check(`[${theme}] clear restores every entry`, (await rowsShown()) === 3);
 
+  // ── settings: an MCP server is named once, at its add (#88) ──
+  const github = p.locator(".cat-row", { hasText: "GitHub" });
+  await github.locator('button:has-text("Connect…")').click();
+  await github.locator('input[placeholder="my-server"]').fill("GitHub work");
+  check(`[${theme}] a curated connect shows the name agents will get`, (await github.locator(".font-mono").textContent()) === "GitHub_work");
+  await github.locator('input[type="password"]').fill("k");
+  await github.locator('button:has-text("Connect with key")').click();
+  const connect = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] the connect carries the name the user gave`, connect?.kind === "connectCatalogKey" && connect.name === "GitHub work");
+  await p.evaluate(() =>
+    window.__patch([{
+      kind: "mcpServersChanged", servers: [], connects: [],
+      importReview: { id: 1, entries: [{ name: "My Files", summary: "npx -y files-server" }, { name: "My_Files", summary: "https://example.test/mcp" }] },
+    }]),
+  );
+  await p.waitForSelector('button:has-text("Add all")');
+  const reviewed = await p.locator('.card:has(button:has-text("Add all")) .note .font-mono').allTextContents();
+  check(`[${theme}] an import is reviewed first, each name as agents will get it beside the ones above`, JSON.stringify(reviewed) === JSON.stringify(["My_Files", "My_Files-2"]));
+  await p.screenshot({ path: `${OUT}/settings-import-review-${theme}.png` });
+  await p.click('button:has-text("Add all")');
+  const added = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] Add all sends the reviewed names`, added?.kind === "addImportedMcpServers" && added.importId === 1 && JSON.stringify(added.names) === JSON.stringify(["My Files", "My_Files"]));
+
   // ── settings: the destructive dialog (Data › Erase all data) ──
   await p.click('.nav .it:has-text("Data")');
   await p.click('button:has-text("Erase all data")');

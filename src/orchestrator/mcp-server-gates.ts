@@ -19,28 +19,29 @@ import type { PatchbayMcpServerId } from "../shared/ids";
 export class McpServerGates {
   constructor(
     private readonly store: McpServerLineOperations & {
-      importEntries(json: string): Promise<{ name: string; source: McpServerSourceView }[]>;
+      readImport(json: string): Promise<void>;
+      takeImport(importId: number): Promise<{ name: string; source: McpServerSourceView }[]>;
       dismiss(key: string): Promise<void>;
     },
     private readonly serverLine: Queue<McpServerWork>,
     private readonly connectLine: Queue<"connect">,
   ) {}
 
-  /** A curated entry connected with a pasted key, then probed. Settles
-   * with the new server's id. */
-  connectWithKey(catalogId: string, token: string, url?: string): Promise<PatchbayMcpServerId> {
+  /** A curated entry connected with a pasted key under the name the user
+   * gave it, then probed. Settles with the new server's id. */
+  connectWithKey(catalogId: string, name: string, token: string, url?: string): Promise<PatchbayMcpServerId> {
     return this.connected(
       this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-        this.store.connectCatalogWithKey(catalogId, token, url, signal),
+        this.store.connectCatalogWithKey(catalogId, name, token, url, signal),
       ),
     );
   }
 
-  /** A curated entry connected through its browser OAuth flow. Settles
-   * with the new server's id. */
-  connectOAuth(catalogId: string, url?: string): Promise<PatchbayMcpServerId> {
+  /** A curated entry connected through its browser OAuth flow under the
+   * name the user gave it. Settles with the new server's id. */
+  connectOAuth(catalogId: string, name: string, url?: string): Promise<PatchbayMcpServerId> {
     return this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-      this.store.connectCatalogOAuth(catalogId, url, signal),
+      this.store.connectCatalogOAuth(catalogId, name, url, signal),
     );
   }
 
@@ -53,11 +54,18 @@ export class McpServerGates {
     );
   }
 
-  /** Each entry the import reads, added in turn; one that fails is held as
-   * its failure and the rest go on. */
-  async importJson(json: string): Promise<void> {
-    for (const { name, source } of await this.store.importEntries(json)) {
-      await this.addCustom(name, source, "auto").catch(() => {});
+  /** An import is read into a review — nothing is added until the user
+   * names its entries. */
+  importJson(json: string): Promise<void> {
+    return this.store.readImport(json);
+  }
+
+  /** The reviewed entries, each added in turn under the name the user gave
+   * it (`names` in the review's order); one that fails is held as its
+   * failure and the rest go on. */
+  async addImported(importId: number, names: readonly string[]): Promise<void> {
+    for (const [i, { name, source }] of (await this.store.takeImport(importId)).entries()) {
+      await this.addCustom(names[i] ?? name, source, "auto").catch(() => {});
     }
   }
 

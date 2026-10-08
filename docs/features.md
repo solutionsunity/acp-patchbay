@@ -206,7 +206,12 @@ deliverable.
   stays, ready to connect again. Nothing is stored until it can actually work: a
   cancelled OAuth consent means nothing was added.
 - A curated service can be connected more than once — two GitHub accounts are
-  two servers, each under its own name (a second connection gets a number).
+  two servers, each under its own name.
+- A server's name is chosen once, when it is added — a curated connect, a custom
+  add, or an import's review — and never changes: agents keep the server's tools
+  and "always allow" rules under it. The form shows the name exactly as every
+  agent will get it while it is typed: characters agents don't keep become `_`,
+  and a name another server holds gets `-2`.
 - User owns the routing: which servers each agent receives is the user's
   choice, per agent, not all-or-nothing. Default ("auto"): a new server
   attaches to every agent; "only" pins an explicit list; "except" attaches to

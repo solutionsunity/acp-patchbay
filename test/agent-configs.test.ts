@@ -72,7 +72,7 @@ describe("agent config store — the retired process policy", () => {
     const old = { id: "old", ...base, registrySource: null, processPolicy: "isolated" };
     // fails the schema (empty id) — still only loses the retired key
     const malformed = { id: "", processPolicy: "auto", extra: 1 };
-    const current = { id: "current", ...base, registrySource: null };
+    const current = { id: "current", ...base, name: "Kimi CLI 2", registrySource: null };
     await kv.update(KEY, [old, malformed, current]);
 
     const store = new AgentConfigStore(kv);
@@ -114,5 +114,41 @@ describe("agent config store — a mode saved as its own field", () => {
     expect(defaults("d")).toEqual({});
     // rewritten on disk: the next load has nothing left to fold
     expect((kv.get(KEY) as { defaults: object }[]).some((r) => "mode" in r.defaults)).toBe(false);
+  });
+});
+
+describe("agent config store — names", () => {
+  const record = (id: string, name: string) => ({ id: id as PatchbayAgentId, ...base, name, registrySource: null });
+
+  it("an add takes a free name; a write under a name another agent holds is refused, its own name is not", async () => {
+    const store = new AgentConfigStore(new MemoryKV());
+    expect(await store.add(record("a", "Claude"))).toBe("Claude");
+    expect(await store.add(record("b", "Claude"))).toBe("Claude 2");
+    await expect(store.upsert(record("b", "Claude"))).rejects.toThrow(/"Claude" is taken/);
+    await store.upsert({ ...record("a", "Claude"), autoConnect: true });
+    expect(store.list().map((c) => [c.id, c.name, c.autoConnect])).toEqual([
+      ["a", "Claude", true],
+      ["b", "Claude 2", false],
+    ]);
+  });
+});
+
+describe("agent config store — names shared before the rule held", () => {
+  it("are told apart once at load — the first keeps its name, the next gets a number", async () => {
+    const kv = new MemoryKV();
+    await kv.update("acpPatchbay.agents", [
+      { id: "a", ...base, name: "Claude", registrySource: null },
+      { id: "b", ...base, name: "Claude", registrySource: null },
+      { id: "c", ...base, name: "Claude 2", registrySource: null },
+    ]);
+    const store = new AgentConfigStore(kv);
+    expect(store.list().map((c) => [c.id, c.name])).toEqual([
+      ["a", "Claude"],
+      ["b", "Claude 3"],
+      ["c", "Claude 2"],
+    ]);
+    // every later write meets the rule — the one that used to share a name too
+    await store.upsert({ ...store.get("b" as PatchbayAgentId)!, autoConnect: true });
+    expect(store.get("b" as PatchbayAgentId)?.autoConnect).toBe(true);
   });
 });

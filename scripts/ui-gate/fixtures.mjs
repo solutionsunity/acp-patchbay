@@ -268,7 +268,7 @@ export function settingsState() {
       { id: "aug", name: "Augment", description: "Augment Code", icon: null, version: "2.1.0", unavailableReason: "requires login" },
     ],
     commandRules: [], machineCommandRules: [], fileWriteScope: "workspace",
-    auditTail: [], mcpCatalog: catalogEntries, mcpServers: [], mcpConnects: [],
+    auditTail: [], mcpCatalog: catalogEntries, mcpServers: [], mcpConnects: [], mcpImportReview: null,
     agentConfigs: [{
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       env: { API_KEY: "sk-fixture" }, defaults: {}, registrySource: null, lastSeenVersion: null,

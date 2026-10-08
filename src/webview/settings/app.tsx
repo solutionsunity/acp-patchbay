@@ -124,16 +124,18 @@ export function App({ state }: { state: SettingsState }) {
         {section === "mcpServers" && (
           <McpServersSection
             state={state}
-            onConnectKey={(catalogId, token, url) =>
-              send({ kind: "connectCatalogKey", catalogId, token, url })
+            onConnectKey={(catalogId, name, token, url) =>
+              send({ kind: "connectCatalogKey", catalogId, name, token, url })
             }
-            onConnectOAuth={(catalogId, url) =>
-              send({ kind: "connectCatalogOAuth", catalogId, url })
+            onConnectOAuth={(catalogId, name, url) =>
+              send({ kind: "connectCatalogOAuth", catalogId, name, url })
             }
             onAddCustom={(name, source, routing) =>
               send({ kind: "addCustomMcpServer", name, source, routing })
             }
             onImportJson={(json) => send({ kind: "importMcpServersJson", json })}
+            onAddImported={(importId, names) => send({ kind: "addImportedMcpServers", importId, names })}
+            onCancelImport={(importId) => send({ kind: "cancelMcpServersImport", importId })}
             onUpdateJson={(patchbayMcpServerId, json) =>
               send({ kind: "updateMcpServerJson", patchbayMcpServerId, json })
             }

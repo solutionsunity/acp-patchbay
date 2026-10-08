@@ -71,7 +71,7 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 const KEY = "acpPatchbay.agents";
 
 /** Two agents from one executable or one registry entry are told apart by
- * name: an add takes a name no other agent holds. */
+ * name: no two agents hold one. */
 export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
   constructor(kv: KV) {
     super(kv, KEY, agentConfigSchema);

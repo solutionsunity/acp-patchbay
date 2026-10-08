@@ -12,6 +12,7 @@ import type {
   SettingsState,
 } from "../../shared/protocol";
 import { count } from "../../shared/count";
+import { addedMcpServerName, mcpServerName } from "../../shared/names";
 import { Icon } from "../shared/icon";
 import { filterCatalog, MECHANISMS, mechanismsOf, type Mechanism } from "./catalog-filter";
 import { ConfirmButton, Field } from "./controls";
@@ -251,6 +252,38 @@ function firstLine(text: string): string {
   return line.length > 140 ? `${line.slice(0, 140)}…` : line;
 }
 
+/** Why an MCP server's name is typed once — said wherever one is named. */
+const NAME_IS_FINAL = `it can't be changed later: agents keep the server's tools and "always allow" rules under its name`;
+
+/** An MCP server's name, typed once: it is the key agents keep the
+ * server's tools and "always allow" rules under, so it never changes after
+ * the add. Shown as the add will store it, while it is typed. */
+function McpNameField(props: { value: string; taken: readonly string[]; onChange(value: string): void }) {
+  const blank = mcpServerName(props.value) === "";
+  return (
+    <>
+      <Field label="name">
+        <Input
+          type="text"
+          placeholder="my-server"
+          value={props.value}
+          onInput={(e) => props.onChange((e.target as HTMLInputElement).value)}
+        />
+      </Field>
+      <div className="note m-0 basis-full">
+        {blank ? (
+          "a name is needed"
+        ) : (
+          <>
+            agents get it as <span className="font-mono">{addedMcpServerName(props.value, props.taken)}</span>
+          </>
+        )}{" "}
+        — {NAME_IS_FINAL}
+      </div>
+    </>
+  );
+}
+
 /** One compact catalog row: name · mechanism chips · Docs · `Connect…`
  * expanding the entry's own form inline. The two mechanisms are presented
  * as the alternatives they are — key paste `— or —` OAuth — never an
@@ -259,17 +292,21 @@ function CatalogRow(props: {
   entry: SettingsState["mcpCatalog"][number];
   /** This entry's connect under way or failed. */
   flow: McpServerConnectView | undefined;
+  /** The names the servers already stored hold. */
+  taken: readonly string[];
   expanded: boolean;
   onToggle(): void;
-  onConnectKey(token: string, url?: string): void;
-  onConnectOAuth(url?: string): void;
+  onConnectKey(name: string, token: string, url?: string): void;
+  onConnectOAuth(name: string, url?: string): void;
   onCancelConnect(): void;
   onUseLocal(): void;
 }) {
   const { entry, flow } = props;
+  const [name, setName] = useState(entry.name);
   const [key, setKey] = useState("");
   const [url, setUrl] = useState("");
   const pending = flow?.status === "running";
+  const nameMissing = mcpServerName(name) === "";
   const userUrlValue = entry.userUrl ? url.trim() : undefined;
   const urlMissing = entry.userUrl && url.trim() === "";
   // A gated remote with a verified local server is still connectable —
@@ -322,6 +359,11 @@ function CatalogRow(props: {
       )}
       {props.expanded && offersAnything && (
         <>
+          {entry.connectable && (
+            <div className="connect-form">
+              <McpNameField value={name} taken={props.taken} onChange={setName} />
+            </div>
+          )}
           {entry.userUrl && (
             <div className="connect-form">
               <Field
@@ -356,8 +398,8 @@ function CatalogRow(props: {
                   )}
                   <Button
                     size="sm"
-                    disabled={pending || key.trim() === "" || urlMissing}
-                    onClick={() => props.onConnectKey(key.trim(), userUrlValue)}
+                    disabled={pending || key.trim() === "" || urlMissing || nameMissing}
+                    onClick={() => props.onConnectKey(name, key.trim(), userUrlValue)}
                   >
                     Connect with key
                   </Button>
@@ -371,8 +413,8 @@ function CatalogRow(props: {
               <div className="form-actions">
                 <Button
                   variant="outline" size="sm"
-                  disabled={pending || urlMissing}
-                  onClick={() => props.onConnectOAuth(userUrlValue)}
+                  disabled={pending || urlMissing || nameMissing}
+                  onClick={() => props.onConnectOAuth(name, userUrlValue)}
                 >
                   Connect with OAuth (browser)…
                 </Button>
@@ -421,10 +463,12 @@ function CatalogRow(props: {
 
 export function McpServersSection(props: {
   state: SettingsState;
-  onConnectKey(catalogId: string, token: string, url?: string): void;
-  onConnectOAuth(catalogId: string, url?: string): void;
+  onConnectKey(catalogId: string, name: string, token: string, url?: string): void;
+  onConnectOAuth(catalogId: string, name: string, url?: string): void;
   onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): void;
   onImportJson(json: string): void;
+  onAddImported(importId: number, names: readonly string[]): void;
+  onCancelImport(importId: number): void;
   onUpdateJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
@@ -459,6 +503,18 @@ export function McpServersSection(props: {
   const [authType, setAuthType] = useState<"none" | "header" | "oauth">("none");
   const [headerName, setHeaderName] = useState("Authorization");
   const [token, setToken] = useState("");
+  // The names typed into the import under review — render state for that
+  // review only; a newer one starts from its own entries' names.
+  const [reviewNames, setReviewNames] = useState<{ id: number; names: readonly string[] } | null>(null);
+
+  const taken = state.mcpServers.map((s) => s.name);
+  const review = state.mcpImportReview;
+  const namesInReview =
+    review === null ? [] : reviewNames?.id === review.id ? reviewNames.names : review.entries.map((e) => e.name);
+  // Each entry takes its name beside the stored ones and the entries above
+  // it — the order Add all adds them in.
+  const reviewStored: string[] = [];
+  for (const n of namesInReview) reviewStored.push(addedMcpServerName(n, [...taken, ...reviewStored]));
 
   /** One shared form under three entry points (blank add, local prefill,
    * import) — every transition clears it, so a half-filled prefill from an
@@ -484,7 +540,7 @@ export function McpServersSection(props: {
    * clicks Add; nothing runs before that. */
   const useLocal = (entryName: string, local: NonNullable<SettingsState["mcpCatalog"][number]["local"]>) => {
     resetCustomForm();
-    setName(`${entryName} (local)`);
+    setName(mcpServerName(`${entryName}-local`));
     if (local.kind === "stdio") {
       setAdding("stdio");
       setCommand(local.command);
@@ -498,7 +554,7 @@ export function McpServersSection(props: {
   };
 
   const submitCustom = () => {
-    if (name.trim() === "") return;
+    if (mcpServerName(name) === "") return;
     // "Bearer " prefix only makes sense on an Authorization header; a
     // custom header name (X-Goog-Api-Key style) carries the raw key.
     const isAuthorization = headerName.trim().toLowerCase() === "authorization";
@@ -738,8 +794,8 @@ export function McpServersSection(props: {
               onInput={(e) => setImportText((e.target as HTMLTextAreaElement).value)}
             />
             <div className="note m-0 basis-full">
-              each entry becomes a server named by its key; env values go straight to
-              SecretStorage; entries that don't validate are skipped, labeled below
+              each entry becomes a server — you review their names before anything is added;
+              entries that don't validate are skipped, labeled below
             </div>
             <Button
               size="sm"
@@ -750,7 +806,7 @@ export function McpServersSection(props: {
                 setAdding(null);
               }}
             >
-              Import
+              Review…
             </Button>
             <Button variant="outline" size="sm" onClick={() => openAdd(null)}>
               Cancel
@@ -758,9 +814,7 @@ export function McpServersSection(props: {
           </div>
         ) : (
           <div className="connect-form">
-            <Field label="name" hint="the display name — the internal id is generated from it">
-              <Input type="text" placeholder="My MCP server" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
-            </Field>
+            <McpNameField value={name} taken={taken} onChange={setName} />
             {adding === "stdio" ? (
               <>
                 <Field label="command" hint="the executable — quotes supported">
@@ -841,7 +895,7 @@ export function McpServersSection(props: {
               <Button
                 size="sm"
                 disabled={
-                  name.trim() === "" ||
+                  mcpServerName(name) === "" ||
                   (adding === "stdio"
                     ? command.trim() === ""
                     : url.trim() === "" || (authType === "header" && token.trim() === ""))
@@ -851,6 +905,53 @@ export function McpServersSection(props: {
                 Add
               </Button>
               <Button variant="outline" size="sm" onClick={() => openAdd(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+        {review !== null && (
+          <div className="connect-form">
+            <div className="note m-0 basis-full">Name each imported server — {NAME_IS_FINAL}.</div>
+            {review.entries.map((entry, i) => {
+              const typed = namesInReview[i] ?? entry.name;
+              return (
+                <div key={i} className="flex basis-full flex-col gap-0.5">
+                  <div className="row gap-2">
+                    <Input
+                      type="text"
+                      className="w-56"
+                      aria-label={`name for ${entry.summary}`}
+                      value={typed}
+                      onInput={(e) => {
+                        const names = [...namesInReview];
+                        names[i] = (e.target as HTMLInputElement).value;
+                        setReviewNames({ id: review.id, names });
+                      }}
+                    />
+                    <span className="note m-0">
+                      {mcpServerName(typed) === "" ? (
+                        "a name is needed"
+                      ) : (
+                        <>
+                          agents get <span className="font-mono">{reviewStored[i]}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <span className="mono">{entry.summary}</span>
+                </div>
+              );
+            })}
+            <div className="form-actions">
+              <Button
+                size="sm"
+                disabled={namesInReview.some((n) => mcpServerName(n) === "")}
+                onClick={() => props.onAddImported(review.id, namesInReview)}
+              >
+                Add all
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => props.onCancelImport(review.id)}>
                 Cancel
               </Button>
             </div>
@@ -929,10 +1030,11 @@ export function McpServersSection(props: {
               key={entry.id}
               entry={entry}
               flow={flow}
+              taken={taken}
               expanded={expandedCatalogId === entry.id}
               onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
-              onConnectKey={(token, url) => props.onConnectKey(entry.id, token, url)}
-              onConnectOAuth={(url) => props.onConnectOAuth(entry.id, url)}
+              onConnectKey={(name, token, url) => props.onConnectKey(entry.id, name, token, url)}
+              onConnectOAuth={(name, url) => props.onConnectOAuth(entry.id, name, url)}
               onCancelConnect={() => {
                 if (flow !== undefined) props.onCancelConnect(flow.key);
               }}

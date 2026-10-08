@@ -260,10 +260,10 @@ Order is the working set first: **Connected servers** on top (dot · name ·
 curated / `Remove` for custom · mono command/URL · routing · `Edit JSON…` for
 custom entries — the mcpServers entry, env values and a header key shown as
 stored and saved as written; an OAuth token never appears), then **Add custom** (structured fields:
-display name, command, args one-per-line, env `KEY=value` lines — the id is
-minted, never user-typed, and a name another server holds gets a number; or
-`Import JSON…` accepting the
-well-known `{"mcpServers": {...}}` shape, per-entry failures labeled), then the
+name, command, args one-per-line, env `KEY=value` lines — the id is
+minted, never user-typed; or `Import JSON…` accepting the
+well-known `{"mcpServers": {...}}` shape, per-entry failures labeled, read into a
+review — one row per entry, its name editable — that `Add all` adds), then the
 **Curated catalog** last: a filter toolbar (search over name and description —
 what the row shows, never the caveat note · the `key`/`OAuth`/`local` chips as
 AND-combined toggles · `N of M` while narrowed; an emptied list offers
@@ -276,7 +276,12 @@ locally —` (verified official local stdio servers — GitHub, Stripe, Sentry,
 Supabase, Augment — prefill the custom form; nothing runs until the user adds it).
 Per-account services label the URL field as what it is: the account's MCP endpoint,
 used by both connect paths. Every entry stays in the catalog: connecting one again
-adds a second server (two accounts), named with a number. A pending browser flow
+adds a second server (two accounts). Every add names its server once — the
+connect form's name field starts as the entry's name, the custom form's and each
+review row's as typed or imported — and shows the name as agents will get it
+(characters agents don't keep become `_`, a taken name gets `-N`), with the note
+that it can't be changed later: agents keep the server's tools and "always
+allow" rules under it. A pending browser flow
 shows `Cancel` — the browser is waited on as long as the user takes (an MFA
 prompt, a password reset, an approval step), and an abandoned tab is ended by
 Cancel, which clears with no outcome invented and drops the waiting callback,

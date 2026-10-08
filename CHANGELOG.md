@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **You name an MCP server, once.** Connecting a curated server took the
+  catalog's name with no say, so a second GitHub could only be "GitHub 2";
+  and a name went to agents as typed, where they rewrote what they don't
+  keep, so Settings and the agent showed different names. Every add now asks
+  for the name, the curated connect too, and shows it as every agent will
+  get it: characters agents don't keep become `_`, a taken name gets `-2`. A
+  JSON import shows its entries for naming before anything is added. A name
+  can't change later, since agents keep the server's "always allow" rules
+  under it; names stored before are rewritten once to the form agents
+  already used, so those rules still hold. An agent's name can no longer be
+  edited to one another agent holds. (#88)
 - **OpenCode's to-do list is its plan.** OpenCode keeps its plan in its own
   to-do tool and sends no ACP plan, so its list used to appear as "N todos"
   tool cards and the plan chip stayed empty. A to-do write that completes

@@ -507,7 +507,6 @@ export class AgentsStore implements ConnectionOperations {
     }
     const prior = this.config(config.id);
     const patchbayAgentId = prior?.id ?? mintPatchbayAgentId();
-    await this.deps.env.set(patchbayAgentId, { ...config.env });
     // Identity/wire facts never round-trip through the form: the webview's
     // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
     // the moment a connect or an Upgrade lands mid-edit — the store's own
@@ -523,8 +522,17 @@ export class AgentsStore implements ConnectionOperations {
       registrySource: prior?.registrySource ?? config.registrySource,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     };
-    if (prior === undefined) await this.deps.configs.add(record);
-    else await this.deps.configs.upsert(record);
+    try {
+      if (prior === undefined) await this.deps.configs.add(record);
+      else await this.deps.configs.upsert(record);
+    } catch (err) {
+      // A name another agent holds: the form says so before Save; this is
+      // the write's own refusal, and nothing of the edit is kept.
+      this.log.error(`agent config ${patchbayAgentId}: ${err instanceof Error ? err.message : String(err)}`);
+      await this.publishAll();
+      return;
+    }
+    await this.deps.env.set(patchbayAgentId, { ...config.env });
     await this.publishAll();
     // The store moved; an open editor re-reads the surface for the new
     // defaults from the agent (a no-op when no editor is open).

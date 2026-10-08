@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type {
+  McpImportReviewView,
   McpServerConnectView,
   McpServerProbeView,
   McpServerRoutingView,
@@ -26,6 +27,7 @@ import type {
 import { unlessAborted } from "./abort";
 import { probeMcpServer, type ProbeFn, type ProbeTarget } from "./mcp-probe";
 import { formatCommandLine, parseCommandLine } from "../shared/command-line";
+import { EDITOR_SERVER_NAME } from "../shared/names";
 import { loggableUrl, nullLogger, type Logger } from "./logger";
 import { connectMcpOAuth, refreshMcpOAuth, type OAuthUserAgent } from "./mcp-oauth";
 import { McpServerTokenStore, type StoredToken } from "./stores/mcp-server-tokens";
@@ -61,7 +63,7 @@ export interface McpServerWire {
  * Built in: never stored, never removed, and its name is never another
  * server's. The id can't be a stored one's: no minted or slugged id holds
  * a colon. */
-const EDITOR_SERVER = { id: "patchbay:editor" as PatchbayMcpServerId, name: "patchbay" } as const;
+const EDITOR_SERVER = { id: "patchbay:editor" as PatchbayMcpServerId, name: EDITOR_SERVER_NAME } as const;
 
 /** One of patchbay's own scripts as a server the agent spawns. On a desktop
  * editor `process.execPath` is its Electron binary, which runs a script as
@@ -255,6 +257,11 @@ export class McpServersStore {
    * thing is tried again. Live: a new window starts with none. */
   private readonly failures = new Map<string, string>();
 
+  /** The import waiting on the user's names — live, like the failures: its
+   * values never leave this side, the view carries names and summaries. */
+  private review: { id: number; entries: { name: string; source: McpServerSourceView }[] } | null = null;
+  private reviews = 0;
+
   /** The refresh in flight per credential — see `refreshOnce`. */
   private readonly refreshing = new Map<string, Promise<void>>();
 
@@ -334,7 +341,12 @@ export class McpServersStore {
   async refresh(): Promise<void> {
     this.hooks.emit(
       { kind: "mcpCatalogLoaded", entries: this.catalogViews() },
-      { kind: "mcpServersChanged", servers: await this.currentViews(), connects: this.connectViews() },
+      {
+        kind: "mcpServersChanged",
+        servers: await this.currentViews(),
+        connects: this.connectViews(),
+        importReview: this.importReviewView(),
+      },
     );
   }
 
@@ -442,9 +454,17 @@ export class McpServersStore {
 
   /** Static-key connect (the v1 floor): store the pasted key, record
    * which mechanism/endpoint this connection uses. No network round-trip;
-   * the first real request proves the key. Returns the server's id. */
-  connectCatalogWithKey(catalogId: string, token: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
+   * the first real request proves the key. Stored under the name the user
+   * gave it. Returns the server's id. */
+  connectCatalogWithKey(
+    catalogId: string,
+    name: string,
+    token: string,
+    url?: string,
+    signal?: AbortSignal,
+  ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
+      McpServerConfigStore.admitName(name);
       const entry = this.entryFor(catalogId);
       if (entry === undefined || entry.auth.header === null) throw new Error("no API-key mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
@@ -452,9 +472,9 @@ export class McpServersStore {
       if (token.trim() === "") throw new Error("key is empty");
       const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.tokens.set(patchbayMcpServerId, { accessToken: token.trim() });
-      const name = await this.configs.add({
+      const given = await this.configs.add({
         id: patchbayMcpServerId,
-        name: entry.name,
+        name,
         source: {
           kind: "catalog",
           catalogId,
@@ -464,8 +484,8 @@ export class McpServersStore {
         routing: "auto",
         active: true,
         transport: "auto",
-      }, [EDITOR_SERVER.name]);
-      this.log.info(`${patchbayMcpServerId}: ${name} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
+      });
+      this.log.info(`${patchbayMcpServerId}: ${given} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
       return patchbayMcpServerId;
     });
   }
@@ -474,9 +494,10 @@ export class McpServersStore {
    * registration, PKCE, browser redirect via the injected user agent.
    * Failure (gated DCR, non-compliant server, denied consent) is immediate
    * and labeled; an abandoned tab waits until the connect is cancelled.
-   * Returns the server's id. */
-  connectCatalogOAuth(catalogId: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
+   * Stored under the name the user gave it. Returns the server's id. */
+  connectCatalogOAuth(catalogId: string, name: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
+      McpServerConfigStore.admitName(name);
       const entry = this.entryFor(catalogId);
       if (entry === undefined || !entry.auth.oauth) throw new Error("no OAuth mode for this server");
       const endpoint = this.resolveEndpoint(entry, url);
@@ -492,9 +513,9 @@ export class McpServersStore {
         tokenEndpoint: result.tokenEndpoint,
         clientId: result.clientId,
       });
-      const name = await this.configs.add({
+      const given = await this.configs.add({
         id: patchbayMcpServerId,
-        name: entry.name,
+        name,
         source: {
           kind: "catalog",
           catalogId,
@@ -504,8 +525,8 @@ export class McpServersStore {
         routing: "auto",
         active: true,
         transport: "auto",
-      }, [EDITOR_SERVER.name]);
-      this.log.info(`${patchbayMcpServerId}: ${name} connected via OAuth`);
+      });
+      this.log.info(`${patchbayMcpServerId}: ${given} connected via OAuth`);
       return patchbayMcpServerId;
     });
   }
@@ -514,7 +535,8 @@ export class McpServersStore {
    * is stored until it can actually work: a custom OAuth connect runs the
    * browser flow *first* and stores only on success — cancelling consent
    * means nothing was added, never a stranded credential-less record. The
-   * id is minted; a name already taken gets a number. Returns the id. */
+   * id is minted; the name is cut to what agents keep, and a taken one
+   * gets a number. Returns the id. */
   addCustom(
     name: string,
     source: McpServerSourceView,
@@ -522,6 +544,7 @@ export class McpServersStore {
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.custom(name), signal, async () => {
+      McpServerConfigStore.admitName(name);
       const patchbayMcpServerId = mintPatchbayMcpServerId();
       let configSource: McpServerSource;
       if (source.kind === "custom-stdio") {
@@ -570,18 +593,21 @@ export class McpServersStore {
         routing: cloneRouting(routing),
         active: true,
         transport: "auto",
-      }, [EDITOR_SERVER.name]);
+      });
       this.log.info(`${patchbayMcpServerId}: custom ${configSource.kind} ${given} added`);
       return patchbayMcpServerId;
     });
   }
 
   /** Reads the well-known `{"mcpServers": {...}}` JSON (a bare name→spec
-   * map is accepted too) into the entries an import adds — each a custom
-   * server named by its key. Only what validates comes back — a trust
-   * boundary, same as every store read; the rest is held as the import's
-   * failures, per entry, without stopping the others. */
-  async importEntries(json: string): Promise<{ name: string; source: McpServerSourceView }[]> {
+   * map is accepted too) into the review an import waits in — each entry a
+   * custom server named by its key until the user names it. Nothing is
+   * added here: a name is final once added, so the user sees and may change
+   * every one first. Only what validates is reviewed — a trust boundary,
+   * same as every store read; the rest is held as the import's failures,
+   * per entry, without stopping the others. A newer import replaces the
+   * review. */
+  async readImport(json: string): Promise<void> {
     for (const key of [...this.failures.keys()]) {
       if (connectOf(key).kind === "import") this.failures.delete(key);
     }
@@ -618,8 +644,42 @@ export class McpServersStore {
         });
       }
     }
+    this.review = entries.length === 0 ? null : { id: ++this.reviews, entries };
+    await this.refresh();
+  }
+
+  /** The entries of the review the user answered, and the review is over —
+   * none when a newer import replaced it or it was cancelled. */
+  async takeImport(importId: number): Promise<{ name: string; source: McpServerSourceView }[]> {
+    if (this.review?.id !== importId) return [];
+    const { entries } = this.review;
+    this.review = null;
     await this.refresh();
     return entries;
+  }
+
+  /** The import under review is dropped — nothing of it is added. */
+  async cancelImport(importId: number): Promise<void> {
+    if (this.review?.id !== importId) return;
+    this.review = null;
+    await this.refresh();
+  }
+
+  /** Erase: the review goes with everything stored — its values were
+   * typed for servers that would be added. */
+  dropImport(): void {
+    this.review = null;
+  }
+
+  private importReviewView(): McpImportReviewView | null {
+    if (this.review === null) return null;
+    return {
+      id: this.review.id,
+      entries: this.review.entries.map(({ name, source }) => ({
+        name,
+        summary: source.kind === "custom-stdio" ? formatCommandLine(source.command, source.args) : source.url,
+      })),
+    };
   }
 
   /** Applies an edited mcpServers entry to one custom server — the box is

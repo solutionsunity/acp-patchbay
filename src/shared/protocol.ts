@@ -181,11 +181,12 @@ export type Action =
    * whether a knob rides ACP's config-option surface or the legacy modes
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
   | { kind: "setSessionKnob"; patchbaySessionId: PatchbaySessionId; knobId: string; value: string | boolean }
-  | { kind: "connectCatalogKey"; catalogId: string; token: string; url?: string }
-  | { kind: "connectCatalogOAuth"; catalogId: string; url?: string }
+  /** `name` is the one the server goes to agents under — final once added. */
+  | { kind: "connectCatalogKey"; catalogId: string; name: string; token: string; url?: string }
+  | { kind: "connectCatalogOAuth"; catalogId: string; name: string; url?: string }
   /** The id is minted orchestrator-side — the storage/SecretStorage key,
-   * an internal concern the user never names; a name another server holds
-   * gets a number. */
+   * an internal concern the user never names; the name is cut to what
+   * agents keep, and one another server holds gets a number. */
   | {
       kind: "addCustomMcpServer";
       name: string;
@@ -193,9 +194,13 @@ export type Action =
       routing: McpServerRoutingView;
     }
   /** The well-known `{"mcpServers": {...}}` JSON (Claude Desktop / Cursor /
-   * VS Code shape) — parsed orchestrator-side; each entry becomes a custom
-   * server, failures labeled per entry. */
+   * VS Code shape) — parsed orchestrator-side into a review
+   * (`importReview`), failures labeled per entry; nothing is added yet. */
   | { kind: "importMcpServersJson"; json: string }
+  /** The review answered: each entry added as a custom server under the
+   * name at its index. */
+  | { kind: "addImportedMcpServers"; importId: number; names: readonly string[] }
+  | { kind: "cancelMcpServersImport"; importId: number }
   /** Replaces one custom server's config from its edited mcpServers entry
    * JSON — env (and a header key) stored exactly as written. */
   | { kind: "updateMcpServerJson"; patchbayMcpServerId: PatchbayMcpServerId; json: string }
@@ -485,6 +490,13 @@ export interface CatalogEntryView {
 
 /** What an MCP server's line can hold. */
 export type McpServerWork = "probe" | "remove";
+
+/** An import waiting on the user's names — what each entry is, never its
+ * env or key. `id` tells this review from a newer one. */
+export interface McpImportReviewView {
+  id: number;
+  entries: readonly { name: string; summary: string }[];
+}
 
 /** A connect under way or failed — a curated entry's, a custom add's, an
  * import's — or a server's save that failed: the MCP-servers store's live
@@ -2493,6 +2505,7 @@ export interface SettingsState {
   mcpCatalog: readonly CatalogEntryView[];
   mcpServers: readonly McpServerView[];
   mcpConnects: readonly McpServerConnectView[];
+  mcpImportReview: McpImportReviewView | null;
   /** Agents (global, developer-env — never repo-committed): addable,
    * editable, removable from Settings; connecting one goes through the same
    * `connectAgent` action as registry/custom (`{ patchbayAgentId }`). */
@@ -2551,6 +2564,7 @@ export const initialSettingsState: SettingsState = {
   mcpCatalog: [],
   mcpServers: [],
   mcpConnects: [],
+  mcpImportReview: null,
   agentConfigs: [],
   sessionsActiveToday: 0,
   agentKnobs: {},
@@ -2577,6 +2591,7 @@ export type SettingsEvent =
       kind: "mcpServersChanged";
       servers: readonly McpServerView[];
       connects: readonly McpServerConnectView[];
+      importReview: McpImportReviewView | null;
     }
   | { kind: "agentConfigsChanged"; configs: readonly AgentConfigView[] }
   | { kind: "sessionStatsChanged"; sessionsActiveToday: number }
@@ -2646,7 +2661,7 @@ export function reduceSettings(
     case "mcpCatalogLoaded":
       return { ...state, mcpCatalog: event.entries };
     case "mcpServersChanged":
-      return { ...state, mcpServers: event.servers, mcpConnects: event.connects };
+      return { ...state, mcpServers: event.servers, mcpConnects: event.connects, mcpImportReview: event.importReview };
     case "agentConfigsChanged":
       return { ...state, agentConfigs: event.configs };
     case "sessionStatsChanged":

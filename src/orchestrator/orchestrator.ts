@@ -881,6 +881,7 @@ export class Orchestrator {
     }
     await this.agents.erased(this.agentView.current.agents.map((a) => a.id));
     this.agentView.emit({ kind: "chatConnectResolved" });
+    this.mcpServers.dropImport();
     await this.mcpServers.refresh();
     this.publishRules();
     this.publishSavedRoots();
@@ -1924,16 +1925,22 @@ export class Orchestrator {
       // A connect's failure is the store's to hold and show; the log has it
       // already.
       case "connectCatalogKey":
-        void this.mcpServerGates.connectWithKey(action.catalogId, action.token, action.url).catch(() => {});
+        void this.mcpServerGates.connectWithKey(action.catalogId, action.name, action.token, action.url).catch(() => {});
         break;
       case "connectCatalogOAuth":
-        void this.mcpServerGates.connectOAuth(action.catalogId, action.url).catch(() => {});
+        void this.mcpServerGates.connectOAuth(action.catalogId, action.name, action.url).catch(() => {});
         break;
       case "addCustomMcpServer":
         void this.mcpServerGates.addCustom(action.name, action.source, action.routing).catch(() => {});
         break;
       case "importMcpServersJson":
         void this.mcpServerGates.importJson(action.json).catch(this.logCatch("import MCP servers"));
+        break;
+      case "addImportedMcpServers":
+        void this.mcpServerGates.addImported(action.importId, action.names).catch(this.logCatch("add imported MCP servers"));
+        break;
+      case "cancelMcpServersImport":
+        void this.mcpServers.cancelImport(action.importId);
         break;
       case "updateMcpServerJson":
         void this.mcpServers.updateFromJson(action.patchbayMcpServerId, action.json);

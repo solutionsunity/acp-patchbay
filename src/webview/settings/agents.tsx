@@ -34,6 +34,8 @@ import type { PatchbayAgentId } from "../../shared/ids";
  * duplicate would let the user type options that don't exist. */
 function AgentConfigForm(props: {
   initial: AgentConfigView;
+  /** The names the other agents hold — no two agents share one. */
+  taken: readonly string[];
   onSave(config: AgentConfigView): void;
   onCancel(): void;
 }) {
@@ -42,8 +44,10 @@ function AgentConfigForm(props: {
   const [autoConnect, setAutoConnect] = useState(props.initial.autoConnect);
   const [envText, setEnvText] = useState(formatEnvLines(props.initial.env));
 
+  const nameTaken = props.taken.includes(name.trim());
+
   const save = () => {
-    if (name.trim() === "" || command.trim() === "") return;
+    if (name.trim() === "" || nameTaken || command.trim() === "") return;
     props.onSave({
       id: props.initial.id,
       name: name.trim(),
@@ -62,6 +66,7 @@ function AgentConfigForm(props: {
       <Field label="name">
         <Input type="text" placeholder="display name" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
       </Field>
+      {nameTaken && <div className="note m-0 basis-full">name taken — another agent holds "{name.trim()}"</div>}
       <Field label="command" hint="command and args — quotes supported">
         <Input
           type="text"
@@ -83,7 +88,7 @@ function AgentConfigForm(props: {
         />
       </Field>
       <div className="form-actions">
-        <Button size="sm" onClick={save}>
+        <Button size="sm" disabled={name.trim() === "" || nameTaken} onClick={save}>
           Save
         </Button>
         <Button variant="outline" size="sm" onClick={props.onCancel}>
@@ -756,6 +761,7 @@ export function AgentsSection(props: {
                   {!detailsOpen ? null : editing === patchbayAgentId ? (
                     <AgentConfigForm
                       initial={effectiveConfig}
+                      taken={state.agentConfigs.filter((c) => c.id !== patchbayAgentId).map((c) => c.name)}
                       onSave={(c) => {
                         props.onSave(c);
                         setEditing(null);

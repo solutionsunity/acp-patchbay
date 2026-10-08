@@ -39,7 +39,9 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   nothing routed) and disconnect = full clear (credential + env + config; the
   catalog entry stays). One catalog entry can be connected more than once —
   two accounts, two servers, each with a minted id and a name of its own: the
-  name rides the wire as the server's name, so no two servers share one.
+  name rides the wire as the server's name, so no two servers share one, and
+  it is given once, at the add, cut to the characters agents keep — they build
+  tool ids and keep "always allow" rules under it, so it never changes.
   Nothing is stored until it can work — a cancelled OAuth consent adds
   nothing.
 - **Fork** — the session menu's Fork, named for the protocol method
