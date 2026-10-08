@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { AsksStore, type AskEnding } from "../src/orchestrator/asks-store";
 import type { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
-import type { AgentViewEvent, PermissionOptionView } from "../src/shared/protocol";
+import type { AgentViewEvent, PermissionOptionView, QuestionEvent } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 const S1 = "s1" as PatchbaySessionId;
@@ -37,13 +37,18 @@ function heldAudit() {
 
 function harness() {
   const events: AgentViewEvent[] = [];
+  const agentEvents: { patchbayAgentId: PatchbayAgentId; event: QuestionEvent }[] = [];
+  // the turn running on S1 — whatever a test sets
+  let turn: string | null = null;
   const held = heldAudit();
   const asks = new AsksStore(held.audit, {
     emit: (...evs) => events.push(...evs),
+    emitAgent: (patchbayAgentId, event) => agentEvents.push({ patchbayAgentId, event }),
+    turnOf: () => turn,
     onAuditWritten: () => {},
     pairOf: () => ({ patchbayAgentId: "a1" as PatchbayAgentId, sessionId: "agent-s1" }),
   });
-  return { asks, events, ...held };
+  return { asks, events, agentEvents, startTurn: (id: string | null) => (turn = id), ...held };
 }
 
 /** Whether a promise has settled by now. */
@@ -60,7 +65,7 @@ async function settledYet(p: Promise<unknown>): Promise<boolean> {
 describe("AsksStore — an answer that doesn't fit its ask moves nothing", () => {
   it("an option the permission doesn't offer leaves the card open, and the ask still answers", async () => {
     const { asks, events, pending } = harness();
-    const { id, ending } = asks.open(S1, "permission", { tool: "Edit", files: [] });
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "permission", { tool: "Edit", files: [] });
     asks.show(id, { kind: "options", title: "Edit", detail: "Edit", facts: [], options: OPTIONS });
 
     asks.answerOption(id, "not-an-option");
@@ -77,7 +82,7 @@ describe("AsksStore — an answer that doesn't fit its ask moves nothing", () =>
 
   it("an option answer at a write's card moves nothing either", async () => {
     const { asks, events } = harness();
-    const { id, ending } = asks.open(S1, "write", { file: "/w/a.ts" });
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
     asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: null });
     asks.answerOption(id, "y");
     expect(await settledYet(ending)).toBe(false);
@@ -88,7 +93,7 @@ describe("AsksStore — an answer that doesn't fit its ask moves nothing", () =>
 describe("AsksStore — the record before the answer", () => {
   it("the caller hears the ending only once its record is written — no action runs ahead of it", async () => {
     const { asks, events, lines, pending } = harness();
-    const { id, ending } = asks.open(S1, "command", { command: "npm test", cwd: "/w", env: [] });
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "command", { command: "npm test", cwd: "/w", env: [] });
     asks.show(id, { kind: "options", title: "Terminal", detail: "npm test", facts: [], options: OPTIONS });
     asks.answerOption(id, "y");
 
@@ -104,7 +109,7 @@ describe("AsksStore — the record before the answer", () => {
 
   it("a record that fails fails the caller — the action never runs unrecorded", async () => {
     const { asks, pending } = harness();
-    const { id, ending } = asks.open(S1, "write", { file: "/w/a.ts" });
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
     asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: null });
     asks.answerWrite(id, true);
     pending[0]!.fail(new Error("disk full"));
@@ -113,7 +118,7 @@ describe("AsksStore — the record before the answer", () => {
 
   it("a question is never recorded — its answer reaches the caller at once", async () => {
     const { asks, pending } = harness();
-    const { id, ending } = asks.open(S1, "question", null);
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "question", null);
     asks.show(id, { kind: "question", message: "Which?", ask: { mode: "form", fields: [] } });
     asks.answerQuestion(id, { action: "decline" });
     expect(await ending).toEqual({ end: "user", choice: { kind: "answer", answer: { action: "decline" } } });
@@ -124,7 +129,7 @@ describe("AsksStore — the record before the answer", () => {
 describe("AsksStore — an ask that ends before its card shows", () => {
   it("leaves no card: the show that follows is a no-op, and the stop is on the record", async () => {
     const { asks, events, lines, pending } = harness();
-    const { id, ending } = asks.open(S1, "write", { file: "/w/a.ts" });
+    const { id, ending } = asks.open({ patchbaySessionId: S1 }, "write", { file: "/w/a.ts" });
     asks.stopSession(S1);
     asks.show(id, { kind: "write", file: "/w/a.ts", additions: 1, deletions: 0, lines: [], proposal: { path: "/w/a.ts", oldText: "", newText: "x" } });
     asks.allow(id); // a rule's verdict that comes too late
@@ -133,5 +138,66 @@ describe("AsksStore — an ask that ends before its card shows", () => {
     expect(events).toEqual([]);
     expect(lines).toEqual([{ kind: "turn-cancelled", patchbayAgentId: "a1", sessionId: "agent-s1", file: "/w/a.ts" }]);
     expect(asks.proposal(id)).toBeNull();
+  });
+});
+
+// An ask ends with its owner (#81): the turn running when it was asked, the
+// session for one asked between turns, the agent for one no session owns.
+describe("AsksStore — an ask ends with its owner", () => {
+  const FORM = { mode: "form", fields: [] } as const;
+
+  it("a turn's end cancels what that turn asked — and nothing asked between turns", async () => {
+    const { asks, events, pending, startTurn } = harness();
+    startTurn(null);
+    const between = asks.open({ patchbaySessionId: S1 }, "question", null);
+    asks.show(between.id, { kind: "question", message: "Sign in to the MCP server?", ask: FORM });
+    startTurn("t1");
+    const during = asks.open({ patchbaySessionId: S1 }, "command", { command: "npm test" });
+    asks.show(during.id, { kind: "options", title: "Terminal", detail: "npm test", facts: [], options: OPTIONS });
+
+    asks.endTurn(S1, "t1", false);
+    pending[0]!.land();
+    expect(await during.ending).toEqual({ end: "stop" });
+    expect(await settledYet(between.ending)).toBe(false);
+    expect(events.at(-1)).toMatchObject({ kind: "permissionResolved", patchbayAskId: during.id });
+
+    // another turn's end leaves it too; the session leaving does not
+    asks.endTurn(S1, "t2", false);
+    expect(await settledYet(between.ending)).toBe(false);
+    asks.stopSession(S1);
+    expect(await between.ending).toEqual({ end: "stop" });
+  });
+
+  it("a stop the user asked for also cancels every permission still pending, whenever it was asked — the spec's MUST", async () => {
+    const { asks, pending, startTurn } = harness();
+    startTurn(null);
+    const permission = asks.open({ patchbaySessionId: S1 }, "permission", { tool: "Edit", files: [] });
+    const question = asks.open({ patchbaySessionId: S1 }, "question", null);
+    startTurn("t1");
+
+    asks.endTurn(S1, "t1", false);
+    expect(await settledYet(permission.ending)).toBe(false);
+    asks.endTurn(S1, "t1", true);
+    pending[0]!.land();
+    expect(await permission.ending).toEqual({ end: "stop" });
+    expect(await settledYet(question.ending)).toBe(false);
+  });
+
+  it("a question no session owns shows on its agent, and only its agent's connection ending stops it", async () => {
+    const { asks, events, agentEvents } = harness();
+    const agent = "a1" as PatchbayAgentId;
+    const { id, ending } = asks.open({ patchbayAgentId: agent }, "question", null);
+    asks.show(id, { kind: "question", message: "Sign in and enter this code: ABCD", ask: FORM });
+    expect(events).toEqual([]);
+    expect(agentEvents).toEqual([
+      { patchbayAgentId: agent, event: { kind: "elicitationRequested", patchbayAskId: id, message: "Sign in and enter this code: ABCD", ...FORM } },
+    ]);
+
+    asks.stopSession(S1);
+    asks.stopAgent("a2" as PatchbayAgentId);
+    expect(await settledYet(ending)).toBe(false);
+    asks.stopAgent(agent);
+    expect(await ending).toEqual({ end: "stop" });
+    expect(agentEvents.at(-1)).toEqual({ patchbayAgentId: agent, event: { kind: "elicitationResolved", patchbayAskId: id, outcome: "cancelled" } });
   });
 });

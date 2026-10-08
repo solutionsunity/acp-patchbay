@@ -12,6 +12,7 @@ import { agentCardControls, runnableLoginMethods } from "./card-controls";
 import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { optionText } from "../shared/option-label";
+import { ElicitationCard } from "../shared/question-card";
 import { UpgradeChip } from "../shared/upgrade-chip";
 import { Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
@@ -716,6 +717,13 @@ export function AgentsSection(props: {
                       <Icon name="info" /> {a.authReason}
                     </div>
                   )}
+                  {/* What the agent asks outside any session — its login's
+                      page to open — shows here, where the login was started. */}
+                  {(state.agentQuestions[patchbayAgentId] ?? []).map((question) => (
+                    <div key={question.id} className="mt-2">
+                      <ElicitationCard block={question} agentName={a?.name ?? effectiveConfig.name} />
+                    </div>
+                  ))}
                   {/* The connect warmup's honest phase label ("downloading the
                       agent package…") — pool.ts sets it only while a launcher
                       download is genuinely in flight, and clears it itself. */}

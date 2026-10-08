@@ -23,7 +23,8 @@ import { formatDuration, type TranscriptView, type TurnRollup } from "./view-mod
 import { Disclosure } from "../../shared/disclosure";
 import { CarriedUpdate, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
-import { DiffCard, ElicitationCard, PermissionCard, TerminalCard } from "./cards";
+import { DiffCard, PermissionCard, TerminalCard } from "./cards";
+import { ElicitationCard } from "../../shared/question-card";
 import { StatePage } from "./state-page";
 import { Button } from "@/components/ui/button";
 import type { PatchbaySessionId } from "../../../shared/ids";

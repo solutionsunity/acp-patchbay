@@ -106,6 +106,22 @@ describe("reducers", () => {
     ).toEqual({});
   });
 
+  // A question no session owns is connection state too (#81): it leaves
+  // with a row that isn't running, and with a removed agent.
+  it("an agent's open question leaves with its connection, and with the agent", () => {
+    const asked = [
+      { kind: "agentUpserted", agent: claude } as const,
+      {
+        kind: "agentQuestion",
+        patchbayAgentId: "claude" as PatchbayAgentId,
+        event: { kind: "elicitationRequested", patchbayAskId: "elicit-1" as PatchbayAskId, message: "Sign in", mode: "form", fields: [] },
+      } as const,
+    ].reduce(reduceSettings, initialSettingsState);
+    expect(asked.agentQuestions.claude).toHaveLength(1);
+    expect(reduceSettings(asked, { kind: "agentUpserted", agent: { ...claude, status: "stopped" } }).agentQuestions).toEqual({});
+    expect(reduceSettings(asked, { kind: "agentRemoved", patchbayAgentId: "claude" as PatchbayAgentId }).agentQuestions).toEqual({});
+  });
+
   // The in-pane connect lifecycle — started → in progress (what the agent
   // is busy with comes from its row), failed → reason + retry, and the
   // session arriving clears it (reducer-level, so it can't desync from

@@ -238,7 +238,7 @@ export function settingsState() {
       id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
       env: { API_KEY: "sk-fixture" }, defaults: {}, registrySource: null, lastSeenVersion: null,
     }],
-    sessionsActiveToday: 7, agentKnobs: {}, registryFetchedAt: "",
+    sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "",
     wireLog: { active: false, until: null }, dataInventory: null,
     preferences, doneSounds: ["Glass", "Ping"],
   };

@@ -1162,9 +1162,19 @@ supplies each agent in its own standard — and ACP carries no channel for it
   decision audit, and only then answers the agent — an action never runs
   ahead of its record. Which end may move an ask — a rule, the user, a stop,
   the agent's withdrawal, a page reported done — is one declared table; an
-  answer that doesn't fit its ask moves nothing. The broker judges: the
-  rules, the write scope, and one small policy per kind of ask
+  answer that doesn't fit its ask moves nothing. An ask ends with its owner:
+  the turn running when it was asked (every turn end answers what that turn
+  left open — no card stays clickable after its turn), else its session,
+  else — for a question asked on no session, a login's page — its agent's
+  connection, its card then on the agent's card in Settings. The broker
+  judges: the rules, the write scope, and one small policy per kind of ask
   ([the stores architecture](store-architecture.md#asks)).
+- **Whose session an agent names is read once** (`session-owner.ts`): the
+  probe's throwaway, the defaults editor's, the user's, or none patchbay
+  holds — for a session's updates, its permission requests and its
+  questions alike. Only the user's session shows an ask; a throwaway's
+  permission is declined (recorded), its question cancelled, and an ask on a
+  session patchbay doesn't hold is cancelled and logged.
 - **Rules never ride the repo.** Agent and MCP server configs are global,
   developer-owned stores — nothing config-shaped lives in the repo at all, so
   no repo-authored launch command exists to adopt.

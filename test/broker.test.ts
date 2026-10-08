@@ -46,6 +46,8 @@ function harness() {
   let auditRefreshes = 0;
   const asks = new AsksStore(audit, {
     emit: (...evs) => events.push(...evs),
+    emitAgent: () => {},
+    turnOf: () => null,
     onAuditWritten: () => auditRefreshes++,
     // every session the agent "a1" holds, under its own id for it
     pairOf: (patchbaySessionId) => ({ patchbayAgentId: "a1" as PatchbayAgentId, sessionId: `agent-${patchbaySessionId}` }),
@@ -590,7 +592,7 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("emits the card and answers with what the user typed", async () => {
     const { broker, asks, events } = harness();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, form);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, form);
     const asked = events.find((e) => e.kind === "elicitationRequested");
     expect(asked).toMatchObject({ patchbaySessionId: "s1", message: "Which database?" });
     const patchbayAskId = (asked as { patchbayAskId: PatchbayAskId }).patchbayAskId;
@@ -606,12 +608,12 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("declining and cancelling are different answers — the agent learns which", async () => {
     const { broker, asks, events } = harness();
-    const declined = broker.askElicitation("s1" as PatchbaySessionId, form);
+    const declined = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, form);
     asks.answerQuestion((events.at(-1) as { patchbayAskId: PatchbayAskId }).patchbayAskId, { action: "decline" });
     expect(await declined).toEqual({ action: "decline" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "declined" });
 
-    const cancelled = broker.askElicitation("s1" as PatchbaySessionId, form);
+    const cancelled = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, form);
     asks.answerQuestion(
       (events.filter((e) => e.kind === "elicitationRequested").at(-1) as { patchbayAskId: PatchbayAskId }).patchbayAskId,
       { action: "cancel" },
@@ -622,8 +624,8 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
 
   it("a stopped turn answers every elicitation it left open — never a dangling request", async () => {
     const { broker, asks, events } = harness();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, form);
-    const other = broker.askElicitation("s2" as PatchbaySessionId, form);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, form);
+    const other = broker.askElicitation({ patchbaySessionId: "s2" as PatchbaySessionId }, form);
     asks.stopSession("s1" as PatchbaySessionId);
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.some((e) => e.kind === "elicitationResolved" && e.patchbaySessionId === "s1")).toBe(true);
@@ -639,7 +641,7 @@ describe("PermissionBroker.askElicitation — the agent asks the user", () => {
   it("a question the agent withdraws settles as withdrawn and answers cancel", async () => {
     const { broker, asks, events } = harness();
     const withdraw = new AbortController();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, form, withdraw.signal);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, form, withdraw.signal);
     withdraw.abort();
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "withdrawn" });
@@ -660,7 +662,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("opens only on accept, re-opens while the agent waits, and stops once the agent completes it", async () => {
     const { broker, asks, events, opened } = harness();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     const patchbayAskId = blockOf(events);
     expect(opened).toEqual([]);
     asks.reopenLink(patchbayAskId); // not accepted yet — nothing to re-open
@@ -680,7 +682,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a declined link never opens", async () => {
     const { broker, asks, events, opened } = harness();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     asks.answerQuestion(blockOf(events), { action: "decline" });
     expect(await answer).toEqual({ action: "decline" });
     expect(opened).toEqual([]);
@@ -688,7 +690,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("completion ids are matched per agent; an unknown or repeated one is ignored", async () => {
     const { broker, asks, events } = harness();
-    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    void broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     asks.answerQuestion(blockOf(events), { action: "accept", content: {} });
     const before = events.length;
     asks.completeLink("a2" as PatchbayAgentId, "e1"); // another agent's id space
@@ -701,7 +703,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a completion before the user answers settles the card as completed and answers cancel — the user chose nothing", async () => {
     const { broker, asks, events, opened } = harness();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     asks.completeLink("a1" as PatchbayAgentId, "e1");
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.at(-1)).toMatchObject({ kind: "elicitationResolved", outcome: "completed" });
@@ -712,7 +714,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker, asks, events, opened } = harness();
     asks.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events).toEqual([]);
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     expect(await answer).toEqual({ action: "cancel" });
     expect(events.map((e) => e.kind)).toEqual(["elicitationRequested", "elicitationResolved"]);
     expect(events.at(-1)).toMatchObject({ outcome: "completed" });
@@ -721,11 +723,11 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a repeated completion is never held — a later question may reuse a finished id", async () => {
     const { broker, asks, events } = harness();
-    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    void broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     asks.answerQuestion(blockOf(events), { action: "accept", content: {} });
     asks.completeLink("a1" as PatchbayAgentId, "e1");
     asks.completeLink("a1" as PatchbayAgentId, "e1"); // a repeat, after the link finished
-    const reused = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const reused = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     let settled = false;
     void reused.then(() => (settled = true));
     await Promise.resolve();
@@ -735,7 +737,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
   it("a withdrawal that overtakes the completion still ends as completed — the finished flow is the fact that stands", async () => {
     const { broker, asks, events } = harness();
     const withdraw = new AbortController();
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn, withdraw.signal);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn, withdraw.signal);
     withdraw.abort();
     expect(await answer).toEqual({ action: "cancel" });
     asks.completeLink("a1" as PatchbayAgentId, "e1");
@@ -746,7 +748,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a declined link the agent later finishes keeps the user's answer and is marked done", async () => {
     const { broker, asks, events } = harness();
-    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    void broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     asks.answerQuestion(blockOf(events), { action: "decline" });
     asks.completeLink("a1" as PatchbayAgentId, "e1");
     expect(events.at(-1)).toMatchObject({ kind: "elicitationLinkSettled", state: "completed" });
@@ -757,7 +759,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
     const { broker, asks } = harness();
     asks.completeLink("a1" as PatchbayAgentId, "e1");
     asks.forgetAgent("a1" as PatchbayAgentId);
-    const answer = broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    const answer = broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     let settled = false;
     void answer.then(() => (settled = true));
     await Promise.resolve();
@@ -766,7 +768,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("the address alone decides what opens — a link nobody will report done still opens and re-opens", async () => {
     const { broker, asks, events, opened } = harness();
-    void broker.askElicitation("s1" as PatchbaySessionId, { message: signIn.message, ask: signIn.ask });
+    void broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, { message: signIn.message, ask: signIn.ask });
     const patchbayAskId = blockOf(events);
     asks.answerQuestion(patchbayAskId, { action: "accept", content: {} });
     asks.reopenLink(patchbayAskId);
@@ -775,7 +777,7 @@ describe("PermissionBroker url asks — a page the user opens", () => {
 
   it("a stopped turn ends the wait on an opened page", async () => {
     const { broker, asks, events, opened } = harness();
-    void broker.askElicitation("s1" as PatchbaySessionId, signIn);
+    void broker.askElicitation({ patchbaySessionId: "s1" as PatchbaySessionId }, signIn);
     const patchbayAskId = blockOf(events);
     asks.answerQuestion(patchbayAskId, { action: "accept", content: {} });
     asks.stopSession("s1" as PatchbaySessionId);

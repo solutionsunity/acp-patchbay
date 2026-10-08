@@ -235,6 +235,11 @@ dot with a `Connect` button, never a claimed `stopped`.
 Anything the queue holds for the agent dims the controls that would only wait
 behind it (Log in, Log out); Stop never dims.
 
+What an agent asks outside any session — its login's page to open, sent
+while Log in runs — shows on its card, under the header, as the same Link or
+Question card the chat shows. It stays while it waits on the user or on the
+page the user opened, leaves once settled, and leaves with the connection.
+
 ### Capability matrix
 
 Legend ● ◌ — · one column per agent · a reconnected agent wears a `handshake <time>`

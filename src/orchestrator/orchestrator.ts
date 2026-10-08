@@ -36,7 +36,8 @@ import { openAsks, type OpenAsk } from "../shared/attention";
 import { AgentGates, type AgentOperation } from "./agent-gates";
 import { AgentsStore, type ConnectionOperations } from "./agents-store";
 import { ATTACHMENTS_DIR, pickedFileForm } from "./attachments";
-import { AsksStore } from "./asks-store";
+import { AsksStore, type AskPlace } from "./asks-store";
+import { sessionOwner, type SessionOwner } from "./session-owner";
 import { PermissionBroker } from "./broker";
 import { applyFileWrite, ClientHost, clientRequestHooks } from "./client-host";
 import { eraseAllData } from "./erase-all";
@@ -49,7 +50,7 @@ import { EditorStateHost } from "./editor-state-host";
 import { McpServerGates } from "./mcp-server-gates";
 import { McpServersStore, type McpServerLineOperations } from "./mcp-servers-store";
 import { OAuthCallbackRegistry } from "./oauth-callback";
-import { elicitationResponseOf, formFieldsOf } from "./readers/elicitation";
+import { elicitationResponseOf, formFieldsOf, type ElicitationScope } from "./readers/elicitation";
 import { runLoginTask } from "./login-task";
 import { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
@@ -413,12 +414,15 @@ export class Orchestrator {
       onSessionUpdate: (patchbayAgentId, sessionId, update) => {
         // Throwaway sessions never reach a transcript: the probe's traffic
         // is dropped, the defaults editor's feeds its own surface.
-        if (this.capabilityTracker.isProbeSession(patchbayAgentId, sessionId)) return;
-        if (this.defaultsEditor.owns(patchbayAgentId, sessionId)) {
-          this.defaultsEditor.handleUpdate(patchbayAgentId, sessionId, update);
-          return;
+        switch (this.ownerOf(patchbayAgentId, sessionId).kind) {
+          case "probe":
+            return;
+          case "defaultsEditor":
+            this.defaultsEditor.handleUpdate(patchbayAgentId, sessionId, update);
+            return;
+          default:
+            this.sessions.handleUpdate(patchbayAgentId, sessionId, update);
         }
-        this.sessions.handleUpdate(patchbayAgentId, sessionId, update);
       },
       onCapabilityEvidence: (patchbayAgentId, row, evidence) => this.agents.noteEvidence(patchbayAgentId, row, evidence),
       onAuthWireFact: (patchbayAgentId, method, settled, startedAt, reason) =>
@@ -438,24 +442,10 @@ export class Orchestrator {
           return { action: "cancel" };
         }
         const { message, ask, elicitationId } = reading;
-        // A throwaway session — the probe's or the defaults editor's — is
-        // invisible by construction; the user never saw the question, which
-        // is exactly what `cancel` means (same rule as permission asks).
-        if (
-          this.capabilityTracker.isProbeSession(patchbayAgentId, reading.sessionId) ||
-          this.defaultsEditor.owns(patchbayAgentId, reading.sessionId)
-        ) {
-          this.log.info(`${patchbayAgentId}: cancelled an elicitation on a throwaway session`);
-          return { action: "cancel" };
-        }
-        // So is a session patchbay doesn't hold: no transcript to ask in.
-        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, reading.sessionId);
-        if (patchbaySessionId === undefined) {
-          this.log.info(`${patchbayAgentId}: cancelled an elicitation on session ${reading.sessionId}, which patchbay doesn't hold`);
-          return { action: "cancel" };
-        }
+        const at = this.questionPlace(patchbayAgentId, reading);
+        if (at === null) return { action: "cancel" };
         const answer = await this.broker.askElicitation(
-          patchbaySessionId,
+          at,
           { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
           signal,
         );
@@ -471,18 +461,19 @@ export class Orchestrator {
         // request is always owed an answer. Least privilege instead: the
         // question re-asks on the user's first real session, and the probe
         // dir is never the workspace.
-        if (this.capabilityTracker.isProbeSession(patchbayAgentId, sessionId) || this.defaultsEditor.owns(patchbayAgentId, sessionId)) {
+        const owner = this.ownerOf(patchbayAgentId, sessionId);
+        if (owner.kind === "probe" || owner.kind === "defaultsEditor") {
           const title = call.title ?? PERMISSION_UNTITLED;
           this.log.info(`${patchbayAgentId}: auto-declined "${title}" on a throwaway session`);
           return this.broker.resolveProbePermissionRequest(patchbayAgentId, sessionId, title, options);
         }
         // A session patchbay doesn't hold has no card to show — the request
         // is still owed an answer, and nobody saw it: cancelled.
-        const patchbaySessionId = this.sessions.rowFor(patchbayAgentId, sessionId);
-        if (patchbaySessionId === undefined) {
+        if (owner.kind === "none") {
           this.log.info(`${patchbayAgentId}: cancelled a permission request on session ${sessionId}, which patchbay doesn't hold`);
           return { cancelled: true };
         }
+        const { patchbaySessionId } = owner;
         const { title, view } = this.sessions.permissionCall(patchbaySessionId, call);
         const result = await this.broker.resolveAgentPermissionRequest(
           patchbaySessionId,
@@ -502,7 +493,11 @@ export class Orchestrator {
       },
       ...clientRequestHooks(
         () => this.clientHost,
-        (patchbayAgentId, sessionId) => this.sessions.rowFor(patchbayAgentId, sessionId),
+        // only the user's session reads, writes or runs anything
+        (patchbayAgentId, sessionId) => {
+          const owner = this.ownerOf(patchbayAgentId, sessionId);
+          return owner.kind === "user" ? owner.patchbaySessionId : undefined;
+        },
       ),
     }, log, {
       // Launch prerequisites (runtime-resolver.ts), as phases of the
@@ -624,6 +619,7 @@ export class Orchestrator {
         isUnseen: (patchbaySessionId) =>
           this.agentView.current.sessions.find((s) => s.id === patchbaySessionId)?.unseen === true,
         cancelAsks: (patchbaySessionId) => this.asks.stopSession(patchbaySessionId),
+        endTurnAsks: (patchbaySessionId, turn, stopped) => this.asks.endTurn(patchbaySessionId, turn, stopped),
         authLocked: (patchbayAgentId) => this.agents.authLocked(patchbayAgentId),
         // the pointer names the session the agent's way, which a re-mint moves
         sessionIdChanged: (patchbaySessionId) => {
@@ -749,6 +745,8 @@ export class Orchestrator {
     });
     this.asks = new AsksStore(this.decisionAudit, {
       emit: (...events) => this.agentView.emit(...events),
+      emitAgent: (patchbayAgentId, event) => this.settings.emit({ kind: "agentQuestion", patchbayAgentId, event }),
+      turnOf: (patchbaySessionId) => this.sessions.turnOf(patchbaySessionId),
       onAuditWritten: () => void this.refreshAuditTail(),
       pairOf: (patchbaySessionId) => this.sessions.pairOf(patchbaySessionId),
       openLink: (href) => void openInBrowser(href),
@@ -1110,7 +1108,7 @@ export class Orchestrator {
     // guessed control.
     const fields = params.requestedSchema === undefined ? [] : formFieldsOf(params.requestedSchema);
     if (fields === null) return Promise.reject(new Error("the form has a field patchbay cannot present"));
-    return this.broker.askElicitation(patchbaySessionId, { message: params.message, ask: { mode: "form", fields } });
+    return this.broker.askElicitation({ patchbaySessionId }, { message: params.message, ask: { mode: "form", fields } });
   }
 
   /** The "last open session" pointer (stores/last-active-session.ts).
@@ -1356,6 +1354,35 @@ export class Orchestrator {
    * on. Read before the sessions are invalidated. */
   private settleAsksOn(patchbayAgentId: PatchbayAgentId): void {
     for (const patchbaySessionId of this.sessions.sessionsOn(patchbayAgentId)) this.asks.stopSession(patchbaySessionId);
+    this.asks.stopAgent(patchbayAgentId);
+  }
+
+  /** Where an agent's question is asked: the session it names, as
+   * patchbay holds it, or — for one riding a request outside any session,
+   * as during login — the agent itself. Null for one no one can be shown,
+   * answered cancel: no user saw it, so none declined it. */
+  private questionPlace(patchbayAgentId: PatchbayAgentId, scope: ElicitationScope): AskPlace | null {
+    if (!("sessionId" in scope)) return { patchbayAgentId };
+    const owner = this.ownerOf(patchbayAgentId, scope.sessionId);
+    switch (owner.kind) {
+      case "user":
+        return { patchbaySessionId: owner.patchbaySessionId };
+      case "none":
+        this.log.info(`${patchbayAgentId}: cancelled an elicitation on session ${scope.sessionId}, which patchbay doesn't hold`);
+        return null;
+      default:
+        this.log.info(`${patchbayAgentId}: cancelled an elicitation on a throwaway session`);
+        return null;
+    }
+  }
+
+  /** Whose session the agent names by this id. */
+  private ownerOf(patchbayAgentId: PatchbayAgentId, sessionId: string): SessionOwner {
+    return sessionOwner(
+      { probe: this.capabilityTracker, defaultsEditor: this.defaultsEditor, sessions: this.sessions },
+      patchbayAgentId,
+      sessionId,
+    );
   }
 
   /** The native notification is raised from the waiting fact, not by a

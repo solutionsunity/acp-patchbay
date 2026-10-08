@@ -134,9 +134,13 @@ export interface SessionsStoreHooks {
   isUnseen?(patchbaySessionId: PatchbaySessionId): boolean;
   /** The session's open asks (permission, file write, terminal command,
    * elicitation — the asks store holds them) are answered cancelled: a
-   * turn told to stop owes the agent that answer (an ACP MUST), and so
-   * does a session that leaves. */
+   * session that leaves asks no one now. */
   cancelAsks?(patchbaySessionId: PatchbaySessionId): void;
+  /** A turn ended — on its own, or `stopped` by the user: the asks it left
+   * open are answered cancelled, the agent never left hanging on a turn
+   * that is over (and a stop owes every pending permission that answer —
+   * an ACP MUST). */
+  endTurnAsks?(patchbaySessionId: PatchbaySessionId, turn: string, stopped: boolean): void;
   /** Standing auth lock on this agent (the orchestrator's persisted,
    * evidence-gated auth state). While it holds, no turn may start: the
    * turn-start door queues the words instead of firing them into a wire
@@ -250,7 +254,7 @@ function liveSession(): LiveSession {
   return {
     openRun: null,
     knobs: NO_KNOBS,
-    inFlight: false,
+    turn: null,
     lastActivityAt: Date.now(),
     openToolCalls: new Set(),
     toolCalls: new Map(),
@@ -470,8 +474,8 @@ export class SessionsStore {
     let turns = 0;
     for (const [patchbaySessionId, session] of this.sessions) {
       if (this.agentOfLive(patchbaySessionId) !== patchbayAgentId) continue;
-      if (session.inFlight) turns++;
-      if (session.inFlight || this.hasTurns(patchbaySessionId)) conversations++;
+      if (session.turn !== null) turns++;
+      if (session.turn !== null || this.hasTurns(patchbaySessionId)) conversations++;
     }
     return { conversations, turns };
   }
@@ -491,7 +495,7 @@ export class SessionsStore {
    * "no saved history" safe — do not relax it to `load || resume`. */
   async release(patchbaySessionId: PatchbaySessionId, reason: string): Promise<void> {
     const session = this.sessions.get(patchbaySessionId);
-    if (session === undefined || session.inFlight) return;
+    if (session === undefined || session.turn !== null) return;
     const patchbayAgentId = this.agentOfLive(patchbaySessionId);
     const agent = this.pool.get(patchbayAgentId);
     if (agent?.status !== "running") return; // nothing attached to free
@@ -1010,7 +1014,7 @@ export class SessionsStore {
    * Stop, the row's ×, a delete or close; the drain's running-agent gate
    * holds them until a reattach can send), chips, draft, roots, knobs. */
   private dropLiveSession(patchbaySessionId: PatchbaySessionId, session: LiveSession): void {
-    if (session.inFlight) {
+    if (session.turn !== null) {
       this.stream.sweep(patchbaySessionId, session);
       this.stream.seal(patchbaySessionId, session);
     }
@@ -1880,7 +1884,7 @@ export class SessionsStore {
     const known = this.known.get(patchbaySessionId);
     if (attached === undefined || known === undefined) throw new Error(this.notAttached(patchbaySessionId));
     if (this.locked(patchbaySessionId)) throw new Error(`${known.patchbayAgentId} is signed out`);
-    if (attached.inFlight) throw new Error(`session ${patchbaySessionId} has a turn running`);
+    if (attached.turn !== null) throw new Error(`session ${patchbaySessionId} has a turn running`);
     const session = attached;
     const { text, parts } = words;
     // Read now: the zero-turn rung, on the attach just before, may have
@@ -1895,7 +1899,8 @@ export class SessionsStore {
     // missing a right one.
     session.userModeSetPending = false;
     this.stream.seal(patchbaySessionId, session);
-    session.inFlight = true;
+    const turn = newBlockId("turn");
+    session.turn = turn;
     known.everPrompted = true;
     session.lastActivityAt = Date.now();
     spent();
@@ -2024,10 +2029,13 @@ export class SessionsStore {
         // rewriter tail must land before the turnEnd block, not after
         this.stream.seal(patchbaySessionId, current);
       }
+      // So is every ask the turn left open: it is answered before the
+      // turnEnd block lands, for the same reason.
+      this.hooks.endTurnAsks?.(patchbaySessionId, turn, false);
       this.hooks.emit({
         kind: "turnEnded",
         patchbaySessionId,
-        blockId: newBlockId("turn"),
+        blockId: turn,
         startedAt,
         at: new Date().toISOString(),
         stopReason,
@@ -2039,14 +2047,14 @@ export class SessionsStore {
     // reaches the wire: the message stands, nothing was sent.
     if (signal.aborted) {
       endTurn("cancelled", null);
-      session.inFlight = false;
+      session.turn = null;
       return;
     }
     const cancel = () => {
       void this.pool.cancel(known.patchbayAgentId, sessionId).catch(() => {}); // a dead connection stops nothing
       // The cancel goes out first, then the asks it leaves are answered —
       // the agent hears the turn is ending before it hears why its ask was.
-      this.hooks.cancelAsks?.(patchbaySessionId);
+      this.hooks.endTurnAsks?.(patchbaySessionId, turn, true);
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
@@ -2079,7 +2087,7 @@ export class SessionsStore {
       signal.removeEventListener("abort", cancel);
       const current = this.sessions.get(patchbaySessionId);
       if (current !== undefined) {
-        current.inFlight = false;
+        if (current.turn === turn) current.turn = null;
         current.lastActivityAt = Date.now();
       }
     }
@@ -2212,6 +2220,12 @@ export class SessionsStore {
       (b): b is ToolCallBlock => b.kind === "toolCall" && b.id === call.toolCallId,
     );
     return this.stream.callView(patchbaySessionId, call, known);
+  }
+
+  /** The turn running on the session right now — null between turns, or
+   * for a session not attached. */
+  turnOf(patchbaySessionId: PatchbaySessionId): string | null {
+    return this.sessions.get(patchbaySessionId)?.turn ?? null;
   }
 
   /** The stashed texts for one openToolCallDiff action — null when unknown

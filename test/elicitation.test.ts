@@ -25,9 +25,12 @@ import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import {
   initialAgentViewState,
+  initialSettingsState,
   reduceAgentView,
+  reduceSettings,
   type AgentViewEvent,
   type ChatBlock,
+  type SettingsEvent,
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { stubFsTerminalHooks } from "./support/stub-hooks";
@@ -222,9 +225,18 @@ describe("readElicitationRequest — one reading of what the agent asked", () =>
     expect(readElicitationRequest({ sessionId: "s", message: "m" }).kind).toBe("invalid");
   });
 
-  it("refuses what it cannot present: no session, an unpresentable form, a link that is not a page", () => {
+  it("reads an ask outside any session by the request it rides — a login's page to open (#81)", () => {
     expect(readElicitationRequest({ mode: "url", requestId: 3, message: "m", url: "https://x.example/", elicitationId: "e" }))
-      .toEqual({ kind: "refuse", why: "it is not tied to a session" });
+      .toMatchObject({ kind: "ask", requestId: 3, message: "m", ask: { mode: "url", link: { host: "x.example" } }, elicitationId: "e" });
+    expect(readElicitationRequest({ mode: "form", requestId: "r-1", message: "m", requestedSchema: { type: "object", properties: { name: { type: "string" } } } }))
+      .toMatchObject({ kind: "ask", requestId: "r-1" });
+  });
+
+  it("refuses what it cannot present: no session or request, an unpresentable form, a link that is not a page", () => {
+    expect(readElicitationRequest({ mode: "url", message: "m", url: "https://x.example/", elicitationId: "e" }))
+      .toEqual({ kind: "refuse", why: "it names neither a session nor a request" });
+    expect(readElicitationRequest({ mode: "url", requestId: null, message: "m", url: "https://x.example/", elicitationId: "e" }).kind)
+      .toBe("refuse");
     expect(readElicitationRequest({ mode: "form", sessionId: "s", message: "m", requestedSchema: {} }).kind).toBe("refuse");
     expect(
       readElicitationRequest({ mode: "url", sessionId: "s", message: "m", url: "command:x", elicitationId: "e" }).kind,
@@ -284,9 +296,12 @@ function spec(script: FakeAgentScript, patchbayAgentId: PatchbayAgentId): Launch
  * and response mapping, with opened links recorded instead of opened. */
 function wireHarness() {
   const events: AgentViewEvent[] = [];
+  const settingsEvents: SettingsEvent[] = [];
   const opened: string[] = [];
   const asks = new AsksStore(new DecisionAuditStore(dir), {
     emit: (...evs) => events.push(...evs),
+    emitAgent: (patchbayAgentId, event) => settingsEvents.push({ kind: "agentQuestion", patchbayAgentId, event }),
+    turnOf: (patchbaySessionId) => sessions.turnOf(patchbaySessionId),
     onAuditWritten: () => {},
     pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
     openLink: (href) => opened.push(href),
@@ -301,11 +316,12 @@ function wireHarness() {
     onElicitation: async (patchbayAgentId, reading, signal) => {
       if (reading.kind !== "ask") return { action: "cancel" };
       const { message, ask, elicitationId } = reading;
-      // the session the agent names its own way, as patchbay holds it
-      const patchbaySessionId = sessions.rowFor(patchbayAgentId, reading.sessionId);
-      if (patchbaySessionId === undefined) return { action: "cancel" };
+      // the session the agent names its own way, as patchbay holds it — or,
+      // riding a request outside any session, the agent itself
+      const patchbaySessionId = "sessionId" in reading ? sessions.rowFor(patchbayAgentId, reading.sessionId) : undefined;
+      if ("sessionId" in reading && patchbaySessionId === undefined) return { action: "cancel" };
       const answer = await broker.askElicitation(
-        patchbaySessionId,
+        patchbaySessionId !== undefined ? { patchbaySessionId } : { patchbayAgentId },
         { message, ask, ...(elicitationId !== undefined ? { completion: { patchbayAgentId, elicitationId } } : {}) },
         signal,
       );
@@ -329,6 +345,7 @@ function wireHarness() {
     events,
     opened,
     state: () => events.reduce(reduceAgentView, initialAgentViewState),
+    settings: () => settingsEvents.reduce(reduceSettings, initialSettingsState),
   };
 }
 
@@ -476,5 +493,51 @@ describe("url elicitation on the wire", () => {
     h.asks.answerQuestion(card.id, { action: "accept", content: {} });
     expect(h.opened).toEqual([]);
     await h.pool.stop("u3" as PatchbayAgentId);
+  });
+});
+
+// A question no session owns: codex-acp's device-code login sends its page
+// as an elicitation tied to the `authenticate` request itself, before any
+// session exists. It shows on the agent's card in Settings, and the login
+// goes through it.
+describe("a question outside any session (#81)", () => {
+  const DEVICE_PAGE = "https://auth.example.com/device";
+  const authPage = { url: DEVICE_PAGE, elicitationId: "login-1", message: "Sign in and enter this code: ABCD-1234" };
+  const authMethods = [{ id: "device", name: "Sign in with a code" }];
+
+  it("a login's page shows on the agent's card; opening it lets the login finish, and the card leaves once done", async () => {
+    const h = wireHarness();
+    const agent = "q1" as PatchbayAgentId;
+    await h.pool.connect(spec({ authMethods, authPage }, agent));
+    const login = h.pool.authenticate(agent, "device");
+    await waitFor(() => (h.settings().agentQuestions[agent] ?? []).length > 0);
+
+    const card = h.settings().agentQuestions[agent]![0]!;
+    expect(card).toMatchObject({ message: authPage.message, mode: "url", resolution: null });
+    expect(card.mode === "url" && card.link.href).toBe(DEVICE_PAGE);
+    expect(h.opened).toEqual([]); // shown, never opened before consent
+    h.asks.answerQuestion(card.id, { action: "accept", content: {} });
+    expect(h.opened).toEqual([DEVICE_PAGE]);
+
+    await login; // the agent heard the accept, and reported its page done
+    await waitFor(() => h.settings().agentQuestions[agent] === undefined);
+    await h.pool.stop(agent);
+  });
+
+  it("a login page the user turns down fails the login, and its card leaves", async () => {
+    const h = wireHarness();
+    const agent = "q2" as PatchbayAgentId;
+    await h.pool.connect(spec({ authMethods, authPage }, agent));
+    const login = h.pool.authenticate(agent, "device").then(
+      () => "logged in",
+      () => "refused",
+    );
+    await waitFor(() => (h.settings().agentQuestions[agent] ?? []).length > 0);
+    h.asks.answerQuestion(h.settings().agentQuestions[agent]![0]!.id, { action: "decline" });
+
+    expect(await login).toBe("refused");
+    expect(h.settings().agentQuestions[agent]).toBeUndefined();
+    expect(h.opened).toEqual([]);
+    await h.pool.stop(agent);
   });
 });

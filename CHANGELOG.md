@@ -8,6 +8,14 @@
   now fills the plan chip, cancelled tasks included, and shows no card; a
   write that fails or is rejected still shows as the card it is. A plan
   task's status and priority show as the agent said them. (#87)
+- **An ask ends with what it belongs to.** A permission or question left
+  open by a turn that ended on its own stayed clickable, and answered
+  nothing; now every turn end answers what that turn left open, as
+  cancelled, while something asked between turns (an agent asking to sign
+  in to an MCP server as a session opens) waits for the user. Codex's
+  "ChatGPT (device code)" login, which asks outside any session, used to
+  fail every time; its page to open now shows on the agent's card in
+  Settings, where the login was started. (#81)
 
 ## 0.84.2 — 2026-10-07
 

@@ -26,7 +26,7 @@ import {
 } from "../src/shared/protocol";
 import type { FakeAgentScript } from "./fake-agent/main";
 import { gatesFor } from "./support/session-gates";
-import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
+import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
 const FAKE_AGENT = join(process.cwd(), "out-test", "fake-agent.mjs");
 
@@ -60,6 +60,8 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
 
   const asks = new AsksStore(audit, {
     emit: (...evs) => events.push(...evs),
+    emitAgent: () => {},
+    turnOf: (patchbaySessionId) => sessions.turnOf(patchbaySessionId),
     onAuditWritten: () => {},
     pairOf: (patchbaySessionId) => sessions.pairOf(patchbaySessionId),
   });
@@ -96,6 +98,7 @@ function harness(live: Partial<Pick<ClientHostDeps, "readLive" | "writeLive">> =
       emit: (...evs) => events.push(...evs),
       workspaceRoots: () => [workspaceRoot],
       cancelAsks: (patchbaySessionId) => asks.stopSession(patchbaySessionId),
+      endTurnAsks: (patchbaySessionId, turn, stopped) => asks.endTurn(patchbaySessionId, turn, stopped),
       currentTranscript: (patchbaySessionId) =>
         events.reduce(reduceAgentView, initialAgentViewState).transcripts[patchbaySessionId] ?? [],
       capabilities: (patchbayAgentId) => {
@@ -507,6 +510,26 @@ describe("fs/terminal — gated by the broker, same as everything else", () => {
     expect(card).toMatchObject({ resolution: { label: "Withdrawn by the agent", auto: true } });
     expect(textOf(patchbaySessionId, h.events)).toContain("permission: withdrawn -32800");
     await h.pool.stop("p2w" as PatchbayAgentId);
+  });
+
+  it("a request the turn left open is answered cancelled when the turn ends on its own — no card stays clickable (#81)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec({ turn: [{ type: "askPermission", title: "Run tests", kind: "execute", subject: "npm test", leaveOpen: true }] }, "p2o" as PatchbayAgentId),
+    );
+    const patchbaySessionId = await h.sessions.createSession("p2o" as PatchbayAgentId, "Fake Agent", workspaceRoot);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+
+    const blocks = h.state().transcripts[patchbaySessionId]!;
+    const card = blocks.find((b) => b.kind === "permission");
+    expect(card).toMatchObject({ resolution: { label: "Cancelled — turn stopped", auto: true } });
+    // answered before the turn's end lands, never a render apart
+    expect(blocks.indexOf(card!)).toBeLessThan(blocks.findIndex((b) => b.kind === "turnEnd"));
+    await waitFor(() => textOf(patchbaySessionId, h.events).includes("permission: cancelled"));
+    // a late click answers nothing
+    h.asks.answerOption(card!.id as PatchbayAskId, "allow_once");
+    expect(h.events.filter((e) => e.kind === "permissionResolved")).toHaveLength(1);
+    await h.pool.stop("p2o" as PatchbayAgentId);
   });
 
   // ACP: a client that cancels a turn MUST answer its pending permission

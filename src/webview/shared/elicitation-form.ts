@@ -10,24 +10,7 @@
 // as "" (an unpicked choice would arrive as a value the agent never
 // offered); a required one blocks Send; and every limit the form declares
 // is checked on what would actually be sent.
-import type { ElicitationBlock, ElicitationField } from "../../../shared/protocol";
-
-/** Where a link card stands, from the user's answer and the agent's
- * follow-up together:
- *  - `ask`: not answered — address, warnings, Open / Decline / Cancel;
- *  - `waiting`: opened, the agent still waits on the page — Open again;
- *  - `opened`: opened, and the session stopped waiting on it;
- *  - `completed`: the agent reported the page done — whether or not the
- *    user ever clicked, since the agent can finish another way;
- *  - `settled`: declined, cancelled, or withdrawn. */
-export type LinkCardPhase = "ask" | "waiting" | "opened" | "completed" | "settled";
-
-export function linkCardPhase(block: Pick<ElicitationBlock, "resolution" | "linkState">): LinkCardPhase {
-  if (block.linkState === "completed") return "completed";
-  if (block.resolution === null) return "ask";
-  if (block.resolution.outcome !== "accepted") return "settled";
-  return block.linkState === "waiting" ? "waiting" : "opened";
-}
+import type { ElicitationField } from "../../shared/protocol";
 
 /** What the user has in each field right now: text-like and choice fields
  * as the string the control holds ("" = nothing given), multi-choice as the

@@ -83,8 +83,10 @@ export interface StreamState {
     messageId: string | null;
     rewriter?: ProseRewriter;
   } | null;
-  /** A prompt turn is in flight — release/reap must never close under it. */
-  inFlight: boolean;
+  /** The prompt turn in flight, by the id its turn-end block will carry —
+   * null between turns. Release/reap must never close under it, and an ask
+   * asked meanwhile belongs to it. */
+  turn: string | null;
   /** toolCallIds seen pending/in_progress and not yet resolved — the turn-end
    * sweep's worklist (tool-call analogue of the asks store's stop). Cleared
    * per id on a terminal status, swept wholesale when the turn ends any way
@@ -156,7 +158,7 @@ export class SessionStream {
   finishReplay(patchbaySessionId: PatchbaySessionId, session: StreamState): void {
     this.sweep(patchbaySessionId, session);
     this.seal(patchbaySessionId, session);
-    if (session.inFlight) session.replayTurnDirty = false;
+    if (session.turn !== null) session.replayTurnDirty = false;
     else this.flushReplayBoundary(patchbaySessionId, session, this.emitter(patchbaySessionId));
   }
 
@@ -278,7 +280,7 @@ export class SessionStream {
   /** A user message's chunk. Replay-only by design: a live send appends its
    * own whole user block (runTurn), and some agents echo the in-flight
    * prompt back as a user_message_chunk (observed: slash-command expansion)
-   * — consuming that would duplicate it, hence the inFlight guard. During
+   * — consuming that would duplicate it, hence the turn guard. During
    * session/load replay nothing is in flight, so every historical user
    * message lands. */
   private applyUserChunk(
@@ -288,7 +290,7 @@ export class SessionStream {
     content: ContentFact,
     emit: (...events: AgentViewEvent[]) => void,
   ): void {
-    if (session.inFlight) return;
+    if (session.turn !== null) return;
     // Interruption marker riding the user role (shape-gated: the whole
     // message is exactly the bracketed marker — no human prompt looks
     // like that; observed: claude-agent-acp replay). It is the replay
@@ -620,7 +622,7 @@ export class SessionStream {
    * the channels honestly differ:
    * - user: never continues. Every user chunk that reaches its arm is a
    *   whole message — live sends render via runTurn, live echoes die at
-   *   the inFlight guard, and id-less replay is whole-message-per-chunk
+   *   the turn guard, and id-less replay is whole-message-per-chunk
    *   (auggie, wire-verified: merging fused adjacent cancelled prompts).
    * - text/thought: always continues. An id-less agent wire carries no
    *   boundary at all, and both of its realities demand merging: live

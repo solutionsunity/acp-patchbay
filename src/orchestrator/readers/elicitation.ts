@@ -220,31 +220,43 @@ export function linkOf(url: unknown): ElicitationLink | null {
  *    reason for the log;
  *  - `invalid`: a mode patchbay never declared — the spec's answer is an
  *    invalid-params error, not a decline.
- * Request-scoped asks (no session, e.g. during login) are refused: no agent
- * sends them yet, and a transcript is where the card lives. */
+ * An ask names what it belongs to: a session, or — outside any session, as
+ * during login — the client's request it rides. */
 export type ElicitationRequestReading =
-  | { kind: "ask"; sessionId: string; message: string; ask: ElicitationAsk; elicitationId?: string }
+  | ({ kind: "ask"; message: string; ask: ElicitationAsk; elicitationId?: string } & ElicitationScope)
   | { kind: "refuse"; why: string }
   | { kind: "invalid"; why: string };
+
+export type ElicitationScope = { sessionId: string } | { requestId: string | number };
 
 export function readElicitationRequest(params: unknown): ElicitationRequestReading {
   const p = record(params) ?? {};
   const mode = p.mode;
   if (mode !== "form" && mode !== "url") return { kind: "invalid", why: `patchbay does not present "${String(mode)}" elicitations` };
-  const sessionId = str(p.sessionId);
-  if (sessionId === undefined) return { kind: "refuse", why: "it is not tied to a session" };
+  const scope = scopeOf(p);
+  if (scope === null) return { kind: "refuse", why: "it names neither a session nor a request" };
   const message = typeof p.message === "string" ? p.message : "";
   if (mode === "form") {
     const fields = formFieldsOf(p.requestedSchema);
     return fields === null
       ? { kind: "refuse", why: "its form has a field patchbay cannot present" }
-      : { kind: "ask", sessionId, message, ask: { mode: "form", fields, ...formIntroOf(p.requestedSchema) } };
+      : { kind: "ask", ...scope, message, ask: { mode: "form", fields, ...formIntroOf(p.requestedSchema) } };
   }
   const link = linkOf(p.url);
   const elicitationId = str(p.elicitationId);
   if (link === null) return { kind: "refuse", why: "its address is not an http(s) page" };
   if (elicitationId === undefined) return { kind: "refuse", why: "its link carries no elicitation id" };
-  return { kind: "ask", sessionId, message, ask: { mode: "url", link }, elicitationId };
+  return { kind: "ask", ...scope, message, ask: { mode: "url", link }, elicitationId };
+}
+
+/** The session the ask is tied to, or the request it rides — null when it
+ * names neither. */
+function scopeOf(p: Record<string, unknown>): ElicitationScope | null {
+  const sessionId = str(p.sessionId);
+  if (sessionId !== undefined) return { sessionId };
+  const requestId = p.requestId;
+  if (typeof requestId === "number" || (typeof requestId === "string" && requestId !== "")) return { requestId };
+  return null;
 }
 
 /** The card's answer as the agent's response. A request the agent withdrew

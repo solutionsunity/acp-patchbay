@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { formatCommandLine } from "../shared/command-line";
 import type { ElicitationAnswer, ElicitationAsk, PermissionCallView, PermissionOptionView } from "../shared/protocol";
-import type { AsksStore, LinkCompletion } from "./asks-store";
+import type { AskPlace, AsksStore, LinkCompletion } from "./asks-store";
 import { computeLineDiff } from "./diff";
 import { type MachineRulesStore, type PermissionRulesStore, type RuleVerdict } from "./stores/permission-rules";
 import type { CreateTerminalParams } from "./terminal-runner";
@@ -127,14 +127,15 @@ export class PermissionBroker {
    * back as the wire names them. A page to open may name who will report
    * it done; an aborted `signal` (the agent withdrew the request) settles
    * the card as withdrawn and answers cancel, which the caller turns into
-   * the request-cancelled error. No rule speaks for a question. */
+   * the request-cancelled error. No rule speaks for a question. A question
+   * no session owns is asked on its agent. */
   async askElicitation(
-    patchbaySessionId: PatchbaySessionId,
+    at: AskPlace,
     question: { message: string; ask: ElicitationAsk; completion?: LinkCompletion },
     signal?: AbortSignal,
   ): Promise<ElicitationAnswer> {
     const link = question.ask.mode === "url" ? { href: question.ask.link.href, completion: question.completion ?? null } : null;
-    const { id, ending } = this.asks.open(patchbaySessionId, "question", null, link);
+    const { id, ending } = this.asks.open(at, "question", null, link);
     this.asks.show(id, { kind: "question", message: question.message, ask: question.ask });
     this.withdrawOn(id, signal);
     const ended = await ending;
@@ -181,7 +182,7 @@ export class PermissionBroker {
     const files = call.toolKind === "edit" ? [...new Set([...call.locations.map((l) => l.path), ...Object.keys(call.diffs)])] : [];
     // The place is held before the judge reads the disk: a turn stopped
     // meanwhile answers this request too, before any card was shown.
-    const { id, ending } = this.asks.open(patchbaySessionId, "permission", { tool: title, files });
+    const { id, ending } = this.asks.open({ patchbaySessionId }, "permission", { tool: title, files });
     this.withdrawOn(id, signal);
     const verdict = await this.evaluateFileWrites(patchbaySessionId, files);
     const auto = verdict === "allow" ? options.find((o) => o.kind === "allow_once") : undefined;
@@ -230,7 +231,7 @@ export class PermissionBroker {
   ): Promise<GateOutcome> {
     // The place is held before the gate reads the disk: a turn stopped
     // meanwhile answers this write too, before any card was shown.
-    const { id, ending } = this.asks.open(patchbaySessionId, "write", { file: path });
+    const { id, ending } = this.asks.open({ patchbaySessionId }, "write", { file: path });
     // What the write replaces — the buffer the user may have edited, not
     // only the disk; a new file diffs against empty, all additions.
     const oldContent = await this.currentText(path).catch(() => "");
@@ -261,7 +262,7 @@ export class PermissionBroker {
       await this.asks.record(verdict === "allow" ? "auto-allow" : "auto-deny", subject, patchbaySessionId);
       return verdict === "allow" ? "accepted" : "rejected";
     }
-    const { id, ending } = this.asks.open(patchbaySessionId, "command", subject);
+    const { id, ending } = this.asks.open({ patchbaySessionId }, "command", subject);
     this.asks.show(id, {
       kind: "options",
       title: "Terminal",

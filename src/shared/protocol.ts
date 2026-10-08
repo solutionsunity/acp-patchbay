@@ -1244,6 +1244,66 @@ export type ElicitationBlock = {
   linkState?: LinkState;
 } & ElicitationAsk;
 
+/** Where a link card stands, from the user's answer and the agent's
+ * follow-up together:
+ *  - `ask`: not answered — address, warnings, Open / Decline / Cancel;
+ *  - `waiting`: opened, the agent still waits on the page — Open again;
+ *  - `opened`: opened, and the session stopped waiting on it;
+ *  - `completed`: the agent reported the page done — whether or not the
+ *    user ever clicked, since the agent can finish another way;
+ *  - `settled`: declined, cancelled, or withdrawn. */
+export type LinkCardPhase = "ask" | "waiting" | "opened" | "completed" | "settled";
+
+export function linkCardPhase(block: Pick<ElicitationBlock, "resolution" | "linkState">): LinkCardPhase {
+  if (block.linkState === "completed") return "completed";
+  if (block.resolution === null) return "ask";
+  if (block.resolution.outcome !== "accepted") return "settled";
+  return block.linkState === "waiting" ? "waiting" : "opened";
+}
+
+/** A question card's events, wherever the card shows — a session's
+ * transcript, or an agent's card in Settings. */
+export type QuestionEvent =
+  | ({ kind: "elicitationRequested"; patchbayAskId: PatchbayAskId; message: string } & ElicitationAsk)
+  | { kind: "elicitationResolved"; patchbayAskId: PatchbayAskId; outcome: ElicitationOutcome }
+  /** An opened link's follow-up moved: the agent reported the page done,
+   * or its asker stopped waiting on it. */
+  | { kind: "elicitationLinkSettled"; patchbayAskId: PatchbayAskId; state: "completed" | "ended" };
+
+/** A question's card as it is first shown — the one reading of the card
+ * events, shared by every surface that shows questions, with
+ * `questionMoved`. */
+function questionAsked(event: Extract<QuestionEvent, { kind: "elicitationRequested" }>): ElicitationBlock {
+  const ask: ElicitationAsk =
+    event.mode === "url"
+      ? { mode: "url", link: event.link }
+      : {
+          mode: "form",
+          fields: event.fields,
+          ...(event.title !== undefined ? { title: event.title } : {}),
+          ...(event.description !== undefined ? { description: event.description } : {}),
+        };
+  return { kind: "elicitation", id: event.patchbayAskId, message: event.message, ...ask, resolution: null };
+}
+
+/** A question's card once it settled, or once its opened link's follow-up
+ * moved. */
+function questionMoved(
+  card: ElicitationBlock,
+  event: Extract<QuestionEvent, { kind: "elicitationResolved" | "elicitationLinkSettled" }>,
+): ElicitationBlock {
+  if (event.kind === "elicitationLinkSettled") return card.mode === "url" ? { ...card, linkState: event.state } : card;
+  return {
+    ...card,
+    resolution: { outcome: event.outcome },
+    // An accepted link opened in the browser; the agent's page is now in
+    // play until it reports back. A link the agent finished before the
+    // user answered is simply done.
+    ...(card.mode === "url" && event.outcome === "accepted" ? { linkState: "waiting" as const } : {}),
+    ...(card.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
+  };
+}
+
 /** A patchbay-authored transcript marker — system voice, never agent prose.
  * Exists for the honesty seams: e.g. the session/resume rung shows where
  * patchbay's cached view ends and the agent's unreplayed memory continues. */
@@ -1681,11 +1741,7 @@ export type AgentViewEvent =
   | { kind: "terminalStarted"; patchbaySessionId: PatchbaySessionId; blockId: string; command: string }
   | { kind: "terminalOutputAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; chunk: string }
   | { kind: "terminalExited"; patchbaySessionId: PatchbaySessionId; blockId: string; exitCode: number | null; signal?: string }
-  | ({ kind: "elicitationRequested"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; message: string } & ElicitationAsk)
-  | { kind: "elicitationResolved"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; outcome: ElicitationOutcome }
-  /** An opened link's follow-up moved: the agent reported the page done,
-   * or the session stopped waiting on it. */
-  | { kind: "elicitationLinkSettled"; patchbaySessionId: PatchbaySessionId; patchbayAskId: PatchbayAskId; state: "completed" | "ended" }
+  | (QuestionEvent & { patchbaySessionId: PatchbaySessionId })
   | { kind: "contextChipAdded"; patchbaySessionId: PatchbaySessionId; chip: ContextChip }
   | { kind: "contextChipRemoved"; patchbaySessionId: PatchbaySessionId; chipId: string }
   /** Words held at the turn-start door (mid-turn, auth lock, or behind
@@ -2185,24 +2241,11 @@ export function reduceAgentView(
         exitCode: event.exitCode,
         ...(event.signal !== undefined ? { signal: event.signal } : {}),
       }));
-    case "elicitationRequested": {
-      const { kind: _kind, patchbaySessionId, patchbayAskId, ...asked } = event;
-      return appendBlock(state, patchbaySessionId, { kind: "elicitation", id: patchbayAskId, ...asked, resolution: null });
-    }
+    case "elicitationRequested":
+      return appendBlock(state, event.patchbaySessionId, questionAsked(event));
     case "elicitationResolved":
-      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) => ({
-        ...b,
-        resolution: { outcome: event.outcome },
-        // An accepted link opened in the browser; the agent's page is now
-        // in play until it reports back. A link the agent finished before
-        // the user answered is simply done.
-        ...(b.mode === "url" && event.outcome === "accepted" ? { linkState: "waiting" as const } : {}),
-        ...(b.mode === "url" && event.outcome === "completed" ? { linkState: "completed" as const } : {}),
-      }));
     case "elicitationLinkSettled":
-      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) =>
-        b.mode === "url" ? { ...b, linkState: event.state } : b,
-      );
+      return patchBlock<ElicitationBlock>(state, event.patchbaySessionId, event.patchbayAskId, (b) => questionMoved(b, event));
     case "contextChipAdded":
       return {
         ...state,
@@ -2448,6 +2491,11 @@ export interface SettingsState {
   sessionsActiveToday: number;
   /** Keyed by patchbayAgentId — observed knob offerings (see AgentKnobsView). */
   agentKnobs: Readonly<Record<string, AgentKnobsView>>;
+  /** Keyed by patchbayAgentId — what an agent asks the user outside any
+   * session (its login's page to open): a card while it waits on the
+   * user, or on the page the user opened. Connection state, like the
+   * knobs: it leaves with the connection. */
+  agentQuestions: Readonly<Record<string, readonly ElicitationBlock[]>>;
   /** ISO time of the last successful ACP registry fetch; "" = never. */
   registryFetchedAt: string;
   /** Wire log (Audit page): live state of the raw-frame tap. Never
@@ -2492,6 +2540,7 @@ export const initialSettingsState: SettingsState = {
   agentConfigs: [],
   sessionsActiveToday: 0,
   agentKnobs: {},
+  agentQuestions: {},
   registryFetchedAt: "",
   wireLog: { active: false, until: null },
   dataInventory: null,
@@ -2521,6 +2570,8 @@ export type SettingsEvent =
   /** The defaults editor ended its session — the surface leaves with it,
    * so a re-expanded card reads fresh instead of showing a stale one. */
   | { kind: "agentKnobsReleased"; patchbayAgentId: PatchbayAgentId }
+  /** A question no session owns moved, on its agent's card. */
+  | { kind: "agentQuestion"; patchbayAgentId: PatchbayAgentId; event: QuestionEvent }
   | { kind: "wireLogChanged"; active: boolean; until: string | null }
   | { kind: "dataInventoryChanged"; rows: readonly DataInventoryRow[] }
   | { kind: "sectionChanged"; section: SettingsSectionId };
@@ -2536,9 +2587,12 @@ export function reduceSettings(
         agents: reduceAgents(state.agents, event),
         // Offerings are connection state — the defaults editor's session
         // rode the connection, so its surface leaves with it; an expanded
-        // card reopens one when the agent is back.
+        // card reopens one when the agent is back. So are its questions.
         ...(event.agent.status !== "running"
-          ? { agentKnobs: dropKey(state.agentKnobs, event.agent.id) }
+          ? {
+              agentKnobs: dropKey(state.agentKnobs, event.agent.id),
+              agentQuestions: dropKey(state.agentQuestions, event.agent.id),
+            }
           : {}),
       };
     case "agentRemoved":
@@ -2547,7 +2601,23 @@ export function reduceSettings(
         ...state,
         agents: reduceAgents(state.agents, event),
         agentKnobs: dropKey(state.agentKnobs, event.patchbayAgentId),
+        agentQuestions: dropKey(state.agentQuestions, event.patchbayAgentId),
       };
+    case "agentQuestion": {
+      const { patchbayAgentId, event: moved } = event;
+      const cards = state.agentQuestions[patchbayAgentId] ?? [];
+      const next =
+        moved.kind === "elicitationRequested"
+          ? [...cards, questionAsked(moved)]
+          : cards.map((c) => (c.id === moved.patchbayAskId ? questionMoved(c, moved) : c));
+      // A card stays while it waits on the user, or on a page the user
+      // opened; a settled one has nothing left to do on the agent's card.
+      const waiting = next.filter((c) => ["ask", "waiting"].includes(linkCardPhase(c)));
+      return {
+        ...state,
+        agentQuestions: waiting.length > 0 ? { ...state.agentQuestions, [patchbayAgentId]: waiting } : dropKey(state.agentQuestions, patchbayAgentId),
+      };
+    }
     case "registryChanged":
       return { ...state, registryAgents: event.agents, registryFetchedAt: event.fetchedAt };
     case "permissionRulesChanged":
@@ -2595,6 +2665,7 @@ const SETTINGS_ONLY_KINDS = new Set([
   "sessionStatsChanged",
   "agentKnobsObserved",
   "agentKnobsReleased",
+  "agentQuestion",
   "wireLogChanged",
   "dataInventoryChanged",
   "sectionChanged",

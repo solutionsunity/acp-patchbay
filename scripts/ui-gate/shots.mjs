@@ -597,6 +597,27 @@ for (const theme of Object.keys(THEMES)) {
   await removing.waitFor({ timeout: 3000 });
   check(`[${theme}] a Remove under way: Remove spins and takes no click`, await p.locator('button[aria-label="Remove"]').isDisabled());
   await upsert(claudeRow);
+  // A question no session owns — a login's page to open (#81) — shows on
+  // its agent's card, answers through the same action as in chat, and
+  // leaves once its page is done.
+  const question = (event) => p.evaluate((e) => window.__patch([{ kind: "agentQuestion", patchbayAgentId: "claude", event: e }]), event);
+  await question({
+    kind: "elicitationRequested", patchbayAskId: "elicit-login", message: "Sign in and enter this code: ABCD-1234",
+    mode: "url", link: { href: "https://auth.example.com/device", host: "auth.example.com", warnings: [] },
+  });
+  const ask = p.locator(".card", { hasText: "Claude Code asks you to open a page: Sign in and enter this code: ABCD-1234" });
+  await ask.locator('button:has-text("Open in browser")').waitFor({ timeout: 3000 });
+  check(`[${theme}] a login's page shows on its agent's card, its address before consent`, (await ask.locator("text=auth.example.com/device").count()) === 1);
+  await p.screenshot({ path: `${OUT}/settings-login-question-${theme}.png` });
+  await ask.locator('button:has-text("Open in browser")').click();
+  const consent = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] opening it answers the ask by its id`, consent?.kind === "resolveElicitation" && consent.patchbayAskId === "elicit-login" && consent.answer.action === "accept");
+  await question({ kind: "elicitationResolved", patchbayAskId: "elicit-login", outcome: "accepted" });
+  await p.locator('button:has-text("Open again")').waitFor({ timeout: 3000 });
+  check(`[${theme}] an opened page stays while the agent waits on it`, true);
+  await question({ kind: "elicitationLinkSettled", patchbayAskId: "elicit-login", state: "completed" });
+  await p.locator('button:has-text("Open again")').waitFor({ state: "detached", timeout: 3000 });
+  check(`[${theme}] the card leaves once the page is done`, (await p.locator("text=ABCD-1234").count()) === 0);
   const [btnColor, bodyColor] = await p.evaluate(() => {
     // Row actions are icon-only buttons (aria-label carries the semantics).
     const btn = document.querySelector('button[aria-label="Stop"]');

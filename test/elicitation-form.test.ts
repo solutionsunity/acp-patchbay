@@ -1,11 +1,12 @@
-// The card's answer check (chat/elicitation-form.ts): what the user sees
+// The card's answer check (shared/elicitation-form.ts): what the user sees
 // pre-filled, what Send may carry, and why it may not yet. The spec asks
 // clients to validate before replying and to pre-fill declared defaults;
 // content should conform to the requested schema — so a field the user
 // left empty is omitted, never sent as "" (an unpicked choice would
 // otherwise arrive as a value the agent never offered).
 import { describe, expect, it } from "vitest";
-import { answerOf, initialDraft, linkCardPhase } from "../src/webview/agent-view/chat/elicitation-form";
+import { answerOf, initialDraft } from "../src/webview/shared/elicitation-form";
+import { linkCardPhase } from "../src/shared/protocol";
 import type { ElicitationField } from "../src/shared/protocol";
 
 const text = (over: Partial<ElicitationField> = {}): ElicitationField => ({

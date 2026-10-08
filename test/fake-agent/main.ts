@@ -66,6 +66,9 @@ export type TurnStep =
       /** Takes the request back this long after asking (the spec's
        * cancel-request), unless answered first. */
       withdrawAfterMs?: number;
+      /** Asks and moves on: the turn ends with the request still open, and
+       * the answer, whenever it comes, is said in an update of its own. */
+      leaveOpen?: boolean;
     }
   | { type: "echoBlocks" }
   | { type: "echoBlockKinds" }
@@ -157,6 +160,11 @@ export interface FakeAgentScript {
   /** Every session/prompt rejects with this JSON-RPC error (code, message,
    * optional data) — the generic error shape the spec leaves to agents. */
   promptError?: { code: number; message: string; data?: unknown };
+  /** `authenticate` sends the user to a page before it answers — a url
+   * elicitation tied to the authenticate request itself, no session yet
+   * (codex-acp's device-code login takes this shape). It reports the page
+   * done once the user opened it, and fails the login on any other answer. */
+  authPage?: { url: string; elicitationId: string; message: string };
   lies?: {
     /** session/set_mode returns success but mode never changes, no update emitted. */
     modeChangeNoop?: boolean;
@@ -424,7 +432,7 @@ async function runTurn(
         const locations: acp.ToolCallLocation[] = [step.subject].flat().map((path) => ({ path }));
         const withdraw = new AbortController();
         if (step.withdrawAfterMs !== undefined) setTimeout(() => withdraw.abort(), step.withdrawAfterMs);
-        const outcome = await cx
+        const asked = cx
           .request(
             acp.methods.client.session.requestPermission,
             {
@@ -448,10 +456,10 @@ async function runTurn(
             (response) => (response.outcome.outcome === "cancelled" ? "cancelled" : response.outcome.optionId),
             (err: unknown) => `withdrawn ${(err as { code?: number }).code ?? "?"}`,
           );
-        await emitUpdate(cx, sessionId, cwd, {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: `permission: ${outcome}` },
-        });
+        const say = (outcome: string) =>
+          emitUpdate(cx, sessionId, cwd, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `permission: ${outcome}` } });
+        if (step.leaveOpen === true) void asked.then(say);
+        else await say(await asked);
         break;
       }
       case "elicit": {
@@ -674,7 +682,19 @@ const app = acp
       agentInfo: { name: script.name ?? "fake-agent", version: script.version ?? "0.0.0" },
     };
   })
-  .onRequest("authenticate", (): acp.AuthenticateResponse => {
+  .onRequest("authenticate", async (ctx): Promise<acp.AuthenticateResponse> => {
+    if (script.authPage !== undefined) {
+      const { url, elicitationId, message } = script.authPage;
+      const response = await ctx.client.request(acp.methods.client.elicitation.create, {
+        mode: "url",
+        requestId: ctx.requestId,
+        message,
+        url,
+        elicitationId,
+      });
+      if (response.action !== "accept") throw acp.RequestError.authRequired(undefined, `login ${response.action}`);
+      await ctx.client.notify(acp.methods.client.elicitation.complete, { elicitationId });
+    }
     authenticated = true;
     return {};
   })

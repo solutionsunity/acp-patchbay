@@ -314,7 +314,7 @@ describe("SessionsStore", () => {
     await h.pool.stop("smq2" as PatchbayAgentId);
   });
 
-  // The turn-start door: a standing auth lock is inFlight's peer — words
+  // The turn-start door: a standing auth lock is a running turn's peer — words
   // sent into a locked agent hold as visible queue rows (no fabricated
   // user message, nothing on the wire) and fire when the lock's clearing
   // releases them. The live-caught shape: prompting a reconnected-but-
@@ -3684,7 +3684,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
         {
           declare: { loadSession: true },
           // the agent echoes the marker as its own user-role message during
-          // the turn — dropped live (inFlight), durably recorded for replay
+          // the turn — dropped live (a turn is running), durably recorded for replay
           turn: [{ type: "userEcho", text: "[Request interrupted by user]" }],
         },
         "sm-int",

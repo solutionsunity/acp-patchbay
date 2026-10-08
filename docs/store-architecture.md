@@ -350,15 +350,28 @@ and how it went. The editor-state socket answers through that record only:
 **The row** — one per ask: a permission the agent asked for, a file write or
 a command patchbay gates, a question — from the moment it is asked until it
 ends. Live only: an ask dies with the connection it was asked on, and
-nothing can ask it again after a reload. It names its session by
-`patchbaySessionId`; its card in the transcript carries the ask's own id,
-and every answer names it as `patchbayAskId`. Its saved half is the
-decision audit.
+nothing can ask it again after a reload. It names where it was asked — its
+session by `patchbaySessionId`, or, for a question no session owns (a
+login's page to open, asked during `authenticate`), its agent by
+`patchbayAgentId`; its card, in the session's transcript or on the agent's
+card in Settings, carries the ask's own id, and every answer names it as
+`patchbayAskId`. Its saved half is the decision audit.
+
+**An ask ends with its owner** — fixed when it is asked: the turn running on
+its session then, read from the sessions store; the session itself, for one
+asked between turns (codex-acp asks to sign in to an MCP server right after
+a session opens); the agent's connection, for one asked on no session. A
+turn's end, however it ended, cancels that turn's asks and only those; a
+stop the user asked for also cancels every permission the session still
+asks, whenever it was asked — the spec owes each the cancelled outcome. The
+session leaving cancels all of its asks, the connection ending all of the
+agent's.
 
 **Operations:** open, show its card, answer (an option, a write's accept,
-a question's answer), a rule's allow, stop (every ask of a session), the
-agent's withdrawal, a page reported done, open a page again. Asks need no
-queue: they are concurrent by nature, and each ends once.
+a question's answer), a rule's allow, a turn's end, stop (every ask of a
+session, or of an agent asked on no session), the agent's withdrawal, a
+page reported done, open a page again. Asks need no queue: they are
+concurrent by nature, and each ends once.
 
 **One writer, one table.** An ask can end several ways, and they race — a
 rule, the user on its card or its notification, a stop, the agent

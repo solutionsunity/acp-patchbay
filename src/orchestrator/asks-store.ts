@@ -8,15 +8,22 @@
 // after a reload. Its saved half is the decision audit, written here and
 // only here, when an ask ends.
 //
+// An ask belongs to an owner, and ends with it: the turn that was running
+// on its session when it was asked; the session itself, for one asked
+// between turns (an agent asking at session start); or the agent's
+// connection, for a question no session owns (a login asking the user to
+// open a page). Its card shows in the session's transcript, or on the
+// agent's card in Settings.
+//
 // An ask can end several ways, and they race: a rule decides it before
 // anyone had to, the user answers its card or its notification, a stop
-// (the turn ends, the session leaves, the connection goes) cancels it, the
-// agent withdraws its question, or the agent reports a page done — a report
-// that can even overtake the question it closes. Which end may move an ask
-// from which state is declared once, in MOVES; one writer consults it and
-// writes everything an end owes, in order: the card's resolution, the
-// audit line, then the answer its caller waits for. No end can answer the
-// agent and leave the card open, and no action runs ahead of its record.
+// (its owner ends) cancels it, the agent withdraws its question, or the
+// agent reports a page done — a report that can even overtake the question
+// it closes. Which end may move an ask from which state is declared once,
+// in MOVES; one writer consults it and writes everything an end owes, in
+// order: the card's resolution, the audit line, then the answer its caller
+// waits for. No end can answer the agent and leave the card open, and no
+// action runs ahead of its record.
 import type {
   AgentViewEvent,
   DiffLineKind,
@@ -26,12 +33,18 @@ import type {
   PermissionCallView,
   PermissionFact,
   PermissionOptionView,
+  QuestionEvent,
 } from "../shared/protocol";
 import type { DecisionAuditStore } from "./stores/decision-audit";
 import { newBlockId } from "./block-ids";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../shared/ids";
 
 export type AskKind = "permission" | "command" | "write" | "question";
+
+/** Where an ask is asked, and its card shows: a session, in its
+ * transcript; or, for a question no session owns, its agent — on the
+ * agent's card in Settings. */
+export type AskPlace = { patchbaySessionId: PatchbaySessionId } | { patchbayAgentId: PatchbayAgentId };
 
 /** Where an ask stands. `waiting`: a page the user opened, still in play.
  * `withdrawn`, `answered`: a question the agent withdrew, or a page the
@@ -107,7 +120,10 @@ export type AskCard =
 
 interface Ask {
   readonly id: PatchbayAskId;
-  readonly patchbaySessionId: PatchbaySessionId;
+  readonly at: AskPlace;
+  /** The turn running on its session when it was asked — its owner; null
+   * for one asked between turns or on no session. */
+  readonly turn: string | null;
   readonly kind: AskKind;
   /** What the record names the ask by; null for a question, which is never
    * recorded — answering one grants nothing. */
@@ -127,7 +143,13 @@ interface Ask {
 }
 
 export interface AsksHooks {
+  /** A card in a session's transcript. */
   emit(...events: AgentViewEvent[]): void;
+  /** A card on an agent's card in Settings — a question no session owns. */
+  emitAgent(patchbayAgentId: PatchbayAgentId, event: QuestionEvent): void;
+  /** The turn running on a session right now, by the id its end will
+   * carry; null between turns. */
+  turnOf(patchbaySessionId: PatchbaySessionId): string | null;
   /** Refresh Settings' audit tail after every write. */
   onAuditWritten(): void;
   /** The session as a later window can name it — its agent, and the
@@ -169,16 +191,31 @@ export class AsksStore {
   ) {}
 
   /** An ask is held from here: a stop that lands before its card shows
-   * answers it too. `ending` settles once the ask has ended. */
+   * answers it too. Asked on a session, it belongs to the turn running
+   * there now, if any; only a question is asked on no session — its agent
+   * holds it. `ending` settles once the ask has ended. */
   open(
-    patchbaySessionId: PatchbaySessionId,
+    at: { patchbaySessionId: PatchbaySessionId },
+    kind: AskKind,
+    subject: Readonly<Record<string, unknown>> | null,
+    link?: { href: string; completion: LinkCompletion | null } | null,
+  ): { id: PatchbayAskId; ending: Promise<AskEnding> };
+  open(
+    at: AskPlace,
+    kind: "question",
+    subject: null,
+    link?: { href: string; completion: LinkCompletion | null } | null,
+  ): { id: PatchbayAskId; ending: Promise<AskEnding> };
+  open(
+    at: AskPlace,
     kind: AskKind,
     subject: Readonly<Record<string, unknown>> | null,
     link: { href: string; completion: LinkCompletion | null } | null = null,
   ): { id: PatchbayAskId; ending: Promise<AskEnding> } {
     const id = newBlockId(PREFIX[kind]) as PatchbayAskId;
+    const turn = "patchbaySessionId" in at ? this.hooks.turnOf(at.patchbaySessionId) : null;
     const ending = new Promise<AskEnding>((reply, fail) => {
-      this.rows.set(id, { id, patchbaySessionId, kind, subject, link, state: "open", shown: false, options: [], proposal: null, reply, fail });
+      this.rows.set(id, { id, at, turn, kind, subject, link, state: "open", shown: false, options: [], proposal: null, reply, fail });
     });
     return { id, ending };
   }
@@ -188,13 +225,12 @@ export class AsksStore {
     const ask = this.rows.get(id);
     if (ask?.state !== "open") return;
     ask.shown = true;
-    const at = { patchbaySessionId: ask.patchbaySessionId, patchbayAskId: id };
     switch (card.kind) {
       case "options":
         ask.options = card.options;
-        this.hooks.emit({
+        this.emitAt(ask, {
           kind: "permissionRequested",
-          ...at,
+          patchbayAskId: id,
           title: card.title,
           detail: card.detail,
           facts: card.facts,
@@ -204,10 +240,10 @@ export class AsksStore {
         return;
       case "write":
         ask.proposal = card.proposal;
-        this.hooks.emit({ kind: "diffProposed", ...at, file: card.file, additions: card.additions, deletions: card.deletions, lines: card.lines });
+        this.emitAt(ask, { kind: "diffProposed", patchbayAskId: id, file: card.file, additions: card.additions, deletions: card.deletions, lines: card.lines });
         return;
       case "question":
-        this.hooks.emit({ kind: "elicitationRequested", ...at, message: card.message, ...card.ask });
+        this.emitAt(ask, { kind: "elicitationRequested", patchbayAskId: id, message: card.message, ...card.ask });
         this.awaitCompletion(ask);
         return;
     }
@@ -245,13 +281,31 @@ export class AsksStore {
     else this.settle(ask, { end: answer.action === "accept" ? "linkOpened" : "linkAnswered", choice });
   }
 
-  /** A stop — the session's turn ended, the session left, or its
-   * connection went: every ask it left open is cancelled (an ACP MUST: the
-   * agent is never left hanging), and a page it was waiting on is no
-   * longer offered. */
+  /** A turn ended, however it ended: every ask it left open is cancelled —
+   * the agent is never left hanging on a turn that is over — and a page it
+   * was waiting on is no longer offered. A stop the user asked for
+   * (`session/cancel`) also cancels every permission the session still
+   * asks, whenever it was asked: the spec owes each the cancelled outcome. */
+  endTurn(patchbaySessionId: PatchbaySessionId, turn: string, stopped: boolean): void {
+    for (const ask of [...this.rows.values()]) {
+      if (!asksOn(ask, patchbaySessionId)) continue;
+      if (ask.turn === turn || (stopped && ask.kind === "permission")) this.settle(ask, { end: "stop" });
+    }
+  }
+
+  /** The session left, or its connection went: everything it still asks
+   * is cancelled, whichever turn it was asked in. */
   stopSession(patchbaySessionId: PatchbaySessionId): void {
     for (const ask of [...this.rows.values()]) {
-      if (ask.patchbaySessionId === patchbaySessionId) this.settle(ask, { end: "stop" });
+      if (asksOn(ask, patchbaySessionId)) this.settle(ask, { end: "stop" });
+    }
+  }
+
+  /** The agent's connection went: what it asked on no session is
+   * cancelled. */
+  stopAgent(patchbayAgentId: PatchbayAgentId): void {
+    for (const ask of [...this.rows.values()]) {
+      if ("patchbayAgentId" in ask.at && ask.at.patchbayAgentId === patchbayAgentId) this.settle(ask, { end: "stop" });
     }
   }
 
@@ -318,7 +372,7 @@ export class AsksStore {
     ask.state = next;
     if (!movable(ask)) this.rows.delete(ask.id);
     const card = cardOf(ask, from, move);
-    if (card !== null) this.hooks.emit(card);
+    if (card !== null) this.emitAt(ask, card);
     if (move.end === "linkOpened" && ask.link !== null) this.hooks.openLink?.(ask.link.href);
     if (from !== "open") return;
     const ending: AskEnding = "choice" in move ? { end: "user", choice: move.choice } : { end: move.end };
@@ -326,7 +380,8 @@ export class AsksStore {
       ask.reply(ending);
       return;
     }
-    void this.log({ kind: recordedAs(ask.kind, move), ...this.pairOf(ask.patchbaySessionId), ...ask.subject }).then(
+    const pair = "patchbaySessionId" in ask.at ? this.pairOf(ask.at.patchbaySessionId) : {};
+    void this.log({ kind: recordedAs(ask.kind, move), ...pair, ...ask.subject }).then(
       () => ask.reply(ending),
       ask.fail,
     );
@@ -364,6 +419,37 @@ export class AsksStore {
     await this.audit.append(entry);
     this.hooks.onAuditWritten();
   }
+
+  /** A card's line, where its card shows. */
+  private emitAt(ask: Ask, event: CardEvent): void {
+    if ("patchbaySessionId" in ask.at) this.hooks.emit({ ...event, patchbaySessionId: ask.at.patchbaySessionId });
+    else if (isQuestionEvent(event)) this.hooks.emitAgent(ask.at.patchbayAgentId, event);
+  }
+}
+
+/** A card's line before it is placed. */
+type CardEvent = Unplaced<Extract<AgentViewEvent, { patchbayAskId: PatchbayAskId }>>;
+type Unplaced<E> = E extends unknown ? Omit<E, "patchbaySessionId"> : never;
+
+/** Which card lines are a question's — the one card that can show off a
+ * session. Every card line is named, so a new one has to say. */
+const QUESTION_LINE: Readonly<Record<CardEvent["kind"], boolean>> = {
+  permissionRequested: false,
+  permissionResolved: false,
+  diffProposed: false,
+  diffResolved: false,
+  elicitationRequested: true,
+  elicitationResolved: true,
+  elicitationLinkSettled: true,
+};
+
+function isQuestionEvent(event: CardEvent): event is QuestionEvent {
+  return QUESTION_LINE[event.kind];
+}
+
+/** Whether the ask was asked on this session. */
+function asksOn(ask: Ask, patchbaySessionId: PatchbaySessionId): boolean {
+  return "patchbaySessionId" in ask.at && ask.at.patchbaySessionId === patchbaySessionId;
 }
 
 /** Whether any end can still move the ask — one none can leaves the
@@ -376,9 +462,9 @@ function movable(ask: Ask): boolean {
 }
 
 /** The card's line for a move — none for a card that never showed. */
-function cardOf(ask: Ask, from: AskState, move: Move): AgentViewEvent | null {
+function cardOf(ask: Ask, from: AskState, move: Move): CardEvent | null {
   if (!ask.shown) return null;
-  const at = { patchbaySessionId: ask.patchbaySessionId, patchbayAskId: ask.id };
+  const at = { patchbayAskId: ask.id };
   if (ask.kind === "question") {
     // A page the user opened or turned down: only its follow-up moves.
     if (from === "waiting" || from === "answered") {
