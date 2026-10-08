@@ -35,6 +35,14 @@ support@augmentcode.com / Discord.
   response (not ~3s: spawn trails the session-open indexing), latch run
   (marker on second) never spawns. Verbatim frames in
   [the compliance report](reports/auggie-acp-compliance-2026-07-13.md).
+- **Re-verified:** 2026-10-08, same marker repro, still latched on
+  **0.36.0** (commit 7c61e5bb — npm `latest`, the registry's pinned
+  version) and **0.37.0-prerelease.202610072259** (commit 09d30708): the
+  control spawns about 1s after `session/new`, and the second session's
+  server never spawns in 30s. **1.2.0-prerelease.202610080924** (preview
+  line) is inconclusive: even the control didn't spawn in 30s, so its MCP
+  servers start lazily — telling the latch apart needs a prompted run,
+  not done.
 - **Patchbay workaround:** implemented 2026-07-13 —
   `extensions/first-session-mcp-latch.ts` (id-keyed curated entry; the
   capability probe defers until the first real session attaches, which then
@@ -44,9 +52,10 @@ support@augmentcode.com / Discord.
   Cost while latched: matrix/offerings stay declared-only until first real
   use, and a logged-out auggie's needsAuth surfaces at first session
   instead of at connect.
-- **Status:** observed 2026-07-12 → report drafted 2026-07-13
+- **Status:** observed 2026-07-12 → reported 2026-07-13 as TKT-66153
   ([the compliance report](reports/auggie-acp-compliance-2026-07-13.md),
-  combined with the models issue), pending send.
+  combined with the models issue); no fix date from the vendor. Still
+  latched on 0.36.0 (2026-10-08); the workaround stays.
 
 ### Model selection rides a removed draft API (root `models` field + `session/set_model`)
 
@@ -85,8 +94,9 @@ support@augmentcode.com / Discord.
   deliberate exception to display-from-agent-state, scoped here. **Retire when Auggie
   migrates to configOptions** — the draft surface is removed upstream, so it
   will never appear in any SDK; vendor migration is the only exit.
-- **Status:** observed 2026-07-12 → report drafted 2026-07-13
-  ([the compliance report](reports/auggie-acp-compliance-2026-07-13.md)), pending send.
+- **Status:** observed 2026-07-12 → reported 2026-07-13 as TKT-66153
+  ([the compliance report](reports/auggie-acp-compliance-2026-07-13.md));
+  not re-verified since 0.32.0.
 
 ### Unknown image format kills the whole turn with an opaque 400
 
@@ -260,4 +270,6 @@ support@augmentcode.com / Discord.
   whether patchbay's id-less merge rule (`runBlockFor`) can tighten for
   replay. Full text + verbatim wire transcripts:
   [the compliance report](reports/auggie-acp-compliance-2026-07-13.md).
-  Awaiting vendor response.
+- **By 2026-10-08** — no fix date given for TKT-66153; Augment Code is
+  being acquired by Harness (per the maintainer). The latch re-verified on
+  0.36.0 and 0.37.0-prerelease (see its entry); no follow-up sent.

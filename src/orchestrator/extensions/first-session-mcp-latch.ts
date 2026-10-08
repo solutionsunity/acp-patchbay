@@ -22,7 +22,8 @@
 // and knob offerings stay at declared-only, and a logged-out agent's
 // needsAuth surfaces at first real use instead of at connect.
 //
-// Reported upstream 2026-07-13 (pending send).
+// Reported upstream 2026-07-13 as TKT-66153; still latched on 0.36.0
+// (re-verified 2026-10-08).
 /** Keyed by the registry entry the agent was added from. */
 const LATCHED_AGENTS: ReadonlySet<string> = new Set([
   // auggie 0.32.0 (commit eb99b871) — verified 2026-07-12, re-verified
