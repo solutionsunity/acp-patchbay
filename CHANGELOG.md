@@ -1,30 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.84.3 — 2026-10-08
 
-- **OdooSurface joins the MCP catalog.** It gives an agent the same Odoo
-  access the signed-in user has in the browser, nothing more. It is the
-  catalog's first server with no remote endpoint: Connect… opens straight to
-  its local server, which fills in the custom form with the four values to
-  enter (the Odoo address, database, user and an API key). Add it once per
-  Odoo instance, each under its own name. (#63)
+Reasoning stays one row while it streams (#92), MCP servers are named once and
+OdooSurface joins the catalog (#88, #63), OpenCode's to-dos fill the plan (#87),
+and fixes from outside reports, most of them filed by Hermes Agent users.
+
 - **Reasoning stays one row while it streams.** A thought opened on its own
   while it streamed, so a model that reasons at length scrolled the panel
   through reasoning nobody asked to read. It now stays collapsed, showing
   "Thinking…" and its newest line, the sign the agent is working; a click
   opens it. Preferences › Thinking opens it while it streams, as before.
   (#92)
-- **You name an MCP server, once.** Connecting a curated server took the
-  catalog's name with no say, so a second GitHub could only be "GitHub 2";
-  and a name went to agents as typed, where they rewrote what they don't
-  keep, so Settings and the agent showed different names. Every add now asks
-  for the name, the curated connect too, and shows it as every agent will
-  get it: characters agents don't keep become `_`, a taken name gets `-2`. A
-  JSON import shows its entries for naming before anything is added. A name
-  can't change later, since agents keep the server's "always allow" rules
-  under it; names stored before are rewritten once to the form agents
-  already used, so those rules still hold. An agent's name can no longer be
-  edited to one another agent holds. (#88)
+- **You name an MCP server, once — and the catalog gains OdooSurface.**
+  Connecting a curated server took the catalog's name with no say, so a
+  second GitHub could only be "GitHub 2"; and a name went to agents as
+  typed, where they rewrote what they don't keep, so Settings and the agent
+  showed different names. Every add now asks for the name, the curated
+  connect too, and shows it as every agent will get it: characters agents
+  don't keep become `_`, a taken name gets `-2`. A JSON import shows its
+  entries for naming before anything is added. A name can't change later,
+  since agents keep the server's "always allow" rules under it; names
+  stored before are rewritten once to the form agents already used, so
+  those rules still hold. An agent's name can no longer be edited to one
+  another agent holds. New in the catalog: OdooSurface, which gives an agent
+  the same Odoo access the signed-in user has in the browser, nothing more.
+  It runs only on your machine, so Connect… opens straight to its local
+  server and fills in the four values to enter (the Odoo address, database,
+  user and an API key); add it once per Odoo instance, each under its own
+  name. (#88, #63)
 - **OpenCode's to-do list is its plan.** OpenCode keeps its plan in its own
   to-do tool and sends no ACP plan, so its list used to appear as "N todos"
   tool cards and the plan chip stayed empty. A to-do write that completes
@@ -45,15 +49,20 @@
   line, the description cut short, and the selected row shows it in full
   under the name. The menu also stays inside the narrowest sidebar, where it
   used to slide the view sideways as it opened. (#89)
-- **An edit you approve shows the change, and its diff closes when you
-  decide.** An agent that asks before editing (Hermes Agent does) showed its
-  raw request, and its diff was a click on a small count; the diff tab then
-  stayed open after the answer. Its card now shows the change the way a
-  write card does, with **Open diff** beside the answers, and the tab closes
-  once the request is answered, on either card. A write card used to preview
-  the first 40 lines of the file, so an edit further down showed nothing of
-  itself; a card now shows a small change whole, with three lines of context,
-  and a larger one only as its counts. (#90)
+- **An agent's edit request shows the change, and Settings says when one
+  is answered for you.** An agent that asks before editing (Hermes Agent
+  does) showed its raw request, and its diff was a click on a small count;
+  the diff tab then stayed open after the answer. Its card now shows the
+  change the way a write card does, with **Open diff** beside the answers,
+  and the tab closes once the request is answered, on either card. A write
+  card used to preview the first 40 lines of the file, so an edit further
+  down showed nothing of itself; a card now shows a small change whole,
+  with three lines of context, and a larger one only as its counts. Under
+  "workspace only", an agent mode that asks before editing (Claude's
+  Default) edits the workspace without a card, as its accept-edits mode
+  would: the scope answers the ask for you. The File writes note now says
+  so, and that "always ask" leaves each agent's mode to decide when you are
+  asked. (#90, #84)
 - **Connecting an agent no longer opens patchbay's own script in the
   editor.** Patchbay's editor server and its MCP bridge run on the editor's
   own binary, which runs them as Node only when told to — and that word
@@ -61,12 +70,6 @@
   agent that hands its servers a filtered one (Hermes Agent does) launched
   the editor instead, which opened `mcp-server.js` as a tab and kept taking
   focus as the agent retried. Both now carry it themselves. (#94)
-- **Settings says a write scope answers an agent's edit asks.** Under
-  "workspace only", an agent mode that asks before editing (Claude's
-  Default) edits the workspace without a card, as its accept-edits mode
-  would — the scope answers the ask for you. That was nowhere said; the
-  File writes note now says it, and that "always ask" leaves each agent's
-  mode to decide when you are asked. (#84)
 - **Log in runs the agent you connected.** An agent that offers ACP's
   terminal login also sends an older-style login command beside it, for
   editors that don't support the new one — and Patchbay ran that one. For

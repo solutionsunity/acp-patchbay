@@ -2,7 +2,7 @@
   "name": "acp-patchbay",
   "displayName": "ACP Patchbay",
   "description": "One VS Code client for every ACP agent — Claude Code, Codex, Gemini CLI, GitHub Copilot, Hermes, Qwen Code, OpenCode, Grok, Auggie and more. Every integration it can accept, shown exactly as it is.",
-  "version": "0.84.2",
+  "version": "0.84.3",
   "publisher": "SolutionsUnity",
   "license": "Apache-2.0",
   "repository": {
