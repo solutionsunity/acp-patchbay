@@ -487,6 +487,42 @@ describe("the gates", () => {
     await h.agents.stopAll();
   });
 
+  // What the login task is handed (#93). A typed terminal method is the
+  // agent's own launch plus the method's args, whatever recipe rides along;
+  // a recipe runs as the agent wrote it, over the agent's launch env — the
+  // user's keys reach the login that writes the credentials they pair with.
+  it("a typed terminal login runs the agent's own launch plus its args, never the recipe beside it", async () => {
+    const handed: { command: string; args: string[]; env?: Record<string, string> }[] = [];
+    const h = agentsHarness(dir, { hooks: { runLoginTask: async (_name, recipe) => (handed.push(recipe), 0) } });
+    const config = fakeConfig("oc2", {
+      authMethods: [
+        { id: "login", name: "Login", type: "terminal", args: ["--login"], _meta: { "terminal-auth": { command: "opencode", args: ["auth", "login"] } } },
+      ],
+    });
+    await stored(h, config);
+    await h.gates.connect("oc2" as PatchbayAgentId);
+    await h.gates.login("oc2" as PatchbayAgentId, "login");
+    expect(handed).toHaveLength(1);
+    expect(handed[0]).toMatchObject({ command: config.command, args: [...config.args, "--login"] });
+    await h.agents.stopAll();
+  });
+
+  it("a recipe login runs as written, over the agent's launch env — the recipe's own env wins a clash", async () => {
+    const handed: { command: string; args: string[]; env?: Record<string, string> }[] = [];
+    const h = agentsHarness(dir, { hooks: { runLoginTask: async (_name, recipe) => (handed.push(recipe), 0) } });
+    const config = fakeConfig(
+      "oc1",
+      { authMethods: [{ id: "login", name: "Login", _meta: { "terminal-auth": { command: "opencode", args: ["auth", "login"], env: { SHARED: "recipe" } } } }] },
+    );
+    await stored(h, { ...config, env: { ...config.env, USER_KEY: "k-1", SHARED: "user" } });
+    await h.gates.connect("oc1" as PatchbayAgentId);
+    await h.gates.login("oc1" as PatchbayAgentId, "login");
+    expect(handed).toHaveLength(1);
+    expect(handed[0]).toMatchObject({ command: "opencode", args: ["auth", "login"] });
+    expect(handed[0]!.env).toMatchObject({ USER_KEY: "k-1", SHARED: "recipe" });
+    await h.agents.stopAll();
+  });
+
   // The login's terminal is the user's: a Stop stops waiting on it, never
   // closes it — the user may still finish the login there, or use it. The
   // return code is the login's only word, so it still counts when it comes.

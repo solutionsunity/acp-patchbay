@@ -628,7 +628,9 @@ export interface OpenEditorView {
  * VS Code terminal, never calls `authenticate` on it), and "terminal"
  * (the spec's terminal type; patchbay re-runs the agent's own spawn command
  * with the method's args appended, in a terminal, and likewise never calls
- * `authenticate` on it) are actionable. The recipe/args stay
+ * `authenticate` on it) are actionable. A method that is both — a spec
+ * terminal carrying a recipe for clients without `auth.terminal` — is
+ * "terminal"; "terminal-recipe" is a recipe with no valid typed half. The recipe/args stay
  * orchestrator-side — the UI only needs to know the method is runnable.
  * "unsupported" is every method patchbay cannot drive (a type outside the
  * spec's `terminal | agent`, or a terminal whose args/env didn't parse):

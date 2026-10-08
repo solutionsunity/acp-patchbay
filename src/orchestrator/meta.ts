@@ -26,8 +26,9 @@ import type { PlanUsageInfo } from "../shared/protocol";
 /** The Zed-ecosystem terminal-auth convention (not in the ACP v1 stable
  * schema — see the authMethod entry below): an auth method carrying a
  * self-contained login recipe the *client* runs in a terminal it owns.
- * `command` is machine-absolute (typically the agent's own binary) — read
- * fresh from every initialize, never persisted. */
+ * By the convention `command` is machine-absolute (typically the agent's
+ * own binary); it runs as written — read fresh from every initialize,
+ * never persisted. */
 const terminalAuthRecipeSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
@@ -78,9 +79,14 @@ const META_EXTENSIONS = {
   authMethod: {
     // Adopted 2026-07-11: without it a logged-out Claude/Auggie has no
     // login path at all (their methods are gated on this declaration).
-    // Never an RPC — patchbay runs the recipe in a visible VS Code
-    // terminal and re-probes; `authenticate` is never called on a recipe
-    // method (Claude's throws, Auggie's no-ops).
+    // Refined 2026-10-08: agents now send a spec terminal method to a
+    // client declaring `auth.terminal` and keep the recipe on it for those
+    // that don't — that method runs the spec way. Still needed for the
+    // type-less recipe method (Auggie 0.32.0 offers nothing without this
+    // declaration); retire it once no agent sends one — ACP v2 requires
+    // the type. Never an RPC — patchbay runs the recipe in a visible VS
+    // Code terminal and re-probes; `authenticate` is never called on a
+    // recipe method (Claude's throws, Auggie's no-ops).
     "terminal-auth": { schema: terminalAuthRecipeSchema, declare: true },
   },
   usageUpdate: {

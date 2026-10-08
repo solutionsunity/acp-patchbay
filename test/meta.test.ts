@@ -101,20 +101,20 @@ function declaredOf(raw: unknown) {
 }
 
 describe("auth method kind classification", () => {
-  it("a parseable recipe wins over the type field (Auggie ships one on a type-less method)", () => {
+  it("a type-less method's recipe is its login, not the schema default (Auggie)", () => {
     const declared = declaredOf(
       initWith([{ id: "auggie-login", name: "Log in with Auggie", _meta: { "terminal-auth": recipe } }]),
     );
     expect(declared.authMethods[0]!.kind).toBe("terminal-recipe");
   });
 
-  it('type: "terminal" with a recipe is still terminal-recipe (Claude labels honestly)', () => {
+  it('type: "terminal" with a recipe is terminal — the recipe is the copy for clients without auth.terminal (#93)', () => {
     const declared = declaredOf(
       initWith([
         { id: "claude-ai-login", name: "Claude Subscription", type: "terminal", args: ["--cli"], _meta: { "terminal-auth": recipe } },
       ]),
     );
-    expect(declared.authMethods[0]!.kind).toBe("terminal-recipe");
+    expect(declared.authMethods[0]!.kind).toBe("terminal");
   });
 
   it("type-less without a recipe stays the schema default: agent", () => {

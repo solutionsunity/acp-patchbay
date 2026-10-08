@@ -44,6 +44,13 @@
   would — the scope answers the ask for you. That was nowhere said; the
   File writes note now says it, and that "always ask" leaves each agent's
   mode to decide when you are asked. (#84)
+- **Log in runs the agent you connected.** An agent that offers ACP's
+  terminal login also sends an older-style login command beside it, for
+  editors that don't support the new one — and Patchbay ran that one. For
+  OpenCode 2.x it names a bare `opencode`, so the login ran whatever
+  `opencode` your PATH held, or failed with nothing there. Patchbay now runs
+  the agent's own launch with the login's arguments. An older-style login
+  that is an agent's only one also gets the keys you set for the agent. (#93)
 
 ## 0.84.2 — 2026-10-07
 

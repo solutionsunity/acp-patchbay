@@ -50,6 +50,36 @@ describe("initialize", () => {
     expect(said).toHaveLength(3); // one per dropped entry — NoteLog says the repeat once
   });
 
+  // The shapes agents send a client declaring both auth.terminal and
+  // _meta["terminal-auth"]: a typed method may carry the recipe too — the
+  // copy for clients without auth.terminal — and the spec path is the one
+  // meant for this client; a type-less method's recipe is its only login.
+  it("a typed terminal method runs the spec way even when it carries a recipe; a type-less one runs its recipe (#93)", () => {
+    const recipe = { "terminal-auth": { command: "opencode", args: ["auth", "login"] } };
+    const fact = readInitialize(
+      {
+        protocolVersion: 1,
+        authMethods: [
+          { id: "both", name: "OpenCode 2.x", type: "terminal", args: ["--login"], _meta: recipe },
+          { id: "recipe", name: "OpenCode 1.x", _meta: recipe },
+          { id: "broken", name: "Malformed typed", type: "terminal", args: "--login", _meta: recipe },
+          { id: "agent", name: "Codex" },
+        ],
+      },
+      () => {},
+    );
+    expect(fact.declared.authMethods.map((m) => [m.id, m.kind])).toEqual([
+      ["both", "terminal"],
+      ["recipe", "terminal-recipe"],
+      ["broken", "terminal-recipe"],
+      ["agent", "agent"],
+    ]);
+    expect(fact.logins.get("both")).toEqual({ via: "terminal", auth: { args: ["--login"], env: {} } });
+    expect(fact.logins.get("recipe")).toMatchObject({ via: "recipe", recipe: { command: "opencode", args: ["auth", "login"] } });
+    expect(fact.logins.get("broken")).toMatchObject({ via: "recipe" });
+    expect(fact.logins.has("agent")).toBe(false);
+  });
+
   it("authMethods that isn't an array reads as none instead of killing connect", () => {
     expect(readInitialize({ protocolVersion: 1, authMethods: "nope" }, () => {}).declared.authMethods).toEqual([]);
   });

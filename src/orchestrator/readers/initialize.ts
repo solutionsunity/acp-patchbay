@@ -124,10 +124,16 @@ function readAgentInfo(v: unknown, note: Note): InitializeFact["agentInfo"] {
 
 /** Each method: identity (id, name) is structural — a button needs both, so
  * an entry without it is dropped whole; the description degrades to none.
- * A parseable `_meta["terminal-auth"]` recipe wins over the wire's own
- * type: Auggie ships its recipe on a type-less method (schema default
- * "agent") whose `authenticate` is a no-op, so type-first would wire a
- * button to nothing. */
+ * How it runs, first match wins:
+ *   1. a spec `terminal` method — the agent's own launch plus its args. A
+ *      `_meta["terminal-auth"]` recipe beside it is the same login for
+ *      clients that don't declare `auth.terminal`; this one does.
+ *   2. a recipe — the terminal-auth convention from before the spec typed
+ *      terminal methods, sent on a type-less method. The missing type means
+ *      "older than the type", not the schema's default "agent": Auggie's
+ *      `authenticate` on that method is a no-op, its recipe the only login.
+ *   3. type absent or "agent" — `authenticate` (no run here).
+ *   4. anything else — shown, never run (`methodKind`). */
 function readAuthMethods(v: unknown, note: Note): { view: AuthMethodView; run: LoginRun | null }[] {
   if (v == null) return [];
   if (!Array.isArray(v)) {
@@ -140,9 +146,9 @@ function readAuthMethods(v: unknown, note: Note): { view: AuthMethodView; run: L
       note("initialize: an authMethods entry without an id and a name — dropped");
       return [];
     }
-    const recipe = terminalAuthRecipeOf(e._meta);
-    const typed = recipe === null ? terminalAuthOf(e) : null;
-    const run: LoginRun | null = recipe !== null ? { via: "recipe", recipe } : typed !== null ? { via: "terminal", auth: typed } : null;
+    const typed = terminalAuthOf(e);
+    const recipe = typed === null ? terminalAuthRecipeOf(e._meta) : null;
+    const run: LoginRun | null = typed !== null ? { via: "terminal", auth: typed } : recipe !== null ? { via: "recipe", recipe } : null;
     return [
       {
         view: {

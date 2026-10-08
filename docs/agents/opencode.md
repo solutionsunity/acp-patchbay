@@ -8,7 +8,18 @@ core-team design approval first). Patchbay's tracking issue: #87.
 
 ## Compliance issues
 
-*(none)*
+### A terminal auth method offered to a client that never declared it
+
+- **Observed:** 2026-10-08, 2.0.25 (`@opencode/cli`), `initialize` sent with
+  each mix of `clientCapabilities.auth.terminal` and
+  `_meta["terminal-auth"]`.
+- **Spec:** "Agents MUST advertise this method only when the client enabled
+  its terminal authentication capability."
+- **Wire:** a client declaring neither still gets `opencode-login` with
+  `type: "terminal"`. With only `_meta` declared, it gets the method with no
+  type and the recipe — the convention's own shape.
+- **Impact on patchbay:** none — patchbay declares `auth.terminal`.
+- **Status:** not reported yet.
 
 ## Capability gaps
 
@@ -68,7 +79,20 @@ core-team design approval first). Patchbay's tracking issue: #87.
 
 ## Behavioral notes
 
-*(none)*
+### The login recipe names `opencode`, not the binary that answered
+
+- **Observed:** 2026-10-08, 1.18.35 and 2.0.25. Both send
+  `_meta["terminal-auth"]` `{ command: "opencode", args: ["auth", "login"] }`.
+  1.18.35 sends no `type`, so the recipe is its only login; 2.0.25 also sends
+  a spec `terminal` method (`args: ["--login"]`).
+- **Convention:** the recipe's `command` is the machine-absolute path of the
+  agent's own binary (Claude agent and Auggie send their `node` and script
+  paths). A bare name finds whatever `opencode` the user's PATH holds — none
+  for a registry install, or another install.
+- **Patchbay:** 2.0.25 logs in the spec way — its own launch plus
+  `--login` — and the recipe beside it isn't run (#93). 1.18.35's recipe runs
+  as written: the binary is the agent's to name.
+- **Status:** not reported yet.
 
 ## Communication log
 
