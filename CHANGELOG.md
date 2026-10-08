@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Reasoning stays one row while it streams.** A thought opened on its own
+  while it streamed, so a model that reasons at length scrolled the panel
+  through reasoning nobody asked to read. It now stays collapsed, showing
+  "Thinking…" and its newest line, the sign the agent is working; a click
+  opens it. Preferences › Thinking opens it while it streams, as before.
+  (#92)
 - **You name an MCP server, once.** Connecting a curated server took the
   catalog's name with no say, so a second GitHub could only be "GitHub 2";
   and a name went to agents as typed, where they rewrote what they don't

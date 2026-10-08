@@ -137,6 +137,20 @@ export function PreferencesSection(props: {
       </PrefCard>
 
       <PrefCard
+        title="Thinking"
+        help="Whether an agent's reasoning opens on its own while it streams. Off, it stays one row —
+        Thinking… and its newest line, so you see the agent working without scrolling through
+        reasoning you didn't ask to read. Either way it folds once the answer starts, and a click
+        opens it."
+      >
+        <Toggle
+          checked={prefs.openThinking}
+          label={prefs.openThinking ? "open while it streams" : "collapsed"}
+          onChange={(openThinking) => props.onSet({ openThinking })}
+        />
+      </PrefCard>
+
+      <PrefCard
         title="Detached windows"
         help='Open a session — or the whole agent view — in its own floating window (the session
         menu&apos;s "Open in new window" and the view&apos;s detach command), multi-screen usable.

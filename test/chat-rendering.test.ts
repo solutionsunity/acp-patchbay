@@ -8,6 +8,7 @@ import {
   formatDuration,
   TOOL_RUN_MIN,
   diffTotal,
+  thoughtTail,
   toolFileRows,
   turnLive,
 } from "../src/webview/agent-view/chat/view-model";
@@ -113,6 +114,31 @@ describe("deriveTranscript: the live-block contract (stream/end)", () => {
       usage: null,
     });
     expect(turnLive(state, S)).toBe(false);
+  });
+});
+
+describe("thoughtTail: a collapsed streaming thought's newest line (#92)", () => {
+  it("is the last line with text in it — a trailing break or blank line never empties it", () => {
+    expect(thoughtTail("first idea\nsecond idea")).toBe("second idea");
+    expect(thoughtTail("first idea\nsecond idea\n\n  ")).toBe("second idea");
+    expect(thoughtTail("one line")).toBe("one line");
+    expect(thoughtTail("")).toBe("");
+    expect(thoughtTail("\n \n")).toBe("");
+  });
+
+  it("reads plain: heading, list, quote and bold markers drop", () => {
+    expect(thoughtTail("x\n**Checking the callers**")).toBe("Checking the callers");
+    expect(thoughtTail("x\n## Plan")).toBe("Plan");
+    expect(thoughtTail("x\n- read a.ts first")).toBe("read a.ts first");
+    expect(thoughtTail("x\n> quoted")).toBe("quoted");
+    expect(thoughtTail("x\n2 * 3 is 6")).toBe("2 * 3 is 6");
+  });
+
+  it("a line that never breaks is read from its end only — its newest words, never the whole thought", () => {
+    const long = "- " + "word ".repeat(1000) + "newest";
+    const tail = thoughtTail(long);
+    expect(tail.endsWith("word newest")).toBe(true);
+    expect(tail.length).toBeLessThanOrEqual(500);
   });
 });
 

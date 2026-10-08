@@ -340,11 +340,15 @@ Rules for appending vs. updating:
 #### Thinking / reasoning feed
 
 `agent_thought_chunk` blocks are not the final answer and should read that way:
-muted/italic styling, and — importantly — auto-collapse into a "Thinking..."
-accordion once the first `agent_message_chunk` of the real answer starts
-streaming. Keep it expandable on demand rather than deleting it; users debugging a
-bad answer often want to see the reasoning that led there, but it shouldn't compete
-visually with the answer once it exists.
+muted/italic styling, and collapsed unless asked for. While a thought streams it
+stays one row: "Thinking…" and its newest line, plain, its end pinned in view and
+a long line fading out the start side. That row is the sign the agent is working;
+some models reason at a length nobody asked to read, and an open thought would
+scroll the panel through all of it. One preference (Preferences › Thinking, off by
+default) opens a streaming thought instead. Either way it folds to "Thought" once
+the turn moves on — the answer starting, or a tool call. Keep it expandable on
+demand rather than deleting it; users debugging a bad answer often want to see the
+reasoning that led there, but it shouldn't compete visually with the answer.
 
 #### Plans
 

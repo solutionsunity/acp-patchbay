@@ -25,7 +25,7 @@ import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
-import { diffTotal, toolFileRows, type ToolFileRow } from "./view-model";
+import { diffTotal, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
@@ -172,16 +172,24 @@ export function UserMessage({ parts }: { parts: readonly UserPart[] }) {
 }
 
 /** agent_thought_chunk feed — not the final answer, and reads that way:
- * muted, collapsed into a "Thinking…" accordion the moment the real answer
- * starts streaming (`live` flips false). Expandable on demand, never
- * deleted; a manual toggle overrides the auto behavior in both directions. */
-export function Thought({ text, live }: { text: string; live: boolean }) {
+ * muted, and collapsed unless asked for. While it streams (`live`) it opens
+ * only under the openThinking preference; collapsed, its header carries the
+ * newest line, the sign the agent is working. Once the turn moves on it
+ * folds to "Thought". Expandable on demand, never deleted; a manual toggle
+ * overrides the auto behavior in both directions. */
+export function Thought({ text, live, openThinking }: { text: string; live: boolean; openThinking: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? live;
+  const open = manual ?? (live && openThinking);
+  const tail = live && !open ? thoughtTail(text) : "";
   return (
     <div className={`thought ${open ? "open" : ""}`}>
-      <Disclosure open={open} onToggle={() => setManual(!open)} label={open ? "Hide the thought" : "Show the thought"}>
-        <Icon name="sparkle" /> {live ? "Thinking…" : "Thought"}
+      <Disclosure open={open} onToggle={() => setManual(!open)} label={open ? "Hide the thought" : "Show the thought"} className="max-w-full">
+        <Icon name="sparkle" /> <span className="whitespace-nowrap">{live ? "Thinking…" : "Thought"}</span>
+        {tail !== "" && (
+          <span className="tail" dir="auto">
+            {tail}
+          </span>
+        )}
       </Disclosure>
       {open && (
         <div className="body">

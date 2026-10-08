@@ -225,6 +225,21 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   };
 }
 
+/** A streaming thought's newest line, as its collapsed header shows it: the
+ * last line with text in it, plain — a heading, list or quote marker and
+ * bold markers dropped, since one row renders no markdown. Reads only the
+ * line's last THOUGHT_TAIL_MAX characters — more than any row shows — so a
+ * thought that never breaks a line isn't copied whole on every delta. */
+export function thoughtTail(text: string): string {
+  let end = text.length;
+  while (end > 0 && /\s/.test(text[end - 1]!)) end--;
+  const lineStart = text.lastIndexOf("\n", end - 1) + 1;
+  const start = Math.max(lineStart, end - THOUGHT_TAIL_MAX);
+  const line = text.slice(start, end);
+  return (start === lineStart ? line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|>\s*)/, "") : line).replace(/\*\*|__/g, "").trim();
+}
+
+const THOUGHT_TAIL_MAX = 500;
 
 /** "1m 29s" (or "12s", "1h 02m") — duration between two ISO timestamps. */
 export function formatDuration(startedAt: string, endedAt: string): string {

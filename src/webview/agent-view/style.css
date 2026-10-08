@@ -581,6 +581,27 @@ body {
   font-size: 12.5px;
 }
 
+/* a collapsed streaming thought's newest line: one row, its end pinned in
+   view — a long line spills out the start side (justify flex-end), where a
+   fade takes it. The fade sits in the padding, so a line that fits starts
+   past it and shows whole. Logical sides and :dir() follow a right-to-left
+   line the same way. */
+.thought .tail {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding-inline-start: 1.5em;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 1.5em);
+  mask-image: linear-gradient(to right, transparent, black 1.5em);
+}
+
+.thought .tail:dir(rtl) {
+  -webkit-mask-image: linear-gradient(to left, transparent, black 1.5em);
+  mask-image: linear-gradient(to left, transparent, black 1.5em);
+}
+
 .thought .body {
   margin-top: 4px;
   padding: 8px 10px;

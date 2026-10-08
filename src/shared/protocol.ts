@@ -1428,6 +1428,10 @@ export interface PreferencesView {
    * silently truncated. Bytes travel the webview bridge as base64, so the
    * cap is also what keeps a stray 200MB drop from stalling the view. */
   attachmentMaxMB: number;
+  /** A thought still streaming opens on its own. Off (the default) keeps it
+   * one row — "Thinking…" and its newest line — since some models reason at
+   * a length nobody asked to read; a click opens it either way. */
+  openThinking: boolean;
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
@@ -1441,6 +1445,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   statsPlanUsage: true,
   detachWindows: true,
   attachmentMaxMB: 10,
+  openThinking: false,
 };
 
 export interface AgentViewState {

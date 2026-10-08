@@ -568,6 +568,49 @@ for (const theme of Object.keys(THEMES)) {
     await p.waitForSelector(".chat .codicon-loading.codicon-modifier-spin", { timeout: 3000 }).then(() => true, () => false),
   );
   await p.screenshot({ path: `${OUT}/chat-live-${theme}.png` });
+  // A thought streaming in stays one row by default (#92): "Thinking…" and
+  // its newest line, end in view however long the line runs; the
+  // preference opens it, and the answer starting folds it either way.
+  const thinking = "First, find the callers.\n**Checking every call site of foo across the workspace before touching its signature, since b.ts returns it**\n";
+  await p.evaluate((text) => window.__patch([{ kind: "agentThoughtDelta", patchbaySessionId: "s1", blockId: "th-live", text }]), thinking);
+  const liveThought = p.locator(".thought", { hasText: "Thinking…" });
+  const tail = liveThought.locator(".tail");
+  await liveThought.waitFor({ timeout: 3000 });
+  check(`[${theme}] a streaming thought stays collapsed by default`, (await liveThought.locator(".body").count()) === 0);
+  check(
+    `[${theme}] its header carries the newest line, plain`,
+    (await tail.count()) === 1 && (await tail.textContent()) === "Checking every call site of foo across the workspace before touching its signature, since b.ts returns it",
+  );
+  // A line spilling out the start side isn't scrollable overflow, so its
+  // width is read off the text itself; its end must sit inside the row.
+  const tailBox = await liveThought.evaluate((root) => {
+    const el = root.querySelector(".tail");
+    if (el === null) return { right: 0, textRight: 0, clipped: false, rowHeight: 0, width: 0 };
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const text = range.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    const label = root.querySelector("button").getBoundingClientRect();
+    return { right: box.right, textRight: text.right, clipped: text.width > box.width, rowHeight: label.height, width: document.documentElement.clientWidth };
+  });
+  check(
+    `[${theme}] the newest line is one row, its end in view (${tailBox.textRight} ≤ ${tailBox.right} ≤ ${tailBox.width}, ${tailBox.rowHeight}px)`,
+    tailBox.clipped && tailBox.textRight <= tailBox.right + 0.5 && tailBox.right <= tailBox.width && tailBox.rowHeight < 24,
+  );
+  await p.mouse.move(0, 0);
+  await liveThought.screenshot({ path: `${OUT}/thought-live-${theme}.png` });
+  await p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: { ...prefs, openThinking: true } }]), preferences);
+  await liveThought.locator(".body").waitFor({ timeout: 3000 });
+  check(`[${theme}] the preference opens a streaming thought, no tail`, (await tail.count()) === 0);
+  await p.evaluate(() => window.__patch([{ kind: "agentTextDelta", patchbaySessionId: "s1", blockId: "x-live", text: "Found it." }]));
+  const folded = p.locator(".thought").last();
+  check(
+    `[${theme}] the answer starting folds the thought`,
+    await liveThought.waitFor({ state: "detached", timeout: 3000 }).then(
+      async () => (await folded.textContent()).includes("Thought") && (await folded.locator(".body, .tail").count()) === 0,
+      () => false,
+    ),
+  );
   await p.close();
 
   // ── settings: agents, dialog, combobox, matrix tooltip ──

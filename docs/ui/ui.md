@@ -83,7 +83,7 @@ session's worth of change against.
 |---|---|---|
 | User message | right-aligned bubble | plain content |
 | Agent text | flat, no bubble | markdown, streams live |
-| Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text |
+| Thought | 💭 collapsed line | click to expand; dimmed; never rendered as answer text. While it streams: `Thinking…` + its newest line, one row (opens instead under Preferences › Thinking); after: `Thought` |
 | Meant for the model | dim line | content the agent addressed to the model alone (its audience names no user) — `meant for the model`, and the content as it renders on a click; never woven into the agent's prose |
 | Shown as sent | ⓘ dim line | an update kind patchbay gives no surface yet: `‹kind› · not shown here`, and what the agent sent on a click — never dropped |
 | Tool call | 🛠 card | title + the first reported file as a link (`name:line`, **+N** for the others) + the lines the call's diffs add and remove (**+a −d**) + spinner while running → ✓/✗. The link opens the file at the line the agent named; the ± opens the edit in VS Code's native diff editor — or, when several files carry a diff, the details; the rest of the header toggles details. The count is what the agent reported, whole file or changed regions, each against its own counterpart. Details: one row per file — name, each reported line, folder relative to the workspace, its own **+a −d** (opening its diff) when the call carried one — listed only when it says more than the header; then what the tool produced for the user (the agent's markdown, images, embedded files), then a collapsed **raw** toggle with the wire input and output. A terminal the call runs in shows inside the card, always visible, never as a separate block |
@@ -326,6 +326,9 @@ the stored truth — the page never assumes its own write landed:
   window, plan usage (all shown by default). Pure render furniture: hiding one
   changes nothing else. The files chip is not among them — it is a way in, not
   a read-out, and lives in the read-out strip.
+- **Thinking** — whether a thought opens on its own while it streams (default
+  off: one row, `Thinking…` and its newest line). It folds once the turn moves
+  on either way; a click opens it.
 
 ### Saved roots
 

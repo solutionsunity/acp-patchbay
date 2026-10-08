@@ -120,12 +120,15 @@ function TurnLine({
 function Block({
   block,
   live,
+  openThinking,
   patchbaySessionId,
   agentName,
   roots,
 }: {
   block: ChatBlock;
   live: boolean;
+  /** The openThinking preference — whether a streaming thought opens. */
+  openThinking: boolean;
   patchbaySessionId: PatchbaySessionId;
   /** Workspace roots — tool-call file rows read relative to them. */
   roots: readonly string[];
@@ -148,7 +151,7 @@ function Block({
         </div>
       );
     case "thought":
-      return <Thought text={block.text} live={live} />;
+      return <Thought text={block.text} live={live} openThinking={openThinking} />;
     case "agentPart":
       // A thought's piece keeps reading as a thought: muted, like its text.
       return (
@@ -468,6 +471,7 @@ export function Chat(props: {
             key={item.block.id}
             block={item.block}
             live={item.block.id === liveBlockId}
+            openThinking={props.state.preferences.openThinking}
             patchbaySessionId={active.id}
             agentName={agentName}
             roots={props.state.workspaceRoots}
