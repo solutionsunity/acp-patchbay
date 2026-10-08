@@ -145,7 +145,9 @@ export function PermissionsSection(props: {
         <div className="note">
           workspace means every workspace folder and every root added to the session, judged by
           where a write lands — links and <code>..</code> followed. Writes surface as diffs either
-          way — auto-accept only changes who clicks, not what is visible
+          way — auto-accept only changes who clicks, not what is visible. A scope also answers an
+          agent's own edit asks for you, over the mode you picked for the session; always ask
+          leaves each agent's mode to decide when you are asked
         </div>
       </div>
 

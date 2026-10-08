@@ -1146,6 +1146,17 @@ supplies each agent in its own standard — and ACP carries no channel for it
   target; ACP gives an execute request no command field a rule could match, so
   it always asks, and command rules apply where the command actually runs
   (`terminal/create`).
+- **A rule answers as the user; the mode is the agent's** (decided
+  2026-10-08). An agent's mode decides when it asks — Codex's
+  approval presets, Claude's Default vs Accept Edits. Whether the user
+  answers that ask by hand or by a rule they set is patchbay's side, and a
+  rule wins: it is what the user configured. The default scope stays
+  `workspace` — an opened workspace is one the agent may edit, and agents
+  that write through `fs/write_text_file` after asking would otherwise
+  show two cards per edit. Under it, an agent's "ask before edits" mode
+  (Claude's Default) behaves as its accept-edits one inside the roots; the
+  Settings scope note says so, and `always-ask` is how a user hands every
+  ask to the agent's mode.
 - **A card shows what it approves.** An agent's request asks about a tool
   call, read by the same reader as the session's stream and shown over what
   the transcript already holds for that call (an absent field is unchanged):

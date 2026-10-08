@@ -38,6 +38,12 @@
   agent that hands its servers a filtered one (Hermes Agent does) launched
   the editor instead, which opened `mcp-server.js` as a tab and kept taking
   focus as the agent retried. Both now carry it themselves. (#94)
+- **Settings says a write scope answers an agent's edit asks.** Under
+  "workspace only", an agent mode that asks before editing (Claude's
+  Default) edits the workspace without a card, as its accept-edits mode
+  would — the scope answers the ask for you. That was nowhere said; the
+  File writes note now says it, and that "always ask" leaves each agent's
+  mode to decide when you are asked. (#84)
 
 ## 0.84.2 — 2026-10-07
 

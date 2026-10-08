@@ -344,7 +344,9 @@ the cwd and env the agent runs it with ride along): *this workspace* (evaluated 
 tightening or loosening) and *this machine* (the fallback floor for every workspace
 — consulted only where the workspace layer stays silent; no rule anywhere means
 ask). File-write scope radios (workspace only / + temp / always ask) with the note
-that writes surface as diffs regardless — file-write scope has no machine layer,
+that writes surface as diffs regardless, and that a
+scope also answers an agent's own edit asks over the mode picked for the session —
+always ask leaves each agent's mode to decide — file-write scope has no machine layer,
 it's defined relative to the session's granted roots (every workspace folder plus
 the roots added to the session), judged by where a write lands. The placement statement in
 green: **workspace rules and machine rules live in developer-owned storage, never
