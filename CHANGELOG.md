@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.84.4 — 2026-10-10
+
+Tool-call titles show whole and commands can stand on their own (#96), an
+agent whose download was cut repairs itself (#97), and every release now
+reaches Open VSX on its own.
 
 - **A command's title shows whole, and commands can stand on their own.** A
   tool call's title was one clipped line even on an opened card, so a long
