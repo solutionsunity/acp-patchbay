@@ -1,9 +1,11 @@
 name: Release
 
 # Builds the .vsix, checksums it, and publishes a GitHub Release when a
-# v<version> tag is pushed. Marketplace publishing is deliberately NOT here —
-# it stays a manual `vsce publish` step (stack.md). No VSCE_PAT is used, so
-# there is no publish secret to protect; the tag-only trigger keeps forks out.
+# v<version> tag is pushed, then publishes that same .vsix to Open VSX by
+# trusted publishing. Marketplace publishing is deliberately NOT here — it
+# stays a manual `vsce publish` step. No publish secret exists to protect:
+# Open VSX takes this run's short-lived OIDC token, accepted only for this
+# repository and workflow file; the tag-only trigger keeps forks out.
 
 on:
   push:
@@ -101,3 +103,36 @@ jobs:
             --notes-file release-notes.md \
             --generate-notes \
             ${prerelease}
+
+  # Its own job, so a failed publish re-runs alone ("Re-run failed jobs")
+  # instead of re-running the release, whose create step refuses a release
+  # that already exists. It publishes the asset the release carries, checked
+  # against its checksum, never a second build.
+  open-vsx:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # download the release asset
+      id-token: write # the OIDC token ovsx exchanges for a short-lived key
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Download the released .vsix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --pattern "*.vsix" --pattern "*.vsix.sha256"
+          sha256sum -c ./*.vsix.sha256
+
+      # No token is passed: --trusted-publishing exchanges this run's ID
+      # token, and fails outright when none is on offer. --skip-duplicate
+      # keeps a re-run, or a version already uploaded by hand, from failing
+      # the job.
+      - name: Publish to Open VSX
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          MINOR="$(echo "$version" | cut -d. -f2)"
+          if [ $((MINOR % 2)) -eq 1 ]; then channel=--pre-release; else channel=; fi
+          npx --yes ovsx@1.2.0 publish "acp-patchbay-${version}.vsix" --trusted-publishing --skip-duplicate ${channel}
