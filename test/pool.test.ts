@@ -420,8 +420,9 @@ describe("AgentPool — stopping", () => {
         "npm error code ENOENT",
         "npm error enoent Could not read package.json",
       ]);
-      // The warmup ran; the agent itself never did.
-      expect((await readFile(runs, "utf8")).trim().split("\n")).toHaveLength(1);
+      // The warmup ran, its first try and three retries; the agent itself
+      // never did.
+      expect((await readFile(runs, "utf8")).trim().split("\n")).toHaveLength(4);
       await rm(bin, { recursive: true, force: true });
     },
   );

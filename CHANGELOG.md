@@ -11,6 +11,15 @@
   how the calls an agent marks as execute (usually shell commands) sit:
   grouped as before, a card each on one line, a card each with its whole
   title, or open. (#96)
+- **An agent whose download was cut no longer stays broken.** When a
+  connection dropped while an agent's platform binary was downloading, npm
+  skipped it silently and called the install done, so the agent connected
+  and then failed every session (Claude: "native binary not found") until
+  its cache folder was deleted by hand. Patchbay now checks the install
+  against what npm meant it to hold, removes one that came up short, and
+  tries the download again up to three times, saying so where it says
+  downloading. Each try fetches only what's missing. If it still fails, the
+  card names the missing package and the likely cause. (#97)
 
 ## 0.84.3 — 2026-10-08
 

@@ -367,10 +367,12 @@ export class AgentPool {
     }
 
     // A launcher package is made ready as its own phase (launcher-health.ts):
-    // a half-written npx entry healed, then the package installed to its
-    // exit — the "run it once manually" advice, done by patchbay itself,
-    // with the honest "downloading" label while it's genuinely fetching. A
-    // failed install is the connect failure, in the launcher's own words.
+    // an npx entry that never finished or came up short healed, then the
+    // package installed to its exit and tried again while it doesn't
+    // complete — the "run it once manually" advice, done by patchbay itself,
+    // with the honest "downloading" label while it's genuinely fetching. The
+    // last failed try is the connect failure, in the launcher's own words or
+    // naming what npm left out.
     try {
       await prepareLauncher(spec, spawnEnv(spec), {
         signal,

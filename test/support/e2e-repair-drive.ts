@@ -1,6 +1,8 @@
 // Manual end-to-end drive of the launcher heal against a REAL npx launch:
 // it poisons the package's npx entry the way the field does — an install
-// killed mid-way (taskkill/SIGKILL, a reload, a cut download) — shows npx
+// killed mid-way (taskkill/SIGKILL, a reload, a cut download), or with
+// `--short` one npm finished short: complete but for the platform binaries
+// it was meant to hold, as npm leaves it when their download is cut — shows npx
 // failing on it as a user would see it (`--raw`, which also lets npm judge
 // the dead install's lock stale first), then connects through the pool —
 // at once, as a reconnect right after a Stop would, the dead install's lock
@@ -10,11 +12,11 @@
 // test by PATH:
 //
 //   npm_config_cache=/some/scratch PATH=/path/to/npm11/bin:$PATH \
-//     npx tsx test/support/e2e-repair-drive.ts [pkg@version] [--raw]
+//     npx tsx test/support/e2e-repair-drive.ts [pkg@version] [--raw] [--short]
 import { spawn, spawnSync } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { npxEntryDir, npxEntryState } from "../../src/orchestrator/launcher-health";
+import { droppedOptionals, npxEntryDir, npxEntryState } from "../../src/orchestrator/launcher-health";
 import { AgentPool } from "../../src/orchestrator/pool";
 import { killTree, treeSpawnOptions } from "../../src/orchestrator/process-tree";
 import type { PatchbayAgentId } from "../../src/shared/ids";
@@ -50,14 +52,29 @@ async function main(): Promise<void> {
   const entry = npxEntryDir(join(cache, "_npx"), pkgSpec);
   console.log(`npm ${npm}, entry ${entry}`);
 
-  // 1. Poison: start the install, kill it once the package is unpacked.
-  const install = spawn("npx", ["-y", "--package", pkgSpec, "node", "--version"], { stdio: "ignore", ...treeSpawnOptions });
-  while (!(await exists(join(entry, "node_modules", ...pkgName.split("/"), "package.json")))) {
-    await new Promise((r) => setTimeout(r, 25));
+  // 1. Poison: start the install, kill it once the package is unpacked —
+  // or let it finish and take out the platform binaries it holds.
+  if (args.includes("--short")) {
+    spawnSync("npx", ["-y", "--package", pkgSpec, "node", "--version"], { stdio: "ignore" });
+    const { packages } = JSON.parse(await readFile(join(entry, "node_modules", ".package-lock.json"), "utf8")) as {
+      packages: Record<string, { optional?: boolean; os?: string[]; cpu?: string[] }>;
+    };
+    for (const [path, record] of Object.entries(packages)) {
+      if (record.optional === true && (record.os !== undefined || record.cpu !== undefined)) {
+        await rm(join(entry, path), { recursive: true, force: true });
+        console.log(`removed ${path}`);
+      }
+    }
+    console.log(`poisoned — entry reads ${await npxEntryState(entry)}, missing ${JSON.stringify(await droppedOptionals(entry, process.env))}`);
+  } else {
+    const install = spawn("npx", ["-y", "--package", pkgSpec, "node", "--version"], { stdio: "ignore", ...treeSpawnOptions });
+    while (!(await exists(join(entry, "node_modules", ...pkgName.split("/"), "package.json")))) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    killTree(install.pid!, "SIGKILL");
+    await new Promise((r) => install.once("exit", r));
+    console.log(`poisoned — entry reads ${await npxEntryState(entry)}`);
   }
-  killTree(install.pid!, "SIGKILL");
-  await new Promise((r) => install.once("exit", r));
-  console.log(`poisoned — entry reads ${await npxEntryState(entry)}`);
 
   // 2. What a user's launch does with it.
   if (args.includes("--raw")) {
@@ -84,7 +101,7 @@ async function main(): Promise<void> {
     env: {},
     cwd: process.cwd(),
   });
-  console.log(`CONNECTED in ${Date.now() - started} ms — entry reads ${await npxEntryState(entry)}; declared ${JSON.stringify(declared).slice(0, 100)}…`);
+  console.log(`CONNECTED in ${Date.now() - started} ms — entry reads ${await npxEntryState(entry)}, missing ${JSON.stringify(await droppedOptionals(entry, process.env))}; declared ${JSON.stringify(declared).slice(0, 100)}…`);
   await pool.disposeAll();
   process.exit(0);
 }

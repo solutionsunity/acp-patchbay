@@ -3,12 +3,16 @@
 // layouts and ask the real npm where its cache is — deleting inside npm's
 // cache is safe only because the entry is the one npm itself names and its
 // state is read by the marker npm writes last.
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   bundledVersionInNpxCache,
+  droppedOptionals,
   healNpxEntry,
   launcherKind,
   LauncherFailure,
@@ -19,6 +23,7 @@ import {
   versionsDiverge,
 } from "../src/orchestrator/launcher-health";
 import { nullLogger } from "../src/orchestrator/logger";
+import { runToExit } from "../src/orchestrator/run-to-exit";
 
 describe("launcherKind", () => {
   it("normalizes paths and Windows shims — the one spelling warmupSpawn shares", () => {
@@ -102,6 +107,68 @@ describe("the npx entry", () => {
     expect(await npxEntryState(dir)).toBe("finished");
   });
 
+  /** A finished install npm came up short on: the agent package declares
+   * three optional packages — this machine's that landed, this machine's
+   * that didn't, and another platform's, skipped on purpose along with what
+   * it depends on. The full lockfile holds each one's platform facts. */
+  async function shortEntry(): Promise<string> {
+    const dir = await entry({ finished: false });
+    const here = { os: [process.platform], cpu: [process.arch], ...(process.platform === "linux" && { libc: ["glibc", "musl"] }) };
+    const agent = {
+      version: "1.0.0",
+      optionalDependencies: { "@scope/bin-here": "1.0.0", "@scope/bin-dropped": "1.0.0", "@scope/bin-elsewhere": "1.0.0" },
+    };
+    const landed = { "node_modules/@scope/agent-acp": agent, "node_modules/@scope/bin-here": { ...here, optional: true } };
+    await writeFile(
+      join(dir, "package-lock.json"),
+      JSON.stringify({
+        packages: {
+          "": { dependencies: { "@scope/agent-acp": "1.0.0" } },
+          ...landed,
+          "node_modules/@scope/bin-dropped": { ...here, optional: true },
+          "node_modules/@scope/bin-elsewhere": { ...here, os: [`!${process.platform}`], optional: true, dependencies: { "elsewhere-dep": "1.0.0" } },
+          "node_modules/elsewhere-dep": { optional: true },
+        },
+      }),
+    );
+    await writeFile(join(dir, "node_modules", ".package-lock.json"), JSON.stringify({ packages: landed }));
+    await mkdir(join(dir, "node_modules", "@scope", "bin-here"));
+    await writeFile(join(dir, "node_modules", "@scope", "bin-here", "package.json"), "{}");
+    return dir;
+  }
+
+  it("names what an install meant to hold here but doesn't — never another platform's, nor what that pulls", async () => {
+    expect(await droppedOptionals(await shortEntry(), process.env)).toEqual(["@scope/bin-dropped"]);
+  });
+
+  it("leaves a package nothing can describe unjudged — no lockfile record, nothing in npm's cache", async () => {
+    const dir = await shortEntry();
+    const hidden = join(dir, "node_modules", ".package-lock.json");
+    const lock = JSON.parse(await readFile(hidden, "utf8")) as { packages: Record<string, { optionalDependencies: Record<string, string> }> };
+    lock.packages["node_modules/@scope/agent-acp"]!.optionalDependencies["@scope/bin-undescribed"] = "1.0.0";
+    await writeFile(hidden, JSON.stringify(lock));
+    expect(await droppedOptionals(dir, { ...process.env, npm_config_cache: join(root, "empty-cache") })).toEqual(["@scope/bin-dropped"]);
+  });
+
+  // npm installs for its own node, which can differ from the editor's — an
+  // x64 node under Rosetta or on Windows ARM. A stand-in node on the
+  // launch's PATH answers for the other arch: this machine's binary is then
+  // not npm's to install, and is not missing.
+  it.skipIf(process.platform === "win32")("judges by the platform npm installs for, not patchbay's", async () => {
+    const dir = await shortEntry();
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(join(bin, "node"), `#!/bin/sh\necho "${process.platform} ${process.arch === "arm64" ? "x64" : "arm64"}"\n`);
+    await chmod(join(bin, "node"), 0o755);
+    expect(await droppedOptionals(dir, { PATH: bin })).toEqual([]);
+  });
+
+  it("names nothing for a complete install, or one that never finished", async () => {
+    expect(await droppedOptionals(await entry({ finished: true }), process.env)).toEqual([]);
+    await rm(root, { recursive: true, force: true });
+    expect(await droppedOptionals(await entry({ finished: false }), process.env)).toEqual([]);
+  });
+
   it("an npm holding its lock is installing; a lock it stopped touching is not", async () => {
     const dir = await entry({ finished: false });
     await mkdir(join(dir, "concurrency.lock"));
@@ -126,7 +193,13 @@ describe("the npx entry", () => {
 
     it("removes an install that never finished, so npm installs it fresh", async () => {
       const dir = await entry({ finished: false, rootManifest: true });
-      expect(await healNpxEntry(launch, env(), { log: nullLogger })).toBe("absent");
+      expect((await healNpxEntry(launch, env(), { log: nullLogger }))?.state).toBe("absent");
+      expect(await readdir(root)).not.toContain(dir.slice(-16));
+    });
+
+    it("removes an install that came up short, so npm installs what's missing", async () => {
+      const dir = await shortEntry();
+      expect((await healNpxEntry(launch, env(), { log: nullLogger }))?.state).toBe("absent");
       expect(await readdir(root)).not.toContain(dir.slice(-16));
     });
 
@@ -134,7 +207,7 @@ describe("the npx entry", () => {
       const other = join(root, "0000000000000000");
       await mkdir(join(other, "node_modules", "other-tool"), { recursive: true });
       const dir = await entry({ finished: true });
-      expect(await healNpxEntry(launch, env(), { log: nullLogger })).toBe("finished");
+      expect((await healNpxEntry(launch, env(), { log: nullLogger }))?.state).toBe("finished");
       expect((await readdir(root)).sort()).toEqual(["0000000000000000", dir.slice(-16)].sort());
     });
 
@@ -147,7 +220,7 @@ describe("the npx entry", () => {
       // The other npm finishes: its marker written, its lock released.
       await writeFile(join(dir, "node_modules", ".package-lock.json"), "{}");
       await rm(join(dir, "concurrency.lock"), { recursive: true });
-      expect(await healing).toBe("finished");
+      expect((await healing)?.state).toBe("finished");
       expect(phases).toEqual(["waiting for another install of the agent package…"]);
     });
 
@@ -227,4 +300,117 @@ describe.skipIf(process.platform === "win32")("prepareLauncher", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(() => process.kill(Number(pid), 0)).toThrow();
   });
+});
+
+// The field case end to end: the real npm (whichever this machine has),
+// its cache in a temp dir, installing from a registry served here whose
+// agent package declares this machine's binary as an optional package —
+// and whose binary download is cut mid-stream while `cuts` lasts. npm
+// skips the cut package, exits 0, and writes its completion marker.
+describe("an install npm finished short — the real npm, a registry that cuts the download", () => {
+  let work: string;
+  let server: Server;
+  let registry: string;
+  let cuts: number;
+  let binFetches: number;
+  let requests = 0;
+  const tarballs = new Map<string, Buffer>();
+  const here = { os: [process.platform], cpu: [process.arch] };
+  const manifests: Record<string, Record<string, unknown>> = {
+    "short-agent": { bin: { "short-agent": "cli.js" }, optionalDependencies: { "short-bin": "1.0.0", "short-elsewhere": "1.0.0" } },
+    "short-bin": here,
+    // Another platform's binary: skipped on purpose, never fetched.
+    "short-elsewhere": { os: [`!${process.platform}`] },
+  };
+  const spec = () => ({ command: "npx", args: ["-y", "short-agent@1.0.0"], cwd: work });
+  const env = (extra: Record<string, string> = {}) => ({
+    ...process.env,
+    npm_config_cache: join(work, "cache"),
+    npm_config_registry: registry,
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    npm_config_update_notifier: "false",
+    ...extra,
+  });
+  const entryDir = () => npxEntryDir(join(work, "cache", "_npx"), "short-agent@1.0.0");
+
+  beforeAll(async () => {
+    work = await mkdtemp(join(tmpdir(), "patchbay-short-"));
+    for (const [name, fields] of Object.entries(manifests)) {
+      const src = join(work, "src", name);
+      await mkdir(src, { recursive: true });
+      await writeFile(join(src, "package.json"), JSON.stringify({ name, version: "1.0.0", ...fields }));
+      await writeFile(join(src, "cli.js"), "#!/usr/bin/env node\nconsole.log('ran')\n");
+      const packed = await runToExit("npm", ["pack", "--silent", "--pack-destination", work], { env: process.env, cwd: src });
+      tarballs.set(name, await readFile(join(work, `${name}-1.0.0.tgz`)));
+      expect(packed?.code).toBe(0);
+    }
+    server = createServer((req, res) => {
+      requests++;
+      const name = req.url?.slice(1).replace(/-1\.0\.0\.tgz$/, "") ?? "";
+      const tgz = tarballs.get(name);
+      if (tgz === undefined) return void res.writeHead(404).end("{}");
+      if (!req.url!.endsWith(".tgz")) {
+        const dist = { tarball: `${registry}${name}-1.0.0.tgz`, integrity: `sha512-${createHash("sha512").update(tgz).digest("base64")}` };
+        const version = { name, version: "1.0.0", ...manifests[name], dist };
+        return void res.end(JSON.stringify({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } }));
+      }
+      if (name === "short-bin") binFetches++;
+      if (name === "short-bin" && cuts > 0) {
+        cuts--;
+        res.writeHead(200, { "content-length": tgz.length });
+        res.write(tgz.subarray(0, 20));
+        return void setTimeout(() => req.socket.destroy(), 50);
+      }
+      res.end(tgz);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    registry = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  });
+  afterAll(async () => {
+    await new Promise((r) => server.close(r));
+    await rm(work, { recursive: true, force: true });
+  });
+  beforeEach(async () => {
+    binFetches = 0;
+    await rm(join(work, "cache"), { recursive: true, force: true });
+  });
+
+  const binLanded = () => readFile(join(entryDir(), "node_modules", "short-bin", "package.json")).then(() => true, () => false);
+
+  it("tries again until the cut binary lands, saying so where it says downloading", async () => {
+    cuts = 2;
+    const phases: string[] = [];
+    await prepareLauncher(spec(), env(), { log: nullLogger, who: "test", onPhase: (l) => phases.push(l) });
+    expect(phases).toEqual([
+      "downloading the agent package…",
+      "the download didn't complete — trying again (1 of 3)…",
+      "the download didn't complete — trying again (2 of 3)…",
+    ]);
+    expect(await binLanded()).toBe(true);
+    expect(binFetches).toBe(3);
+  }, 120_000);
+
+  it("a download cut every time fails naming what's missing, after its retries", async () => {
+    cuts = Infinity;
+    const failure = await prepareLauncher(spec(), env(), { log: nullLogger, who: "test" }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(LauncherFailure);
+    expect((failure as LauncherFailure).detail).toBe(
+      "part of the package didn't finish downloading (short-bin) — probably an unstable internet connection; trying again downloads only what's missing",
+    );
+    expect(binFetches).toBe(4);
+    // The next connect heals it before it runs.
+    expect((await healNpxEntry(spec(), env(), { log: nullLogger }))?.state).toBe("absent");
+  }, 120_000);
+
+  it("with no full lockfile written, npm's cache tells — offline, the registry never asked", async () => {
+    cuts = 1;
+    const noLock = env({ npm_config_package_lock: "false" });
+    const ran = await runToExit("npx", ["-y", "short-agent@1.0.0"], { env: noLock, cwd: work });
+    expect(ran?.code).toBe(0);
+    expect(await readFile(join(entryDir(), "package-lock.json")).then(() => true, () => false)).toBe(false);
+    const asked = requests;
+    expect(await droppedOptionals(entryDir(), noLock)).toEqual(["short-bin"]);
+    expect(requests).toBe(asked);
+  }, 120_000);
 });

@@ -230,6 +230,7 @@
     "katex": "^0.19.0",
     "lexical": "^0.46.0",
     "mermaid": "^11.17.2",
+    "npm-install-checks": "^8.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "rehype-katex": "^7.0.1",

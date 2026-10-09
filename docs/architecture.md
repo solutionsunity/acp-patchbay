@@ -232,10 +232,35 @@ flowchart TD
   `node_modules/.package-lock.json` — present whatever the user's npm
   config. An entry without it is removed; one whose npm `concurrency.lock`
   is held is waited out the way npm waits (released, or stale by npm's own
-  one-minute rule). Then the registry-shaped package is installed as a
-  labeled phase (`npx -y --package <pkg> node --version`), run to its exit:
-  a failed install fails the connect in the launcher's own words, shown in
-  the card's output tail. **No clock bounds a download or a launch** — a
+  one-minute rule). **A finished entry can still be short:** npm skips any
+  optional package whose install fails, whatever failed it (a download cut
+  mid-stream — fetched once, never retried, never resumed — or a scanner
+  holding the file), logs it at verbose level only, exits 0, writes the
+  marker, and no later `npx` fetches it again; an agent shipping its
+  platform binary as an optional package then fails at its first session
+  (the field case: claude-agent-acp on a 4G link that drops). So a finished
+  entry is also read against what npm meant it to hold
+  (`droppedOptionals`): each installed package's declared optional
+  dependencies (the hidden lockfile) that resolve to nothing on disk,
+  judged by npm's own platform rule (`npm-install-checks`) against the
+  platform npm installs for — its own node's, asked of the node the
+  launch's env finds, since it is not always the editor's (an x64 node
+  under Rosetta or on Windows ARM) — on each one's
+  platform facts — from the full `package-lock.json` npm writes beside the
+  install, or from npm's cache (`npm view <spec> --json --offline`) where
+  that lacks them (`package-lock=false` writes none; npm 10 omits `libc`,
+  which only Linux reads). What neither can describe stays unjudged. A
+  short entry is removed like an unfinished one; npm's cache keeps every
+  package that did land, so reinstalling fetches only what's missing. Then
+  the registry-shaped package is installed as a labeled phase
+  (`npx -y --package <pkg> node --version`), run to its exit, and an
+  install that doesn't complete — the launcher fails, or npm finishes
+  short — is healed and tried again, three times, the retry named in the
+  same label; there is no clock between tries (a link that is down fails
+  npm's own request retries, which wait). The last failure fails the
+  connect: in the launcher's own words, shown in the card's output tail,
+  or naming the packages npm left out, with the likely cause (an unstable
+  connection) said as likely. **No clock bounds a download or a launch** — a
   slow link is a working one, and cutting the install is exactly what
   poisons the cache (the field case: a 112 MB Windows package on a slow
   link, cut by limits patchbay used to set). `initialize` waits for the
