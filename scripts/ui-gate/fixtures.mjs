@@ -172,7 +172,7 @@ const unlistedMatrix = Object.fromEntries(
 export const preferences = {
   soundOnDone: false, doneSound: "", knobSource: "agent-default", idleCloseMinutes: 60,
   statsPrompts: true, statsToolCalls: true, statsContext: true, statsPlanUsage: true,
-  detachWindows: true, attachmentMaxMB: 10, openThinking: false,
+  detachWindows: true, attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
 };
 
 /** live=true streams the last block (caret, ticker); live=false is the

@@ -18,6 +18,7 @@ import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
 import {
   attaching,
+  DEFAULT_PREFERENCES,
   type ChatBlock,
   userPartsText,
 } from "../src/shared/protocol";
@@ -3753,13 +3754,13 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
     const { h, push, blocks } = await chunkHarness("ch10" as PatchbayAgentId);
     push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Checking " }, messageId: "m1" });
     push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the callers." }, messageId: "m1" });
-    expect(deriveTranscript(blocks(), true).liveBlockId).toBe(blocks()[0]!.id);
+    expect(deriveTranscript(blocks(), true, DEFAULT_PREFERENCES).liveBlockId).toBe(blocks()[0]!.id);
     push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Found " }, messageId: "m1" });
     push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "it." }, messageId: "m1" });
     expect(blocks().map((b) => b.kind)).toEqual(["thought", "text"]);
     expect(textOf(blocks()[0])).toBe("Checking the callers.");
     expect(textOf(blocks()[1])).toBe("Found it.");
-    expect(deriveTranscript(blocks(), true).liveBlockId).toBe(blocks()[1]!.id);
+    expect(deriveTranscript(blocks(), true, DEFAULT_PREFERENCES).liveBlockId).toBe(blocks()[1]!.id);
     await h.pool.stop("ch10" as PatchbayAgentId);
   });
 

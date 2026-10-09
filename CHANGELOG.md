@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **A command's title shows whole, and commands can stand on their own.** A
+  tool call's title was one clipped line even on an opened card, so a long
+  command could only be read in the raw input, if the agent sent one; and
+  commands folded into "N tool calls" with everything else. An opened card
+  now shows its whole title, and hovering a clipped one (or a folded run,
+  listing each call) shows it whole. Preferences › Tool calls › Execute sets
+  how the calls an agent marks as execute (usually shell commands) sit:
+  grouped as before, a card each on one line, a card each with its whole
+  title, or open. (#96)
+
 ## 0.84.3 — 2026-10-08
 
 Reasoning stays one row while it streams (#92), MCP servers are named once and

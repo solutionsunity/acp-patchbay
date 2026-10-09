@@ -19,9 +19,11 @@ import {
   type AgentViewState,
   type ChatBlock,
   type DiffStat,
+  type PreferencesView,
   type ToolCallBlock,
   type ToolCallKind,
 } from "../../../shared/protocol";
+import { joinsRuns, toolCallDisplay, type ToolDisplayPreference } from "../../../shared/tool-display";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 export type TranscriptItem =
@@ -138,7 +140,13 @@ export function turnLive(state: Pick<AgentViewState, "activeTurn">, patchbaySess
   return state.activeTurn[patchbaySessionId] !== undefined;
 }
 
-export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): TranscriptView {
+/** `prefs` routes each call's kind to its display: a call whose step ends
+ * grouping stands alone and ends the run before it. */
+export function deriveTranscript(
+  blocks: readonly ChatBlock[],
+  live: boolean,
+  prefs: Pick<PreferencesView, ToolDisplayPreference>,
+): TranscriptView {
   const items: TranscriptItem[] = [];
   const rollups = new Map<string, TurnRollup>();
 
@@ -177,7 +185,6 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
   for (const block of blocks) {
     if (block.kind === "terminal" && embedded.has(block.id)) continue;
     if (block.kind === "toolCall") {
-      run.push(block);
       toolCalls++;
       totalCalls++;
       byKind[block.toolKind] = (byKind[block.toolKind] ?? 0) + 1;
@@ -187,7 +194,10 @@ export function deriveTranscript(blocks: readonly ChatBlock[], live: boolean): T
           allFiles.add(path);
         }
       }
-      continue;
+      if (joinsRuns(toolCallDisplay(block.toolKind, prefs))) {
+        run.push(block);
+        continue;
+      }
     }
     flushRun();
     items.push({ kind: "single", block });

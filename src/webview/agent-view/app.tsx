@@ -62,8 +62,8 @@ export function App({
   const blocks = active !== null ? (state.transcripts[active.id] ?? []) : [];
   const activeLive = active !== null && turnLive(state, active.id);
   const derived = useMemo(
-    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive) : EMPTY_TRANSCRIPT),
-    [blocks, activeLive],
+    () => (blocks.length > 0 ? deriveTranscript(blocks, activeLive, state.preferences) : EMPTY_TRANSCRIPT),
+    [blocks, activeLive, state.preferences],
   );
   const detach = state.preferences?.detachWindows ?? true;
 

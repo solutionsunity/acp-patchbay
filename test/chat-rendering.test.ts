@@ -13,6 +13,7 @@ import {
   turnLive,
 } from "../src/webview/agent-view/chat/view-model";
 import {
+  DEFAULT_PREFERENCES,
   coalesceAgentViewEvent,
   initialAgentViewState,
   reduceAgentView,
@@ -51,7 +52,7 @@ function text(id: string): ChatBlock {
 describe("deriveTranscript: grouping (sequential tool-call runs)", () => {
   it("collapses runs of >= TOOL_RUN_MIN consecutive tool calls, preserving order", () => {
     const blocks = [text("a"), tool("t1"), tool("t2"), tool("t3"), text("b")];
-    const { items } = deriveTranscript(blocks, false);
+    const { items } = deriveTranscript(blocks, false, DEFAULT_PREFERENCES);
     expect(items.map((i) => i.kind)).toEqual(["single", "toolRun", "single"]);
     const run = assertKind(items[1], "toolRun");
     expect(run.calls.map((c) => c.id)).toEqual(["t1", "t2", "t3"]);
@@ -59,7 +60,7 @@ describe("deriveTranscript: grouping (sequential tool-call runs)", () => {
   });
 
   it("leaves short runs as individual cards", () => {
-    const { items } = deriveTranscript([tool("t1"), tool("t2"), text("a")], false);
+    const { items } = deriveTranscript([tool("t1"), tool("t2"), text("a")], false, DEFAULT_PREFERENCES);
     expect(items.map((i) => i.kind)).toEqual(["single", "single", "single"]);
   });
 
@@ -67,30 +68,43 @@ describe("deriveTranscript: grouping (sequential tool-call runs)", () => {
     const { items } = deriveTranscript(
       [tool("t1"), tool("t2"), text("a"), tool("t3"), tool("t4"), tool("t5")],
       false,
+      DEFAULT_PREFERENCES,
     );
     expect(items.map((i) => i.kind)).toEqual(["single", "single", "single", "toolRun"]);
   });
 
   it("a trailing live run still groups (the summary row carries the in-flight call)", () => {
-    const { items } = deriveTranscript([tool("t1"), tool("t2"), tool("t3", { status: "in_progress" })], true);
+    const { items } = deriveTranscript([tool("t1"), tool("t2"), tool("t3", { status: "in_progress" })], true, DEFAULT_PREFERENCES);
     expect(items).toHaveLength(1);
     expect(items[0]?.kind).toBe("toolRun");
+  });
+
+  it("a command routed past grouped stands alone and splits the run around it — still counted (#96)", () => {
+    const end: ChatBlock = { kind: "turnEnd", id: "e1", startedAt: "2026-10-09T10:00:00Z", endedAt: "2026-10-09T10:01:00Z", stopReason: "end_turn", usage: null };
+    const blocks = [tool("r1"), tool("r2"), tool("x1", { toolKind: "execute" }), tool("r3"), tool("r4"), tool("r5"), end];
+    const grouped = deriveTranscript(blocks, false, DEFAULT_PREFERENCES);
+    expect(grouped.items.map((i) => i.kind)).toEqual(["toolRun", "single"]);
+    for (const executeCalls of ["ungrouped-truncated", "ungrouped-untruncated", "uncollapsed"] as const) {
+      const { items, rollups } = deriveTranscript(blocks, false, { ...DEFAULT_PREFERENCES, executeCalls });
+      expect(items.map((i) => (i.kind === "single" ? i.block.id : i.calls.map((c) => c.id).join("+")))).toEqual(["r1", "r2", "x1", "r3+r4+r5", "e1"]);
+      expect(rollups.get("e1")).toMatchObject({ toolCalls: 6, byKind: { other: 5, execute: 1 } });
+    }
   });
 });
 
 describe("deriveTranscript: the live-block contract (stream/end)", () => {
   it("live turn + trailing prose block → that block is live", () => {
-    const { liveBlockId } = deriveTranscript([text("a"), { kind: "thought", id: "th", text: "…" }], true);
+    const { liveBlockId } = deriveTranscript([text("a"), { kind: "thought", id: "th", text: "…" }], true, DEFAULT_PREFERENCES);
     expect(liveBlockId).toBe("th");
   });
 
   it("a trailing tool call is 'waiting on a tool', never a live prose block", () => {
-    const { liveBlockId } = deriveTranscript([text("a"), tool("t1", { status: "in_progress" })], true);
+    const { liveBlockId } = deriveTranscript([text("a"), tool("t1", { status: "in_progress" })], true, DEFAULT_PREFERENCES);
     expect(liveBlockId).toBeNull();
   });
 
   it("turn ended → nothing is live, whatever the last block is", () => {
-    const { liveBlockId } = deriveTranscript([text("a")], false);
+    const { liveBlockId } = deriveTranscript([text("a")], false, DEFAULT_PREFERENCES);
     expect(liveBlockId).toBeNull();
   });
 
@@ -276,7 +290,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       tool("t4", { toolKind: "read", locations: [{ path: "/ws/c.ts", line: null }] }), // reads never count as touched
       turnEnd("e1"),
     ];
-    const r = deriveTranscript(blocks, false).rollups.get("e1")!;
+    const r = deriveTranscript(blocks, false, DEFAULT_PREFERENCES).rollups.get("e1")!;
     expect(r.toolCalls).toBe(4);
     expect(r.filesTouched).toBe(2);
     expect(r.byKind).toEqual({ edit: 3, read: 1 });
@@ -292,7 +306,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       tool("t3", { toolKind: "search" }),
       turnEnd("e2"),
     ];
-    const { rollups } = deriveTranscript(blocks, false);
+    const { rollups } = deriveTranscript(blocks, false, DEFAULT_PREFERENCES);
     expect(rollups.get("e2")).toEqual({ toolCalls: 2, filesTouched: 0, byKind: { search: 2 } });
     expect(rollups.get("e1")).toEqual({ toolCalls: 1, filesTouched: 0, byKind: { execute: 1 } });
   });
@@ -306,7 +320,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       tool("t2", { toolKind: "edit", locations: [{ path: "/ws/a.ts", line: null }], status: "in_progress" }),
       tool("t3", { toolKind: "read" }),
     ];
-    const { liveRollup, rollups } = deriveTranscript(blocks, true);
+    const { liveRollup, rollups } = deriveTranscript(blocks, true, DEFAULT_PREFERENCES);
     expect(liveRollup).toEqual({ toolCalls: 2, filesTouched: 1, byKind: { edit: 1, read: 1 } });
     // the settled turn is untouched by the open segment
     expect(rollups.get("e1")).toEqual({ toolCalls: 1, filesTouched: 0, byKind: { execute: 1 } });
@@ -324,7 +338,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       user("u3"), // in-flight turn ticks the totals too
       tool("t4", { toolKind: "read", status: "in_progress" }),
     ];
-    const { totals } = deriveTranscript(blocks, true);
+    const { totals } = deriveTranscript(blocks, true, DEFAULT_PREFERENCES);
     // files list is deduped in first-touch order — the read-out strip's panel
     expect(totals).toEqual({ prompts: 3, toolCalls: 4, files: ["/ws/a.ts", "/ws/b.ts"] });
   });
@@ -345,7 +359,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       diff("d3", "/ws/pending.ts", null),
       turnEnd("e1"),
     ];
-    expect(deriveTranscript(blocks, false).totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
+    expect(deriveTranscript(blocks, false, DEFAULT_PREFERENCES).totals.files).toEqual(["/ws/plain.ts", "/ws/rich.ts", "/ws/gate.ts"]);
   });
 
   it("injected user envelopes reset the turn but never count as prompts", () => {
@@ -361,7 +375,7 @@ describe("deriveTranscript: per-turn rollups", () => {
       turnEnd("e2"),
       user("u2"),
     ];
-    const { totals, rollups } = deriveTranscript(blocks, false);
+    const { totals, rollups } = deriveTranscript(blocks, false, DEFAULT_PREFERENCES);
     expect(totals.prompts).toBe(2);
     // the injected boundary still scopes the turn segment
     expect(rollups.get("e2")).toEqual({ toolCalls: 1, filesTouched: 1, byKind: { edit: 1 } });
@@ -515,7 +529,7 @@ describe("deriveTranscript: embedded terminals", () => {
       tool("t3"),
       term("term-block-term-2"),
     ];
-    const items = deriveTranscript(blocks, false).items;
+    const items = deriveTranscript(blocks, false, DEFAULT_PREFERENCES).items;
     // t1..t3 stay one run: the embedded terminal no longer sits between them
     expect(items.map((i) => (i.kind === "toolRun" ? `run:${i.calls.length}` : i.block.id))).toEqual([
       "run:3",

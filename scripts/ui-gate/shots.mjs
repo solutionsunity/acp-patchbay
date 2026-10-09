@@ -613,6 +613,38 @@ for (const theme of Object.keys(THEMES)) {
   );
   await p.close();
 
+  // ── tool-call display (#96): hover shows a title whole; the commands
+  // preference walks its ladder — one line, whole title on a closed card,
+  // then the card open — and an open card always shows its title whole ──
+  p = await page(browser, theme, { width: 420, height: 900 });
+  await renderView(p, "agent-view", agentViewState({ live: false }));
+  await p.waitForSelector(".chat .msg-user");
+  const runTitle = await p.locator(".tool-hd", { hasText: "5 tool calls" }).locator("span[title]").first().getAttribute("title");
+  check(`[${theme}] a grouped run's hover lists each call's title`, runTitle !== null && runTitle.split("\n").length === 5);
+  const command = "docker exec -it patchbay-dev bash -lc 'cd /workspace && npm ci && npm run build && npm test -- --reporter=verbose --coverage'";
+  await p.evaluate((title) =>
+    window.__patch([
+      { kind: "agentTextDelta", patchbaySessionId: "s1", blockId: "x-before-cmd", text: "Running the suite." },
+      { kind: "toolCallUpserted", patchbaySessionId: "s1", blockId: "cmd-long", title, status: "completed", toolKind: "execute", content: [{ kind: "text", text: "1135 passed" }] },
+    ]), command);
+  const cmdTitle = p.locator(`.tool-hd span[title="${command}"]`);
+  const cmdCard = p.locator(".card", { has: cmdTitle });
+  const titleHeight = () => cmdTitle.evaluate((el) => el.getBoundingClientRect().height);
+  await cmdCard.waitFor({ timeout: 3000 });
+  const oneLine = await titleHeight();
+  check(`[${theme}] a long command is one clipped line by default, whole on hover (${oneLine}px)`, oneLine < 24 && (await cmdTitle.evaluate((el) => el.scrollWidth > el.clientWidth)));
+  const setDisplay = (executeCalls) => p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: prefs }]), { ...preferences, executeCalls });
+  await setDisplay("ungrouped-untruncated");
+  check(`[${theme}] ungrouped, whole title: the command wraps whole, the card stays closed`, (await titleHeight()) > oneLine * 1.5 && (await cmdCard.locator(".msg-agent").count()) === 0);
+  await p.mouse.move(0, 0);
+  await cmdCard.screenshot({ path: `${OUT}/tool-whole-title-${theme}.png` });
+  await setDisplay("uncollapsed");
+  check(`[${theme}] uncollapsed: the card opens on what the agent showed`, await cmdCard.locator(".msg-agent", { hasText: "1135 passed" }).waitFor({ timeout: 3000 }).then(() => true, () => false));
+  await setDisplay("grouped");
+  await cmdCard.getByRole("button", { name: "Show details" }).click();
+  check(`[${theme}] a card opened by hand shows its title whole`, (await titleHeight()) > oneLine * 1.5);
+  await p.close();
+
   // ── settings: agents, dialog, combobox, matrix tooltip ──
   p = await page(browser, theme, { width: 900, height: 500 });
   await renderView(p, "settings", settingsState());

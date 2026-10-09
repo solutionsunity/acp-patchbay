@@ -6,17 +6,20 @@
 // sends its own actions — no callback threading.
 import { createContext, useContext, useState, type ReactNode } from "react";
 import {
+  DEFAULT_PREFERENCES,
   isToolCallOpen,
   userPartsText,
   terminalBlockId,
   unrenderedLabel,
   type ContentPart,
   type DiffStat,
+  type PreferencesView,
   type TerminalBlock,
   type ToolCallBlock,
   type ToolContentPart,
   type UserPart,
 } from "../../../shared/protocol";
+import { showsWholeTitle, startsOpen, toolCallDisplay, type ToolDisplayPreference } from "../../../shared/tool-display";
 import { useActions } from "../../shared/actions";
 import { Icon } from "../../shared/icon";
 import { Disclosure } from "../../shared/disclosure";
@@ -369,7 +372,10 @@ function headerClick(act: () => void) {
  * listed only when it says more than the header; then what the tool
  * produced for the user, as the agent presented it; then the raw wire
  * payload behind its own toggle. A terminal the call runs in shows under
- * the header, always visible. */
+ * the header, always visible. The call's kind routes it to a display step
+ * (ToolDisplayPrefs): the whole title on a closed card, or the card open;
+ * an open card always shows its whole title, and a click overrides the
+ * step either way. Hovering the title shows it whole too. */
 export function ToolCallCard({
   block,
   patchbaySessionId,
@@ -381,7 +387,8 @@ export function ToolCallCard({
   roots: readonly string[];
 }) {
   const send = useActions();
-  const [open, setOpen] = useState(false);
+  const display = toolCallDisplay(block.toolKind, useContext(ToolDisplayPrefs));
+  const [manual, setManual] = useState<boolean | null>(null);
   const rows = toolFileRows(block);
   const total = diffTotal(rows);
   const diffRows = rows.filter((r) => r.diff !== null);
@@ -394,6 +401,10 @@ export function ToolCallCard({
   const terminals = block.content.flatMap((p) => (p.kind === "terminal" ? [p.terminalId] : []));
   const hasRaw = block.input !== null || block.output !== null;
   const expandable = listFiles || shown.length > 0 || hasRaw;
+  // A card with no details stays closed whatever its step — until the call
+  // brings some.
+  const open = expandable && (manual ?? startsOpen(display));
+  const wholeTitle = open || showsWholeTitle(display);
   const openAt = (path: string, line: number | undefined) =>
     send(line === undefined ? { kind: "openFile", path } : { kind: "openFile", path, line });
   const openDiff = (path: string) => send({ kind: "openToolCallDiff", patchbaySessionId, toolCallId: block.id, path });
@@ -402,13 +413,18 @@ export function ToolCallCard({
       {/* The header is a mouse target for the whole row; the keyboard's is
           the chevron — the header holds other buttons, so it can't be one. */}
       <div
-        className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""}`}
-        onClick={expandable ? headerClick(() => setOpen((v) => !v)) : undefined}
+        className={`card-hd tool-hd ${expandable ? "cursor-pointer" : ""} ${wholeTitle ? "items-start" : ""}`}
+        onClick={expandable ? headerClick(() => setManual(!open)) : undefined}
       >
         <span className={WEIGHT_CLASS[TOOL_WEIGHT[block.toolKind]]} title={block.name}>
           <Icon name={TOOL_ICON[block.toolKind]} />
         </span>
-        <span className="min-w-0 flex-1 truncate">{block.title}</span>
+        <span
+          className={`min-w-0 flex-1 ${wholeTitle ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "truncate"}`}
+          title={block.title}
+        >
+          {block.title}
+        </span>
         {first !== undefined && (
           <button
             type="button"
@@ -425,7 +441,7 @@ export function ToolCallCard({
             type="button"
             className={`tool-loc-more shrink-0 ${HEADER_LINK}`}
             title="Show the other files this call reported"
-            onClick={() => setOpen(true)}
+            onClick={() => setManual(true)}
           >
             +{rows.length - 1}
           </button>
@@ -434,11 +450,11 @@ export function ToolCallCard({
           <DiffCount
             stat={total}
             title={diffRows.length === 1 ? "Open this edit in VS Code's diff editor" : "Show each file's diff"}
-            onClick={() => (diffRows.length === 1 ? openDiff(diffRows[0]!.path) : setOpen(true))}
+            onClick={() => (diffRows.length === 1 ? openDiff(diffRows[0]!.path) : setManual(true))}
           />
         )}
         {expandable && (
-          <Disclosure open={open} onToggle={() => setOpen((v) => !v)} label={open ? "Hide details" : "Show details"} />
+          <Disclosure open={open} onToggle={() => setManual(!open)} label={open ? "Hide details" : "Show details"} />
         )}
         <ToolCallStatusTag block={block} />
       </div>
@@ -602,6 +618,9 @@ function RawSection({ input, output, initiallyOpen }: { input: string | null; ou
  * every tool card around them. */
 export const TerminalBlocks = createContext<ReadonlyMap<string, TerminalBlock>>(new Map());
 
+/** The preferences that route each tool kind to its display step. */
+export const ToolDisplayPrefs = createContext<Pick<PreferencesView, ToolDisplayPreference>>(DEFAULT_PREFERENCES);
+
 /** A terminal the call runs in, always visible under its header — ACP: the
  * client displays an embedded terminal's output as it is generated. One
  * patchbay didn't run in this window — the agent's own, or an earlier
@@ -662,7 +681,7 @@ export function ToolRunCard({
     <div className="card">
       <div className="card-hd tool-hd cursor-pointer" onClick={headerClick(() => setOpen(true))}>
         {weightedIcon}
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 flex-1 truncate" title={calls.map((c) => c.title).join("\n")}>
           {calls.length} tool calls{running !== undefined ? ` — ${running.title}` : ""}
         </span>
         <Disclosure open={false} onToggle={() => setOpen(true)} label="Show each tool call" />

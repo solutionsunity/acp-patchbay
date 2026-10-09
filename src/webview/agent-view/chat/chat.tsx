@@ -21,7 +21,7 @@ import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
 import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
 import { Disclosure } from "../../shared/disclosure";
-import { CarriedUpdate, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolRunCard, UserMessage } from "./blocks";
+import { CarriedUpdate, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolDisplayPrefs, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, PermissionCard, TerminalCard } from "./cards";
 import { ElicitationCard } from "../../shared/question-card";
@@ -427,6 +427,7 @@ export function Chat(props: {
 
   return (
     <TerminalBlocks.Provider value={terminalBlocks}>
+    <ToolDisplayPrefs.Provider value={props.state.preferences}>
     <div
       className="chat"
       ref={chatRef}
@@ -512,6 +513,7 @@ export function Chat(props: {
         </div>
       )}
     </div>
+    </ToolDisplayPrefs.Provider>
     </TerminalBlocks.Provider>
   );
 }

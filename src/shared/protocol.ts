@@ -1389,6 +1389,12 @@ export function chatPaneShows(
   return pane !== null && pane.patchbayAgentId === patchbayAgentId && pane.forPatchbaySessionId === forPatchbaySessionId && pane.reason === undefined;
 }
 
+/** How a kind's tool calls sit in the transcript — a ladder, each step
+ * adding one thing to the last: one card per call, then the whole title on
+ * a closed card, then the card open. A click still opens or closes any
+ * card. tool-display.ts routes each kind to the preference that holds it. */
+export type ToolCallDisplay = "grouped" | "ungrouped-truncated" | "ungrouped-untruncated" | "uncollapsed";
+
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
  * non-sensitive). Read fresh orchestrator-side at each point of use
  * (store-truth); this view exists so the Preferences page can render and
@@ -1432,6 +1438,11 @@ export interface PreferencesView {
    * one row — "Thinking…" and its newest line — since some models reason at
    * a length nobody asked to read; a click opens it either way. */
   openThinking: boolean;
+  /** How calls of ACP's `execute` kind sit in the transcript — what the
+   * agent marks as execute: usually shell commands, for some agents also
+   * code runs or browser actions. Grouped (the default) keeps today's runs;
+   * the later steps are for a user who reads every command the agent runs. */
+  executeCalls: ToolCallDisplay;
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
@@ -1446,6 +1457,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   detachWindows: true,
   attachmentMaxMB: 10,
   openThinking: false,
+  executeCalls: "grouped",
 };
 
 export interface AgentViewState {

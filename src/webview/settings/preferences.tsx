@@ -7,7 +7,8 @@
 // answers with the complete object, so a write that didn't land never shows
 // as landed).
 import type { ReactNode } from "react";
-import type { PreferencesView, SettingsState } from "../../shared/protocol";
+import type { PreferencesView, SettingsState, ToolCallDisplay } from "../../shared/protocol";
+import { DISPLAY_LADDER, TOOL_DISPLAY_ROUTES } from "../../shared/tool-display";
 import { Icon } from "../shared/icon";
 import { Field, Toggle } from "./controls";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,14 @@ function PrefCard(props: { title: string; help: string; children: ReactNode }) {
  * sentinel that never collides with a file basename (filenames can't be
  * empty, but the sentinel keeps the mapping explicit either way). */
 const DEFAULT_CHIME = "\u0000default";
+
+/** What each display step reads as in Settings. */
+const DISPLAY_STEP_LABEL: Readonly<Record<ToolCallDisplay, string>> = {
+  grouped: "grouped",
+  "ungrouped-truncated": "ungrouped, one line",
+  "ungrouped-untruncated": "ungrouped, whole title",
+  uncollapsed: "uncollapsed",
+};
 
 export function PreferencesSection(props: {
   state: SettingsState;
@@ -148,6 +157,34 @@ export function PreferencesSection(props: {
           label={prefs.openThinking ? "open while it streams" : "collapsed"}
           onChange={(openThinking) => props.onSet({ openThinking })}
         />
+      </PrefCard>
+
+      <PrefCard
+        title="Tool calls"
+        help="How a kind of tool call sits in the conversation — the kind is ACP's, and the agent
+        decides which kind each call is (hover a row for what it usually covers). Grouped folds three
+        or more calls in a row into one line you can open. Each later step adds one thing: a card per call, then its
+        whole title even while closed, then the card open on what the agent showed — for a shell
+        command, usually its output. An agent that shortens its own titles still shows them shortened. A
+        click opens or closes any card either way."
+      >
+        {TOOL_DISPLAY_ROUTES.map((route) => (
+          <Field key={route.kind} label={route.label} hint={route.hint}>
+            <Select
+              value={prefs[route.preference]}
+              onValueChange={(v) => props.onSet({ [route.preference]: v as ToolCallDisplay })}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {DISPLAY_LADDER.map((step) => (
+                  <SelectItem key={step} value={step}>
+                    {DISPLAY_STEP_LABEL[step]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        ))}
       </PrefCard>
 
       <PrefCard

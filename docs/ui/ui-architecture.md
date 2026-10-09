@@ -335,7 +335,15 @@ Rules for appending vs. updating:
   tool calls back-to-back with no intervening text (common during search/glob-heavy
   work), collapse them into a single "3 tool calls" summary row, expandable to the
   individual cards — otherwise a search-heavy turn buries the actual prose under a
-  wall of small cards.
+  wall of small cards. Grouping is per kind, routed by one table: a kind the
+  table names follows its preference (`execute` today, for a user who reads every
+  command the agent runs — under the kind's own name, since the agent decides
+  what it marks as execute, and some mark browser actions or code runs that
+  way), and a kind it doesn't stays grouped. The preference is
+  a ladder — grouped, ungrouped on one line, ungrouped with the whole title on a
+  closed card, uncollapsed — so a combination that can't show (an open card in a
+  closed group) can't be chosen. An open card always shows its whole title; a
+  title clipped on a closed card shows whole on hover.
 
 #### Thinking / reasoning feed
 
