@@ -1,11 +1,10 @@
 name: Release
 
 # Builds the .vsix, checksums it, and publishes a GitHub Release when a
-# v<version> tag is pushed, then publishes that same .vsix to Open VSX by
-# trusted publishing. Marketplace publishing is deliberately NOT here — it
-# stays a manual `vsce publish` step. No publish secret exists to protect:
-# Open VSX takes this run's short-lived OIDC token, accepted only for this
-# repository and workflow file; the tag-only trigger keeps forks out.
+# v<version> tag is pushed, then publishes that same .vsix to Open VSX and the
+# Visual Studio Marketplace. No publish secret exists to protect: each store
+# takes this run's short-lived OIDC token, accepted only from this repository
+# and only in that store's GitHub environment, which admits `v*` tags alone.
 
 on:
   push:
@@ -18,6 +17,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # What the store jobs publish under — read here once, from the tag.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v5
 
@@ -41,6 +44,7 @@ jobs:
         run: npm test
 
       - name: Verify tag matches package.json version
+        id: version
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
           TAG_VERSION="${GITHUB_REF_NAME#v}"
@@ -49,6 +53,7 @@ jobs:
             exit 1
           fi
           echo "version=$PKG_VERSION" >> "$GITHUB_ENV"
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package .vsix
         run: npx vsce package --out "acp-patchbay-${version}.vsix"
@@ -58,13 +63,16 @@ jobs:
 
       # Marketplace parity: even minor = stable, odd minor = pre-release.
       - name: Determine release channel
+        id: channel
         run: |
           MINOR="$(echo "$version" | cut -d. -f2)"
           if [ $((MINOR % 2)) -eq 1 ]; then
             echo "prerelease=--prerelease" >> "$GITHUB_ENV"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "Odd minor ($MINOR) -> pre-release"
           else
             echo "prerelease=" >> "$GITHUB_ENV"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "Even minor ($MINOR) -> stable"
           fi
 
@@ -104,13 +112,15 @@ jobs:
             --generate-notes \
             ${prerelease}
 
-  # Its own job, so a failed publish re-runs alone ("Re-run failed jobs")
-  # instead of re-running the release, whose create step refuses a release
-  # that already exists. It publishes the asset the release carries, checked
-  # against its checksum, never a second build.
+  # Each store is its own job, so a failed publish re-runs alone ("Re-run
+  # failed jobs") instead of re-running the release, whose create step
+  # refuses a release that already exists. Each publishes the asset the
+  # release carries, checked against its checksum, never a second build —
+  # fetched by the job itself, since every job runs on its own machine.
   open-vsx:
     needs: release
     runs-on: ubuntu-latest
+    environment: open-vsx
     permissions:
       contents: read # download the release asset
       id-token: write # the OIDC token ovsx exchanges for a short-lived key
@@ -132,7 +142,44 @@ jobs:
       # the job.
       - name: Publish to Open VSX
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          MINOR="$(echo "$version" | cut -d. -f2)"
-          if [ $((MINOR % 2)) -eq 1 ]; then channel=--pre-release; else channel=; fi
-          npx --yes ovsx@1.2.0 publish "acp-patchbay-${version}.vsix" --trusted-publishing --skip-duplicate ${channel}
+          npx --yes ovsx@1.2.0 publish "acp-patchbay-${{ needs.release.outputs.version }}.vsix" \
+            --trusted-publishing --skip-duplicate ${{ needs.release.outputs.prerelease == 'true' && '--pre-release' || '' }}
+
+  marketplace:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: read # download the release asset
+      id-token: write # the OIDC token Entra ID exchanges for a short-lived one
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Download the released .vsix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --pattern "*.vsix" --pattern "*.vsix.sha256"
+          sha256sum -c ./*.vsix.sha256
+
+      # Workload identity federation: Entra ID trusts a token GitHub issues to
+      # this repository's `marketplace` environment and signs the run in as
+      # the app the SolutionsUnity publisher lists as a Contributor. The ids
+      # are identifiers, not secrets; no Azure subscription is involved.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # verify-pat first, so a lost publisher role fails here, named, before
+      # any upload. --skip-duplicate keeps a re-run, or a version already
+      # uploaded by hand, from failing the job.
+      - name: Publish to the Marketplace
+        run: |
+          npx --yes @vscode/vsce@3.9.2 verify-pat SolutionsUnity --azure-credential
+          npx --yes @vscode/vsce@3.9.2 publish --azure-credential \
+            --packagePath "acp-patchbay-${{ needs.release.outputs.version }}.vsix" \
+            --skip-duplicate ${{ needs.release.outputs.prerelease == 'true' && '--pre-release' || '' }}
