@@ -624,7 +624,7 @@ export class SessionsStore {
       signal,
     );
     this.hooks.onRealSessionAttached?.(patchbayAgentId, sessionId);
-    this.noticeMissingRoots(target.patchbaySessionId, missing);
+    this.sayMissingRoots(target.patchbaySessionId, missing);
     return {
       sessionId,
       contextToken,
@@ -671,15 +671,15 @@ export class SessionsStore {
 
   /** Says, in the session, which roots its last lifecycle request skipped
    * — never a silent narrowing of what the user set up. */
-  private noticeMissingRoots(patchbaySessionId: PatchbaySessionId, missing: readonly string[]): void {
+  private sayMissingRoots(patchbaySessionId: PatchbaySessionId, missing: readonly string[]): void {
     if (missing.length === 0) return;
     const blocks = this.hooks.currentTranscript?.(patchbaySessionId) ?? [];
-    const notice: ChatBlock = {
-      kind: "notice",
-      id: newBlockId("notice"),
+    const marker: ChatBlock = {
+      kind: "patchbayNotice",
+      id: newBlockId("patchbay"),
       text: `Not found on disk, so neither the agent nor the MCP servers got ${missing.length === 1 ? "this root" : "these roots"}: ${missing.join(", ")}. Restore the folder, or remove it from the roots (saved ones in Settings › Saved roots).`,
     };
-    this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, notice] });
+    this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
   }
 
   /** Sanitizer report channel (knobs.ts guards) — dropped wire entries land
@@ -748,7 +748,7 @@ export class SessionsStore {
       this.save(patchbaySessionId, { roots: seeded });
       this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId, roots: seeded });
     }
-    this.noticeMissingRoots(patchbaySessionId, missing);
+    this.sayMissingRoots(patchbaySessionId, missing);
     this.hooks.rootsChanged?.(patchbaySessionId);
     this.log.info(`session ${patchbaySessionId} created with ${patchbayAgentId}`);
     this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
@@ -794,7 +794,7 @@ export class SessionsStore {
     });
     this.save(forkId, { forkedFrom: parent.sessionId, ...(added.length > 0 ? { roots: added } : {}) });
     if (added.length > 0) this.hooks.emit({ kind: "contextRootsChanged", patchbaySessionId: forkId, roots: added });
-    this.noticeMissingRoots(forkId, missing);
+    this.sayMissingRoots(forkId, missing);
     this.hooks.rootsChanged?.(forkId);
     this.log.info(`session ${forkId} forked from ${patchbaySessionId} with ${patchbayAgentId}`);
     this.publishKnobs(forkId, knobs ?? NO_KNOBS);
@@ -808,8 +808,8 @@ export class SessionsStore {
         patchbaySessionId: forkId,
         blocks: [
           {
-            kind: "notice",
-            id: newBlockId("notice"),
+            kind: "patchbayNotice",
+            id: newBlockId("patchbay"),
             text: `Forked from "${title}". This agent can't replay a session, so the earlier messages aren't shown here — the fork carries them.`,
           },
         ],
@@ -862,8 +862,8 @@ export class SessionsStore {
       kind: "transcriptSeeded",
       patchbaySessionId,
       blocks: [{
-        kind: "notice",
-        id: newBlockId("notice"),
+        kind: "patchbayNotice",
+        id: newBlockId("patchbay"),
         text: "This agent supports neither session/load nor session/resume — this session's history lives only in the agent and can't be reopened here.",
       }],
     });
@@ -1374,15 +1374,15 @@ export class SessionsStore {
     this.sessions.set(patchbaySessionId, liveSession());
     const { knobs } = await this.attachSession({ via: "resume", patchbaySessionId }, patchbayAgentId, {}, signal);
     const blocks = this.hooks.currentTranscript?.(patchbaySessionId) ?? [];
-    const notice: ChatBlock = {
-      kind: "notice",
-      id: newBlockId("notice"),
+    const marker: ChatBlock = {
+      kind: "patchbayNotice",
+      id: newBlockId("patchbay"),
       text:
         blocks.length > 0
           ? "This agent doesn't support replaying history (session/load) — the conversation above is patchbay's view. The session is resumed: its context is ready and continues from here."
           : "This agent doesn't support replaying history (session/load), so earlier turns can't be shown. The session is resumed: its context is ready and continues from here.",
     };
-    this.hooks.emit({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, notice] });
+    this.hooks.emit({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
     this.log.info(`session ${patchbaySessionId} resumed (no replay) on ${patchbayAgentId}`);
     // A fresh attachment holds nothing yet: an answer naming no knobs is none.
     this.publishKnobs(patchbaySessionId, knobs ?? NO_KNOBS);
@@ -1767,7 +1767,7 @@ export class SessionsStore {
     this.hooks.sessionIdChanged?.(patchbaySessionId);
     // A birth like any other: the session says what was skipped, and its
     // servers hear its list once it exists.
-    this.noticeMissingRoots(patchbaySessionId, missing);
+    this.sayMissingRoots(patchbaySessionId, missing);
     this.hooks.rootsChanged?.(patchbaySessionId);
     // The empty shell, only while its process still exists — a dead
     // connection took it along.

@@ -173,7 +173,7 @@ function Block({
       return <TerminalCard block={block} />;
     case "elicitation":
       return <ElicitationCard block={block} agentName={agentName} />;
-    case "notice":
+    case "patchbayNotice":
       // System voice — visually distinct from agent prose on purpose (the
       // honesty seam: e.g. where a resumed session's cached view ends).
       return (

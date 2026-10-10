@@ -1333,12 +1333,15 @@ function questionMoved(
 /** A patchbay-authored transcript marker — system voice, never agent prose.
  * Exists for the honesty seams: e.g. the session/resume rung shows where
  * patchbay's cached view ends and the agent's unreplayed memory continues. */
-export interface NoticeBlock {
-  kind: "notice";
+export interface PatchbayNoticeBlock {
+  kind: "patchbayNotice";
   id: string;
   text: string;
 }
 
+/** A transcript block. Kinds that render something from the wire carry
+ * ACP's own word for it; a kind patchbay authors itself carries the
+ * `patchbay` prefix, so no word ACP adds later can mean two things here. */
 export type ChatBlock =
   | UserBlock
   | TextBlock
@@ -1351,7 +1354,7 @@ export type ChatBlock =
   | DiffBlock
   | TerminalBlock
   | ElicitationBlock
-  | NoticeBlock;
+  | PatchbayNoticeBlock;
 
 export interface AvailableCommand {
   name: string;

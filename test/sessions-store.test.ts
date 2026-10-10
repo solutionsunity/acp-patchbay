@@ -1610,8 +1610,8 @@ describe("SessionsStore", () => {
     expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/src/odoo"]);
     expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, "/src/odoo"]);
     expect(h.rootsMissing).toEqual([["/src/gone"]]);
-    const notice = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "notice");
-    expect(notice?.kind === "notice" && notice.text).toContain("/src/gone");
+    const notice = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "patchbayNotice");
+    expect(notice?.kind === "patchbayNotice" && notice.text).toContain("/src/gone");
     await h.gates.prompt(patchbaySessionId, { text: "roots?" });
     const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual(["/src/odoo"]);
@@ -1639,8 +1639,8 @@ describe("SessionsStore", () => {
     await h.gates.reload(patchbaySessionId);
     expect(h.state().contextRoots[patchbaySessionId]).toEqual(["/repo/backend"]); // the user's list, untouched
     expect(h.rootsMissing).toEqual([["/repo/backend"]]);
-    const notice = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "notice").at(-1);
-    expect(notice?.kind === "notice" && notice.text).toContain("/repo/backend");
+    const notice = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "patchbayNotice").at(-1);
+    expect(notice?.kind === "patchbayNotice" && notice.text).toContain("/repo/backend");
     await h.gates.prompt(patchbaySessionId, { text: "roots?" });
     const echoed = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "text").at(-1);
     expect(echoed?.kind === "text" && JSON.parse(echoed.text)).toEqual([]);
@@ -2581,7 +2581,7 @@ describe("session history (list / resume / delete)", () => {
     expect(state.sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
     const blocks = state.transcripts[patchbaySessionId]!;
     // cached view kept, seam notice marks where the unreplayed memory begins
-    const noticeAt = blocks.findIndex((b) => b.kind === "notice");
+    const noticeAt = blocks.findIndex((b) => b.kind === "patchbayNotice");
     expect(noticeAt).toBeGreaterThanOrEqual(before);
     expect(blocks.filter((b) => b.kind === "user").map((b) => b.kind === "user" && userPartsText(b.parts))).toEqual([
       "first",
@@ -2637,7 +2637,7 @@ describe("session history (list / resume / delete)", () => {
     }
     const blocks = h.state().transcripts[dead]!;
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]?.kind === "notice" && blocks[0].text).toContain("can't be reopened");
+    expect(blocks[0]?.kind === "patchbayNotice" && blocks[0].text).toContain("can't be reopened");
     expect(h.sessions.isLive(dead)).toBe(false);
 
     await h.pool.stop("sh8" as PatchbayAgentId);
@@ -2662,8 +2662,8 @@ describe("session history (list / resume / delete)", () => {
     }
     expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
     const blocks = h.state().transcripts[patchbaySessionId]!;
-    const notice = blocks.find((b) => b.kind === "notice");
-    expect(notice?.kind === "notice" && notice.text).toContain("doesn't support replaying history");
+    const notice = blocks.find((b) => b.kind === "patchbayNotice");
+    expect(notice?.kind === "patchbayNotice" && notice.text).toContain("doesn't support replaying history");
     // ready to prompt straight away — same session, context attached
     await h.gates.prompt(patchbaySessionId, { text: "after" });
     expect(h.state().sessions.map((s) => s.id)).toEqual([patchbaySessionId]);
@@ -2964,7 +2964,7 @@ describe("session history (list / resume / delete)", () => {
     const forked = await h.gates.fork(original, "go");
     const blocks = h.state().transcripts[forked] ?? [];
     expect(blocks.filter((b) => b.kind === "user")).toEqual([]);
-    expect(blocks.some((b) => b.kind === "notice" && b.text.includes("can't replay a session"))).toBe(true);
+    expect(blocks.some((b) => b.kind === "patchbayNotice" && b.text.includes("can't replay a session"))).toBe(true);
     await h.pool.stop(agent);
   });
 
