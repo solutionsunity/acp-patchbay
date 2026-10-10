@@ -30,6 +30,12 @@ export type SessionUpdateFact =
   /** The whole config surface, in the knob normalizer's hands (knobs.ts
    * owns that shape's reading). */
   | { kind: "configOptions"; configOptions: unknown }
+  /** A context compaction, by the agent's id for it. The spec's patch
+   * rules: an absent field is unchanged; `summary` and `error` at `null`
+   * clear (an empty summary clears too, read as `null`). */
+  | { kind: "compaction"; compactionId: string; status: string; summary?: readonly ContentFact[] | null; error?: string | null }
+  /** One content block appended to a compaction's summary. */
+  | { kind: "compactionChunk"; compactionId: string; content: ContentFact }
   /** A kind no surface renders yet: its name and payload, shown raw. */
   | { kind: "carried"; updateKind: string; payload: unknown };
 
@@ -75,13 +81,21 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
       return { kind: "mode", currentModeId: update.currentModeId };
     case "config_option_update":
       return { kind: "configOptions", configOptions: update.configOptions };
+    case "compaction_update":
+      return {
+        kind: "compaction",
+        compactionId: update.compactionId,
+        status: update.status,
+        ...(update.summary !== undefined ? { summary: update.summary === null || update.summary.length === 0 ? null : update.summary.map(readContent) } : {}),
+        ...(update.error !== undefined ? { error: update.error } : {}),
+      };
+    case "compaction_summary_chunk":
+      return { kind: "compactionChunk", compactionId: update.compactionId, content: readContent(update.content) };
     // Each of these sits behind a client capability patchbay doesn't
     // declare — an agent that sends one anyway is shown, not silenced.
     case "plan_update":
     case "plan_removed":
     case "notice":
-    case "compaction_update":
-    case "compaction_summary_chunk":
     case "subagent_update":
     case "session_message":
     case "session_message_chunk": {

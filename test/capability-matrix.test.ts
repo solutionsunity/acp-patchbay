@@ -373,6 +373,12 @@ describe("elicitation client claim", () => {
   });
 });
 
+describe("session client claims", () => {
+  it("declares compaction alongside the config surface — an agent only reports compactions to a client that says it shows them", () => {
+    expect(clientCapabilitiesWire().session).toEqual({ configOptions: { boolean: {} }, compaction: {} });
+  });
+});
+
 describe("auth.terminal client opt-in", () => {
   it("rides initialize — an agent gating its terminal login offers on it sees the claim", () => {
     expect((clientCapabilitiesWire() as { auth?: unknown }).auth).toEqual({ terminal: true });

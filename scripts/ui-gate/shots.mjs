@@ -242,6 +242,18 @@ for (const theme of Object.keys(THEMES)) {
   await p.mouse.move(0, 0);
   await carried.screenshot({ path: `${OUT}/carried-open-${theme}.png` });
   await carried.locator("button").click();
+  // ── a context compaction: a rule naming it, the summary one click away;
+  // a failed one says why beneath its rule ──
+  const compacted = p.locator(".compaction", { hasText: "Context compacted" });
+  check(`[${theme}] a compaction is a rule naming it`, (await compacted.count()) === 1);
+  await compacted.locator("button").click();
+  check(`[${theme}] the rule opens to the summary, rendered as agent text`, (await compacted.locator(".msg-agent", { hasText: "failing test list" }).count()) === 1);
+  await p.mouse.move(0, 0);
+  await compacted.screenshot({ path: `${OUT}/compaction-open-${theme}.png` });
+  await compacted.locator("button").click();
+  const failedCompaction = p.locator(".compaction", { hasText: "Context compaction failed" });
+  check(`[${theme}] a failed compaction says why`, (await failedCompaction.locator(".text-err", { hasText: "too large" }).count()) === 1);
+  await failedCompaction.screenshot({ path: `${OUT}/compaction-failed-${theme}.png` });
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
   // user-message part model: the sent bubble renders its mention and

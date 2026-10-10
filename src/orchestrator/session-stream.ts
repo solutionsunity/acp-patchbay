@@ -10,6 +10,7 @@
 // store routes each update to its row and keeps what is the session's own —
 // its title, its knobs; everything here is the transcript's.
 import {
+  compactionBlockId,
   isToolCallOpen,
   terminalBlockId,
   type AgentViewEvent,
@@ -100,6 +101,9 @@ export interface StreamState {
   /** Terminals the agent runs itself, by id, and whether each still runs —
    * the turn-end sweep settles any the agent never reported ended. */
   agentTerminals: Map<string, boolean>;
+  /** Compactions by the agent's id, and whether each was last said to be
+   * in progress — the turn-end sweep settles any still running. */
+  compactions: Map<string, boolean>;
   /** The wire-extension filter this attachment's tool-call facts pass
    * through (extensions/index.ts — opaque to this file), attached on the
    * first call. It may hold a call back; the sweep releases what it holds. */
@@ -246,6 +250,12 @@ export class SessionStream {
           ...(update.plan !== undefined ? { plan: update.plan } : {}),
         });
         break;
+      case "compaction":
+      case "compactionChunk":
+        // Not turn activity on replay: a compaction rides between turns, and
+        // a synthesized turn line after it would count nothing.
+        this.applyCompaction(patchbaySessionId, session, update, emit);
+        break;
       case "carried":
         // A kind with no surface of its own yet: shown as the agent sent it,
         // between prose runs like any other piece of the conversation.
@@ -259,6 +269,34 @@ export class SessionStream {
         });
         break;
     }
+  }
+
+  /** A compaction, by the agent's id: its first word fixes where it sits
+   * (the prose run it interrupts ends there); every later one patches it in
+   * place. A summary piece for a compaction never announced opens it. */
+  private applyCompaction(
+    patchbaySessionId: PatchbaySessionId,
+    session: StreamState,
+    update: Extract<TranscriptFact, { kind: "compaction" | "compactionChunk" }>,
+    emit: (...events: AgentViewEvent[]) => void,
+  ): void {
+    if (!session.compactions.has(update.compactionId)) this.seal(patchbaySessionId, session);
+    const blockId = compactionBlockId(update.compactionId);
+    const stash = this.imageStash(patchbaySessionId, "compaction");
+    if (update.kind === "compactionChunk") {
+      session.compactions.set(update.compactionId, session.compactions.get(update.compactionId) ?? false);
+      emit({ kind: "compactionSummaryAppended", patchbaySessionId, blockId, part: contentPartOf(update.content, stash) });
+      return;
+    }
+    session.compactions.set(update.compactionId, update.status === "in_progress");
+    emit({
+      kind: "compactionUpserted",
+      patchbaySessionId,
+      blockId,
+      status: update.status,
+      ...(update.summary !== undefined ? { summary: (update.summary ?? []).map((c) => contentPartOf(c, stash)) } : {}),
+      ...(update.error !== undefined ? { error: update.error } : {}),
+    });
   }
 
   /** A tool call or a plan — as the agent sent it, or as the tool-call
@@ -571,6 +609,13 @@ export class SessionStream {
       if (!running) continue;
       session.agentTerminals.set(terminalId, false);
       emit({ kind: "terminalExited", patchbaySessionId, blockId: terminalBlockId(terminalId), exitCode: null });
+    }
+    // A compaction still said to be running, with nothing running: no
+    // spinner — how it ended was never said.
+    for (const [compactionId, running] of session.compactions) {
+      if (!running) continue;
+      session.compactions.set(compactionId, false);
+      emit({ kind: "compactionInterrupted", patchbaySessionId, blockId: compactionBlockId(compactionId) });
     }
     if (session.openToolCalls.size === 0) return;
     const ids = [...session.openToolCalls];

@@ -912,6 +912,12 @@ export function terminalBlockId(terminalId: string): string {
   return `term-block-${terminalId}`;
 }
 
+/** A compaction's block id — the agent's compactionId is unique only
+ * within its session and owes nothing to the tool-call id space. */
+export function compactionBlockId(compactionId: string): string {
+  return `compaction-${compactionId}`;
+}
+
 /** What a content kind with no renderer says in its place — one wording for
  * the chat and for copied text. Audio is the one kind a player could show;
  * none exists yet, a recorded decision. */
@@ -987,6 +993,26 @@ export interface CarriedBlock {
   id: string;
   updateKind: string;
   payload: string;
+}
+
+/** A context compaction the agent reported: where its first update
+ * arrived, everything above is what the agent now holds only as the
+ * summary. One block per compactionId, updated in place. */
+export interface CompactionBlock {
+  kind: "compaction";
+  id: string;
+  /** The agent's status as sent — `in_progress`, `completed`, `failed`,
+   * `cancelled`, or a value the spec leaves open; null while only summary
+   * content has arrived, before any status. */
+  status: string | null;
+  /** What the agent kept, as it renders; empty when none was given. */
+  summary: readonly ContentPart[];
+  /** The agent's account of a failure, as sent. */
+  error: string | null;
+  /** Set once when nothing was in flight anymore (a turn ended, a replay
+   * finished) while the agent still called it in progress — no spinner
+   * then. A later update for it clears the mark. */
+  interrupted: boolean;
 }
 
 /** ACP's own tool-call taxonomy (ToolKind) — carried verbatim so the card
@@ -1354,6 +1380,7 @@ export type ChatBlock =
   | DiffBlock
   | TerminalBlock
   | ElicitationBlock
+  | CompactionBlock
   | PatchbayNoticeBlock;
 
 export interface AvailableCommand {
@@ -1717,6 +1744,22 @@ export type AgentViewEvent =
   | { kind: "agentThoughtDelta"; patchbaySessionId: PatchbaySessionId; blockId: string; text: string }
   | { kind: "agentPartAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart; thought: boolean }
   | { kind: "carriedAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; updateKind: string; payload: string }
+  /** A compaction, announced or updated — the spec's patch rules: an
+   * absent field keeps its value, an empty `summary` or a null `error`
+   * clears it. A new block takes what's absent as none. */
+  | {
+      kind: "compactionUpserted";
+      patchbaySessionId: PatchbaySessionId;
+      blockId: string;
+      status: string;
+      summary?: readonly ContentPart[];
+      error?: string | null;
+    }
+  /** One piece appended to a compaction's summary — the block opens here
+   * when no update announced it, its status not yet said. */
+  | { kind: "compactionSummaryAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart }
+  /** Nothing is in flight anymore while this compaction still runs. */
+  | { kind: "compactionInterrupted"; patchbaySessionId: PatchbaySessionId; blockId: string }
   | {
       kind: "toolCallUpserted";
       patchbaySessionId: PatchbaySessionId;
@@ -1928,11 +1971,7 @@ function upsertUserBlock(
     });
   }
   const existing = blocks[i] as UserBlock;
-  const last = existing.parts[existing.parts.length - 1];
-  const parts =
-    last !== undefined && last.kind === "text" && part.kind === "text"
-      ? [...existing.parts.slice(0, -1), { kind: "text" as const, text: last.text + part.text }]
-      : [...existing.parts, part];
+  const parts = withPart(existing.parts, part);
   return withTranscript(
     state,
     patchbaySessionId,
@@ -1988,6 +2027,34 @@ function upsertToolCall(
     patchbaySessionId,
     blocks.map((b, j) => (j === i ? updated : b)),
   );
+}
+
+/** A compaction's block patched in place, or opened where this event
+ * arrived when it is the first the session hears of it. */
+function upsertCompaction(
+  state: AgentViewState,
+  patchbaySessionId: PatchbaySessionId,
+  blockId: string,
+  patch: (existing: CompactionBlock) => CompactionBlock,
+): AgentViewState {
+  if ((state.transcripts[patchbaySessionId] ?? []).some((b) => b.id === blockId)) {
+    return patchBlock<CompactionBlock>(state, patchbaySessionId, blockId, patch);
+  }
+  return appendBlock(state, patchbaySessionId, patch({ kind: "compaction", id: blockId, status: null, summary: [], error: null, interrupted: false }));
+}
+
+/** Two parts as one when the second continues the first's text — a
+ * streamed passage, not one paragraph per chunk; text meant for the model
+ * alone never joins text meant for the user. Null when they stay apart. */
+function joinedText<P extends UserPart>(first: P, second: P): P | null {
+  return first.kind === "text" && second.kind === "text" && first.forModel === second.forModel ? { ...first, text: first.text + second.text } : null;
+}
+
+/** A streamed piece appended, joining the text before it. */
+function withPart<P extends UserPart>(parts: readonly P[], part: P): P[] {
+  const last = parts.at(-1);
+  const joined = last !== undefined ? joinedText(last, part) : null;
+  return joined !== null ? [...parts.slice(0, -1), joined] : [...parts, part];
 }
 
 /** Finds a block by id and replaces it with `patch(existing)`'s result — a
@@ -2163,6 +2230,18 @@ export function reduceAgentView(
       });
     case "toolCallUpserted":
       return upsertToolCall(state, event.patchbaySessionId, event);
+    case "compactionUpserted":
+      return upsertCompaction(state, event.patchbaySessionId, event.blockId, (b) => ({
+        ...b,
+        status: event.status,
+        summary: event.summary ?? b.summary,
+        error: event.error !== undefined ? event.error : b.error,
+        interrupted: false,
+      }));
+    case "compactionSummaryAppended":
+      return upsertCompaction(state, event.patchbaySessionId, event.blockId, (b) => ({ ...b, summary: withPart(b.summary, event.part) }));
+    case "compactionInterrupted":
+      return patchBlock<CompactionBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({ ...b, interrupted: true }));
     case "toolCallDenied":
       return patchBlock<ToolCallBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,
@@ -2399,15 +2478,9 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
   }
   // Same rule in the part vocabulary: adjacent replayed text parts of one
   // user block ride as a single event.
-  if (
-    prev.kind === "userPartAppended" &&
-    next.kind === "userPartAppended" &&
-    prev.patchbaySessionId === next.patchbaySessionId &&
-    prev.blockId === next.blockId &&
-    prev.part.kind === "text" &&
-    next.part.kind === "text"
-  ) {
-    return { ...next, part: { kind: "text", text: prev.part.text + next.part.text } };
+  if (prev.kind === "userPartAppended" && next.kind === "userPartAppended" && prev.patchbaySessionId === next.patchbaySessionId && prev.blockId === next.blockId) {
+    const part = joinedText(prev.part, next.part);
+    if (part !== null) return { ...next, part };
   }
   // Rapid-fire status updates on the same tool call: only the latest matters,
   // but absent fields inherit — same merge rule as the reducer's upsert.
@@ -2429,6 +2502,11 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
       content: next.content ?? prev.content,
       diffs: next.diffs ?? prev.diffs,
     };
+  }
+  // A streamed summary: same rule for a compaction's pieces.
+  if (prev.kind === "compactionSummaryAppended" && next.kind === "compactionSummaryAppended" && prev.patchbaySessionId === next.patchbaySessionId && prev.blockId === next.blockId) {
+    const part = joinedText(prev.part, next.part);
+    if (part !== null) return { ...next, part };
   }
   // Usage can report mid-stream (claude-agent-acp does) — only the latest
   // counters matter, but a plan-window reading and the cost are sticky

@@ -21,7 +21,7 @@ import { Icon } from "../../shared/icon";
 import { count } from "../../../shared/count";
 import { formatDuration, type TranscriptView, type TurnRollup } from "./view-model";
 import { Disclosure } from "../../shared/disclosure";
-import { CarriedUpdate, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolDisplayPrefs, ToolRunCard, UserMessage } from "./blocks";
+import { CarriedUpdate, CompactionDivider, ContentPartView, InjectedUser, TerminalBlocks, Thought, ToolCallCard, ToolDisplayPrefs, ToolRunCard, UserMessage } from "./blocks";
 import { AgentMarkdown } from "./markdown";
 import { DiffCard, PermissionCard, TerminalCard } from "./cards";
 import { ElicitationCard } from "../../shared/question-card";
@@ -173,6 +173,8 @@ function Block({
       return <TerminalCard block={block} />;
     case "elicitation":
       return <ElicitationCard block={block} agentName={agentName} />;
+    case "compaction":
+      return <CompactionDivider block={block} />;
     case "patchbayNotice":
       // System voice — visually distinct from agent prose on purpose (the
       // honesty seam: e.g. where a resumed session's cached view ends).

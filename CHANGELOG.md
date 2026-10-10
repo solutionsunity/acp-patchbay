@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A context compaction shows where it happened.** When an agent
+  summarizes older conversation to free room, the transcript now carries a
+  rule at that point: "Compacting context" while it runs, then "Context
+  compacted", with the agent's summary of what it kept one click away, or
+  the reason when it failed. Before, it read as a tool the agent ran (Claude)
+  or showed nothing at all, and after a reload the summary could appear as a
+  message you never wrote. (#101)
+
 ## 0.84.4 — 2026-10-10
 
 Tool-call titles show whole and commands can stand on their own (#96), an

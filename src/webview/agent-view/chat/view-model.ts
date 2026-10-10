@@ -18,6 +18,7 @@ import {
   terminalBlockId,
   type AgentViewState,
   type ChatBlock,
+  type CompactionBlock,
   type DiffStat,
   type PreferencesView,
   type ToolCallBlock,
@@ -233,6 +234,30 @@ export function deriveTranscript(
     totals: { prompts, toolCalls: totalCalls, files: [...allFiles] },
     liveBlockId,
   };
+}
+
+/** A compaction divider's words and tone, from what the agent said of it:
+ * running spins; failed and cancelled read as their verdicts; a status the
+ * spec leaves open is shown as sent; none said yet names only the event. */
+export function compactionLine(block: Pick<CompactionBlock, "status" | "interrupted">): {
+  text: string;
+  tone: "running" | "quiet" | "err" | "warn";
+} {
+  if (block.status === "in_progress") {
+    return block.interrupted ? { text: "Context compaction interrupted", tone: "quiet" } : { text: "Compacting context", tone: "running" };
+  }
+  switch (block.status) {
+    case "completed":
+      return { text: "Context compacted", tone: "quiet" };
+    case "failed":
+      return { text: "Context compaction failed", tone: "err" };
+    case "cancelled":
+      return { text: "Context compaction cancelled", tone: "warn" };
+    case null:
+      return { text: "Context compaction", tone: "quiet" };
+    default:
+      return { text: `Context compaction · ${block.status}`, tone: "quiet" };
+  }
 }
 
 /** A streaming thought's newest line, as its collapsed header shows it: the

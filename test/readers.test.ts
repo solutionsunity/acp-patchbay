@@ -122,6 +122,31 @@ describe("readSessionUpdate", () => {
     expect(readSessionUpdate({ sessionUpdate: "usage_update", used: 1, size: 2 }, note)).toEqual({ kind: "usage", used: 1, size: 2 });
   });
 
+  it("a compaction keeps the spec's patch rules: absent is unchanged, null and an empty summary clear", () => {
+    expect(readSessionUpdate({ sessionUpdate: "compaction_update", compactionId: "c", status: "in_progress" }, note)).toEqual({
+      kind: "compaction",
+      compactionId: "c",
+      status: "in_progress",
+    });
+    expect(
+      readSessionUpdate({ sessionUpdate: "compaction_update", compactionId: "c", status: "completed", summary: [{ type: "text", text: "kept" }] }, note),
+    ).toEqual({ kind: "compaction", compactionId: "c", status: "completed", summary: [{ type: "text", text: "kept" }] });
+    expect(readSessionUpdate({ sessionUpdate: "compaction_update", compactionId: "c", status: "completed", summary: [] }, note)).toMatchObject({ summary: null });
+    expect(readSessionUpdate({ sessionUpdate: "compaction_update", compactionId: "c", status: "completed", summary: null, error: null }, note)).toMatchObject({
+      summary: null,
+      error: null,
+    });
+    expect(readSessionUpdate({ sessionUpdate: "compaction_update", compactionId: "c", status: "failed", error: "too long" }, note)).toMatchObject({ error: "too long" });
+  });
+
+  it("a compaction's summary chunk is one content block for its compaction", () => {
+    expect(readSessionUpdate({ sessionUpdate: "compaction_summary_chunk", compactionId: "c", content: { type: "text", text: "x" } }, note)).toEqual({
+      kind: "compactionChunk",
+      compactionId: "c",
+      content: { type: "text", text: "x" },
+    });
+  });
+
   it("chunks name their channel and message", () => {
     const update: SessionUpdate = { sessionUpdate: "agent_thought_chunk", messageId: "m", content: { type: "text", text: "x" } };
     expect(readSessionUpdate(update, note)).toEqual({ kind: "chunk", channel: "thought", messageId: "m", content: { type: "text", text: "x" } });

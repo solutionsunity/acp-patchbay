@@ -46,6 +46,10 @@ export const chatTranscript = [
   },
   // an update kind with no surface yet, shown as the agent sent it
   { kind: "carried", id: "car1", updateKind: "notice", payload: '{\n  "severity": "warning",\n  "title": "Rate limit near"\n}' },
+  // a context compaction: a rule across the transcript, its summary one
+  // click away; a failed one says why beneath its rule
+  { kind: "compaction", id: "compaction-c1", status: "completed", summary: [{ kind: "text", text: "Kept: the **auth** refactor plan and the failing test list." }], error: null, interrupted: false },
+  { kind: "compaction", id: "compaction-c2", status: "failed", summary: [], error: "Context too large to summarize", interrupted: false },
   // non-text pieces of an agent's message: rendered by the message part
   // renderers, never a placeholder line (an embedded file expands;
   // audio keeps a labeled placeholder — nothing plays it)

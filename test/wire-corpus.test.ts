@@ -171,12 +171,16 @@ const CORPUS: SessionUpdate[] = [
       },
     ],
   },
+  // a compaction's whole lifecycle, and one that failed
+  { sessionUpdate: "compaction_update", compactionId: "c-1", status: "in_progress" },
+  { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "We kept " } },
+  { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "the plan." } },
+  { sessionUpdate: "compaction_update", compactionId: "c-1", status: "completed" },
+  { sessionUpdate: "compaction_update", compactionId: "c-2", status: "failed", error: "Context too large to summarize" },
   // kinds behind client capabilities patchbay doesn't declare
   { sessionUpdate: "plan_update", plan: { type: "markdown", planId: "p-1", content: "# Plan" } },
   { sessionUpdate: "plan_removed", planId: "p-1" } as SessionUpdate,
   { sessionUpdate: "notice", severity: "warning", title: "Rate limit near", description: "80% used" },
-  { sessionUpdate: "compaction_update", compactionId: "c-1", status: "completed" },
-  { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "summary" } },
   { sessionUpdate: "subagent_update", sessionId: "child-1", title: "Explore", state: { state: "running" } },
   { sessionUpdate: "session_message", messageId: "sm-1", senderSessionId: "child-1", content: [{ type: "text", text: "found it" }] },
   { sessionUpdate: "session_message_chunk", messageId: "sm-1", content: { type: "text", text: "found it" } },

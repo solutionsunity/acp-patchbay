@@ -26,6 +26,9 @@ const CLIENT_DECLARES: {
   /** URL mode: the agent sends the user to a page (OAuth and the like). */
   elicitationUrl: boolean;
   sessionConfigOptions: boolean;
+  /** The agent reports context compactions as their own updates — shown
+   * as a divider in the transcript, live and on replay. */
+  sessionCompaction: boolean;
   authTerminal: boolean;
 } = {
   fs: true,
@@ -44,6 +47,9 @@ const CLIENT_DECLARES: {
   // matrix row: the row list is hand-picked,
   // and this claim's visible proof is the composer knob strip itself.
   sessionConfigOptions: true,
+  // No matrix row either: the transcript's compaction divider is the
+  // claim's visible proof.
+  sessionCompaction: true,
 };
 
 /** CLIENT_DECLARES in its wire form. Elicitation is object-shaped, one key
@@ -55,15 +61,21 @@ export function clientCapabilitiesWire(): ClientCapabilities {
     fs: { readTextFile: CLIENT_DECLARES.fs, writeTextFile: CLIENT_DECLARES.fs },
     terminal: CLIENT_DECLARES.terminal,
     ...(Object.keys(elicitationWire()).length > 0 ? { elicitation: elicitationWire() } : {}),
-    // `{ boolean: {} }` = "agents may include type:'boolean' entries" —
-    // knobs.ts supports them, so the claim is the truth.
-    ...(CLIENT_DECLARES.sessionConfigOptions
-      ? { session: { configOptions: { boolean: {} } } }
-      : {}),
+    ...(Object.keys(sessionWire()).length > 0 ? { session: sessionWire() } : {}),
     ...(CLIENT_DECLARES.authTerminal ? { auth: { terminal: true } } : {}),
     // Adopted _meta extensions (meta.ts — the declare flags there are the
     // single source; nothing here names a key).
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
+  };
+}
+
+/** The declared session surfaces, exactly as they ride initialize. */
+function sessionWire(): { configOptions?: { boolean: Record<string, never> }; compaction?: Record<string, never> } {
+  return {
+    // `{ boolean: {} }` = "agents may include type:'boolean' entries" —
+    // knobs.ts supports them, so the claim is the truth.
+    ...(CLIENT_DECLARES.sessionConfigOptions ? { configOptions: { boolean: {} } } : {}),
+    ...(CLIENT_DECLARES.sessionCompaction ? { compaction: {} } : {}),
   };
 }
 

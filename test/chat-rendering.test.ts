@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { assertKind } from "./support/assert-kind";
 import {
+  compactionLine,
   deriveTranscript,
   formatDuration,
   TOOL_RUN_MIN,
@@ -247,6 +248,74 @@ describe("toolCallUpserted merge semantics (P13b)", () => {
       progress,
     ].reduce(reduceAgentView, initialAgentViewState);
     expect(state.transcripts[S]![0]).toMatchObject({ status: "in_progress", title: "Run", output: "partial" });
+  });
+});
+
+describe("compaction (#101)", () => {
+  const created: AgentViewEvent = {
+    kind: "sessionCreated",
+    session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+  };
+  const reduce = (...events: AgentViewEvent[]) => [created, ...events].reduce(reduceAgentView, initialAgentViewState).transcripts[S]!;
+
+  it("the first update fixes its place; later ones patch it there, absent fields kept", () => {
+    const blocks = reduce(
+      { kind: "agentTextDelta", patchbaySessionId: S, blockId: "text-1", text: "before" },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "in_progress" },
+      { kind: "agentTextDelta", patchbaySessionId: S, blockId: "text-2", text: "after" },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "completed", summary: [{ kind: "text", text: "kept" }] },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "completed" },
+    );
+    expect(blocks.map((b) => b.id)).toEqual(["text-1", "compaction-c", "text-2"]);
+    expect(blocks[1]).toEqual({ kind: "compaction", id: "compaction-c", status: "completed", summary: [{ kind: "text", text: "kept" }], error: null, interrupted: false });
+  });
+
+  it("an empty summary and a null error clear; an error stays until cleared", () => {
+    const failed = reduce(
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "failed", summary: [{ kind: "text", text: "x" }], error: "too long" },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "failed" },
+    );
+    expect(failed[0]).toMatchObject({ summary: [{ kind: "text", text: "x" }], error: "too long" });
+    const cleared = reduce(
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "failed", summary: [{ kind: "text", text: "x" }], error: "too long" },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "completed", summary: [], error: null },
+    );
+    expect(cleared[0]).toMatchObject({ summary: [], error: null });
+  });
+
+  it("summary pieces join into one passage; one for an unannounced compaction opens it without a status", () => {
+    const blocks = reduce(
+      { kind: "compactionSummaryAppended", patchbaySessionId: S, blockId: "compaction-c", part: { kind: "text", text: "We " } },
+      { kind: "compactionSummaryAppended", patchbaySessionId: S, blockId: "compaction-c", part: { kind: "text", text: "kept this." } },
+    );
+    expect(blocks).toEqual([{ kind: "compaction", id: "compaction-c", status: null, summary: [{ kind: "text", text: "We kept this." }], error: null, interrupted: false }]);
+    const prev: AgentViewEvent = { kind: "compactionSummaryAppended", patchbaySessionId: S, blockId: "compaction-c", part: { kind: "text", text: "We " } };
+    const next: AgentViewEvent = { kind: "compactionSummaryAppended", patchbaySessionId: S, blockId: "compaction-c", part: { kind: "text", text: "kept." } };
+    expect(coalesceAgentViewEvent(prev, next)).toMatchObject({ part: { kind: "text", text: "We kept." } });
+  });
+
+  it("interrupted when nothing runs, until the agent speaks of it again", () => {
+    const stranded = reduce(
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "in_progress" },
+      { kind: "compactionInterrupted", patchbaySessionId: S, blockId: "compaction-c" },
+    );
+    expect(stranded[0]).toMatchObject({ interrupted: true });
+    const resumed = reduce(
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "in_progress" },
+      { kind: "compactionInterrupted", patchbaySessionId: S, blockId: "compaction-c" },
+      { kind: "compactionUpserted", patchbaySessionId: S, blockId: "compaction-c", status: "completed" },
+    );
+    expect(resumed[0]).toMatchObject({ status: "completed", interrupted: false });
+  });
+
+  it("the divider's words: running spins, verdicts read as verdicts, an open status shows as sent", () => {
+    expect(compactionLine({ status: "in_progress", interrupted: false })).toEqual({ text: "Compacting context", tone: "running" });
+    expect(compactionLine({ status: "in_progress", interrupted: true })).toEqual({ text: "Context compaction interrupted", tone: "quiet" });
+    expect(compactionLine({ status: "completed", interrupted: false })).toEqual({ text: "Context compacted", tone: "quiet" });
+    expect(compactionLine({ status: "failed", interrupted: false })).toEqual({ text: "Context compaction failed", tone: "err" });
+    expect(compactionLine({ status: "cancelled", interrupted: false })).toEqual({ text: "Context compaction cancelled", tone: "warn" });
+    expect(compactionLine({ status: null, interrupted: false })).toEqual({ text: "Context compaction", tone: "quiet" });
+    expect(compactionLine({ status: "paused", interrupted: false })).toEqual({ text: "Context compaction · paused", tone: "quiet" });
   });
 });
 

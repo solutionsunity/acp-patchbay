@@ -258,6 +258,7 @@ function liveSession(): LiveSession {
     openToolCalls: new Set(),
     toolCalls: new Map(),
     agentTerminals: new Map(),
+    compactions: new Map(),
     replayTurnDirty: false,
     userModeSetPending: false,
   };

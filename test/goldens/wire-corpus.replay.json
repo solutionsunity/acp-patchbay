@@ -235,6 +235,27 @@
       "interrupted": true
     },
     {
+      "kind": "compaction",
+      "id": "compaction-c-1",
+      "status": "completed",
+      "summary": [
+        {
+          "kind": "text",
+          "text": "We kept the plan."
+        }
+      ],
+      "error": null,
+      "interrupted": false
+    },
+    {
+      "kind": "compaction",
+      "id": "compaction-c-2",
+      "status": "failed",
+      "summary": [],
+      "error": "Context too large to summarize",
+      "interrupted": false
+    },
+    {
       "kind": "carried",
       "id": "<id-21>",
       "updateKind": "plan_update",
@@ -255,41 +276,29 @@
     {
       "kind": "carried",
       "id": "<id-24>",
-      "updateKind": "compaction_update",
-      "payload": "{\n  \"compactionId\": \"c-1\",\n  \"status\": \"completed\"\n}"
-    },
-    {
-      "kind": "carried",
-      "id": "<id-25>",
-      "updateKind": "compaction_summary_chunk",
-      "payload": "{\n  \"compactionId\": \"c-1\",\n  \"content\": {\n    \"text\": \"summary\",\n    \"type\": \"text\"\n  }\n}"
-    },
-    {
-      "kind": "carried",
-      "id": "<id-26>",
       "updateKind": "subagent_update",
       "payload": "{\n  \"sessionId\": \"child-1\",\n  \"title\": \"Explore\",\n  \"state\": {\n    \"state\": \"running\"\n  }\n}"
     },
     {
       "kind": "carried",
-      "id": "<id-27>",
+      "id": "<id-25>",
       "updateKind": "session_message",
       "payload": "{\n  \"messageId\": \"sm-1\",\n  \"senderSessionId\": \"child-1\",\n  \"content\": [\n    {\n      \"text\": \"found it\",\n      \"type\": \"text\"\n    }\n  ]\n}"
     },
     {
       "kind": "carried",
-      "id": "<id-28>",
+      "id": "<id-26>",
       "updateKind": "session_message_chunk",
       "payload": "{\n  \"messageId\": \"sm-1\",\n  \"content\": {\n    \"text\": \"found it\",\n    \"type\": \"text\"\n  }\n}"
     },
     {
       "kind": "text",
-      "id": "<id-29>",
+      "id": "<id-27>",
       "text": "Done."
     },
     {
       "kind": "turnEnd",
-      "id": "<id-30>",
+      "id": "<id-28>",
       "startedAt": null,
       "endedAt": null,
       "stopReason": null,

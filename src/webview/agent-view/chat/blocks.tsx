@@ -11,6 +11,7 @@ import {
   userPartsText,
   terminalBlockId,
   unrenderedLabel,
+  type CompactionBlock,
   type ContentPart,
   type DiffStat,
   type PreferencesView,
@@ -28,7 +29,7 @@ import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
-import { diffTotal, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
+import { compactionLine, diffTotal, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
@@ -216,6 +217,49 @@ export function InjectedUser({ text }: { text: string }) {
  * its kind, and what it sent one click away — shown, never dropped. */
 export function CarriedUpdate({ updateKind, payload }: { updateKind: string; payload: string }) {
   return <DimLine kind="carried" icon="info" label={unrenderedLabel(updateKind)} what="what the agent sent" body={payload} />;
+}
+
+const COMPACTION_TONE: Record<ReturnType<typeof compactionLine>["tone"], string> = {
+  running: "",
+  quiet: "",
+  err: "text-err",
+  warn: "text-warn",
+};
+
+/** A context compaction (CompactionBlock): a rule across the transcript —
+ * what sits above it, the agent now holds only as its summary. The summary
+ * opens on a click; a failure says why beneath the rule. */
+export function CompactionDivider({ block }: { block: CompactionBlock }) {
+  const [open, setOpen] = useState(false);
+  const line = compactionLine(block);
+  const label = (
+    <span className={`inline-flex items-center gap-1 ${COMPACTION_TONE[line.tone]}`}>
+      {line.tone === "running" ? <span className="spin" /> : <Icon name="fold" />} {line.text}
+    </span>
+  );
+  return (
+    <div className="compaction my-2 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <span className="h-px flex-1 bg-border" />
+        {block.summary.length > 0 ? (
+          <Disclosure open={open} onToggle={() => setOpen(!open)} label={open ? "Hide the summary" : "Show the summary"}>
+            {label}
+          </Disclosure>
+        ) : (
+          label
+        )}
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      {block.error !== null && <div className="mt-1 text-center text-err">{block.error}</div>}
+      {open && (
+        <div className="mt-1">
+          {block.summary.map((part, i) => (
+            <ContentPartView key={i} part={part} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** A dim collapsed line beside the conversation, never part of it: a

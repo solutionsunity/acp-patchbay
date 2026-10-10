@@ -889,6 +889,29 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm5i" as PatchbayAgentId);
   });
 
+  it("a compaction ends the prose it interrupts and, left running when the turn ends, stops claiming to run (#101)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          turn: [
+            { type: "chunk", text: "before " },
+            { type: "update", update: { sessionUpdate: "compaction_update", compactionId: "c1", status: "in_progress" } },
+            { type: "update", update: { sessionUpdate: "compaction_summary_chunk", compactionId: "c1", content: { type: "text", text: "kept" } } },
+            { type: "chunk", text: "after" },
+          ],
+        },
+        "sm5c",
+      ),
+    );
+    const patchbaySessionId = await h.sessions.createSession("sm5c" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    const blocks = h.state().transcripts[patchbaySessionId]!;
+    expect(blocks.map((b) => b.kind)).toEqual(["user", "text", "compaction", "text", "turnEnd"]);
+    expect(blocks[2]).toMatchObject({ status: "in_progress", summary: [{ kind: "text", text: "kept" }], interrupted: true });
+    await h.pool.stop("sm5c" as PatchbayAgentId);
+  });
+
   it("a live user_message_chunk echo never duplicates the sent prompt", async () => {
     // Some agents echo the in-flight prompt back (slash-command expansion);
     // the turn already appended the user block, so the echo must drop.
