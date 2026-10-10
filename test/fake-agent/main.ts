@@ -233,7 +233,8 @@ async function emitUpdate(
   cwd: string,
   update: acp.SessionUpdate,
 ): Promise<void> {
-  recordUpdate(cwd, sessionId, update);
+  // A notice is a live event, not history: the spec has it never replayed.
+  if (update.sessionUpdate !== "notice") recordUpdate(cwd, sessionId, update);
   await cx.notify(acp.methods.client.session.update, { sessionId, update });
 }
 

@@ -9,6 +9,13 @@
   the reason when it failed. Before, it read as a tool the agent ran (Claude)
   or showed nothing at all, and after a reload the summary could appear as a
   message you never wrote. (#101)
+- **What an agent tells you outside its answer stays outside it.** A model
+  falling back to another, fast mode turning off, a warning from its own
+  tooling: agents folded these into their reply as bold text, so they read
+  as the answer and stayed in its history. Now each is its own line where
+  it happened, named as the agent's, a warning in yellow and an error in
+  red. Like the agent's own record of them, they don't come back after a
+  reload. (#100)
 
 ## 0.84.4 — 2026-10-10
 

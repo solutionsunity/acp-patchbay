@@ -374,8 +374,8 @@ describe("elicitation client claim", () => {
 });
 
 describe("session client claims", () => {
-  it("declares compaction alongside the config surface — an agent only reports compactions to a client that says it shows them", () => {
-    expect(clientCapabilitiesWire().session).toEqual({ configOptions: { boolean: {} }, compaction: {} });
+  it("declares compaction and notices alongside the config surface — an agent sends either only to a client that says it shows them", () => {
+    expect(clientCapabilitiesWire().session).toEqual({ configOptions: { boolean: {} }, compaction: {}, notices: {} });
   });
 });
 

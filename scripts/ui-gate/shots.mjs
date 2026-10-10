@@ -236,9 +236,9 @@ for (const theme of Object.keys(THEMES)) {
   // ── an update kind with no surface: a dim line naming it, what the agent
   // sent one click away — shown, never dropped ──
   const carried = p.locator(".carried");
-  check(`[${theme}] an update with no surface is a line naming its kind`, (await carried.filter({ hasText: "notice · not shown here" }).count()) === 1);
+  check(`[${theme}] an update with no surface is a line naming its kind`, (await carried.filter({ hasText: "subagent_update · not shown here" }).count()) === 1);
   await carried.locator("button").click();
-  check(`[${theme}] the line opens to what the agent sent`, (await carried.locator("pre", { hasText: "Rate limit near" }).count()) === 1);
+  check(`[${theme}] the line opens to what the agent sent`, (await carried.locator("pre", { hasText: "child-1" }).count()) === 1);
   await p.mouse.move(0, 0);
   await carried.screenshot({ path: `${OUT}/carried-open-${theme}.png` });
   await carried.locator("button").click();
@@ -254,6 +254,17 @@ for (const theme of Object.keys(THEMES)) {
   const failedCompaction = p.locator(".compaction", { hasText: "Context compaction failed" });
   check(`[${theme}] a failed compaction says why`, (await failedCompaction.locator(".text-err", { hasText: "too large" }).count()) === 1);
   await failedCompaction.screenshot({ path: `${OUT}/compaction-failed-${theme}.png` });
+  // ── notices: a line each, named as the agent's, outside its answer —
+  // a warning and an error in their colors, the description beneath ──
+  const notices = p.locator(".notice");
+  check(`[${theme}] each notice is its own line`, (await notices.count()) === 3);
+  const fallback = notices.filter({ hasText: "Model fallback" });
+  check(`[${theme}] a notice names the agent it came from`, (await fallback.filter({ hasText: "Claude Code:" }).count()) === 1);
+  check(`[${theme}] a warning reads as a warning, its description beneath`, (await p.locator(".notice.text-warn", { hasText: "Sonnet" }).count()) === 1);
+  check(`[${theme}] an error reads as an error`, (await p.locator(".notice.text-err", { hasText: "Hook failed" }).count()) === 1);
+  check(`[${theme}] a notice is never inside the agent's prose`, (await p.locator(".msg-agent .notice").count()) === 0);
+  await p.mouse.move(0, 0);
+  await fallback.screenshot({ path: `${OUT}/notice-warning-${theme}.png` });
   const bubbles = await p.$$eval(".msg-user", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] no user bubble contains the envelope`, !bubbles.some((t) => t.includes("task-notification")));
   // user-message part model: the sent bubble renders its mention and

@@ -236,6 +236,15 @@ export function deriveTranscript(
   };
 }
 
+/** A notice's look, by the agent's severity hint: a warning and an error
+ * read as their verdicts; info, and a hint the spec leaves open, stay
+ * quiet. */
+export function noticeLook(severity: string): { icon: "info" | "warning" | "error"; tone: "quiet" | "warn" | "err" } {
+  if (severity === "warning") return { icon: "warning", tone: "warn" };
+  if (severity === "error") return { icon: "error", tone: "err" };
+  return { icon: "info", tone: "quiet" };
+}
+
 /** A compaction divider's words and tone, from what the agent said of it:
  * running spins; failed and cancelled read as their verdicts; a status the
  * spec leaves open is shown as sent; none said yet names only the event. */

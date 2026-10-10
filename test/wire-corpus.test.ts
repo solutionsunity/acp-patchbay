@@ -177,10 +177,11 @@ const CORPUS: SessionUpdate[] = [
   { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "the plan." } },
   { sessionUpdate: "compaction_update", compactionId: "c-1", status: "completed" },
   { sessionUpdate: "compaction_update", compactionId: "c-2", status: "failed", error: "Context too large to summarize" },
+  // a notice: live only — the replay never brings it back
+  { sessionUpdate: "notice", severity: "warning", title: "Rate limit near", description: "80% used" },
   // kinds behind client capabilities patchbay doesn't declare
   { sessionUpdate: "plan_update", plan: { type: "markdown", planId: "p-1", content: "# Plan" } },
   { sessionUpdate: "plan_removed", planId: "p-1" } as SessionUpdate,
-  { sessionUpdate: "notice", severity: "warning", title: "Rate limit near", description: "80% used" },
   { sessionUpdate: "subagent_update", sessionId: "child-1", title: "Explore", state: { state: "running" } },
   { sessionUpdate: "session_message", messageId: "sm-1", senderSessionId: "child-1", content: [{ type: "text", text: "found it" }] },
   { sessionUpdate: "session_message_chunk", messageId: "sm-1", content: { type: "text", text: "found it" } },

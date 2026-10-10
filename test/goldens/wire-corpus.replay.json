@@ -270,35 +270,29 @@
     {
       "kind": "carried",
       "id": "<id-23>",
-      "updateKind": "notice",
-      "payload": "{\n  \"severity\": \"warning\",\n  \"title\": \"Rate limit near\",\n  \"description\": \"80% used\"\n}"
-    },
-    {
-      "kind": "carried",
-      "id": "<id-24>",
       "updateKind": "subagent_update",
       "payload": "{\n  \"sessionId\": \"child-1\",\n  \"title\": \"Explore\",\n  \"state\": {\n    \"state\": \"running\"\n  }\n}"
     },
     {
       "kind": "carried",
-      "id": "<id-25>",
+      "id": "<id-24>",
       "updateKind": "session_message",
       "payload": "{\n  \"messageId\": \"sm-1\",\n  \"senderSessionId\": \"child-1\",\n  \"content\": [\n    {\n      \"text\": \"found it\",\n      \"type\": \"text\"\n    }\n  ]\n}"
     },
     {
       "kind": "carried",
-      "id": "<id-26>",
+      "id": "<id-25>",
       "updateKind": "session_message_chunk",
       "payload": "{\n  \"messageId\": \"sm-1\",\n  \"content\": {\n    \"text\": \"found it\",\n    \"type\": \"text\"\n  }\n}"
     },
     {
       "kind": "text",
-      "id": "<id-27>",
+      "id": "<id-26>",
       "text": "Done."
     },
     {
       "kind": "turnEnd",
-      "id": "<id-28>",
+      "id": "<id-27>",
       "startedAt": null,
       "endedAt": null,
       "stopReason": null,

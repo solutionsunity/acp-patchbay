@@ -238,22 +238,23 @@
       "interrupted": false
     },
     {
-      "kind": "carried",
+      "kind": "notice",
       "id": "<id-19>",
+      "severity": "warning",
+      "title": "Rate limit near",
+      "description": "80% used"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-20>",
       "updateKind": "plan_update",
       "payload": "{\n  \"plan\": {\n    \"planId\": \"p-1\",\n    \"content\": \"# Plan\",\n    \"type\": \"markdown\"\n  }\n}"
     },
     {
       "kind": "carried",
-      "id": "<id-20>",
+      "id": "<id-21>",
       "updateKind": "plan_removed",
       "payload": "{\n  \"planId\": \"p-1\"\n}"
-    },
-    {
-      "kind": "carried",
-      "id": "<id-21>",
-      "updateKind": "notice",
-      "payload": "{\n  \"severity\": \"warning\",\n  \"title\": \"Rate limit near\",\n  \"description\": \"80% used\"\n}"
     },
     {
       "kind": "carried",

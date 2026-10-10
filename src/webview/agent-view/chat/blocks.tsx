@@ -13,6 +13,7 @@ import {
   unrenderedLabel,
   type CompactionBlock,
   type ContentPart,
+  type NoticeBlock,
   type DiffStat,
   type PreferencesView,
   type TerminalBlock,
@@ -29,7 +30,7 @@ import { useCopy } from "../../shared/use-copy";
 import { attachmentUri } from "../../shared/attachments-base";
 import { AgentMarkdown } from "./markdown";
 import { DiffStatText } from "./diff-stat";
-import { compactionLine, diffTotal, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
+import { compactionLine, diffTotal, noticeLook, thoughtTail, toolFileRows, type ToolFileRow } from "./view-model";
 import type { PatchbaySessionId } from "../../../shared/ids";
 
 /** Mention spelling some agents flatten replayed mentions into as *text*:
@@ -219,7 +220,7 @@ export function CarriedUpdate({ updateKind, payload }: { updateKind: string; pay
   return <DimLine kind="carried" icon="info" label={unrenderedLabel(updateKind)} what="what the agent sent" body={payload} />;
 }
 
-const COMPACTION_TONE: Record<ReturnType<typeof compactionLine>["tone"], string> = {
+const TONE_CLASS: Record<ReturnType<typeof compactionLine>["tone"], string> = {
   running: "",
   quiet: "",
   err: "text-err",
@@ -233,7 +234,7 @@ export function CompactionDivider({ block }: { block: CompactionBlock }) {
   const [open, setOpen] = useState(false);
   const line = compactionLine(block);
   const label = (
-    <span className={`inline-flex items-center gap-1 ${COMPACTION_TONE[line.tone]}`}>
+    <span className={`inline-flex items-center gap-1 ${TONE_CLASS[line.tone]}`}>
       {line.tone === "running" ? <span className="spin" /> : <Icon name="fold" />} {line.text}
     </span>
   );
@@ -258,6 +259,23 @@ export function CompactionDivider({ block }: { block: CompactionBlock }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** A notice from the agent (NoticeBlock): one line where it arrived,
+ * named as the agent's and set apart from its answer — plain text, the
+ * severity in its color, the description beneath. */
+export function NoticeLine({ block, agentName }: { block: NoticeBlock; agentName: string }) {
+  const look = noticeLook(block.severity);
+  return (
+    <div className={`notice py-1 text-[11px] ${TONE_CLASS[look.tone]}`}>
+      <div className="flex items-baseline gap-1">
+        <Icon name={look.icon} />
+        <span className="text-muted-foreground">{agentName}:</span>
+        <span className="font-medium whitespace-pre-line">{block.title}</span>
+      </div>
+      {block.description !== null && <div className="pl-5 text-muted-foreground whitespace-pre-line">{block.description}</div>}
     </div>
   );
 }

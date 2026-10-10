@@ -1015,6 +1015,20 @@ export interface CompactionBlock {
   interrupted: boolean;
 }
 
+/** A notice from the agent (ACP session notice): something it tells the
+ * user outside its answer. A live event, not history — the agent never
+ * replays one, so it lasts until the transcript is rebuilt. */
+export interface NoticeBlock {
+  kind: "notice";
+  id: string;
+  /** The agent's severity hint as sent — `info`, `warning`, `error`, or a
+   * value the spec leaves open. */
+  severity: string;
+  /** Plain text, never markdown. */
+  title: string;
+  description: string | null;
+}
+
 /** ACP's own tool-call taxonomy (ToolKind) — carried verbatim so the card
  * icon can pattern-match by kind instead of a generic spinner-only look. */
 export type ToolCallKind =
@@ -1381,6 +1395,7 @@ export type ChatBlock =
   | TerminalBlock
   | ElicitationBlock
   | CompactionBlock
+  | NoticeBlock
   | PatchbayNoticeBlock;
 
 export interface AvailableCommand {
@@ -1760,6 +1775,7 @@ export type AgentViewEvent =
   | { kind: "compactionSummaryAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; part: ContentPart }
   /** Nothing is in flight anymore while this compaction still runs. */
   | { kind: "compactionInterrupted"; patchbaySessionId: PatchbaySessionId; blockId: string }
+  | { kind: "noticeAppended"; patchbaySessionId: PatchbaySessionId; blockId: string; severity: string; title: string; description: string | null }
   | {
       kind: "toolCallUpserted";
       patchbaySessionId: PatchbaySessionId;
@@ -2242,6 +2258,14 @@ export function reduceAgentView(
       return upsertCompaction(state, event.patchbaySessionId, event.blockId, (b) => ({ ...b, summary: withPart(b.summary, event.part) }));
     case "compactionInterrupted":
       return patchBlock<CompactionBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({ ...b, interrupted: true }));
+    case "noticeAppended":
+      return appendBlock(state, event.patchbaySessionId, {
+        kind: "notice",
+        id: event.blockId,
+        severity: event.severity,
+        title: event.title,
+        description: event.description,
+      });
     case "toolCallDenied":
       return patchBlock<ToolCallBlock>(state, event.patchbaySessionId, event.blockId, (b) => ({
         ...b,

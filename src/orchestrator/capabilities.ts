@@ -29,6 +29,9 @@ const CLIENT_DECLARES: {
   /** The agent reports context compactions as their own updates — shown
    * as a divider in the transcript, live and on replay. */
   sessionCompaction: boolean;
+  /** The agent tells the user things outside its answer as notices —
+   * shown as a line in the transcript, never folded into the reply. */
+  sessionNotices: boolean;
   authTerminal: boolean;
 } = {
   fs: true,
@@ -50,6 +53,8 @@ const CLIENT_DECLARES: {
   // No matrix row either: the transcript's compaction divider is the
   // claim's visible proof.
   sessionCompaction: true,
+  // Nor here: the transcript's notice line is the proof.
+  sessionNotices: true,
 };
 
 /** CLIENT_DECLARES in its wire form. Elicitation is object-shaped, one key
@@ -70,12 +75,17 @@ export function clientCapabilitiesWire(): ClientCapabilities {
 }
 
 /** The declared session surfaces, exactly as they ride initialize. */
-function sessionWire(): { configOptions?: { boolean: Record<string, never> }; compaction?: Record<string, never> } {
+function sessionWire(): {
+  configOptions?: { boolean: Record<string, never> };
+  compaction?: Record<string, never>;
+  notices?: Record<string, never>;
+} {
   return {
     // `{ boolean: {} }` = "agents may include type:'boolean' entries" —
     // knobs.ts supports them, so the claim is the truth.
     ...(CLIENT_DECLARES.sessionConfigOptions ? { configOptions: { boolean: {} } } : {}),
     ...(CLIENT_DECLARES.sessionCompaction ? { compaction: {} } : {}),
+    ...(CLIENT_DECLARES.sessionNotices ? { notices: {} } : {}),
   };
 }
 

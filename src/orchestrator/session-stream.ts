@@ -256,6 +256,18 @@ export class SessionStream {
         // a synthesized turn line after it would count nothing.
         this.applyCompaction(patchbaySessionId, session, update, emit);
         break;
+      case "notice":
+        // Between prose runs, where it arrived — never inside the answer.
+        this.seal(patchbaySessionId, session);
+        emit({
+          kind: "noticeAppended",
+          patchbaySessionId,
+          blockId: newBlockId("notice"),
+          severity: update.severity,
+          title: update.title,
+          description: update.description ?? null,
+        });
+        break;
       case "carried":
         // A kind with no surface of its own yet: shown as the agent sent it,
         // between prose runs like any other piece of the conversation.

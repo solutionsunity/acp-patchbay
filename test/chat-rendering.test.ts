@@ -6,6 +6,7 @@ import { assertKind } from "./support/assert-kind";
 import {
   compactionLine,
   deriveTranscript,
+  noticeLook,
   formatDuration,
   TOOL_RUN_MIN,
   diffTotal,
@@ -316,6 +317,25 @@ describe("compaction (#101)", () => {
     expect(compactionLine({ status: "cancelled", interrupted: false })).toEqual({ text: "Context compaction cancelled", tone: "warn" });
     expect(compactionLine({ status: null, interrupted: false })).toEqual({ text: "Context compaction", tone: "quiet" });
     expect(compactionLine({ status: "paused", interrupted: false })).toEqual({ text: "Context compaction · paused", tone: "quiet" });
+  });
+});
+
+describe("notices (#100)", () => {
+  it("a notice is its own block where it arrived", () => {
+    const state = [
+      { kind: "sessionCreated", session: { id: S, patchbayAgentId: "a" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" } } as AgentViewEvent,
+      { kind: "agentTextDelta", patchbaySessionId: S, blockId: "text-1", text: "answer" } as AgentViewEvent,
+      { kind: "noticeAppended", patchbaySessionId: S, blockId: "notice-1", severity: "warning", title: "Model fallback", description: null } as AgentViewEvent,
+    ].reduce(reduceAgentView, initialAgentViewState);
+    expect(state.transcripts[S]!.map((b) => b.kind)).toEqual(["text", "notice"]);
+    expect(state.transcripts[S]![1]).toEqual({ kind: "notice", id: "notice-1", severity: "warning", title: "Model fallback", description: null });
+  });
+
+  it("a warning and an error read as verdicts; info and an open hint stay quiet", () => {
+    expect(noticeLook("warning")).toEqual({ icon: "warning", tone: "warn" });
+    expect(noticeLook("error")).toEqual({ icon: "error", tone: "err" });
+    expect(noticeLook("info")).toEqual({ icon: "info", tone: "quiet" });
+    expect(noticeLook("debug")).toEqual({ icon: "info", tone: "quiet" });
   });
 });
 

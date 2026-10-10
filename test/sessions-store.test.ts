@@ -912,6 +912,31 @@ describe("SessionsStore", () => {
     await h.pool.stop("sm5c" as PatchbayAgentId);
   });
 
+  it("a notice sits between the prose it interrupts, and a reload doesn't bring it back — it was never history (#100)", async () => {
+    const h = harness();
+    await h.pool.connect(
+      spec(
+        {
+          declare: { loadSession: true },
+          turn: [
+            { type: "chunk", text: "before " },
+            { type: "update", update: { sessionUpdate: "notice", severity: "warning", title: "Model fallback", description: "Using a smaller model" } },
+            { type: "chunk", text: "after" },
+          ],
+        },
+        "sm5n",
+      ),
+    );
+    const patchbaySessionId = await h.sessions.createSession("sm5n" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "go" });
+    const live = h.state().transcripts[patchbaySessionId]!;
+    expect(live.map((b) => b.kind)).toEqual(["user", "text", "notice", "text", "turnEnd"]);
+    expect(live[2]).toMatchObject({ severity: "warning", title: "Model fallback", description: "Using a smaller model" });
+    await h.gates.reload(patchbaySessionId);
+    expect(h.state().transcripts[patchbaySessionId]!.some((b) => b.kind === "notice")).toBe(false);
+    await h.pool.stop("sm5n" as PatchbayAgentId);
+  });
+
   it("a live user_message_chunk echo never duplicates the sent prompt", async () => {
     // Some agents echo the in-flight prompt back (slash-command expansion);
     // the turn already appended the user block, so the echo must drop.

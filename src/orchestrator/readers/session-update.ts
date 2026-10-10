@@ -36,6 +36,9 @@ export type SessionUpdateFact =
   | { kind: "compaction"; compactionId: string; status: string; summary?: readonly ContentFact[] | null; error?: string | null }
   /** One content block appended to a compaction's summary. */
   | { kind: "compactionChunk"; compactionId: string; content: ContentFact }
+  /** A notice: the agent telling the user something outside its answer.
+   * Plain text; a missing or null description is none. */
+  | { kind: "notice"; severity: string; title: string; description?: string }
   /** A kind no surface renders yet: its name and payload, shown raw. */
   | { kind: "carried"; updateKind: string; payload: unknown };
 
@@ -91,11 +94,12 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
       };
     case "compaction_summary_chunk":
       return { kind: "compactionChunk", compactionId: update.compactionId, content: readContent(update.content) };
+    case "notice":
+      return { kind: "notice", severity: update.severity, title: update.title, ...present("description", update.description) };
     // Each of these sits behind a client capability patchbay doesn't
     // declare — an agent that sends one anyway is shown, not silenced.
     case "plan_update":
     case "plan_removed":
-    case "notice":
     case "subagent_update":
     case "session_message":
     case "session_message_chunk": {

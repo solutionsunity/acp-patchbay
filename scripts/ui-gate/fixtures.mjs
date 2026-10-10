@@ -45,7 +45,12 @@ export const chatTranscript = [
     parts: [{ kind: "text", text: "<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<result>Agent finished.</result>\n</task-notification>" }],
   },
   // an update kind with no surface yet, shown as the agent sent it
-  { kind: "carried", id: "car1", updateKind: "notice", payload: '{\n  "severity": "warning",\n  "title": "Rate limit near"\n}' },
+  { kind: "carried", id: "car1", updateKind: "subagent_update", payload: '{\n  "sessionId": "child-1",\n  "title": "Explore"\n}' },
+  // notices from the agent: a line each where it arrived, set apart from
+  // the answer, severity in its color
+  { kind: "notice", id: "ntc1", severity: "warning", title: "Model fallback", description: "Opus is overloaded; this turn uses Sonnet." },
+  { kind: "notice", id: "ntc2", severity: "info", title: "Fast mode turned off", description: null },
+  { kind: "notice", id: "ntc3", severity: "error", title: "Hook failed", description: "pre-commit exited with code 1" },
   // a context compaction: a rule across the transcript, its summary one
   // click away; a failed one says why beneath its rule
   { kind: "compaction", id: "compaction-c1", status: "completed", summary: [{ kind: "text", text: "Kept: the **auth** refactor plan and the failing test list." }], error: null, interrupted: false },

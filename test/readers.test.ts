@@ -113,9 +113,19 @@ describe("readSessionUpdate", () => {
 
   it("a kind with no surface is carried — its name and payload — and noted", () => {
     const said = vi.fn();
-    const fact = readSessionUpdate({ sessionUpdate: "notice", severity: "info", title: "Heads up" }, said);
-    expect(fact).toEqual({ kind: "carried", updateKind: "notice", payload: { severity: "info", title: "Heads up" } });
-    expect(said).toHaveBeenCalledWith("notice has no surface yet — shown as the agent sent it");
+    const fact = readSessionUpdate({ sessionUpdate: "subagent_update", sessionId: "child" }, said);
+    expect(fact).toEqual({ kind: "carried", updateKind: "subagent_update", payload: { sessionId: "child" } });
+    expect(said).toHaveBeenCalledWith("subagent_update has no surface yet — shown as the agent sent it");
+  });
+
+  it("a notice is its severity hint, title and description — a null description is none", () => {
+    expect(readSessionUpdate({ sessionUpdate: "notice", severity: "warning", title: "Model fallback", description: "Using a smaller model" }, note)).toEqual({
+      kind: "notice",
+      severity: "warning",
+      title: "Model fallback",
+      description: "Using a smaller model",
+    });
+    expect(readSessionUpdate({ sessionUpdate: "notice", severity: "info", title: "Heads up", description: null }, note)).toEqual({ kind: "notice", severity: "info", title: "Heads up" });
   });
 
   it("a usage update without a cost says nothing about the cost", () => {
