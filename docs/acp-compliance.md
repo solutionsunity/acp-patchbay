@@ -2,8 +2,8 @@
 
 Facts as checked **2026-07-12** against the pinned wire surface of
 `@agentclientprotocol/sdk` **1.2.1** (ground truth for method names and type unions),
-with the type unions and stability markers (§9, §10, §19) re-checked **2026-09-23**
-against **1.5.0**
+with the type unions and stability markers (§9, §10, §19) re-checked **2026-10-10**
+against **1.8.0** (spec schema 1.25.0)
 and https://agentclientprotocol.com/protocol/v1 (ground truth for normative
 MUST/SHOULD/MAY language). Patchbay is a **Client**: compliance means (a) every
 client-side duty is met, and (b) every agent-side surface the protocol lets a client
@@ -138,7 +138,7 @@ against this project's own honesty rules, which bind harder than the spec here.
 
 ## 9. Session updates — the full union
 
-SDK 1.5.0 `sessionUpdate` union (16 kinds), read by `readers/session-update.ts` (an exhaustive switch: every kind read or carried) and consumed by `sessions-store.ts:handleUpdate` (title and knobs) and `session-stream.ts:apply` (the transcript):
+SDK 1.8.0 `sessionUpdate` union (19 kinds), read by `readers/session-update.ts` (an exhaustive switch: every kind read or carried) and consumed by `sessions-store.ts:handleUpdate` (title and knobs) and `session-stream.ts:apply` (the transcript):
 
 | Kind | Verdict | Notes |
 |---|---|---|
@@ -148,7 +148,8 @@ SDK 1.5.0 `sessionUpdate` union (16 kinds), read by `readers/session-update.ts` 
 | `tool_call` / `tool_call_update` | ✅ | See §10. |
 | `plan` | ✅ | Whole-replace per spec ("Client MUST replace the current plan completely") — `planUpdated` swaps the pinned strip snapshot. |
 | `plan_update` / `plan_removed` | ⛔ | UNSTABLE as of 1.5.0 ("not part of the spec yet") and modeling a *different* plan system than the stable whole-replace `plan`: multi-plan (`PlanId`-keyed), three content forms. Gated behind a client capability patchbay does not declare, so no conforming agent sends them; the stable `plan` already covers the feature. An agent that sends one anyway is shown as sent — its kind on a dim transcript line, its payload a click away — and noted in Output, never dropped. Watch each SDK bump (the exhaustive reader switch forces the look); adopt when it lands in the published spec — contribution upstream is an option if the shape stalls. |
-| `notice` / `compaction_update` / `compaction_summary_chunk` | ⛔ | UNSTABLE as of 1.5.0, new since 1.2.1 (session-notices and compaction RFDs). Each is gated behind a client session capability (`notices`, `compaction`) patchbay does not declare, so no conforming agent sends them; one sent anyway is shown as sent and noted, like `plan_update`. Revisit when they land in the published spec. |
+| `notice` / `compaction_update` / `compaction_summary_chunk` | ⛔ | Stable as of 1.8.0 (session-notices and compaction RFDs; UNSTABLE through 1.7.0). Each is gated behind a client session capability (`notices`, `compaction`) patchbay does not declare, so no conforming agent sends them; one sent anyway is shown as sent and noted, like `plan_update`. Declining rests on the missing surface alone: declaring a capability promises to present what it admits, and patchbay has no surface for live notices or compaction entities. Instability, the earlier ground, no longer holds. |
+| `subagent_update` / `session_message` / `session_message_chunk` | ⛔ | UNSTABLE, new in 1.8.0: child sessions an agent exposes as restricted ACP sessions, their state, and messages addressed between sessions. Gated behind the client capability `subagents`, which patchbay does not declare; one sent anyway is shown as sent and noted, like `plan_update`. The surface a declaration would commit patchbay to is #60's to decide. |
 | `available_commands_update` | ✅ | Name/description/input-hint all consumed; the hint shows in the composer's slash menu. |
 | `current_mode_update` | ✅ | Modes surface only; config surface deliberately owns its own confirmations (knobs.ts normalizer — spec forbids category as a correctness key). |
 | `config_option_update` | ✅ | Spec: notification carries complete state — consumed as a whole-replace. |
@@ -158,7 +159,7 @@ SDK 1.5.0 `sessionUpdate` union (16 kinds), read by `readers/session-update.ts` 
 
 ## 10. Tool calls
 
-`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.5.0). The
+`ToolCallContent` union: `content` | `diff` | `terminal` (re-checked at 1.8.0). The
 optional `ToolCall.name` (programmatic tool name, stabilized 2026-09-17) rides the
 block and shows as the card icon's tooltip: the card names the call by its
 `title`, which every agent sends.
@@ -255,10 +256,10 @@ The per-command input hint rides through to the slash menu.
 
 ## 19. Unstable SDK surface — adoption stances
 
-Stability markers as of SDK **1.5.0**. Stance: adopt only what has a proven consumer,
+Stability markers as of SDK **1.8.0**. Stance: adopt only what has a proven consumer,
 always offered on what the agent declares, never silently.
 
-| Surface | 1.5.0 marker | Stance |
+| Surface | 1.8.0 marker | Stance |
 |---|---|---|
 | `session/resume` | stable | **Adopted** — real agents declare it; capability-gated and used-tracked. |
 | `session/fork` | UNSTABLE (the SDK method is still `unstable_forkSession`) | **Adopted** — the session menu's Fork, offered where declared. |
@@ -266,7 +267,8 @@ always offered on what the agent declares, never silently.
 | `session.configOptions` client capability | stable | **Declared** (§2, §16). |
 | `session_info_update`, `usage_update` | stable | **Adopted** — purely additive notifications with visible value. |
 | Elicitation (form and url modes, `elicitation/create` + `elicitation/complete`) | stable (spec 2026-07-24; SDK 1.4.0) | **Adopted** (decided 2026-09-23) — **form** mode declared and wired: the question renders as a chat card naming the agent, answers are checked against the schema's limits before Send, and Decline and Cancel reach the agent as themselves; a schema with a field patchbay cannot present is answered `cancel`, never guessed at — no user saw it, and `decline` is the user's own no (decided 2026-10-07, superseding a decline). **url** mode declared and wired: the card shows the full address and its host before consent, marks punycode hosts, a user name before the host, bare IP hosts and unencrypted non-loopback links, and opens nothing until the user clicks Open — then in the system browser, outside the editor and the model's reach; only `http(s)` addresses are ever opened (anything else is declined). `elicitation/complete` settles the card as completed, matched per agent connection in whichever order it and its request (or the agent's withdrawal) arrive — the SDK dispatches incoming messages concurrently, so a notice can overtake its request; a repeat for an already-completed id is ignored. An agent withdrawing a request (`$/cancel_request`) settles its card as withdrawn and gets `-32800`. A mode patchbay never declared gets `-32602`. **Request-scoped** asks (`requestId`, no session) are **adopted** (2026-10-07, #81, superseding the 2026-09-24 cancel): codex-acp (2.1.x; read in source at 2.1.2-preview.1) sends its ChatGPT device-code login page this way during `authenticate`, offered only to clients declaring url mode — refused, that login always failed. `readers/elicitation.ts` reads the scope; the agent owns the ask (`asks-store.ts`), its card shows on the agent's card in Settings, where the login was started, and stays while it waits on the user or on the page the user opened; the agent's connection ending cancels it. |
-| Session notices, context compaction | UNSTABLE (new since 1.2.1) | **Declined** (§9). |
+| Session notices, context compaction | stable (since 1.8.0; new in 1.2.1) | **Declined** (§9). |
+| Subagents (`subagent_update`, `session_message`, `session_message_chunk`; the `subagents` client capability) | UNSTABLE (new in 1.8.0) | **Declined** (§9). |
 | `plan_update` / `plan_removed` | UNSTABLE | **Declined** (§9). |
 | Providers config (`ProviderId`), NES (`NesSuggestionId`), position encoding | UNSTABLE | **Declined** — no consumer in patchbay's feature set; re-evaluate per feature, not per SDK release. A `models` root field observed from auggie on new/load responses is outside even this SDK's schema — an agent-side preview surface, nothing to consume (the Auggie dossier). |
 

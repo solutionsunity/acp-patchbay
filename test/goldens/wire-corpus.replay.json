@@ -265,13 +265,31 @@
       "payload": "{\n  \"compactionId\": \"c-1\",\n  \"content\": {\n    \"text\": \"summary\",\n    \"type\": \"text\"\n  }\n}"
     },
     {
-      "kind": "text",
+      "kind": "carried",
       "id": "<id-26>",
+      "updateKind": "subagent_update",
+      "payload": "{\n  \"sessionId\": \"child-1\",\n  \"title\": \"Explore\",\n  \"state\": {\n    \"state\": \"running\"\n  }\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-27>",
+      "updateKind": "session_message",
+      "payload": "{\n  \"messageId\": \"sm-1\",\n  \"senderSessionId\": \"child-1\",\n  \"content\": [\n    {\n      \"text\": \"found it\",\n      \"type\": \"text\"\n    }\n  ]\n}"
+    },
+    {
+      "kind": "carried",
+      "id": "<id-28>",
+      "updateKind": "session_message_chunk",
+      "payload": "{\n  \"messageId\": \"sm-1\",\n  \"content\": {\n    \"text\": \"found it\",\n    \"type\": \"text\"\n  }\n}"
+    },
+    {
+      "kind": "text",
+      "id": "<id-29>",
       "text": "Done."
     },
     {
       "kind": "turnEnd",
-      "id": "<id-27>",
+      "id": "<id-30>",
       "startedAt": null,
       "endedAt": null,
       "stopReason": null,

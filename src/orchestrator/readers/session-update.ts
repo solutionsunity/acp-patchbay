@@ -81,7 +81,10 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
     case "plan_removed":
     case "notice":
     case "compaction_update":
-    case "compaction_summary_chunk": {
+    case "compaction_summary_chunk":
+    case "subagent_update":
+    case "session_message":
+    case "session_message_chunk": {
       const { sessionUpdate, ...payload } = update;
       note(`${sessionUpdate} has no surface yet — shown as the agent sent it`);
       return { kind: "carried", updateKind: sessionUpdate, payload };

@@ -177,6 +177,9 @@ const CORPUS: SessionUpdate[] = [
   { sessionUpdate: "notice", severity: "warning", title: "Rate limit near", description: "80% used" },
   { sessionUpdate: "compaction_update", compactionId: "c-1", status: "completed" },
   { sessionUpdate: "compaction_summary_chunk", compactionId: "c-1", content: { type: "text", text: "summary" } },
+  { sessionUpdate: "subagent_update", sessionId: "child-1", title: "Explore", state: { state: "running" } },
+  { sessionUpdate: "session_message", messageId: "sm-1", senderSessionId: "child-1", content: [{ type: "text", text: "found it" }] },
+  { sessionUpdate: "session_message_chunk", messageId: "sm-1", content: { type: "text", text: "found it" } },
   // the closing words
   { sessionUpdate: "agent_message_chunk", messageId: "m-3", content: { type: "text", text: "Done." } },
 ];
