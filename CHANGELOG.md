@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.86.0 — 2026-10-10
+
+A context compaction shows where it happened (#101) and an agent's notices
+stand outside its answer (#100), on ACP SDK 1.8.0 (#99); every release now
+reaches the Marketplace on its own too.
 
 - **A context compaction shows where it happened.** When an agent
   summarizes older conversation to free room, the transcript now carries a
