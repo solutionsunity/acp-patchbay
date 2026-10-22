@@ -9,7 +9,7 @@
 // dropped without a word.
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { AvailableCommand, PlanEntry, PlanUsageInfo } from "../../shared/protocol";
-import { planUsageOf } from "../meta";
+import { normalizeOpenCodeUsage, planUsageOf } from "../meta";
 import { present, readContent, type ContentFact } from "./content";
 import type { Note } from "./notes";
 import { readToolCall, readToolCallAnnounced, type ToolCallFact } from "./tool-call";
@@ -69,12 +69,25 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
         })),
       };
     case "usage_update": {
+      const customUsage = normalizeOpenCodeUsage(
+        {
+          sessionId: (update as { sessionId?: string }).sessionId,
+          usage: (update as { usage?: unknown }).usage,
+          cost: (update as { cost?: unknown }).cost,
+        },
+        200_000,
+      );
       const plan = planUsageOf(update._meta);
-      return {
-        kind: "usage",
+      const usage = customUsage ?? {
         used: update.used,
         size: update.size,
-        ...(update.cost != null ? { cost: { amount: update.cost.amount, currency: update.cost.currency } } : {}),
+      };
+      return {
+        kind: "usage",
+        used: usage.used,
+        size: usage.size,
+        ...(usage.cost !== undefined ? { cost: usage.cost } : {}),
+        ...(update.cost != null && customUsage === null ? { cost: { amount: update.cost.amount, currency: update.cost.currency } } : {}),
         ...(plan !== null ? { plan } : {}),
       };
     }

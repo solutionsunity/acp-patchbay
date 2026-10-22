@@ -21,7 +21,7 @@
 // effects stay at the chokepoints that own each site (pool.ts captures
 // auth-method recipes, the orchestrator runs them).
 import { z } from "zod";
-import type { PlanUsageInfo } from "../shared/protocol";
+import type { PlanUsageInfo, UsageInfo } from "../shared/protocol";
 
 /** The Zed-ecosystem terminal-auth convention (not in the ACP v1 stable
  * schema — see the authMethod entry below): an auth method carrying a
@@ -70,6 +70,52 @@ export interface AgentTerminalReading {
   terminalId: string;
   output?: string;
   exit?: { exitCode: number | null; signal: string | null };
+}
+
+/** OpenCode's usage payload format is not part of the ACP v1 schema, but some
+ * agents send it alongside `session/update`'s `usage` information and patchbay
+ * must reduce it to the neutral `UsageInfo` shape before surfacing it. */
+export type OpenCodeUsagePayload = {
+  sessionId?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    context_window_tokens?: number;
+    max_tokens?: number;
+  };
+  cost?: number | { amount?: number; currency?: string };
+};
+
+export function normalizeOpenCodeUsage(
+  payload: OpenCodeUsagePayload,
+  fallbackContextWindow = 200_000,
+): UsageInfo | null {
+  const usage = payload.usage ?? {};
+
+  const totalValue =
+    typeof usage.total_tokens === "number"
+      ? usage.total_tokens
+      : Number(usage.prompt_tokens ?? 0) + Number(usage.completion_tokens ?? 0);
+  if (!Number.isFinite(totalValue) || totalValue < 0) return null;
+
+  const size =
+    typeof usage.context_window_tokens === "number"
+      ? usage.context_window_tokens
+      : typeof usage.max_tokens === "number"
+        ? usage.max_tokens
+        : fallbackContextWindow;
+
+  const normalized: UsageInfo = { used: totalValue, size };
+  const cost = payload.cost;
+  if (typeof cost === "number") {
+    normalized.cost = { amount: Number(cost), currency: "USD" };
+  } else if (cost != null && typeof cost.amount === "number") {
+    normalized.cost = { amount: Number(cost.amount), currency: cost.currency ?? "USD" };
+  }
+  return normalized;
 }
 
 /** Where in the protocol a `_meta` blob may carry an extension patchbay
