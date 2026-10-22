@@ -58,10 +58,46 @@ function Root<S>({ channel, App }: { channel: ViewChannel<S>; App: ComponentType
   );
 }
 
+/** Where focus lands when a press hits content that can't take it: the
+ * scroller under the press, else the container — never the body. VS Code's
+ * desktop host runs Copy in the page, and when the body holds focus it first
+ * refocuses the element that last held it; when that is a text field — the
+ * composer, a settings input — focusing it moves the selection into it, and
+ * the selection copies as nothing. A scroller rather than always the
+ * container, because the keyboard scrolls the focused element's scroll
+ * chain: a code block pressed keeps its arrow keys, the transcript its Page
+ * keys, as they had while the body held focus. The scroller is made
+ * focusable before the press lands, so the browser's own focus step picks
+ * it; tabIndex -1 keeps it out of the Tab order, and `data-press-focus`
+ * keeps it ringless (theme.css). */
+function keepFocusOffBody(container: HTMLElement): void {
+  const pressFocusable = (el: Element) => {
+    el.setAttribute("tabindex", "-1");
+    el.setAttribute("data-press-focus", "");
+  };
+  pressFocusable(container);
+  // The nearest of the two up from the press decides: something that takes
+  // focus itself (a control, an editor, a scroller already made focusable)
+  // keeps the browser's choice; a scroller met first becomes the choice.
+  container.addEventListener(
+    "mousedown",
+    (e) => {
+      for (let el = e.target instanceof Element ? e.target : null; el !== null && el !== container; el = el.parentElement) {
+        const html = el as HTMLElement;
+        if (el.hasAttribute("tabindex") || html.tabIndex >= 0 || html.isContentEditable) return;
+        const { overflowX, overflowY } = getComputedStyle(el);
+        if (/auto|scroll/.test(overflowX + overflowY)) return pressFocusable(el);
+      }
+    },
+    true,
+  );
+}
+
 export function mount<S>(
   channel: ViewChannel<S>,
   App: ComponentType<{ state: S }>,
-  container: Element,
+  container: HTMLElement,
 ): void {
+  keepFocusOffBody(container);
   createRoot(container).render(<Root channel={channel} App={App} />);
 }

@@ -179,7 +179,7 @@ jobs:
       # uploaded by hand, from failing the job.
       - name: Publish to the Marketplace
         run: |
-          npx --yes @vscode/vsce@3.9.2 verify-pat SolutionsUnity --azure-credential
-          npx --yes @vscode/vsce@3.9.2 publish --azure-credential \
+          npx --yes @vscode/vsce@4.0.0 verify-pat SolutionsUnity --azure-credential
+          npx --yes @vscode/vsce@4.0.0 publish --azure-credential \
             --packagePath "acp-patchbay-${{ needs.release.outputs.version }}.vsix" \
             --skip-duplicate ${{ needs.release.outputs.prerelease == 'true' && '--pre-release' || '' }}

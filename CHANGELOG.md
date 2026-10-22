@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.88.2 — 2026-10-21
+
+Security updates to the tools that build and test Patchbay; nothing you
+run changes.
+
+- **The build and test toolchain is past its security advisories.** The
+  packages flagged — hono, vite, markdown-it and braces — were never in
+  the extension you install; they sat in the tools that package and test
+  it, now updated past each advisory. The one change inside the
+  extension is its schema-validation library, zod, moving from 4.4 to
+  4.6.
+
+## 0.88.1 — 2026-10-21
+
+One fix: text you select copies again — in the chat, its error pages and
+Settings (#118).
+
+- **Copying selected text copies it.** Text you selected — in the chat, on
+  its error pages, in Settings — copied as nothing, by Ctrl+C or
+  right-click › Copy alike, and the cursor jumped into the prompt box or
+  the last field you typed in. Before copying, VS Code puts focus back
+  where it last was, and putting it in a text field cleared the
+  selection. A press anywhere now keeps focus where you pressed, so what
+  you selected is what you copy — and the keys that scroll what you
+  pressed still scroll it. (#118)
+
 ## 0.88.0 — 2026-10-17
 
 Permissions, reworked: every command a line runs is judged, with word rules and

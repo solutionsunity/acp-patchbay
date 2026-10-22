@@ -146,6 +146,13 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Focus a press gave to what can't otherwise take it (mount.tsx) — the
+ * container, or the scroller under the press. Never a tab stop, so it draws
+ * no ring, even when a keystroke later puts focus back there. */
+[data-press-focus]:focus {
+  outline: none;
+}
+
 /* Unlayered on purpose: must outrank the `text-primary` utility Streamdown
  * puts on links. `primary` maps to VS Code's *button* background — right
  * for Buttons, wrong for prose links, which follow the theme's own link

@@ -50,6 +50,46 @@ const settled = (p) =>
     { timeout: 3000 },
   );
 
+/** Drag-selects across `locator` with the mouse, then copies the way VS
+ * Code's desktop webview host does — the keystroke never copies natively:
+ * the host gets a Copy back and, when the page's focused element is the
+ * body, first refocuses the element that last held focus, then runs
+ * execCommand('copy'). Returns the text the copy carried. */
+async function hostCopy(p, locator) {
+  // The drag needs the box where it will be: offscreen rows lay out as
+  // they scroll in, and a late mermaid render moves what follows it — so
+  // measure until two frames agree.
+  await locator.scrollIntoViewIfNeeded();
+  await settled(p);
+  let box = await locator.boundingBox();
+  for (let i = 0; i < 20; i++) {
+    await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const again = await locator.boundingBox();
+    if (again.x === box.x && again.y === box.y && again.width === box.width) break;
+    box = again;
+  }
+  await p.mouse.move(box.x + 2, box.y + box.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await p.mouse.up();
+  return p.evaluate(() => {
+    let text = null;
+    const grab = (e) => {
+      text = window.getSelection().toString();
+      e.preventDefault();
+    };
+    document.addEventListener("copy", grab, { once: true });
+    const active = document.activeElement;
+    if ((active === document.body || active === document.documentElement) && window.__lastFocused?.isConnected) {
+      window.__lastFocused.focus({ preventScroll: true });
+    }
+    document.execCommand("copy");
+    document.removeEventListener("copy", grab);
+    window.getSelection().removeAllRanges();
+    return text;
+  });
+}
+
 async function page(browser, themeName, { width, height }) {
   const p = await browser.newPage({ viewport: { width, height } });
   p.on("pageerror", (e) => {
@@ -88,6 +128,13 @@ async function page(browser, themeName, { width, height }) {
   await p.evaluate(`
     let rev = 1;
     window.__actions = [];
+    // VS Code's desktop host remembers the page's last focused element
+    // (anything but the body) — hostCopy below refocuses it.
+    window.__lastFocused = null;
+    window.addEventListener("focusin", () => {
+      const el = document.activeElement;
+      if (el && el !== document.body && el !== document.documentElement) window.__lastFocused = el;
+    });
     window.__patch = (events) => window.postMessage({ kind: "patch", rev: ++rev, events }, "*");
     window.acquireVsCodeApi = () => ({
       postMessage: (msg) => {
@@ -286,6 +333,29 @@ for (const theme of Object.keys(THEMES)) {
   const userTokens = await p.$$eval(".msg-user .prompt-token", (els) => els.map((el) => el.textContent.trim()));
   check(`[${theme}] user bubble renders the mention part as a token`, userTokens.includes("@api.ts"));
   check(`[${theme}] user bubble renders the attachment part as a chip`, userTokens.some((t) => t.includes("notes.md")));
+  // Copy from the transcript once the composer has held focus, and the
+  // keyboard the transcript had while the body held focus: a press focuses
+  // the scroller under it — the code block pressed, else the transcript.
+  await p.locator(".composer [contenteditable=true]").click();
+  const copied = await hostCopy(p, p.locator(".msg-agent p", { hasText: "stay currency" }).first());
+  check(`[${theme}] a transcript selection survives the host's copy (${JSON.stringify(copied?.slice(0, 24))})`, copied?.includes("stay currency") === true);
+  const focused = await p.evaluate(() => {
+    const el = document.activeElement;
+    return { chat: el?.classList.contains("chat") === true, ring: el === null ? "" : getComputedStyle(el).outlineStyle };
+  });
+  check(`[${theme}] a press in the transcript focuses it, with no ring (${focused.ring})`, focused.chat && focused.ring === "none");
+  const pageDown = await p.evaluate(() => {
+    const chat = document.querySelector(".chat");
+    chat.scrollTop = 0;
+    return chat.scrollHeight > chat.clientHeight;
+  });
+  await p.keyboard.press("PageDown");
+  await p.waitForFunction(() => document.querySelector(".chat").scrollTop > 0, null, { timeout: 2000 }).catch(() => {});
+  check(`[${theme}] the transcript keeps its Page keys`, pageDown && (await p.evaluate(() => document.querySelector(".chat").scrollTop > 0)));
+  const fence = p.locator('.msg-agent pre:has-text("const pattern")').first();
+  await fence.scrollIntoViewIfNeeded();
+  await fence.click();
+  check(`[${theme}] a press in a code block focuses the code block, so its arrow keys scroll it`, await fence.evaluate((el) => el === document.activeElement));
   // the sent bubble wears the theme's badge pair: every text in it — the
   // snapshot body opened under a sent selection included — reads on that
   // background, at the 4.5:1 normal text needs. Colors resolve through a
@@ -1797,6 +1867,11 @@ for (const theme of Object.keys(THEMES)) {
     "[commands] the list leads with what wins: deny, then ask, then allow",
     (await p.locator("[data-rule-list]").first().locator(".rule .verdict").first().innerText()) === "deny",
   );
+  await p.locator("[data-rule-list] .rule").nth(3).click();
+  check("[commands] a press in the rule list focuses the list", await p.locator("[data-rule-list]").first().evaluate((el) => el === document.activeElement));
+  await p.keyboard.press("PageDown");
+  await p.waitForFunction(() => document.querySelector("[data-rule-list]").scrollTop > 0, null, { timeout: 2000 }).catch(() => {});
+  check("[commands] the rule list keeps its Page keys", await p.locator("[data-rule-list]").first().evaluate((el) => el.scrollTop > 0));
   await p.screenshot({ path: `${OUT}/settings-commands-long.png` });
   await p.close();
 
@@ -1811,6 +1886,10 @@ for (const theme of Object.keys(THEMES)) {
     const line = `kubectl get pods --watch && rm -rf build && echo $(id) ${LONG}`;
     await p.fill('[aria-label="Command to test"]', line);
     await p.locator('input[placeholder="kubectl get *"]').first().fill("kubectl get *");
+    if (width === 900) {
+      const copied = await hostCopy(p, p.locator('h2:text("Command rules — this machine")'));
+      check(`[commands] text selected after typing in a field survives the host's copy (${JSON.stringify(copied)})`, /this machine/i.test(copied ?? ""));
+    }
     const asked = await p
       .waitForFunction(() => window.__actions.filter((a) => a.kind === "testCommand").find((a) => a.draft !== null), null, { timeout: 3000 })
       .then((h) => h.jsonValue())
