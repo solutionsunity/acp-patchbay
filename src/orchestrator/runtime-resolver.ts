@@ -485,7 +485,7 @@ export async function resolveBinaryLaunch(
       {
         ask: (check) => ({ kind: "agent", name: spec.name, version, archiveUrl, check }),
         phase: `downloading ${label}…`,
-        declined: `${label} download declined — Connect again to be asked again`,
+        declined: `${label} download declined — nothing was downloaded`,
         digest,
       },
     );
@@ -496,7 +496,7 @@ export async function resolveBinaryLaunch(
       archiveUrl,
       "its registry entry publishes",
       err,
-      "Connect again later, or add it as a custom command to run it regardless.",
+      "Try again later, or add it as a custom command to run it regardless.",
     );
   }
   deps.log.info(`${spec.patchbayAgentId}: binary ${version} ready (${installed.command})`);

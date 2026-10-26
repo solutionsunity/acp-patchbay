@@ -8,6 +8,12 @@
   Node and could not start — on Windows the task named a file that never
   existed (`C:\Users\<you>\npx`). A terminal login now runs from the same
   launch as the agent it signs in, managed runtime included. (#126)
+- **A failed upgrade keeps the version you had.** Upgrade saved the new
+  version before starting it, so one that couldn't install — a package
+  your registry policy holds back, say — left the agent pinned to a
+  version that wouldn't run. The new version now becomes the agent's only
+  once it has started; one that doesn't start leaves the agent on its
+  version, running again if it was, and says why. (#125)
 
 ## 0.88.3 — 2026-10-23
 

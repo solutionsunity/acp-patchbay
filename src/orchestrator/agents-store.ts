@@ -360,8 +360,14 @@ export class AgentsStore implements ConnectionOperations {
     if (this.deps.pool.get(patchbayAgentId)?.status === "running") return;
     const merged = await this.launch(patchbayAgentId);
     if (merged === undefined) throw new Error("no saved launch configuration — re-add it in Settings");
-    await this.deps.pool.connect(merged, { signal });
-    void this.warnOnPathDivergence(merged, this.config(patchbayAgentId)?.registrySource?.registryId ?? null);
+    await this.spawn(merged, signal);
+  }
+
+  /** A launch handed to the pool — done once the agent answered
+   * `initialize`. */
+  private async spawn(spec: LaunchSpec, signal?: AbortSignal): Promise<void> {
+    await this.deps.pool.connect(spec, { signal });
+    void this.warnOnPathDivergence(spec, this.config(spec.patchbayAgentId)?.registrySource?.registryId ?? null);
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
@@ -388,9 +394,14 @@ export class AgentsStore implements ConnectionOperations {
    * SecretStorage env merged — what the next spawn's launch phase starts
    * from. */
   private async launch(patchbayAgentId: PatchbayAgentId): Promise<LaunchSpec | undefined> {
-    const spec = this.spec(patchbayAgentId);
-    if (spec === undefined) return undefined;
-    return { ...spec, env: mergeEnv(spec.env, await this.deps.env.get(patchbayAgentId)) };
+    const config = this.config(patchbayAgentId);
+    return config === undefined ? undefined : this.launchOf(config);
+  }
+
+  /** A config's launch with its SecretStorage env merged — saved or not. */
+  private async launchOf(config: AgentConfig): Promise<LaunchSpec> {
+    const spec = this.specFromConfig(config);
+    return { ...spec, env: mergeEnv(spec.env, await this.deps.env.get(config.id)) };
   }
 
   /** Re-resolves the registry's current (possibly newer) pinned version and
@@ -402,23 +413,38 @@ export class AgentsStore implements ConnectionOperations {
    * nothing this platform can run, leaves it as it is. A running agent is
    * stopped only on `consent`, asked at that moment — the caller's
    * question, so it is never asked for an upgrade that can't happen.
-   * Stopped before the new pin is saved, the agent keeps its version. */
+   *
+   * The new version becomes the agent's only once it has started: it is
+   * launched unsaved, and saved once it answered `initialize`. One that
+   * doesn't start leaves the agent on the version it had — said once, with
+   * why, and running again if it was running before. Stopped before it
+   * started, the upgrade is cancelled: the version stays, nothing restarts. */
   async upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
     const config = this.config(patchbayAgentId);
     const launch = config === undefined ? null : await this.freshLaunch(config, "upgrade");
     if (config === undefined || launch === null) return;
-    if (this.deps.pool.get(patchbayAgentId)?.status === "running") {
+    const wasRunning = this.deps.pool.get(patchbayAgentId)?.status === "running";
+    if (wasRunning) {
       if (consent !== undefined && !(await consent())) return;
       await this.deps.pool.stop(patchbayAgentId);
     }
     signal?.throwIfAborted();
-    await this.saveUpgrade(config, launch.spec, launch.registrySource);
+    const upgraded = upgradedConfig(config, launch);
     try {
-      await this.connect(patchbayAgentId, signal);
-    } catch {
+      await this.spawn(await this.launchOf(upgraded), signal);
+    } catch (err) {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
+      if (signal?.aborted) return;
+      const from = config.registrySource?.pinnedVersion;
+      const to = upgraded.registrySource?.pinnedVersion;
+      this.hooks.warn(
+        `${config.name}: the upgrade to ${to} didn't start — ${err instanceof Error ? err.message : String(err)}. It stays on ${from}.`,
+      );
+      if (wasRunning) await this.connect(patchbayAgentId, signal).catch(() => {});
+      return;
     }
+    await this.saveUpgrade(config, upgraded);
   }
 
   /** An imported agent this machine downloads: its launch and pin
@@ -434,7 +460,7 @@ export class AgentsStore implements ConnectionOperations {
     const config = this.config(patchbayAgentId);
     const launch = config === undefined ? null : await this.freshLaunch(config, "import");
     if (config === undefined || launch === null) return false;
-    await this.saveUpgrade(config, launch.spec, launch.registrySource);
+    await this.saveUpgrade(config, upgradedConfig(config, launch));
     return true;
   }
 
@@ -875,15 +901,17 @@ export class AgentsStore implements ConnectionOperations {
   }
 
   /** Upgrade's save: the registry's new launch, pin and recipe replace the
-   * old ones; the agent's own facts — its name, env, auto-connect,
-   * defaults, the version that last answered — stay as they are. */
-  private async saveUpgrade(
-    config: AgentConfig,
-    spec: LaunchSpec,
-    registrySource: AgentConfig["registrySource"],
-  ): Promise<void> {
-    await this.deps.configs.upsert({ ...config, command: spec.command, args: [...spec.args], registrySource });
-    await this.noteEnvChange(config, registrySource);
+   * old ones on the agent as it stands now; its own facts — its name, env,
+   * auto-connect, defaults, the version that last answered — stay as they
+   * are. It bears only on the launch it was resolved from: a Save doesn't
+   * wait for an upgrade, so an agent whose launch was edited while the new
+   * version started keeps the edit — the newer word — and one removed
+   * meanwhile stays removed. */
+  private async saveUpgrade(from: AgentConfig, upgraded: AgentConfig): Promise<void> {
+    const now = this.config(from.id);
+    if (now === undefined || !sameLaunch(now, from)) return;
+    await this.deps.configs.upsert({ ...now, command: upgraded.command, args: upgraded.args, registrySource: upgraded.registrySource });
+    await this.noteEnvChange(now, upgraded.registrySource);
     await this.publishAll();
   }
 
@@ -1035,6 +1063,25 @@ export class AgentsStore implements ConnectionOperations {
         : spec.command;
     await this.loginViaTerminal(patchbayAgentId, { command, args: [...spec.args, ...typed.args], env }, signal);
   }
+}
+
+/** The agent as a re-resolve would leave it: the registry's launch, pin
+ * and recipe over its own facts. */
+function upgradedConfig(
+  config: AgentConfig,
+  launch: { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] },
+): AgentConfig {
+  return { ...config, command: launch.spec.command, args: [...launch.spec.args], registrySource: launch.registrySource };
+}
+
+/** Whether two configs launch the same thing: the same line from the same
+ * registry pin (or both custom). */
+function sameLaunch(a: AgentConfig, b: AgentConfig): boolean {
+  return (
+    sameCommandLine(a, b) &&
+    a.registrySource?.registryId === b.registrySource?.registryId &&
+    a.registrySource?.pinnedVersion === b.registrySource?.pinnedVersion
+  );
 }
 
 /** A registry binary's archive as the launch phase takes it: where it is

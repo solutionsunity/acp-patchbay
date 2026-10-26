@@ -39,7 +39,10 @@ deliverable.
   above the chat while one of its sessions is the one open. Nothing upgrades on its
   own, and an upgrade that would interrupt open conversations asks first —
   once: Upgrade again while one runs and it is the same upgrade, shown on
-  the chip as `upgrading to x.y.z…`.
+  the chip as `upgrading to x.y.z…`. The new version becomes the agent's only
+  once it has started: one that doesn't start leaves the agent on the version
+  it had — running again if it was — and says why; Stop cancels an upgrade
+  the same way.
 - Editing a registry agent's command makes it a custom agent: what was typed
   is what runs, and its upgrades are the user's from then on — the form
   says so before Save.

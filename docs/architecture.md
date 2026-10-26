@@ -375,7 +375,14 @@ flowchart TD
   path: it reads the registry and re-resolves the version like a first
   add — before anything stops, so a registry that no longer lists the agent leaves it
   running — and asks before a stop that would disconnect open
-  conversations. A registry agent whose command line the user edits
+  conversations. The new launch starts before it is saved, and is saved
+  only once the new version answered `initialize`: one that doesn't start
+  (an install the user's registry policy refuses, a crash) leaves the pin
+  as it was, says why, and reconnects the old version if it was running; a
+  Stop cancels it the same way, without the reconnect. A Save doesn't wait
+  behind an upgrade, so the upgrade's save bears only on the launch it was
+  resolved from — a launch edited while the new version started keeps the
+  edit. A registry agent whose command line the user edits
   leaves the registry for good: Save takes a line only when one was typed
   (a knob or toggle save never rewrites the command), and a changed line
   drops the link — no update is offered, no Upgrade writes the registry's

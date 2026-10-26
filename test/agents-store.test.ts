@@ -354,7 +354,8 @@ describe("agents store", () => {
     );
     serveRegistry({ id: "reg", version: "4.0.0" });
     await h.gates.upgrade("old" as PatchbayAgentId);
-    expect(h.agents.config("old" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("4.0.0");
+    // offline, 4.0.0 can't start — the version it tried is the fresh read's
+    expect(h.warnings()).toContainEqual(expect.stringContaining("the upgrade to 4.0.0 didn't start"));
   }, 120_000);
 
   it("Add and a re-resolve (Upgrade, import) keep the registry's recipe for the pinned version whole — npx package, args and env, or this platform's binary target", async () => {
@@ -530,30 +531,36 @@ describe("agents store", () => {
     expect(h.row("reg" as PatchbayAgentId)?.status).toBe("running");
   });
 
-  it("an Upgrade moves the pin in place and keeps the agent's own facts — its id, name, auto-connect and defaults", async () => {
-    // Offline, the launch fails — the pin moves all the same, and the
-    // failed connect shows on the row as a crash would.
+  // #125: the new pin was saved before the new version started, so one that
+  // couldn't install left the agent pinned to a version that won't run.
+  it("an Upgrade whose new version doesn't start leaves the agent on its version — stopped before, it stays down and says why (#125)", async () => {
+    // Offline, the new version's launch fails.
     const h = harness();
     await seedRegistry(h, { id: "reg", version: "2.0.0" });
-    await h.saveAgent(
-      fakeConfig("mine", {}, {
-        name: "Work profile",
-        env: OFFLINE,
-        autoConnect: true,
-        defaults: { model: "fast" },
-        registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" },
-      }),
-    );
+    const config = fakeConfig("mine", {}, {
+      env: OFFLINE,
+      registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" },
+    });
+    await h.saveAgent(config);
 
     await h.gates.upgrade("mine" as PatchbayAgentId);
     expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({
-      name: "Work profile",
-      autoConnect: true,
-      defaults: { options: { model: "fast" } },
-      registrySource: { registryId: "reg", pinnedVersion: "2.0.0" },
+      command: config.command,
+      args: config.args,
+      registrySource: { registryId: "reg", pinnedVersion: "1.0.0" },
     });
-    expect(h.deps.configs.list()).toHaveLength(1);
-    expect(h.row("mine" as PatchbayAgentId)?.status).toBe("crashed");
+    expect(h.row("mine" as PatchbayAgentId)).toMatchObject({ status: "crashed", update: { from: "1.0.0", to: "2.0.0" } });
+    expect(h.warnings()).toEqual([expect.stringMatching(/^Fake mine: the upgrade to 2\.0\.0 didn't start — .+\. It stays on 1\.0\.0\.$/)]);
+  }, 120_000);
+
+  it("an Upgrade whose new version doesn't start brings the version it had back up when it was running (#125)", async () => {
+    const h = harness();
+    await upgradable(h);
+    await h.gates.upgrade("reg" as PatchbayAgentId);
+    expect(h.agents.config("reg" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.row("reg" as PatchbayAgentId)?.status).toBe("running");
+    expect(h.warnings()).toEqual([expect.stringContaining("the upgrade to 2.0.0 didn't start")]);
+    await h.gates.stopAll();
   }, 120_000);
 });
 
@@ -690,6 +697,57 @@ describe("the gates", () => {
     expect(h.row("slow" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
     await h.gates.connect("slow" as PatchbayAgentId);
     expect(h.row("slow" as PatchbayAgentId)?.status).toBe("running");
+    await h.gates.stopAll();
+  }, 120_000);
+
+  /** A registry agent pinned at 0.9.0 whose registry now lists the fake
+   * agent's package at 1.0.0 — an Upgrade that downloads and starts. */
+  const upgradableTo100 = async (h: Harness, id: string, over: Partial<AgentConfigView> = {}) => {
+    await seedRegistry(h, { id: "patchbay-fake-agent", version: "1.0.0" });
+    const config = fakeConfig(id, {}, {
+      env: downloaded(id).env,
+      registrySource: { registryId: "patchbay-fake-agent", distributionKind: "npx", pinnedVersion: "0.9.0" },
+      ...over,
+    });
+    await h.saveAgent(config);
+    return config;
+  };
+
+  it("an Upgrade saves the new version once it has started, keeping the agent's own facts — its id, name, auto-connect and defaults (#125)", async () => {
+    const h = harness();
+    await upgradableTo100(h, "up", { name: "Work profile", autoConnect: true, defaults: { model: "fast" } });
+    await h.gates.upgrade("up" as PatchbayAgentId);
+    expect(h.agents.config("up" as PatchbayAgentId)).toMatchObject({
+      name: "Work profile",
+      autoConnect: true,
+      defaults: { options: { model: "fast" } },
+      command: "npx",
+      registrySource: { registryId: "patchbay-fake-agent", pinnedVersion: "1.0.0" },
+    });
+    expect(h.deps.configs.list()).toHaveLength(1);
+    expect(h.row("up" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
+    expect(h.warnings()).toEqual([]);
+    await h.gates.stopAll();
+  }, 120_000);
+
+  // A Save doesn't wait its turn behind an Upgrade: one landing while the new
+  // version downloads is the newer word.
+  it("a launch edited while an Upgrade starts the new version keeps the edit — the upgrade saves nothing over it (#125)", async () => {
+    const h = harness();
+    const config = await upgradableTo100(h, "raced");
+    const release = packages.hold("patchbay-fake-agent");
+    const fetched = packages.tarballFetches("patchbay-fake-agent");
+    const upgrade = h.gates.upgrade("raced" as PatchbayAgentId);
+    await downloading(fetched);
+
+    await h.agents.save(config, formatCommandLine(config.command, [...config.args, "--edited"]));
+    release();
+    await upgrade;
+    expect(h.agents.config("raced" as PatchbayAgentId)).toMatchObject({
+      command: config.command,
+      args: [...config.args, "--edited"],
+      registrySource: null,
+    });
     await h.gates.stopAll();
   }, 120_000);
 
