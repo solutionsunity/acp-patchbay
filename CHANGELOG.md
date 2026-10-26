@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Log in works without Node installed.** On a machine with no Node.js
+  of its own, an agent launched through `npx` connected on the Node
+  Patchbay downloads for it, but its terminal Log in ran without that
+  Node and could not start — on Windows the task named a file that never
+  existed (`C:\Users\<you>\npx`). A terminal login now runs from the same
+  launch as the agent it signs in, managed runtime included. (#126)
+
 ## 0.88.3 — 2026-10-23
 
 Three fixes: an edited registry agent runs the command you typed (#121),

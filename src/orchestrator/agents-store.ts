@@ -385,8 +385,8 @@ export class AgentsStore implements ConnectionOperations {
   }
 
   /** The agent's launch as configured, read now: the saved spec with its
-   * SecretStorage env merged — what a spawn runs, and the base a terminal
-   * login runs over. */
+   * SecretStorage env merged — what the next spawn's launch phase starts
+   * from. */
   private async launch(patchbayAgentId: PatchbayAgentId): Promise<LaunchSpec | undefined> {
     const spec = this.spec(patchbayAgentId);
     if (spec === undefined) return undefined;
@@ -639,21 +639,21 @@ export class AgentsStore implements ConnectionOperations {
       return;
     }
     const run = live?.initialize?.logins.get(methodId);
-    if (run?.via === "terminal") {
-      // the spec's terminal auth method: the agent's own launch at click
-      // time plus the method's args — `authenticate` is never called on
-      // it, so a login's success is always terminal-ran-plus-reprobe,
-      // never the RPC's word for it.
-      await this.typedLoginViaTerminal(patchbayAgentId, run.auth, signal);
+    if (live !== undefined && run?.via === "terminal") {
+      // the spec's terminal auth method: the agent's own launch plus the
+      // method's args — `authenticate` is never called on it, so a login's
+      // success is always terminal-ran-plus-reprobe, never the RPC's word
+      // for it.
+      await this.typedLoginViaTerminal(patchbayAgentId, live.spec, run.auth, signal);
       return;
     }
-    if (run?.via === "recipe") {
+    if (live !== undefined && run?.via === "recipe") {
       // terminal-recipe method: the agent's command as it wrote it, over
-      // the agent's launch env — the user's keys reach the login that
-      // writes the credentials the agent reads with them. `authenticate`
+      // the env the agent runs in — the user's keys reach the login that
+      // writes the credentials the agent reads with them, and a managed
+      // runtime's PATH reaches the shim the recipe names. `authenticate`
       // is never called on it either (meta.ts).
-      const launchEnv = (await this.launch(patchbayAgentId))?.env;
-      await this.loginViaTerminal(patchbayAgentId, { ...run.recipe, env: mergeEnv(launchEnv ?? {}, run.recipe.env) }, signal);
+      await this.loginViaTerminal(patchbayAgentId, { ...run.recipe, env: mergeEnv(live.spec.env, run.recipe.env) }, signal);
       return;
     }
     await this.deps.tracker.authenticate(patchbayAgentId, methodId);
@@ -1011,21 +1011,23 @@ export class AgentsStore implements ConnectionOperations {
     }
   }
 
-  /** The spec's terminal auth method: the wire pins the
-   * command to the agent's own spawn — the launch read fresh (a Settings
-   * edit applies here exactly as it would to the next spawn), the method's
-   * args APPENDED to the spawn args and its env layered over the spawn env. On Windows
-   * the command is absolutized the same way a spawn would be — a bare
-   * name would otherwise be resolved by the task engine's own PATH walk,
-   * which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
+  /** The spec's terminal auth method: the wire pins the command to the
+   * agent's own spawn — `spec` is the launch the running agent was spawned
+   * from, as its launch phase resolved it (a registry binary's cached path,
+   * a managed runtime's PATH; the configured launch has neither, and on a
+   * machine with no Node of its own its `npx` names nothing), the method's
+   * args APPENDED to the spawn args and its env layered over the spawn env.
+   * On Windows the command is absolutized the same way a spawn would be — a
+   * bare name would otherwise be resolved by the task engine's own PATH
+   * walk, which knows nothing of the planted-`npx.cmd` hazard spawn-resolve
    * guards, and it must not win here any more than it can at spawn;
    * not-found falls back to the bare name and lets the task report it. */
-  private async typedLoginViaTerminal(patchbayAgentId: PatchbayAgentId, typed: TerminalAuth, signal?: AbortSignal): Promise<void> {
-    const spec = await this.launch(patchbayAgentId);
-    if (spec === undefined) {
-      this.log.warn(`typed terminal login: no configured spec for ${patchbayAgentId}`);
-      return;
-    }
+  private async typedLoginViaTerminal(
+    patchbayAgentId: PatchbayAgentId,
+    spec: LaunchSpec,
+    typed: TerminalAuth,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const env = mergeEnv(spec.env, typed.env);
     const command =
       process.platform === "win32"

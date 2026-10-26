@@ -356,7 +356,9 @@ flowchart TD
   applied decision is PATH-prepending into that one agent's spawn env —
   the command is never rewritten, so every downstream spelling (warmup,
   Windows .cmd shim handling, the cache check) works unchanged, and nothing
-  is installed system-wide. Deliberate pairing with the data stance:
+  is installed system-wide. A terminal login runs from the launch the
+  running agent was spawned from, so it gets the same PATH: on a machine
+  with no Node, its `npx` exists only there. Deliberate pairing with the data stance:
   **runtime = ours when needed, state = always the agent's own** — the
   managed runtime changes which interpreter runs, never where the agent
   keeps sessions, auth, or config, so terminal and patchbay copies stay

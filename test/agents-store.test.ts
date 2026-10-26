@@ -6,8 +6,8 @@
 // queue — its holdings riding the row as busy — with Stop and Remove
 // ending whatever it holds.
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, mkdir, symlink, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FAKE_AGENT, fakeAgentPackage, fakeConfig } from "./support/fake-agent";
 import { npmRegistry, type LocalNpmRegistry } from "./support/npm-registry";
@@ -15,6 +15,7 @@ import { orchestratorHarness, type OrchestratorHarnessOptions } from "./support/
 import { fileTempDir, tempDir } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
 import { Cancelled } from "../src/orchestrator/queue";
+import { runtimeInstallSpec } from "../src/orchestrator/runtime-resolver";
 import { hostPlatformKey } from "../src/orchestrator/stores/acp-registry";
 import { formatCommandLine } from "../src/shared/command-line";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
@@ -689,6 +690,51 @@ describe("the gates", () => {
     expect(h.row("slow" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
     await h.gates.connect("slow" as PatchbayAgentId);
     expect(h.row("slow" as PatchbayAgentId)?.status).toBe("running");
+    await h.gates.stopAll();
+  }, 120_000);
+
+  // #126: on a machine with no Node of its own, the connect ran the agent on
+  // the managed runtime while its Log in ran the configured launch — whose
+  // `npx` names nothing there.
+  it("a terminal login runs in the env the agent was launched in — the managed runtime's PATH with it (#126)", async () => {
+    const handed: { command: string; args: string[]; env?: Record<string, string> }[] = [];
+    const h = harness({ ports: { runLoginTask: async (_name, recipe) => (handed.push(recipe), 0) } });
+    // The managed Node, already in the cache: this node and its npm in the
+    // slot the launch phase installs to, laid out as the archive lays them
+    // (`bin/` beside POSIX node, `.cmd` shims beside Windows node.exe), so
+    // nothing is downloaded.
+    const node = runtimeInstallSpec("node")!;
+    const managedBin = dirname(join(h.paths.globalStorage, "bin-cache", node.distribution, node.version, node.cmd));
+    await mkdir(managedBin, { recursive: true });
+    const win = process.platform === "win32";
+    const npmBin = join(dirname(process.execPath), win ? "" : "../lib", "node_modules/npm/bin");
+    if (win) {
+      await copyFile(process.execPath, join(managedBin, "node.exe"));
+      for (const tool of ["npx", "npm"]) {
+        await writeFile(join(managedBin, `${tool}.cmd`), `@"%~dp0node.exe" "${join(npmBin, `${tool}-cli.js`)}" %*\r\n`);
+      }
+    } else {
+      await symlink(process.execPath, join(managedBin, "node"));
+      for (const tool of ["npx", "npm"]) await symlink(join(npmBin, `${tool}-cli.js`), join(managedBin, tool));
+    }
+    // A system PATH with no Node on it — a shell still, as any machine has
+    // (npm runs a package's scripts through `sh`; Windows reaches cmd.exe by
+    // ComSpec).
+    const bare = await fileTempDir("patchbay-no-node-");
+    if (!win) await symlink("/bin/sh", join(bare, "sh"));
+    const config = downloaded("nonode", {
+      env: {
+        ...downloaded("nonode").env,
+        PATH: bare,
+        FAKE_AGENT_SCRIPT: JSON.stringify({ authMethods: [{ id: "login", name: "Login", type: "terminal", args: ["--login"] }] }),
+      },
+    });
+    await h.saveAgent(config);
+    await h.gates.connect("nonode" as PatchbayAgentId);
+    await h.gates.login("nonode" as PatchbayAgentId, "login");
+    expect(handed).toHaveLength(1);
+    expect(handed[0]).toMatchObject({ command: win ? join(managedBin, "npx.cmd") : "npx", args: [...config.args, "--login"] });
+    expect(handed[0]!.env?.PATH?.split(delimiter)).toEqual([managedBin, bare]);
     await h.gates.stopAll();
   }, 120_000);
 
