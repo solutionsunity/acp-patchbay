@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.88.4 — 2026-10-26
+
+Two fixes: Log in works on a machine without Node installed (#126), and a
+failed upgrade keeps the version you had (#125).
 
 - **Log in works without Node installed.** On a machine with no Node.js
   of its own, an agent launched through `npx` connected on the Node
