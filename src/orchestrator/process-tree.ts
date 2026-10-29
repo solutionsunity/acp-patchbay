@@ -1,21 +1,124 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// Tree-wide process control — house mechanism, no
-// dependency. Agents and brokered terminals spawn as process-group leaders
-// on POSIX (`detached`), so stopping one stops everything it shelled out to
-// — grandchildren included (an agent's own mcp-server/bridge children, a
-// terminal's test runner). Windows has no process groups: `taskkill /T`
-// walks the tree instead, and has no signal concept, so the graceful rung
-// collapses into the forced one there. vscode-free, like pool.ts, so all of
-// it is unit-testable against real spawned processes.
-import { type ChildProcess, execFile, type SpawnOptions } from "node:child_process";
+// The process door — every child process the extension host starts is
+// started here, and nowhere else: an agent, a brokered terminal, an MCP
+// server's probe, a short program run to its exit (a version check, a
+// package warm-up, an archive's extraction), and the reads and kills this
+// module itself runs. What decides the door is which process starts the
+// child, not whose code asks: a task VS Code runs (a terminal login) is
+// VS Code's own process, and what an agent spawns (its MCP servers, its
+// tools) is the agent's.
+//
+// Through the door a child is resolved Windows-safe against the env it
+// will run with (spawn-resolve.ts) and leads its own process tree. Agents,
+// terminals and probe servers spawn as process-group leaders on POSIX
+// (`detached`), so stopping one stops everything it shelled out to —
+// grandchildren included (an agent's own mcp-server/bridge children, a
+// terminal's test runner, a launcher's server). Windows has no process
+// groups: `taskkill /T` walks the tree instead, and has no signal concept,
+// so the graceful rung collapses into the forced one there. House
+// mechanism, no dependency; vscode-free, like pool.ts, so all of it is
+// unit-testable against real spawned processes.
+import { type ChildProcess, spawn, type SpawnOptions } from "node:child_process";
+import { resolveSpawn } from "./spawn-resolve";
 
 /** Spread into `spawn` options: POSIX children lead their own process
  * group (that's what makes `kill(-pid)` reach the whole tree). stdio stays
  * piped, so `detached` changes group membership only — nothing else. */
 export const treeSpawnOptions: Pick<SpawnOptions, "detached"> =
   process.platform === "win32" ? {} : { detached: true };
+
+export interface ChildOptions {
+  env: Readonly<Record<string, string | undefined>>;
+  cwd?: string;
+  stdio: ["pipe" | "ignore", "pipe" | "ignore", "pipe" | "ignore"];
+  /** No console window on Windows — for a program nobody watches. */
+  windowsHide?: boolean;
+  platform?: NodeJS.Platform;
+}
+
+/** Starts `command args` through the door: resolved like every launch, a
+ * tree leader. A command the resolver refuses never starts — its reason
+ * comes back instead. A start the system refuses throws or emits `error`,
+ * as Node's own spawn does, for the caller to say why where it is. */
+export function startChild(
+  command: string,
+  args: readonly string[],
+  opts: ChildOptions,
+): { child: ChildProcess } | { error: string } {
+  const launch = resolveSpawn(command, args, opts.env, opts.platform);
+  if (launch.error !== undefined) return { error: launch.error };
+  const child = spawn(launch.command, launch.args, {
+    env: opts.env as NodeJS.ProcessEnv,
+    cwd: opts.cwd,
+    stdio: opts.stdio,
+    shell: launch.shell,
+    windowsHide: opts.windowsHide,
+    ...treeSpawnOptions,
+  });
+  return { child };
+}
+
+export interface ExitAnswer {
+  /** null when the process died to a signal. */
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** A short-lived program run to its exit — `node --version`, `npm config
+ * get cache`, a launcher warming its package cache. Its exit is the answer,
+ * and no clock stands in for it: a slow answer (a scanner holding a
+ * first-touch binary, a cold disk, a slow link mid-download) is still the
+ * answer, and timing it out turns a working system into a "missing" one.
+ * What ends the wait early is a stop — the caller's signal — never a guess
+ * about speed. Answers once it has exited and its output has drained. Null
+ * when it can't run at all (unresolvable, or the spawn itself fails).
+ * Aborted, the whole tree is killed and the promise rejects with the
+ * signal's reason — never a made-up answer a caller might act on. */
+export function runToExit(
+  command: string,
+  args: readonly string[],
+  opts: {
+    env: Readonly<Record<string, string | undefined>>;
+    cwd?: string;
+    signal?: AbortSignal;
+    platform?: NodeJS.Platform;
+  },
+): Promise<ExitAnswer | null> {
+  const { signal } = opts;
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const started = startChild(command, args, { ...opts, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    if ("error" in started) return resolve(null);
+    const { child } = started;
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr?.on("data", (chunk: string) => (stderr += chunk));
+    // killTree, not child.kill: a .cmd shim rides cmd.exe on win32 and
+    // launchers fork node children everywhere — killing the direct child
+    // alone would leak the subtree.
+    const abort = () => {
+      killTree(child, "SIGKILL");
+      reject(signal!.reason);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    child.on("error", () => {
+      signal?.removeEventListener("abort", abort);
+      resolve(null);
+    });
+    // "close", not "exit": exit can beat the delivery of buffered output,
+    // reading a fast answer as empty. close waits for the streams to drain.
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
 
 /** Signals the tree of a process this host spawned. A pid is this host's
  * only while it holds the process — until its exit lands; after that the
@@ -40,7 +143,7 @@ export function killTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): vo
  * just read back as the one recorded. */
 function killPidTree(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
   if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(pid), "/T", "/F"], () => {});
+    void runToExit("taskkill", ["/pid", String(pid), "/T", "/F"], { env: process.env });
     return;
   }
   // Group already gone (or the leader never became one — spawn raced its
@@ -107,42 +210,37 @@ export async function commandOf(pid: number): Promise<string> {
  * many there are (on Windows each read is a PowerShell process — the cost
  * worth sharing). A pid that is gone, or whose line can't be read, is
  * absent. */
-export function commandsOf(pids: readonly number[]): Promise<Map<number, string>> {
+export async function commandsOf(pids: readonly number[]): Promise<Map<number, string>> {
   const lines = new Map<number, string>();
-  if (pids.length === 0) return Promise.resolve(lines);
-  return new Promise((resolve) => {
-    if (process.platform === "win32") {
-      const filter = pids.map((pid) => `ProcessId=${pid}`).join(" OR ");
-      execFile(
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          `ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, CommandLine)`,
-        ],
-        (_err, stdout) => {
-          try {
-            for (const row of JSON.parse(stdout) as { ProcessId: number; CommandLine: string | null }[]) {
-              const line = row.CommandLine?.trim() ?? "";
-              if (line !== "") lines.set(row.ProcessId, line);
-            }
-          } catch {
-            /* no answer — every pid reads as unreadable */
-          }
-          resolve(lines);
-        },
-      );
-      return;
-    }
-    // `ps` lists what it found and fails only when it found none.
-    execFile("ps", ["-o", "pid=,args=", "-p", pids.join(",")], (_err, stdout) => {
-      for (const row of stdout.split("\n")) {
-        const match = /^\s*(\d+)\s+(.*\S)/.exec(row);
-        if (match !== null) lines.set(Number(match[1]), match[2]!);
+  if (pids.length === 0) return lines;
+  if (process.platform === "win32") {
+    const filter = pids.map((pid) => `ProcessId=${pid}`).join(" OR ");
+    const answer = await runToExit(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, CommandLine)`,
+      ],
+      { env: process.env },
+    );
+    try {
+      for (const row of JSON.parse(answer?.stdout ?? "") as { ProcessId: number; CommandLine: string | null }[]) {
+        const line = row.CommandLine?.trim() ?? "";
+        if (line !== "") lines.set(row.ProcessId, line);
       }
-      resolve(lines);
-    });
-  });
+    } catch {
+      /* no answer — every pid reads as unreadable */
+    }
+    return lines;
+  }
+  // `ps` lists what it found and fails only when it found none.
+  const answer = await runToExit("ps", ["-o", "pid=,args=", "-p", pids.join(",")], { env: process.env });
+  for (const row of (answer?.stdout ?? "").split("\n")) {
+    const match = /^\s*(\d+)\s+(.*\S)/.exec(row);
+    if (match !== null) lines.set(Number(match[1]), match[2]!);
+  }
+  return lines;
 }
 
 export interface OrphanRecord {

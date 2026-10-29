@@ -5,9 +5,9 @@
 // it's testable against the fake agent without a real extension host) —
 // visibility in a real VS Code terminal is a thin wrapper layered on top in
 // the extension host (orchestrator-host.ts), not this module's concern.
-import { type ChildProcess, spawn } from "node:child_process";
-import { killTree, trackedChild, type TrackedProcess, treeSpawnOptions } from "./process-tree";
-import { mergeEnv, resolveSpawn } from "./spawn-resolve";
+import type { ChildProcess } from "node:child_process";
+import { killTree, startChild, trackedChild, type TrackedProcess } from "./process-tree";
+import { mergeEnv } from "./spawn-resolve";
 
 export interface ExitStatus {
   exitCode: number | null;
@@ -98,22 +98,18 @@ export class NodeTerminalRunner implements TerminalRunner {
     // Resolved as an agent's own launch is: on Windows a bare name is found
     // through PATH × PATHEXT, and a .cmd/.bat runs through cmd.exe only
     // when no argument is one cmd would act on — so what runs is exactly
-    // the program and arguments the rules judged.
-    const env = mergeEnv(process.env, params.env);
-    const launch = resolveSpawn(params.command, params.args, env);
+    // the program and arguments the rules judged. A tree leader:
+    // terminal/kill must end the whole tree — build tools fork, and ACP's
+    // contract is "the command stops", not "its top process stops".
     let child: ChildProcess | null = null;
     try {
-      if (launch.error !== undefined) throw new Error(launch.error);
-      child = spawn(launch.command, launch.args, {
+      const started = startChild(params.command, params.args, {
+        env: mergeEnv(process.env, params.env),
         cwd: params.cwd,
-        env,
         stdio: ["ignore", "pipe", "pipe"],
-        shell: launch.shell,
-        // Group leader on POSIX (process-tree.ts): terminal/kill must end the
-        // whole tree — build tools fork, and ACP's contract is "the command
-        // stops", not "its top process stops".
-        ...treeSpawnOptions,
       });
+      if ("error" in started) throw new Error(started.error);
+      child = started.child;
     } catch (err) {
       // Told once its caller is listening, as a failure after the spawn is.
       const reason = err instanceof Error ? err.message : String(err);

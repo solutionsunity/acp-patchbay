@@ -96,7 +96,10 @@ flowchart TD
 
 Data flows one way: webviews send **actions**; the orchestrator sends **snapshots and
 patches**. No business logic, persistence, or protocol handling in webview code —
-webviews are disposed when hidden and must rehydrate losslessly on every mount.
+every webview must rehydrate losslessly whenever its page loads. Settings is
+disposed when hidden; the agent surfaces are kept alive while hidden, for the
+turn-end chime (§ Environment), but a page still loads again on a Hide view, a
+reload or a close.
 
 ## UI layer
 
@@ -159,6 +162,98 @@ decision), and the Sessions drawer names each such agent so the gap is never
 unexplained. Everything else patchbay holds — the stores, where each fact's
 truth is, the queue and gates that order work on them, and where every saved
 fact lives — is [the stores architecture](store-architecture.md).
+
+## Environment
+
+Patchbay runs in VS Code and its forks, locally and in remote windows. The
+platform was never misread — `process.platform` was right at every
+host-shaped bug (#85, #93, #94, #97, #108, #115, #116); what failed was a
+part not knowing what the platform meant for it. So the environment is no
+store: its facts are read where they are needed, and each consequence has
+one home.
+
+**Boundaries.** VS Code runs as three parts, and patchbay's code runs in two
+of them:
+
+| Part | Runs as | Machine | Patchbay's code |
+|---|---|---|---|
+| VS Code host | Node: windows, native dialogs, file system, terminals, tasks | in a remote window, both: dialogs and the window on the user's machine, the file system, terminals and tasks in VS Code Server | none — reached only through the `vscode` API, which picks the machine that serves each call |
+| Editor UI | the renderer | always the user's | the webviews |
+| Extension host | Node | always the workspace's | the orchestrator |
+
+Work happens in a host; the UI reflects state and sends actions back (the
+render-only rule, held for every UI). Work is patchbay's own, done in the
+extension host, or handed to VS Code through the API — a terminal, a task,
+SecretStorage, a sign-in.
+
+- **One process door** (process-tree.ts). Every child process the
+  extension host starts is started there: agents, brokered terminals, an
+  MCP server's probe, the short programs run to their exit (version checks,
+  package warm-ups, an archive's extraction), and the door's own process
+  reads and kills. Through it a command is found the Windows-safe way
+  (`resolveSpawn`) against the env it will run with, and the child leads
+  its own process tree, so a stop reaches what it shelled out to. The door
+  is decided by **which process starts a child**, not whose code asks: a
+  terminal login (`vscode.ProcessExecution`) is a task VS Code's host runs —
+  outside the door by where it runs, not as an exception; the MCP servers an
+  agent spawns (patchbay's own bridge included) and the tools it runs are
+  the agent's. A library running in the
+  extension host is inside: the MCP SDK's stdio transport, which spawns its
+  command itself, is not used — the probe starts the server through the
+  door and hands the SDK's client a transport over the child's streams, as
+  the pool does for ACP. A test holds it with no exception list: only the
+  door imports `child_process` for more than its types, and nothing uses
+  the SDK's stdio transport.
+- **One platform vocabulary** (platform.ts). Node names the machine; what
+  patchbay downloads is published under other names — the ACP registry's
+  binary targets (`windows-x86_64`), nodejs.org's archives (`win-x64`), uv's
+  Rust target triples (`x86_64-pc-windows-msvc`). One table holds the
+  platforms any of them build for, each publisher's spelling beside it, and
+  every name is a projection of it: a platform is added, or a spelling
+  fixed, in one row. A machine outside the table has no platform — nothing
+  is downloaded for it, never a guessed name. Node's own names
+  (`process.platform === "win32"`) are read directly wherever a site needs
+  them. A scan holds the home: no publisher's spelling appears anywhere
+  else in `src`, the runtime catalog's pinned digests aside — each names
+  its publisher's archive whole, and the catalog's digest test holds those
+  names against the projections.
+- **Host facts are read with their consumer.** VS Code tells an extension
+  which editor it runs in (`appName`, `appHost`), whether the window is
+  remote (`remoteName`) and desktop or web (`uiKind`). They are read on the
+  VS Code side, where the `vscode` API is, and handed to the orchestrator
+  through its ports; never stored — a remote switch is a new extension
+  host. None is read today, by decision: nothing consumes one. The remote
+  cases patchbay meets are read off reality itself — a dialog's URI
+  scheme, `asExternalUri`, `openExternal` — and VS Code routes them. A
+  fact lands with its first consumer (the extension's own update check
+  needs which gallery the editor installs from).
+- **The turn-end chime plays in the view.** Deciding is work: the
+  orchestrator decides a chime is due (a turn ended, not cancelled; the
+  preference on) and picks the one surface that plays it — the Agent View's
+  state (`chime`) names it, and only that page plays. Playing is
+  reflection: the page is in the editor UI, on the user's machine, so the
+  sound is where the user sits, local or remote alike. The sound is two
+  tones made with Web Audio — no audio file, no change to the webview's
+  security policy — and the preference is on or off, on by default. Every
+  agent surface is kept alive while hidden (`retainContextWhenHidden`), so
+  a chime plays from a minimized window, an Agent View behind another
+  sidebar tab or in a collapsed sidebar, and a detached panel in a
+  background tab or another window. Two facts bound who can play, both
+  Chromium's: a surface must be open, and its page must have been touched
+  by the user since it loaded — Chromium starts audio only then, and a
+  page loaded again (Hide view, a reload) starts untouched. Each page
+  reports its touch as an action; the page makes its audio context inside
+  that touch, holds it suspended, and resumes it for each chime — a
+  touched page can resume while hidden. Settings' ▶ plays the same sound
+  in its own page, the click being its touch. The pick (`chimePlayer`): a
+  touched surface, a visible one first, else the first opened. **No touched
+  surface open means no chime** — no webview exists to play, and VS Code
+  gives an extension no background one; the attention badge still marks
+  the turn. A deliberate scope decision, revisited if VS Code adds a way to
+  play from the background or one is found. A player in the extension host
+  as a fallback was rejected: two players for one sound, and the host's is
+  the one that is wrong in a remote window. The cost is each hidden agent
+  surface's memory, accepted for the chime.
 
 ## ACP client pool & process model
 
@@ -1216,6 +1311,11 @@ flowchart TD
   run fails. A stdio server run by npx/uvx has its package made ready first
   (launcher health, above), and the handshake has no limit of patchbay's own: it
   ends with the server's answer, its exit, a network failure, or Stop. The
+  server starts through the process door (§ Environment), so its command is
+  found as an agent's is, and the SDK's client talks over the child's streams;
+  at the end it is shut down as MCP's stdio lifecycle says — input closed, then
+  SIGTERM, then SIGKILL, each after a grace — to its whole tree, so a
+  launcher's server goes with its launcher. The
   built-in server is probed through the very launch an attach hands an agent,
   under a context token no attach minted: initialize and tools/list never reach
   the IPC socket, so the probe proves the spawn and the tool list, and a tool

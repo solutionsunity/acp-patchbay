@@ -485,27 +485,27 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
     const store = new PreferencesStore(new MemoryKV());
     expect(store.get()).toEqual(DEFAULT_PREFERENCES);
 
-    await store.set({ soundOnDone: true });
-    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true });
+    await store.set({ soundOnDone: false });
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: false });
 
     // A later patch never clobbers an earlier one.
     await store.set({ idleCloseMinutes: 0 });
-    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true, idleCloseMinutes: 0 });
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: false, idleCloseMinutes: 0 });
   });
 
   it("an older stored object missing newer keys reads as defaults for them", () => {
     const kv = new MemoryKV();
-    void kv.update(STORAGE_KEYS.preferences, { soundOnDone: true });
+    void kv.update(STORAGE_KEYS.preferences, { soundOnDone: false });
     const store = new PreferencesStore(kv);
-    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: true });
+    expect(store.get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: false });
   });
 
   it("a stored one-switch composerStats splits into a switch per read-out, then is gone", () => {
     const hidden = new MemoryKV();
-    void hidden.update(STORAGE_KEYS.preferences, { composerStats: false, soundOnDone: true });
+    void hidden.update(STORAGE_KEYS.preferences, { composerStats: false, soundOnDone: false });
     expect(new PreferencesStore(hidden).get()).toEqual({
       ...DEFAULT_PREFERENCES,
-      soundOnDone: true,
+      soundOnDone: false,
       statsToolCalls: false,
       statsContext: false,
       statsPlanUsage: false,
@@ -528,6 +528,13 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
     expect(kv.get(STORAGE_KEYS.preferences)).toEqual({ statsContext: false });
   });
 
+  it("a stored doneSound is retired — the chime has no sound to pick; the switch keeps its word", () => {
+    const kv = new MemoryKV();
+    void kv.update(STORAGE_KEYS.preferences, { soundOnDone: false, doneSound: "Glass" });
+    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, soundOnDone: false });
+    expect(kv.get(STORAGE_KEYS.preferences)).toEqual({ soundOnDone: false });
+  });
+
   it("a stored value that isn't an object never throws, and reads as the defaults", () => {
     for (const junk of ["composerStats", 42, null]) {
       const kv = new MemoryKV();
@@ -543,10 +550,10 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
       knobSource: "sometimes",
       idleCloseMinutes: "5",
       executeCalls: "uncollapsed",
-      doneSound: "Glass",
+      openThinking: true,
       unknownLater: true,
     });
-    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, executeCalls: "uncollapsed", doneSound: "Glass" });
+    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, executeCalls: "uncollapsed", openThinking: true });
   });
 
   it("wipe returns to factory defaults", async () => {

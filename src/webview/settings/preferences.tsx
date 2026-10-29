@@ -9,6 +9,7 @@
 import type { ReactNode } from "react";
 import type { PreferencesView, SettingsState, ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER, TOOL_DISPLAY_ROUTES } from "../../shared/tool-display";
+import { playChime } from "../shared/chime-sound";
 import { Icon } from "../shared/icon";
 import { Field, Toggle } from "./controls";
 import { Button } from "@/components/ui/button";
@@ -32,11 +33,6 @@ function PrefCard(props: { title: string; help: string; children: ReactNode }) {
   );
 }
 
-/** Radix Select reserves "" for "no value", so the default chime rides a
- * sentinel that never collides with a file basename (filenames can't be
- * empty, but the sentinel keeps the mapping explicit either way). */
-const DEFAULT_CHIME = "\u0000default";
-
 /** What each display step reads as in Settings. */
 const DISPLAY_STEP_LABEL: Readonly<Record<ToolCallDisplay, string>> = {
   grouped: "grouped",
@@ -48,10 +44,8 @@ const DISPLAY_STEP_LABEL: Readonly<Record<ToolCallDisplay, string>> = {
 export function PreferencesSection(props: {
   state: SettingsState;
   onSet(patch: Partial<PreferencesView>): void;
-  onPreview(sound: string): void;
 }) {
   const prefs = props.state.preferences;
-  const sounds = props.state.doneSounds;
 
   // Committed on blur/Enter, not per keystroke — a half-typed "6" must not
   // become a 6-minute reaper setting mid-edit.
@@ -79,32 +73,18 @@ export function PreferencesSection(props: {
 
       <PrefCard
         title="Turn end"
-        help="Plays a system sound when an agent finishes a turn. Sounds host-side, so it fires even
-        when the chat view is hidden — and never for a turn you cancelled yourself. The list is
-        this machine's own system-sound set; ▶ previews the selection."
+        help="Plays a chime when an agent finishes a turn — never for a turn you cancelled
+        yourself. An open Agent View plays it on the machine you sit at, even when it is hidden
+        behind another tab or the window is minimized. A view you haven't clicked since it opened
+        can't make a sound, and with none open the badge alone marks the turn. ▶ plays it."
       >
-        {/* stale name (sound removed from the OS since) still renders — the
-            player falls back to the default chime, honestly, not silence */}
-        <Select
-          value={prefs.doneSound === "" ? DEFAULT_CHIME : prefs.doneSound}
-          onValueChange={(v) => props.onSet({ doneSound: v === DEFAULT_CHIME ? "" : v })}
-        >
-          <SelectTrigger className="min-w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={DEFAULT_CHIME}>default chime</SelectItem>
-            {sounds.map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-            {prefs.doneSound !== "" && !sounds.includes(prefs.doneSound) && (
-              <SelectItem value={prefs.doneSound}>{prefs.doneSound} (missing)</SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        {/* Played here, by this page: the click is the touch Chromium asks
+            for, and the sound is the one the Agent View makes. */}
         <Button
           variant="outline" size="icon" className="size-8"
-          title="Play this sound"
-          aria-label="Play this sound"
-          onClick={() => props.onPreview(prefs.doneSound)}
+          title="Play the chime"
+          aria-label="Play the chime"
+          onClick={playChime}
         >
           <Icon name="play" />
         </Button>

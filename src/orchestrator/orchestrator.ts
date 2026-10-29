@@ -55,6 +55,7 @@ import { eraseAllData } from "./erase-all";
 import { CapabilityTracker } from "./capability-tracker";
 import { DefaultsEditor } from "./defaults-editor";
 import { ChannelHost } from "./channel";
+import { chimePlayer, type SurfaceFacts } from "./chime";
 import { count } from "../shared/count";
 import type { RequestUserInputParams } from "../mcp/ipc-protocol";
 import { McpServerGates } from "./mcp-server-gates";
@@ -68,7 +69,6 @@ import type { McpServerWork } from "../shared/protocol";
 import { type AttachWork, SessionGates } from "./session-gates";
 import { SessionsStore, type SessionConnectionOperations } from "./sessions-store";
 import { WireLog } from "./wire-log";
-import { listDoneSounds, playDoneSound } from "./sound";
 import {
   AcpRegistryStore,
   binaryDigestFor,
@@ -167,6 +167,13 @@ export interface OrchestratorPorts {
   warnCatch(context: string, what: string): (err: unknown) => void;
 }
 
+/** What a view host says of an open agent surface. */
+export interface SurfaceReport {
+  visible: boolean;
+  /** The session it shows; null = it follows the active-session pointer. */
+  pinned: string | null;
+}
+
 export class Orchestrator {
   readonly agentView: ChannelHost<AgentViewState, AgentViewEvent>;
   readonly settings: ChannelHost<SettingsState, SettingsEvent>;
@@ -241,10 +248,12 @@ export class Orchestrator {
    * Lives as long as the review. */
   configImport: { id: number; fileName: string; read: ConfigurationRead } | null = null;
   private importCount = 0;
-  /** Visible agent-view surfaces → the session each pins (null = follows
-   * the active-session pointer). Hidden or disposed surfaces are absent;
-   * the view hosts report through noteSurface. */
-  private readonly visibleSurfaces = new Map<object, string | null>();
+  /** Live agent-view surfaces, by the id their host gave them, in the
+   * order they opened: whether each is visible, the session it pins (null
+   * = follows the active-session pointer), and whether the user has
+   * touched it since its page loaded. The view hosts report visibility
+   * and closing through noteSurface; the page reports its touch. */
+  private readonly surfaces = new Map<string, SurfaceFacts & { pinned: string | null }>();
   /** Open asks already accounted for by the native notification — each
    * new one is judged once, as it arrives. */
   private knownAsks = new Set<string>();
@@ -350,7 +359,6 @@ export class Orchestrator {
         writeScope: this.writeScopeView(),
         mcpCatalog: this.mcpServers.catalogViews(),
         preferences: this.preferences.get(),
-        doneSounds: listDoneSounds(),
         savedRoots: this.savedRootsView(),
       },
       reduceSettings,
@@ -1059,15 +1067,16 @@ export class Orchestrator {
     void this.lastActiveSession.set({ patchbayAgentId, sessionId });
   }
 
-  /** Done-sound (Preferences): the system chime as a turn resolves —
-   * host-side (sound.ts header: webviews die when hidden). A cancelled
-   * turn never chimes: the user was present to cancel it. */
+  /** The turn-end chime (Preferences), as a turn resolves — decided here,
+   * played by the one surface `chimePlayer` picks. A cancelled turn never
+   * chimes: the user was present to cancel it. */
   private maybeChime(events: readonly AgentViewEvent[]): void {
     for (const event of events) {
       if (event.kind !== "turnEnded" || event.stopReason === "cancelled") continue;
-      const prefs = this.preferences.get();
-      if (!prefs.soundOnDone) return;
-      playDoneSound(this.log, prefs.doneSound);
+      if (!this.preferences.get().soundOnDone) return;
+      const surface = chimePlayer(this.surfaces);
+      if (surface === null) this.log.debug("turn-end chime: no open Agent View the user has touched — silent");
+      else this.agentView.emit({ kind: "chimed", surface });
       return; // one chime per batch, however many turns settled together
     }
   }
@@ -1086,19 +1095,27 @@ export class Orchestrator {
     this.settings.emit({ kind: "sessionStatsChanged", sessionsActiveToday: count });
   }
 
-  /** A surface became visible or hidden (or went away): the view hosts
-   * report here, and the screen fact follows — emitted only on a real
-   * change. `pinned` is the session the surface shows; null = it follows
-   * the active-session pointer. */
-  noteSurface(surface: object, visible: boolean, pinned: string | null): void {
-    if (visible) this.visibleSurfaces.set(surface, pinned);
-    else this.visibleSurfaces.delete(surface);
-    const shows = [...this.visibleSurfaces.values()];
+  /** A surface opened, became visible or hidden, or closed (`report`
+   * null): the view hosts report here, and the screen fact follows —
+   * emitted only on a real change. `pinned` is the session the surface
+   * shows; null = it follows the active-session pointer. */
+  noteSurface(surface: string, report: SurfaceReport | null): void {
+    if (report === null) this.surfaces.delete(surface);
+    else this.surfaces.set(surface, { activated: this.surfaces.get(surface)?.activated ?? false, ...report });
+    const shows = [...this.surfaces.values()].filter((s) => s.visible).map((s) => s.pinned);
     const pointer = shows.includes(null);
     const pinnedIds = [...new Set(shows.filter((id): id is string => id !== null))].sort();
     const current = this.agentView.current.screen;
     if (current.pointer === pointer && current.pinned.join("\n") === pinnedIds.join("\n")) return;
     this.agentView.emit({ kind: "screenChanged", pointer, pinned: pinnedIds });
+  }
+
+  /** A surface's page says whether the user has touched it since it
+   * loaded — as it loads (a page loaded again starts untouched), and on
+   * its first touch. A surface already closed has nothing to note. */
+  noteSurfaceActivation(surface: string, activated: boolean): void {
+    const facts = this.surfaces.get(surface);
+    if (facts !== undefined) facts.activated = activated;
   }
 
   /** A connection that ended can no longer take an answer: every ask still

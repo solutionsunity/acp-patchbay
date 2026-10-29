@@ -14,12 +14,12 @@
 // download has. Either way callers gate the first install of each
 // (distribution, version) behind an explicit, visible user confirmation, and
 // tell the user which of the two it is.
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, readBytes } from "../net";
+import { runToExit } from "../process-tree";
 
 const ARCHIVE_EXTENSIONS = [".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".zip"];
 
@@ -111,19 +111,10 @@ export function isBinaryInstalled(
  * Windows 10 1803+ ships tar.exe as bsdtar too, which also reads .zip) —
  * rather than adding a zip/tar dependency for a format set every platform
  * this extension targets already covers natively. */
-function extractArchive(archivePath: string, destDir: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("tar", ["-xf", archivePath, "-C", destDir]);
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`tar exited ${code}: ${stderr.trim()}`));
-    });
-  });
+async function extractArchive(archivePath: string, destDir: string): Promise<void> {
+  const answer = await runToExit("tar", ["-xf", archivePath, "-C", destDir], { env: process.env });
+  if (answer === null) throw new Error("tar could not be run");
+  if (answer.code !== 0) throw new Error(`tar exited ${answer.code}: ${answer.stderr.trim()}`);
 }
 
 export async function installBinary(

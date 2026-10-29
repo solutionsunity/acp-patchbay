@@ -13,6 +13,7 @@ import { describe, expect, it, beforeAll } from "vitest";
 import { fileTempDir, tempDir } from "./support/teardown";
 import { waitFor } from "./support/wait-for";
 import { nullLogger } from "../src/orchestrator/logger";
+import { platformOf } from "../src/orchestrator/platform";
 import type { LaunchSpec } from "../src/orchestrator/pool";
 import { ChecksumMismatch, type BinaryInstallSpec, type InstalledBinary } from "../src/orchestrator/stores/binary-installer";
 import {
@@ -63,37 +64,36 @@ describe("nodeMajor", () => {
 
 describe("runtimeInstallSpec", () => {
   it("node: platform slugs, archive formats, and the launcher-adjacent cmd", () => {
-    const linux = runtimeInstallSpec("node", "linux", "x64")!;
+    const linux = runtimeInstallSpec("node", platformOf("linux", "x64"))!;
     expect(linux.archiveUrl).toMatch(/^https:\/\/nodejs\.org\/dist\/v\d.+linux-x64\.tar\.gz$/);
     expect(linux.cmd).toMatch(/^node-v.+-linux-x64\/bin\/node$/);
-    const win = runtimeInstallSpec("node", "win32", "arm64")!;
+    const win = runtimeInstallSpec("node", platformOf("win32", "arm64"))!;
     expect(win.archiveUrl).toMatch(/win-arm64\.zip$/);
     expect(win.cmd).toMatch(/^node-v.+-win-arm64\/node\.exe$/); // npx.cmd sits adjacent
-    expect(runtimeInstallSpec("node", "darwin", "arm64")!.archiveUrl).toMatch(
+    expect(runtimeInstallSpec("node", platformOf("darwin", "arm64"))!.archiveUrl).toMatch(
       /darwin-arm64\.tar\.gz$/,
     );
   });
 
   it("uv: rust target triples; windows zips are flat", () => {
-    const linux = runtimeInstallSpec("uv", "linux", "arm64")!;
+    const linux = runtimeInstallSpec("uv", platformOf("linux", "arm64"))!;
     expect(linux.archiveUrl).toMatch(/uv-aarch64-unknown-linux-gnu\.tar\.gz$/);
     expect(linux.cmd).toBe("uv-aarch64-unknown-linux-gnu/uvx");
-    const win = runtimeInstallSpec("uv", "win32", "x64")!;
+    const win = runtimeInstallSpec("uv", platformOf("win32", "x64"))!;
     expect(win.archiveUrl).toMatch(/uv-x86_64-pc-windows-msvc\.zip$/);
     expect(win.cmd).toBe("uvx.exe");
   });
 
-  it("unsupported platform/arch is null, never a guessed URL", () => {
-    expect(runtimeInstallSpec("node", "linux", "ia32")).toBeNull();
-    expect(runtimeInstallSpec("node", "freebsd", "x64")).toBeNull();
-    expect(runtimeInstallSpec("uv", "aix", "x64")).toBeNull();
+  it("a platform no publisher builds for is null, never a guessed URL", () => {
+    expect(runtimeInstallSpec("node", null)).toBeNull();
+    expect(runtimeInstallSpec("uv", null)).toBeNull();
   });
 
   it("every archive the catalog can name carries its publisher's digest — a version bump without them fails here", () => {
     for (const kind of ["node", "uv"] as const) {
       for (const platform of ["linux", "darwin", "win32"] as const) {
         for (const arch of ["x64", "arm64"]) {
-          const entry = runtimeInstallSpec(kind, platform, arch)!;
+          const entry = runtimeInstallSpec(kind, platformOf(platform, arch))!;
           expect(entry.sha256, `${kind} ${platform}-${arch}: ${entry.archiveUrl}`).toMatch(/^[0-9a-f]{64}$/);
         }
       }
@@ -101,8 +101,8 @@ describe("runtimeInstallSpec", () => {
   });
 
   it("dot-named distributions keep runtimes distinct in the shared bin-cache", () => {
-    expect(runtimeInstallSpec("node", "linux", "x64")!.distribution).toBe(".runtime-node");
-    expect(runtimeInstallSpec("uv", "linux", "x64")!.distribution).toBe(".runtime-uv");
+    expect(runtimeInstallSpec("node", platformOf("linux", "x64"))!.distribution).toBe(".runtime-node");
+    expect(runtimeInstallSpec("uv", platformOf("linux", "x64"))!.distribution).toBe(".runtime-uv");
   });
 });
 

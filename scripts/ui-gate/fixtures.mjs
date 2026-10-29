@@ -181,7 +181,7 @@ const unlistedMatrix = Object.fromEntries(
 
 /** Complete stored-preferences object, as every snapshot carries. */
 export const preferences = {
-  soundOnDone: false, doneSound: "", knobSource: "agent-default", idleCloseMinutes: 60,
+  soundOnDone: true, knobSource: "agent-default", idleCloseMinutes: 60,
   statsToolCalls: true, statsContext: true, statsPlanUsage: true,
   detachWindows: true, attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
 };
@@ -223,6 +223,7 @@ export function agentViewState({ live }) {
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,
     screen: { pointer: true, pinned: [] },
+    chime: null,
   };
 }
 
@@ -313,6 +314,6 @@ export function settingsState() {
     }],
     sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "",
     wireLog: { active: false, until: null }, dataInventory: null, configImport: null, commandTest: null,
-    preferences, doneSounds: ["Glass", "Ping"],
+    preferences,
   };
 }

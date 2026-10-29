@@ -44,7 +44,7 @@ import { basename, join } from "node:path";
 import { checkPlatform } from "npm-install-checks";
 import { unlessAborted } from "./abort";
 import type { Logger } from "./logger";
-import { runToExit, type ExitAnswer } from "./run-to-exit";
+import { runToExit, type ExitAnswer } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
 
 /** Normalized launcher name from a command that may be a path or a Windows

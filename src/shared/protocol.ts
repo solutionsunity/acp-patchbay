@@ -237,10 +237,11 @@ export type Action =
    * orchestrator answers `preferencesChanged` with the complete stored
    * object — the webview never assumes its own write landed. */
   | { kind: "setPreferences"; patch: Partial<PreferencesView> }
-  /** Preferences Turn-end play button — plays the given sound ("" = the
-   * platform default chime) host-side, exactly as a finishing turn would.
-   * Preview only: nothing is stored. */
-  | { kind: "previewDoneSound"; sound: string }
+  /** An agent surface's audio standing: whether the user has touched it
+   * since its page loaded (Chromium lets only a surface the user has
+   * touched start audio). Sent as the page loads and again on its first
+   * touch; `surface` is the id its host gave it. */
+  | { kind: "surfaceActivation"; surface: string; activated: boolean }
   /** The user's answer to an elicitation card, in the wire's own
    * vocabulary: accept carries what they typed (reviewed and editable
    * until they press it), decline is a refusal, cancel is a dismissal.
@@ -1542,13 +1543,10 @@ export type ToolCallDisplay = "grouped" | "ungrouped-truncated" | "ungrouped-unt
  * composer's stats read-outs). Declared above AgentViewState because initialAgentViewState
  * seeds from DEFAULT_PREFERENCES. */
 export interface PreferencesView {
-  /** System chime when a prompt turn finishes (host-side player — a
-   * cancelled turn never chimes: the user was present to cancel it). */
+  /** A chime when a prompt turn finishes, played by one Agent View
+   * surface (`chime`) — a cancelled turn never chimes: the user was present
+   * to cancel it. */
   soundOnDone: boolean;
-  /** Which system sound the done-chime plays — a basename from the
-   * platform's own sound directory (sound.ts enumerates it; SettingsState
-   * carries the list as `doneSounds`). "" = the platform default chime. */
-  doneSound: string;
   /** What a fresh session's knobs are seeded from: the agent config's
    * defaults, or the last agent-confirmed combination on that agent
    * (stores/composer-knobs.ts, falling back to the defaults when none). */
@@ -1585,8 +1583,7 @@ export interface PreferencesView {
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
-  soundOnDone: false,
-  doneSound: "",
+  soundOnDone: true,
   knobSource: "agent-default",
   idleCloseMinutes: 60,
   statsToolCalls: true,
@@ -1682,6 +1679,18 @@ export interface AgentViewState {
    * sessions shown by visible panels of their own. Reported by the view
    * hosts as visibility flips; nothing is visible until one says so. */
   screen: ScreenView;
+  /** The latest chime and the one surface the orchestrator chose to play
+   * it — every surface sees it, only that one plays, and only a chime
+   * newer than the first it saw (a page that loads reads the latest as
+   * already played). Null until a turn first chimes. */
+  chime: ChimeView | null;
+}
+
+export interface ChimeView {
+  /** Counts chimes this window; each is one sound. */
+  seq: number;
+  /** The id its host gave the surface that plays it. */
+  surface: string;
 }
 
 export interface ScreenView {
@@ -1797,6 +1806,7 @@ export const initialAgentViewState: AgentViewState = {
   workspaceFiles: { query: "", files: [], dirs: [] },
   preferences: DEFAULT_PREFERENCES,
   screen: { pointer: false, pinned: [] },
+  chime: null,
 };
 
 export type AgentViewEvent =
@@ -1840,6 +1850,8 @@ export type AgentViewEvent =
   | { kind: "sessionActivated"; patchbaySessionId: PatchbaySessionId }
   /** The visible surfaces changed — shown, hidden, opened, or closed. */
   | ({ kind: "screenChanged" } & ScreenView)
+  /** A turn's chime, for `surface` to play. */
+  | { kind: "chimed"; surface: string }
   | { kind: "sessionClosed"; patchbaySessionId: PatchbaySessionId }
   /** What the session's lines hold moved — the gates' queue reports every
    * move. */
@@ -2265,6 +2277,8 @@ export function reduceAgentView(
         : state;
     case "screenChanged":
       return markSeen({ ...state, screen: { pointer: event.pointer, pinned: event.pinned } });
+    case "chimed":
+      return { ...state, chime: { seq: (state.chime?.seq ?? 0) + 1, surface: event.surface } };
     case "sessionClosed": {
       const { [event.patchbaySessionId]: _t, ...transcripts } = state.transcripts;
       const { [event.patchbaySessionId]: _c, ...commandsBySession } = state.commandsBySession;
@@ -2843,10 +2857,6 @@ export interface SettingsState {
   /** Preferences page snapshot — the stored truth as of the last
    * preferencesChanged; edits round-trip through setPreferences. */
   preferences: PreferencesView;
-  /** This machine's system sounds (basenames, sound.ts enumerates the
-   * platform's own sound directory at activation) — the Turn-end picker's
-   * options. Empty on platforms with no enumerable set. */
-  doneSounds: readonly string[];
   /** Saved roots page snapshot — same event as the agent view's copy. */
   savedRoots: SavedRootsView;
   /** The import under way on the Import/Export page; null when none. */
@@ -2888,7 +2898,6 @@ export const initialSettingsState: SettingsState = {
   configImport: null,
   commandTest: null,
   preferences: DEFAULT_PREFERENCES,
-  doneSounds: [],
   savedRoots: NO_SAVED_ROOTS,
 };
 

@@ -6,7 +6,9 @@
 // own SDK, no build step: `node <this file>`. Doubles as a live fixture —
 // added to patchbay as a custom stdio server with the marker in the
 // workspace root, the probe should list report_cwd and an agent calling
-// it should answer with the workspace directory.
+// it should answer with the workspace directory. With `--hold` it names its
+// pid as its version and outlives its input's end — a server holding
+// something open, which only a kill ends.
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -19,7 +21,10 @@ try {
   process.exit(1);
 }
 
-const server = new McpServer({ name: "cwd-marker-server", version: "0" });
+const hold = process.argv.includes("--hold");
+if (hold) setInterval(() => {}, 1 << 30);
+
+const server = new McpServer({ name: "cwd-marker-server", version: hold ? String(process.pid) : "0" });
 server.registerTool("report_cwd", { description: `marker: ${marker}` }, async () => ({
   content: [{ type: "text", text: process.cwd() }],
 }));

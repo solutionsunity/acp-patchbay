@@ -64,7 +64,7 @@ describe("an import's plan", () => {
     expect(of(plan, "mcpServer:github").flags).toEqual(["needs a fresh sign-in on this machine"]);
     expect(of(plan, "mcpServer:local").flags).toEqual(["tool isn't found on this machine"]);
     expect(of(plan, "savedRoot:/home/me/notes").flags).toEqual(["doesn't exist on this machine"]);
-    expect(of(plan, "preferences").differs).toEqual(["knobSource", "idleCloseMinutes"]);
+    expect(of(plan, "preferences").differs).toEqual(["soundOnDone", "knobSource", "idleCloseMinutes"]);
     // New ones keep their own ids.
     expect(plan.agentIds.get("claude")).toBe("claude");
   });
@@ -141,7 +141,7 @@ describe("an import's plan", () => {
     const read = await golden();
     const plan = planImport(read, {
       ...empty,
-      preferences: { ...DEFAULT_PREFERENCES, knobSource: "last-session", idleCloseMinutes: 45 },
+      preferences: { ...DEFAULT_PREFERENCES, soundOnDone: false, knobSource: "last-session", idleCloseMinutes: 45 },
       machineCommandRules: [{ kind: "command", pattern: "git status", verdict: "ask" }, { kind: "command", pattern: "ls", verdict: "allow" }],
       machineSavedRoots: ["/home/me/notes"],
     }, { ...here, pathExists: () => false });

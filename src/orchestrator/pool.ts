@@ -8,7 +8,7 @@
 //
 // Connection handling approach checked against vscode-acp's ConnectionManager
 // (MIT, formulahendry); rebuilt here on the SDK 1.x client() builder API.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
@@ -46,8 +46,8 @@ import {
   type TurnEndFact,
 } from "./readers/responses";
 import { readSessionUpdate, type SessionUpdateFact } from "./readers/session-update";
-import { mergeEnv, resolveSpawn } from "./spawn-resolve";
-import { killTree, trackedChild, type TrackedProcess, treeSpawnOptions } from "./process-tree";
+import { mergeEnv } from "./spawn-resolve";
+import { killTree, startChild, trackedChild, type TrackedProcess } from "./process-tree";
 import type { PatchbayAgentId } from "../shared/ids";
 import { PRODUCT } from "../shared/product";
 
@@ -257,20 +257,6 @@ function spawnEnv(spec: LaunchSpec): NodeJS.ProcessEnv {
   return mergeEnv(process.env, spec.env);
 }
 
-/** shell comes from resolveSpawn (Windows .cmd shims only — stop() still
- * reaches the whole tree there: killTree is taskkill /T, wrapper included);
- * treeSpawnOptions makes the child a process-group leader on POSIX
- * (process-tree.ts), what lets stop() reach grandchildren. */
-function spawnOptions(spec: LaunchSpec, shell: boolean) {
-  return {
-    env: spawnEnv(spec),
-    cwd: spec.cwd,
-    stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
-    shell,
-    ...treeSpawnOptions,
-  };
-}
-
 /** A launch that failed — its process has nothing to wind down, so its
  * whole tree (npx → node → …) goes at once. */
 function killFailedLaunch(child: ChildProcess): void {
@@ -408,12 +394,18 @@ export class AgentPool {
     if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
 
     this.log.info(`${patchbayAgentId}: spawning ${spec.command} (${spec.args.length} args)`);
-    const launch = resolveSpawn(spec.command, spec.args, spawnEnv(spec));
-    if (launch.error !== undefined) {
-      this.markDead(entry, launch.error);
-      throw new Error(launch.error);
+    // A tree leader (process-tree.ts) — what lets stop() reach
+    // grandchildren, a Windows .cmd shim's wrapper included.
+    const started = startChild(spec.command, spec.args, {
+      env: spawnEnv(spec),
+      cwd: spec.cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    if ("error" in started) {
+      this.markDead(entry, started.error);
+      throw new Error(started.error);
     }
-    const child = spawn(launch.command, launch.args, spawnOptions(spec, launch.shell));
+    const { child } = started;
     entry.process = child;
 
     child.stderr!.setEncoding("utf8");

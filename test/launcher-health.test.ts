@@ -22,7 +22,7 @@ import {
   versionsDiverge,
 } from "../src/orchestrator/launcher-health";
 import { nullLogger } from "../src/orchestrator/logger";
-import { runToExit } from "../src/orchestrator/run-to-exit";
+import { runToExit } from "../src/orchestrator/process-tree";
 import { mergeEnv } from "../src/orchestrator/spawn-resolve";
 import { answering, standIn } from "./support/stand-in";
 

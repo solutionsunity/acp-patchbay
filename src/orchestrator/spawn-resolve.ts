@@ -2,9 +2,10 @@
 // Copyright 2026 Solutions Unity
 
 // Windows-safe command resolution — THE one spelling of "this configured
-// command becomes that spawned executable", shared by the agent launch,
-// the launcher warmup, every version probe, and the terminal commands an
-// agent runs. POSIX passes through
+// command becomes that spawned executable", applied by the process door
+// (process-tree.ts) to every child it starts: the agent launch, the
+// launcher warmup, every version probe, an MCP server's probe, and the
+// terminal commands an agent runs. POSIX passes through
 // untouched: execvp searches PATH only, never the working directory.
 // Windows is where resolution bites, three ways at once:
 //

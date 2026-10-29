@@ -443,13 +443,14 @@ most:
 
 | Cost | When it's paid | Handler |
 |---|---|---|
-| **Mount** — React reconciliation, Streamdown parse, DOM construction | Every webview show (webviews are disposed when hidden — the render-only rule — so this recurs on every tab switch) | Windowed mount, below |
+| **Mount** — React reconciliation, Streamdown parse, DOM construction | Every page load — an agent surface is kept alive while hidden, so a tab switch costs none, but its page loads again on opening, Hide view and reload, and Settings on every show | Windowed mount, below |
 | **Layout/paint per frame** | Every scroll/update frame | `content-visibility: auto` + `contain-intrinsic-size` on the block wrapper — opt-in, one CSS line; Chromium then skips offscreen subtrees entirely |
 | **Update** — re-render on each streaming delta | Every bus flush during a live turn | `React.memo` on the block renderer; blocks are immutable objects out of the reducer, so identity is the memo key for free — only the streaming block re-renders |
 
-The platform owns exactly one cost: memory of *hidden* webviews (disposal). That
-justifies never unmounting in-session — it does **not** make whole-render safe; it
-makes it worse, because the full mount cost recurs per glance.
+The platform owns exactly one cost: memory of *hidden* webviews. Agent surfaces
+pay it — kept alive while hidden, for the turn-end chime — which justifies never
+unmounting in-session; it does **not** make whole-render safe, because the full
+mount cost still recurs on every page load.
 
 #### Windowed mount (reverse infinite scroll)
 

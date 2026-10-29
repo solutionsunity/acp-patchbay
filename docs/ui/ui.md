@@ -341,11 +341,13 @@ workspaces, not repos, may return later as an opt-in feature.
 Machine-scoped behavior defaults (non-sensitive), four cards, each a full read of
 the stored truth — the page never assumes its own write landed:
 
-- **Turn end** — done-sound toggle (default off). Host-side, never webview audio:
-  webviews die when hidden, and the chime matters most when the user is looking
-  elsewhere. OS system chime, no bundled asset; a cancelled turn never chimes;
-  under WSL the sound plays through Windows interop on the machine the user
-  actually sits at.
+- **Turn end** — chime toggle (default on); a cancelled turn never chimes. One
+  open Agent View plays it, on the machine the user sits at, hidden or not —
+  behind another tab, in a collapsed sidebar, in a minimized window. The card
+  says the two cases that stay silent: a view not clicked since it opened
+  (Chromium's rule for starting audio), and no view open, where the badge alone
+  marks the turn. Two tones made in the view, no sound to pick; ▶ plays them
+  in Settings itself (the click is the touch Chromium asks for).
 - **New sessions** — knob seed source: `agent defaults` (the config's saved
   defaults) or `last used` (the last agent-confirmed combination, recorded per
   agent; falls back to the defaults when none). Either way a stale knob is

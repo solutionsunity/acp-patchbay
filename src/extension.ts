@@ -46,8 +46,7 @@ export function activate(context: vscode.ExtensionContext): {
   // Detached agent-view surfaces (editor panels floated to aux windows) —
   // same channel as the sidebar; pinned panels follow the sessions list
   // (dispose on close, retitle on rename) and are idle-reaper exempt.
-  const reportSurface: SurfaceReporter = (surface, visible, pinned) =>
-    orchestrator.noteSurface(surface, visible, pinned);
+  const reportSurface: SurfaceReporter = (surface, report) => orchestrator.noteSurface(surface, report);
   const agentPanelHost = new AgentPanelHost(context.extensionUri, orchestrator.agentView, reportSurface);
   host.pinnedSessions = () => agentPanelHost.pinnedPatchbaySessionIds();
   const agentViewProvider = new AgentViewProvider(context.extensionUri, orchestrator.agentView, reportSurface);
@@ -58,7 +57,10 @@ export function activate(context: vscode.ExtensionContext): {
 
   context.subscriptions.push(
     host,
-    vscode.window.registerWebviewViewProvider("acpPatchbay.agentView", agentViewProvider),
+    // Kept alive while hidden, as every agent surface is (webview-host.ts).
+    vscode.window.registerWebviewViewProvider("acpPatchbay.agentView", agentViewProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.commands.registerCommand("acpPatchbay.openSettings", () =>
       settingsPanelHost.openOrReveal(),
     ),

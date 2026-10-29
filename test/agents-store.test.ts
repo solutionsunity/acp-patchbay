@@ -14,9 +14,9 @@ import { npmRegistry, type LocalNpmRegistry } from "./support/npm-registry";
 import { orchestratorHarness, type OrchestratorHarnessOptions } from "./support/orchestrator-harness";
 import { fileTempDir, tempDir } from "./support/teardown";
 import { SETTLE } from "./support/wait-for";
+import { platformOf, registryTarget } from "../src/orchestrator/platform";
 import { Cancelled } from "../src/orchestrator/queue";
 import { runtimeInstallSpec } from "../src/orchestrator/runtime-resolver";
-import { hostPlatformKey } from "../src/orchestrator/stores/acp-registry";
 import { formatCommandLine } from "../src/shared/command-line";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
@@ -377,7 +377,7 @@ describe("agents store", () => {
     });
 
     const target = { archive: "https://example.test/reg-2.0.0.tar.gz", cmd: "./reg", args: ["acp"], env: { REG_HOME: "x" }, sha256: "ab".repeat(32) };
-    serve("2.0.0", { binary: { [hostPlatformKey()!]: target } });
+    serve("2.0.0", { binary: { [registryTarget(platformOf()!)]: target } });
     await h.agents.resolveHere(added!);
     expect(h.agents.config(added!)?.registrySource).toEqual({
       registryId: "reg",
@@ -422,7 +422,7 @@ describe("agents store", () => {
           version: "1.0.0",
           agents: [
             { id: "pkg", name: "pkg", version: "1.0.0", distribution: { npx: { package: "pkg@1.0.0", args: ["--acp"] } } },
-            { id: "bin", name: "bin", version: "1.0.0", distribution: { binary: { [hostPlatformKey()!]: target } } },
+            { id: "bin", name: "bin", version: "1.0.0", distribution: { binary: { [registryTarget(platformOf()!)]: target } } },
             { id: "moved", name: "moved", version: "3.0.0", distribution: { npx: { package: "moved@3.0.0" } } },
           ],
         },

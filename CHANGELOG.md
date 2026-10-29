@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **The turn-end chime plays where you are.** It now plays from the Agent
+  View, so in a WSL, SSH or container window it reaches the machine you sit
+  at; before, it played on the remote machine, or through Windows from WSL
+  only. It plays with the view hidden behind another tab, in a collapsed
+  sidebar or a minimized window. It is one chime, on or off, now on by
+  default for a machine that never set it; the system-sound picker is gone,
+  and ▶ plays the chime. A view you haven't clicked since it opened can't make a
+  sound, and with no view open the badge alone marks a finished turn.
+  (#127)
+- **MCP servers started by `npx` are checked on Windows.** The tool check
+  Patchbay runs when a stdio MCP server connects started the command
+  itself and found only `.exe` programs, so a server run by `npx` (a
+  `.cmd` on Windows) always failed the check. It now starts the server the
+  way agents are started, and ends everything the server started when it
+  is done, so a server run through a launcher no longer outlives the
+  check. (#127)
+
 ## 0.88.4 — 2026-10-26
 
 Two fixes: Log in works on a machine without Node installed (#126), and a

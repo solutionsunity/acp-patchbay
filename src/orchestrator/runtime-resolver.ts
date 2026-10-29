@@ -31,8 +31,9 @@ import { rm } from "node:fs/promises";
 import { basename, delimiter, dirname, join } from "node:path";
 import { launcherKind } from "./launcher-health";
 import type { Logger } from "./logger";
+import { nodeDistName, type Platform, platformOf, rustTarget } from "./platform";
 import type { LaunchSpec } from "./pool";
-import { runToExit } from "./run-to-exit";
+import { runToExit } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
 import {
   ChecksumMismatch,
@@ -186,51 +187,34 @@ function runtimeEntry(distribution: string, version: string, archiveUrl: string,
  * dot-prefixed distribution names keep runtimes in the same cache with
  * the same staging/rename integrity story as agent binaries; the dot
  * reserves them (no registry id starts with one), so an agent's download
- * can never collide with a runtime's cache slot. Null when no
- * managed build exists for this platform/arch (the caller surfaces that
- * honestly).
+ * can never collide with a runtime's cache slot. Null on a platform no
+ * publisher builds for (the caller surfaces that honestly).
  * `cmd` names the launcher-adjacent interpreter; its dirname is the PATH
  * entry. Official node builds are glibc — on musl (Alpine) the
  * post-install gate fails and the connect dies with a real reason instead
  * of a half-running agent. */
 export function runtimeInstallSpec(
   kind: RuntimeKind,
-  platform: NodeJS.Platform = process.platform,
-  arch: string = process.arch,
+  platform: Platform | null = platformOf(),
 ): BinaryInstallSpec | null {
-  if (arch !== "x64" && arch !== "arm64") return null;
+  if (platform === null) return null;
+  const windows = platform.os === "win32";
   if (kind === "node") {
-    if (platform !== "win32" && platform !== "darwin" && platform !== "linux") return null;
-    const slug =
-      platform === "win32"
-        ? `node-v${NODE_VERSION}-win-${arch}`
-        : `node-v${NODE_VERSION}-${platform}-${arch}`;
-    const ext = platform === "win32" ? "zip" : "tar.gz";
+    const slug = `node-v${NODE_VERSION}-${nodeDistName(platform)}`;
     return runtimeEntry(
       ".runtime-node",
       NODE_VERSION,
-      `https://nodejs.org/dist/v${NODE_VERSION}/${slug}.${ext}`,
+      `https://nodejs.org/dist/v${NODE_VERSION}/${slug}.${windows ? "zip" : "tar.gz"}`,
       // win zips put node.exe + npx.cmd at the package root; tars under bin/.
-      platform === "win32" ? `${slug}/node.exe` : `${slug}/bin/node`,
+      windows ? `${slug}/node.exe` : `${slug}/bin/node`,
     );
   }
-  const rustArch = arch === "x64" ? "x86_64" : "aarch64";
-  if (platform === "win32") {
-    return runtimeEntry(
-      ".runtime-uv",
-      UV_VERSION,
-      `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${rustArch}-pc-windows-msvc.zip`,
-      "uvx.exe", // windows zips are flat: uv.exe + uvx.exe at the root
-    );
-  }
-  if (platform !== "darwin" && platform !== "linux") return null;
-  const target =
-    platform === "darwin" ? `uv-${rustArch}-apple-darwin` : `uv-${rustArch}-unknown-linux-gnu`;
+  const target = `uv-${rustTarget(platform)}`;
   return runtimeEntry(
     ".runtime-uv",
     UV_VERSION,
-    `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${target}.tar.gz`,
-    `${target}/uvx`,
+    `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${target}.${windows ? "zip" : "tar.gz"}`,
+    windows ? "uvx.exe" : `${target}/uvx`, // windows zips are flat: uv.exe + uvx.exe at the root
   );
 }
 

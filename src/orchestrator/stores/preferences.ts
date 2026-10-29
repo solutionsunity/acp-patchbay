@@ -2,7 +2,7 @@
 // Copyright 2026 Solutions Unity
 
 // Preferences (Settings, Preferences section): machine-scoped behavior
-// defaults — done-sound, fresh-session knob source, idle-release timer.
+// defaults — the turn-end chime, fresh-session knob source, idle-release timer.
 // Machine store by the placement contract: non-sensitive, developer-env, never
 // repo-committed (secrets stay out of here by construction — nothing in this
 // shape is one). Stored as one partial record merged over defaults
@@ -23,7 +23,6 @@ const KNOB_SOURCES: Readonly<Record<PreferencesView["knobSource"], true>> = { "a
  * missing entry here until it has one. */
 const PREFERENCE_SCHEMAS: { [K in keyof PreferencesView]: z.ZodType<PreferencesView[K]> } = {
   soundOnDone: z.boolean(),
-  doneSound: z.string(),
   knobSource: z.custom<PreferencesView["knobSource"]>((v) => typeof v === "string" && Object.hasOwn(KNOB_SOURCES, v)),
   idleCloseMinutes: z.number().finite(),
   statsToolCalls: z.boolean(),
@@ -48,15 +47,17 @@ function readStored(stored: unknown): Partial<PreferencesView> {
 }
 
 /** A stored record in any shape a released version wrote, brought to the
- * current one. Two transitions so far: `composerStats` (one switch over the
- * whole strip) split into a switch per read-out — a stored "hidden" hides
- * all of them, so nobody's strip reappears on upgrade; then `statsPrompts`
- * retired, the prompt count having moved to the read-out strip's prompts
- * chip, which has no switch. */
-const RETIRED = ["composerStats", "statsPrompts"] as const;
+ * current one. Three transitions so far: `composerStats` (one switch over
+ * the whole strip) split into a switch per read-out — a stored "hidden"
+ * hides all of them, so nobody's strip reappears on upgrade; then
+ * `statsPrompts` retired, the prompt count having moved to the read-out
+ * strip's prompts chip, which has no switch; then `doneSound` retired, the
+ * chime moving from the system's sounds to one the Agent View makes, with
+ * nothing to pick. */
+const RETIRED = ["composerStats", "statsPrompts", "doneSound"] as const;
 
 function migrate(stored: Record<string, unknown>): Partial<PreferencesView> {
-  const { composerStats, statsPrompts: _retired, ...rest } = stored;
+  const { composerStats, statsPrompts: _prompts, doneSound: _sound, ...rest } = stored;
   const split = composerStats === false ? { statsToolCalls: false, statsContext: false, statsPlanUsage: false } : {};
   return { ...split, ...(rest as Partial<PreferencesView>) };
 }

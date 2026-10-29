@@ -114,7 +114,6 @@ export function App({ state }: { state: SettingsState }) {
           <PreferencesSection
             state={state}
             onSet={(patch) => send({ kind: "setPreferences", patch })}
-            onPreview={(sound) => send({ kind: "previewDoneSound", sound })}
           />
         )}
         {section === "roots" && (

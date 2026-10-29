@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "./support/teardown";
 import type { Logger } from "../src/orchestrator/logger";
+import { platformOf, registryTarget } from "../src/orchestrator/platform";
 import {
   AcpRegistryStore,
   binaryDigestFor,
   fetchIcons,
-  hostPlatformKey,
   registryAgentSchema,
   registryAgentView,
   resolveDistribution,
@@ -111,7 +111,7 @@ describe("binary digests", () => {
       version,
       distribution: {
         binary: {
-          [hostPlatformKey()!]: { archive: "https://example.com/a.tar.gz", cmd: "./a", args: [], env: {}, ...(sha256 ? { sha256 } : {}) },
+          [registryTarget(platformOf()!)]: { archive: "https://example.com/a.tar.gz", cmd: "./a", args: [], env: {}, ...(sha256 ? { sha256 } : {}) },
         },
       },
     });
@@ -158,7 +158,7 @@ describe("AcpRegistryStore", () => {
         id: "bin-agent",
         name: "Bin Agent",
         version: "1.0.0",
-        distribution: { binary: { [hostPlatformKey()!]: { archive: "https://x/a.tar.gz", cmd: "./a", sha256: DIGEST } } },
+        distribution: { binary: { [registryTarget(platformOf()!)]: { archive: "https://x/a.tar.gz", cmd: "./a", sha256: DIGEST } } },
       },
     ],
   };

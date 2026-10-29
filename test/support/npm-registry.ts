@@ -8,7 +8,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { runToExit } from "../../src/orchestrator/run-to-exit";
+import { runToExit } from "../../src/orchestrator/process-tree";
 import { atFileEnd } from "./teardown";
 
 export interface PackageSource {

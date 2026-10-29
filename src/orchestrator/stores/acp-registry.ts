@@ -18,19 +18,10 @@ import { count } from "../../shared/count";
 import type { RegistryAgentView } from "../../shared/protocol";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, readBytes, readJson } from "../net";
+import { platformOf, registryTarget } from "../platform";
 
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const CACHE_FILENAME = "acp-registry-cache.json";
-
-export const PLATFORM_KEYS = [
-  "darwin-aarch64",
-  "darwin-x86_64",
-  "linux-aarch64",
-  "linux-x86_64",
-  "windows-aarch64",
-  "windows-x86_64",
-] as const;
-export type PlatformKey = (typeof PLATFORM_KEYS)[number];
 
 const envSchema = z.record(z.string(), z.string()).default({});
 
@@ -142,14 +133,6 @@ const cacheFileSchema = z.object({
   icons: z.record(z.string(), cachedIconSchema),
 });
 
-export function hostPlatformKey(): PlatformKey | null {
-  const os = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : null;
-  const arch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : null;
-  if (os === null || arch === null) return null;
-  const key = `${os}-${arch}`;
-  return (PLATFORM_KEYS as readonly string[]).includes(key) ? (key as PlatformKey) : null;
-}
-
 /** A distribution as the registry publishes it: npx/uvx's package, or the
  * host platform's binary target — the recipe a registry agent is added and
  * upgraded from. */
@@ -200,8 +183,9 @@ export function resolveDistribution(
     return { kind: "uvx", ...packageLaunch("uvx", d.uvx), env: d.uvx.env, published: d.uvx };
   }
   if (d.binary) {
-    const key = hostPlatformKey();
-    if (key === null) return { error: "unsupported platform for a binary distribution" };
+    const platform = platformOf();
+    if (platform === null) return { error: "unsupported platform for a binary distribution" };
+    const key = registryTarget(platform);
     const target = d.binary[key];
     if (target === undefined) return { error: `no binary build published for ${key}` };
     return { kind: "binary", published: target };

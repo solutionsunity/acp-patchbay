@@ -103,9 +103,9 @@ suite("snapshot/patch round-trip through real webviews", () => {
     ch.flushNow();
     await ch.waitForApplied(ch.revision);
 
-    // hide the sidebar (kills non-retained webview content), advance state, re-show
-    // closing the sidebar hides the view (it is not disposed) — settled once
-    // the provider has reported not-visible and the hidden iframe is gone
+    // hide the sidebar, advance state, re-show — closing the sidebar hides
+    // the view (it is not disposed); settled once the provider has reported
+    // not-visible
     await vscode.commands.executeCommand("workbench.action.closeSidebar");
     await waitFor(() => !orchestrator.agentView.current.screen.pointer, WINDOW_SETTLE);
     ch.emit(upsert("dummy-4"));
@@ -115,5 +115,26 @@ suite("snapshot/patch round-trip through real webviews", () => {
     await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
     const acked = await ch.waitForApplied(targetRev);
     assert.ok(acked >= targetRev, `webview acked ${acked}, wanted ${targetRev}`);
+  });
+
+  // The chime's player is an agent surface the user has touched — kept
+  // alive while hidden, or its page would load again, untouched, and no
+  // longer be allowed to play. A live hidden page takes a patch while still
+  // hidden; a page VS Code let go of has nothing to take it until shown.
+  test("a hidden agent view keeps its page: it takes a patch while hidden", async () => {
+    const { orchestrator } = await internals<Internal>();
+    const ch = orchestrator.agentView;
+    for (const hide of ["workbench.action.closeSidebar", "workbench.view.explorer"]) {
+      await vscode.commands.executeCommand("acpPatchbay.agentView.focus");
+      await ch.waitForApplied(ch.revision);
+      await vscode.commands.executeCommand(hide);
+      await waitFor(() => !ch.current.screen.pointer, WINDOW_SETTLE);
+      ch.emit(upsert(`dummy-${hide}`));
+      ch.flushNow();
+      let taken = false;
+      void ch.waitForApplied(ch.revision).then(() => (taken = true));
+      await waitFor(() => taken, WINDOW_SETTLE, `the hidden view to take the patch (${hide})`);
+      assert.strictEqual(ch.current.screen.pointer, false, "the view was shown again while waiting");
+    }
   });
 });

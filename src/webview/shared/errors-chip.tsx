@@ -3,8 +3,9 @@
 
 // "errors (N)" — visible only when this webview instance has collected any;
 // click copies the list for a bug report. Honest scope: these are THIS
-// view's errors since its last mount (webviews die when hidden); the full
-// history lives in the Patchbay Output channel.
+// view's errors since its page last loaded (a page loads again when it is
+// reopened or reloaded, and Settings whenever it is shown); the full history
+// lives in the Patchbay Output channel.
 import { useEffect, useState } from "react";
 import { collectedErrors, subscribeErrors } from "./error-collector";
 import { useCopy } from "./use-copy";

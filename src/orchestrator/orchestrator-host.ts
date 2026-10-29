@@ -28,7 +28,6 @@ import { Cancelled } from "./queue";
 import type { ExportPart } from "../shared/protocol";
 import { normalizeRootPath } from "./sessions-store";
 import { nonce } from "./webview-host";
-import { playDoneSound } from "./sound";
 import {
   resolveDistribution,
 } from "./stores/acp-registry";
@@ -916,10 +915,8 @@ export class OrchestratorHost {
           this.syncDetachContext();
         });
         break;
-      case "previewDoneSound":
-        // Preview only — plays exactly what a finishing turn would, stores
-        // nothing (the selection persists via setPreferences on change).
-        playDoneSound(this.log, action.sound);
+      case "surfaceActivation":
+        this.orchestrator.noteSurfaceActivation(action.surface, action.activated);
         break;
       case "resolveElicitation":
         this.orchestrator.asks.answerQuestion(action.patchbayAskId, action.answer);

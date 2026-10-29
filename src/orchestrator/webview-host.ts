@@ -2,7 +2,12 @@
 // Copyright 2026 Solutions Unity
 
 // vscode glue between webviews and channel hosts. Webviews are render-only:
-// they die when hidden and resurrect via ready → snapshot.
+// each rehydrates via ready → snapshot whenever its page loads. Settings dies
+// when hidden; every agent surface is kept alive while hidden
+// (retainContextWhenHidden) — the one that plays a turn's chime may be
+// behind another tab, and a page that died would also have lost the user's
+// touch Chromium requires before it plays audio. The cost is each hidden
+// agent surface's memory, accepted for the chime.
 // CSP + nonce pattern after vscode-acp's ChatWebviewProvider (MIT, formulahendry).
 //
 // CSP is authored here and never widened silently. The record:
@@ -27,14 +32,14 @@ import { count } from "../shared/count";
 import type { ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
 import type { ChannelEndpoint } from "./channel";
+import type { SurfaceReport } from "./orchestrator";
 import type { PatchbaySessionId } from "../shared/ids";
 
 type Bundle = "agent-view" | "settings";
 
-/** How an agent-view surface tells the orchestrator it became visible or
- * hidden (disposed = hidden for good). `pinned` is the session it shows;
- * null = it follows the active-session pointer. */
-export type SurfaceReporter = (surface: object, visible: boolean, pinned: string | null) => void;
+/** How an agent-view surface, by the id its host gave it, tells the
+ * orchestrator it opened, became visible or hidden, or closed (null). */
+export type SurfaceReporter = (surface: string, report: SurfaceReport | null) => void;
 
 export function nonce(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -46,9 +51,10 @@ function webviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
   bundle: Bundle,
-  /** Pins the agent-view bundle to one session (detached session panel) —
-   * rides in as a meta tag, URI-encoded (session ids are agent-authored). */
-  pinPatchbaySessionId?: PatchbaySessionId,
+  /** An agent surface's id and the session it pins, if any (a detached
+   * session panel) — each rides in as a meta tag, the session URI-encoded
+   * (session ids are agent-authored). */
+  surface?: AgentSurface,
 ): string {
   const script = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "out", `${bundle}.js`),
@@ -78,8 +84,10 @@ function webviewHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="patchbay-out-base" content="${outBase}/">
   <meta name="patchbay-attachments-base" content="${attachmentsBase}/">${
-    pinPatchbaySessionId !== undefined
-      ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(pinPatchbaySessionId)}">`
+    surface !== undefined ? `\n  <meta name="patchbay-surface" content="${surface.id}">` : ""
+  }${
+    surface?.pinned !== undefined
+      ? `\n  <meta name="patchbay-pin-session" content="${encodeURIComponent(surface.pinned)}">`
       : ""
   }
   <link rel="stylesheet" href="${codiconStyle}">
@@ -92,6 +100,14 @@ function webviewHtml(
 </html>`;
 }
 
+/** An agent surface as its page knows it: the id its host minted for it
+ * (the orchestrator's name for it when picking who plays a chime), and the
+ * session it pins, if any. */
+interface AgentSurface {
+  id: string;
+  pinned?: PatchbaySessionId;
+}
+
 /** Wire one webview to its channel host for the webview's lifetime. */
 function bind(
   webview: vscode.Webview,
@@ -99,7 +115,7 @@ function bind(
   extensionUri: vscode.Uri,
   bundle: Bundle,
   disposables: vscode.Disposable[],
-  pinPatchbaySessionId?: PatchbaySessionId,
+  surface?: AgentSurface,
 ): void {
   webview.options = {
     enableScripts: true,
@@ -111,7 +127,7 @@ function bind(
       vscode.Uri.file(ATTACHMENTS_DIR),
     ],
   };
-  webview.html = webviewHtml(webview, extensionUri, bundle, pinPatchbaySessionId);
+  webview.html = webviewHtml(webview, extensionUri, bundle, surface);
   channel.attach(webview);
   disposables.push(
     webview.onDidReceiveMessage((msg: ViewToHost) =>
@@ -133,14 +149,15 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     const disposables: vscode.Disposable[] = [];
     const webview = view.webview; // .webview throws once disposed — capture now
-    bind(webview, this.channel, this.extensionUri, "agent-view", disposables);
+    const surface = nonce();
+    bind(webview, this.channel, this.extensionUri, "agent-view", disposables, { id: surface });
     this.view = view;
     this.applyBadge();
-    this.reportSurface(view, view.visible, null);
-    disposables.push(view.onDidChangeVisibility(() => this.reportSurface(view, view.visible, null)));
+    this.reportSurface(surface, { visible: view.visible, pinned: null });
+    disposables.push(view.onDidChangeVisibility(() => this.reportSurface(surface, { visible: view.visible, pinned: null })));
     view.onDidDispose(() => {
       if (this.view === view) this.view = null;
-      this.reportSurface(view, false, null);
+      this.reportSurface(surface, null);
       this.channel.detach(webview);
       for (const d of disposables) d.dispose();
     });
@@ -166,21 +183,22 @@ export class AgentViewProvider implements vscode.WebviewViewProvider {
 /** An editor-area panel bound to its channel for the panel's lifetime
  * (attach on create, detach + disposable sweep on dispose) — the one
  * WebviewPanel constructor, shared by Settings and the detached agent-view
- * surfaces. */
+ * surfaces; an agent surface is kept alive while hidden. */
 function boundPanel(
   viewType: string,
   title: string,
   channel: ChannelEndpoint,
   extensionUri: vscode.Uri,
   bundle: Bundle,
-  pinPatchbaySessionId?: PatchbaySessionId,
+  surface?: AgentSurface,
 ): vscode.WebviewPanel {
   const panel = vscode.window.createWebviewPanel(viewType, title, vscode.ViewColumn.Active, {
     enableScripts: true,
+    retainContextWhenHidden: surface !== undefined,
   });
   const disposables: vscode.Disposable[] = [];
   const webview = panel.webview; // .webview throws once disposed — capture now
-  bind(webview, channel, extensionUri, bundle, disposables, pinPatchbaySessionId);
+  bind(webview, channel, extensionUri, bundle, disposables, surface);
   panel.onDidDispose(() => {
     channel.detach(webview);
     for (const d of disposables) d.dispose();
@@ -248,11 +266,15 @@ export class AgentPanelHost {
   }
 
   private createPanel(title: string, pinPatchbaySessionId: PatchbaySessionId | undefined): vscode.WebviewPanel {
-    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", pinPatchbaySessionId);
+    const surface = nonce();
+    const panel = boundPanel("acpPatchbay.agentPanel", title, this.channel, this.extensionUri, "agent-view", {
+      id: surface,
+      pinned: pinPatchbaySessionId,
+    });
     const pinned = pinPatchbaySessionId ?? null;
-    this.reportSurface(panel, panel.visible, pinned);
-    panel.onDidChangeViewState(() => this.reportSurface(panel, panel.visible, pinned));
-    panel.onDidDispose(() => this.reportSurface(panel, false, pinned));
+    this.reportSurface(surface, { visible: panel.visible, pinned });
+    panel.onDidChangeViewState(() => this.reportSurface(surface, { visible: panel.visible, pinned }));
+    panel.onDidDispose(() => this.reportSurface(surface, null));
     return panel;
   }
 

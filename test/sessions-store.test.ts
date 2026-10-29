@@ -53,7 +53,7 @@ function harness(opts: Pick<OrchestratorHarnessOptions, "machineKV" | "workspace
   const o = h.orchestrator;
   // the chat view open, following the active session: a turn finished
   // anywhere else is unseen
-  o.noteSurface(h.agentView, true, null);
+  o.noteSurface("chat-view", { visible: true, pinned: null });
   const told = vi.spyOn(o.ipcHost, "notifyRootsChanged");
   // Every event the view's state took, in order — patched, or in a
   // replay's window folded in silently and closed by one resync. Wrapped by
