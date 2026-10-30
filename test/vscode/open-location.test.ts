@@ -77,12 +77,16 @@ suite("open a tool-call location (issue #41)", () => {
       ),
     );
     pb.act({ kind: "openFile", path: png, line: 1 });
-    await waitFor(() =>
-      vscode.window.tabGroups.all
+    // The tab, found by the file its input holds — or by the active tab's
+    // name where VS Code gives an extension no input for the editor (its
+    // image editor, since 1.144).
+    await waitFor(() => {
+      const opened = vscode.window.tabGroups.all
         .flatMap((g) => g.tabs)
-        .some((t) => (t.input as { uri?: vscode.Uri } | undefined)?.uri?.fsPath === png),
-      WINDOW_SETTLE,
-    );
+        .some((t) => (t.input as { uri?: vscode.Uri } | undefined)?.uri?.fsPath === png);
+      const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+      return opened || (active !== undefined && active.input === undefined && active.label === "dot.png");
+    }, WINDOW_SETTLE);
   });
 
   test("a directory is revealed, never opened as a folder or an editor", async () => {
