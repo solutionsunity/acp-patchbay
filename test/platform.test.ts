@@ -58,7 +58,7 @@ describe("platform vocabulary boundary", () => {
       .filter((path) => path !== HOME)
       .flatMap((path) =>
         readFileSync(path, "utf8")
-          .split("\n")
+          .split(/\r?\n/) // a Windows checkout ends lines in CRLF
           .flatMap((line, i) => (SPELLING.test(line) && !DIGEST_ENTRY.test(line) ? [`${relative(SRC, path)}:${i + 1}: ${line.trim()}`] : [])),
       );
     expect(strays, "spell it as a projection in platform.ts").toEqual([]);
