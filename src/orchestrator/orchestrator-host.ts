@@ -891,6 +891,9 @@ export class OrchestratorHost {
       case "refreshRegistry":
         void this.orchestrator.acpRegistry.read("manual");
         break;
+      case "browseRegistry":
+        void this.orchestrator.acpRegistry.read("browse");
+        break;
       case "addCommandRule":
         void this.orchestrator.setCommandRules(action.layer, (rules) => withRule(rules, action.rule));
         break;

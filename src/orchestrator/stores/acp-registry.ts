@@ -15,9 +15,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { count } from "../../shared/count";
-import type { RegistryAgentView } from "../../shared/protocol";
+import type { PreferencesView, RegistryAgentView } from "../../shared/protocol";
 import { type Logger, nullLogger } from "../logger";
-import { describeNetFailure, readBytes, readJson } from "../net";
+import { describeNetFailure, type NetClass, readBytes, readJson, switchedOn } from "../net";
 import { platformOf, registryTarget } from "../platform";
 
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
@@ -213,17 +213,29 @@ export function binaryDigestFor(
 
 /** The moments the registry is read — the one list. A moment is added
  * here, and every site that reads names one. */
-export type RegistryReadMoment = "startup" | "new-session" | "settings" | "add" | "upgrade" | "import" | "download" | "manual";
+export type RegistryReadMoment =
+  | "startup"
+  | "new-session"
+  | "settings"
+  | "browse"
+  | "add"
+  | "upgrade"
+  | "import"
+  | "download"
+  | "manual";
 
-const MOMENT_TEXT: Record<RegistryReadMoment, string> = {
-  startup: "startup",
-  "new-session": "new session",
-  settings: "Settings opened",
-  add: "before an add",
-  upgrade: "before an upgrade",
-  import: "before an import",
-  download: "before a download",
-  manual: "refresh requested",
+/** Each moment's log text and its class. The moments that exist only for
+ * update notices are optional: nothing the user is doing waits on them. */
+const MOMENTS: Record<RegistryReadMoment, { text: string; class: NetClass }> = {
+  startup: { text: "startup", class: { optional: "checkAgentUpdates" } },
+  "new-session": { text: "new session", class: { optional: "checkAgentUpdates" } },
+  settings: { text: "Settings opened", class: { optional: "checkAgentUpdates" } },
+  browse: { text: "registry search opened", class: "essential" },
+  add: { text: "before an add", class: "essential" },
+  upgrade: { text: "before an upgrade", class: "essential" },
+  import: { text: "before an import", class: "essential" },
+  download: { text: "before a download", class: "essential" },
+  manual: { text: "refresh requested", class: "essential" },
 };
 
 /** How a read ended: the registry confirmed current (fetched or
@@ -246,6 +258,8 @@ export class AcpRegistryStore {
     /** The registry moved (read and confirmed current) — read it from
      * `current()`; the store is its one holder, so no copy travels. */
     private readonly onUpdated: () => void,
+    /** Read at each moment: an optional moment reads only while its switch is on. */
+    private readonly preferences: () => PreferencesView,
     private readonly log: Logger = nullLogger,
   ) {}
 
@@ -264,15 +278,19 @@ export class AcpRegistryStore {
 
   /** The one way to the registry: reads it now, at `moment` — the log line
    * names it — and what it held becomes what it answered. Overlapping
-   * moments share one read (named by the first). */
+   * moments share one read (named by the first). An optional moment whose
+   * switch is off reads nothing: the copy stays as last confirmed. */
   read(moment: RegistryReadMoment): Promise<RegistryRead> {
-    this.inflight ??= this.doRead(MOMENT_TEXT[moment]).finally(() => {
+    if (!switchedOn(MOMENTS[moment].class, this.preferences())) {
+      return Promise.resolve({ ok: false, at: new Date().toISOString(), reason: "switched off in Preferences" });
+    }
+    this.inflight ??= this.doRead(MOMENTS[moment]).finally(() => {
       this.inflight = null;
     });
     return this.inflight;
   }
 
-  private async doRead(moment: string): Promise<RegistryRead> {
+  private async doRead({ text: moment, class: why }: (typeof MOMENTS)[RegistryReadMoment]): Promise<RegistryRead> {
     const at = new Date().toISOString();
     const fail = (reason: string): RegistryRead => {
       this.log.warn(
@@ -281,7 +299,7 @@ export class AcpRegistryStore {
       return { ok: false, at, reason };
     };
     try {
-      const read = await readJson(REGISTRY_URL, { log: this.log, what: "ACP registry", etag: this.etag });
+      const read = await readJson(REGISTRY_URL, { log: this.log, what: "ACP registry", class: why, etag: this.etag });
       if (!read.ok) return fail(describeNetFailure(read.failure));
       if (read.value === "unchanged") {
         this.cache = { ...this.cache, fetchedAt: at };
@@ -292,7 +310,7 @@ export class AcpRegistryStore {
       }
       const reading = readRegistry(read.value.json);
       if (reading === null) return fail("unexpected shape (not a registry file)");
-      this.iconCache = await fetchIcons(reading.agents, this.iconCache, this.log);
+      this.iconCache = await fetchIcons(reading.agents, this.iconCache, why, this.log);
       this.raw = read.value.json;
       this.etag = read.value.etag;
       this.adopt(reading, at);
@@ -359,10 +377,12 @@ function iconUris(icons: Record<string, { version: string; dataUri: string }>): 
  * for the rest, honest failure handling (a failed fetch keeps the stale
  * icon — branding, not truth — or stays absent; a non-image content-type or
  * an oversized body is refused). Agents dropped from the registry fall out
- * naturally: only current agents enter the result. Exported for tests. */
+ * naturally: only current agents enter the result. The icons ride the read
+ * that listed them, under its class. Exported for tests. */
 export async function fetchIcons(
   agents: readonly RegistryAgent[],
   prior: Record<string, { version: string; dataUri: string }>,
+  why: NetClass,
   log: Logger = nullLogger,
 ): Promise<Record<string, { version: string; dataUri: string }>> {
   const next: Record<string, { version: string; dataUri: string }> = {};
@@ -374,7 +394,7 @@ export async function fetchIcons(
         next[a.id] = had;
         return;
       }
-      const read = await readBytes(a.icon, { log, what: `icon of ${a.id}`, maxBytes: ICON_MAX_BYTES });
+      const read = await readBytes(a.icon, { log, what: `icon of ${a.id}`, class: why, maxBytes: ICON_MAX_BYTES });
       if (!read.ok) {
         if (had !== undefined) next[a.id] = had; // branding, not truth: stale beats none
         return;

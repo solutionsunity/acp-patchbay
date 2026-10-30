@@ -218,7 +218,8 @@ card; adding one collapses it back.
 
 Add Agent card: one mode at a time behind a toggle, never a registry field and a
 command field half-filled together — a searchable combobox (type to filter, click
-to pick, ✕ to clear) or a custom command line. Buttons in order: `Add` (submits
+to pick, ✕ to clear; opening it reads the registry fresh, the list updating as the
+read lands) or a custom command line. Buttons in order: `Add` (submits
 whichever mode is active) · the mode toggle itself (`Add custom…` in registry
 mode, `Add from list` in custom mode). A
 registry agent already added is listed with `— added`; adding it again adds a
@@ -338,7 +339,7 @@ workspaces, not repos, may return later as an opt-in feature.
 
 ### Preferences
 
-Machine-scoped behavior defaults (non-sensitive), four cards, each a full read of
+Machine-scoped behavior defaults (non-sensitive), in cards, each a full read of
 the stored truth — the page never assumes its own write landed:
 
 - **Turn end** — chime toggle (default on); a cancelled turn never chimes. One
@@ -371,6 +372,16 @@ the stored truth — the page never assumes its own write landed:
   `ungrouped, whole title` (its title whole while the card is closed),
   `uncollapsed` (the card open). A kind with no row stays grouped; a click
   opens or closes any card either way.
+- **Network** — one switch per call patchbay makes on its own, for something
+  extra: *check for agent updates automatically* (default on) — the registry
+  reads at window start, a new session and Settings opening, which exist for
+  update notices; off, the registry is read only when the user acts on it
+  (opening the registry search, Refresh registry, an Add, an Upgrade, an
+  import).
+  One sentence beside the switches says what they don't cover: what the user
+  does still reaches the network (an Add or Upgrade, a runtime download, an
+  MCP server's sign-in or check), and what an agent sends is the agent's own
+  settings'.
 
 ### Saved roots
 

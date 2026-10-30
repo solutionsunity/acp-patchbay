@@ -8,10 +8,13 @@
 // vscode-free; McpServersStore injects credentials and caches results.
 // HTTP rides the MCP SDK's transport — the one dependency that also backs
 // the stdio-to-HTTP bridge, so probe and bridge can't drift on transport
-// behavior. A stdio server is started through the process door like every
-// child, and the SDK's client talks over its streams with the SDK's own
-// line framing: the SDK's stdio transport would spawn the command itself,
-// past the Windows-safe lookup, and end only its top process.
+// behavior — and its requests go out through the network door's fetch.
+// Every remote probe is the user's act (a connect, a switch-on, a refresh),
+// so the probe's class is essential. A stdio server is started through the
+// process door like every child, and the SDK's client talks over its
+// streams with the SDK's own line framing: the SDK's stdio transport would
+// spawn the command itself, past the Windows-safe lookup, and end only its
+// top process.
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -20,6 +23,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { prepareLauncher } from "./launcher-health";
 import { nullLogger, type Logger } from "./logger";
+import { doorFetch } from "./net";
 import { killTree, startChild } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
 import { PRODUCT } from "../shared/product";
@@ -156,6 +160,7 @@ export async function probeMcpServer(target: ProbeTarget, signal?: AbortSignal, 
   const transport =
     target.kind === "http"
       ? new StreamableHTTPClientTransport(new URL(target.url), {
+          fetch: doorFetch({ log, what: "MCP probe", class: "essential" }),
           requestInit:
             target.header !== null
               ? { headers: { [target.header.name]: target.header.value } }

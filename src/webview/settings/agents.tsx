@@ -157,13 +157,21 @@ function RegistryCombobox(props: {
   selectedId: string;
   onQueryChange(query: string): void;
   onSelect(registryId: string): void; // "" clears the selection
+  /** The dropdown opened: the list is about to be read. */
+  onBrowse(): void;
 }) {
   const [open, setOpen] = useState(false);
   const selected = props.entries.find((r) => r.id === props.selectedId);
 
   return (
     <div className="flex items-center gap-1.5">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (next) props.onBrowse();
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -243,6 +251,7 @@ function AddAgentRow(props: {
   state: SettingsState;
   onAdd(source: { registryId: string } | { command: string }): void;
   onRefreshRegistry(): void;
+  onBrowseRegistry(): void;
 }) {
   const added = new Set(props.state.agentConfigs.flatMap((c) => (c.registrySource === null ? [] : [c.registrySource.registryId])));
   const registryCount = props.state.registryAgents.length;
@@ -298,6 +307,7 @@ function AddAgentRow(props: {
             selectedId={registryId}
             onQueryChange={setRegistryQuery}
             onSelect={setRegistryId}
+            onBrowse={props.onBrowseRegistry}
           />
         ) : (
           <Input
@@ -501,6 +511,7 @@ export function AgentsSection(props: {
   onLogout(patchbayAgentId: PatchbayAgentId): void;
   onUpgrade(patchbayAgentId: PatchbayAgentId): void;
   onRefreshRegistry(): void;
+  onBrowseRegistry(): void;
   onReorder(patchbayAgentIds: PatchbayAgentId[]): void;
   /** A card's knob editor is showing (open) or gone — the host opens or
    * ends the throwaway session that reads the agent's surface. */
@@ -577,6 +588,7 @@ export function AgentsSection(props: {
             setAddOpen(false);
           }}
           onRefreshRegistry={props.onRefreshRegistry}
+          onBrowseRegistry={props.onBrowseRegistry}
         />
       )}
       {patchbayAgentIds.length === 0 && (

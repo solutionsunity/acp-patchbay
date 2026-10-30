@@ -7,10 +7,13 @@
 // prove the cwd handed in is the workspace's; this proves the handed-in cwd
 // is where the command actually runs.
 import { writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { tempDir } from "./support/teardown";
 import { SETTLE, waitFor } from "./support/wait-for";
+import type { Logger } from "../src/orchestrator/logger";
 import { probeMcpServer } from "../src/orchestrator/mcp-probe";
 import { isAlive } from "../src/orchestrator/process-tree";
 
@@ -53,4 +56,17 @@ describe("probeMcpServer — the server's whole tree ends with the probe", () =>
       if (isAlive(serverPid)) process.kill(serverPid, "SIGKILL"); // an orphan the suite must not leave
     }
   }, 3 * SETTLE.timeout); // the shutdown's graces and the wait, with room for the cleanup to run
+});
+
+describe("probeMcpServer — a remote server is reached through the network door", () => {
+  it("the probe's requests are the door's: a refused connection is logged by it", async () => {
+    const closed = createServer();
+    await new Promise<void>((r) => closed.listen(0, "127.0.0.1", r));
+    const port = (closed.address() as AddressInfo).port;
+    await new Promise<void>((r) => closed.close(() => r()));
+    const warnings: string[] = [];
+    const log: Logger = { trace: () => {}, debug: () => {}, info: () => {}, warn: (m) => warnings.push(m), error: () => {} };
+    await expect(probeMcpServer({ kind: "http", url: `http://127.0.0.1:${port}/mcp`, header: null }, undefined, log)).rejects.toThrow();
+    expect(warnings).toEqual([expect.stringMatching(new RegExp(`^MCP probe: 127\\.0\\.0\\.1:${port} — network error`))]);
+  });
 });

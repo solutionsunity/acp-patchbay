@@ -132,7 +132,11 @@ export async function installBinary(
     // poison the npx cache suffers from, launcher-health.ts; here we own
     // the disk, so it's prevented rather than repaired). Same parent dir on
     // purpose: rename stays atomic on one filesystem.
-    const download = await readBytes(spec.archiveUrl, { log, what: `download of ${spec.distribution} ${spec.version}` });
+    const download = await readBytes(spec.archiveUrl, {
+      log,
+      what: `download of ${spec.distribution} ${spec.version}`,
+      class: "essential",
+    });
     if (!download.ok) throw new Error(`download failed: ${describeNetFailure(download.failure)}`);
     const { bytes } = download.value;
     if (spec.sha256 !== null) {

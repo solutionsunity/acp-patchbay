@@ -215,6 +215,9 @@ export type Action =
   | { kind: "logoutAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "upgradeAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "refreshRegistry" }
+  /** The user opened the registry search — the list they are about to
+   * read is read fresh. */
+  | { kind: "browseRegistry" }
   /** `layer` picks which rule list (permission-rules.ts): "workspace"
    * (workspaceState, this repo, evaluated first) or "machine" (machine store,
    * every workspace, the fallback floor). */
@@ -1580,6 +1583,10 @@ export interface PreferencesView {
    * code runs or browser actions. Grouped (the default) keeps today's runs;
    * the later steps are for a user who reads every command the agent runs. */
   executeCalls: ToolCallDisplay;
+  /** The ACP registry read for update notices alone — the registry's
+   * optional read moments (acp-registry.ts). Off, it is read only when the
+   * user acts on it. */
+  checkAgentUpdates: boolean;
 }
 
 export const DEFAULT_PREFERENCES: PreferencesView = {
@@ -1593,6 +1600,7 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   attachmentMaxMB: 10,
   openThinking: false,
   executeCalls: "grouped",
+  checkAgentUpdates: true,
 };
 
 export interface AgentViewState {

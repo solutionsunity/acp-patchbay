@@ -105,6 +105,7 @@ export function App({ state }: { state: SettingsState }) {
             onLogout={(patchbayAgentId) => send({ kind: "logoutAgent", patchbayAgentId })}
             onUpgrade={(patchbayAgentId) => send({ kind: "upgradeAgent", patchbayAgentId })}
             onRefreshRegistry={() => send({ kind: "refreshRegistry" })}
+            onBrowseRegistry={() => send({ kind: "browseRegistry" })}
             onReorder={(patchbayAgentIds) => send({ kind: "reorderAgentConfigs", patchbayAgentIds })}
             onEditDefaults={(patchbayAgentId, open) => send({ kind: "editAgentDefaults", patchbayAgentId, open })}
           />

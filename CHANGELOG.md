@@ -18,6 +18,12 @@
   way agents are started, and ends everything the server started when it
   is done, so a server run through a launcher no longer outlives the
   check. (#127)
+- **Agent update checks can be switched off.** Patchbay reads the ACP
+  registry when the window starts, a new session starts and Settings opens,
+  to tell you about newer agent versions. Preferences › Network › *check
+  for agent updates automatically* (on by default) turns those reads off;
+  the registry is then read only when you act on it — opening the registry
+  search, Refresh registry, an Add, an Upgrade, an import. (#128)
 
 ## 0.88.4 — 2026-10-26
 

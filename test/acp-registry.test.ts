@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "./support/teardown";
 import type { Logger } from "../src/orchestrator/logger";
+import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { platformOf, registryTarget } from "../src/orchestrator/platform";
 import {
   AcpRegistryStore,
@@ -68,7 +69,7 @@ describe("fetchIcons", () => {
 
   it("fetches, encodes, and version-keys a new icon", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => svgResponse("<svg/>")));
-    const out = await fetchIcons([iconAgent("a1", "1.0.0")], {});
+    const out = await fetchIcons([iconAgent("a1", "1.0.0")], {}, "essential");
     expect(out.a1).toEqual({
       version: "1.0.0",
       dataUri: `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`,
@@ -79,7 +80,7 @@ describe("fetchIcons", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const prior = { a1: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
-    const out = await fetchIcons([iconAgent("a1", "1.0.0")], prior);
+    const out = await fetchIcons([iconAgent("a1", "1.0.0")], prior, "essential");
     expect(out.a1).toBe(prior.a1);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -87,7 +88,7 @@ describe("fetchIcons", () => {
   it("a failed refetch keeps the stale icon; a failed first fetch stays absent", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
     const prior = { a1: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
-    const out = await fetchIcons([iconAgent("a1", "2.0.0"), iconAgent("a2", "1.0.0")], prior);
+    const out = await fetchIcons([iconAgent("a1", "2.0.0"), iconAgent("a2", "1.0.0")], prior, "essential");
     expect(out.a1).toBe(prior.a1); // stale beats none
     expect(out.a2).toBeUndefined();
   });
@@ -95,7 +96,7 @@ describe("fetchIcons", () => {
   it("refuses an oversized body and a dropped agent falls out of the cache", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => svgResponse("x".repeat(129 * 1024))));
     const prior = { gone: { version: "1.0.0", dataUri: "data:image/svg+xml;base64,QQ==" } };
-    const out = await fetchIcons([iconAgent("big", "1.0.0")], prior);
+    const out = await fetchIcons([iconAgent("big", "1.0.0")], prior, "essential");
     expect(out.big).toBeUndefined();
     expect(out.gone).toBeUndefined();
   });
@@ -179,7 +180,7 @@ describe("AcpRegistryStore", () => {
     await fresh();
     const fetchSpy = vi.fn(async () => json(payload));
     vi.stubGlobal("fetch", fetchSpy);
-    const store = new AcpRegistryStore(dir, () => {});
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
     const [a, b] = await Promise.all([store.read("manual"), store.read("manual")]);
     expect(a).toBe(b);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -199,7 +200,7 @@ describe("AcpRegistryStore", () => {
     let updates = 0;
     const infos: string[] = [];
     const log: Logger = { trace: () => {}, debug: () => {}, info: (m) => infos.push(m), warn: () => {}, error: () => {} };
-    const store = new AcpRegistryStore(dir, () => updates++, log);
+    const store = new AcpRegistryStore(dir, () => updates++, () => DEFAULT_PREFERENCES, log);
     await store.read("manual");
     const before = store.current();
     expect(await store.read("manual")).toMatchObject({ ok: true });
@@ -214,7 +215,7 @@ describe("AcpRegistryStore", () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
     const { log, lines } = warnings();
-    const store = new AcpRegistryStore(dir, () => {}, log);
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES, log);
     await store.read("manual");
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("fetch failed"))));
     const outcome = await store.read("manual");
@@ -223,16 +224,35 @@ describe("AcpRegistryStore", () => {
     expect(lines.some((l) => l.startsWith("ACP registry: read failed (refresh requested) — network error"))).toBe(true);
   });
 
+  it("the update-notice moments read only while their switch is on; a moment the user acts in always reads", async () => {
+    await fresh();
+    const fetchSpy = vi.fn(async () => json(payload));
+    vi.stubGlobal("fetch", fetchSpy);
+    let prefs = { ...DEFAULT_PREFERENCES, checkAgentUpdates: false };
+    const store = new AcpRegistryStore(dir, () => {}, () => prefs);
+    for (const moment of ["startup", "new-session", "settings"] as const) {
+      expect((await store.read(moment)).ok).toBe(false);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    for (const moment of ["browse", "add", "upgrade", "import", "download", "manual"] as const) {
+      expect((await store.read(moment)).ok).toBe(true);
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(6);
+    prefs = { ...prefs, checkAgentUpdates: true }; // read at each moment, never captured
+    expect((await store.read("startup")).ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(7);
+  });
+
   it("caches the registry as received — a later read parses it whole, digests included", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(payload, { etag: '"v1"' })));
-    await new AcpRegistryStore(dir, () => {}).read("manual");
+    await new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES).read("manual");
     const cached = JSON.parse(await readFile(join(dir, "acp-registry-cache.json"), "utf8"));
     expect(cached.raw).toEqual(payload);
     expect(cached.etag).toBe('"v1"');
     // a fresh store with the network gone answers from the cache — nothing lost
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("fetch failed"))));
-    const reader = new AcpRegistryStore(dir, () => {});
+    const reader = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
     await reader.load();
     expect(binaryDigestFor(reader.current().agents, "bin-agent", "1.0.0", null)).toBe(DIGEST);
   });
@@ -240,9 +260,9 @@ describe("AcpRegistryStore", () => {
   it("a read that lands before the cache loads is never replaced by the older disk copy", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json({ ...payload, agents: [] })));
-    await new AcpRegistryStore(dir, () => {}).read("manual"); // disk: an empty registry
+    await new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES).read("manual"); // disk: an empty registry
     vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
-    const store = new AcpRegistryStore(dir, () => {});
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
     // the startup load and a restored view's read overlap: the load reads
     // the old disk copy, the read lands in memory first
     const loading = store.load();
@@ -268,7 +288,7 @@ describe("AcpRegistryStore", () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(unreadable)));
     const { log, lines } = warnings();
-    const store = new AcpRegistryStore(dir, () => {}, log);
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES, log);
     expect(await store.read("manual")).toMatchObject({ ok: true });
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
     expect(lines).toEqual([
@@ -281,9 +301,9 @@ describe("AcpRegistryStore", () => {
   it("the cached copy is read entry by entry too", async () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(unreadable)));
-    await new AcpRegistryStore(dir, () => {}).read("manual");
+    await new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES).read("manual");
     const { log, lines } = warnings();
-    const reader = new AcpRegistryStore(dir, () => {}, log);
+    const reader = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES, log);
     await reader.load();
     expect(reader.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
     expect(lines).toHaveLength(3);
@@ -293,7 +313,7 @@ describe("AcpRegistryStore", () => {
     await fresh();
     vi.stubGlobal("fetch", vi.fn(async () => json(payload)));
     const { log, lines } = warnings();
-    const store = new AcpRegistryStore(dir, () => {}, log);
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES, log);
     await store.read("manual");
     vi.stubGlobal("fetch", vi.fn(async () => json({ version: "1.0.0", agents: "none" })));
     expect(await store.read("manual")).toMatchObject({ ok: false, reason: expect.stringContaining("unexpected shape") });
@@ -312,7 +332,7 @@ describe("AcpRegistryStore", () => {
         return json(payload);
       }),
     );
-    const store = new AcpRegistryStore(dir, () => {});
+    const store = new AcpRegistryStore(dir, () => {}, () => DEFAULT_PREFERENCES);
     await store.load();
     await store.read("manual");
     expect(asked[0]).toBeNull(); // never a conditional read against a copy it can't use

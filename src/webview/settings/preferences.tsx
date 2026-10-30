@@ -239,6 +239,22 @@ export function PreferencesSection(props: {
           />
         </Field>
       </PrefCard>
+
+      <PrefCard
+        title="Network"
+        help="Agent updates: patchbay reads the ACP registry when the window starts, a new session starts and
+        Settings opens, to tell you when an agent has a newer version. Off, it reads the registry only
+        when you act — opening the registry search, Refresh registry, an Add, an Upgrade, an import. The switches here cover only the
+        calls patchbay makes on its own: what you do yourself still reaches the network (adding or
+        upgrading an agent, a runtime download, an MCP server's sign-in or check), and what an agent
+        sends is up to the agent's own settings."
+      >
+        <Toggle
+          checked={prefs.checkAgentUpdates}
+          label="check for agent updates automatically"
+          onChange={(checkAgentUpdates) => props.onSet({ checkAgentUpdates })}
+        />
+      </PrefCard>
     </section>
   );
 }

@@ -204,6 +204,34 @@ SecretStorage, a sign-in.
   the pool does for ACP. A test holds it with no exception list: only the
   door imports `child_process` for more than its types, and nothing uses
   the SDK's stdio transport.
+- **One network door** (net.ts). Every call the extension host makes to
+  the network is made there: the ACP registry and its icons, binary and
+  runtime downloads, OAuth discovery, registration and tokens, and the MCP
+  probe's HTTP — a library that makes its own requests (the MCP SDK's
+  transport) is handed the door's fetch. A read or request ends in one
+  outcome vocabulary (body, unchanged, or a failure that says whether it
+  was a status, the network, or the body), one log line per failure; a
+  library handed the fetch reads its own statuses, and the door logs its
+  failed connections. No timeout of patchbay's own — a slow link is not a
+  broken one, and a dead connection is failed by the network stack
+  itself. Every call **declares
+  its class**, so none ships without one: *essential* — what the user is
+  doing can't happen without it, and their own act is its control (an
+  Add, an Upgrade, a download, a sign-in, a probe on connect or refresh);
+  or *optional* — a feature riding alongside, naming the preference that
+  switches it. The line is drawn per call site, not per kind of call: the
+  same registry read is optional at startup and essential before an Add.
+  The test: if the call never happened, would what the user is doing fail,
+  or only something extra disappear? The door knows every call and blocks
+  none — an optional feature checks its switch where it decides to run (the
+  registry's moment table, today's one optional feature). What the agents
+  send — their own calls, the MCP servers they spawn, patchbay's bridge
+  among them — is the agent's traffic, governed by the agent's settings,
+  the same line as the process door. A test holds the door over the
+  extension host's code with no exception list: no `fetch` call, no Node
+  HTTP client, and no MCP SDK network transport without the door's fetch.
+  Settings › Preferences shows only the switches, with one sentence saying
+  what they don't cover.
 - **One platform vocabulary** (platform.ts). Node names the machine; what
   patchbay downloads is published under other names — the ACP registry's
   binary targets (`windows-x86_64`), nodejs.org's archives (`win-x64`), uv's
@@ -1252,9 +1280,12 @@ mechanism — MCP servers routed to agents:
   agent source (identity, launch, icon, live-fetched + disk-cached), and the
   registry store is its one holder — nothing else keeps a copy — and the
   one way to the registry. It is read at the moments it matters (startup,
-  a new session, Settings opening; never on a clock) and always right
-  before anything acts on it (an Add, an Upgrade, a download), one read at
-  a time, conditionally by its ETag (an unchanged registry costs a
+  a new session, Settings opening — for update notices alone, so optional
+  and switched by *check for agent updates automatically*; never on a
+  clock) and always right before anything acts on it or shows it to be
+  acted on (opening the registry search, an Add, an Upgrade, an import, a
+  download, a refresh — essential), one read at a time,
+  conditionally by its ETag (an unchanged registry costs a
   bodiless 304). Between reads the copy is shown with the date it was last
   confirmed. The disk cache holds
   the registry *as served*, never patchbay's parse of it: a build that
@@ -1264,11 +1295,8 @@ mechanism — MCP servers routed to agents:
   the log with why, its neighbours read as ever; only a file that isn't a
   registry at all fails the read. A failed read is logged with its reason and
   the store keeps its copy — it never passes a failure off as current.
-  Every network read goes through one module (`net.ts`): one outcome
-  vocabulary (body, unchanged, or a failure that says whether it was a
-  status, the network, or the body), one log line per failure, and no
-  timeout of patchbay's own — a slow link is not a broken one, and a dead
-  connection is failed by the network stack itself. And
+  Each read, and the icons it fetches, goes through the network door
+  (§ Environment) under its moment's class. And
   patchbay's own per-agent curation lives in code tables where every other house
   knowledge does — `META_EXTENSIONS` (meta.ts), knob quirks (knobs.ts). The
   custom-command escape hatch covers anything the registry omits.
@@ -1310,7 +1338,10 @@ flowchart TD
   `mcpServers` entry carries none, so a probe-only cwd could pass where the real
   run fails. A stdio server run by npx/uvx has its package made ready first
   (launcher health, above), and the handshake has no limit of patchbay's own: it
-  ends with the server's answer, its exit, a network failure, or Stop. The
+  ends with the server's answer, its exit, a network failure, or Stop. A
+  remote server is reached through the network door (§ Environment) — the
+  SDK's HTTP transport is handed its fetch — and every remote probe is the
+  user's act, so its class is essential. A stdio
   server starts through the process door (§ Environment), so its command is
   found as an agent's is, and the SDK's client talks over the child's streams;
   at the end it is shut down as MCP's stdio lifecycle says — input closed, then

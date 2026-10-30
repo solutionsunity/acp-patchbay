@@ -998,6 +998,7 @@ for (const theme of Object.keys(THEMES)) {
   await p.click('button[aria-expanded]'); // add-agent tile
   await p.click('button[role="combobox"]');
   check(`[${theme}] roster combobox lists + disables with reason`, (await p.waitForSelector("text=requires login", { timeout: 3000 })) !== null);
+  check(`[${theme}] opening the registry search asks for a fresh read`, (await p.evaluate(() => window.__actions.some((a) => a.kind === "browseRegistry"))));
   await p.screenshot({ path: `${OUT}/settings-combobox-${theme}.png` });
   await p.keyboard.press("Escape");
 
@@ -1090,6 +1091,14 @@ for (const theme of Object.keys(THEMES)) {
   const sent = await p.evaluate(() => window.__actions.at(-1));
   check(`[${theme}] a read-out switch patches only its own key`, JSON.stringify(sent) === JSON.stringify({ kind: "setPreferences", patch: { statsContext: false } }));
   await statsCard.screenshot({ path: `${OUT}/settings-composer-stats-${theme}.png` });
+
+  // ── settings: the network switches, and what they don't cover ──
+  const networkCard = p.locator(".card", { has: p.locator('h2:text-is("Network")') });
+  await networkCard.locator("label", { hasText: "check for agent updates automatically" }).locator('[role="switch"]').click();
+  const switched = await p.evaluate(() => window.__actions.at(-1));
+  check(`[${theme}] the agent-update switch patches only its own key`, JSON.stringify(switched) === JSON.stringify({ kind: "setPreferences", patch: { checkAgentUpdates: false } }));
+  check(`[${theme}] the network card says what its switches don't cover`, (await networkCard.textContent()).replace(/\s+/g, " ").includes("what an agent sends is up to the agent's own settings"));
+  await networkCard.screenshot({ path: `${OUT}/settings-network-${theme}.png` });
   await p.close();
 }
 

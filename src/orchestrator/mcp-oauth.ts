@@ -96,7 +96,7 @@ const tokenResponseSchema = z.object({
  * reason, never passing for "no metadata" (which would send the flow to a
  * fallback server on the strength of a dropped packet). */
 async function fetchJson(url: string, fetchFn?: FetchFn): Promise<unknown | null> {
-  const read = await readJson(url, { log: nullLogger, what: "OAuth discovery", fetchFn });
+  const read = await readJson(url, { log: nullLogger, what: "OAuth discovery", class: "essential", fetchFn });
   if (read.ok) return read.value === "unchanged" ? null : read.value.json;
   if (read.failure.kind === "status") return null;
   throw new OAuthDiscoveryError(`couldn't read ${new URL(url).host}'s OAuth metadata — ${describeNetFailure(read.failure)}`);
@@ -177,7 +177,7 @@ export async function registerClient(
         token_endpoint_auth_method: "none", // public client — PKCE carries the proof
       }),
     },
-    { log: nullLogger, what: "OAuth client registration", fetchFn },
+    { log: nullLogger, what: "OAuth client registration", class: "essential", fetchFn },
     async (res) =>
       res.ok
         ? { kind: "registered" as const, client: registrationResponseSchema.parse(await res.json()) }
@@ -217,7 +217,7 @@ async function postForm(url: string, params: Record<string, string>, fetchFn?: F
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body: new URLSearchParams(params).toString(),
     },
-    { log: nullLogger, what: "OAuth token request", fetchFn },
+    { log: nullLogger, what: "OAuth token request", class: "essential", fetchFn },
     async (res) => {
       const json: unknown = await res.json();
       if (json === null || typeof json !== "object" || Array.isArray(json)) throw new Error("not a JSON object");

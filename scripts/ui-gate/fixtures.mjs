@@ -184,6 +184,7 @@ export const preferences = {
   soundOnDone: true, knobSource: "agent-default", idleCloseMinutes: 60,
   statsToolCalls: true, statsContext: true, statsPlanUsage: true,
   detachWindows: true, attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
+  checkAgentUpdates: true,
 };
 
 /** live=true streams the last block (caret, ticker); live=false is the

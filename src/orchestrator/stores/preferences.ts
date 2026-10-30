@@ -32,6 +32,7 @@ const PREFERENCE_SCHEMAS: { [K in keyof PreferencesView]: z.ZodType<PreferencesV
   attachmentMaxMB: z.number().finite(),
   openThinking: z.boolean(),
   executeCalls: z.custom<ToolCallDisplay>((v) => DISPLAY_LADDER.includes(v as ToolCallDisplay)),
+  checkAgentUpdates: z.boolean(),
 };
 
 /** What is stored, each preference read on its own: one in a shape this

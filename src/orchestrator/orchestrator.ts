@@ -374,6 +374,7 @@ export class Orchestrator {
         this.publishRegistry();
         void this.ports.announceUpdates();
       },
+      () => this.preferences.get(),
       log,
     );
 

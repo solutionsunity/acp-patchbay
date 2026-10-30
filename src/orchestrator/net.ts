@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// The one way patchbay calls the network: a read, or a request to an
-// endpoint that answers in its body. Every call ends in one vocabulary —
+// The network door — every call the extension host makes to the network is
+// made here, and nowhere else: a read, a request to an endpoint that
+// answers in its body, or a fetch handed to a library that makes its own
+// requests. What the agents send (their own calls, the MCP servers they
+// spawn, patchbay's bridge among them) is the agents' traffic, not the
+// door's. A read or a request ends in one vocabulary —
 // the answer, "unchanged" (a conditional read's 304), or a failure that
 // says which kind — and every failure is logged here, once, with the host
 // only. A failure is never an absence: a caller that treats some status as
@@ -13,7 +17,30 @@
 // business, and a slow link is not a broken one. A connection that truly
 // dies is failed by the network stack itself, and that failure lands here
 // like any other.
+//
+// Every call says why it is made (`NetClass`), so none reaches the network
+// without its class named — and no optional one without the switch the
+// user turns it off with.
 import { type Logger, loggableUrl } from "./logger";
+import type { PreferencesView } from "../shared/protocol";
+
+/** Why a call is made. Essential: what the user is doing can't happen
+ * without it, and their own act is its control (an Add reads the registry,
+ * a sign-in talks to its provider). Optional: a feature riding alongside,
+ * run only while the preference it names is on — checked where the feature
+ * decides to run, never here: the door knows every call and blocks none.
+ * The test: if this call never happened, would what the user is doing
+ * fail, or only something extra disappear? */
+export type NetClass = "essential" | { optional: NetSwitch };
+
+/** The preferences that switch an optional call — a new one is named here. */
+type NetSwitch = Extract<keyof PreferencesView, "checkAgentUpdates">;
+
+/** Whether a call of this class runs under these preferences — asked by
+ * an optional feature where it decides to run. */
+export function switchedOn(why: NetClass, prefs: PreferencesView): boolean {
+  return why === "essential" || prefs[why.optional];
+}
 
 export type NetFailure =
   | { kind: "status"; status: number }
@@ -43,6 +70,7 @@ export interface NetReadOptions {
   log: Logger;
   /** What the read is for, in the log line ("ACP registry", "download of X"). */
   what: string;
+  class: NetClass;
   /** Statuses that are an answer to this caller, not a failure worth a
    * warning — logged at debug. */
   answerStatuses?: readonly number[];
@@ -62,9 +90,7 @@ async function request<T>(
   decode: (res: Response) => Promise<T>,
 ): Promise<Read<T>> {
   const fail = (failure: NetFailure): Read<never> => {
-    const line = `${opts.what}: ${loggableUrl(url)} — ${describeNetFailure(failure)}`;
-    if (failure.kind === "status" && opts.answerStatuses?.includes(failure.status)) opts.log.debug(line);
-    else opts.log.warn(line);
+    logFailure(url, failure, opts);
     return { ok: false, failure };
   };
   let res: Response;
@@ -82,6 +108,12 @@ async function request<T>(
   } catch (err) {
     return fail({ kind: "body", detail: errorDetail(err) });
   }
+}
+
+function logFailure(url: string, failure: NetFailure, opts: NetReadOptions): void {
+  const line = `${opts.what}: ${loggableUrl(url)} — ${describeNetFailure(failure)}`;
+  if (failure.kind === "status" && opts.answerStatuses?.includes(failure.status)) opts.log.debug(line);
+  else opts.log.warn(line);
 }
 
 /** `conditional`: the read asked "only if changed" — the one case where a
@@ -150,4 +182,22 @@ export function exchange<T>(
   decode: (res: Response) => Promise<T>,
 ): Promise<Read<T>> {
   return request(url, init, opts, () => true, decode);
+}
+
+/** The door as a fetch, for a library that makes its own requests (the MCP
+ * SDK's HTTP transport): the same platform call, a failed connection logged
+ * here like every other. Statuses are the library's to read, and a request
+ * its own signal ended is no failure. */
+export function doorFetch(opts: NetReadOptions): FetchFn {
+  return async (input, init) => {
+    try {
+      return await (opts.fetchFn ?? fetch)(input, init);
+    } catch (err) {
+      const request = input instanceof Request ? input : null;
+      if ((init?.signal ?? request?.signal)?.aborted !== true) {
+        logFailure(request?.url ?? String(input), { kind: "network", detail: errorDetail(err) }, opts);
+      }
+      throw err;
+    }
+  };
 }
