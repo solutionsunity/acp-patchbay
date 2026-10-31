@@ -11,13 +11,16 @@
   and ▶ plays the chime. A view you haven't clicked since it opened can't make a
   sound, and with no view open the badge alone marks a finished turn.
   (#127)
-- **MCP servers started by `npx` are checked on Windows.** The tool check
-  Patchbay runs when a stdio MCP server connects started the command
-  itself and found only `.exe` programs, so a server run by `npx` (a
-  `.cmd` on Windows) always failed the check. It now starts the server the
-  way agents are started, and ends everything the server started when it
-  is done, so a server run through a launcher no longer outlives the
-  check. (#127)
+- **The MCP tool check starts servers the way agents are started.** The
+  check Patchbay runs when a stdio MCP server connects now starts the
+  command through the same door as agents: a program of that name in the
+  workspace folder is never run in place of the one on PATH, and
+  everything the server started ends when the check is done, so a server
+  run through a launcher no longer outlives it. On Windows, a server run
+  through a `.cmd` (`npx`, say) whose arguments hold spaces or shell
+  characters isn't checked, as such an agent isn't started; it still runs
+  in the agent. Stopping an agent and unpacking a downloaded one no longer
+  flash a console window on Windows. (#127)
 - **Agent update checks can be switched off.** Patchbay reads the ACP
   registry when the window starts, a new session starts and Settings opens,
   to tell you about newer agent versions. Preferences › Network › *check
@@ -36,7 +39,14 @@
   upgrade replaced, and **Reset to ACP registry** for an agent whose
   command you edited: it now remembers where it came from and links to the
   registry's current version again, your env kept. An agent edited before
-  this release didn't keep that and stays custom. (#129)
+  this release didn't keep that and stays custom. Upgrade and Reset say so
+  when the registry no longer lists anything this machine can run for the
+  agent. Agents are now kept under a new name in the machine store, so a
+  window still on 0.88 after the update can't strip what this version
+  adds; what such a window changes before it reloads stays its own.
+  Settings › Data lists that earlier copy, and erasing removes it. A
+  configuration exported from this version carries its agents under the
+  new name, which 0.88 can't read. (#129)
 - **Fixes from one rule per action.** An MCP server added or edited as
   JSON with its key in a header other than `Authorization` now sends the
   key as it is — it used to get `Bearer ` in front, as only
@@ -48,8 +58,12 @@
   transcript hasn't loaded yet. Restart asks before cutting off open
   conversations, like Stop. Log out is never sent to an agent that doesn't
   offer it. An agent's one-line summary of its capabilities counts a
-  suspect one, as the matrix does. Saving an agent's form after the agent
-  was removed — in another window, say — no longer adds it back. (#135)
+  suspect one, as the matrix does; the Agents drawer says "stopped" or
+  "crashed" where it showed nothing for an agent that never fully
+  connected. Saving an agent's form after the agent was removed — in
+  another window, say — no longer adds it back. A custom HTTP MCP server
+  whose header name is left blank sends its key as `Authorization: Bearer`
+  — it used to send no key at all. (#135)
 - **A crashed agent's card says why, every time.** The last lines an agent
   writes before it dies can reach Patchbay just after its exit does, and
   the card then showed the crash without them. They now join the card
