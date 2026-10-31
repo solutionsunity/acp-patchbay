@@ -11,7 +11,7 @@
 import type { ChildProcess } from "node:child_process";
 import { PassThrough, Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import type { AgentStatus, CapabilityRowId, DeclaredCapabilities, KnobSeed } from "../shared/protocol";
+import { processUp, type AgentStatus, type CapabilityRowId, type DeclaredCapabilities, type KnobSeed } from "../shared/protocol";
 import { nullLogger, type Logger } from "./logger";
 import { unlessAborted } from "./abort";
 import { isRefusal } from "./client-replies";
@@ -308,7 +308,7 @@ export class AgentPool {
     const signal = opts?.signal;
     signal?.throwIfAborted();
     const existing = this.entries.get(patchbayAgentId);
-    if (existing && (existing.status === "running" || existing.status === "reconnecting")) {
+    if (existing && processUp(existing.status)) {
       throw new Error(`agent ${patchbayAgentId} is already connected`);
     }
 
@@ -676,7 +676,7 @@ export class AgentPool {
    * live process is never let go of. */
   forget(patchbayAgentId: PatchbayAgentId): void {
     const status = this.entries.get(patchbayAgentId)?.status;
-    if (status === "running" || status === "reconnecting") return;
+    if (processUp(status)) return;
     this.entries.delete(patchbayAgentId);
   }
 

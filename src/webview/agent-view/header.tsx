@@ -9,16 +9,13 @@
 // native view title bar (package.json view/title), not here. The usage
 // gauge lives in the composer's stats strip (composer/stats.tsx).
 import type { ReactNode } from "react";
-import type { AgentStatus, AgentSummary } from "../../shared/protocol";
+import type { AgentSummary } from "../../shared/protocol";
 import { versionChip } from "../shared/agent-work";
+import { Dot } from "../shared/dot";
 import { ErrorsChip } from "../shared/errors-chip";
 import { Icon } from "../shared/icon";
 import { VersionChip } from "../shared/version-chip";
 import { Button } from "@/components/ui/button";
-
-export function Dot({ status }: { status: AgentStatus | "none" }) {
-  return <span className={`dot ${status === "none" ? "stopped" : status}`} />;
-}
 
 export function Header(props: {
   agent: AgentSummary | null;

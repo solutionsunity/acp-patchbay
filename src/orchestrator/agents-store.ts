@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
-import {
+import { processUp,
   type AgentConfigView,
   type AgentStatus,
   type AgentSummary,
@@ -874,7 +874,7 @@ export class AgentsStore implements ConnectionOperations {
     const lock = this.deps.authLocks.lockFor(config.id);
     // A process running or starting answers for what it was spawned with;
     // otherwise the config is what the next Connect runs.
-    const launch = live?.status === "running" || live?.status === "reconnecting" ? live.spec : config;
+    const launch = live !== undefined && processUp(live.status) ? live.spec : config;
     const update = agentUpdates(this.deps.registry.current().agents, [config]).get(config.id);
     return {
       id: config.id,

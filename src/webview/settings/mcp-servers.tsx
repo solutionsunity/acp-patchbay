@@ -3,6 +3,7 @@
 
 // MCP Servers: curated and custom are the same mechanism, routed per
 // agent; a copied config carries what its owner typed, never an OAuth token.
+import { Dot } from "../shared/dot";
 import { useState } from "react";
 import type {
   McpServerConnectView,
@@ -642,7 +643,7 @@ export function McpServersSection(props: {
                 <div className="card">
                   <div className="row flex-wrap">
                     {handle}
-                    <span className={`dot ${server.connected && server.active ? "running" : "stopped"}`} />
+                    <Dot status={server.connected && server.active ? "running" : "stopped"} />
                     {catalogEntry !== undefined && <EntryIcon glyph={catalogEntry.brandIcon} />}
                     <span className="nm min-w-0">{server.name}</span>
                     <Badge className={server.sourceKind === "catalog" ? "border-brand/40 text-brand" : undefined}>

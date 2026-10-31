@@ -6,6 +6,7 @@
 // dialogs, notifications, the status bar, the browser. It builds the
 // orchestrator (orchestrator.ts) from this editor's storage and fills the
 // ports it asks through.
+import { agentSubtitle } from "../shared/capability-format";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -288,7 +289,7 @@ export class OrchestratorHost {
       const picked = await vscode.window.showQuickPick(
         agents.map((a) => ({
           label: a.name,
-          description: a.detail ?? (a.status === "running" ? "ready" : a.status === "untested" ? "never connected" : a.status),
+          description: agentSubtitle(a),
           patchbayAgentId: a.id,
         })),
         { placeHolder: "New session with…" },

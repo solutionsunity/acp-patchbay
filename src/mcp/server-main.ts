@@ -6,14 +6,15 @@
 // the *agent*, not by patchbay, per ACP's stdio mcpServers model. Plain
 // Node, no vscode: real editor state comes from the orchestrator over the
 // IPC bridge (ipc-protocol.ts) via env vars this process is launched with.
+import { IPC_ENV } from "./ipc-protocol";
 import { IpcClient } from "./ipc-client";
 import { callTool, TOOL_DEFS } from "./tools";
 import { PRODUCT } from "../shared/product";
 
-const socketPath = process.env.ACP_PATCHBAY_IPC;
-const contextToken = process.env.ACP_PATCHBAY_CONTEXT_TOKEN;
+const socketPath = process.env[IPC_ENV.socket];
+const contextToken = process.env[IPC_ENV.contextToken];
 if (socketPath === undefined || contextToken === undefined) {
-  process.stderr.write("acp-patchbay MCP server: missing ACP_PATCHBAY_IPC/ACP_PATCHBAY_CONTEXT_TOKEN\n");
+  process.stderr.write(`acp-patchbay MCP server: missing ${IPC_ENV.socket}/${IPC_ENV.contextToken}\n`);
   process.exit(1);
 }
 

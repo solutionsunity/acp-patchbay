@@ -663,6 +663,10 @@ export type CoalesceHook<E> = (prev: E, next: E) => E | null;
  * is durable proven-ness of the declared surface. */
 export type AgentStatus = "untested" | "running" | "stopped" | "crashed" | "reconnecting";
 
+/** The agent has a process — running, or starting: what the connection
+ * answers for, and what there is to stop. */
+export const processUp = (status: AgentStatus | undefined): boolean => status === "running" || status === "reconnecting";
+
 /** A registry agent's newer version than the one its config pins — never
  * applied on its own; Upgrade is always the user's click. */
 export interface AgentUpdate {

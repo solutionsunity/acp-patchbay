@@ -9,7 +9,8 @@ import type { AgentConfigView, AgentSummary, AuthMethodView, RegistryAgentView, 
 import { formatCommandLine } from "../../shared/command-line";
 import { count } from "../../shared/count";
 import { agentCardControls, runnableLoginMethods } from "./card-controls";
-import { capabilityOneLiner } from "../shared/capability-format";
+import { capabilityOneLiner } from "../../shared/capability-format";
+import { Dot } from "../shared/dot";
 import { Icon } from "../shared/icon";
 import { optionText } from "../shared/option-label";
 import { ElicitationCard } from "../shared/question-card";
@@ -666,7 +667,7 @@ export function AgentsSection(props: {
                       to its own line instead of pushing past the card border */}
                   <div className="row flex-wrap">
                     {handle}
-                    <span className={`dot ${status}`} />
+                    <Dot status={status} />
                     <AgentIcon icon={registry?.icon} />
                     <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
                     {controls.version !== null && (

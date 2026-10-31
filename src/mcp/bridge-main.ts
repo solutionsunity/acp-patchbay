@@ -38,19 +38,19 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { IpcClient } from "./ipc-client";
-import type { McpServerTokenParams, RootsResult } from "./ipc-protocol";
+import { IPC_ENV, type McpServerTokenParams, type RootsResult } from "./ipc-protocol";
 import type { PatchbayMcpServerId } from "../shared/ids";
 
-const socketPath = process.env.ACP_PATCHBAY_IPC ?? "";
-const contextToken = process.env.ACP_PATCHBAY_CONTEXT_TOKEN ?? "";
-const patchbayMcpServerId = (process.env.ACP_PATCHBAY_MCP_SERVER_ID ?? "") as PatchbayMcpServerId;
-const url = process.env.ACP_PATCHBAY_MCP_SERVER_URL ?? "";
+const socketPath = process.env[IPC_ENV.socket] ?? "";
+const contextToken = process.env[IPC_ENV.contextToken] ?? "";
+const patchbayMcpServerId = (process.env[IPC_ENV.serverId] ?? "") as PatchbayMcpServerId;
+const url = process.env[IPC_ENV.serverUrl] ?? "";
 // How the credential rides the request — per-server data, since not
 // every service takes `Authorization: Bearer` (Stitch wants a raw key in
 // `X-Goog-Api-Key`). Absent header name =
 // this server sends no credential at all (authType "none").
-const authHeader = process.env.ACP_PATCHBAY_AUTH_HEADER ?? "";
-const authPrefix = process.env.ACP_PATCHBAY_AUTH_PREFIX ?? "";
+const authHeader = process.env[IPC_ENV.authHeader] ?? "";
+const authPrefix = process.env[IPC_ENV.authPrefix] ?? "";
 
 let onRootsChanged: () => void = () => {};
 const ipc = new IpcClient(socketPath, contextToken, () => onRootsChanged());

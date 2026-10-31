@@ -252,3 +252,41 @@ a[data-streamdown="link"]:active {
   --font-sans: var(--vscode-font-family, sans-serif);
   --font-mono: var(--vscode-editor-font-family, monospace);
 }
+
+/* An agent's status dot — one look in every view that shows an agent. */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot.running {
+  background: var(--pb-ok);
+  box-shadow: 0 0 6px var(--pb-ok);
+}
+
+.dot.crashed {
+  background: var(--pb-err);
+}
+
+.dot.reconnecting {
+  background: var(--pb-warn);
+  animation: pulse 1s infinite;
+}
+
+.dot.stopped {
+  background: var(--pb-text-faint);
+}
+
+/* never connected — visibly hollow, not just another gray */
+.dot.untested {
+  background: transparent;
+  border: 1px solid var(--pb-text-faint);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}

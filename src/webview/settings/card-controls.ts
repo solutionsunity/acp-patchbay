@@ -7,7 +7,7 @@
 // invariants (login/logout exclusivity, in-flight gating) live — and are
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout regressions happened.
-import type { AgentConfigView, AgentSummary, AgentWork, AuthMethodView } from "../../shared/protocol";
+import { processUp, type AgentConfigView, type AgentSummary, type AgentWork, type AuthMethodView } from "../../shared/protocol";
 import { agentOffers } from "../../shared/agent-offers";
 import { versionChip, type VersionChip } from "../shared/agent-work";
 
@@ -69,7 +69,7 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   const status = agent?.status ?? "untested";
   const running = status === "running";
   // Something to stop: the process, its launch, or work its queue holds.
-  const live = running || status === "reconnecting" || working;
+  const live = processUp(status) || working;
   const needsAuth = agent?.needsAuth === true;
   // What the agent's facts allow — the agents store refuses the rest with
   // the same reading. No config: nothing to move.

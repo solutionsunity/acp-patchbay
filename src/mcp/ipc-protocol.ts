@@ -13,6 +13,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PatchbayMcpServerId } from "../shared/ids";
 
+/** The env a spawned MCP process is given to reach the extension host — the
+ * names both sides read from this one table, so a rename can't leave one
+ * side asking for a name the other no longer sets. */
+export const IPC_ENV = {
+  /** The IPC socket. */
+  socket: "ACP_PATCHBAY_IPC",
+  /** The session the process serves. */
+  contextToken: "ACP_PATCHBAY_CONTEXT_TOKEN",
+  /** A bridged server's id, its URL, and how its credential goes on the wire. */
+  serverId: "ACP_PATCHBAY_MCP_SERVER_ID",
+  serverUrl: "ACP_PATCHBAY_MCP_SERVER_URL",
+  authHeader: "ACP_PATCHBAY_AUTH_HEADER",
+  authPrefix: "ACP_PATCHBAY_AUTH_PREFIX",
+} as const;
+
 /** Where the channel named `name` listens: a named pipe on Windows, which
  * refuses a socket at a file path, and a socket file in the temp folder
  * everywhere else. */

@@ -10,12 +10,12 @@ import { useState, type ReactNode } from "react";
 import type { AgentSummary, SessionSummary } from "../../shared/protocol";
 import type { SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
-import { capabilityOneLiner } from "../shared/capability-format";
+import { agentSubtitle } from "../../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { timeAgo } from "../shared/time";
 import { MarkDot } from "./attention";
 import { unlistedAgents } from "./drawer-notes";
-import { Dot } from "./header";
+import { Dot } from "../shared/dot";
 import { SessionActions } from "./session-row";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -63,7 +63,6 @@ export function AgentsDrawer(props: {
         </div>
       )}
       {props.agents.map((a) => {
-        const matrix = a.capabilities;
         return (
           <button
             type="button"
@@ -77,16 +76,7 @@ export function AgentsDrawer(props: {
             <Dot status={a.status} />
             <div className="min-w-0 flex-1">
               <div className="nm">{a.name}</div>
-              <div className="sub">
-                {a.detail ??
-                  (a.status === "running"
-                    ? "ready"
-                    : a.status === "untested"
-                      ? "never connected"
-                      : matrix !== undefined
-                        ? capabilityOneLiner(matrix)
-                        : "")}
-              </div>
+              <div className="sub">{agentSubtitle(a)}</div>
             </div>
           </button>
         );

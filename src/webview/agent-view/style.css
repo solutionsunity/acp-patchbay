@@ -117,43 +117,6 @@ body {
   text-overflow: ellipsis;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-
-.dot.running {
-  background: var(--pb-ok);
-  box-shadow: 0 0 6px var(--pb-ok);
-}
-
-.dot.crashed {
-  background: var(--pb-err);
-}
-
-.dot.reconnecting {
-  background: var(--pb-warn);
-  animation: pulse 1s infinite;
-}
-
-.dot.stopped {
-  background: var(--pb-text-faint);
-}
-
-/* never connected — visibly hollow, not just another gray */
-.dot.untested {
-  background: transparent;
-  border: 1px solid var(--pb-text-faint);
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
 .hdr .spacer {
   flex: 1;
 }

@@ -10,6 +10,7 @@
 // injected OAuthUserAgent, so everything is unit-testable against a fake
 // OAuth provider and a fake remote MCP endpoint — the same fixture
 // philosophy as the fake ACP agent.
+import { IPC_ENV } from "../mcp/ipc-protocol";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
@@ -87,8 +88,8 @@ function ownScript(name: string, script: string, env: EnvVariable[]): McpServerS
  * agent's session and patchbay's own check of the server spawn. */
 function editorServer(wire: McpServerWire, contextToken: string): McpServerStdio {
   return ownScript(EDITOR_SERVER.name, wire.editorServerScript, [
-    { name: "ACP_PATCHBAY_IPC", value: wire.socketPath() },
-    { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
+    { name: IPC_ENV.socket, value: wire.socketPath() },
+    { name: IPC_ENV.contextToken, value: contextToken },
   ]);
 }
 
@@ -101,14 +102,14 @@ export function bridgeServer(
   server: { id: string; name: string; url: string; header: { headerName: string; valuePrefix: string } | null },
 ): McpServerStdio {
   return ownScript(server.name, wire.bridgeScript, [
-    { name: "ACP_PATCHBAY_IPC", value: wire.socketPath() },
-    { name: "ACP_PATCHBAY_CONTEXT_TOKEN", value: contextToken },
-    { name: "ACP_PATCHBAY_MCP_SERVER_ID", value: server.id },
-    { name: "ACP_PATCHBAY_MCP_SERVER_URL", value: server.url },
+    { name: IPC_ENV.socket, value: wire.socketPath() },
+    { name: IPC_ENV.contextToken, value: contextToken },
+    { name: IPC_ENV.serverId, value: server.id },
+    { name: IPC_ENV.serverUrl, value: server.url },
     ...(server.header !== null
       ? [
-          { name: "ACP_PATCHBAY_AUTH_HEADER", value: server.header.headerName },
-          { name: "ACP_PATCHBAY_AUTH_PREFIX", value: server.header.valuePrefix },
+          { name: IPC_ENV.authHeader, value: server.header.headerName },
+          { name: IPC_ENV.authPrefix, value: server.header.valuePrefix },
         ]
       : []),
   ]);
@@ -224,6 +225,11 @@ function endpointOf(
   entry: CatalogEntry | undefined,
 ): string {
   return source.kind === "catalog" ? (source.url ?? entry?.url ?? "") : source.url;
+}
+
+/** A custom server in one line: its command line, or its URL. */
+function customLine(source: { kind: "custom-stdio"; command: string; args: readonly string[] } | { kind: "custom-http"; url: string }): string {
+  return source.kind === "custom-stdio" ? formatCommandLine(source.command, source.args) : source.url;
 }
 
 /** How the bridge should present the stored credential on the wire —
@@ -428,12 +434,7 @@ export class McpServersStore {
         name: config.name,
         sourceKind: source.kind,
         catalogId: source.kind === "catalog" ? source.catalogId : undefined,
-        command:
-          source.kind === "custom-stdio"
-            ? formatCommandLine(source.command, source.args)
-            : source.kind === "custom-http"
-              ? source.url
-              : undefined,
+        command: source.kind === "catalog" ? undefined : customLine(source),
         connected,
         active: config.active,
         routing: config.routing,
@@ -739,7 +740,7 @@ export class McpServersStore {
       id: this.review.id,
       entries: this.review.entries.map(({ name, source }) => ({
         name,
-        summary: source.kind === "custom-stdio" ? formatCommandLine(source.command, source.args) : source.url,
+        summary: customLine(source),
       })),
     };
   }
@@ -937,7 +938,7 @@ export class McpServersStore {
       };
     }
     const entry = source.kind === "catalog" ? this.entryFor(source.catalogId) : undefined;
-    const url = source.kind === "catalog" ? (source.url ?? entry?.url ?? "") : source.url;
+    const url = endpointOf(source, entry);
     if (url === "") return null;
     const shape = headerShapeOf(source, entry);
     if (shape === null) return { kind: "http", url, header: null };
