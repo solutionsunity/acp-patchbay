@@ -16,11 +16,9 @@
   command through the same door as agents: a program of that name in the
   workspace folder is never run in place of the one on PATH, and
   everything the server started ends when the check is done, so a server
-  run through a launcher no longer outlives it. On Windows, a server run
-  through a `.cmd` (`npx`, say) whose arguments hold spaces or shell
-  characters isn't checked, as such an agent isn't started; it still runs
-  in the agent. Stopping an agent and unpacking a downloaded one no longer
-  flash a console window on Windows. (#127)
+  run through a launcher no longer outlives it. Stopping an agent and
+  unpacking a downloaded one no longer flash a console window on Windows.
+  (#127)
 - **Agent update checks can be switched off.** Patchbay reads the ACP
   registry when the window starts, a new session starts and Settings opens,
   to tell you about newer agent versions. Preferences › Network › *check
@@ -64,6 +62,17 @@
   another window, say — no longer adds it back. A custom HTTP MCP server
   whose header name is left blank sends its key as `Authorization: Bearer`
   — it used to send no key at all. (#135)
+- **On Windows, any argument reaches an npm-launched program.** A `.cmd`
+  runs only through `cmd.exe`, so Patchbay refused an argument holding a
+  space or a shell character for one — an agent launched by `npx` or
+  installed with npm given a path under `C:\Users\John Doe\…`, a
+  terminal command like `npm test -- --grep "a b"`, an MCP server checked
+  with such an argument. npm's own `npx.cmd` and `npm.cmd`, and the shims
+  npm writes for an installed bin, now run as `node` and their script, with
+  no shell in between, so every argument arrives exactly as given; an npm
+  updated with `npm i -g npm` is still the one that runs. Any other `.cmd`
+  or `.bat` runs through `cmd.exe` as before, and an argument `cmd.exe`
+  would act on is refused, saying which. (#136)
 - **A crashed agent's card says why, every time.** The last lines an agent
   writes before it dies can reach Patchbay just after its exit does, and
   the card then showed the crash without them. They now join the card

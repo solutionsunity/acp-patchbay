@@ -1,7 +1,9 @@
 // Windows command resolution: bare names resolve to absolute paths through
-// PATH×PATHEXT (never the spawn cwd — a repo-planted npx.cmd must not win),
-// .cmd/.bat shims get shell:true scoped to exactly that case (Node ≥ 20.12,
+// PATH×PATHEXT (never the spawn cwd — a repo-planted npx.cmd must not win);
+// npm's .cmd files run as node and their script (npm-shims.test.ts), and any
+// other .cmd/.bat gets cmd.exe scoped to exactly that case (Node ≥ 20.12,
 // CVE-2024-27980) with shell-active args refused rather than quoted-and-hoped.
+// The .cmd files here aren't npm's: none can be read.
 import { describe, expect, it } from "vitest";
 import { commandFound, mergeEnv, resolveSpawn, resolveExecutableWin32 } from "../src/orchestrator/spawn-resolve";
 import { warmupSpawn } from "../src/orchestrator/launcher-health";
@@ -11,6 +13,7 @@ import type { PatchbayAgentId } from "../src/shared/ids";
 const NODE_DIR = "C:\\Program Files\\nodejs";
 const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
 const winEnv = { Path: `${NODE_DIR};${NPM_DIR}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+const unread = () => null;
 const files =
   (...paths: string[]) =>
   (p: string) =>
@@ -30,75 +33,71 @@ describe("mergeEnv", () => {
 describe("resolveSpawn", () => {
   it("POSIX: commands pass through untouched, never a shell", () => {
     expect(resolveSpawn("npx", ["-y", "@zed-industries/claude-code-acp"], {}, "linux")).toEqual({
+      kind: "program",
       command: "npx",
       args: ["-y", "@zed-industries/claude-code-acp"],
-      shell: false,
     });
   });
 
   it("win32: a bare npx resolves to its absolute .cmd, shell on, spaces quoted", () => {
     const isFile = files(`${NODE_DIR}\\npx.cmd`);
-    expect(resolveSpawn("npx", ["-y", "pkg"], winEnv, "win32", isFile)).toEqual({
+    expect(resolveSpawn("npx", ["-y", "pkg"], winEnv, "win32", isFile, unread)).toEqual({
+      kind: "shell",
       command: `"${NODE_DIR}\\npx.cmd"`,
       args: ["-y", "pkg"],
-      shell: true,
     });
   });
 
   it("win32: a bare non-launcher name finds its npm shim — the ENOENT gap", () => {
     const isFile = files(`${NPM_DIR}\\gemini.cmd`);
-    const r = resolveSpawn("gemini", ["--experimental-acp"], winEnv, "win32", isFile);
+    const r = resolveSpawn("gemini", ["--experimental-acp"], winEnv, "win32", isFile, unread);
     expect(r).toEqual({
+      kind: "shell",
       command: `${NPM_DIR}\\gemini.cmd`,
       args: ["--experimental-acp"],
-      shell: true,
     });
   });
 
   it("win32: an .exe resolves shell-less", () => {
     const isFile = files(`${NODE_DIR}\\uvx.exe`);
     expect(resolveSpawn("uvx", ["some-agent"], winEnv, "win32", isFile)).toEqual({
+      kind: "program",
       command: `${NODE_DIR}\\uvx.exe`, // no shell → no quoting, even with spaces
       args: ["some-agent"],
-      shell: false,
     });
   });
 
   it("win32: an explicitly typed .cmd/.bat name resolves and gets a shell", () => {
     const isFile = files(`${NPM_DIR}\\agent.cmd`, `${NPM_DIR}\\agent.bat`);
-    expect(resolveSpawn("agent.CMD", [], winEnv, "win32", isFile).shell).toBe(true);
-    expect(resolveSpawn("agent.bat", [], winEnv, "win32", isFile).shell).toBe(true);
+    expect(resolveSpawn("agent.CMD", [], winEnv, "win32", isFile, unread).kind).toBe("shell");
+    expect(resolveSpawn("agent.bat", [], winEnv, "win32", isFile, unread).kind).toBe("shell");
   });
 
   it("win32: not found is a refusal with a real reason, not a downstream ENOENT", () => {
-    const r = resolveSpawn("codex", [], winEnv, "win32", files());
-    expect(r.error).toContain("not found on PATH");
-    const abs = resolveSpawn("C:\\tools\\agent.exe", [], winEnv, "win32", files());
-    expect(abs.error).toContain("does not exist");
+    expect(resolveSpawn("codex", [], winEnv, "win32", files())).toMatchObject({ kind: "refused", error: expect.stringContaining("not found on PATH") });
+    expect(resolveSpawn("C:\\tools\\agent.exe", [], winEnv, "win32", files())).toMatchObject({ kind: "refused", error: expect.stringContaining("does not exist") });
   });
 
   it("win32: an absolute extensionless command resolves through PATHEXT", () => {
     const isFile = files("C:\\tools\\agent.exe");
-    expect(resolveSpawn("C:\\tools\\agent", [], winEnv, "win32", isFile).command).toBe(
-      "C:\\tools\\agent.exe",
-    );
+    expect(resolveSpawn("C:\\tools\\agent", [], winEnv, "win32", isFile)).toMatchObject({ command: "C:\\tools\\agent.exe" });
   });
 
   it("win32: a relative path with a separator is explicit config — passed through", () => {
     const r = resolveSpawn(".\\tools\\agent.cmd", [], winEnv, "win32", files());
-    expect(r).toEqual({ command: ".\\tools\\agent.cmd", args: [], shell: true });
+    expect(r).toEqual({ kind: "shell", command: ".\\tools\\agent.cmd", args: [] });
   });
 
-  it("win32: shell-active args are refused, not quoted — remote data never meets a shell", () => {
+  it("win32: a .cmd that isn't npm's refuses shell-active args, never quotes them — remote data never meets a shell", () => {
     const isFile = files(`${NODE_DIR}\\npx.cmd`);
     for (const arg of ["a&b", "a|b", "a<b", "a>b", "a^b", "%PATH%", 'a"b', "a'b", "a b", "a!b"]) {
-      const r = resolveSpawn("npx", ["-y", arg], winEnv, "win32", isFile);
-      expect(r.error, arg).toContain("shell-active");
+      const r = resolveSpawn("npx", ["-y", arg], winEnv, "win32", isFile, unread);
+      expect(r, arg).toMatchObject({ kind: "refused", error: expect.stringContaining("shell-active") });
     }
   });
 
   it("POSIX: the same args spawn fine — no shell, nothing to escape", () => {
-    expect(resolveSpawn("npx", ["-y", "a b&c"], {}, "linux").error).toBeUndefined();
+    expect(resolveSpawn("npx", ["-y", "a b&c"], {}, "linux").kind).toBe("program");
   });
 });
 

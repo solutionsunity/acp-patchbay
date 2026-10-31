@@ -21,7 +21,9 @@
 // mechanism, no dependency; vscode-free, like pool.ts, so all of it is
 // unit-testable against real spawned processes.
 import { type ChildProcess, spawn, type SpawnOptions } from "node:child_process";
-import { resolveSpawn } from "./spawn-resolve";
+import { win32 } from "node:path";
+import { prefixFrom } from "./npm-shims";
+import { isFileSync, type Launch, resolveSpawn } from "./spawn-resolve";
 
 /** Spread into `spawn` options: POSIX children lead their own process
  * group (that's what makes `kill(-pid)` reach the whole tree). stdio stays
@@ -36,28 +38,44 @@ export interface ChildOptions {
   /** No console window on Windows — for a program nobody watches. */
   windowsHide?: boolean;
   platform?: NodeJS.Platform;
+  /** A stop before the spawn: nothing starts, and the start rejects with
+   * its reason. */
+  signal?: AbortSignal;
 }
 
 /** Starts `command args` through the door: resolved like every launch, a
  * tree leader. A command the resolver refuses never starts — its reason
  * comes back instead. A start the system refuses throws or emits `error`,
  * as Node's own spawn does, for the caller to say why where it is. */
-export function startChild(
+export async function startChild(
   command: string,
   args: readonly string[],
   opts: ChildOptions,
-): { child: ChildProcess } | { error: string } {
+): Promise<{ child: ChildProcess } | { error: string }> {
   const launch = resolveSpawn(command, args, opts.env, opts.platform);
-  if (launch.error !== undefined) return { error: launch.error };
-  const child = spawn(launch.command, launch.args, {
-    env: opts.env as NodeJS.ProcessEnv,
+  if (launch.kind === "refused") return { error: launch.error };
+  const [file, argv] = launch.kind === "npm" ? [launch.node, [await npmCli(launch, opts), ...launch.args]] : [launch.command, launch.args];
+  if (opts.signal?.aborted) throw opts.signal.reason;
+  const child = spawn(file, argv, {
+    env: (launch.kind === "program" && launch.env !== undefined ? { ...opts.env, ...launch.env } : opts.env) as NodeJS.ProcessEnv,
     cwd: opts.cwd,
     stdio: opts.stdio,
-    shell: launch.shell,
+    shell: launch.kind === "shell",
     windowsHide: opts.windowsHide,
     ...treeSpawnOptions,
   });
   return { child };
+}
+
+/** The CLI script npm's launcher would run: the one under the global
+ * prefix its query prints, where there is one — an npm updated with `npm i
+ * -g npm` — else its own. Asked as the launcher asks, in the launch's own
+ * folder and env: the prefix can come from a project's .npmrc. */
+async function npmCli(launch: Extract<Launch, { kind: "npm" }>, opts: ChildOptions): Promise<string> {
+  const answer = await runToExit(launch.node, launch.prefixQuery, { env: opts.env, cwd: opts.cwd, signal: opts.signal, platform: opts.platform });
+  const prefix = answer === null ? null : prefixFrom(answer.stdout);
+  const updated = prefix === null ? null : win32.join(prefix, launch.prefixCli);
+  return updated !== null && isFileSync(updated) ? updated : launch.cli;
 }
 
 export interface ExitAnswer {
@@ -89,8 +107,7 @@ export function runToExit(
 ): Promise<ExitAnswer | null> {
   const { signal } = opts;
   if (signal?.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const started = startChild(command, args, { ...opts, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  return startChild(command, args, { ...opts, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).then((started) => new Promise((resolve, reject) => {
     if ("error" in started) return resolve(null);
     const { child } = started;
     let stdout = "";
@@ -99,13 +116,16 @@ export function runToExit(
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => (stdout += chunk));
     child.stderr?.on("data", (chunk: string) => (stderr += chunk));
-    // killTree, not child.kill: a .cmd shim rides cmd.exe on win32 and
-    // launchers fork node children everywhere — killing the direct child
-    // alone would leak the subtree.
+    // killTree, not child.kill: a .cmd that isn't npm's rides cmd.exe on
+    // win32 and launchers fork node children everywhere — killing the
+    // direct child alone would leak the subtree.
     const abort = () => {
       killTree(child, "SIGKILL");
       reject(signal!.reason);
     };
+    // A stop that landed while the start resolved finds no listener to
+    // tell: it is read here, once the child is in hand.
+    if (signal?.aborted) return abort();
     signal?.addEventListener("abort", abort, { once: true });
     child.on("error", () => {
       signal?.removeEventListener("abort", abort);
@@ -117,7 +137,7 @@ export function runToExit(
       signal?.removeEventListener("abort", abort);
       resolve({ code, stdout, stderr });
     });
-  });
+  }));
 }
 
 /** Signals the tree of a process this host spawned. A pid is this host's

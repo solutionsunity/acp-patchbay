@@ -393,18 +393,26 @@ export class AgentPool {
       this.markDead(entry, detail);
       throw new Error(detail);
     }
-    // The last moment the signal reaches the launch: from the spawn on, a
-    // stop reaches the process.
+    // The signal reaches the launch up to its spawn — the door takes it
+    // through an npm launcher's prefix query; from the spawn on, a stop
+    // reaches the process.
     if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
 
     this.log.info(`${patchbayAgentId}: spawning ${spec.command} (${spec.args.length} args)`);
     // A tree leader (process-tree.ts) — what lets stop() reach
-    // grandchildren, a Windows .cmd shim's wrapper included.
-    const started = startChild(spec.command, spec.args, {
-      env: spawnEnv(spec),
-      cwd: spec.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    // grandchildren, a Windows .cmd's cmd.exe wrapper included.
+    let started: Awaited<ReturnType<typeof startChild>>;
+    try {
+      started = await startChild(spec.command, spec.args, {
+        env: spawnEnv(spec),
+        cwd: spec.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
+      throw err;
+    }
     if ("error" in started) {
       this.markDead(entry, started.error);
       throw new Error(started.error);

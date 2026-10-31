@@ -43,7 +43,7 @@ export interface CreateTerminalParams {
 }
 
 export interface TerminalRunner {
-  create(params: CreateTerminalParams): TerminalHandle;
+  create(params: CreateTerminalParams): Promise<TerminalHandle>;
 }
 
 const DEFAULT_OUTPUT_LIMIT = 1_000_000;
@@ -62,7 +62,7 @@ export function tailBytes(s: string, maxBytes: number): { text: string; truncate
 }
 
 export class NodeTerminalRunner implements TerminalRunner {
-  create(params: CreateTerminalParams): TerminalHandle {
+  async create(params: CreateTerminalParams): Promise<TerminalHandle> {
     const limit = params.outputByteLimit ?? DEFAULT_OUTPUT_LIMIT;
     let output = "";
     let truncated = false;
@@ -97,14 +97,15 @@ export class NodeTerminalRunner implements TerminalRunner {
     };
 
     // Resolved as an agent's own launch is: on Windows a bare name is found
-    // through PATH × PATHEXT, and a .cmd/.bat runs through cmd.exe only
-    // when no argument is one cmd would act on — so what runs is exactly
-    // the program and arguments the rules judged. A tree leader:
+    // through PATH × PATHEXT, npm's .cmd files run as node and their script,
+    // and any other .cmd/.bat runs through cmd.exe only when no argument is
+    // one cmd would act on — so what runs is exactly the program and
+    // arguments the rules judged. A tree leader:
     // terminal/kill must end the whole tree — build tools fork, and ACP's
     // contract is "the command stops", not "its top process stops".
     let child: ChildProcess | null = null;
     try {
-      const started = startChild(params.command, params.args, {
+      const started = await startChild(params.command, params.args, {
         env: mergeEnv(process.env, params.env),
         cwd: params.cwd,
         stdio: ["ignore", "pipe", "pipe"],
@@ -112,9 +113,10 @@ export class NodeTerminalRunner implements TerminalRunner {
       if ("error" in started) throw new Error(started.error);
       child = started.child;
     } catch (err) {
-      // Told once its caller is listening, as a failure after the spawn is.
+      // Told once its caller is listening, as a failure after the spawn is:
+      // a turn after this start resolves and the caller attaches.
       const reason = agentErrorText(err);
-      queueMicrotask(() => neverStarted(reason));
+      setImmediate(() => neverStarted(reason));
     }
     if (child !== null) {
       child.stdout!.setEncoding("utf8").on("data", append);

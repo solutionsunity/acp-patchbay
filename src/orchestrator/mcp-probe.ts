@@ -74,16 +74,16 @@ class ChildTransport implements Transport {
 
   constructor(private readonly target: StdioTarget) {}
 
-  start(): Promise<void> {
+  async start(): Promise<void> {
+    const started = await startChild(this.target.command, this.target.args, {
+      env: mergeEnv(process.env, this.target.env),
+      cwd: this.target.cwd,
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    if ("error" in started) throw new Error(started.error);
+    const { child } = started;
     return new Promise((resolve, reject) => {
-      const started = startChild(this.target.command, this.target.args, {
-        env: mergeEnv(process.env, this.target.env),
-        cwd: this.target.cwd,
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      });
-      if ("error" in started) return reject(new Error(started.error));
-      const { child } = started;
       this.child = child;
       child.once("spawn", () => resolve());
       child.on("error", (err) => {

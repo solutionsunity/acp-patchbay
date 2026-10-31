@@ -199,7 +199,18 @@ SecretStorage, a sign-in.
   package warm-ups, an archive's extraction), and the door's own process
   reads and kills. Through it a command is found the Windows-safe way
   (`resolveSpawn`) against the env it will run with, and the child leads
-  its own process tree, so a stop reaches what it shelled out to. The door
+  its own process tree, so a stop reaches what it shelled out to. On
+  Windows a `.cmd` runs only through cmd.exe, which has no faithful way to
+  pass an argument on, so npm's own — its launchers (`npx.cmd`, `npm.cmd`,
+  read line for line as npm writes them) and the shims it writes for a Node
+  bin (read with npm's `read-cmd-shim`, the interpreter from the script's
+  shebang) — run as `node` and their script, with no shell (`npm-shims.ts`,
+  decided 2026-10-31, #136, refining 2026-07-11's refusal for every
+  `.cmd`). A launcher's prefix query (an npm updated under the global
+  prefix) is asked as the launcher asks it, in the launch's folder and env.
+  Every other `.cmd`/`.bat` runs through cmd.exe, an argument cmd would act
+  on refused rather than quoted. Each command either runs exactly the
+  arguments it was given or is refused, saying why. The door
   is decided by **which process starts a child**, not whose code asks: a
   terminal login (`vscode.ProcessExecution`) is a task VS Code's host runs —
   outside the door by where it runs, not as an exception; the MCP servers an
@@ -1242,10 +1253,11 @@ The differentiator (the PRD's current-release scope), shipped complete:
   The run is resolved as an agent's launch is (`spawn-resolve.ts`, decided
   2026-10-17, #116): on Windows a bare name is found through PATH × PATHEXT —
   never in the command's own directory, where an opened repo could plant a
-  `git.exe` — and a `.cmd`/`.bat` runs through cmd.exe only when no argument
-  is one cmd would act on, so what runs is exactly the program and arguments
-  the rules judged; an argument cmd would act on is refused, said in the
-  terminal's own output. Every way a command fails to start — refused, or
+  `git.exe` — npm's `.cmd` files run as node and their script, and any other
+  `.cmd`/`.bat` runs through cmd.exe only when no argument is one cmd would
+  act on, so what runs is exactly the program and arguments the rules
+  judged; an argument cmd would act on is refused, said in the terminal's
+  own output. Every way a command fails to start — refused, or
   rejected by the system on the spot — ends as that output, never as an
   error to the agent's request.
   A command that names no cwd runs in its session's — the cwd the pool sent when

@@ -90,7 +90,7 @@ export class ClientHost {
     const outcome = await this.deps.broker.gateCommand(session.id, run);
     if (outcome !== "accepted") throw gateRefusal(outcome, `command \`${command}\``);
 
-    const handle = this.runner.create(run);
+    const handle = await this.runner.create(run);
     // Unique beyond this window: a replayed call naming a terminal of an
     // earlier window must never bind to a new one that happens to share
     // its number.
