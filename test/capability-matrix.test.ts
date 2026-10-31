@@ -1,7 +1,7 @@
 // Pure-function coverage: capabilityState, matrixFromDeclared, and the
 // tracker's marks over a stand-in pool — the parts of P5 that don't need a
 // live agent at all.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   clientCapabilitiesWire,
   matrixFromDeclared,
@@ -219,6 +219,7 @@ function trackerOver(declared: DeclaredCapabilities, version: string | undefined
   const changed: string[] = [];
   const tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
     registryIdOf: () => null,
+    connectionSettled: async () => {},
     changed: (patchbayAgentId) => changed.push(patchbayAgentId),
     probeRoot: async () => "/nowhere",
   });
@@ -382,5 +383,39 @@ describe("session client claims", () => {
 describe("auth.terminal client opt-in", () => {
   it("rides initialize — an agent gating its terminal login offers on it sees the claim", () => {
     expect((clientCapabilitiesWire() as { auth?: unknown }).auth).toEqual({ terminal: true });
+  });
+});
+
+// The connect-time probe opened a session around the agent's gates, so it
+// could land on a process a queued Upgrade, Restart or Stop was about to
+// take down (#135).
+describe("the connect-time probe", () => {
+  it("waits for what ends the connection, and opens nothing on a connection it replaced", async () => {
+    let live = { declared: noDeclared, initializedAt: "t1", initialize: { protocolVersion: 1 } };
+    const opened: string[] = [];
+    let settle!: () => void;
+    const pool = {
+      get: () => live,
+      newSession: (id: string) => (opened.push(`${id}@${live.initializedAt}`), Promise.reject(new Error("no wire here"))),
+      forgetSession: () => {},
+    } as unknown as AgentPool;
+    const tracker = new CapabilityTracker(pool, new UsedCapabilityStore(new MemoryKV()), {
+      registryIdOf: () => null,
+      connectionSettled: () => new Promise<void>((r) => (settle = r)),
+      changed: () => {},
+      probeRoot: async () => "/nowhere",
+    });
+
+    tracker.onDeclared("a1" as PatchbayAgentId);
+    await Promise.resolve();
+    expect(opened).toEqual([]); // held while the row's ending work runs
+    live = { ...live, initializedAt: "t2" }; // that work replaced the connection
+    settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(opened).toEqual([]);
+
+    tracker.onDeclared("a1" as PatchbayAgentId); // the new connection's own probe
+    settle();
+    await vi.waitFor(() => expect(opened).toEqual(["a1@t2"]));
   });
 });

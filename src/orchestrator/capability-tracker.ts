@@ -67,6 +67,9 @@ export interface CapabilityTrackerHooks {
   /** The registry entry the agent was added from — what an extension
    * module's curated entry names a vendor by. Null for a custom command. */
   registryIdOf(patchbayAgentId: PatchbayAgentId): string | null;
+  /** Settles once the work the agent's row holds that ends its connection
+   * has left it (the gates). */
+  connectionSettled(patchbayAgentId: PatchbayAgentId): Promise<void>;
 }
 
 export class CapabilityTracker {
@@ -159,7 +162,19 @@ export class CapabilityTracker {
       return;
     }
     this.log.debug(`${patchbayAgentId}: connect-time probe starting`);
-    void this.probe(patchbayAgentId);
+    void this.probeOnItsOwn(patchbayAgentId);
+  }
+
+  /** A probe nothing waits on — at connect, or a deferred one: not on a
+   * connection about to be replaced. What the agent's row holds that ends
+   * it goes first, and if it did end it, the new connection probes itself.
+   * A probe an operation awaits (a login's recheck) runs at once: it is
+   * that operation's own turn, and waiting on the row would wait on
+   * itself. */
+  private async probeOnItsOwn(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    const connection = this.pool.get(patchbayAgentId)?.initializedAt;
+    await this.hooks.connectionSettled(patchbayAgentId);
+    if (this.pool.get(patchbayAgentId)?.initializedAt === connection) await this.probe(patchbayAgentId);
   }
 
   /** A removed agent's live marks leave with it: its connection's own
@@ -183,7 +198,7 @@ export class CapabilityTracker {
     this.probeSessions.get(patchbayAgentId)?.delete(sessionId);
     if (!this.deferredProbes.delete(patchbayAgentId)) return;
     this.log.debug(`${patchbayAgentId}: deferred probe starting (first real session opened)`);
-    void this.probe(patchbayAgentId);
+    void this.probeOnItsOwn(patchbayAgentId);
   }
 
   /** Whether this session is one of the tracker's throwaway probes.

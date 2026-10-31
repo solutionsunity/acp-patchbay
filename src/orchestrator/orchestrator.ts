@@ -664,6 +664,7 @@ export class Orchestrator {
         changed: (patchbayAgentId) => this.agents.publish(patchbayAgentId),
         probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
         registryIdOf: (patchbayAgentId) => this.agents.linkedRegistryId(patchbayAgentId),
+        connectionSettled: (patchbayAgentId) => this.gates.connectionSettled(patchbayAgentId),
       },
       log,
     );
@@ -673,6 +674,7 @@ export class Orchestrator {
         probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
         defaultsFor: (patchbayAgentId) => this.agents.spec(patchbayAgentId)?.defaults ?? {},
         mayOpen: (patchbayAgentId) => !this.capabilityTracker.isProbeDeferred(patchbayAgentId),
+        connectionSettled: (patchbayAgentId) => this.gates.connectionSettled(patchbayAgentId),
         emit: (...events) => this.settings.emit(...events),
       },
       log,

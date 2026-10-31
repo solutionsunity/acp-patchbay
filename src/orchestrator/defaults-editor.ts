@@ -44,6 +44,10 @@ export interface DefaultsEditorHooks {
   /** Whether a throwaway session may open on this agent right now — false
    * while a latched agent's first-session privilege is unspent. */
   mayOpen(patchbayAgentId: PatchbayAgentId): boolean;
+  /** Settles once the work the agent's row holds that ends its connection
+   * has left it (the gates) — the editor's session never opens on a
+   * process about to go. */
+  connectionSettled(patchbayAgentId: PatchbayAgentId): Promise<void>;
   emit(...events: SettingsEvent[]): void;
 }
 
@@ -147,6 +151,7 @@ export class DefaultsEditor {
       this.publish(patchbayAgentId, existing);
       return;
     }
+    await this.hooks.connectionSettled(patchbayAgentId);
     if (this.pool.get(patchbayAgentId)?.status !== "running") return; // the card states "connect to edit"
     if (!this.hooks.mayOpen(patchbayAgentId)) {
       this.hooks.emit({

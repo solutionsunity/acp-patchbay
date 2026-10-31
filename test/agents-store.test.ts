@@ -349,14 +349,23 @@ describe("agents store", () => {
     ]);
   });
 
-  it("a saved config for an agent the store doesn't hold is added under an id the store mints — a view never chooses one", async () => {
+  it("a saved config with no id is added under an id the store mints — a view never chooses one", async () => {
     const h = harness();
-    await h.agents.save(fakeConfig("chosen", {}));
-    expect(h.agents.config("chosen" as PatchbayAgentId)).toBeUndefined();
+    await h.agents.save(fakeConfig("", {}, { name: "Fake chosen" }));
     const [added] = h.deps.configs.list();
     expect(added?.id).toMatch(MINTED);
     expect(added?.name).toBe("Fake chosen");
     expect(await h.deps.env.get(added!.id)).toEqual(fakeConfig("chosen", {}).env);
+  });
+
+  // A card or form left open while its agent was removed — here or in
+  // another window — saved it back as a new agent (#135).
+  it("a save for an agent removed under the form doesn't bring it back", async () => {
+    const h = harness();
+    await h.saveAgent(fakeConfig("gone", {}));
+    await h.gates.remove("gone" as PatchbayAgentId);
+    await h.agents.save(fakeConfig("gone", {}, { autoConnect: true }));
+    expect(h.deps.configs.list()).toEqual([]);
   });
 
   it("one executable added twice is two agents — ids patchbay minted, numbered names, neither overwrites the other (#51)", async () => {

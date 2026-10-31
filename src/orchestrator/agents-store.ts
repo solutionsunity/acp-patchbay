@@ -529,7 +529,12 @@ export class AgentsStore implements ConnectionOperations {
    * copy is loaded, before any agent starts, and after an import. */
   async relinkAll(): Promise<void> {
     let moved = false;
-    for (const config of this.deps.configs.list()) moved = (await this.relink(config)) || moved;
+    // Each record read when its turn comes, not from one list read first:
+    // a save landing while an earlier one is written is the newer word.
+    for (const { id } of this.deps.configs.list()) {
+      const config = this.config(id);
+      if (config !== undefined) moved = (await this.relink(config)) || moved;
+    }
     if (moved) await this.publishAll();
   }
 
@@ -687,11 +692,21 @@ export class AgentsStore implements ConnectionOperations {
    * what was typed is what runs, and no Upgrade may write the registry's
    * line over it; only the user's Reset links it again. `config.env` is the
    * form's full desired set — what is in the box is what gets stored, to SecretStorage
-   * only (stores/secret-env.ts). A config for an agent the store doesn't
-   * hold is added under an id the store mints, and a name no other agent
-   * holds — a view never chooses an agent's id. */
+   * only (stores/secret-env.ts). A config with no id is added under an id
+   * the store mints, and a name no other agent holds — a view never chooses
+   * an agent's id; so is a connected agent's first save. An id the store
+   * doesn't hold and no process answers to is a removed agent's, and isn't
+   * brought back. */
   async save(config: AgentConfigView, commandLine?: string): Promise<void> {
     const prior = this.config(config.id);
+    // An id the store doesn't hold and no process answers to was removed
+    // under the form that sends it (another window, a stale card): the save
+    // doesn't bring it back. A connected agent saved for the first time has
+    // its process; a new one comes with no id.
+    if (prior === undefined && config.id !== "" && this.deps.pool.get(config.id) === undefined) {
+      this.log.info(`agent config ${config.id}: not saved — the agent was removed`);
+      return;
+    }
     const typed = commandLine === undefined ? undefined : parseCommandLine(commandLine);
     if (typed === null) {
       this.log.error(`agent config ${config.id}: command line has an unterminated quote`);
