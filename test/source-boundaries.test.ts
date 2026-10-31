@@ -8,12 +8,13 @@
 // sections and planning ids rot as the documents move.
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { LATCHED_AGENTS } from "../src/orchestrator/extensions/first-session-mcp-latch";
 import { PATH_SIBLINGS } from "../src/orchestrator/launcher-health";
 import { filesUnder } from "./support/source-files";
 
-const SRC = new URL("../src/", import.meta.url).pathname;
+const SRC = fileURLToPath(new URL("../src/", import.meta.url));
 
 /** Every line of `files` matching `pattern`, as "file:line: text". */
 const hits = (files: readonly string[], pattern: RegExp): string[] =>

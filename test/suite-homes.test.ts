@@ -76,6 +76,9 @@ const HOMES: ReadonlyArray<{ concept: string; spelled: RegExp; homes: readonly s
   { concept: "a wait on a condition", spelled: /\bfunction waitFor\b|\bconst waitFor\s*=/, homes: ["support/wait-for.ts"] },
   { concept: "the fake agent's script", spelled: /fake-agent\.mjs/, homes: ["setup/build-fake-agent.ts", "support/fake-agent.ts", "vscode/patchbay.ts"] },
   { concept: "a scan of source files", spelled: /\bwithFileTypes\b/, homes: ["support/source-files.ts"] },
+  // A module's URL is no path: its pathname reads `/D:/a/…` on Windows,
+  // and a join makes it `D:\D:\a\…`. Read through fileURLToPath — no home.
+  { concept: "a path from a module's URL", spelled: /import\.meta\.url\)\.pathname/, homes: [] },
 ];
 
 /** The files spelling `spelled`, this one aside — it spells them all. */
