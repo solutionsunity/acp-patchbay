@@ -397,6 +397,7 @@ export class Orchestrator {
     // capabilityTracker / broker here — before they're assigned below — is
     // safe; this is the same lazy-closure pattern all three use themselves.
     this.pool = new AgentPool({
+      onLastWords: (patchbayAgentId) => this.agents.noteLastWords(patchbayAgentId),
       onStatusChanged: (patchbayAgentId, status, detail) => {
         this.agents.noteStatus(patchbayAgentId, status, detail);
         if (status !== "running") this.settleAsksOn(patchbayAgentId);

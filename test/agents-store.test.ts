@@ -223,6 +223,23 @@ describe("agents store", () => {
     await h.gates.stop("v" as PatchbayAgentId);
   });
 
+  // Windows has no process groups to step out of: the tree kill walks by
+  // parent and takes the speaker with it.
+  it.skipIf(process.platform === "win32")("words the pipe carries after the crash still reach the crashed row", async () => {
+    const h = harness();
+    // a child holding the pipe — in its own group, so the failed launch's
+    // tree kill passes it by — speaks once its parent is gone
+    const late = "late words";
+    const dying = [
+      "-e",
+      `require("node:child_process").spawn(process.execPath, ["-e", 'setTimeout(() => process.stderr.write("${late}\\n"), 300)'], { stdio: ["ignore", "ignore", "inherit"], detached: true }); process.exit(1);`,
+    ];
+    await h.saveAgent(fakeConfig("doomed", {}, { args: dying }));
+    await expect(h.gates.connect("doomed" as PatchbayAgentId)).rejects.toThrow();
+    expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("crashed");
+    await expect.poll(() => h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain(late);
+  });
+
   it("a crashed row carries the process's last words; a running one carries none", async () => {
     const h = harness();
     // write-callback → exit: the last words are flushed before death
@@ -230,7 +247,8 @@ describe("agents store", () => {
     await h.saveAgent(fakeConfig("doomed", {}, { args: dying }));
     await expect(h.gates.connect("doomed" as PatchbayAgentId)).rejects.toThrow();
     expect(h.row("doomed" as PatchbayAgentId)?.status).toBe("crashed");
-    expect(h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain("boom: config missing");
+    // the exit can land before the pipe drains: the words follow the crash
+    await expect.poll(() => h.row("doomed" as PatchbayAgentId)?.stderr?.join("\n")).toContain("boom: config missing");
 
     await h.agents.save(fakeConfig("doomed", {}), formatCommandLine(process.execPath, [FAKE_AGENT]));
     await h.gates.connect("doomed" as PatchbayAgentId);

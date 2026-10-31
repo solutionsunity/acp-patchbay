@@ -275,6 +275,12 @@ export class AgentsStore implements ConnectionOperations {
     else this.log.info(`${patchbayAgentId}: ${status}${suffix}`);
   }
 
+  /** A crashed process's last words arrived after its crash: the row
+   * shows them. */
+  noteLastWords(patchbayAgentId: PatchbayAgentId): void {
+    this.publish(patchbayAgentId);
+  }
+
   /** A fresh connection's `initialize` answer is in the pool: its claims
    * reach the matrix, and the version that actually answered is recorded. */
   noteDeclared(patchbayAgentId: PatchbayAgentId): void {

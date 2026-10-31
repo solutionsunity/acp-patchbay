@@ -48,6 +48,10 @@
   transcript hasn't loaded yet. Restart asks before cutting off open
   conversations, like Stop. Log out is never sent to an agent that doesn't
   offer it. (#135)
+- **A crashed agent's card says why, every time.** The last lines an agent
+  writes before it dies can reach Patchbay just after its exit does, and
+  the card then showed the crash without them. They now join the card
+  whenever they arrive.
 
 ## 0.88.4 — 2026-10-26
 

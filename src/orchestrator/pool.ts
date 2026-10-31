@@ -163,6 +163,10 @@ export interface PoolHooks {
   /** One complete ndjson frame, already line-assembled. Redaction is the
    * receiver's job (wire-log.ts) — pool.ts hands over the raw line. */
   onWireFrame?(patchbayAgentId: PatchbayAgentId, direction: "→" | "←", line: string): void;
+  /** A crashed process's stderr spoke after its exit was seen — Node
+   * reports the exit before the pipes drain, so the last words can land
+   * after the crash and the row's tail has grown. */
+  onLastWords?(patchbayAgentId: PatchbayAgentId): void;
   /** Each agent process as it spawns — for the bookkeeping that outlives
    * a crash. */
   onProcessSpawned?(process: TrackedProcess): void;
@@ -418,6 +422,7 @@ export class AgentPool {
         // debug level so the Output panel's level switch controls the noise.
         this.log.debug(`${patchbayAgentId} stderr: ${line}`);
       }
+      if (entry.status === "crashed" && entry.process === child) this.hooks.onLastWords?.(patchbayAgentId);
     });
 
     const tracked = trackedChild(child);
