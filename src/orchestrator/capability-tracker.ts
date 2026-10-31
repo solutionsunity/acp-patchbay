@@ -18,7 +18,8 @@
 // chokepoints (agent RPC resolved, incoming request handled, session/update
 // kind tag arrived) consult the one proof table (capabilities.ts
 // CAPABILITY_PROOFS) and report through the one `onCapabilityEvidence`
-// hook; no call site anywhere names a row. This file records what is
+// hook, and the auth authority consults it with a lock it cleared; no call
+// site anywhere names a row. This file records what is
 // reported and decides *when* to run the synthetic probe below.
 //
 // The matrix is read, never held: what the agent's connection declared,
