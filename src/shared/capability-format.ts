@@ -29,10 +29,15 @@ export function capabilityOneLiner(matrix: CapabilityMatrix): string {
 }
 
 /** An agent's subtitle in a list: what its status says now, else what it
- * proved, else its status. */
-export function agentSubtitle(agent: Pick<AgentSummary, "status" | "detail" | "capabilities">): string {
+ * proved, else its status. A list without a status dot beside the line
+ * (the command palette's pick) says the status instead of what it proved —
+ * there, the line is the only place a stopped or crashed agent shows. */
+export function agentSubtitle(
+  agent: Pick<AgentSummary, "status" | "detail" | "capabilities">,
+  besideStatusDot: boolean,
+): string {
   if (agent.detail !== undefined) return agent.detail;
   if (agent.status === "running") return "ready";
   if (agent.status === "untested") return "never connected";
-  return agent.capabilities !== undefined ? capabilityOneLiner(agent.capabilities) : agent.status;
+  return besideStatusDot && agent.capabilities !== undefined ? capabilityOneLiner(agent.capabilities) : agent.status;
 }

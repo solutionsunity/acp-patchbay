@@ -289,7 +289,7 @@ export class OrchestratorHost {
       const picked = await vscode.window.showQuickPick(
         agents.map((a) => ({
           label: a.name,
-          description: agentSubtitle(a),
+          description: agentSubtitle(a, false),
           patchbayAgentId: a.id,
         })),
         { placeHolder: "New session with…" },

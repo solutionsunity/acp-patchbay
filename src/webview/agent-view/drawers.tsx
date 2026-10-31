@@ -76,7 +76,7 @@ export function AgentsDrawer(props: {
             <Dot status={a.status} />
             <div className="min-w-0 flex-1">
               <div className="nm">{a.name}</div>
-              <div className="sub">{agentSubtitle(a)}</div>
+              <div className="sub">{agentSubtitle(a, true)}</div>
             </div>
           </button>
         );

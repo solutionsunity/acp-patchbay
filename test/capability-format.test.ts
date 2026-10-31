@@ -31,10 +31,17 @@ describe("capabilityOneLiner", () => {
 
 describe("agentSubtitle", () => {
   it("is one line for every list of agents: its status's word, else what it proved, else its status (#135)", () => {
-    expect(agentSubtitle({ status: "reconnecting", detail: "downloading…" })).toBe("downloading…");
-    expect(agentSubtitle({ status: "running" })).toBe("ready");
-    expect(agentSubtitle({ status: "untested" })).toBe("never connected");
-    expect(agentSubtitle({ status: "stopped", capabilities: matrix({ "session.fork": cell(true, true) }) })).toBe("fs — · terminal — · fork ✓ used");
-    expect(agentSubtitle({ status: "crashed" })).toBe("crashed");
+    expect(agentSubtitle({ status: "reconnecting", detail: "downloading…" }, true)).toBe("downloading…");
+    expect(agentSubtitle({ status: "running" }, true)).toBe("ready");
+    expect(agentSubtitle({ status: "untested" }, true)).toBe("never connected");
+    expect(agentSubtitle({ status: "stopped", capabilities: matrix({ "session.fork": cell(true, true) }) }, true)).toBe("fs — · terminal — · fork ✓ used");
+    expect(agentSubtitle({ status: "crashed" }, true)).toBe("crashed");
+  });
+
+  it("without a status dot beside it, a stopped or crashed agent says so — never only what it proved", () => {
+    const proved = matrix({ "session.fork": cell(true, true) });
+    expect(agentSubtitle({ status: "stopped", capabilities: proved }, false)).toBe("stopped");
+    expect(agentSubtitle({ status: "crashed", capabilities: proved }, false)).toBe("crashed");
+    expect(agentSubtitle({ status: "running", capabilities: proved }, false)).toBe("ready");
   });
 });
