@@ -27,6 +27,7 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { KV } from "./kv";
+import { agentErrorText } from "../readers/agent-error";
 
 /** Structural subset of vscode.Memento that can enumerate itself — the
  * migration source. */
@@ -85,7 +86,7 @@ export class FileKV implements KV {
     try {
       disk = this.readDisk();
     } catch (error) {
-      this.log(`write refused: ${(error as Error).message}`);
+      this.log(`write refused: ${agentErrorText(error)}`);
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     const next = { ...(disk ?? this.map) };

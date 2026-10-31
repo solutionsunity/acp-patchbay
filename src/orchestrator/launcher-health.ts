@@ -46,6 +46,7 @@ import { unlessAborted } from "./abort";
 import type { Logger } from "./logger";
 import { runToExit, type ExitAnswer } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
+import { agentErrorText } from "./readers/agent-error";
 
 /** Normalized launcher name from a command that may be a path or a Windows
  * shim — THE one spelling of "is this an ecosystem launcher", shared by the
@@ -306,7 +307,7 @@ export async function healNpxEntry(
     await rm(dir, { recursive: true, force: true });
   } catch (err) {
     throw new Error(
-      `the incomplete ${pkgSpec} in ${dir} couldn't be removed (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}) — close whatever holds it, or delete that folder, then connect again`,
+      `the incomplete ${pkgSpec} in ${dir} couldn't be removed (${(err as NodeJS.ErrnoException).code ?? agentErrorText(err)}) — close whatever holds it, or delete that folder, then connect again`,
     );
   }
   opts.log.info(

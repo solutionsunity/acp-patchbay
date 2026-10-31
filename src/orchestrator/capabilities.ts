@@ -43,7 +43,7 @@ const CLIENT_DECLARES: {
   // — true because the executor is wired (the orchestrator's terminal
   // login path).
   authTerminal: true,
-  // Stabilized in SDK 1.2.1 (compliance G14): patchbay consumes config
+  // Stabilized in SDK 1.2.1: patchbay consumes config
   // options end to end — knobs.ts normalizes select AND boolean types — so
   // not declaring was the honesty gap in reverse: an agent honoring
   // "omitted = unsupported" would have withheld the whole knob surface. No

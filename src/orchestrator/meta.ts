@@ -90,8 +90,8 @@ const META_EXTENSIONS = {
     "terminal-auth": { schema: terminalAuthRecipeSchema, declare: true },
   },
   usageUpdate: {
-    // Adopted 2026-07-13: the plan-usage gauge (features: context window's
-    // sibling readout). Consume-only — the bridge emits unconditionally,
+    // Adopted 2026-07-13: the plan-usage gauge, the context window's sibling
+    // read-out. Consume-only — the bridge emits unconditionally,
     // nothing is gated on patchbay declaring it.
     "_claude/rateLimit": { schema: rateLimitInfoSchema, declare: false },
   },

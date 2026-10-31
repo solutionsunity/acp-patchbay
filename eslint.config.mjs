@@ -82,6 +82,37 @@ export default tseslint.config(
       ],
     },
   },
+  // Which way code may reach: shared code is read by both sides and reaches
+  // neither; the webviews render and reach no extension-host code, Node or
+  // VS Code; what an agent spawns (src/mcp) reaches the extension host only
+  // through the IPC contract it owns.
+  {
+    files: ["src/shared/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [{ group: ["**/orchestrator/**", "**/webview/**", "**/mcp/**", "vscode", "node:*"], message: "shared code reaches neither side" }] },
+      ],
+    },
+  },
+  {
+    files: ["src/webview/**/*.ts", "src/webview/**/*.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [{ group: ["**/orchestrator/**", "**/mcp/**", "vscode", "node:*"], message: "a webview renders; what it needs comes from src/shared or the channel" }] },
+      ],
+    },
+  },
+  {
+    files: ["src/mcp/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [{ group: ["**/orchestrator/**", "**/webview/**", "vscode"], message: "the agent-spawned side reaches the extension host only over IPC" }] },
+      ],
+    },
+  },
   {
     // every file the gate lints
     files: ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "scripts/**/*.mjs"],

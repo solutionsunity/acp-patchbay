@@ -213,8 +213,8 @@ export class OrchestratorHost {
       if (target.scheme === "file") await writeConfigurationFile(target.fsPath, file);
       else await vscode.workspace.fs.writeFile(target, Buffer.from(configurationText(file), "utf8"));
     } catch (err) {
-      this.log.error(`export to ${target.toString()}: ${err instanceof Error ? err.message : String(err)}`);
-      void vscode.window.showErrorMessage(`Export failed — ${err instanceof Error ? err.message : String(err)}`);
+      this.log.error(`export to ${target.toString()}: ${agentErrorText(err)}`);
+      void vscode.window.showErrorMessage(`Export failed — ${agentErrorText(err)}`);
       return;
     }
     void vscode.window.showInformationMessage(

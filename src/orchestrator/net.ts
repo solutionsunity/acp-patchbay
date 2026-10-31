@@ -23,6 +23,7 @@
 // user turns it off with.
 import { type Logger, loggableUrl } from "./logger";
 import type { PreferencesView } from "../shared/protocol";
+import { agentErrorText } from "./readers/agent-error";
 
 /** Why a call is made. Essential: what the user is doing can't happen
  * without it, and their own act is its control (an Add reads the registry,
@@ -136,7 +137,7 @@ function read<T>(
 /** The stack's reason, with its cause when it has one — undici reports
  * "fetch failed" and keeps the real reason (ECONNRESET, ENOTFOUND) there. */
 function errorDetail(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = agentErrorText(err);
   const cause = (err as { cause?: unknown } | null)?.cause;
   const why = cause instanceof Error ? ((cause as { code?: string }).code ?? cause.message) : undefined;
   return why !== undefined && why !== message ? `${message} (${why})` : message;

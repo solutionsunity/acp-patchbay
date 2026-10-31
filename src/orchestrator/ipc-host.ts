@@ -28,6 +28,7 @@ import {
 } from "../mcp/ipc-protocol";
 import type { ElicitationAnswer } from "../shared/protocol";
 import type { PatchbayMcpServerId } from "../shared/ids";
+import { agentErrorText } from "./readers/agent-error";
 
 /** The editor's own state, as a subprocess may read it — read from the
  * editor by the host, the one side that can. */
@@ -120,7 +121,7 @@ export class IpcHost {
       const response: IpcResponse = { id: request.id, result };
       socket.write(encodeLine(response));
     } catch (err) {
-      const response: IpcResponse = { id: request.id, error: (err as Error).message };
+      const response: IpcResponse = { id: request.id, error: agentErrorText(err) };
       socket.write(encodeLine(response));
     }
   }

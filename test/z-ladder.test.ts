@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { filesUnder } from "./support/source-files";
 
-const WEBVIEW_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "webview");
+// The whole source tree, not the webviews alone: a page built anywhere
+// paints in a webview.
+const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const PORTAL_BAND = 50;
 
 /** The ladder's rungs below the band — a closed set. Anything that floats
@@ -36,9 +38,9 @@ function authoredZ(source: string): number[] {
 
 /** App files with the z values each authors. */
 const appLayers = () =>
-  filesUnder(WEBVIEW_ROOT, /\.(css|tsx|ts)$/)
-    .filter((path) => !relative(WEBVIEW_ROOT, path).split(sep).slice(0, 2).join("/").startsWith("components/ui"))
-    .flatMap((path) => authoredZ(readFileSync(path, "utf8")).map((z) => ({ where: relative(WEBVIEW_ROOT, path), z })));
+  filesUnder(SRC_ROOT, /\.(css|tsx|ts)$/)
+    .filter((path) => relative(SRC_ROOT, path).split(sep).slice(0, 3).join("/") !== "webview/components/ui")
+    .flatMap((path) => authoredZ(readFileSync(path, "utf8")).map((z) => ({ where: relative(SRC_ROOT, path), z })));
 
 describe("z ladder", () => {
   it(`app-authored z-index stays below the portal band (${PORTAL_BAND})`, () => {

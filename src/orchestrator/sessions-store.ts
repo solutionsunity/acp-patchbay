@@ -1550,7 +1550,7 @@ export class SessionsStore {
         const path = await this.files.put(row.patchbayAgentId, row.sessionId, this.cwd(), name, chip.content);
         persisted = { kind: "image", id: chip.id, label: chip.label, mimeType: chip.mimeType, path };
       } catch (err) {
-        this.log.info(`session ${patchbaySessionId}: image not staged — its folder refused it: ${(err as Error).message}`);
+        this.log.info(`session ${patchbaySessionId}: image not staged — its folder refused it: ${agentErrorText(err)}`);
         return;
       }
       void stashPreview(name, chip.content).catch((err: Error) =>
@@ -1580,7 +1580,7 @@ export class SessionsStore {
     try {
       path = await this.files.put(row.patchbayAgentId, row.sessionId, this.cwd(), stored, file.base64);
     } catch (err) {
-      this.log.info(`session ${patchbaySessionId}: dropped file not staged — its folder refused it: ${(err as Error).message}`);
+      this.log.info(`session ${patchbaySessionId}: dropped file not staged — its folder refused it: ${agentErrorText(err)}`);
       return;
     }
     await this.addContext(patchbaySessionId, {

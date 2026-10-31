@@ -725,7 +725,7 @@ export class AgentsStore implements ConnectionOperations {
     } catch (err) {
       // A name another agent holds: the form says so before Save; this is
       // the write's own refusal, and nothing of the edit is kept.
-      this.log.error(`agent config ${patchbayAgentId}: ${err instanceof Error ? err.message : String(err)}`);
+      this.log.error(`agent config ${patchbayAgentId}: ${agentErrorText(err)}`);
       await this.publishAll();
       return;
     }

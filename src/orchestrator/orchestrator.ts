@@ -937,7 +937,7 @@ export class Orchestrator {
       });
     } catch (err) {
       // Whatever landed before it stopped stays, and the restart still runs.
-      outcome = { landed: 0, failures: [`the import stopped — ${err instanceof Error ? err.message : String(err)}`] };
+      outcome = { landed: 0, failures: [`the import stopped — ${agentErrorText(err)}`] };
     }
     await this.agents.relinkAll();
     await this.republishAll();

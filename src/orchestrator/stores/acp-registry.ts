@@ -20,6 +20,7 @@ import { type RegistryReadMoment, REGISTRY_READS } from "../../shared/registry-r
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, type NetClass, readBytes, readJson, switchedOn } from "../net";
 import { platformOf, registryTarget } from "../platform";
+import { agentErrorText } from "../readers/agent-error";
 
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const CACHE_FILENAME = "acp-registry-cache.json";
@@ -302,7 +303,7 @@ export class AcpRegistryStore {
       this.onUpdated();
       return { ok: true, at };
     } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(agentErrorText(err));
     }
   }
 

@@ -37,6 +37,7 @@ import { authTypeOf, McpServerConfigStore, type McpServerConfig, type McpServerS
 import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
+import { agentErrorText } from "./readers/agent-error";
 
 export interface McpServersStoreHooks {
   emit(...events: SettingsEvent[]): void;
@@ -321,8 +322,8 @@ export class McpServersStore {
       if (signal?.aborted === true) {
         this.log.info(`${key}: stopped — nothing stored`);
       } else {
-        this.failures.set(key, (err as Error).message);
-        this.log.error(`${key}: failed — ${(err as Error).message}`);
+        this.failures.set(key, agentErrorText(err));
+        this.log.error(`${key}: failed — ${agentErrorText(err)}`);
       }
       throw err;
     }
@@ -903,8 +904,8 @@ export class McpServersStore {
       // reason should let the user see which one was tried.
       const reason =
         target?.kind === "stdio"
-          ? `${(err as Error).message} (ran in ${target.cwd})`
-          : (err as Error).message;
+          ? `${agentErrorText(err)} (ran in ${target.cwd})`
+          : agentErrorText(err);
       this.probes.set(patchbayMcpServerId, { status: "failed", at: new Date().toISOString(), reason });
       this.log.info(`${patchbayMcpServerId}: probe failed — ${reason}`);
     }
@@ -1008,7 +1009,7 @@ export class McpServersStore {
         clientId: stored.clientId,
       });
     } catch (err) {
-      this.log.error(`${patchbayMcpServerId}: credential refresh failed — ${(err as Error).message}`);
+      this.log.error(`${patchbayMcpServerId}: credential refresh failed — ${agentErrorText(err)}`);
     }
   }
 

@@ -8,6 +8,7 @@
 import type { ChildProcess } from "node:child_process";
 import { killTree, startChild, trackedChild, type TrackedProcess } from "./process-tree";
 import { mergeEnv } from "./spawn-resolve";
+import { agentErrorText } from "./readers/agent-error";
 
 export interface ExitStatus {
   exitCode: number | null;
@@ -112,7 +113,7 @@ export class NodeTerminalRunner implements TerminalRunner {
       child = started.child;
     } catch (err) {
       // Told once its caller is listening, as a failure after the spawn is.
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = agentErrorText(err);
       queueMicrotask(() => neverStarted(reason));
     }
     if (child !== null) {

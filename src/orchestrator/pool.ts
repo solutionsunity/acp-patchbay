@@ -70,7 +70,7 @@ export type LaunchResolver = (
  * message is the death's. */
 export class ConnectionLost extends Error {
   constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    super(agentErrorText(cause), { cause });
     this.name = "ConnectionLost";
   }
 }
@@ -355,7 +355,7 @@ export class AgentPool {
         this.clearPhaseLabel(entry);
       } catch (err) {
         if (signal?.aborted) throw this.stoppedBeforeSpawn(entry, signal);
-        const detail = `launch prerequisite unavailable — ${(err as Error).message}`;
+        const detail = `launch prerequisite unavailable — ${agentErrorText(err)}`;
         this.markDead(entry, detail);
         throw new Error(detail);
       }
@@ -385,7 +385,7 @@ export class AgentPool {
         this.markDead(entry, err.detail);
         throw err;
       }
-      const detail = `launcher package unavailable — ${(err as Error).message}`;
+      const detail = `launcher package unavailable — ${agentErrorText(err)}`;
       this.markDead(entry, detail);
       throw new Error(detail);
     }
@@ -526,7 +526,7 @@ export class AgentPool {
           );
         } catch (err) {
           this.log.info(
-            `${patchbayAgentId}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${(err as Error).message}`,
+            `${patchbayAgentId}: session/update (${ctx.params.update.sessionUpdate}) handling failed — update dropped: ${agentErrorText(err)}`,
           );
         }
       })

@@ -15,6 +15,7 @@ import type { AgentConfig } from "./stores/agent-configs";
 import type { McpServerConfig } from "./stores/mcp-server-configs";
 import { type CommandRule, withRule } from "./stores/permission-rules";
 import { withWriteEntry } from "./stores/write-scope";
+import { agentErrorText } from "./readers/agent-error";
 
 type Env = Record<string, string>;
 
@@ -40,8 +41,6 @@ export interface ImportOutcome {
   failures: string[];
 }
 
-const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
 export async function applyImport(
   read: ConfigurationRead,
   plan: ImportPlan,
@@ -57,7 +56,7 @@ export async function applyImport(
       outcome.landed++;
       if (typeof note === "string") outcome.failures.push(`${label}: ${note}`);
     } catch (err) {
-      outcome.failures.push(`${label}: ${message(err)}`);
+      outcome.failures.push(`${label}: ${agentErrorText(err)}`);
     }
   };
 
