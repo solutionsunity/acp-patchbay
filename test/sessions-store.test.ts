@@ -149,10 +149,44 @@ const LIST_CAPS = { sessionCapabilities: { list: {}, delete: {} } } as const;
 const LOAD_LIST_ROOTS_CAPS = { loadSession: true, sessionCapabilities: { list: {}, additionalDirectories: {}, resume: {} } } as const;
 
 describe("SessionsStore", () => {
+  // The roots chip read "has turns" from the transcript it had loaded,
+  // while the store re-applies by its own fact — the two disagreed on a
+  // session whose transcript wasn't loaded yet. The row now carries the
+  // store's fact, and one reading decides from it on both sides.
+  // New chat on an empty session whose connection died revives that row —
+  // and the pane waited for a sessionCreated a revive never sends.
+  it("a New chat that revives the agent's empty session closes its connect pane (#135)", async () => {
+    const h = harness();
+    await h.saveAgent(fakeConfig("nc1", {}));
+    await h.orchestrator.startChat("nc1" as PatchbayAgentId);
+    const draft = h.state().activePatchbaySessionId!;
+    expect(h.state().chatConnect).toBeNull();
+    await h.orchestrator.gates.stop("nc1" as PatchbayAgentId);
+
+    await h.orchestrator.startChat("nc1" as PatchbayAgentId);
+    expect(h.state().activePatchbaySessionId).toBe(draft);
+    expect(h.state().sessions).toHaveLength(1);
+    expect(h.state().chatConnect).toBeNull();
+    await h.pool.stop("nc1" as PatchbayAgentId);
+  });
+
+  it("a session's row says whether it has had a turn — the store's fact, from its first prompt on (#135)", async () => {
+    const h = harness();
+    await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "ht1"));
+    const patchbaySessionId = await h.gates.create("ht1" as PatchbayAgentId, "Fake Agent", cwd);
+    expect(h.state().sessions[0]).toMatchObject({ id: patchbaySessionId, hasTurns: false });
+    await h.gates.prompt(patchbaySessionId, { text: "first" });
+    expect(h.state().sessions[0]).toMatchObject({ hasTurns: true, title: "first" });
+    await h.gates.prompt(patchbaySessionId, { text: "second" });
+    // said once: the second prompt moves nothing
+    expect(h.events().filter((e) => e.kind === "sessionRefreshed" && e.hasTurns === true)).toHaveLength(1);
+    await h.pool.stop("ht1" as PatchbayAgentId);
+  });
+
   it("streams a full turn into the transcript and clears live on completion", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "hi " }, { type: "chunk", text: "there" }] }, "sm1"));
-    const patchbaySessionId = await h.sessions.createSession("sm1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm1" as PatchbayAgentId, "Fake Agent", cwd);
 
     const state1 = h.state();
     expect(state1.sessions).toHaveLength(1);
@@ -179,8 +213,8 @@ describe("SessionsStore", () => {
     await h.connect(spec({}, "sm-join"));
     const newSessions = vi.spyOn(h.pool, "newSession");
     const [first, second] = await Promise.all([
-      h.sessions.createSession("sm-join" as PatchbayAgentId, "Fake Agent", cwd),
-      h.sessions.createSession("sm-join" as PatchbayAgentId, "Fake Agent", cwd),
+      h.gates.create("sm-join" as PatchbayAgentId, "Fake Agent", cwd),
+      h.gates.create("sm-join" as PatchbayAgentId, "Fake Agent", cwd),
     ]);
     expect(second).toBe(first);
     // in the window's folder — the agent's free check opens its own elsewhere
@@ -204,7 +238,7 @@ describe("SessionsStore", () => {
         "sm2",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm2" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "do the thing" });
 
     const state = h.state();
@@ -234,7 +268,7 @@ describe("SessionsStore", () => {
         "sm3",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm3" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
@@ -253,7 +287,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150, cancelDelayMs: 1200 }, "slowstop"),
     );
-    const patchbaySessionId = await h.sessions.createSession("slowstop" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("slowstop" as PatchbayAgentId, "Fake Agent", cwd);
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
     const stopped = Date.now();
@@ -280,7 +314,7 @@ describe("SessionsStore", () => {
         "nostop",
       ),
     );
-    const first = await h.sessions.createSession("nostop" as PatchbayAgentId, "Fake Agent", cwd);
+    const first = await h.gates.create("nostop" as PatchbayAgentId, "Fake Agent", cwd);
     const firstDone = h.gates.prompt(first, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, first);
     void h.gates.stop(first);
@@ -290,7 +324,7 @@ describe("SessionsStore", () => {
     expect(Date.now() - at).toBeLessThan(1000);
     expect(await firstDone).toMatchObject({ by: "stop" });
 
-    const second = await h.sessions.createSession("nostop" as PatchbayAgentId, "Fake Agent", cwd);
+    const second = await h.gates.create("nostop" as PatchbayAgentId, "Fake Agent", cwd);
     const secondDone = h.gates.prompt(second, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, second);
     at = Date.now();
@@ -312,7 +346,7 @@ describe("SessionsStore", () => {
         "smq1",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("smq1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smq1" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await untilTurnOnWire(h, patchbaySessionId);
@@ -335,7 +369,7 @@ describe("SessionsStore", () => {
         "smq4",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smq4" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await untilTurnOnWire(h, patchbaySessionId);
@@ -382,7 +416,7 @@ describe("SessionsStore", () => {
         "smq2",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("smq2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smq2" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
@@ -412,7 +446,7 @@ describe("SessionsStore", () => {
     await h.saveAgent(fakeConfig("smq3" as PatchbayAgentId, {}));
     logOut(h, "smq3");
     await h.connect(spec({ turn: [{ type: "chunk", text: "served" }] }, "smq3"));
-    const patchbaySessionId = await h.sessions.createSession("smq3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smq3" as PatchbayAgentId, "Fake Agent", cwd);
 
     await h.gates.prompt(patchbaySessionId, { text: "held words" }); // resolves immediately: held
     expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "held words" }]);
@@ -435,7 +469,7 @@ describe("SessionsStore", () => {
         "smq4",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("smq4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smq4" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" });
     await untilTurnOnWire(h, patchbaySessionId);
@@ -471,7 +505,7 @@ describe("SessionsStore", () => {
         "sm3c",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm3c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm3c" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
@@ -496,7 +530,7 @@ describe("SessionsStore", () => {
         "sm3d",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm3d" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm3d" as PatchbayAgentId, "Fake Agent", cwd);
 
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
@@ -524,7 +558,7 @@ describe("SessionsStore", () => {
         "sm3b",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm3b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm3b" as PatchbayAgentId, "Fake Agent", cwd);
 
     // Stopped once the call has landed and before the next step's own
     // delay runs out — otherwise there's nothing yet to strand.
@@ -546,7 +580,7 @@ describe("SessionsStore", () => {
   it("closes sessions — row and transcript leave the view", async () => {
     const h = harness();
     await h.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sm4"));
-    const patchbaySessionId = await h.sessions.createSession("sm4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm4" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "some words" });
 
     await h.gates.close(patchbaySessionId);
@@ -579,7 +613,7 @@ describe("SessionsStore", () => {
         "sm48a",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm48a" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm48a" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "edit" });
     const tools = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind === "toolCall");
     expect(tools.map((t) => assertKind(t, "toolCall").diffs)).toEqual([
@@ -611,7 +645,7 @@ describe("SessionsStore", () => {
         "sm48b",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm48b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm48b" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "edit" });
     const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.diffs).toEqual({
@@ -651,7 +685,7 @@ describe("SessionsStore", () => {
         "sm48d",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm48d" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm48d" as PatchbayAgentId, "Fake Agent", cwd);
     const turn = h.gates.prompt(patchbaySessionId, { text: "overwrite" });
     const card = () => h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "toolCall");
     await vi.waitFor(() => expect(card(), "tool call never announced").toBeDefined(), SETTLE);
@@ -693,7 +727,7 @@ describe("SessionsStore", () => {
         "sm48e",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm48e" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm48e" as PatchbayAgentId, "Fake Agent", cwd);
     const turn = h.gates.prompt(patchbaySessionId, { text: "edit" });
     const card = () => h.state().transcripts[patchbaySessionId]?.find((b) => b.kind === "toolCall");
     await vi.waitFor(() => expect(card(), "tool call never announced").toBeDefined(), SETTLE);
@@ -718,7 +752,7 @@ describe("SessionsStore", () => {
         "sm48c",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm48c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm48c" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "write" });
     const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
     expect(tool.diffs).toEqual({ [target]: { additions: 3, deletions: 0 } });
@@ -740,7 +774,7 @@ describe("SessionsStore", () => {
       turn: [{ type: "chunk", text: "ok" }],
     };
     await h.connect(spec(dying, "smc1"));
-    const patchbaySessionId = await h.sessions.createSession("smc1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smc1" as PatchbayAgentId, "Fake Agent", cwd);
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch(() => {});
     await untilTurnOnWire(h, patchbaySessionId);
     await h.gates.prompt(patchbaySessionId, { text: "held words" }); // queued mid-turn
@@ -777,7 +811,7 @@ describe("SessionsStore", () => {
     const h = harness();
     const dying: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "chunk", text: "half" }, { type: "crash" }], stepDelayMs: 200 };
     await h.connect(spec(dying, "smc2"));
-    const patchbaySessionId = await h.sessions.createSession("smc2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smc2" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "do the thing" }).catch(() => {});
     await vi.waitFor(() => expect(h.sessions.isLive(patchbaySessionId)).toBe(false), SETTLE);
     expect(h.state().promptQueue[patchbaySessionId]).toMatchObject([{ text: "do the thing", cut: true }]);
@@ -800,7 +834,7 @@ describe("SessionsStore", () => {
   it("a turn the agent itself answers with an error holds nothing — only a dead connection cuts (#120)", async () => {
     const h = harness();
     await h.connect(spec({ promptError: { code: -32603, message: "Internal error" } }, "smc3"));
-    const patchbaySessionId = await h.sessions.createSession("smc3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("smc3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" }).catch(() => {});
     expect(h.state().promptQueue[patchbaySessionId] ?? []).toEqual([]);
     await h.pool.stop("smc3" as PatchbayAgentId);
@@ -831,7 +865,7 @@ describe("SessionsStore", () => {
       ],
     };
     await h.connect(spec(script, "sms1"));
-    const patchbaySessionId = await h.sessions.createSession("sms1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sms1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
     await h.gates.addRoot(patchbaySessionId, at("/repo/extra"));
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "first" }).catch(() => {});
@@ -876,7 +910,7 @@ describe("SessionsStore", () => {
         "sm5",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
     expect(textOf(h.state().transcripts[patchbaySessionId]?.[1])).toBe("before crash");
 
@@ -914,7 +948,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hello" }] }, "sm5s"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5s" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5s" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
     expect(h.silentEvents()).toHaveLength(0); // live streaming patches normally
     expect(h.resyncCount()).toBe(0);
@@ -946,7 +980,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "reply" }] }, "sm5m"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5m" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5m" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "one" });
     await h.gates.prompt(patchbaySessionId, { text: "two" });
 
@@ -979,7 +1013,7 @@ describe("SessionsStore", () => {
         "sm5i",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5i" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5i" as PatchbayAgentId, "Fake Agent", cwd);
     const promptDone = h.gates.prompt(patchbaySessionId, { text: "long turn" }).catch((err: unknown) => err);
     // stopped once the call has landed, before the next step's delay runs out
     await vi.waitFor(() => expect(h.state().transcripts[patchbaySessionId]!.some((b) => b.id === "t1")).toBe(true), SETTLE);
@@ -1015,7 +1049,7 @@ describe("SessionsStore", () => {
         "sm5c",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5c" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
     const blocks = h.state().transcripts[patchbaySessionId]!;
     expect(blocks.map((b) => b.kind)).toEqual(["user", "text", "compaction", "text", "turnEnd"]);
@@ -1038,7 +1072,7 @@ describe("SessionsStore", () => {
         "sm5n",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5n" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5n" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
     const live = h.state().transcripts[patchbaySessionId]!;
     expect(live.map((b) => b.kind)).toEqual(["user", "text", "notice", "text", "turnEnd"]);
@@ -1058,7 +1092,7 @@ describe("SessionsStore", () => {
         "sm5e",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm5e" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm5e" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "/cmd" });
     const blocks = h.state().transcripts[patchbaySessionId]!;
     expect(blocks.filter((b) => b.kind === "user")).toHaveLength(1);
@@ -1074,7 +1108,7 @@ describe("SessionsStore", () => {
     // rejects, the transcript stands untouched, no sibling appears.
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "only turn" }] }, "sm6"));
-    const deadPatchbaySessionId = await h.sessions.createSession("sm6" as PatchbayAgentId, "Fake Agent", cwd);
+    const deadPatchbaySessionId = await h.gates.create("sm6" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(deadPatchbaySessionId, { text: "hello" });
     const before = h.state().transcripts[deadPatchbaySessionId]!;
     expect(before.length).toBeGreaterThan(0);
@@ -1113,7 +1147,7 @@ describe("SessionsStore", () => {
         "sm13b",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm13b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm13b" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "find foo" });
 
     const blocks = h.state().transcripts[patchbaySessionId]!;
@@ -1153,7 +1187,7 @@ describe("SessionsStore", () => {
         "sm13c",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm13c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm13c" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "read it" });
 
     const tool = assertKind(
@@ -1182,7 +1216,7 @@ describe("SessionsStore", () => {
         "sm13d",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm13d" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm13d" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "edit it" });
 
     const state = h.state();
@@ -1216,7 +1250,7 @@ describe("SessionsStore", () => {
         "sm45",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm45" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm45" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "show me" });
 
     const blocks = h.state().transcripts[patchbaySessionId]!.filter((b) => b.kind !== "user" && b.kind !== "turnEnd");
@@ -1263,7 +1297,7 @@ describe("SessionsStore", () => {
         "sm44",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm44" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm44" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "build" });
 
     const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
@@ -1301,7 +1335,7 @@ describe("SessionsStore", () => {
         "sm41",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm41" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm41" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "read it" });
 
     const tool = assertKind(h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "toolCall"), "toolCall");
@@ -1326,7 +1360,7 @@ describe("SessionsStore", () => {
         "sm13f",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm13f" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm13f" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "edit" });
 
     const tool = assertKind(
@@ -1347,7 +1381,7 @@ describe("SessionsStore", () => {
   it("a turn without reported usage gets usage: null — absence over fake (P13c)", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "sm13e"));
-    const patchbaySessionId = await h.sessions.createSession("sm13e" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm13e" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
 
     const blocks = h.state().transcripts[patchbaySessionId]!;
@@ -1364,7 +1398,7 @@ describe("SessionsStore", () => {
     );
     expect(h.capabilityTracker.matrix("sm7" as PatchbayAgentId)!.usage).toEqual({ declared: false, used: false });
 
-    const patchbaySessionId = await h.sessions.createSession("sm7" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm7" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
 
     expect(h.state().sessionUsage[patchbaySessionId]).toEqual({ used: 42, size: 200, cost: undefined });
@@ -1378,7 +1412,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sm8"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm8" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm8" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     expect(h.capabilityTracker.matrix("sm8" as PatchbayAgentId)!["session.load"]).toEqual({ declared: true, used: false });
 
@@ -1392,7 +1426,7 @@ describe("SessionsStore", () => {
   it("attached context rides in as its own labeled blocks, ahead of the user's words, then clears (P7)", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm9"));
-    const patchbaySessionId = await h.sessions.createSession("sm9" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm9" as PatchbayAgentId, "Fake Agent", cwd);
 
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-1",
@@ -1428,7 +1462,7 @@ describe("SessionsStore", () => {
         "img1",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("img1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("img1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-img",
       kind: "image",
@@ -1451,7 +1485,7 @@ describe("SessionsStore", () => {
         "emb1",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("emb1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("emb1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-sel",
       kind: "selection",
@@ -1480,7 +1514,7 @@ describe("SessionsStore", () => {
   it("image chips fall back to a temp-file ResourceLink when image support is undeclared — paste is never disabled", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "img2"));
-    const patchbaySessionId = await h.sessions.createSession("img2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("img2" as PatchbayAgentId, "Fake Agent", cwd);
     const bytes = Buffer.from("fake-jpeg-bytes");
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-img-fb",
@@ -1505,7 +1539,7 @@ describe("SessionsStore", () => {
   it("attachment chips ride as resource_link to their real path — baseline, no capability consulted", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "att1"));
-    const patchbaySessionId = await h.sessions.createSession("att1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("att1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-att",
       kind: "attachment",
@@ -1539,7 +1573,7 @@ describe("SessionsStore", () => {
     const h = harness();
     const script: FakeAgentScript = { declare: { loadSession: true }, turn: [{ type: "echoBlocks" }] };
     await h.connect(spec(script, "sm-late-chip"));
-    const patchbaySessionId = await h.sessions.createSession("sm-late-chip" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm-late-chip" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" }); // prompted: the load rung reopens it
     await h.pool.stop("sm-late-chip" as PatchbayAgentId);
     expect(h.sessions.isLive(patchbaySessionId)).toBe(false);
@@ -1558,7 +1592,7 @@ describe("SessionsStore", () => {
   it("removeContext drops a chip before it's ever sent", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlocks" }] }, "sm10"));
-    const patchbaySessionId = await h.sessions.createSession("sm10" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm10" as PatchbayAgentId, "Fake Agent", cwd);
 
     await h.sessions.addContext(patchbaySessionId, {
       id: "chip-1",
@@ -1579,7 +1613,7 @@ describe("SessionsStore", () => {
     const h = harness();
     // Deliberately no load/resume declared: the zero-turn rung is session/new.
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm11"));
-    const patchbaySessionId = await h.sessions.createSession("sm11" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11" as PatchbayAgentId, "Fake Agent", cwd);
     const before = h.sessions.sessionIdOf(patchbaySessionId);
 
     await h.gates.addRoot(patchbaySessionId, `${at("/repo/backend")}${sep}`); // trailing slash normalized away
@@ -1612,7 +1646,7 @@ describe("SessionsStore", () => {
         "sm11l",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm11l" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11l" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
 
     // load would replay the whole session for one root — never used for a
@@ -1639,7 +1673,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm28"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm28" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm28" as PatchbayAgentId, "Fake Agent", cwd);
     const wireRoots = async () => {
       await h.gates.prompt(patchbaySessionId, { text: "roots?" });
       return (echoed(h.state(), patchbaySessionId) as string[]);
@@ -1666,7 +1700,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm28n"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm28n" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm28n" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "roots?" });
     expect(echoed(h.state(), patchbaySessionId)).toEqual([]);
     // an add is recorded for the servers (issue #34) and never re-applied
@@ -1688,7 +1722,7 @@ describe("SessionsStore", () => {
   it("granted roots: the workspace folders apart from the session's own roots — a cwd no folder backs is neither", async () => {
     const h = harness({ workspaceRoots: [cwd, at("/repo/second")] });
     await h.connect(spec({ declare: ROOTS_CAPS }, "sm56"));
-    const patchbaySessionId = await h.sessions.createSession("sm56" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm56" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.addRoot(patchbaySessionId, at("/repo/backend"));
     const current = h.state().activePatchbaySessionId!;
     expect(h.sessions.grantedRoots(current)).toEqual({ workspace: [cwd, at("/repo/second")], added: [at("/repo/backend")] });
@@ -1721,7 +1755,7 @@ describe("SessionsStore", () => {
         "sm32",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm32" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm32" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(h.state().contextRoots[patchbaySessionId]).toEqual([at("/src/odoo"), at("/src/lib")]);
     expect(store.read("sm32" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!)?.roots).toEqual([at("/src/odoo"), at("/src/lib")]);
@@ -1745,7 +1779,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm32n"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm32n" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm32n" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.state().contextRoots[patchbaySessionId]).toEqual([at("/src/odoo")]);
     expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, at("/src/odoo")]);
     await h.gates.prompt(patchbaySessionId, { text: "roots?" });
@@ -1759,7 +1793,7 @@ describe("SessionsStore", () => {
     const h = harness();
     for (const root of [at("/src/odoo"), at("/src/gone")]) await h.orchestrator.workspaceSavedRoots.add(root);
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm32m"));
-    const patchbaySessionId = await h.sessions.createSession("sm32m" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm32m" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(h.state().contextRoots[patchbaySessionId]).toEqual([at("/src/odoo")]);
     expect(h.sessions.rootsOf(patchbaySessionId)).toEqual([cwd, at("/src/odoo")]);
@@ -1782,7 +1816,7 @@ describe("SessionsStore", () => {
         "sm32g",
       ),
     );
-    const firstId = await h.sessions.createSession("sm32g" as PatchbayAgentId, "Fake Agent", cwd);
+    const firstId = await h.gates.create("sm32g" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.addRoot(firstId, at("/repo/backend")); // zero-turn: re-minted
     const patchbaySessionId = h.state().activePatchbaySessionId!;
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
@@ -1822,7 +1856,7 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ machineKV: kv });
       await h1.connect(spec(script, "c33"));
-      const patchbaySessionId = await h1.sessions.createSession("c33" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h1.gates.create("c33" as PatchbayAgentId, "Fake Agent", cwd);
       await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
       await h1.gates.addRoot(patchbaySessionId, at("/repo/extra"));
       const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
@@ -1859,7 +1893,7 @@ describe("SessionsStore", () => {
       };
       const h = harness();
       await h.connect(spec(script, "c33o"));
-      const patchbaySessionId = await h.sessions.createSession("c33o" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c33o" as PatchbayAgentId, "Fake Agent", cwd);
       await h.gates.prompt(patchbaySessionId, { text: "first turn" });
       await h.gates.addRoot(patchbaySessionId, at("/repo/extra"));
       await report([at("/stale/root")]);
@@ -1878,7 +1912,7 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ machineKV: kv, workspaceRoots: [cwd, at("/repo/second")] });
       await h1.connect(spec(script, "c33w"));
-      const patchbaySessionId = await h1.sessions.createSession("c33w" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h1.gates.create("c33w" as PatchbayAgentId, "Fake Agent", cwd);
       await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
       const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
       await h1.pool.stop("c33w" as PatchbayAgentId);
@@ -1901,7 +1935,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: ROOTS_CAPS, stepDelayMs: 150, turn: [{ type: "echoRoots" }] }, "sm28t"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm28t" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm28t" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
     const slow = h.gates.prompt(patchbaySessionId, { text: "slow turn" });
     await untilTurnOnWire(h, patchbaySessionId);
@@ -1919,7 +1953,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: ROOTS_CAPS, stepDelayMs: 150, turn: [{ type: "echoRoots" }] }, "sm28s"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm28s" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm28s" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
     const slow = h.gates.prompt(patchbaySessionId, { text: "slow turn" }).catch((err: unknown) => err);
     await untilTurnOnWire(h, patchbaySessionId);
@@ -1939,7 +1973,7 @@ describe("SessionsStore", () => {
   it("a root added under a turn that fails is still applied once it ends — the failure holds words, never the roots", async () => {
     const h = harness();
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm28f"));
-    const patchbaySessionId = await h.sessions.createSession("sm28f" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm28f" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "warm-up" }); // everPrompted: the resume rung, not recreate
     let fail!: () => void;
     const failed = new Promise<void>((r) => (fail = r));
@@ -1981,7 +2015,7 @@ describe("SessionsStore", () => {
         "sm11k",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm11k" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11k" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
 
@@ -2023,7 +2057,7 @@ describe("SessionsStore", () => {
     // window 1: the user steers the knob, then the window goes away
     const h1 = harness({ machineKV: kv });
     await h1.connect(spec(script, "smk1"));
-    const patchbaySessionId = await h1.sessions.createSession("smk1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h1.gates.create("smk1" as PatchbayAgentId, "Fake Agent", cwd);
     await h1.gates.setKnob(patchbaySessionId, "model", "sonnet");
     await h1.gates.prompt(patchbaySessionId, { text: "first turn" });
     // the durable row keys on the agent's own id — what names the session
@@ -2065,7 +2099,7 @@ describe("SessionsStore", () => {
     const h1 = harness({ machineKV: kv });
     await h1.saveAgent(fakeConfig("smq6" as PatchbayAgentId, {}));
     await h1.connect(spec(script, "smq6"));
-    const patchbaySessionId = await h1.sessions.createSession("smq6" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h1.gates.create("smq6" as PatchbayAgentId, "Fake Agent", cwd);
     await h1.gates.prompt(patchbaySessionId, { text: "real turn" }); // persists agent-side
     await h1.gates.addRoot(patchbaySessionId, at("/repo/extra"));
     await h1.sessions.addContext(patchbaySessionId, {
@@ -2143,7 +2177,7 @@ describe("SessionsStore", () => {
         turn: [{ type: "chunk", text: "x" }],
       });
       const stage = async (patchbayAgentId: PatchbayAgentId) => {
-        const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
+        const patchbaySessionId = await h.gates.create(patchbayAgentId, "Fake Agent", cwd);
         await h.gates.prompt(patchbaySessionId, { text: "first turn" });
         await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
         await h.gates.addRoot(patchbaySessionId, at("/repo/extra"));
@@ -2191,7 +2225,7 @@ describe("SessionsStore", () => {
       expect(store.list().map((r) => `${r.patchbayAgentId}:${r.sessionId}`).sort()).toEqual(["c29-load:stale-elsewhere", "c29-other:other"]);
 
       // a session of this window keeps its row across the agent's reconnect
-      const patchbaySessionId = await h.sessions.createSession("c29-load" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c29-load" as PatchbayAgentId, "Fake Agent", cwd);
       h.sessions.saveDraft(patchbaySessionId, "half a thought");
       await h.pool.stop("c29-load" as PatchbayAgentId);
       await h.connect(spec({ declare: { loadSession: true } }, "c29-load"));
@@ -2209,7 +2243,7 @@ describe("SessionsStore", () => {
       };
       const h1 = harness({ machineKV: kv });
       await h1.connect(spec(script, "c29-walk"));
-      const patchbaySessionId = await h1.sessions.createSession("c29-walk" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h1.gates.create("c29-walk" as PatchbayAgentId, "Fake Agent", cwd);
       await h1.gates.prompt(patchbaySessionId, { text: "persisted agent-side" });
       const sessionId = h1.sessions.sessionIdOf(patchbaySessionId)!;
       await h1.pool.stop("c29-walk" as PatchbayAgentId);
@@ -2241,7 +2275,7 @@ describe("SessionsStore", () => {
       await h.connect(
         spec({ declare: { loadSession: true, sessionCapabilities: { list: {} } }, configOptions: MODEL_KNOB }, "c29-live"),
       );
-      const patchbaySessionId = await h.sessions.createSession("c29-live" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c29-live" as PatchbayAgentId, "Fake Agent", cwd);
       await h.gates.setKnob(patchbaySessionId, "model", "sonnet");
       const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
       expect(store.read("c29-live" as PatchbayAgentId, sessionId)?.knobs).toEqual({ model: "sonnet" });
@@ -2263,7 +2297,7 @@ describe("SessionsStore", () => {
     it("a zero-turn re-mint keeps the composer draft — an agent that writes no row still keeps the words, on the same session", async () => {
       const h = harness();
       await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "c29-draft"));
-      const patchbaySessionId = await h.sessions.createSession("c29-draft" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c29-draft" as PatchbayAgentId, "Fake Agent", cwd);
       const before = h.sessions.sessionIdOf(patchbaySessionId);
       h.sessions.saveDraft(patchbaySessionId, "typed before any turn");
       await h.gates.addRoot(patchbaySessionId, at("/repo/backend"));
@@ -2279,7 +2313,7 @@ describe("SessionsStore", () => {
     await h.connect(
       spec({ declare: ROOTS_CAPS, failResume: true, turn: [{ type: "echoRoots" }] }, "sm11f"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm11f" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11f" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
     expect(h.sessions.isLive(patchbaySessionId)).toBe(true);
 
@@ -2298,7 +2332,7 @@ describe("SessionsStore", () => {
         "sm11r",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm11r" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11r" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first turn" });
     const before = h.state().transcripts[patchbaySessionId]!.length;
 
@@ -2315,7 +2349,7 @@ describe("SessionsStore", () => {
   it("prompt parts: inline file mentions ride as resource_link blocks at their position", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "sm11p"));
-    const patchbaySessionId = await h.sessions.createSession("sm11p" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm11p" as PatchbayAgentId, "Fake Agent", cwd);
 
     await h.gates.prompt(patchbaySessionId, { text: "look at @app.ts please", parts: [
       { kind: "text", text: "look at " },
@@ -2352,7 +2386,7 @@ describe("SessionsStore", () => {
     it("new-session focus still finds the row, and the first prompt mints it again — the same session, its draft in place, no sibling", async () => {
       const h = harness();
       await h.connect(spec({ exitAfterMs: 150 }, "c30a"));
-      const patchbaySessionId = await h.sessions.createSession("c30a" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c30a" as PatchbayAgentId, "Fake Agent", cwd);
       const before = h.sessions.sessionIdOf(patchbaySessionId);
       h.sessions.saveDraft(patchbaySessionId, "typed before the crash"); // the composer's debounced save
       await untilStatus(h, "c30a" as PatchbayAgentId, "crashed");
@@ -2377,7 +2411,7 @@ describe("SessionsStore", () => {
     it("opening the dead row mints it again — one live session, the same one, focused, chips in place", async () => {
       const h = harness();
       await h.connect(spec({ exitAfterMs: 150 }, "c30b"));
-      const patchbaySessionId = await h.sessions.createSession("c30b" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c30b" as PatchbayAgentId, "Fake Agent", cwd);
       const before = h.sessions.sessionIdOf(patchbaySessionId);
       await h.sessions.addContext(patchbaySessionId, { kind: "selection", id: "c30-chip", label: "a.ts:1", content: "x" });
       await untilStatus(h, "c30b" as PatchbayAgentId, "crashed");
@@ -2395,7 +2429,7 @@ describe("SessionsStore", () => {
     it("a Close while the dead row is minted again leaves it closed — the fresh session is freed, nothing comes back", async () => {
       const h = harness();
       await h.connect(spec({ exitAfterMs: 150, declare: { sessionCapabilities: { close: {} } } }, "c30c"));
-      const patchbaySessionId = await h.sessions.createSession("c30c" as PatchbayAgentId, "Fake Agent", cwd);
+      const patchbaySessionId = await h.gates.create("c30c" as PatchbayAgentId, "Fake Agent", cwd);
       await untilStatus(h, "c30c" as PatchbayAgentId, "crashed");
 
       // the agent answers a creation late, so the Close lands mid-mint
@@ -2417,7 +2451,7 @@ describe("SessionsStore", () => {
   it("a still-new session is findable for add-session focus; the first prompt ends that", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm14"));
-    const patchbaySessionId = await h.sessions.createSession("sm14" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm14" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.sessions.findNeverPrompted("sm14" as PatchbayAgentId)).toBe(patchbaySessionId);
     expect(h.sessions.findNeverPrompted("other-agent" as PatchbayAgentId)).toBeUndefined();
 
@@ -2430,7 +2464,7 @@ describe("SessionsStore", () => {
   it("open work counts conversations a stop would disconnect — never-prompted ones cost nothing (issue #47)", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 300 }, "w47"));
-    const fresh = await h.sessions.createSession("w47" as PatchbayAgentId, "Fake Agent", cwd);
+    const fresh = await h.gates.create("w47" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.sessions.openWork("w47" as PatchbayAgentId)).toEqual({ conversations: 0, turns: 0 });
 
     const turn = h.gates.prompt(fresh, { text: "go" });
@@ -2438,7 +2472,7 @@ describe("SessionsStore", () => {
     await turn;
     expect(h.sessions.openWork("w47" as PatchbayAgentId)).toEqual({ conversations: 1, turns: 0 });
 
-    await h.sessions.createSession("w47" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.create("w47" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.sessions.openWork("w47" as PatchbayAgentId)).toEqual({ conversations: 1, turns: 0 });
     expect(h.sessions.openWork("other-agent" as PatchbayAgentId)).toEqual({ conversations: 0, turns: 0 });
 
@@ -2459,7 +2493,7 @@ describe("held prompts and their chips", () => {
     const h = harness();
     const agent = "hc1" as PatchbayAgentId;
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 150 }, "hc1"));
-    const id = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const id = await h.gates.create(agent, "Fake Agent", cwd);
     const first = h.gates.prompt(id, { text: "first" }); // a turn underway
     await untilTurnOnWire(h, id);
     await h.sessions.addContext(id, selection("A"));
@@ -2480,7 +2514,7 @@ describe("held prompts and their chips", () => {
     const h = harness();
     const agent = "hc2" as PatchbayAgentId;
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }], stepDelayMs: 300 }, "hc2"));
-    const id = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const id = await h.gates.create(agent, "Fake Agent", cwd);
     const first = h.gates.prompt(id, { text: "first" });
     await untilTurnOnWire(h, id);
     await h.sessions.addContext(id, selection("A"));
@@ -2504,7 +2538,7 @@ describe("session history (list / resume / delete)", () => {
 
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS }, "sh1"));
-    const mine = await h.sessions.createSession("sh1" as PatchbayAgentId, "Fake Agent", cwd);
+    const mine = await h.gates.create("sh1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.syncAgentSessions("sh1" as PatchbayAgentId);
 
     const state = h.state();
@@ -2637,7 +2671,7 @@ describe("session history (list / resume / delete)", () => {
   it("the agent's title always wins — patchbay-side rename is gone", async () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS, listWithTitles: true }, "sh3"));
-    const patchbaySessionId = await h.sessions.createSession("sh3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "derive me a title" });
     expect(h.state().sessions[0]?.title).toBe("derive me a title");
 
@@ -2651,7 +2685,7 @@ describe("session history (list / resume / delete)", () => {
   it("a listed session the agent gave no title takes its first prompt's, like one made here (#80)", async () => {
     const first = harness();
     await first.connect(spec({ declare: { ...LIST_CAPS, loadSession: true } }, "sh3u"));
-    const made = await first.sessions.createSession("sh3u" as PatchbayAgentId, "Fake Agent", cwd);
+    const made = await first.gates.create("sh3u" as PatchbayAgentId, "Fake Agent", cwd);
     await first.gates.prompt(made, { text: "first" });
     const wireId = first.sessions.sessionIdOf(made)!;
     await first.pool.stop("sh3u" as PatchbayAgentId);
@@ -2672,7 +2706,7 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: LIST_CAPS, turn: [{ type: "infoUpdate", title: "agent named me" }] }, "sh4"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh4" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "hello" });
     // noteInfoUpdate is fire-and-forget off the notification — wait for it
     await vi.waitFor(() => expect(h.state().sessions[0]?.title).toBe("agent named me"), SETTLE);
@@ -2688,7 +2722,7 @@ describe("session history (list / resume / delete)", () => {
         "sh5",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh5" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh5" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     const before = h.state().transcripts[patchbaySessionId]!.length;
     expect(before).toBeGreaterThan(0);
@@ -2718,7 +2752,7 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "remembered" }] }, "sh7"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh7" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh7" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     h.sessions.invalidateAgent("sh7" as PatchbayAgentId);
     const resetsBefore = h.events().filter((e) => e.kind === "transcriptReset").length;
@@ -2770,7 +2804,7 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "chunk", text: "ok" }] }, "sh9"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh9" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "before" });
     h.sessions.invalidateAgent("sh9" as PatchbayAgentId);
 
@@ -2800,9 +2834,9 @@ describe("session history (list / resume / delete)", () => {
         "sh10",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh10" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "work" });
-    const shown = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
+    const shown = await h.gates.create("sh10" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
 
     await h.idlePasses(); // the reaper releases it
     // released, and the release's own work done — its close answered
@@ -2826,12 +2860,12 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: { loadSession: true, sessionCapabilities: { close: {} } }, turn: [{ type: "chunk", text: "x" }] }, "sh11c"),
     );
-    const patchbaySessionId = await h.sessions.createSession("sh11" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh11" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "irreplaceable transcript" });
     // A control the reaper may take, on an agent that can bring it back.
-    const control = await h.sessions.createSession("sh11c" as PatchbayAgentId, "Fake Agent", cwd);
+    const control = await h.gates.create("sh11c" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(control, { text: "the reaper's" });
-    await h.sessions.createSession("sh11c" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
+    await h.gates.create("sh11c" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
 
     // resume would bring back the context but not the visible history —
     // and patchbay persists none, so closing would destroy the only copy.
@@ -2851,9 +2885,9 @@ describe("session history (list / resume / delete)", () => {
         "sh12",
       ),
     );
-    const idle = await h.sessions.createSession("sh12" as PatchbayAgentId, "Fake Agent", cwd);
+    const idle = await h.gates.create("sh12" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(idle, { text: "then silence" });
-    const active = await h.sessions.createSession("sh12" as PatchbayAgentId, "Fake Agent", cwd); // activates itself
+    const active = await h.gates.create("sh12" as PatchbayAgentId, "Fake Agent", cwd); // activates itself
     await h.gates.prompt(active, { text: "also silent, but visible" });
     expect(h.state().activePatchbaySessionId).toBe(active);
 
@@ -2877,13 +2911,13 @@ describe("session history (list / resume / delete)", () => {
         "smq5",
       ),
     );
-    const victim = await h.sessions.createSession("smq5" as PatchbayAgentId, "Fake Agent", cwd);
+    const victim = await h.gates.create("smq5" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(victim, { text: "reapable" });
-    const holding = await h.sessions.createSession("smq5" as PatchbayAgentId, "Fake Agent", cwd);
+    const holding = await h.gates.create("smq5" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(holding, { text: "prompted once" });
     logOut(h, "smq5");
     await h.gates.prompt(holding, { text: "held words" }); // auth-held row
-    const active = await h.sessions.createSession("smq5" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
+    const active = await h.gates.create("smq5" as PatchbayAgentId, "Fake Agent", cwd); // takes the view
 
     // the reaper proves it ran by releasing the queue-less idle session…
     await h.idlePasses();
@@ -2905,12 +2939,12 @@ describe("session history (list / resume / delete)", () => {
         "sh13",
       ),
     );
-    const fresh = await h.sessions.createSession("sh13" as PatchbayAgentId, "Fake Agent", cwd);
+    const fresh = await h.gates.create("sh13" as PatchbayAgentId, "Fake Agent", cwd);
     // A control the reaper may take: prompted after `fresh` was made, so the
     // sweep that releases it has `fresh` past the idle threshold too.
-    const control = await h.sessions.createSession("sh13" as PatchbayAgentId, "Fake Agent", cwd);
+    const control = await h.gates.create("sh13" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(control, { text: "idle, seen, prompted — the reaper's" });
-    const active = await h.sessions.createSession("sh13" as PatchbayAgentId, "Fake Agent", cwd);
+    const active = await h.gates.create("sh13" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(active, { text: "make this one the visible, prompted one" });
     expect(h.state().activePatchbaySessionId).toBe(active);
 
@@ -2930,12 +2964,12 @@ describe("session history (list / resume / delete)", () => {
         "sh14",
       ),
     );
-    const idle = await h.sessions.createSession("sh14" as PatchbayAgentId, "Fake Agent", cwd);
+    const idle = await h.gates.create("sh14" as PatchbayAgentId, "Fake Agent", cwd);
     // A control the reaper may take: finished while on screen, so only the
     // mark tells the two apart.
-    const control = await h.sessions.createSession("sh14" as PatchbayAgentId, "Fake Agent", cwd);
+    const control = await h.gates.create("sh14" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(control, { text: "seen" });
-    const active = await h.sessions.createSession("sh14" as PatchbayAgentId, "Fake Agent", cwd);
+    const active = await h.gates.create("sh14" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(idle, { text: "finished while looking away" });
     expect(h.state().sessions.find((s) => s.id === idle)?.unseen).toBe(true);
     await h.gates.prompt(active, { text: "the visible one" });
@@ -2959,7 +2993,7 @@ describe("session history (list / resume / delete)", () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS }, "sh6"));
 
-    const patchbaySessionId = await h.sessions.createSession("sh6" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh6" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "leave a durable record" });
     const sessionId = h.sessions.sessionIdOf(patchbaySessionId);
     expect((await h.pool.listSessions("sh6" as PatchbayAgentId, { cwd })).sessions.map((s) => s.sessionId)).toContain(sessionId);
@@ -2981,7 +3015,7 @@ describe("session history (list / resume / delete)", () => {
     const h = harness({ machineKV: kv });
     const agent = "sh7" as PatchbayAgentId;
     await h.connect(spec({ declare: { loadSession: true, sessionCapabilities: { list: {}, close: {} } } }, "sh7"));
-    const patchbaySessionId = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create(agent, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "keep me" });
     h.sessions.saveDraft(patchbaySessionId, "half-typed thought");
     await h.sessions.addDroppedFile(patchbaySessionId, { chipId: "chip-1", name: "notes.txt", mimeType: "text/plain", base64: "aGk=" });
@@ -3006,7 +3040,7 @@ describe("session history (list / resume / delete)", () => {
   it("close is refused where the agent doesn't offer it — nothing of the session ends", async () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS }, "sh7b"));
-    const patchbaySessionId = await h.sessions.createSession("sh7b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh7b" as PatchbayAgentId, "Fake Agent", cwd);
 
     await expect(h.gates.close(patchbaySessionId)).rejects.toThrow(/doesn't offer session\/close/);
     expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
@@ -3020,7 +3054,7 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: { loadSession: true, sessionCapabilities: { fork: {}, list: {}, additionalDirectories: {} } }, turn: [{ type: "chunk", text: "an answer" }] }, "sf1"),
     );
-    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const original = await h.gates.create(agent, "Fake Agent", cwd);
     await h.gates.addRoot(original, at("/repo/extra"));
     await h.gates.prompt(original, { text: "the first question" });
     const originalId = h.sessions.sessionIdOf(original);
@@ -3053,7 +3087,7 @@ describe("session history (list / resume / delete)", () => {
     };
     const h1 = harness({ machineKV: kv });
     await h1.connect(spec(script, "sf5"));
-    const original = await h1.sessions.createSession(agent, "Fake Agent", cwd);
+    const original = await h1.gates.create(agent, "Fake Agent", cwd);
     await h1.gates.prompt(original, { text: "the first question" });
     const forked = await h1.gates.fork(original, "first");
     expect(h1.state().sessions.find((s) => s.id === forked)?.forkedFrom).toBe(original);
@@ -3079,7 +3113,7 @@ describe("session history (list / resume / delete)", () => {
     await h.connect(
       spec({ declare: { loadSession: true, sessionCapabilities: { fork: {} } }, turn: [{ type: "chunk", text: "a" }, { type: "chunk", text: "b" }], stepDelayMs: 150 }, "sf2"),
     );
-    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const original = await h.gates.create(agent, "Fake Agent", cwd);
     const turn = h.gates.prompt(original, { text: "go" }).then(() => "finished", (err: unknown) => err);
     await untilTurnOnWire(h, original);
     const forked = await h.gates.fork(original, "go");
@@ -3092,7 +3126,7 @@ describe("session history (list / resume / delete)", () => {
     const h = harness();
     const agent = "sf3" as PatchbayAgentId;
     await h.connect(spec({ declare: { sessionCapabilities: { fork: {} } }, turn: [{ type: "chunk", text: "x" }] }, "sf3"));
-    const original = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const original = await h.gates.create(agent, "Fake Agent", cwd);
     await h.gates.prompt(original, { text: "go" });
     const forked = await h.gates.fork(original, "go");
     const blocks = h.state().transcripts[forked] ?? [];
@@ -3104,7 +3138,7 @@ describe("session history (list / resume / delete)", () => {
   it("fork is refused where the agent doesn't offer it — nothing moves", async () => {
     const h = harness();
     await h.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sf4"));
-    const original = await h.sessions.createSession("sf4" as PatchbayAgentId, "Fake Agent", cwd);
+    const original = await h.gates.create("sf4" as PatchbayAgentId, "Fake Agent", cwd);
     const sessionsBefore = h.state().sessions.length;
     await expect(h.gates.fork(original, "x")).rejects.toThrow(/doesn't offer session\/fork/);
     expect(h.state().sessions).toHaveLength(sessionsBefore);
@@ -3114,7 +3148,7 @@ describe("session history (list / resume / delete)", () => {
   it("delete is refused where the agent never offered it — nothing of the session ends", async () => {
     const h = harness();
     await h.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "sh8"));
-    const patchbaySessionId = await h.sessions.createSession("sh8" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh8" as PatchbayAgentId, "Fake Agent", cwd);
 
     await expect(h.gates.delete(patchbaySessionId)).rejects.toThrow(/doesn't offer session\/delete/);
     expect(h.state().sessions.map((s) => s.id)).toContain(patchbaySessionId);
@@ -3125,7 +3159,7 @@ describe("session history (list / resume / delete)", () => {
   it("a delete that fails leaves the session where it was — the agent goes first", async () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS }, "sh9"));
-    const patchbaySessionId = await h.sessions.createSession("sh9" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh9" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "still mine" });
     await h.pool.stop("sh9" as PatchbayAgentId);
 
@@ -3138,7 +3172,7 @@ describe("session history (list / resume / delete)", () => {
   it("close, where the agent lists no sessions: the session leaves, and session/close frees the agent's side", async () => {
     const h = harness();
     await h.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "sh10"));
-    const patchbaySessionId = await h.sessions.createSession("sh10" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sh10" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "done here" });
     const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
     expect(h.pool.get("sh10" as PatchbayAgentId)?.sessions).toContain(sessionId);
@@ -3189,7 +3223,7 @@ describe("session activity stamp — one home", () => {
   it("a wire row without a stamp: the re-read says nothing, the row keeps its own", async () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st2"));
-    const patchbaySessionId = await h.sessions.createSession("st2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("st2" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
     const after = h.state().sessions.find((s) => s.id === patchbaySessionId)!.updatedAt;
 
@@ -3207,7 +3241,7 @@ describe("session activity stamp — one home", () => {
   it("session_info_update with a null title and no stamp is a clear, not a rename — nothing moves", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "hi" }] }, "st2n"));
-    const patchbaySessionId = await h.sessions.createSession("st2n" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("st2n" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "derive me" });
     const before = h.events().length;
     h.sessions.handleUpdate(
@@ -3237,7 +3271,7 @@ describe("session activity stamp — one home", () => {
   it("a wire list without titles leaves the derived title alone — the refresh carries no title", async () => {
     const h = harness();
     await h.connect(spec({ declare: LIST_CAPS, turn: [{ type: "chunk", text: "hi" }] }, "st4"));
-    const patchbaySessionId = await h.sessions.createSession("st4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("st4" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "derive me" });
     expect(h.state().sessions.find((s) => s.id === patchbaySessionId)?.title).toBe("derive me");
 
@@ -3253,7 +3287,7 @@ describe("session activity stamp — one home", () => {
   it("a zero-turn re-mint keeps the session's title — the row stays, the store keeps no copy", async () => {
     const h = harness();
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "st5"));
-    const patchbaySessionId = await h.sessions.createSession("st5" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("st5" as PatchbayAgentId, "Fake Agent", cwd);
     const before = h.sessions.sessionIdOf(patchbaySessionId);
     // an agent-pushed title lands on the row only (session_info_update path)
     h.sessions.handleUpdate(
@@ -3306,7 +3340,7 @@ describe("session activity stamp — one home", () => {
       listedFirst = h.state().sessions[0]?.id;
       return reply;
     });
-    const patchbaySessionId = await h.sessions.createSession("st-cross" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("st-cross" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(listedFirst).toBeDefined();
     expect(patchbaySessionId).not.toBe(listedFirst);
@@ -3354,7 +3388,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
     const h = await composed();
     await h.connect(spec({ newSessionReplyDelayMs: 200 }, "ct1"));
     const newSession = vi.spyOn(h.pool, "newSession");
-    const born = h.sessions.createSession("ct1" as PatchbayAgentId, "Fake Agent", cwd);
+    const born = h.gates.create("ct1" as PatchbayAgentId, "Fake Agent", cwd);
     await vi.waitFor(() => expect(newSession).toHaveBeenCalled(), SETTLE); // session/new is on the wire
     const [token] = h.minted();
     expect(token).toMatch(UUID);
@@ -3371,7 +3405,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
   it("a credential's bridge is the server's: only a server given through the bridge under that token names the agent", async () => {
     const h = await composed();
     await h.connect(spec({}, "ct2"));
-    await h.sessions.createSession("ct2" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.create("ct2" as PatchbayAgentId, "Fake Agent", cwd);
     const [token] = h.minted();
     expect(h.sessions.bridgedTo(token!, "remote" as PatchbayMcpServerId)).toBe("ct2");
     expect(h.sessions.bridgedTo(token!, "local" as PatchbayMcpServerId)).toBeUndefined(); // handed through: asks for nothing
@@ -3383,7 +3417,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
   it("a token outlives its session's close while the connection is up, and ends with the connection", async () => {
     const h = await composed();
     await h.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "ct3"));
-    const patchbaySessionId = await h.sessions.createSession("ct3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("ct3" as PatchbayAgentId, "Fake Agent", cwd);
     const [token] = h.minted();
     await h.gates.close(patchbaySessionId);
     // an agent that keeps one server for all its sessions still calls with
@@ -3397,7 +3431,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
   it("every attach mints its own token, each naming the session; erase drops them all", async () => {
     const h = await composed();
     await h.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "ct4"));
-    const patchbaySessionId = await h.sessions.createSession("ct4" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("ct4" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     await h.gates.reload(patchbaySessionId);
     expect(h.minted()).toHaveLength(2);
@@ -3453,7 +3487,7 @@ describe("a session's work enters behind its agent's", () => {
   it("a reload asked while the agent's row holds work runs after it — never against a connection being replaced", async () => {
     const h = rowHarness();
     await h.connect(spec({ ...LOGIN, declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw1"));
-    const patchbaySessionId = await h.sessions.createSession("sw1" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sw1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     const restart = await h.hold("sw1" as PatchbayAgentId);
     const parked = h.nextPark();
@@ -3471,7 +3505,7 @@ describe("a session's work enters behind its agent's", () => {
   it("a prompt sent meanwhile is underway at once and reaches the wire after it; a close waits on nothing", async () => {
     const h = rowHarness();
     await h.connect(spec({ ...LOGIN, turn: [{ type: "chunk", text: "hi" }], declare: { sessionCapabilities: { close: {} } } }, "sw2"));
-    const patchbaySessionId = await h.sessions.createSession("sw2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sw2" as PatchbayAgentId, "Fake Agent", cwd);
     const restart = await h.hold("sw2" as PatchbayAgentId);
     const parked = h.nextPark();
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
@@ -3492,7 +3526,7 @@ describe("a session's work enters behind its agent's", () => {
   it("an open while the agent's row holds work attaches once it is done", async () => {
     const h = rowHarness();
     await h.connect(spec({ ...LOGIN, declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "sw3"));
-    const patchbaySessionId = await h.sessions.createSession("sw3" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sw3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     h.sessions.invalidateAgent("sw3" as PatchbayAgentId); // its sessions detach, as a restart's would
     const restart = await h.hold("sw3" as PatchbayAgentId);
@@ -3522,9 +3556,9 @@ describe("open — one ceremony for every entrance", () => {
     const h = harness();
     await h.saveAgent(fakeConfig("op1" as PatchbayAgentId, LOAD));
     await h.connect(spec(LOAD, "op1"));
-    const older = await h.sessions.createSession("op1" as PatchbayAgentId, "Fake Agent", cwd);
+    const older = await h.gates.create("op1" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(older, { text: "first" });
-    const current = await h.sessions.createSession("op1" as PatchbayAgentId, "Fake Agent", cwd);
+    const current = await h.gates.create("op1" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.state().activePatchbaySessionId).toBe(current);
     await h.pool.stop("op1" as PatchbayAgentId); // nothing to attach to but its Connect
 
@@ -3541,7 +3575,7 @@ describe("open — one ceremony for every entrance", () => {
     const h = harness();
     await h.saveAgent(fakeConfig("op2" as PatchbayAgentId, LOAD));
     await h.connect(spec(LOAD, "op2"));
-    const patchbaySessionId = await h.sessions.createSession("op2" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("op2" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "first" });
     await h.pool.stop("op2" as PatchbayAgentId);
 
@@ -3556,9 +3590,9 @@ describe("open — one ceremony for every entrance", () => {
   it("an agent coming up hydrates every session on view — pinned included, not only the pointer", async () => {
     const h = harness();
     await h.connect(spec(LOAD, "op3"));
-    const shown = await h.sessions.createSession("op3" as PatchbayAgentId, "Fake Agent", cwd);
+    const shown = await h.gates.create("op3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(shown, { text: "first" });
-    const other = await h.sessions.createSession("op3" as PatchbayAgentId, "Fake Agent", cwd);
+    const other = await h.gates.create("op3" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(other, { text: "second" });
     expect(h.state().activePatchbaySessionId).toBe(other);
     // The agent goes down; the pinned window opens while it's off — nothing
@@ -3583,7 +3617,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   async function chunkHarness(patchbayAgentId: PatchbayAgentId) {
     const h = harness();
     await h.connect(spec({ declare: {}, turn: [] }, patchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession(patchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create(patchbayAgentId, "Fake Agent", cwd);
     // the agent names its session its own way on the wire
     const sessionId = h.sessions.sessionIdOf(patchbaySessionId)!;
     const push = (update: Record<string, unknown>) => h.sessions.handleUpdate(patchbayAgentId, sessionId, readUpdate(update));
@@ -3608,7 +3642,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   it("a failed turn says why on its turn line — the error's data included (#80)", async () => {
     const h = harness();
     await h.connect(spec({ promptError: { code: -32603, message: "Internal error", data: { details: "process exited with code 1" } } }, "ch-err"));
-    const patchbaySessionId = await h.sessions.createSession("ch-err" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("ch-err" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "go" }).catch(() => {});
     const end = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "turnEnd");
     expect(end).toMatchObject({ stopReason: "error", error: "Internal error — process exited with code 1" });
@@ -3694,7 +3728,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
   it("live chips ride the sent bubble as parts — image, attachment, context, then prose", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "chunk", text: "ok" }] }, "sm-parts"));
-    const patchbaySessionId = await h.sessions.createSession("sm-parts" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm-parts" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(patchbaySessionId, {
       id: "img-1",
       kind: "image",
@@ -3830,7 +3864,7 @@ describe("chunk rendering honesty (G4/G10/G11)", () => {
         "sm-int",
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("sm-int" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("sm-int" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "do the thing" });
 
     await h.pool.restart("sm-int" as PatchbayAgentId);
@@ -3977,7 +4011,7 @@ describe("a session's files live with the session", () => {
   it("a staged image is sent from the session's folder — a temp cleanup meanwhile costs only its preview", async () => {
     const h = harness();
     await h.connect(spec({ declare: { promptCapabilities: { image: true } }, turn: [{ type: "echoBlockKinds" }] }, "f78a"));
-    const patchbaySessionId = await h.sessions.createSession("f78a" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("f78a" as PatchbayAgentId, "Fake Agent", cwd);
     const chipId = `chip-f78a-${Date.now()}`;
     await h.sessions.addContext(patchbaySessionId, { id: chipId, kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
     // the OS empties its temp directory while the chip waits
@@ -3991,7 +4025,7 @@ describe("a session's files live with the session", () => {
   it("an image an agent takes only as a link points at the session's own copy, which outlives the turn", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78b"));
-    const patchbaySessionId = await h.sessions.createSession("f78b" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("f78b" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f78b", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
     const path = join(h.files.dirOf("f78b" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd), "chip-f78b.png");
 
@@ -4004,7 +4038,7 @@ describe("a session's files live with the session", () => {
   it("a dropped file lands in the session's folder, and its chip links it there — under its own name", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f78c"));
-    const patchbaySessionId = await h.sessions.createSession("f78c" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("f78c" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addDroppedFile(patchbaySessionId, {
       chipId: "chip-f78c",
       name: "my notes.txt",
@@ -4029,7 +4063,7 @@ describe("a session's files live with the session", () => {
   it("a reused prompt's files are staged again; a snapshot and a gone file are named instead (#59)", async () => {
     const h = harness();
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }] }, "f59a"));
-    const patchbaySessionId = await h.sessions.createSession("f59a" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("f59a" as PatchbayAgentId, "Fake Agent", cwd);
     const notes = join(cwd, "f59a-notes.txt");
     await writeFile(notes, "notes");
     const gonePath = join(cwd, "f59a-gone.txt");
@@ -4059,9 +4093,9 @@ describe("a session's files live with the session", () => {
     const h = harness();
     const agent = "f78d" as PatchbayAgentId;
     await h.connect(spec({ turn: [{ type: "echoBlockKinds" }], declare: { sessionCapabilities: { list: {}, delete: {}, close: {} } } }, "f78d"));
-    const deleted = await h.sessions.createSession(agent, "Fake Agent", cwd);
-    const closed = await h.sessions.createSession(agent, "Fake Agent", cwd);
-    const removed = await h.sessions.createSession(agent, "Fake Agent", cwd);
+    const deleted = await h.gates.create(agent, "Fake Agent", cwd);
+    const closed = await h.gates.create(agent, "Fake Agent", cwd);
+    const removed = await h.gates.create(agent, "Fake Agent", cwd);
     const folderOf = (patchbaySessionId: PatchbaySessionId) => h.files.dirOf(agent, h.sessions.sessionIdOf(patchbaySessionId)!, cwd);
     for (const patchbaySessionId of [deleted, closed, removed]) {
       await h.sessions.addContext(patchbaySessionId, { id: `chip-${patchbaySessionId}`, kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
@@ -4086,7 +4120,7 @@ describe("a session's files live with the session", () => {
     await h.connect(spec({ declare: { sessionCapabilities: { list: {} } } }, "f78e"));
     // a session the agent no longer has, whose folder an earlier window left
     const stray = await h.files.put("f78e" as PatchbayAgentId, "deleted-elsewhere", cwd, "chip.png", PNG);
-    const kept = await h.sessions.createSession("f78e" as PatchbayAgentId, "Fake Agent", cwd);
+    const kept = await h.gates.create("f78e" as PatchbayAgentId, "Fake Agent", cwd);
     await h.sessions.addContext(kept, { id: "chip-f78e", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
 
     await h.sessions.syncAgentSessions("f78e" as PatchbayAgentId);
@@ -4100,7 +4134,7 @@ describe("a session's files live with the session", () => {
     const continuity = new SessionContinuityStore(kv);
     const h = harness({ machineKV: kv });
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "f78f"));
-    const patchbaySessionId = await h.sessions.createSession("f78f" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("f78f" as PatchbayAgentId, "Fake Agent", cwd);
     const before = h.sessions.sessionIdOf(patchbaySessionId)!;
     await h.sessions.addContext(patchbaySessionId, { id: "chip-f78f", kind: "image", label: "Image", content: PNG, mimeType: "image/png" });
 

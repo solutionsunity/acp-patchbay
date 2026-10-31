@@ -195,7 +195,7 @@ export function App({
           advertised: activeMatrix?.["session.additionalDirectories"]?.declared === true,
           resumeDeclared: activeMatrix?.["session.resume"]?.declared === true,
           loadDeclared: activeMatrix?.["session.load"]?.declared === true,
-          hasTurns: active !== null && (state.transcripts[active.id]?.length ?? 0) > 0,
+          hasTurns: active?.hasTurns === true,
         })}
         liveSelection={state.liveSelection}
         openEditors={state.openEditors}

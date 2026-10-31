@@ -8,6 +8,7 @@
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout regressions happened.
 import type { AgentConfigView, AgentSummary, AgentWork, AuthMethodView } from "../../shared/protocol";
+import { agentOffers } from "../../shared/agent-offers";
 import { versionChip, type VersionChip } from "../shared/agent-work";
 
 export interface AgentCardInputs {
@@ -70,10 +71,14 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   // Something to stop: the process, its launch, or work its queue holds.
   const live = running || status === "reconnecting" || working;
   const needsAuth = agent?.needsAuth === true;
-  // An edited agent that came from the registry has a way back to it; an
-  // upgraded one, to the version its upgrade replaced. A courtesy over the
-  // agents store's own rule for each move, which holds whatever is clicked.
-  const resettable = config !== undefined && config.origin !== null && config.link === null;
+  // What the agent's facts allow — the agents store refuses the rest with
+  // the same reading. No config: nothing to move.
+  const offers = agentOffers({
+    matrix,
+    origin: config?.origin ?? null,
+    link: config?.link ?? null,
+    previous: config?.previousVersion ?? null,
+  });
   const previousVersion = config?.previousVersion ?? null;
 
   return {
@@ -87,7 +92,7 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // of — and never both login and logout); dimmed while the queue holds
     // work it would only wait behind.
     logout: {
-      show: running && !needsAuth && matrix?.["auth.logout"]?.declared === true,
+      show: running && !needsAuth && offers.logout,
       disabled: working,
     },
     // Killing a hung process is the escape hatch, so Stop is there from
@@ -96,9 +101,9 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     stop: { show: live, busy: holds("stop") },
     connect: { show: !live && config !== undefined },
     version: versionChip(agent),
-    reset: { show: resettable, disabled: working },
-    goBack: { show: previousVersion !== null, to: previousVersion, disabled: working },
-    menu: { show: resettable || previousVersion !== null },
+    reset: { show: offers.reset, disabled: working },
+    goBack: { show: offers.goBack, to: previousVersion, disabled: working },
+    menu: { show: offers.reset || offers.goBack },
     edit: { show: true },
     remove: { show: config !== undefined, busy: holds("remove") },
   };

@@ -17,7 +17,7 @@ function replay(evs: AgentViewEvent[], state: AgentViewState = initialAgentViewS
 
 const created = (id: string): AgentViewEvent => ({
   kind: "sessionCreated",
-  session: { id: id as PatchbaySessionId, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" },
+  session: { id: id as PatchbaySessionId, patchbayAgentId: "fake" as PatchbayAgentId, title: `title ${id}`, busy: [], updatedAt: "2026-09-25T00:00:00Z" , hasTurns: false},
 });
 
 const permission = (patchbaySessionId: PatchbaySessionId, id: string): AgentViewEvent => ({

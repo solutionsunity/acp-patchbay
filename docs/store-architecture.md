@@ -149,7 +149,10 @@ and the connect — the free check with it — passes the gates.
 
 **One line per agent.** Every operation on an agent's connection waits its
 turn (a login, per method) except the two that cut in, below; the gates'
-table names each operation's way. A request for one the row already holds
+table names each operation's way, and whether it ends the connection. A new
+session waits for the ones that do — never opening on a process an Upgrade,
+a Restart or a Stop is about to take down — and not for the rest: a terminal
+login can take minutes, and the connection stays. A request for one the row already holds
 joins it — a chat started while the agent auto-connects shares that connect,
 a second Upgrade shares the first's question and restart — and a connect
 whose turn finds the agent running is already done. Agents never wait on each

@@ -249,7 +249,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     atTestEnd(() => remote.close());
     const h = await withRemote(remote, { name: "github", header: { headerName: "Authorization", valuePrefix: "Bearer ", token: "gh-token-1" } });
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e1" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e1" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
 
     const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
@@ -270,7 +270,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     const h = await withRemote(remote, { name: "github", header: { headerName: "Authorization", valuePrefix: "Bearer ", token: "stale-token" } });
     remote.onReject = () => h.orchestrator.mcpServerTokens.set(h.id, { accessToken: "fresh-token" });
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e2" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });
 
     const text = h.state().transcripts[patchbaySessionId]!.find((b) => b.kind === "text");
@@ -295,7 +295,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     const h = await withRemote(remote, { name: "fs-aware" }, { workspace: frontend, roots: [frontend, backend] });
     remote.clientCapabilities = null; // what the add's own probe declared is not the bridge's
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_roots", server: "fs-aware" }] }, "e3" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", frontend);
+    const patchbaySessionId = await h.gates.create("e3" as PatchbayAgentId, "Fake Agent", frontend);
     await h.gates.prompt(patchbaySessionId, { text: "what can you see?" });
 
     expect(echoed(h.state(), patchbaySessionId)).toEqual({
@@ -316,7 +316,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     atTestEnd(() => remote.close());
     const h = await withRemote(remote, { name: "fs-aware" }, { workspace: frontend, roots: [frontend] });
     await h.pool.connect(spec({ declare: { sessionCapabilities: { additionalDirectories: {}, resume: {} } } }, "e4" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e4" as PatchbayAgentId, "Fake Agent", frontend);
+    const patchbaySessionId = await h.gates.create("e4" as PatchbayAgentId, "Fake Agent", frontend);
     // the bridge as the agent spawns it for this session: the orchestrator's
     // own entry, under the session's own token
     const [token] = h.sessions.tokensOf(patchbaySessionId);

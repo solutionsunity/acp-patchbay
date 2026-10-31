@@ -67,7 +67,7 @@ describe("a turn's chime", () => {
     const id = "chimer" as PatchbayAgentId;
     await o.pool.connect(fakeAgent(opts.cancel ? { turn: [{ type: "chunk", text: "a" }], stepDelayMs: 300 } : { turn: [{ type: "chunk", text: "done" }] }, id, cwd));
     await o.listsSynced();
-    const session = await o.sessions.createSession(id, "Fake Agent", cwd);
+    const session = await o.sessionGates.create(id, "Fake Agent", cwd);
     const prompt = o.sessionGates.prompt(session, { text: "go" }).catch(() => {});
     if (opts.cancel) {
       await new Promise((r) => setTimeout(r, 100));

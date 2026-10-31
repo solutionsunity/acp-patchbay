@@ -128,9 +128,9 @@ describe("auth flows on the wire", () => {
   it("a witnessed logout survives a lazy-auth agent's probe successes; only a completed prompt clears it", async () => {
     const h = harness();
     await h.saveAgent(fakeConfig("lazy" as PatchbayAgentId, {}));
-    // A wire-driven logout can't be produced here — the fixture has no
-    // logout handler — so the lock is seeded the way the persisted store
-    // restores one across a reload. Every fact below is a real wire fact.
+    // The lock is seeded the way the persisted store restores one across a
+    // reload — the logout witnessed in an earlier window. Every fact below
+    // is a real wire fact.
     h.locks.set("lazy" as PatchbayAgentId, {
       kind: "loggedOut",
       reason: LOGGED_OUT_REASON,

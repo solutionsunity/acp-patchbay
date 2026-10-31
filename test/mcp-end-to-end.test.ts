@@ -56,7 +56,7 @@ describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads the live selection via the local MCP server", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_selection" }] }, "e1" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e1" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "what's selected?" });
 
     expect(echoed(h.state(), patchbaySessionId)).toEqual({
@@ -71,7 +71,7 @@ describe("local MCP server, end to end through a real agent process", () => {
   it("the agent reads diagnostics via the local MCP server — opportunistically verifiable data", async () => {
     const h = harness();
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "get_diagnostics" }] }, "e2" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any problems?" });
 
     expect(echoed(h.state(), patchbaySessionId)).toEqual([
@@ -85,7 +85,7 @@ describe("local MCP server, end to end through a real agent process", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e3" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e3" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
 
     // the subprocess asked with its correlation token; the question shows in
@@ -102,8 +102,8 @@ describe("local MCP server, end to end through a real agent process", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "callMcpTool", tool: "request_user_input", args: { message: "ok?" } }] }, "e4" as PatchbayAgentId),
     );
-    const s1 = await h.sessions.createSession("e4" as PatchbayAgentId, "Fake Agent", dir);
-    const s2 = await h.sessions.createSession("e4" as PatchbayAgentId, "Fake Agent", dir);
+    const s1 = await h.gates.create("e4" as PatchbayAgentId, "Fake Agent", dir);
+    const s2 = await h.gates.create("e4" as PatchbayAgentId, "Fake Agent", dir);
     expect(s1).not.toBe(s2);
 
     // each session's tool call asks in its own session, never the other's —

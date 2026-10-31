@@ -210,10 +210,10 @@ function rendered(state: AgentViewState, patchbaySessionId: PatchbaySessionId): 
 describe("wire corpus", () => {
   it("every agent message renders as pinned — live, and replayed by a reload", async () => {
     const h = orchestratorHarness(cwd);
-    const { pool, sessions, sessionGates: gates } = h.orchestrator;
+    const { pool, sessionGates: gates } = h.orchestrator;
     const agent = "corpus" as PatchbayAgentId;
     await pool.connect(spec({ declare: { loadSession: true }, turn: CORPUS.map((update) => ({ type: "update", update })) }, agent));
-    const patchbaySessionId = await sessions.createSession(agent, "Fake Agent", cwd);
+    const patchbaySessionId = await gates.create(agent, "Fake Agent", cwd);
     await gates.prompt(patchbaySessionId, { text: "go" });
     await expect(rendered(h.agentView.state(), patchbaySessionId)).toMatchFileSnapshot("./goldens/wire-corpus.live.json");
 

@@ -642,6 +642,7 @@ export class Orchestrator {
         connect: (patchbaySessionId) => void this.connectForSession(patchbaySessionId),
         failed: (context, err) => this.logCatch(context)(err),
         agentSettled: (patchbayAgentId) => this.gates.settled(patchbayAgentId),
+        connectionSettled: (patchbayAgentId) => this.gates.connectionSettled(patchbayAgentId),
       },
       // Read fresh every sweep (store-truth) — 0 in Preferences disables.
       () => {
@@ -1396,10 +1397,12 @@ export class Orchestrator {
       // isn't takes the connect's turn, joining one already under way.
       if (this.agents.row(patchbayAgentId)?.status !== "running") await this.gates.connect(patchbayAgentId);
       if (!this.paneShows(patchbayAgentId)) return;
-      // sessionCreated itself clears the connect pane (reducer) — success
-      // needs no extra event; the re-mint emits the same event.
+      // A created session's arrival clears the connect pane itself
+      // (sessionCreated); a revived one is a row the view already holds, so
+      // the pane is closed here — still showing only if nothing else did.
       if (draft !== undefined) await this.sessionGates.revive(draft);
-      else await this.sessions.createSession(patchbayAgentId, agentName, this.workspaceCwd);
+      else await this.sessionGates.create(patchbayAgentId, agentName, this.workspaceCwd);
+      if (this.paneShows(patchbayAgentId)) this.agentView.emit({ kind: "chatConnectResolved" });
     } catch (err) {
       this.logCatch(`startChat ${patchbayAgentId}`)(err);
       this.chatPaneFailed(patchbayAgentId, err);

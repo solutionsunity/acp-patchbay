@@ -37,6 +37,17 @@
   command you edited: it now remembers where it came from and links to the
   registry's current version again, your env kept. An agent edited before
   this release didn't keep that and stays custom. (#129)
+- **Fixes from one rule per action.** An MCP server added or edited as
+  JSON with its key in a header other than `Authorization` now sends the
+  key as it is — it used to get `Bearer ` in front, as only
+  `Authorization` should. New chat on an empty session whose agent had
+  stopped no longer leaves the pane on its spinner, and a New chat asked
+  for while an Upgrade is pending waits for it instead of opening on the
+  old process. The roots chip and the session agree on whether a session
+  has had its first prompt, so the chip no longer says "live" for one whose
+  transcript hasn't loaded yet. Restart asks before cutting off open
+  conversations, like Stop. Log out is never sent to an agent that doesn't
+  offer it. (#135)
 
 ## 0.88.4 — 2026-10-26
 

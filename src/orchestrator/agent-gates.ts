@@ -18,27 +18,33 @@ import type { PatchbayAgentId } from "../shared/ids";
  * can hold, its busy vocabulary. */
 export type AgentOperation = Exclude<keyof ConnectionOperations, "stopAll">;
 
-/** How each operation meets the queue; the agent's row holds every one
- * while it waits and runs. "waits": it takes its turn behind what the row
- * holds, and a repeat of one held — the same operation with the same
- * arguments — joins it. "cuts in": Stop and Remove, the escape hatch that
- * must reach a hung agent — the agent's process goes down at once, what
- * runs is told to stop and what waits is dropped, and the operation itself
- * runs once what it cut has unwound. */
+/** How each operation meets the queue, and whether it ends the agent's
+ * connection; the agent's row holds every one while it waits and runs.
+ * "waits": it takes its turn behind what the row holds, and a repeat of
+ * one held — the same operation with the same arguments — joins it. "cuts
+ * in": Stop and Remove, the escape hatch that must reach a hung agent —
+ * the agent's process goes down at once, what runs is told to stop and
+ * what waits is dropped, and the operation itself runs once what it cut
+ * has unwound. One that ends the connection puts the one question first,
+ * and a new session waits for it to leave rather than open on a process
+ * about to go. */
 const GATES = {
-  connect: "waits",
-  restart: "waits",
-  upgrade: "waits",
-  reset: "waits",
-  goBack: "waits",
-  login: "waits",
-  logout: "waits",
-  stop: "cuts in",
-  remove: "cuts in",
-} as const satisfies Record<AgentOperation, "waits" | "cuts in">;
+  connect: { way: "waits", ends: false },
+  restart: { way: "waits", ends: true },
+  upgrade: { way: "waits", ends: true },
+  reset: { way: "waits", ends: true },
+  goBack: { way: "waits", ends: true },
+  login: { way: "waits", ends: false },
+  logout: { way: "waits", ends: true },
+  stop: { way: "cuts in", ends: true },
+  remove: { way: "cuts in", ends: true },
+} as const satisfies Record<AgentOperation, { way: "waits" | "cuts in"; ends: boolean }>;
 
-/** The operations that end an agent's connection. */
-type Ending = "stop" | "upgrade" | "reset" | "goBack" | "logout" | "remove" | "import";
+/** What ends an agent's connection: its operations that do, and an import,
+ * which restarts every agent. */
+type Ending = { [K in AgentOperation]: (typeof GATES)[K]["ends"] extends true ? K : never }[AgentOperation] | "import";
+
+const ENDS = new Set<string>(Object.entries(GATES).flatMap(([operation, gate]) => (gate.ends ? [operation] : [])));
 
 /** The one question before a connection ends: nothing in hand, it just runs
  * — null; work in hand, it says what will be cut off. Remove always asks:
@@ -66,6 +72,8 @@ export function endQuestion(
       return inHand
         ? { message: `Take ${name} back to its previous version? It restarts the agent, disconnecting ${open}.`, choice: "Go back" }
         : null;
+    case "restart":
+      return inHand ? { message: `Restart ${name}? It disconnects ${open}.`, choice: "Restart" } : null;
     case "logout":
       return inHand
         ? { message: `Log out of ${name}? It signs the agent out and stops it, disconnecting ${open}.`, choice: "Log out" }
@@ -101,8 +109,12 @@ export class AgentGates implements ConnectionOperations {
     return this.pass("connect", patchbayAgentId, (signal) => this.agents.connect(patchbayAgentId, signal));
   }
 
+  /** Asks when its turn comes, like Log out — a crashed agent has nothing
+   * in hand, so its Restart just runs. */
   restart(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    return this.pass("restart", patchbayAgentId, (signal) => this.agents.restart(patchbayAgentId, signal));
+    return this.pass("restart", patchbayAgentId, (signal) =>
+      this.unlessDeclined("restart", patchbayAgentId, () => this.agents.restart(patchbayAgentId, signal)),
+    );
   }
 
   /** Asks when it would stop a running agent — after the registry has
@@ -154,6 +166,14 @@ export class AgentGates implements ConnectionOperations {
     return this.queue.settled(patchbayAgentId);
   }
 
+  /** Settles once the work the agent's row holds now that ends its
+   * connection has left it — what a new session waits for. Other work (a
+   * terminal login that can take minutes) it doesn't wait for: the
+   * connection stays. */
+  connectionSettled(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.queue.settled(patchbayAgentId, (work) => ENDS.has(work));
+  }
+
   /** Every agent's connection ends — the window closing, or erase: all the
    * agents' work is ended as their Stop would end it, and every process
    * goes down on the shutdown budget. Nobody is asked: both are past
@@ -193,7 +213,7 @@ export class AgentGates implements ConnectionOperations {
     ...args: string[]
   ): Promise<T> {
     const identity = [operation, ...args].join(":");
-    if (GATES[operation] === "waits") return this.queue.run(patchbayAgentId, operation, run, identity);
+    if (GATES[operation].way === "waits") return this.queue.run(patchbayAgentId, operation, run, identity);
     const outcome = this.queue.cut(patchbayAgentId, operation, run, identity);
     // The process goes down now: what the cut stopped may be waiting on a
     // hung agent, and ends only with it. The operation's own stop, when it

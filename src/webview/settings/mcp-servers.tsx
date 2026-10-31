@@ -555,9 +555,7 @@ export function McpServersSection(props: {
 
   const submitCustom = () => {
     if (mcpServerName(name) === "") return;
-    // "Bearer " prefix only makes sense on an Authorization header; a
-    // custom header name (X-Goog-Api-Key style) carries the raw key.
-    const isAuthorization = headerName.trim().toLowerCase() === "authorization";
+    // What was typed, as typed: the store decides the header's prefix.
     const source: McpServerSourceView =
       adding === "stdio"
         ? {
@@ -571,7 +569,6 @@ export function McpServersSection(props: {
             url: url.trim(),
             authType,
             headerName: authType === "header" ? headerName.trim() : undefined,
-            valuePrefix: authType === "header" ? (isAuthorization ? "Bearer " : "") : undefined,
             token: authType === "header" ? token : undefined,
           };
     props.onAddCustom(name.trim(), source, "auto");

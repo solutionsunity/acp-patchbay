@@ -8,9 +8,10 @@
 // patchbay attaches always have it, live — telling them is patchbay's own
 // act. The agent has it only through the protocol, and only on a lifecycle
 // request, so whether and when the agent gets a root is what varies; this
-// derives that from the same declared facts the sessions store's
-// re-apply reads, so the chip tells the truth the writer holds. Adding is
-// never gated: a root reaches the servers regardless.
+// says it from the same reading the sessions store re-applies by
+// (root-delivery.ts), so the chip tells the truth the writer holds. Adding
+// is never gated: a root reaches the servers regardless.
+import { rootDelivery } from "../../../shared/root-delivery";
 import type { SavedRootsView } from "../../../shared/protocol";
 
 /** When the agent gets a root added now. */
@@ -31,33 +32,21 @@ export interface RootsControls {
   note: string | null;
 }
 
-export function rootsControls(facts: {
-  /** The agent advertises `sessionCapabilities.additionalDirectories`. */
-  advertised: boolean;
-  /** The agent declares `session/resume` — the one re-apply rung after a turn. */
-  resumeDeclared: boolean;
-  /** The agent declares `session/load` — the rung a reopen takes. */
-  loadDeclared: boolean;
-  /** The session has at least one turn (a zero-turn session re-mints itself for free). */
-  hasTurns: boolean;
-}): RootsControls {
-  if (!facts.advertised) {
-    return {
-      agent: "never",
-      note: "this agent doesn't take extra roots — the MCP servers have them; reference paths with @ for the agent",
-    };
+export function rootsControls(facts: Parameters<typeof rootDelivery>[0]): RootsControls {
+  switch (rootDelivery(facts)) {
+    case "remint":
+    case "resume":
+      return { agent: "live", note: null };
+    case "nextOpen":
+      return { agent: "nextOpen", note: "this agent takes new roots at its next open — the MCP servers have them now" };
+    case "never":
+      return facts.advertised
+        ? { agent: "never", note: "this agent can't take roots after the first prompt — the MCP servers have them" }
+        : {
+            agent: "never",
+            note: "this agent doesn't take extra roots — the MCP servers have them; reference paths with @ for the agent",
+          };
   }
-  if (!facts.hasTurns || facts.resumeDeclared) return { agent: "live", note: null };
-  if (facts.loadDeclared) {
-    return {
-      agent: "nextOpen",
-      note: "this agent takes new roots at its next open — the MCP servers have them now",
-    };
-  }
-  return {
-    agent: "never",
-    note: "this agent can't take roots after the first prompt — the MCP servers have them",
-  };
 }
 
 /** The row label: who holds this root. The cwd is the agent's working

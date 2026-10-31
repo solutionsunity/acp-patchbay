@@ -242,6 +242,21 @@ function headerShapeOf(
   return { headerName: source.headerName, valuePrefix: source.valuePrefix };
 }
 
+/** A custom HTTP server as stored, from what was typed or pasted — the one
+ * place its header defaults: `Authorization` when none was named, and a
+ * `Bearer ` prefix only on an `Authorization` header — any other header
+ * carries the key as it is, unless a prefix was given. */
+function customHttpSource(entry: {
+  url: string;
+  authType: "none" | "header" | "oauth";
+  headerName?: string;
+  valuePrefix?: string;
+}): McpServerSource {
+  const headerName = entry.headerName?.trim() || "Authorization";
+  const valuePrefix = entry.valuePrefix ?? (headerName.toLowerCase() === "authorization" ? "Bearer " : "");
+  return { kind: "custom-http", url: entry.url, authType: entry.authType, headerName, valuePrefix };
+}
+
 /** A new server's id — patchbay's own, never the catalog's or one made
  * from a name. */
 function mintPatchbayMcpServerId(): PatchbayMcpServerId {
@@ -609,13 +624,7 @@ export class McpServersStore {
         // record above deliberately carries no env.
         await this.envStore.set(patchbayMcpServerId, { ...source.env });
       } else {
-        configSource = {
-          kind: "custom-http",
-          url: source.url,
-          authType: source.authType,
-          headerName: source.headerName ?? "Authorization",
-          valuePrefix: source.valuePrefix ?? "Bearer ",
-        };
+        configSource = customHttpSource(source);
         if (source.authType === "header") {
           if (!source.token) throw new Error("key is empty");
           await this.tokens.set(patchbayMcpServerId, { accessToken: source.token });
@@ -764,13 +773,7 @@ export class McpServersStore {
       }
       await this.configs.upsert({
         ...existing,
-        source: {
-          kind: "custom-http",
-          url: spec.data.url,
-          authType: spec.data.authType,
-          headerName: spec.data.headerName ?? "Authorization",
-          valuePrefix: spec.data.valuePrefix ?? "Bearer ",
-        },
+        source: customHttpSource(spec.data),
       });
     }
     await this.refresh();

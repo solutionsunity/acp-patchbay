@@ -651,8 +651,10 @@ fact proves which row. `pool.ts` — the sole channel that talks to an agent on
 the wire — consults it at three chokepoints: an outgoing agent RPC resolving
 (`session/new` → `auth`, and → `concurrentSessions` when the connection already
 served a session; `logout` → `auth.logout` — declared from
-`agentCapabilities.auth.logout`, and the Log out control only exists on a
-declared row: the spec's "Clients MUST NOT call it" holds by construction;
+`agentCapabilities.auth.logout`; the agents store refuses a logout the agent
+doesn't declare, and the card offers Log out on the same reading
+(`src/shared/agent-offers.ts`), so the spec's "Clients MUST NOT call it"
+holds at the writer;
 `session/fork` → `session.fork` + `concurrentSessions`;
 `session/load` → `session.load`; `session/prompt` → `prompt.image` / `audio` /
 `embeddedContext` when the prompt actually carried that block type), an
@@ -1143,7 +1145,10 @@ The differentiator (the PRD's current-release scope), shipped complete:
   `session/load` is never used for a re-apply, a full replay being too high a
   price — so on an agent without resume the agent's copy waits for the next
   open (the reload the chip's note offers, where `session/load` exists; never,
-  where neither rung does); a zero-turn session re-mints itself for free. A
+  where neither rung does); a zero-turn session re-mints itself for free. The
+  store re-applies and the chip speaks by one reading of that ladder
+  (`src/shared/root-delivery.ts`), over the store's own fact of whether the
+  session has had a turn, which rides the session's row. A
   change during a live turn applies at turn end, before the held queue drains.
   The session's MCP servers read the same list through patchbay's own channel,
   at once and whatever the agent's rung (the local server's `get_roots` tool,

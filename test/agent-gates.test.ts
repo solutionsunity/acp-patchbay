@@ -244,6 +244,7 @@ describe("the one question before a connection ends", () => {
     expect(endQuestion("upgrade", "Claude", none)).toBeNull();
     expect(endQuestion("reset", "Claude", none)).toBeNull();
     expect(endQuestion("goBack", "Claude", none)).toBeNull();
+    expect(endQuestion("restart", "Claude", none)).toBeNull();
     expect(endQuestion("logout", "Claude", none)).toBeNull();
     expect(endQuestion("import", "patchbay", none)).toBeNull();
     expect(endQuestion("remove", "Claude", none)).toEqual({
@@ -261,6 +262,7 @@ describe("the one question before a connection ends", () => {
       message: `Reset Claude to the ACP registry? It restarts the agent, disconnecting ${cut}.`,
       choice: "Reset",
     });
+    expect(endQuestion("restart", "Claude", work)).toEqual({ message: `Restart Claude? It disconnects ${cut}.`, choice: "Restart" });
     expect(endQuestion("goBack", "Claude", work)).toEqual({
       message: `Take Claude back to its previous version? It restarts the agent, disconnecting ${cut}.`,
       choice: "Go back",
@@ -324,17 +326,17 @@ describe("the one question before a connection ends", () => {
   it("Log out asks when its turn comes — the counts it would cut off, then", async () => {
     const user = asking();
     const { gates, ran, finish } = gated(user.asks);
-    const restart = gates.restart("a" as PatchbayAgentId);
+    const connect = gates.connect("a" as PatchbayAgentId);
     const logout = gates.logout("a" as PatchbayAgentId);
     await tick();
     expect(user.asked).toEqual([]);
-    finish("restart");
-    await restart;
+    finish("connect");
+    await connect;
     await tick();
     expect(user.asked).toHaveLength(1);
     user.answer(true);
     await tick();
-    expect(ran).toEqual(["restart", "logout"]);
+    expect(ran).toEqual(["connect", "logout"]);
     finish("logout");
     await logout;
   });

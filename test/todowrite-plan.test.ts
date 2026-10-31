@@ -121,7 +121,7 @@ beforeEach(async () => {
 describe("todowrite plan, end to end", () => {
   it("the plan chip holds the stored list, the transcript only the write that failed — live, and replayed by a reload", async () => {
     const h = orchestratorHarness(cwd);
-    const { pool, sessions, sessionGates: gates } = h.orchestrator;
+    const { pool, sessionGates: gates } = h.orchestrator;
     const agent = "opencode-like" as PatchbayAgentId;
     const turn = [
       ...liveWrite("w-1", TODOS, "completed"),
@@ -129,7 +129,7 @@ describe("todowrite plan, end to end", () => {
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
     ] satisfies SessionUpdate[];
     await pool.connect(fakeAgent({ declare: { loadSession: true }, turn: turn.map((update) => ({ type: "update", update })) }, agent, cwd));
-    const id = await sessions.createSession(agent, "Fake Agent", cwd);
+    const id = await gates.create(agent, "Fake Agent", cwd);
     await gates.prompt(id, { text: "go" });
 
     const seen = () => ({

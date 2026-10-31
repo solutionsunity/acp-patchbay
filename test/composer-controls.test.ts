@@ -13,7 +13,7 @@ const session: SessionSummary = {
   patchbayAgentId: "a1" as PatchbayAgentId,
   title: "T",
   busy: [],
-  updatedAt: "2026-07-21T00:00:00Z",
+  updatedAt: "2026-07-21T00:00:00Z", hasTurns: false,
 };
 const agent = (over: Partial<AgentSummary>): AgentSummary => ({
   id: "a1" as PatchbayAgentId,
@@ -44,12 +44,14 @@ describe("composerControls", () => {
     expect(composerControls(null, agent({}), false)).toEqual({
       enabled: false,
       stop: false,
+      button: { role: "send", disabled: true },
       placeholder: "Connect an agent to start",
     });
     expect(composerControls(session, agent({ status: "stopped" }), false).enabled).toBe(false);
     expect(composerControls(session, null, false)).toEqual({
       enabled: false,
       stop: false,
+      button: { role: "send", disabled: true },
       placeholder: "Connect an agent to start",
     });
     // Stopped + logged out (the card right after Logout): the login hint
@@ -91,6 +93,18 @@ describe("composerControls", () => {
   it("a turn still waiting for its session to attach can be stopped; an attach alone cannot", () => {
     expect(composerControls({ ...session, busy: ["open", "prompt"] }, agent({}), false).stop).toBe(true);
     expect(composerControls({ ...session, busy: ["reload"] }, agent({}), false).stop).toBe(false);
+  });
+
+  // The button's role and its gate lived inline in the composer's render
+  // (#135): Send gated by `enabled`, Stop by `stop`, "stopping" while the
+  // agent still owes the turn's end.
+  it("the button is Send with no turn, Stop while one is underway, stopping once told — each behind its own gate", () => {
+    expect(composerControls(session, agent({}), false).button).toEqual({ role: "send", disabled: false });
+    expect(composerControls(session, agent({ needsAuth: true }), false).button).toEqual({ role: "send", disabled: true });
+    expect(composerControls({ ...session, busy: ["prompt"] }, agent({ needsAuth: true }), false).button).toEqual({ role: "stop", disabled: false });
+    expect(composerControls({ ...session, busy: ["stopping"] }, agent({}), false).button).toEqual({ role: "stopping", disabled: false });
+    expect(composerControls({ ...session, busy: ["prompt"] }, agent({ status: "crashed" }), false).button).toEqual({ role: "stop", disabled: true });
+    expect(composerControls(null, agent({}), false).button).toEqual({ role: "send", disabled: true });
   });
 
   it("a new chat in flight locks the box and names the starting agent — no session exists yet", () => {

@@ -37,8 +37,9 @@ the bridge sends it on every request.
 - **Header name is per-server data, not hardcoded**: most services take
   `Authorization: Bearer <key>`, but Stitch requires `X-Goog-Api-Key: <key>`. The
   bearer-token case is the default; the catalog/custom schema carries a
-  `headerName` field (default `Authorization`, value template `Bearer {token}` vs
-  raw).
+  `headerName` field (default `Authorization`). A custom server's prefix, unless
+  one was given, is `Bearer ` on an `Authorization` header and nothing on any
+  other — one rule for the form and JSON alike, kept by the MCP servers store.
 - Zero OAuth surface: no popups, no redirects, no browser, no remote-environment
   failure modes. Works identically in local VS Code, SSH remote, WSL, code-server,
   Codespaces.

@@ -7,7 +7,7 @@ import { sessionsActiveToday } from "../src/orchestrator/session-stats";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 function row(id: string, updatedAt: string): SessionSummary {
-  return { id: id as PatchbaySessionId, patchbayAgentId: "a" as PatchbayAgentId, title: id, busy: [], updatedAt };
+  return { id: id as PatchbaySessionId, patchbayAgentId: "a" as PatchbayAgentId, title: id, busy: [], updatedAt, hasTurns: false };
 }
 
 describe("sessionsActiveToday", () => {

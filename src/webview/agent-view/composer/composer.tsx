@@ -7,7 +7,6 @@
 // furniture (draft content, open adder, drag height).
 import { useRef, useState } from "react";
 import {
-  turnUnderway,
   type AgentSummary,
   type ContextChip,
   type LiveSelectionView,
@@ -84,19 +83,15 @@ export function Composer(props: {
   const drag = useRef<{ y0: number; h0: number } | null>(null);
   const submitRef = useRef<(() => void) | null>(null);
   const MIN_HEIGHT = 160; // never squeezes the 5-line input out of view
-  const { enabled, stop, placeholder } = composerControls(props.session, props.agent, props.incoming);
+  const { enabled, button, placeholder } = composerControls(props.session, props.agent, props.incoming);
   // Without a session every control is disabled; an empty id sent anyway
   // names nothing the host holds, and it ignores it.
   const patchbaySessionId = props.session?.id ?? ("" as PatchbaySessionId);
-  const underway = props.session !== null && turnUnderway(props.session);
-  // Told to stop, the turn waits for its agent's answer; Stop again ends it
-  // here, and the button says so while it waits.
-  const stopping = props.session?.busy.includes("stopping") === true;
-  const stopLabel = stopping ? "Stopping — waiting for the agent. Stop again to end the turn here" : "Stop";
+  const buttonLabel = { send: "Send", stop: "Stop", stopping: "Stopping — waiting for the agent. Stop again to end the turn here" }[button.role];
 
   const sendOrStop = () => {
-    if (underway) send({ kind: "stopTurn", patchbaySessionId });
-    else submitRef.current?.();
+    if (button.role === "send") submitRef.current?.();
+    else send({ kind: "stopTurn", patchbaySessionId });
   };
   // Enter during a turn underway queues (the orchestrator holds it until the
   // turn ends); the Stop button is the only stop — Enter-as-stop would be
@@ -313,15 +308,15 @@ export function Composer(props: {
             which is destructive. Each role has its own gate (composerControls
             says why they differ). */}
         <Button
-          variant={underway ? "destructive" : "default"}
+          variant={button.role === "send" ? "default" : "destructive"}
           size="icon"
           className="ml-auto size-[26px] rounded-[7px]"
-          disabled={underway ? !stop : !enabled}
-          title={underway ? stopLabel : "Send"}
-          aria-label={underway ? stopLabel : "Send"}
+          disabled={button.disabled}
+          title={buttonLabel}
+          aria-label={buttonLabel}
           onClick={sendOrStop}
         >
-          <Icon name={stopping ? "loading" : underway ? "debug-stop" : "arrow-up"} spin={stopping} />
+          <Icon name={{ send: "arrow-up", stop: "debug-stop", stopping: "loading" }[button.role]} spin={button.role === "stopping"} />
         </Button>
       </div>
     </div>

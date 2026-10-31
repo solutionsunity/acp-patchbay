@@ -61,9 +61,9 @@ describe("One process per agent", () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { sessionCapabilities: { close: {} } } }, "one" as PatchbayAgentId));
     await probeDone(h, "one" as PatchbayAgentId);
-    const a = await h.sessions.createSession("one" as PatchbayAgentId, "Fake Agent", cwd);
+    const a = await h.gates.create("one" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.capabilityTracker.matrix("one" as PatchbayAgentId)!.concurrentSessions.used).toBe(false);
-    const b = await h.sessions.createSession("one" as PatchbayAgentId, "Fake Agent", cwd);
+    const b = await h.gates.create("one" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(pidOf(h.sessions.sessionIdOf(a)!)).toBe(pidOf(h.sessions.sessionIdOf(b)!));
     expect(h.capabilityTracker.matrix("one" as PatchbayAgentId)!.concurrentSessions.used).toBe(true);
@@ -77,8 +77,8 @@ describe("One process per agent", () => {
       spec({ declare: { sessionCapabilities: { close: {} } }, concurrent: "fail" }, "single" as PatchbayAgentId),
     );
     await probeDone(h, "single" as PatchbayAgentId);
-    const a = await h.sessions.createSession("single" as PatchbayAgentId, "Fake Agent", cwd);
-    await expect(h.sessions.createSession("single" as PatchbayAgentId, "Fake Agent", cwd)).rejects.toThrow();
+    const a = await h.gates.create("single" as PatchbayAgentId, "Fake Agent", cwd);
+    await expect(h.gates.create("single" as PatchbayAgentId, "Fake Agent", cwd)).rejects.toThrow();
 
     expect(h.capabilityTracker.matrix("single" as PatchbayAgentId)!.concurrentSessions).toMatchObject({ used: false, suspect: true });
     expect(h.pool.get("single" as PatchbayAgentId)?.sessions).toEqual([h.sessions.sessionIdOf(a)]);
@@ -91,7 +91,7 @@ describe("One-click reload (P8)", () => {
   it("re-loads a session on demand, discarding and rebuilding the transcript, even while still live", async () => {
     const h = harness();
     await h.pool.connect(spec({ declare: { loadSession: true }, turn: [{ type: "chunk", text: "hi" }] }, "rl" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("rl" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("rl" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.prompt(patchbaySessionId, { text: "hello" });
     expect(h.state().transcripts[patchbaySessionId]!.length).toBeGreaterThan(0);
 
@@ -123,7 +123,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "modes" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("modes" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("modes" as PatchbayAgentId, "Fake Agent", cwd);
     // The modes fallback surface synthesizes one uniform knob (knobs.ts).
     expect(h.state().sessionKnobs[patchbaySessionId]).toEqual([
       {
@@ -156,7 +156,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "liarmode" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("liarmode" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("liarmode" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "mode", "code");
     // the request "succeeded" but emitted no current_mode_update — display stays put
     expect(h.state().sessionKnobs[patchbaySessionId]![0]).toMatchObject({ currentValue: "ask" });
@@ -186,7 +186,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "cfg" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("cfg" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("cfg" as PatchbayAgentId, "Fake Agent", cwd);
     expect(h.state().sessionKnobs[patchbaySessionId]).toHaveLength(1);
     expect(h.state().sessionKnobs[patchbaySessionId]![0]).toMatchObject({ id: "model-opt", currentValue: "sonnet" });
 
@@ -219,7 +219,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "cfg-reply" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("cfg-reply" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("cfg-reply" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "model-opt", "opus");
     // no config_option_update arrived — the display truth rode the response
     expect(h.state().sessionKnobs[patchbaySessionId]![0]).toMatchObject({ currentValue: "opus" });
@@ -248,7 +248,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "both" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("both" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("both" as PatchbayAgentId, "Fake Agent", cwd);
     // One knob, not two — the dup-pill class of bug is unrepresentable.
     expect(h.state().sessionKnobs[patchbaySessionId]).toHaveLength(1);
     expect(h.state().sessionKnobs[patchbaySessionId]![0]).toMatchObject({ id: "permission-style" });
@@ -263,7 +263,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
     const h = harness();
     // the agent's saved defaults, folded by knob id — the entry seed
     await h.saveAgent(fakeConfig("defaulted" as PatchbayAgentId, {}, { defaults: { mode: "code", "model-opt": "opus" } }));
-    const { pool, sessions, state } = h;
+    const { pool, gates, state } = h;
     await pool.connect(
       spec(
         {
@@ -290,7 +290,7 @@ describe("Session model/mode/effort knobs (P8)", () => {
         "defaulted" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await sessions.createSession("defaulted" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await gates.create("defaulted" as PatchbayAgentId, "Fake Agent", cwd);
 
     expect(state().sessionKnobs[patchbaySessionId]!.find((k) => k.id === "mode")).toMatchObject({ currentValue: "code" });
     expect(state().sessionKnobs[patchbaySessionId]!.find((k) => k.id === "model-opt")).toMatchObject({ currentValue: "opus" });
@@ -322,7 +322,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "rec" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("rec" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("rec" as PatchbayAgentId, "Fake Agent", cwd);
     expect(records()).toEqual([]); // the attach publish carries agent state, not a use
 
     await h.gates.setKnob(patchbaySessionId, "model-opt", "opus");
@@ -339,7 +339,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
     const modes = { currentModeId: "ask", availableModes: [{ id: "ask", name: "Ask" }, { id: "code", name: "Code" }] };
     const h = harness();
     await h.pool.connect(spec({ modes }, "modes-rec" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("modes-rec" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("modes-rec" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "mode", "code");
     await waitFor(() => h.recorded().length > 0);
     expect(h.recorded()).toEqual([{ mode: "code" }]);
@@ -347,7 +347,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
 
     const liar = harness();
     await liar.pool.connect(spec({ modes, lies: { modeChangeNoop: true } }, "modes-liar" as PatchbayAgentId));
-    const liarSession = await liar.sessions.createSession("modes-liar" as PatchbayAgentId, "Fake Agent", cwd);
+    const liarSession = await liar.gates.create("modes-liar" as PatchbayAgentId, "Fake Agent", cwd);
     await liar.gates.setKnob(liarSession, "mode", "code");
     // An agent's update for a set comes before its answer; the answer is in,
     // so everything the agent will say about this set has been read. One
@@ -362,7 +362,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
     await h.pool.connect(
       spec({ declare: { loadSession: true }, configOptions: [MODEL_KNOB], turn: [{ type: "chunk", text: "hi" }] }, "reseed" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("reseed" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await h.gates.create("reseed" as PatchbayAgentId, "Fake Agent", cwd);
     await h.gates.setKnob(patchbaySessionId, "model-opt", "opus");
     await h.gates.prompt(patchbaySessionId, { text: "hello" });
 
@@ -386,7 +386,7 @@ describe("Knob two-fold rule (composer vs session)", () => {
         "entry" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await w1.sessions.createSession("entry" as PatchbayAgentId, "Fake Agent", cwd);
+    const patchbaySessionId = await w1.gates.create("entry" as PatchbayAgentId, "Fake Agent", cwd);
     await w1.gates.prompt(patchbaySessionId, { text: "hello" });
     const sessionId = w1.sessions.sessionIdOf(patchbaySessionId)!;
     await w1.pool.stop("entry" as PatchbayAgentId);

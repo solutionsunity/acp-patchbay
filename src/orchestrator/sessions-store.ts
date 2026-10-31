@@ -64,6 +64,7 @@ import type { SessionContinuityStore } from "./stores/session-continuity";
 import type { SessionFilesStore } from "./stores/session-files";
 import { boundedText } from "./content-parts";
 import type { PatchbayAgentId, PatchbayMcpServerId, PatchbaySessionId } from "../shared/ids";
+import { rootDelivery } from "../shared/root-delivery";
 import { sessionOffers, type SessionOffers } from "../shared/session-offers";
 
 export interface SessionsStoreHooks {
@@ -286,7 +287,7 @@ export interface OpenWork {
  * lines. */
 export type SessionConnectionOperations = Pick<
   SessionsStore,
-  "hydrate" | "reload" | "delete" | "close" | "setKnob" | "reapplyRoots" | "release" | "runTurn"
+  "createSession" | "fork" | "hydrate" | "reload" | "delete" | "close" | "setKnob" | "reapplyRoots" | "release" | "runTurn"
 >;
 
 /** A new session's id — patchbay's own, kept for the window's life; the
@@ -759,6 +760,7 @@ export class SessionsStore {
       title,
       busy: [],
       updatedAt: now,
+      hasTurns: false,
     };
     this.hooks.emit({ kind: "sessionCreated", session: summary });
     // The saved roots are this session's own from here on — the same list
@@ -808,6 +810,7 @@ export class SessionsStore {
         title: named,
         busy: [],
         updatedAt: new Date().toISOString(),
+        hasTurns: parent.everPrompted,
         forkedFrom: patchbaySessionId,
       },
     });
@@ -1196,7 +1199,7 @@ export class SessionsStore {
       const saved = this.saved(patchbaySessionId);
       this.hooks.emit({
         kind: "sessionListed",
-        session: { id: patchbaySessionId, patchbayAgentId, title, busy: [], updatedAt: at },
+        session: { id: patchbaySessionId, patchbayAgentId, title, busy: [], updatedAt: at, hasTurns: true },
       });
       if (info.additionalDirectories !== undefined) {
         // the view has no list for this session yet; the row may
@@ -1761,20 +1764,24 @@ export class SessionsStore {
     const session = this.sessions.get(patchbaySessionId);
     if (session === undefined) return; // not attached — next attach picks the list up
     const declared = this.pool.get(this.agentOfLive(patchbaySessionId))?.declared;
-    // An agent that never advertised the field gets no field on any
-    // request — a re-attach would carry nothing, so none is made.
-    if (declared?.sessionAdditionalDirectories !== true) return;
-    if (!this.hasTurns(patchbaySessionId)) {
+    const delivery = rootDelivery({
+      advertised: declared?.sessionAdditionalDirectories === true,
+      resumeDeclared: declared?.sessionResume === true,
+      loadDeclared: declared?.loadSession === true,
+      hasTurns: this.hasTurns(patchbaySessionId),
+    });
+    if (delivery === "remint") {
       await this.recreateEmpty(patchbaySessionId, session, signal);
       return;
     }
     // Resume is the only re-apply rung after a turn: real memory, no
     // replay. A load would rebuild the whole transcript for one root —
-    // never used for roots. No resume → nothing to do here: the list is
-    // recorded, the chip says the agent takes it at the next open, and
-    // that open (or a folder change's next attach) reads the composed
-    // list anyway.
-    if (declared.sessionResume !== true) return;
+    // never used for roots. Anything else → nothing to do here: an agent
+    // that never advertised the field gets no field on any request, and
+    // otherwise the list is recorded, the chip says the agent takes it at
+    // the next open, and that open (or a folder change's next attach)
+    // reads the composed list anyway.
+    if (delivery !== "resume") return;
     // The re-attach resets agent-side knob state to its defaults (observed:
     // claude-agent-acp rebuilds session config on load) — but the user asked
     // to change *roots*, nothing else. Re-seed the confirmed combination
@@ -1995,14 +2002,21 @@ export class SessionsStore {
     this.stream.seal(patchbaySessionId, session);
     const turn = newBlockId("turn");
     session.turn = turn;
+    const firstTurn = !known.everPrompted;
     known.everPrompted = true;
     session.lastActivityAt = Date.now();
     spent();
 
     const events: AgentViewEvent[] = [];
-    if (!known.titled) {
-      known.titled = true;
-      events.push({ kind: "sessionRefreshed", patchbaySessionId, title: deriveTitle(text) });
+    const title = known.titled ? undefined : deriveTitle(text);
+    known.titled = true;
+    if (title !== undefined || firstTurn) {
+      events.push({
+        kind: "sessionRefreshed",
+        patchbaySessionId,
+        ...(title !== undefined ? { title } : {}),
+        ...(firstTurn ? { hasTurns: true as const } : {}),
+      });
     }
     // Duration basis is send→stop, deliberately not first-chunk→stop: the
     // live ticker exists so a slow response has visible feedback instead of

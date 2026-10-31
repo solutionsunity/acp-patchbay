@@ -43,6 +43,9 @@ export interface SessionGateAsks {
   failed(context: string, err: unknown): void;
   /** Settles once the work the agent's row holds now has left it. */
   agentSettled(patchbayAgentId: PatchbayAgentId): Promise<void>;
+  /** Settles once the work it holds now that ends its connection has left
+   * it — a terminal login that can take minutes isn't waited for. */
+  connectionSettled(patchbayAgentId: PatchbayAgentId): Promise<void>;
 }
 
 export class SessionGates {
@@ -106,6 +109,14 @@ export class SessionGates {
    * Settles once they all have. */
   async reattachViewed(patchbayAgentId: PatchbayAgentId): Promise<void> {
     await Promise.all(this.sessions.viewed(patchbayAgentId).map((patchbaySessionId) => this.attachToView(patchbaySessionId)));
+  }
+
+  /** A new session on the agent — once what its row holds that ends its
+   * connection has left, so it never opens on a process an Upgrade, a
+   * Restart or a Stop is about to take down. */
+  async create(patchbayAgentId: PatchbayAgentId, agentName: string, cwd: string): Promise<PatchbaySessionId> {
+    await this.asks.connectionSettled(patchbayAgentId);
+    return this.sessions.createSession(patchbayAgentId, agentName, cwd);
   }
 
   /** "New session" for an agent whose never-prompted session lost its

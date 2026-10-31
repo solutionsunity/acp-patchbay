@@ -109,7 +109,7 @@ beforeEach(async () => {
   o = h.orchestrator;
   const composed = vi.spyOn(o.mcpServers, "mcpServersFor");
   await o.pool.connect(fakeAgent({}, "wire", dir));
-  patchbaySessionId = await o.sessions.createSession("wire" as PatchbayAgentId, "Fake Agent", dir);
+  patchbaySessionId = await o.sessionGates.create("wire" as PatchbayAgentId, "Fake Agent", dir);
   entry = (await composed.mock.results.at(-1)!.value).servers[0] as McpServerStdio;
   client = new McpTestClient(entry);
 });

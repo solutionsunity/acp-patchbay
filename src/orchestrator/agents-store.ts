@@ -36,6 +36,7 @@ import {
 } from "../shared/protocol";
 import { formatCommandLine, parseCommandLine, sameCommandLine } from "../shared/command-line";
 import { unlessAborted } from "./abort";
+import { agentOffers, type AgentOffers } from "../shared/agent-offers";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { agentErrorText } from "./readers/agent-error";
@@ -175,6 +176,12 @@ export class AgentsStore implements ConnectionOperations {
   linkedRegistryId(patchbayAgentId: PatchbayAgentId): string | null {
     const config = this.config(patchbayAgentId);
     return config?.link == null ? null : config.origin;
+  }
+
+  /** What the agent's own facts allow on it, read now (agent-offers.ts) —
+   * every operation that needs one refuses without it. */
+  private offers(config: AgentConfig): AgentOffers {
+    return agentOffers({ matrix: this.deps.tracker.matrix(config.id), ...config });
   }
 
   /** The update fact, worked out now — the registry's version against each
@@ -462,7 +469,7 @@ export class AgentsStore implements ConnectionOperations {
     consent?: () => Promise<boolean>,
   ): Promise<void> {
     const config = this.config(patchbayAgentId);
-    if (config === undefined || !MOVABLE[move](config)) return;
+    if (config === undefined || !this.offers(config)[move]) return;
     const link = move === "goBack" ? config.previous : await this.freshLink(config, move);
     if (link === null) {
       this.hooks.warn(`${config.name}: the ACP registry lists nothing this machine can run for it — it stays as it is.`);
@@ -747,6 +754,11 @@ export class AgentsStore implements ConnectionOperations {
    * stopped + the logout reason, and the lock persists (auth-evidence.ts) —
    * a reconnect carries it until real login evidence clears it. */
   async logout(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    const config = this.config(patchbayAgentId);
+    if (config === undefined || !this.offers(config).logout) {
+      this.log.warn(`${patchbayAgentId}: ignored a logout — the agent doesn't declare one`);
+      return;
+    }
     await this.deps.tracker.logout(patchbayAgentId);
     await this.deps.pool.stop(patchbayAgentId);
   }
@@ -1107,14 +1119,6 @@ export class AgentsStore implements ConnectionOperations {
     await this.loginViaTerminal(patchbayAgentId, { command, args: [...spec.args, ...typed.args], env }, signal);
   }
 }
-
-/** What an agent's own facts allow of each move: Upgrade a linked agent,
- * Reset an edited one, Back one that has a way back. */
-const MOVABLE: Record<VersionMove, (config: AgentConfig) => boolean> = {
-  upgrade: (c) => c.origin !== null && c.link !== null,
-  reset: (c) => c.origin !== null && c.link === null,
-  goBack: (c) => c.origin !== null && c.previous !== null,
-};
 
 /** How a move names itself when it didn't start. */
 const MOVE_PHRASE: Record<VersionMove, (to: string) => string> = {

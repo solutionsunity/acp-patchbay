@@ -293,7 +293,7 @@ describe("elicitation on the wire", () => {
   it("an elicitation in a mode patchbay doesn't present is answered invalid params, and nothing is shown", async () => {
     const h = wireHarness();
     await h.pool.connect(spec({ turn: [{ type: "elicitRaw", params: { mode: "telepathy", message: "Think of a number" } }] }, "e0" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e0" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e0" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
 
     const blocks = h.state().transcripts[patchbaySessionId]!;
@@ -325,7 +325,7 @@ describe("elicitation on the wire", () => {
         "e1" as PatchbayAgentId,
       ),
     );
-    const patchbaySessionId = await h.sessions.createSession("e1" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e1" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
 
@@ -347,7 +347,7 @@ describe("elicitation on the wire", () => {
   it("a declined question reaches the agent as a decline, not as silence", async () => {
     const h = wireHarness();
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "Your name?" }] }, "e2" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e2" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e2" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
     h.asks.answerQuestion(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "decline" });
@@ -362,7 +362,7 @@ describe("elicitation on the wire", () => {
     // The fake agent refuses to ask when the client declared nothing — the
     // spec's own rule. Its answer here proves the declaration went out.
     await h.pool.connect(spec({ turn: [{ type: "elicit", message: "anything?" }] }, "e3" as PatchbayAgentId));
-    const patchbaySessionId = await h.sessions.createSession("e3" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("e3" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
     h.asks.answerQuestion(elicitationCard(h.state().transcripts[patchbaySessionId])!.id, { action: "cancel" });
@@ -387,7 +387,7 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-1", then: "complete" }] }, "u1" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("u1" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("u1" as PatchbayAgentId, "Fake Agent", dir);
     const turn = h.gates.prompt(patchbaySessionId, { text: "go" });
     await waitFor(() => elicitationCard(h.state().transcripts[patchbaySessionId]) !== undefined);
 
@@ -415,7 +415,7 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-2", then: "finishFirst" }] }, "u2" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("u2" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("u2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;
@@ -430,7 +430,7 @@ describe("url elicitation on the wire", () => {
     await h.pool.connect(
       spec({ turn: [{ type: "elicitUrl", url: SIGN_IN, elicitationId: "oauth-3", then: "withdraw" }] }, "u3" as PatchbayAgentId),
     );
-    const patchbaySessionId = await h.sessions.createSession("u3" as PatchbayAgentId, "Fake Agent", dir);
+    const patchbaySessionId = await h.gates.create("u3" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "go" });
 
     const card = elicitationCard(h.state().transcripts[patchbaySessionId])!;

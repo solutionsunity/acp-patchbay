@@ -142,6 +142,26 @@ function asking() {
 }
 
 describe("agents store", () => {
+  // The protocol says a client must not call logout on an agent that
+  // doesn't declare it; the card hid the button, and nothing else held it.
+  it("Log out reaches only an agent that declares it — refused at the writer, whatever the view sent (#135)", async () => {
+    const h = harness();
+    await h.saveAgent(fakeConfig("silent", {}));
+    await h.saveAgent(fakeConfig("declares", { declare: { auth: { logout: {} } } }));
+    await h.gates.connect("silent" as PatchbayAgentId);
+    await h.gates.connect("declares" as PatchbayAgentId);
+    const wire = vi.spyOn(h.pool, "logout");
+
+    await h.gates.logout("silent" as PatchbayAgentId);
+    expect(wire).not.toHaveBeenCalled();
+    expect(h.row("silent" as PatchbayAgentId)).toMatchObject({ status: "running", needsAuth: false });
+
+    await h.gates.logout("declares" as PatchbayAgentId);
+    expect(wire).toHaveBeenCalledWith("declares");
+    expect(h.row("declares" as PatchbayAgentId)).toMatchObject({ status: "stopped", needsAuth: true });
+    await h.gates.stopAll();
+  });
+
   it("reads saved facts from the file when asked — another window's save shows at once", async () => {
     const kv = new MemoryKV();
     const h = harness({ kv });
@@ -677,6 +697,42 @@ describe("the gates", () => {
     await Promise.all([reset, back]);
     expect(h.row("ed" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
     expect(h.agents.config("up" as PatchbayAgentId)).toMatchObject({ link: { pinnedVersion: "2.0.0" }, previous });
+    await h.gates.stopAll();
+  });
+
+  // New chat called the store directly, so a session could open on a
+  // process an Upgrade was about to stop.
+  it("a New chat waits for an Upgrade the agent's row holds — never opening on a process about to go (#135)", async () => {
+    const user = asking();
+    const h = harness({ ports: { confirm: user.confirm } });
+    await upgradable(h);
+    await openConversation(h, "reg" as PatchbayAgentId);
+    const upgrade = h.gates.upgrade("reg" as PatchbayAgentId);
+    await vi.waitFor(() => expect(user.asked).toHaveLength(1), SETTLE);
+
+    const chat = h.orchestrator.startChat("reg" as PatchbayAgentId);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.state().sessions).toHaveLength(1);
+
+    user.answer("Upgrade", false);
+    await Promise.all([upgrade, chat]);
+    expect(h.state().sessions).toHaveLength(2);
+    await h.gates.stopAll();
+  });
+
+  it("Restart puts the one question when it would cut off a conversation — declined, the agent runs on (#135)", async () => {
+    const user = asking();
+    const h = harness({ ports: { confirm: user.confirm } });
+    await h.saveAgent(fakeConfig("rs", {}));
+    await h.gates.connect("rs" as PatchbayAgentId);
+    await openConversation(h, "rs" as PatchbayAgentId);
+    const restart = h.gates.restart("rs" as PatchbayAgentId);
+    await vi.waitFor(() => expect(user.asked).toEqual(["Restart Fake rs? It disconnects 1 open conversation."]), SETTLE);
+    const spawns = vi.spyOn(h.pool, "restart");
+    user.answer("Restart", false);
+    await restart;
+    expect(spawns).not.toHaveBeenCalled();
+    expect(h.row("rs" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
     await h.gates.stopAll();
   });
 

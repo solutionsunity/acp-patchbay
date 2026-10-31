@@ -94,10 +94,10 @@ export class Queue<Work extends string, Row extends string = string> {
     return Promise.all([...this.rows.keys()].map((row) => this.end(row, by))).then(() => {});
   }
 
-  /** Settles once everything the row holds now has left it — what an
-   * operation elsewhere waits for (`after`). */
-  settled(row: Row): Promise<void> {
-    return Promise.all((this.rows.get(row) ?? []).map((h) => h.left)).then(() => {});
+  /** Settles once everything the row holds now has left it — or only the
+   * work `only` picks — what an operation elsewhere waits for (`after`). */
+  settled(row: Row, only: (work: Work) => boolean = () => true): Promise<void> {
+    return Promise.all((this.rows.get(row) ?? []).filter((h) => only(h.work)).map((h) => h.left)).then(() => {});
   }
 
   private enter<T>(

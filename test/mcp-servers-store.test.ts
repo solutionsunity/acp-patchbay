@@ -792,6 +792,26 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     expect(await review(h)).toBeNull();
   });
 
+  // The form put `Bearer ` only on an Authorization header; JSON put it on
+  // any header, so an imported X-Api-Key server sent `Bearer <key>`. One
+  // owner now decides it, whatever the way in.
+  it("a header key gets `Bearer ` only on an Authorization header, whichever way the server came in (#135)", async () => {
+    const h = harness([]);
+    await h.gates.importJson(
+      JSON.stringify({
+        mcpServers: {
+          keyed: { url: "https://example.test/a", authType: "header", headerName: "X-Api-Key", token: "k1" },
+          bearer: { url: "https://example.test/b", authType: "header", token: "k2" },
+          chosen: { url: "https://example.test/c", authType: "header", headerName: "X-Api-Key", valuePrefix: "Token ", token: "k3" },
+        },
+      }),
+    );
+    await h.gates.addImported((await review(h))!.id, ["keyed", "bearer", "chosen"]);
+    expect(named(h, "keyed")?.source).toMatchObject({ headerName: "X-Api-Key", valuePrefix: "" });
+    expect(named(h, "bearer")?.source).toMatchObject({ headerName: "Authorization", valuePrefix: "Bearer " });
+    expect(named(h, "chosen")?.source).toMatchObject({ headerName: "X-Api-Key", valuePrefix: "Token " });
+  });
+
   it("a review answered after a newer import replaced it, or after it was cancelled, adds nothing", async () => {
     const h = harness([]);
     const doc = (name: string) => JSON.stringify({ mcpServers: { [name]: { command: "srv", args: [] } } });

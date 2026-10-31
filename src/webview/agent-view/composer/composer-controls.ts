@@ -24,6 +24,12 @@ export interface ComposerControls {
    * sibling session's `auth_required` mid-turn must not strand this one's
    * only exit. Sending and stopping have opposite preconditions. */
   stop: boolean;
+  /** The send button's role: Send, or — while a turn is underway on the
+   * session — Stop, which reads "stopping" once told to stop while the
+   * agent still owes the answer that ends the turn (Stop again ends it
+   * here). Disabled by its role's own gate: `enabled` to send, `stop` to
+   * stop. */
+  button: { role: "send" | "stop" | "stopping"; disabled: boolean };
   placeholder: string;
 }
 
@@ -45,6 +51,9 @@ export function composerControls(
   const running = session !== null && agent?.status === "running";
   const enabled = running && !needsAuth;
   const stop = running && turnUnderway(session);
+  const underway = session !== null && turnUnderway(session);
+  const role = !underway ? "send" : session.busy.includes("stopping") ? "stopping" : "stop";
+  const button = { role, disabled: role === "send" ? !enabled : !stop } as const;
   const placeholder = enabled
     ? `Message ${agent!.name} — / commands · @ context`
     : incoming
@@ -52,7 +61,7 @@ export function composerControls(
       : needsAuth && agent !== null
         ? `${agent.name} needs login — Log in on its card in Settings › Agents`
         : "Connect an agent to start";
-  return { enabled, stop, placeholder };
+  return { enabled, stop, button, placeholder };
 }
 
 /** Why a sent prompt can't come back into the composer — taking a held one

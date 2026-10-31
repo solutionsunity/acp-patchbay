@@ -711,6 +711,11 @@ const app = acp
       agentInfo: { name: script.name ?? "fake-agent", version: script.version ?? "0.0.0" },
     };
   })
+  // The spec's logout: answered only by an agent that declares it.
+  .onRequest("logout", (): acp.LogoutResponse => {
+    if (script.declare?.auth?.logout == null) throw acp.RequestError.methodNotFound("logout");
+    return {};
+  })
   .onRequest("authenticate", async (ctx): Promise<acp.AuthenticateResponse> => {
     if (script.authPage !== undefined) {
       const { url, elicitationId, message } = script.authPage;

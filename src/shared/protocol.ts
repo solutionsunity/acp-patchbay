@@ -913,6 +913,9 @@ export interface SessionSummary {
    * the agent's own session/list metadata, whichever is newest. The
    * drawer's sort key ("latest" = last activity, not creation). */
   updatedAt: string;
+  /** The session has had a turn — the sessions store's fact (a session the
+   * agent lists has, a new one hasn't until its first prompt). */
+  hasTurns: boolean;
   /** A turn completed while no visible surface showed this session — the
    * blue dot. Reducer-derived (turnEnded off screen), cleared once a
    * visible surface renders it; never persisted — a reload starts with
@@ -1885,6 +1888,8 @@ export type AgentViewEvent =
       title?: string;
       updatedAt?: string;
       forkedFrom?: PatchbaySessionId;
+      /** The session's first prompt was sent. */
+      hasTurns?: true;
     }
   | { kind: "sessionActivated"; patchbaySessionId: PatchbaySessionId }
   /** The visible surfaces changed — shown, hidden, opened, or closed. */
@@ -2290,6 +2295,7 @@ export function reduceAgentView(
                 ...s,
                 title: event.title ?? s.title,
                 ...(event.forkedFrom !== undefined ? { forkedFrom: event.forkedFrom } : {}),
+                ...(event.hasTurns === true ? { hasTurns: true } : {}),
                 updatedAt:
                   event.updatedAt !== undefined && event.updatedAt > s.updatedAt
                     ? event.updatedAt

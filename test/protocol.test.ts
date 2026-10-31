@@ -143,7 +143,7 @@ describe("reducers", () => {
     const succeeded = replay(connecting, [
       {
         kind: "sessionCreated",
-        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "t", busy: [], updatedAt: "2026-07-09T00:00:00Z" , hasTurns: false},
       },
     ]);
     expect(succeeded.chatConnect).toBeNull();
@@ -157,11 +157,11 @@ describe("reducers", () => {
     const two = replay(initialAgentViewState, [
       {
         kind: "sessionCreated",
-        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+        session: { id: "s1" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "one", busy: [], updatedAt: "2026-07-09T00:00:00Z" , hasTurns: false},
       },
       {
         kind: "sessionCreated",
-        session: { id: "s2" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" },
+        session: { id: "s2" as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: "two", busy: [], updatedAt: "2026-07-09T00:00:01Z" , hasTurns: false},
       },
     ]);
     expect(two.activePatchbaySessionId).toBe("s2");
@@ -347,7 +347,7 @@ describe("applyHostMessage", () => {
 describe("session activity + unseen (drawer ordering / dots)", () => {
   const mk = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id: id as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" },
+    session: { id: id as PatchbaySessionId, patchbayAgentId: "claude" as PatchbayAgentId, title: id, busy: [], updatedAt: "2026-07-09T00:00:00Z" , hasTurns: false},
   });
 
   it("turnStarted/turnEnded bump updatedAt — 'latest' means last activity, not creation", () => {
@@ -474,7 +474,7 @@ describe("session activity + unseen (drawer ordering / dots)", () => {
 describe("sessionBusyChanged (what a session's lines hold — its busy state)", () => {
   const created = (id: string): AgentViewEvent => ({
     kind: "sessionCreated",
-    session: { id: id as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" },
+    session: { id: id as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-21T00:00:00Z" , hasTurns: false},
   });
 
   it("a prompt on the turn line is a turn underway; an open or a reload is an attach; other work is neither", () => {

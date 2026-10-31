@@ -167,17 +167,24 @@ export const chatPlan = [
   { content: "publish a release", status: "cancelled" },
 ];
 
-/** A full capability matrix for an agent that declared session/load but no
- * session/list — every row present, as the tracker always reads it. */
-const unlistedMatrix = Object.fromEntries(
-  [
-    "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation", "resources.subscribe",
-    "prompt.image", "prompt.audio", "prompt.embeddedContext", "session.fork", "session.load",
-    "session.resume", "session.list", "session.delete", "session.close",
-    "session.additionalDirectories", "mcp.http", "mcp.sse", "usage", "concurrentSessions",
-    "auth", "auth.logout",
-  ].map((row) => [row, { declared: row === "session.load", used: false }]),
-);
+/** Every capability row, as the tracker always reads a matrix — checked
+ * against the protocol's row list by a test. */
+export const CAPABILITY_ROWS = [
+  "fs.readTextFile", "fs.writeTextFile", "terminal", "elicitation", "resources.subscribe",
+  "prompt.image", "prompt.audio", "prompt.embeddedContext", "session.fork", "session.load",
+  "session.resume", "session.list", "session.delete", "session.close",
+  "session.additionalDirectories", "mcp.http", "mcp.sse", "usage", "concurrentSessions",
+  "auth", "auth.logout",
+];
+
+/** A full matrix: every row neither declared nor used, but `cells`. */
+const matrixOf = (cells) => ({
+  ...Object.fromEntries(CAPABILITY_ROWS.map((row) => [row, { declared: false, used: false }])),
+  ...cells,
+});
+
+/** An agent that declared session/load but no session/list. */
+const unlistedMatrix = matrixOf({ "session.load": { declared: true, used: false } });
 
 /** Complete stored-preferences object, as every snapshot carries. */
 export const preferences = {
@@ -202,10 +209,10 @@ export function agentViewState({ live }) {
     // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
     // with s2 they fill the header's read-out of the other sessions.
     sessions: [
-      { id: "s1", patchbayAgentId: "fake", title: "find foo", busy: live ? ["prompt"] : [], updatedAt: "2026-07-09T10:00:00Z" },
-      { id: "s2", patchbayAgentId: "fake", title: "refactor bar", busy: [], updatedAt: "2026-07-09T11:00:00Z", unseen: true },
-      { id: "s3", patchbayAgentId: "fake", title: "migrate the schema", busy: ["prompt"], updatedAt: "2026-07-09T09:00:00Z" },
-      { id: "s4", patchbayAgentId: "fake", title: "write the release notes", busy: ["prompt"], updatedAt: "2026-07-09T08:00:00Z" },
+      { id: "s1", patchbayAgentId: "fake", title: "find foo", busy: live ? ["prompt"] : [], updatedAt: "2026-07-09T10:00:00Z", hasTurns: true },
+      { id: "s2", patchbayAgentId: "fake", title: "refactor bar", busy: [], updatedAt: "2026-07-09T11:00:00Z", hasTurns: true, unseen: true },
+      { id: "s3", patchbayAgentId: "fake", title: "migrate the schema", busy: ["prompt"], updatedAt: "2026-07-09T09:00:00Z", hasTurns: true },
+      { id: "s4", patchbayAgentId: "fake", title: "write the release notes", busy: ["prompt"], updatedAt: "2026-07-09T08:00:00Z", hasTurns: true },
     ],
     activePatchbaySessionId: "s1",
     chatConnect: null,
@@ -270,7 +277,7 @@ export function settingsState() {
         // the card's version chip, the upgrade while there is one (#37, #129)
         version: { pinned: "0.9.0", reported: "0.9.0" },
         update: { from: "0.9.0", to: "1.0.0" },
-        capabilities: {
+        capabilities: matrixOf({
           "fs.readTextFile": { declared: true, used: true },
           "fs.writeTextFile": { declared: true, used: false },
           terminal: { declared: true, used: true },
@@ -279,7 +286,7 @@ export function settingsState() {
           "prompt.image": { declared: true, used: false },
           usage: { declared: true, used: true },
           auth: { declared: true, used: true },
-        },
+        }),
       },
       // edited: its own command, what it reported in its own scheme (#129)
       { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], version: { reported: "0.36.0 (commit 7c61e5bb)" }, busy: [] },

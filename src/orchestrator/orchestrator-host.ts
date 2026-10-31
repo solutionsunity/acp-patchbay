@@ -1106,6 +1106,10 @@ export class OrchestratorHost {
           this.orchestrator.logCatch(`queryWorkspaceFiles "${action.query}"`),
         );
         break;
+      default:
+        // Every action the views can send has its handler here: a new kind
+        // doesn't build until it does.
+        action satisfies never;
     }
   }
 
