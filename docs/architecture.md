@@ -608,6 +608,15 @@ says it in the Output channel.
   pool, the readers, the extension modules, the `_meta` table. Building a
   message to send is not reading one; the two files that read back only
   what patchbay itself built are named in the test, each with why.
+- **Every caught error is read whole.** In the extension host an error is
+  said through `agentErrorText` — never by its bare message, which drops the
+  reason an agent puts in `data`. A source scan holds it
+  (`test/source-boundaries.test.ts`), with the rule that no code comment
+  names a document.
+- **Code reaches one way.** Shared code reaches neither side; a webview
+  reaches no extension-host code, Node or VS Code; what an agent spawns
+  (`src/mcp`) reaches the extension host only over IPC. A lint rule per
+  directory holds it.
 - **Rendering is pinned.** A wire corpus (`test/wire-corpus.test.ts`) runs
   the whole `session/update` surface through the real wire, live and as a
   reload's replay, against golden files: a change to what any agent message
