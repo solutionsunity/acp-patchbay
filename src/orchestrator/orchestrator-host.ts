@@ -20,7 +20,7 @@ import { type OpenAsk } from "../shared/attention";
 import { chipId, fileChipLabel, pickedFileForm } from "./attachments";
 import { diffDir } from "./diff-files";
 import { applyFileWrite } from "./client-host";
-import { configurationText, exportConfiguration, writeConfigurationFile } from "./config-export";
+import { configurationText, writeConfigurationFile } from "./config-export";
 import { EditorStateHost } from "./editor-state-host";
 import { runLoginTask } from "./login-task";
 import { agentErrorText } from "./readers/agent-error";
@@ -199,26 +199,7 @@ export class OrchestratorHost {
   /** Export: the picked parts read fresh from the stores, written where
    * the user says. */
   private async exportToFile(parts: readonly ExportPart[]): Promise<void> {
-    const file = await exportConfiguration(new Set(parts), {
-      entries: [
-        this.orchestrator.agentConfigs,
-        this.orchestrator.composerKnobs,
-        this.orchestrator.mcpServerConfigs,
-        this.orchestrator.preferences,
-        this.orchestrator.machinePermissionRules,
-        this.orchestrator.machineWriteScope,
-        this.orchestrator.machineSavedRoots,
-      ],
-      agents: {
-        ids: () => this.orchestrator.agentConfigs.list().map((c) => c.id),
-        env: (id) => this.orchestrator.agentEnv.get(id),
-      },
-      mcpServers: {
-        ids: () => this.orchestrator.mcpServerConfigs.list().map((c) => c.id),
-        env: (id) => this.orchestrator.mcpServerEnv.get(id),
-        headerKey: (id) => this.orchestrator.mcpServers.headerKey(id as PatchbayMcpServerId),
-      },
-    });
+    const file = await this.orchestrator.exportConfiguration(parts);
     const target = await vscode.window.showSaveDialog({
       title: "Export patchbay configuration",
       defaultUri: vscode.Uri.file(join(homedir(), `patchbay-config-${file.exportedAt.slice(0, 10)}.json`)),
@@ -254,7 +235,7 @@ export class OrchestratorHost {
   private async connectStartupAgents(): Promise<void> {
     const legacy = vscode.workspace.getConfiguration("acpPatchbay").get<string>("defaultAgent", "");
     const sources = await this.orchestrator.agents.startupSources(legacy);
-    const pointed = this.orchestrator.lastActiveSession.get()?.patchbayAgentId;
+    const pointed = this.orchestrator.lastActiveAgent();
     let pointedSettled!: () => void;
     const pointedConnect = new Promise<void>((resolve) => (pointedSettled = resolve));
     const all = Promise.allSettled(
@@ -695,9 +676,8 @@ export class OrchestratorHost {
    * and only while the update is still the fact: a notification answered
    * after the agent was upgraded elsewhere restarts nothing. */
   private async announceUpdates(): Promise<void> {
-    const fresh = [...this.orchestrator.agents.updates()].filter(([patchbayAgentId, u]) => !this.orchestrator.announcedUpdates.has(`${patchbayAgentId}@${u.to}`));
+    const fresh = this.orchestrator.updatesToAnnounce();
     if (fresh.length === 0) return;
-    for (const [patchbayAgentId, u] of fresh) this.orchestrator.announcedUpdates.add(`${patchbayAgentId}@${u.to}`);
     if (fresh.length === 1) {
       const [patchbayAgentId, u] = fresh[0]!;
       const picked = await vscode.window.showInformationMessage(
@@ -1249,13 +1229,11 @@ export class OrchestratorHost {
    * the owner's explicit acts; configs never ride a repo, so nothing can
    * follow a user between workspaces on its own. */
   private async copyMcpServerJson(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
-    const config = this.orchestrator.mcpServerConfigs.get(patchbayMcpServerId);
+    const name = this.orchestrator.mcpServers.name(patchbayMcpServerId);
     const json = await this.orchestrator.mcpServers.exportJson(patchbayMcpServerId);
-    if (config === undefined || json === undefined) return;
+    if (name === undefined || json === undefined) return;
     await vscode.env.clipboard.writeText(json);
-    void vscode.window.showInformationMessage(
-      `Copied "${config.name}" as an mcpServers entry.`,
-    );
+    void vscode.window.showInformationMessage(`Copied "${name}" as an mcpServers entry.`);
   }
 
   /** File writes' add: a folder the user picks lands switched on, at the

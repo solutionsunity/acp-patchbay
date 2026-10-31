@@ -358,6 +358,12 @@ export class SessionsStore {
     this.notes = new NoteLog(log);
   }
 
+  /** Every session's saved facts and given files gone — the erase. */
+  async eraseAll(): Promise<void> {
+    await this.continuity.wipe();
+    await this.files.wipe();
+  }
+
   isLive(patchbaySessionId: PatchbaySessionId): boolean {
     return this.sessions.has(patchbaySessionId);
   }

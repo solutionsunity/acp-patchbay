@@ -17,6 +17,8 @@ import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
 import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
+import { orchestratorHarness } from "./support/orchestrator-harness";
+import { tempDir } from "./support/teardown";
 import { SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
 
 async function golden(): Promise<ConfigurationRead> {
@@ -26,10 +28,13 @@ async function golden(): Promise<ConfigurationRead> {
   return outcome.read;
 }
 
-/** A machine of real stores, and what resolving a download here does. */
-function machine(resolves = true) {
+/** A machine: the window's own owners land agents and servers, over
+ * stores a test reads what landed from — and what resolving a download
+ * here does. */
+async function machine(resolves = true) {
   const kv = new MemoryKV();
   const secrets = new MemorySecrets();
+  const h = orchestratorHarness(await tempDir("patchbay-import-"), { machineKV: kv, secrets });
   const resolved: string[] = [];
   const stores = {
     agentConfigs: new AgentConfigStore(kv),
@@ -44,8 +49,15 @@ function machine(resolves = true) {
     machineSavedRoots: new SavedRootsStore(kv, "machine"),
   };
   const targets: ImportTargets = {
-    ...stores,
-    resolveHere: async (id) => (resolved.push(id), resolves),
+    agents: {
+      landImported: (record, env, knobs) => h.orchestrator.agents.landImported(record, env, knobs),
+      resolveHere: async (id) => (resolved.push(id), resolves),
+    },
+    mcpServers: h.orchestrator.mcpServers,
+    preferences: stores.preferences,
+    machineRules: stores.machineRules,
+    machineWriteScope: stores.machineWriteScope,
+    machineSavedRoots: stores.machineSavedRoots,
   };
   const local = () =>
     localConfiguration({
@@ -65,7 +77,7 @@ const here = { commandFound: () => true, pathExists: () => true };
 describe("landing an import", () => {
   it("on an empty machine, every ticked item lands with its secrets; a download is resolved for this machine", async () => {
     const read = await golden();
-    const m = machine();
+    const m = await machine();
     const plan = planImport(read, await m.local(), here);
     const outcome = await applyImport(read, plan, new Set(plan.items.map((i) => i.id)), m.targets);
 
@@ -96,7 +108,7 @@ describe("landing an import", () => {
         a.id === "claude" ? { ...a, previous: npxBack } : a.link?.distributionKind === "binary" ? { ...a, previous: binaryBack } : a,
       ),
     };
-    const m = machine();
+    const m = await machine();
     const plan = planImport(carried, await m.local(), here);
     await applyImport(carried, plan, new Set(plan.items.map((i) => i.id)), m.targets);
     expect(m.stores.agentConfigs.get("claude" as PatchbayAgentId)?.previous).toEqual(npxBack);
@@ -105,7 +117,7 @@ describe("landing an import", () => {
 
   it("only what is ticked lands — and an unchanged item is never rewritten", async () => {
     const read = await golden();
-    const m = machine();
+    const m = await machine();
     const plan = planImport(read, await m.local(), here);
     const outcome = await applyImport(read, plan, new Set(["agent:bare", "savedRoot:/home/me/notes", "nothing:here"]), m.targets);
     expect(outcome.landed).toBe(2);
@@ -115,7 +127,7 @@ describe("landing an import", () => {
 
   it("a matched agent is replaced whole on this machine's id, keeping the version it last answered with", async () => {
     const read = await golden();
-    const m = machine();
+    const m = await machine();
     const theirs = read.agents.find((a) => a.id === "claude")!;
     await m.stores.agentConfigs.add({ ...theirs, id: "local-claude" as PatchbayAgentId, autoConnect: false, lastSeenVersion: "0.30.0" });
     await m.stores.agentEnv.set("local-claude", { OLD: "1" });
@@ -130,7 +142,7 @@ describe("landing an import", () => {
 
   it("a server's routing lands on the ids its agents landed on; a sign-in stays with an unchanged connection", async () => {
     const read = await golden();
-    const m = machine();
+    const m = await machine();
     const claude = read.agents.find((a) => a.id === "claude")!;
     const github = read.mcpServers.find((s) => s.id === "github")!;
     await m.stores.agentConfigs.add({ ...claude, id: "local-claude" as PatchbayAgentId });
@@ -146,7 +158,7 @@ describe("landing an import", () => {
 
   it("a rule replaces its pattern's verdict in place or joins the list; this machine's other rules stay", async () => {
     const read = await golden();
-    const m = machine();
+    const m = await machine();
     await m.stores.machineRules.set([
       { kind: "command", pattern: "ls", verdict: "allow" },
       { kind: "command", pattern: "git status", verdict: "ask" },
@@ -166,7 +178,7 @@ describe("landing an import", () => {
       ...(await golden()),
       machineWriteScope: [{ location: { kind: "temp" }, on: true }, { location: hermes, on: true }],
     };
-    const m = machine();
+    const m = await machine();
     await m.stores.machineWriteScope.set([{ location: { kind: "path", path: "/srv/infra" }, on: true }, { location: { kind: "temp" }, on: false }]);
     const plan = planImport(read, await m.local(), here);
     await applyImport(read, plan, new Set(["writeLocation:temp", "writeLocation:/home/me/.hermes"]), m.targets);
@@ -179,7 +191,7 @@ describe("landing an import", () => {
 
   it("says what didn't land, or landed with a word to say — and lands the rest", async () => {
     const read = await golden();
-    const m = machine(false);
+    const m = await machine(false);
     // Another agent here already holds the name the file gives "bare".
     await m.stores.agentConfigs.add({ ...read.agents.find((a) => a.id === "bare")!, id: "other" as PatchbayAgentId, name: "Agent X" });
     const renamed: ConfigurationRead = { ...read, agents: read.agents.map((a) => (a.id === "bare" ? { ...a, name: "Agent X" } : a)) };

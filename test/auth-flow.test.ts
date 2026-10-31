@@ -45,7 +45,8 @@ const LAZY: FakeAgentScript = {
  * how often the views saw needsAuth go up and come down. */
 function harness() {
   const h = orchestratorHarness(cwd);
-  const { pool, capabilityTracker: tracker, agents, authLocks } = h.orchestrator;
+  const { pool, capabilityTracker: tracker, agents } = h.orchestrator;
+  const { authLocks } = h.stores;
   const locks = {
     get: (patchbayAgentId: PatchbayAgentId): AuthLock | undefined => authLocks.lockFor(patchbayAgentId) ?? undefined,
     set: (patchbayAgentId: PatchbayAgentId, lock: AuthLock): void => {

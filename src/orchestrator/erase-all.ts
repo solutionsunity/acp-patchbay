@@ -11,32 +11,21 @@
 import { DEFAULT_PERMISSION_RULES, type CommandRule, type PermissionRules } from "./stores/permission-rules";
 import type { WriteEntry } from "../shared/protocol";
 
-/** A record store whose ids key secrets that go with it. */
-interface IdKeyedRecords {
-  list(): { id: string }[];
-  wipe(): Promise<void>;
-}
-
-interface SecretsById {
-  remove(id: string): Promise<void>;
-}
-
 interface Wipeable {
   wipe(): Promise<void>;
 }
 
+/** Facts that have an owner are erased by it — it knows the order its
+ * secrets and records go in; every other store is wiped here. */
+interface Erasable {
+  eraseAll(): Promise<void>;
+}
+
 export interface EraseTargets {
-  agentConfigs: IdKeyedRecords;
-  mcpServerConfigs: IdKeyedRecords;
-  usedCapabilities: Wipeable;
-  authLocks: Wipeable;
-  sessionContinuity: Wipeable;
-  /** The files sessions were given, each in its session's folder. */
-  sessionFiles: Wipeable;
+  agents: Erasable;
+  mcpServers: Erasable;
+  sessions: Erasable;
   spawnRegistry: Wipeable;
-  agentEnv: SecretsById;
-  mcpServerEnv: SecretsById;
-  mcpServerTokens: SecretsById;
   permissionRules: { set(rules: PermissionRules): Promise<void> };
   machineRules: { set(rules: CommandRule[]): Promise<void> };
   machineWriteScope: { set(entries: readonly WriteEntry[]): Promise<void> };
@@ -45,7 +34,6 @@ export interface EraseTargets {
   defaultAgentFold: Wipeable;
   lastActiveSession: Wipeable;
   preferences: Wipeable;
-  composerKnobs: Wipeable;
   workspaceSavedRoots: Wipeable;
   machineSavedRoots: Wipeable;
   /** The preview and diff temp stashes: image previews and diff
@@ -54,35 +42,17 @@ export interface EraseTargets {
   tempStashes: Wipeable;
 }
 
-/** Deletes everything patchbay ever stored for this user. Ordering
- * constraint, recorded: SecretStorage has no enumeration API — the config
- * lists are the only key index into it, so secrets are deleted while their
- * config records still exist; a config removed first would strand its
- * secret in the OS store forever. Limits (documented in the README): this
+/** Deletes everything patchbay ever stored for this user. Its limits: this
  * window's workspaceState only — other workspaces' rules are unreachable
- * from here — and only secrets the current config lists still name. */
+ * from here — and only secrets the stored records still name
+ * (SecretStorage can't be listed; each owner removes its secrets while its
+ * records still key them). */
 export async function eraseAllData(targets: EraseTargets): Promise<void> {
-  // 1 — secrets, while their key index still exists.
-  for (const { id } of targets.agentConfigs.list()) {
-    await targets.agentEnv.remove(id);
-  }
-  for (const { id } of targets.mcpServerConfigs.list()) {
-    await targets.mcpServerEnv.remove(id);
-    await targets.mcpServerTokens.remove(id);
-  }
-  // 2 — every record store whole, so strays whose config is already gone
-  // (an old version's leftovers), and records that no longer read as
-  // records, go too.
-  const recordStores: Wipeable[] = [
-    targets.agentConfigs,
-    targets.mcpServerConfigs,
-    targets.usedCapabilities,
-    targets.authLocks,
-    targets.sessionContinuity,
-    targets.spawnRegistry,
-  ];
-  for (const store of recordStores) await store.wipe();
-  // 3 — rules back to built-ins, file stores gone.
+  await targets.agents.eraseAll();
+  await targets.mcpServers.eraseAll();
+  await targets.sessions.eraseAll();
+  await targets.spawnRegistry.wipe();
+  // rules back to built-ins, file stores gone
   await targets.permissionRules.set(DEFAULT_PERMISSION_RULES);
   await targets.machineRules.set([]);
   await targets.machineWriteScope.set([]);
@@ -91,9 +61,7 @@ export async function eraseAllData(targets: EraseTargets): Promise<void> {
   await targets.defaultAgentFold.wipe();
   await targets.lastActiveSession.wipe();
   await targets.preferences.wipe();
-  await targets.composerKnobs.wipe();
   await targets.workspaceSavedRoots.wipe();
   await targets.machineSavedRoots.wipe();
-  await targets.sessionFiles.wipe();
   await targets.tempStashes.wipe();
 }

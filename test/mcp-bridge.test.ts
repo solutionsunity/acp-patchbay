@@ -203,7 +203,7 @@ async function withRemote(
     header === undefined ? { kind: "custom-http", url: remote.url, authType: "none" } : { kind: "custom-http", url: remote.url, authType: "header", ...header },
     "auto",
   );
-  return { orchestrator: o, id, pool: o.pool, sessions: o.sessions, gates: o.sessionGates, state: h.agentView.state };
+  return { orchestrator: o, id, pool: o.pool, sessions: o.sessions, gates: o.sessionGates, state: h.agentView.state, stores: h.stores };
 }
 
 /** A bridge spawned the way an agent spawns it from its mcpServers entry,
@@ -268,7 +268,7 @@ describe("MCP bridge — real agent, real bridge subprocess, fake remote MCP ser
     await remote.listen();
     atTestEnd(() => remote.close());
     const h = await withRemote(remote, { name: "github", header: { headerName: "Authorization", valuePrefix: "Bearer ", token: "stale-token" } });
-    remote.onReject = () => h.orchestrator.mcpServerTokens.set(h.id, { accessToken: "fresh-token" });
+    remote.onReject = () => h.stores.mcpServerTokens.set(h.id, { accessToken: "fresh-token" });
     await h.pool.connect(spec({ turn: [{ type: "callMcpTool", tool: "list_issues", server: "github" }] }, "e2" as PatchbayAgentId));
     const patchbaySessionId = await h.gates.create("e2" as PatchbayAgentId, "Fake Agent", dir);
     await h.gates.prompt(patchbaySessionId, { text: "any open issues?" });

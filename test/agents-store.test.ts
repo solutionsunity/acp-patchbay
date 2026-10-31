@@ -20,7 +20,8 @@ import { runtimeInstallSpec } from "../src/orchestrator/runtime-resolver";
 import { formatCommandLine } from "../src/shared/command-line";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
-import type { AgentConfigView } from "../src/shared/protocol";
+import { matrixFromDeclared } from "../src/orchestrator/capabilities";
+import type { AgentConfigView, DeclaredCapabilities } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbaySessionId } from "../src/shared/ids";
 
 
@@ -45,12 +46,12 @@ function harness(opts: { kv?: MemoryKV; ports?: OrchestratorHarnessOptions["port
     gates: o.gates,
     tracker: o.capabilityTracker,
     deps: {
-      configs: o.agentConfigs,
-      env: o.agentEnv,
+      configs: h.stores.agentConfigs,
+      env: h.stores.agentEnv,
       registry: o.acpRegistry,
-      usedCapabilities: o.usedCapabilities,
-      composerKnobs: o.composerKnobs,
-      authLocks: o.authLocks,
+      usedCapabilities: h.stores.usedCapabilities,
+      composerKnobs: h.stores.composerKnobs,
+      authLocks: h.stores.authLocks,
     },
     events: h.agentView.events,
     state,
@@ -75,6 +76,24 @@ const OFFLINE = { npm_config_offline: "true" };
 
 /** A registry agent's origin and link, as the Settings view carries them. */
 const linked = (origin: string, pinnedVersion: string) => ({ origin, link: { distributionKind: "npx" as const, pinnedVersion } });
+
+/** An agent that declared nothing. */
+const NOTHING_DECLARED: DeclaredCapabilities = {
+  loadSession: false,
+  sessionFork: false,
+  sessionResume: false,
+  sessionList: false,
+  sessionDelete: false,
+  sessionClose: false,
+  promptImage: false,
+  promptAudio: false,
+  promptEmbeddedContext: false,
+  mcpHttp: false,
+  mcpSse: false,
+  authMethods: [],
+  authLogout: false,
+  sessionAdditionalDirectories: false,
+};
 
 /** The shape of an id patchbay mints. */
 const MINTED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -142,6 +161,21 @@ function asking() {
 }
 
 describe("agents store", () => {
+  it("the erase takes every agent's env while its record still names it, then every record store — strays included (#135)", async () => {
+    const h = harness();
+    await h.saveAgent(fakeConfig("gone", {}, { env: { KEY: "sk-1" } }));
+    await h.deps.composerKnobs.record("gone" as PatchbayAgentId, { mode: "plan" });
+    await h.deps.authLocks.upsert({ id: "gone" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: new Date().toISOString() } });
+    // a stray: marks for an agent no record names any more
+    await h.deps.usedCapabilities.save("stray" as PatchbayAgentId, "1.0.0", matrixFromDeclared(NOTHING_DECLARED));
+    await h.orchestrator.agents.eraseAll();
+    expect(h.deps.configs.list()).toEqual([]);
+    expect(await h.deps.env.get("gone")).toEqual({});
+    expect(h.deps.composerKnobs.count()).toBe(0);
+    expect(h.deps.authLocks.list()).toEqual([]);
+    expect(h.deps.usedCapabilities.list()).toEqual([]);
+  });
+
   // The protocol says a client must not call logout on an agent that
   // doesn't declare it; the card hid the button, and nothing else held it.
   it("Log out reaches only an agent that declares it — refused at the writer, whatever the view sent (#135)", async () => {

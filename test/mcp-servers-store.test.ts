@@ -927,6 +927,45 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     expect(json).not.toContain((await h.tokens.get(id))!.accessToken);
   });
 
+  // A save doesn't wait for a server's line: a Remove landing while the
+  // save wrote its key brought the server back, its key with it.
+  it("a save racing a Remove leaves the server removed, its secrets gone with it (#135)", async () => {
+    const h = harness([]);
+    const id = await h.gates.addCustom(
+      "Remote",
+      { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", token: "k1" },
+      "auto",
+    );
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const set = h.tokens.set.bind(h.tokens);
+    vi.spyOn(h.tokens, "set").mockImplementation(async (...args) => (await held, set(...args)));
+    const save = h.manager.updateFromJson(id, JSON.stringify({ url: "https://example.test/mcp", authType: "header", headerName: "X-Key", token: "k2" }));
+    await h.manager.remove(id);
+    release();
+    await save;
+    expect(h.configs.get(id)).toBeUndefined();
+    expect(await h.tokens.get(id)).toBeNull();
+  });
+
+  it("the erase takes every server's secrets while their records still name them, then the records (#135)", async () => {
+    const h = harness([]);
+    const id = await h.gates.addCustom(
+      "Files",
+      { kind: "custom-stdio", command: "files-server", args: [], env: { FILES_KEY: "sk-1" } },
+      "auto",
+    );
+    const keyed = await h.gates.addCustom(
+      "Remote",
+      { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "k1" },
+      "auto",
+    );
+    await h.manager.eraseAll();
+    expect(h.configs.list()).toEqual([]);
+    expect(await h.envStore.get(id)).toEqual({});
+    expect(await h.tokens.get(keyed)).toBeNull();
+  });
+
   it("editJson shows the stored env and header key; updateFromJson stores the box as written (issue #12)", async () => {
     const h = harness([]);
     const editable = await h.gates.addCustom(

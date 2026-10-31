@@ -606,6 +606,40 @@ export class AgentsStore implements ConnectionOperations {
     await this.publishAll();
   }
 
+  /** An imported agent landed on this machine, whole, on `record.id` — its
+   * env and composer choices as the file carries them. What this machine
+   * knows of the agent on its own stays: the version it last answered
+   * with. A downloaded way back names the exporting machine's build, so it
+   * stays there. Returns the name it holds here: a taken one gets a
+   * number. */
+  async landImported(record: AgentConfig, env: Readonly<Record<string, string>>, knobs: KnobSeed | undefined): Promise<string> {
+    const mine = this.config(record.id);
+    const landed: AgentConfig = {
+      ...record,
+      previous: record.previous?.distributionKind === "binary" ? null : record.previous,
+      lastSeenVersion: mine?.lastSeenVersion ?? null,
+    };
+    let name = landed.name;
+    if (mine === undefined) name = await this.deps.configs.add(landed);
+    else await this.deps.configs.upsert(landed);
+    await this.deps.env.set(record.id, { ...env });
+    if (knobs === undefined) await this.deps.composerKnobs.remove(record.id);
+    else await this.deps.composerKnobs.record(record.id, knobs);
+    return name;
+  }
+
+  /** Every agent's facts gone — the erase. Their env first, while the
+   * records still key it: SecretStorage can't be listed, so a record gone
+   * first would strand its secret for good. Then each store whole, strays
+   * an older version left behind included. */
+  async eraseAll(): Promise<void> {
+    for (const { id } of this.deps.configs.list()) await this.deps.env.remove(id);
+    await this.deps.configs.wipe();
+    await this.deps.usedCapabilities.wipe();
+    await this.deps.authLocks.wipe();
+    await this.deps.composerKnobs.wipe();
+  }
+
   /** Add's save half: a registry agent or a custom command is saved as a
    * new agent under an id patchbay mints — one registry entry or one
    * executable added twice is two agents — and a saved agent is taken as

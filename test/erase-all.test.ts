@@ -1,37 +1,26 @@
-// P18 gate (store half): the erase sweep leaves factory state — every
-// record store empty (strays included), every secret the config lists name
-// deleted, rules back to built-ins, file stores gone. Real stores over
-// MemoryKV/MemorySecrets and a real temp dir; only vscode itself is absent.
+// The erase sweep leaves factory state: each owner erases its own facts
+// (agents, MCP servers, sessions — their suites hold how), every other
+// store is wiped here, rules back to built-ins, file stores gone. Real
+// stores over MemoryKV and a real temp dir; only vscode itself is absent.
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { tempDir } from "./support/teardown";
 import { eraseAllData } from "../src/orchestrator/erase-all";
-import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { DecisionAuditStore } from "../src/orchestrator/stores/decision-audit";
-import { McpServerConfigStore } from "../src/orchestrator/stores/mcp-server-configs";
-import { McpServerTokenStore, MemorySecrets } from "../src/orchestrator/stores/mcp-server-tokens";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
 import { LastActiveSessionStore } from "../src/orchestrator/stores/last-active-session";
 import { LastConnectedStore } from "../src/orchestrator/stores/last-connected";
 import { DefaultAgentFoldStore } from "../src/orchestrator/stores/default-agent-fold";
-import { ComposerKnobsStore } from "../src/orchestrator/stores/composer-knobs";
 import { PreferencesStore } from "../src/orchestrator/stores/preferences";
 import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
 import { DEFAULT_PERMISSION_RULES, MachineRulesStore, PermissionRulesStore } from "../src/orchestrator/stores/permission-rules";
 import { MachineWriteScopeStore } from "../src/orchestrator/stores/write-scope";
-import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { commandOf } from "../src/orchestrator/process-tree";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
-import { UsedCapabilityStore } from "../src/orchestrator/stores/used-capabilities";
-import { AuthLockStore } from "../src/orchestrator/stores/auth-locks";
-import { SessionContinuityStore } from "../src/orchestrator/stores/session-continuity";
-import { SessionFilesStore } from "../src/orchestrator/stores/session-files";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
-import { matrixFromDeclared } from "../src/orchestrator/capabilities";
 import type { PatchbayAgentId } from "../src/shared/ids";
-import type { PatchbayMcpServerId } from "../src/shared/ids";
-import { SECRET_FAMILIES, STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
+import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 
 let dir: string;
 beforeEach(async () => {
@@ -39,19 +28,11 @@ beforeEach(async () => {
 });
 
 describe("eraseAllData", () => {
-  it("leaves factory state: records, secrets, rules, files — strays included", async () => {
+  it("leaves factory state: each owner erases its facts, every other store is wiped, rules back to built-ins", async () => {
     const globalKv = new MemoryKV();
     const workspaceKv = new MemoryKV();
-    const secrets = new MemorySecrets();
 
-    const agentConfigs = new AgentConfigStore(globalKv);
-    const mcpServerConfigs = new McpServerConfigStore(globalKv);
-    const usedCapabilities = new UsedCapabilityStore(globalKv);
-    const authLocks = new AuthLockStore(globalKv);
     const spawnRegistry = new SpawnRegistryStore(globalKv);
-    const agentEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.agent);
-    const mcpServerEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer);
-    const mcpServerTokens = new McpServerTokenStore(secrets);
     const permissionRules = new PermissionRulesStore(workspaceKv);
     const machineRules = new MachineRulesStore(globalKv);
     const machineWriteScope = new MachineWriteScopeStore(globalKv);
@@ -60,21 +41,10 @@ describe("eraseAllData", () => {
     const defaultAgentFold = new DefaultAgentFoldStore(globalKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
-    const composerKnobs = new ComposerKnobsStore(globalKv);
-    const sessionContinuity = new SessionContinuityStore(globalKv);
-    const sessionFiles = new SessionFilesStore(join(dir, "session-files"));
     const workspaceSavedRoots = new SavedRootsStore(workspaceKv, "workspace");
     const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
     // A lived-in install.
-    await agentConfigs.upsert({ id: "claude" as PatchbayAgentId, name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, origin: null, link: null, previous: null, lastSeenVersion: "1.0.0" });
-    await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
-    await mcpServerConfigs.upsert({ id: "github" as PatchbayMcpServerId, name: "GitHub", source: { kind: "catalog", catalogId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
-    await mcpServerEnv.set("github", { GITHUB_PAT: "ghp-secret" });
-    await mcpServerTokens.set("github" as PatchbayMcpServerId, { accessToken: "gho-secret" });
-    await usedCapabilities.save("claude" as PatchbayAgentId, "1.0.0", matrixFromDeclared({ loadSession: true, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
-    // A stray from a removed agent — no config left, must still go.
-    await usedCapabilities.save("ghost" as PatchbayAgentId, "0.1.0", matrixFromDeclared({ loadSession: false, sessionFork: false, sessionResume: false, sessionList: false, sessionDelete: false, sessionClose: false, promptImage: false, promptAudio: false, promptEmbeddedContext: false, mcpHttp: false, mcpSse: false, authMethods: [], authLogout: false, sessionAdditionalDirectories: false }));
     // One of this window's own processes: another window's records stay
     // its own (spawn-registry.test.ts).
     const host = { pid: process.pid, command: await commandOf(process.pid) };
@@ -87,35 +57,25 @@ describe("eraseAllData", () => {
     await lastConnected.write(["claude" as PatchbayAgentId]);
     await lastActiveSession.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
-    await composerKnobs.record("claude" as PatchbayAgentId, { mode: "code" });
-    await authLocks.upsert({ id: "claude" as PatchbayAgentId, lock: { kind: "loggedOut", reason: "logged out", at: "2026-07-21T00:00:00Z" } });
-    await sessionContinuity.patch("claude" as PatchbayAgentId, "s1", "/ws", { knobs: { mode: "code" }, draft: "half a thought" });
-    const sessionFile = await sessionFiles.put("claude" as PatchbayAgentId, "s1", "/ws", "chip-1.png", "cG5n");
     await workspaceSavedRoots.add("/src/lib");
     await machineSavedRoots.add("/src/odoo");
     let stashWiped = false;
 
+    const erased: string[] = [];
+    const owner = (name: string) => ({ eraseAll: async () => void erased.push(name) });
+
     await eraseAllData({
-      agentConfigs, mcpServerConfigs, usedCapabilities,
-      authLocks, spawnRegistry, agentEnv, mcpServerEnv,
-      mcpServerTokens, permissionRules, machineRules, machineWriteScope,
+      agents: owner("agents"), mcpServers: owner("mcpServers"), sessions: owner("sessions"),
+      spawnRegistry, permissionRules, machineRules, machineWriteScope,
       decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
-      preferences, composerKnobs, sessionContinuity, sessionFiles,
-      workspaceSavedRoots, machineSavedRoots,
+      preferences, workspaceSavedRoots, machineSavedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
     });
 
-    expect(agentConfigs.list()).toEqual([]);
-    expect(mcpServerConfigs.list()).toEqual([]);
-    expect(usedCapabilities.list()).toEqual([]); // ghost gone too
-    expect(authLocks.list()).toEqual([]);
-    expect(sessionContinuity.list()).toEqual([]);
-    await expect(stat(sessionFile)).rejects.toThrow(); // the files sessions were given go too
+    expect(erased).toEqual(["agents", "mcpServers", "sessions"]);
+
     expect(stashWiped).toBe(true);
     expect(spawnRegistry.list()).toEqual([]);
-    expect(await agentEnv.get("claude")).toEqual({});
-    expect(await mcpServerEnv.get("github")).toEqual({});
-    expect(await mcpServerTokens.get("github" as PatchbayMcpServerId)).toBeNull();
     expect(permissionRules.get()).toEqual(DEFAULT_PERMISSION_RULES);
     expect(machineRules.get()).toEqual({ commandRules: [] });
     expect(machineWriteScope.get()).toEqual([]);
@@ -123,8 +83,6 @@ describe("eraseAllData", () => {
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
-    expect(composerKnobs.get("claude" as PatchbayAgentId)).toBeUndefined();
-    expect(composerKnobs.count()).toBe(0);
     expect(workspaceSavedRoots.list()).toEqual([]);
     expect(machineSavedRoots.list()).toEqual([]);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();

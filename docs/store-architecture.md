@@ -18,7 +18,10 @@ file is the model they share.
 - **Each store allows a fixed set of operations on its rows**, and nothing
   writes a row from outside its store. Every door — a webview action, a
   palette command, a notification's button, startup, an internal flow — calls
-  the same operation.
+  the same operation. The saved stores behind a store's facts are its own:
+  the orchestrator keeps them private, so a write that goes around the owner
+  does not build — an import lands an agent or a server through its owner,
+  and the erase asks each owner to erase what it holds.
 - **A store is a store only.** Its operations are plain; it knows nothing of
   what else runs. When an operation runs is the orchestrator's call, made with
   two tools it owns: the queue and the gates.
@@ -448,13 +451,14 @@ each record matched by id, then by name — ids are minted per machine, and a
 name is how its owner tells two apart — and a matched record lands on this
 machine's id. Applying stops everything (the agents running are stamped first,
 as a shutdown stamps them), plans again against the stores as they stand,
-writes each ticked item through its store (`config-import-apply.ts`), republishes
+lands each ticked item through its owner (`config-import-apply.ts`), republishes
 both channels from the stores — the same stop and republish an erase runs —
 and runs the startup connects, so what was running comes back on the new
 configuration. A taken item replaces what is here whole; only what this machine
-knows of it on its own stays: the version an agent last answered with, and an
-OAuth sign-in to an unchanged connection. A downloaded agent is resolved for
-this platform from a fresh registry read.
+knows of it on its own stays, as its owner decides: the version an agent last
+answered with, and an OAuth sign-in to an unchanged connection. A downloaded
+agent is resolved for this platform from a fresh registry read, and its way
+back is the exporting machine's build, so it stays there.
 
 Agents and MCP servers are deliberately global-only. The risk this guards —
 a production-access MCP server silently following a user between repos — is

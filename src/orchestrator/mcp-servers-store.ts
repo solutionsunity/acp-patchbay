@@ -10,6 +10,7 @@
 // injected OAuthUserAgent, so everything is unit-testable against a fake
 // OAuth provider and a fake remote MCP endpoint — the same fixture
 // philosophy as the fake ACP agent.
+import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { EnvVariable, McpServer, McpServerStdio } from "@agentclientprotocol/sdk";
 import { z } from "zod";
@@ -452,6 +453,11 @@ export class McpServersStore {
     return entry === undefined ? undefined : JSON.stringify(entry, null, 2);
   }
 
+  /** The server's name, read now — undefined once removed. */
+  name(patchbayMcpServerId: PatchbayMcpServerId): string | undefined {
+    return this.configs.get(patchbayMcpServerId)?.name;
+  }
+
   /** Copy config: the server as a `{"mcpServers": {name: entry}}`
    * document — the well-known shape an import reads and other clients
    * take. Keyed by display name — the name a re-import gives the server.
@@ -762,21 +768,54 @@ export class McpServersStore {
     }
     if ("command" in spec.data) {
       await this.envStore.set(patchbayMcpServerId, spec.data.env);
-      await this.configs.upsert({
-        ...existing,
-        source: { kind: "custom-stdio", command: spec.data.command, args: spec.data.args },
-      });
-    } else {
-      if (spec.data.authType === "header") {
-        if (spec.data.token) await this.tokens.set(patchbayMcpServerId, { accessToken: spec.data.token });
-        else await this.tokens.remove(patchbayMcpServerId);
-      }
-      await this.configs.upsert({
-        ...existing,
-        source: customHttpSource(spec.data),
-      });
+    } else if (spec.data.authType === "header") {
+      if (spec.data.token) await this.tokens.set(patchbayMcpServerId, { accessToken: spec.data.token });
+      else await this.tokens.remove(patchbayMcpServerId);
     }
+    // A save doesn't wait for the server's line: one removed while its
+    // secrets were written stays removed, and takes them with it.
+    const now = this.configs.get(patchbayMcpServerId);
+    if (now === undefined) {
+      await this.tokens.remove(patchbayMcpServerId);
+      await this.envStore.remove(patchbayMcpServerId);
+      return;
+    }
+    await this.configs.upsert({
+      ...now,
+      source:
+        "command" in spec.data
+          ? { kind: "custom-stdio", command: spec.data.command, args: spec.data.args }
+          : customHttpSource(spec.data),
+    });
     await this.refresh();
+  }
+
+  /** An imported server landed on this machine, whole, on `record.id` — its
+   * env and header key as the file carries them. A sign-in is this
+   * machine's own: it stays with a server whose connection is unchanged,
+   * and goes with one that moved. Returns the name it holds here: a taken
+   * one gets a number. */
+  async landImported(record: McpServerConfig, secret: { env?: Readonly<Record<string, string>>; key?: string } | undefined): Promise<string> {
+    const mine = this.configs.get(record.id);
+    let name = record.name;
+    if (mine === undefined) name = await this.configs.add(record);
+    else await this.configs.upsert(record);
+    await this.envStore.set(record.id, { ...secret?.env });
+    const auth = authTypeOf(record.source);
+    const keepsSignIn = auth === "oauth" && mine !== undefined && isDeepStrictEqual(mine.source, record.source);
+    if (auth === "header" && secret?.key !== undefined) await this.tokens.set(record.id, { accessToken: secret.key });
+    else if (!keepsSignIn) await this.tokens.remove(record.id);
+    return name;
+  }
+
+  /** Every server's facts gone — the erase. Secrets first, while the
+   * records still key them; then the records whole. */
+  async eraseAll(): Promise<void> {
+    for (const { id } of this.configs.list()) {
+      await this.envStore.remove(id);
+      await this.tokens.remove(id);
+    }
+    await this.configs.wipe();
   }
 
   /** Disconnect *is* remove — the full clear (credential + env + config):

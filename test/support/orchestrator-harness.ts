@@ -11,7 +11,15 @@ import { applyFileWrite } from "../../src/orchestrator/client-host";
 import { nullLogger } from "../../src/orchestrator/logger";
 import { Orchestrator, type OrchestratorPorts } from "../../src/orchestrator/orchestrator";
 import { MemoryKV } from "../../src/orchestrator/stores/kv";
-import { MemorySecrets } from "../../src/orchestrator/stores/mcp-server-tokens";
+import { AgentConfigStore } from "../../src/orchestrator/stores/agent-configs";
+import { AuthLockStore } from "../../src/orchestrator/stores/auth-locks";
+import { ComposerKnobsStore } from "../../src/orchestrator/stores/composer-knobs";
+import { UsedCapabilityStore } from "../../src/orchestrator/stores/used-capabilities";
+import { McpServerConfigStore } from "../../src/orchestrator/stores/mcp-server-configs";
+import { McpServerTokenStore, MemorySecrets } from "../../src/orchestrator/stores/mcp-server-tokens";
+import { SecretEnvStore } from "../../src/orchestrator/stores/secret-env";
+import { SessionFilesStore } from "../../src/orchestrator/stores/session-files";
+import { SECRET_FAMILIES } from "../../src/orchestrator/stores/storage-keys";
 import type { PatchbayAgentId } from "../../src/shared/ids";
 import type { AgentConfigView, AgentViewEvent, AgentViewState, HostToView, SettingsEvent, SettingsState } from "../../src/shared/protocol";
 import { atTestEnd, stopsAtTestEnd } from "./teardown";
@@ -42,6 +50,18 @@ export interface OrchestratorHarness {
   pinned: Set<string>;
   /** Where the orchestrator keeps what it stores on disk. */
   paths: { globalStorage: string; workspaceStorage: string };
+  /** The machine's stored facts as its storage holds them — what was there
+   * before the test, and what landed. */
+  stores: {
+    agentConfigs: AgentConfigStore;
+    agentEnv: SecretEnvStore;
+    authLocks: AuthLockStore;
+    mcpServerConfigs: McpServerConfigStore;
+    mcpServerTokens: McpServerTokenStore;
+    sessionFiles: SessionFilesStore;
+    usedCapabilities: UsedCapabilityStore;
+    composerKnobs: ComposerKnobsStore;
+  };
   /** Every free-check probe the orchestrator opened, in order: the
    * session/new each agent was sent in its probe root. */
   probes: { patchbayAgentId: PatchbayAgentId; sessionId: string }[];
@@ -57,6 +77,8 @@ export interface OrchestratorHarnessOptions {
   machineKV?: MemoryKV;
   /** This workspace's storage — likewise. */
   workspaceKV?: MemoryKV;
+  /** This machine's secret storage — likewise. */
+  secrets?: MemorySecrets;
   /** The folder the window works in — absent, `cwd`. */
   workspace?: string;
   workspaceRoots?: readonly string[];
@@ -137,11 +159,27 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
     warnCatch: (context, what) => (err) => note("warnCatch", context, what, err),
     ...opts.ports,
   };
+  const machineKV = opts.machineKV ?? new MemoryKV();
+  const secrets = opts.secrets ?? new MemorySecrets();
+  // What this machine holds, as its files and secret storage hold it — for a
+  // test to set up what was already there, and to read what landed. The
+  // orchestrator's owners hold their own copies of these stores; both read
+  // the same storage.
+  const stores = {
+    agentConfigs: new AgentConfigStore(machineKV),
+    agentEnv: new SecretEnvStore(secrets, SECRET_FAMILIES.agent),
+    authLocks: new AuthLockStore(machineKV),
+    mcpServerConfigs: new McpServerConfigStore(machineKV),
+    mcpServerTokens: new McpServerTokenStore(secrets),
+    sessionFiles: new SessionFilesStore(join(paths.globalStorage, "session-files")),
+    usedCapabilities: new UsedCapabilityStore(machineKV),
+    composerKnobs: new ComposerKnobsStore(machineKV),
+  };
   const orchestrator = new Orchestrator(
     {
-      machineKV: opts.machineKV ?? new MemoryKV(),
+      machineKV,
       workspaceKV: opts.workspaceKV ?? new MemoryKV(),
-      secrets: new MemorySecrets(),
+      secrets,
       globalStoragePath: paths.globalStorage,
       storagePath: paths.workspaceStorage,
       workspaceCwd: workspace,
@@ -178,8 +216,8 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
     return opened;
   };
   const saveAgent = async (config: AgentConfigView) => {
-    await orchestrator.agentEnv.set(config.id, { ...config.env });
-    await orchestrator.agentConfigs.upsert({
+    await stores.agentEnv.set(config.id, { ...config.env });
+    await stores.agentConfigs.upsert({
       id: config.id,
       name: config.name,
       command: config.command,
@@ -202,6 +240,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
     workspaceRoots,
     pinned,
     paths,
+    stores,
     probes,
     saveAgent,
   };

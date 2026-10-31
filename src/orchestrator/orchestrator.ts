@@ -48,6 +48,7 @@ import { sessionOwner, type SessionOwner } from "./session-owner";
 import { PermissionBroker } from "./broker";
 import { ClientHost, clientRequestHooks } from "./client-host";
 import { readConfiguration, type ConfigurationRead } from "./config-import";
+import { exportConfiguration, type ConfigurationFile } from "./config-export";
 import { applyImport, type ImportOutcome } from "./config-import-apply";
 import { localConfiguration, planImport, type ImportPlan } from "./config-import-plan";
 import { commandFound } from "./spawn-resolve";
@@ -65,7 +66,7 @@ import { elicitationResponseOf, formFieldsOf, type ElicitationScope } from "./re
 import { AgentPool } from "./pool";
 import { agentErrorText, authRequiredReasonOf } from "./readers/agent-error";
 import { Cancelled, Queue } from "./queue";
-import type { McpServerWork } from "../shared/protocol";
+import type { AgentUpdate, ExportPart, McpServerWork } from "../shared/protocol";
 import { type AttachWork, SessionGates } from "./session-gates";
 import { SessionsStore, type SessionConnectionOperations } from "./sessions-store";
 import { WireLog } from "./wire-log";
@@ -181,17 +182,18 @@ export class Orchestrator {
   readonly decisionAudit: DecisionAuditStore;
   readonly lastConnected: LastConnectedStore;
   private readonly defaultAgentFold: DefaultAgentFoldStore;
-  readonly lastActiveSession: LastActiveSessionStore;
-  readonly agentConfigs: AgentConfigStore;
-  readonly mcpServerConfigs: McpServerConfigStore;
-  readonly usedCapabilities: UsedCapabilityStore;
+  private readonly lastActiveSession: LastActiveSessionStore;
+  private readonly agentConfigs: AgentConfigStore;
+  private readonly mcpServerConfigs: McpServerConfigStore;
+  private readonly usedCapabilities: UsedCapabilityStore;
   /** Standing auth locks (auth-evidence.ts) — persisted so reload and
-   * reconnect cannot launder a witnessed logout. Written only by the agents
-   * store's noteAuthEvidence, the one auth-state writer. */
-  readonly authLocks: AuthLockStore;
+   * reconnect cannot launder a witnessed logout. The agents store owns
+   * them: noteAuthEvidence is the one writer of a lock's transitions, and
+   * an agent's removal or the erase purges it. */
+  private readonly authLocks: AuthLockStore;
   readonly spawnRegistry: SpawnRegistryStore;
-  readonly agentEnv: SecretEnvStore;
-  readonly mcpServerEnv: SecretEnvStore;
+  private readonly agentEnv: SecretEnvStore;
+  private readonly mcpServerEnv: SecretEnvStore;
   readonly acpRegistry: AcpRegistryStore;
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
@@ -199,12 +201,12 @@ export class Orchestrator {
   readonly workspaceSavedRoots: SavedRootsStore;
   readonly machineSavedRoots: SavedRootsStore;
   readonly preferences: PreferencesStore;
-  readonly composerKnobs: ComposerKnobsStore;
-  readonly sessionContinuity: SessionContinuityStore;
-  readonly sessionFiles: SessionFilesStore;
+  private readonly composerKnobs: ComposerKnobsStore;
+  private readonly sessionContinuity: SessionContinuityStore;
+  private readonly sessionFiles: SessionFilesStore;
   /** The updates already announced this window ("patchbayAgentId@version") — each
    * newer version is told once. */
-  readonly announcedUpdates = new Set<string>();
+  private readonly announcedUpdates = new Set<string>();
   readonly pool: AgentPool;
   /** The agents store without its connection operations — those are
    * reached only through the gates. */
@@ -218,7 +220,7 @@ export class Orchestrator {
   readonly defaultsEditor: DefaultsEditor;
   readonly broker: PermissionBroker;
   readonly asks: AsksStore;
-  readonly mcpServerTokens: McpServerTokenStore;
+  private readonly mcpServerTokens: McpServerTokenStore;
   /** The MCP-servers store without the operations that take time — those
    * are reached only through the MCP gates. */
   readonly mcpServers: Omit<McpServersStore, keyof McpServerLineOperations>;
@@ -793,21 +795,55 @@ export class Orchestrator {
       .finally(() => this.agentView.emit({ kind: "startupSettled" }));
   }
 
+  /** Export: the picked parts read fresh from the stores, beside the
+   * secrets their records name (config-export.ts). */
+  exportConfiguration(parts: readonly ExportPart[]): Promise<ConfigurationFile> {
+    return exportConfiguration(new Set(parts), {
+      entries: [
+        this.agentConfigs,
+        this.composerKnobs,
+        this.mcpServerConfigs,
+        this.preferences,
+        this.machinePermissionRules,
+        this.machineWriteScope,
+        this.machineSavedRoots,
+      ],
+      agents: {
+        ids: () => this.agentConfigs.list().map((c) => c.id),
+        env: (id) => this.agentEnv.get(id),
+      },
+      mcpServers: {
+        ids: () => this.mcpServerConfigs.list().map((c) => c.id),
+        env: (id) => this.mcpServerEnv.get(id),
+        headerKey: (id) => this.mcpServers.headerKey(id as PatchbayMcpServerId),
+      },
+    });
+  }
+
+  /** The updates not yet told this window — each newer version is told
+   * once, so these are now counted as told. */
+  updatesToAnnounce(): [PatchbayAgentId, AgentUpdate][] {
+    const fresh = [...this.agents.updates()].filter(([patchbayAgentId, u]) => !this.announcedUpdates.has(`${patchbayAgentId}@${u.to}`));
+    for (const [patchbayAgentId, u] of fresh) this.announcedUpdates.add(`${patchbayAgentId}@${u.to}`);
+    return fresh;
+  }
+
+  /** The agent of the session the last-open pointer names, if any. */
+  lastActiveAgent(): PatchbayAgentId | undefined {
+    return this.lastActiveSession.get()?.patchbayAgentId;
+  }
+
   /** "Disconnect & erase all data": everything stopped, the erase sweep
-   * (erase-all.ts owns the ordering constraint), everything republished —
+   * (each owner erases its own facts, secrets first), everything republished —
    * empty. Never automatic; the Settings action is the only caller. */
   async eraseEverything(): Promise<void> {
     this.log.info("erase all data: stopping every process");
     await this.stopEverything();
     await eraseAllData({
-      agentConfigs: this.agentConfigs,
-      mcpServerConfigs: this.mcpServerConfigs,
-      usedCapabilities: this.usedCapabilities,
-      authLocks: this.authLocks,
+      agents: this.agents,
+      mcpServers: this.mcpServers,
+      sessions: this.sessions,
       spawnRegistry: this.spawnRegistry,
-      agentEnv: this.agentEnv,
-      mcpServerEnv: this.mcpServerEnv,
-      mcpServerTokens: this.mcpServerTokens,
       permissionRules: this.permissionRules,
       machineRules: this.machinePermissionRules,
       machineWriteScope: this.machineWriteScope,
@@ -816,9 +852,6 @@ export class Orchestrator {
       lastConnected: this.lastConnected,
       defaultAgentFold: this.defaultAgentFold,
       preferences: this.preferences,
-      composerKnobs: this.composerKnobs,
-      sessionContinuity: this.sessionContinuity,
-      sessionFiles: this.sessionFiles,
       workspaceSavedRoots: this.workspaceSavedRoots,
       machineSavedRoots: this.machineSavedRoots,
       tempStashes: {
@@ -890,17 +923,12 @@ export class Orchestrator {
       // Planned again against what the stores hold now: the review showed
       // the machine as it was when the file was read.
       outcome = await applyImport(pending.read, await this.importPlan(pending.read), new Set(take), {
-        agentConfigs: this.agentConfigs,
-        agentEnv: this.agentEnv,
-        composerKnobs: this.composerKnobs,
-        mcpServerConfigs: this.mcpServerConfigs,
-        mcpServerEnv: this.mcpServerEnv,
-        mcpServerTokens: this.mcpServerTokens,
+        agents: this.agents,
+        mcpServers: this.mcpServers,
         preferences: this.preferences,
         machineRules: this.machinePermissionRules,
         machineWriteScope: this.machineWriteScope,
         machineSavedRoots: this.machineSavedRoots,
-        resolveHere: (patchbayAgentId) => this.agents.resolveHere(patchbayAgentId),
       });
     } catch (err) {
       // Whatever landed before it stopped stays, and the restart still runs.

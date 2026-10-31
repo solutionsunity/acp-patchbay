@@ -3,7 +3,7 @@
 // wholesale from session/load replay after a crash. Sessions are the
 // agent's truth: patchbay persists no index and no transcripts.
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,7 +75,8 @@ function harness(opts: Pick<OrchestratorHarnessOptions, "machineKV" | "workspace
     sessions: o.sessions,
     gates: o.sessionGates,
     capabilityTracker: o.capabilityTracker,
-    files: o.sessionFiles,
+    files: h.stores.sessionFiles,
+    stores: h.stores,
     events: () => [...took],
     state: h.agentView.state,
     settings: h.settings,
@@ -107,7 +108,7 @@ function logOut(h: Harness, patchbayAgentId: string): void {
 
 /** A login that went out after the lock: the evidence that clears it. */
 function logIn(h: Harness, patchbayAgentId: string): void {
-  const lockedAt = Date.parse(h.orchestrator.authLocks.lockFor(patchbayAgentId as PatchbayAgentId)!.at);
+  const lockedAt = Date.parse(h.stores.authLocks.lockFor(patchbayAgentId as PatchbayAgentId)!.at);
   h.orchestrator.agents.noteAuthWireFact(patchbayAgentId as PatchbayAgentId, methods.agent.authenticate, "ok", new Date(lockedAt + 1).toISOString());
 }
 
@@ -153,6 +154,19 @@ describe("SessionsStore", () => {
   // while the store re-applies by its own fact — the two disagreed on a
   // session whose transcript wasn't loaded yet. The row now carries the
   // store's fact, and one reading decides from it on both sides.
+  it("the erase takes every session's saved facts and the files it was given (#135)", async () => {
+    const kv = new MemoryKV();
+    const h = harness({ machineKV: kv });
+    await h.connect(spec({}, "er1"));
+    const patchbaySessionId = await h.gates.create("er1" as PatchbayAgentId, "Fake Agent", cwd);
+    await h.gates.prompt(patchbaySessionId, { text: "keep me" });
+    const file = await h.files.put("er1" as PatchbayAgentId, h.sessions.sessionIdOf(patchbaySessionId)!, cwd, "chip-1.png", "cG5n");
+    await h.sessions.eraseAll();
+    await expect(stat(file)).rejects.toThrow();
+    expect(new SessionContinuityStore(kv).list()).toEqual([]);
+    await h.pool.stop("er1" as PatchbayAgentId);
+  });
+
   // New chat on an empty session whose connection died revives that row —
   // and the pane waited for a sessionCreated a revive never sends.
   it("a New chat that revives the agent's empty session closes its connect pane (#135)", async () => {
@@ -3375,7 +3389,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
    * through, and each token an attach's composition was handed. */
   async function composed() {
     const h = harness();
-    const configs = h.orchestrator.mcpServerConfigs;
+    const configs = h.stores.mcpServerConfigs;
     const routed = { routing: "auto", active: true, transport: "auto" } as const;
     await configs.upsert({ id: "remote" as PatchbayMcpServerId, name: "Remote", source: { kind: "custom-http", url: "http://127.0.0.1:9/mcp", authType: "none", headerName: "Authorization", valuePrefix: "Bearer " }, ...routed });
     await configs.upsert({ id: "local" as PatchbayMcpServerId, name: "Local", source: { kind: "custom-stdio", command: process.execPath, args: [] }, ...routed });
