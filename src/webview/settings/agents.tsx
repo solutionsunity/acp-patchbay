@@ -541,7 +541,7 @@ export function AgentsSection(props: {
   // Opening is derived here; collapse is the gear click; unmount releases
   // whatever is still open.
   const editingIds = Object.keys(openDetails)
-    .filter((id) => openDetails[id] && state.agents.find((a) => a.id === id)?.status === "running")
+    .filter((id) => openDetails[id] && agentCardControls({ agent: state.agents.find((a) => a.id === id), config: undefined }).knobs.editable)
     .join("\n");
   const onEditDefaults = useRef(props.onEditDefaults);
   onEditDefaults.current = props.onEditDefaults;
@@ -795,7 +795,7 @@ export function AgentsSection(props: {
                       <Icon name="cloud-download" /> {a.detail}
                     </div>
                   )}
-                  {status === "crashed" && (
+                  {controls.restart.show && (
                     <div className="note crashed-note mt-1.5">
                       <Icon name="warning" /> crashed{a?.detail !== undefined ? ` — ${a.detail}` : ""}
                       <Button variant="outline" size="sm" className="ml-2" onClick={() => props.onRestart(patchbayAgentId)}>
@@ -837,7 +837,7 @@ export function AgentsSection(props: {
                         checked={effectiveConfig.autoConnect}
                         onChange={(v) => saveConfig({ autoConnect: v })}
                       />
-                      {status !== "running" ? (
+                      {!controls.knobs.editable ? (
                         // Offerings are connection state — no connection, no list
                         // to render, only the stored selections stated as text.
                         <StoredDefaultsLine defaults={effectiveConfig.defaults} />

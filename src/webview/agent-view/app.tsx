@@ -6,6 +6,7 @@
 // drawers overlay from the top. Render-only: the shell owns only local UI
 // furniture (which drawer is open, the toast); components own their markup
 // and send their own actions; everything durable comes from snapshots.
+import { restartOffered } from "../shared/agent-work";
 import { useMemo, useState } from "react";
 import { attaching, type AgentViewState, type UserBlock } from "../../shared/protocol";
 import { elsewhere, sessionMark, waitingOn } from "../../shared/attention";
@@ -138,7 +139,7 @@ export function App({
           reloading={attaching(active)}
         />
       )}
-      {activeAgent !== null && activeAgent.status === "crashed" && (
+      {activeAgent !== null && restartOffered(activeAgent) && (
         <div className="crash-banner">
           <Icon name="warning" /> {activeAgent.name} crashed
           {activeAgent.detail !== undefined ? ` — ${activeAgent.detail}` : ""}

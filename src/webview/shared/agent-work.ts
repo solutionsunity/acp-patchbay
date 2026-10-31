@@ -51,6 +51,12 @@ function movingText(work: VersionWork): string {
   }
 }
 
+/** A crashed agent is offered its Restart — wherever it shows: the Agent
+ * View's banner, its Settings card. */
+export function restartOffered(agent: AgentSummary | null | undefined): boolean {
+  return agent?.status === "crashed";
+}
+
 /** The in-progress pane's line: while the chat waits on its agent, what
  * the agent's queue runs now — with the launch phase while its process
  * starts; once the agent runs, the chat itself being opened (a running

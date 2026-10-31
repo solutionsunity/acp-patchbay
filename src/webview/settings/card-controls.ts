@@ -9,7 +9,7 @@
 // predicates, which is how the logout regressions happened.
 import { processUp, type AgentConfigView, type AgentSummary, type AgentWork, type AuthMethodView } from "../../shared/protocol";
 import { agentOffers } from "../../shared/agent-offers";
-import { versionChip, type VersionChip } from "../shared/agent-work";
+import { restartOffered, versionChip, type VersionChip } from "../shared/agent-work";
 
 export interface AgentCardInputs {
   /** The orchestrator's row — its matrix, auth methods, update fact and
@@ -41,6 +41,12 @@ export interface AgentCardControls {
   menu: { show: boolean };
   edit: { show: boolean };
   remove: { show: boolean; busy: boolean };
+  /** The crash note's Restart. */
+  restart: { show: boolean };
+  /** The default knobs are edited against what the agent offers — only
+   * while it runs (offerings are connection state); otherwise the card
+   * states what is saved. */
+  knobs: { editable: boolean };
 }
 
 /** The wire's runnable subset — "agent"-kind (`authenticate`),
@@ -105,6 +111,8 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     goBack: { show: offers.goBack, to: previousVersion, disabled: working },
     menu: { show: offers.reset || offers.goBack },
     edit: { show: true },
+    restart: { show: restartOffered(agent) },
+    knobs: { editable: running },
     remove: { show: config !== undefined, busy: holds("remove") },
   };
 }

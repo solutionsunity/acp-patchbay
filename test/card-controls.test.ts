@@ -233,6 +233,16 @@ describe("agentCardControls", () => {
     expect([transient.reset.show, transient.goBack.show, transient.menu.show]).toEqual([false, false, false]);
   });
 
+  // Both were inline in the card's render (#135).
+  it("Restart is offered on a crash, and the knobs are editable only while the agent runs", () => {
+    expect(agentCardControls(inputs({ agent: summary({ status: "crashed" }) })).restart.show).toBe(true);
+    expect(agentCardControls(inputs({ agent: summary({ status: "stopped" }) })).restart.show).toBe(false);
+    expect(agentCardControls(inputs()).knobs.editable).toBe(true);
+    for (const status of ["stopped", "crashed", "reconnecting", "untested"] as const) {
+      expect(agentCardControls(inputs({ agent: summary({ status }) })).knobs.editable).toBe(false);
+    }
+  });
+
   // The invariant no inline predicate ever enforced: across the whole
   // state matrix, login and logout are never both shown.
   it("login/logout exclusivity holds across the state matrix", () => {
