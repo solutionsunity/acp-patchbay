@@ -75,6 +75,11 @@ export default tseslint.config(
       "no-restricted-globals": [
         "error",
         { name: "fetch", message: "network calls go through net.ts (readJson, readBytes, exchange)" },
+        // A webview renders; what lasts lives in the extension host's stores.
+        ...["localStorage", "sessionStorage", "indexedDB"].map((name) => ({
+          name,
+          message: "durable state lives in the extension host's stores — a webview holds render state only",
+        })),
       ],
       "no-restricted-properties": [
         "error",

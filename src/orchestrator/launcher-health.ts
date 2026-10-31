@@ -418,7 +418,7 @@ async function shortFailure(
  * @openai/codex). Entries are earned by verifying that mapping, never
  * guessed: claude-acp is absent because its adapter bundles the agent SDK,
  * not the claude CLI — no honest comparison exists. */
-const PATH_SIBLINGS: Readonly<Record<string, { bundledPkg: string; bin: string }>> = {
+export const PATH_SIBLINGS: Readonly<Record<string, { bundledPkg: string; bin: string }>> = {
   "codex-acp": { bundledPkg: "@openai/codex", bin: "codex" },
   gemini: { bundledPkg: "@google/gemini-cli", bin: "gemini" },
 };

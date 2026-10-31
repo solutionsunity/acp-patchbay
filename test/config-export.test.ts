@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { tempDir } from "./support/teardown";
 import {
   exportConfiguration,
+  STORED_KEYS,
   writeConfigurationFile,
   type ExportSources,
 } from "../src/orchestrator/config-export";
@@ -222,5 +223,23 @@ describe("configuration export", () => {
     await writeConfigurationFile(path, file);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(file);
+  });
+});
+
+// The Export card says what its Settings part carries — words a person
+// reads, so not composed from key names; held here instead to the export's
+// own key table: a key the part gains fails until the card names it.
+describe("the Export card's Settings part", () => {
+  it("names every stored key the part carries", async () => {
+    const said: Readonly<Record<string, string>> = {
+      [STORAGE_KEYS.preferences]: "preferences",
+      [STORAGE_KEYS.machineCommandRules]: "command rule",
+      [STORAGE_KEYS.machineWriteScope]: "file writes",
+      [STORAGE_KEYS.machineSavedRoots]: "saved root",
+    };
+    const carried = Object.entries(STORED_KEYS).flatMap(([key, fate]) => (fate === "settings" ? [key] : []));
+    expect(Object.keys(said).sort()).toEqual(carried.sort());
+    const card = await readFile(new URL("../src/webview/settings/import-export.tsx", import.meta.url), "utf8");
+    expect(Object.values(said).filter((words) => !card.includes(words))).toEqual([]);
   });
 });

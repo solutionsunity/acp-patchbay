@@ -59,6 +59,8 @@ describe("eraseAllData", () => {
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
     await workspaceSavedRoots.add("/src/lib");
     await machineSavedRoots.add("/src/odoo");
+    // the one key the erase keeps: the recovery would run again without it
+    await globalKv.update(STORAGE_KEYS.legacyStateRecovery, { at: "2026-07-21T00:00:00Z", outcome: "done", recoveredKeys: [] });
     let stashWiped = false;
 
     const erased: string[] = [];
@@ -73,6 +75,7 @@ describe("eraseAllData", () => {
     });
 
     expect(erased).toEqual(["agents", "mcpServers", "sessions"]);
+    expect(globalKv.get(STORAGE_KEYS.legacyStateRecovery)).toBeDefined();
 
     expect(stashWiped).toBe(true);
     expect(spawnRegistry.list()).toEqual([]);

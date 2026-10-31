@@ -15,7 +15,7 @@ what it's made of.
 | Element | Appearance | Meaning |
 |---|---|---|
 | Status dot | ● green (glow) / red / amber (pulsing) / gray / ○ hollow | agent running / crashed / reconnecting / stopped / untested (configured, never connected) |
-| Session mark | ● amber (pulsing) / green (pulsing) / blue | waiting on you / turn underway / finished while no visible surface showed it — one per session, most urgent first |
+| Session mark | ● amber (pulsing) / blue / green (pulsing) | waiting on you / finished while no visible surface showed it / turn underway — one per session, in the one order of marks — most urgent first |
 | Matrix states | ● / ◌ / — | used / declared but not used / not declared |
 | Lit (teal) | accent color on a chip or control | active or available *right now* (external root plugged, live selection exists) |
 | Toast | transient strip, bottom-center | confirmation of an action; never the only record (the audit holds the durable one) |
@@ -307,10 +307,9 @@ entry has, in the row's own text color · name · mechanism chips · Docs · `Co
 with the entry's one-line description dim underneath, whole — never truncated,
 never behind a hover), one row expanding at a time into its connect form — key
 paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— or run it
-locally —` (verified official local stdio servers — GitHub, Stripe, Sentry,
-Supabase, Augment, OdooSurface — prefill the custom form; nothing runs until the
-user adds it; an entry with no remote, OdooSurface, opens straight to `run it
-locally:`).
+locally —` (each catalog entry with a verified official local stdio server
+prefills the custom form; nothing runs until the user adds it; an entry with
+no remote opens straight to `run it locally:`).
 Per-account services label the URL field as what it is: the account's MCP endpoint,
 used by both connect paths. Every entry stays in the catalog: connecting one again
 adds a second server (two accounts). Every add names its server once — the
