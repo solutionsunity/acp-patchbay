@@ -230,6 +230,6 @@ describe("session/set_config_option", () => {
     expect(readConfigSet({}, note)).toEqual({});
     expect(readConfigSet("x", note)).toEqual({});
     expect(said).toHaveLength(2);
-    expect(readConfigSet({ configOptions: [] }, note)).toEqual({ configOptions: [] });
+    expect(readConfigSet({ configOptions: [] }, note)).toEqual({ options: [] });
   });
 });

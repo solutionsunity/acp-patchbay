@@ -24,12 +24,10 @@
 // spec-surface knob already owns is dropped; the spec surface is the
 // confirming one), and never learns any extension's shape, wire method, or
 // display policy.
-import { z } from "zod";
+import type { ModeState } from "./readers/config-options";
 import type {
   AgentKnobsView,
   KnobSeed,
-  SessionConfigSelectGroupView,
-  SessionConfigSelectValueView,
   SessionKnobView,
 } from "../shared/protocol";
 
@@ -73,198 +71,25 @@ export interface NormalizedKnobs {
 
 export const NO_KNOBS: NormalizedKnobs = { surface: "none", knobs: [] };
 
-/** Where a sanitizer reports what it dropped — the caller's logger, absent
- * in pure contexts (tests). Dropping stays honest either way: the raw wire
- * frame is already in the wire log when the tap is on. */
-type DropLog = (message: string) => void;
-
-// ── trust-boundary guards ───────────────────────────────────────────────────
-// Session responses (session/new, /load, /resume, set_config_option) reach
-// this module unvalidated — the SDK checks outgoing request params only, so
-// modes/configOptions here are agent-supplied claims, not facts. Validate
-// and degrade, never crash: a malformed or unrecognized entry (the unstable
-// surface explicitly allows new variants) drops to a logged skip and the
-// rest of the knob surface survives. Degrade granularity mirrors the spec
-// schema's own deserialize guidance: structural fields drop the entry,
-// annotation fields (description, category) default to absent.
-
-const selectValueSchema = z.object({
-  value: z.string(),
-  name: z.string(),
-  description: z.string().nullish().catch(undefined),
-});
-
-const selectGroupSchema = z.object({
-  group: z.string(),
-  name: z.string(),
-  options: z.array(z.unknown()),
-});
-
-const optionCommon = {
-  id: z.string(),
-  name: z.string(),
-  description: z.string().nullish().catch(undefined),
-  category: z.string().nullish().catch(undefined),
-};
-
-const selectOptionSchema = z.object({
-  ...optionCommon,
-  type: z.literal("select"),
-  currentValue: z.string(),
-  options: z.array(z.unknown()),
-});
-
-const booleanOptionSchema = z.object({
-  ...optionCommon,
-  type: z.literal("boolean"),
-  currentValue: z.boolean(),
-});
-
-const modeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string().nullish().catch(undefined),
-});
-
-const modeStateSchema = z.object({
-  currentModeId: z.string(),
-  availableModes: z.array(z.unknown()),
-});
-
-function idOf(value: unknown): string {
-  if (typeof value === "object" && value !== null && "id" in value) {
-    return `"${String((value as { id: unknown }).id)}"`;
-  }
-  return "<unshaped>";
-}
-
-/** A select option's offered values: value entries or group entries, each
- * guarded singly. The wire type is homogeneous (all values or all groups);
- * on a malformed mix the parseable entries of the first-seen shape win. */
-function sanitizeSelectOptions(
-  entries: readonly unknown[],
-  optionId: string,
-  log?: DropLog,
-): readonly SessionConfigSelectValueView[] | readonly SessionConfigSelectGroupView[] {
-  const values: SessionConfigSelectValueView[] = [];
-  const groups: SessionConfigSelectGroupView[] = [];
-  for (const entry of entries) {
-    const group = selectGroupSchema.safeParse(entry);
-    if (group.success) {
-      groups.push({
-        group: group.data.group,
-        name: group.data.name,
-        options: sanitizeSelectOptions(group.data.options, optionId, log) as SessionConfigSelectValueView[],
-      });
-      continue;
-    }
-    const value = selectValueSchema.safeParse(entry);
-    if (value.success) {
-      values.push({
-        value: value.data.value,
-        name: value.data.name,
-        description: value.data.description ?? undefined,
-      });
-      continue;
-    }
-    log?.(`knobs: dropped malformed select entry on config option ${optionId}`);
-  }
-  return groups.length > 0 ? groups : values;
-}
-
-/** One config option through the union guard — null (logged) when it fits
- * no known variant. */
-function sanitizeConfigOption(raw: unknown, log?: DropLog): SessionKnobView | null {
-  const bool = booleanOptionSchema.safeParse(raw);
-  if (bool.success) {
-    const o = bool.data;
-    return {
-      id: o.id,
-      name: o.name,
-      description: o.description ?? undefined,
-      category: o.category ?? undefined,
-      type: "boolean",
-      currentValue: o.currentValue,
-    };
-  }
-  const select = selectOptionSchema.safeParse(raw);
-  if (select.success) {
-    const o = select.data;
-    return {
-      id: o.id,
-      name: o.name,
-      description: o.description ?? undefined,
-      category: o.category ?? undefined,
-      type: "select",
-      currentValue: o.currentValue,
-      options: sanitizeSelectOptions(o.options, `"${o.id}"`, log),
-    };
-  }
-  log?.(`knobs: dropped malformed or unrecognized config option ${idOf(raw)}`);
-  return null;
-}
-
-function sanitizeConfigOptions(raw: unknown, log?: DropLog): SessionKnobView[] {
-  if (raw == null) return [];
-  if (!Array.isArray(raw)) {
-    log?.("knobs: configOptions is not an array — surface ignored");
-    return [];
-  }
-  return raw.map((o) => sanitizeConfigOption(o, log)).filter((k) => k !== null);
-}
-
-/** The modes surface through the guard: malformed wholesale → absent (the
- * fallback simply doesn't exist this attach); malformed individual modes
- * drop singly. */
-function sanitizeModes(
-  raw: unknown,
-  log?: DropLog,
-): { currentModeId: string; modes: SessionConfigSelectValueView[] } | null {
-  if (raw == null) return null;
-  const state = modeStateSchema.safeParse(raw);
-  if (!state.success) {
-    log?.("knobs: malformed modes state — surface ignored");
-    return null;
-  }
-  const modes: SessionConfigSelectValueView[] = [];
-  for (const entry of state.data.availableModes) {
-    const mode = modeSchema.safeParse(entry);
-    if (!mode.success) {
-      log?.(`knobs: dropped malformed mode entry ${idOf(entry)}`);
-      continue;
-    }
-    modes.push({
-      value: mode.data.id,
-      name: mode.data.name,
-      description: mode.data.description ?? undefined,
-    });
-  }
-  return { currentModeId: state.data.currentModeId, modes };
-}
-
 /** The one entry point for a session response's knob surface
- * (session/new, /load, /resume). Exclusivity applies to modes/config here;
- * extension-owned extras are independent axes folded in afterward.
- * Inputs are `unknown` on purpose: response fields are agent-supplied and
- * unvalidated until the guards above run. */
+ * (session/new, /load, /resume), over what its reader read
+ * (readers/config-options.ts). Exclusivity applies to modes/config here;
+ * extension-owned extras are independent axes folded in afterward. */
 export function normalizeKnobs(
-  modes: unknown,
-  configOptions: unknown,
+  modeState: ModeState | null,
+  options: readonly SessionKnobView[],
   extras?: readonly KnobExtra[],
-  log?: DropLog,
 ): NormalizedKnobs {
-  return withExtras(baseKnobs(modes, configOptions, log), extras);
+  return withExtras(baseKnobs(modeState, options), extras);
 }
 
-function baseKnobs(modes: unknown, configOptions: unknown, log?: DropLog): NormalizedKnobs {
+function baseKnobs(modeState: ModeState | null, options: readonly SessionKnobView[]): NormalizedKnobs {
   // Exclusivity decides on the *valid* list: an all-malformed configOptions
   // array offers nothing to set, so the modes fallback (if intact) still
   // yields a usable surface instead of an empty config one.
-  const options = sanitizeConfigOptions(configOptions, log);
   if (options.length > 0) {
-    return { surface: "config", knobs: options };
+    return { surface: "config", knobs: [...options] };
   }
-  const modeState = sanitizeModes(modes, log);
   if (modeState !== null) {
     return {
       surface: "modes",
@@ -324,16 +149,11 @@ export function withKnobValue(current: NormalizedKnobs, knobId: string, value: s
  * standing state so accepted extras survive: they ride the session response,
  * not config updates — a config replace must not silently drop an
  * extension's independent axis. */
-export function applyConfigUpdate(
-  configOptions: unknown,
-  prior?: NormalizedKnobs,
-  log?: DropLog,
-): NormalizedKnobs {
-  const options = sanitizeConfigOptions(configOptions, log);
+export function applyConfigUpdate(options: readonly SessionKnobView[], prior?: NormalizedKnobs): NormalizedKnobs {
   // An empty config list offers nothing to set: a modes surface stands —
   // the same exclusivity rule a session response's reading applies.
   if (options.length === 0 && prior?.surface === "modes") return prior;
-  return withExtras({ surface: "config", knobs: options }, prior?.extras);
+  return withExtras({ surface: "config", knobs: [...options] }, prior?.extras);
 }
 
 /** A `current_mode_update` notification. Only meaningful on the modes
@@ -405,7 +225,7 @@ export interface KnobWire {
     sessionId: string,
     configId: string,
     value: string | boolean,
-  ): Promise<{ configOptions?: unknown }>;
+  ): Promise<{ options?: readonly SessionKnobView[] }>;
   /** Raw sender for extension-owned methods (pool.unstableRequest bound). */
   send: KnobExecuteDeps["send"];
 }
@@ -428,7 +248,6 @@ export async function performKnobSet(
   current: () => NormalizedKnobs,
   route: KnobSetRoute,
   value: string | boolean,
-  log?: DropLog,
 ): Promise<NormalizedKnobs | null> {
   if (route.via === "setMode") {
     await wire.setMode(sessionId, route.modeId);
@@ -440,8 +259,8 @@ export async function performKnobSet(
   const response = await wire.setConfigOption(sessionId, route.configId, value);
   // An answer without its required surface says nothing of the new state —
   // display waits for the agent's own update, as for set_mode.
-  if (response.configOptions === undefined) return null;
-  return applyConfigUpdate(response.configOptions, current(), log);
+  if (response.options === undefined) return null;
+  return applyConfigUpdate(response.options, current());
 }
 
 /** Whether the surface already reads back this seed entry. */

@@ -707,9 +707,6 @@ export class SessionsStore {
     this.stream.emitter(patchbaySessionId)({ kind: "transcriptSeeded", patchbaySessionId, blocks: [...blocks, marker] });
   }
 
-  /** Sanitizer report channel (knobs.ts guards) — dropped wire entries land
-   * in the Output channel, never a crash. */
-  private readonly knobDropLog = (message: string): void => this.log.info(message);
 
   /** A `session/load` with its replay window silenced: the reset and every replayed update
    * reduce into canonical state only — the old pane content stays up (no
@@ -1432,7 +1429,7 @@ export class SessionsStore {
     if (route.via === "setMode") session.userModeSetPending = true;
     let next: NormalizedKnobs | null;
     try {
-      next = await performKnobSet(this.knobWire(this.agentOfLive(patchbaySessionId)), sessionId, () => session.knobs, route, value, this.knobDropLog);
+      next = await performKnobSet(this.knobWire(this.agentOfLive(patchbaySessionId)), sessionId, () => session.knobs, route, value);
     } catch (err) {
       if (route.via === "setMode") session.userModeSetPending = false;
       throw err;
@@ -1526,7 +1523,7 @@ export class SessionsStore {
         const sessionId = this.known.get(patchbaySessionId)?.sessionId;
         if (!session || sessionId === undefined || signal?.aborted === true) return;
         try {
-          const next = await performKnobSet(this.knobWire(this.agentOfLive(patchbaySessionId)), sessionId, () => session.knobs, route, value, this.knobDropLog);
+          const next = await performKnobSet(this.knobWire(this.agentOfLive(patchbaySessionId)), sessionId, () => session.knobs, route, value);
           if (next !== null) this.publishKnobs(patchbaySessionId, next);
         } catch (err) {
           // a rejected seed entry — the agent's state stands, nothing to repair
@@ -2414,7 +2411,7 @@ export class SessionsStore {
         // the session response, not config updates.)
         this.publishKnobs(
           patchbaySessionId,
-          applyConfigUpdate(update.configOptions, session.knobs, this.knobDropLog),
+          applyConfigUpdate(update.options, session.knobs),
         );
         break;
       default:

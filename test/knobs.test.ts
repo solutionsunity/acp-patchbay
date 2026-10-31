@@ -6,20 +6,36 @@
 import { describe, expect, it } from "vitest";
 import type { SessionConfigOption, SessionModeState } from "@agentclientprotocol/sdk";
 import {
-  applyConfigUpdate,
+  applyConfigUpdate as applyTyped,
   applyModeUpdate,
   applySeedToFixedPoint,
   confirmedFromKnobs,
   MODE_KNOB_ID,
   NO_KNOBS,
-  normalizeKnobs,
+  normalizeKnobs as normalizeTyped,
   performKnobSet,
   routeKnobSet,
   withKnobValue,
   type KnobExtra,
   type KnobWire,
+  type NormalizedKnobs,
 } from "../src/orchestrator/knobs";
 import { toOfferedKnobs } from "../src/orchestrator/knobs";
+import { readConfigOptions, readModeState } from "../src/orchestrator/readers/config-options";
+
+// What arrives on the wire, read as its reader reads it and handed to the
+// normalizer — the two together, from raw agent values.
+const silent = () => {};
+function normalizeKnobs(
+  modes: unknown,
+  configOptions: unknown,
+  extras?: readonly KnobExtra[],
+  note: (what: string) => void = silent,
+): NormalizedKnobs {
+  const options = readConfigOptions(configOptions, note);
+  return normalizeTyped(options.length > 0 ? null : readModeState(modes, note), options, extras);
+}
+const applyConfigUpdate = (configOptions: unknown, prior?: NormalizedKnobs) => applyTyped(readConfigOptions(configOptions, silent), prior);
 
 const MODES: SessionModeState = {
   currentModeId: "ask",
@@ -250,7 +266,7 @@ describe("performKnobSet — one routed set, three wire paths", () => {
       setConfigOption: async (sessionId, configId, value) => {
         calls.push(`set_config_option ${sessionId} ${configId}=${String(value)}`);
         onConfigSet?.();
-        return response === undefined ? {} : { configOptions: response };
+        return response === undefined ? {} : { options: readConfigOptions(response, silent) };
       },
       send: async (method, params) => {
         calls.push(`${method} ${JSON.stringify(params)}`);

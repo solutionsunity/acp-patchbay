@@ -10,6 +10,8 @@
 import type { TurnUsage } from "../../shared/protocol";
 import { sessionKnobExtras } from "../extensions";
 import { normalizeKnobs, type NormalizedKnobs } from "../knobs";
+import type { SessionKnobView } from "../../shared/protocol";
+import { readConfigOptions, readModeState } from "./config-options";
 import type { Note } from "./notes";
 import { isString, record, structural } from "./wire-shape";
 
@@ -54,7 +56,8 @@ export interface TurnEndFact {
 /** session/set_config_option: the config surface the agent answered with,
  * in the knob normalizer's hands — absent when the answer carried none. */
 export interface ConfigSetFact {
-  configOptions?: unknown;
+  /** The complete config surface the agent answered with. */
+  options?: readonly SessionKnobView[];
 }
 
 export const readSessionOpened =
@@ -118,7 +121,7 @@ export function readConfigSet(raw: unknown, note: Note): ConfigSetFact {
     note("session/set_config_option: the answer carries no configOptions — the knobs stay as they were");
     return {};
   }
-  return { configOptions: r.configOptions };
+  return { options: readConfigOptions(r.configOptions, note) };
 }
 
 /** For answers patchbay reads nothing from (authenticate, logout, delete,
@@ -132,7 +135,10 @@ export function readNothing(): void {}
 function knobsOf(r: Record<string, unknown>, note: Note): NormalizedKnobs | undefined {
   const extras = sessionKnobExtras(r);
   if (r.modes == null && r.configOptions == null && extras.length === 0) return undefined;
-  return normalizeKnobs(r.modes, r.configOptions, extras, note);
+  // Modes are read only when no config option reads valid: config wins the
+  // whole surface, so a modes field it shadows says nothing.
+  const options = readConfigOptions(r.configOptions, note);
+  return normalizeKnobs(options.length > 0 ? null : readModeState(r.modes, note), options, extras);
 }
 
 /** Title, stamp and roots degrade to absent so one malformed field can never

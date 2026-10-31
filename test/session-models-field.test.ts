@@ -2,6 +2,7 @@
 // shapes captured live from auggie 0.32.0 (docs/acp-agents-notes/auggie.md
 // § Model selection rides a removed draft API). Tested through the compose
 // point (extensions/index.ts), the same import core uses.
+import { readConfigOptions, readModeState } from "../src/orchestrator/readers/config-options";
 import { describe, expect, it } from "vitest";
 import { sessionKnobExtras } from "../src/orchestrator/extensions";
 import { MODE_KNOB_ID, normalizeKnobs, routeKnobSet } from "../src/orchestrator/knobs";
@@ -50,7 +51,7 @@ describe("session-models-field extension", () => {
   });
 
   it("end-to-end through normalize: appends to modes, routes to itself, sends session/set_model, advances optimistically", async () => {
-    const n = normalizeKnobs(RESPONSE.modes, undefined, sessionKnobExtras(RESPONSE));
+    const n = normalizeKnobs(readModeState(RESPONSE.modes, () => {}), [], sessionKnobExtras(RESPONSE));
     expect(n.knobs.map((k) => k.id)).toEqual([MODE_KNOB_ID, "model"]);
     const route = routeKnobSet(n, "model", "claude-opus-4-8");
     if (route?.via !== "extension") throw new Error("expected extension route");
@@ -83,7 +84,7 @@ describe("session-models-field extension", () => {
     };
     // Even if a hypothetical agent sent BOTH surfaces, the spec one wins.
     const both = { ...claudeish, models: RESPONSE.models };
-    const n = normalizeKnobs(undefined, both.configOptions as never, sessionKnobExtras(both));
+    const n = normalizeKnobs(null, readConfigOptions(both.configOptions, () => {}), sessionKnobExtras(both));
     expect(n.knobs.filter((k) => k.id === "model")).toHaveLength(1);
     expect(routeKnobSet(n, "model", "default")).toEqual({ via: "setConfigOption", configId: "model" });
   });

@@ -132,7 +132,7 @@ describe("DefaultsEditor", () => {
     // the session embodies both: a fresh read of the fixture's state
     const sessionId = h.pool.get("order" as PatchbayAgentId)!.sessions[0]!;
     const r = await h.pool.setSessionConfigOption("order" as PatchbayAgentId, sessionId, "model", "pro");
-    expect((r.configOptions as { id: string; currentValue: unknown }[]).find((o) => o.id === "effort")?.currentValue).toBe("high");
+    expect(r.options?.find((o) => o.id === "effort")?.currentValue).toBe("high");
     await h.pool.stop("order" as PatchbayAgentId);
   });
 

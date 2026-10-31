@@ -7,8 +7,9 @@
 // carried — shown as the agent sent it, its payload in the raw view, and
 // noted — until a surface of its own is decided. Nothing an agent sends is
 // dropped without a word.
+import { readConfigOptions } from "./config-options";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import type { AvailableCommand, PlanEntry, PlanUsageInfo } from "../../shared/protocol";
+import type { AvailableCommand, PlanEntry, PlanUsageInfo, SessionKnobView } from "../../shared/protocol";
 import { planUsageOf } from "../meta";
 import { present, readContent, type ContentFact } from "./content";
 import type { Note } from "./notes";
@@ -29,7 +30,7 @@ export type SessionUpdateFact =
   | { kind: "mode"; currentModeId: string }
   /** The whole config surface, in the knob normalizer's hands (knobs.ts
    * owns that shape's reading). */
-  | { kind: "configOptions"; configOptions: unknown }
+  | { kind: "configOptions"; options: readonly SessionKnobView[] }
   /** A context compaction, by the agent's id for it. The spec's patch
    * rules: an absent field is unchanged; `summary` and `error` at `null`
    * clear (an empty summary clears too, read as `null`). */
@@ -83,7 +84,7 @@ export function readSessionUpdate(update: SessionUpdate, note: Note): SessionUpd
     case "current_mode_update":
       return { kind: "mode", currentModeId: update.currentModeId };
     case "config_option_update":
-      return { kind: "configOptions", configOptions: update.configOptions };
+      return { kind: "configOptions", options: readConfigOptions(update.configOptions, note) };
     case "compaction_update":
       return {
         kind: "compaction",

@@ -132,7 +132,7 @@ export class DefaultsEditor {
     const entry = this.editing.get(patchbayAgentId);
     if (entry === undefined || entry.sessionId !== sessionId) return;
     if (update.kind === "configOptions") {
-      entry.knobs = applyConfigUpdate(update.configOptions, entry.knobs, (m) => this.log.info(m));
+      entry.knobs = applyConfigUpdate(update.options, entry.knobs);
     } else if (update.kind === "mode") {
       const next = applyModeUpdate(entry.knobs, update.currentModeId);
       if (next === null) return;
@@ -198,9 +198,7 @@ export class DefaultsEditor {
    * state means the agent confirms by notification — handleUpdate. */
   private async set(patchbayAgentId: PatchbayAgentId, entry: Editing, route: KnobSetRoute, value: string | boolean): Promise<void> {
     try {
-      const next = await performKnobSet(this.knobWire(patchbayAgentId), entry.sessionId, () => entry.knobs, route, value, (m) =>
-        this.log.info(m),
-      );
+      const next = await performKnobSet(this.knobWire(patchbayAgentId), entry.sessionId, () => entry.knobs, route, value);
       if (next !== null) entry.knobs = next;
     } catch (err) {
       this.log.info(`${patchbayAgentId}: defaults editor set rejected — ${agentErrorText(err)}`);
