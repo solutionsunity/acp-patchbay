@@ -107,7 +107,7 @@ describe("reading a configuration file", () => {
     const r = read({
       patchbay: "configuration",
       state: {
-        [STORAGE_KEYS.agents]: [agent("a", { defaults: { mode: "plan" }, processPolicy: "per-session" })],
+        [STORAGE_KEYS.agentsBefore090]: [agent("a", { defaults: { mode: "plan" }, processPolicy: "per-session" })],
         [STORAGE_KEYS.mcpServers]: [
           { id: "s", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "oauth" }, routing: "auto", active: true, transport: "auto" },
         ],

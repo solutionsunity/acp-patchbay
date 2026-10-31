@@ -18,11 +18,13 @@ import { STORAGE_KEYS, type StorageKey } from "./stores/storage-keys";
 type Env = Record<string, string>;
 
 /** Every key patchbay stores in a KV, and its fate in an export: the part
- * that carries it, or why it never leaves. Typed over the key table, so a
- * key added there without a row here does not build — nothing new is left
- * out unannounced. */
-export const STORED_KEYS: Readonly<Record<StorageKey, ExportPart | { never: string }>> = {
+ * that carries it, why it never leaves, or — an earlier version's key — the
+ * part an older file's entry is read into, never written to a new one.
+ * Typed over the key table, so a key added there without a row here does
+ * not build — nothing new is left out unannounced. */
+export const STORED_KEYS: Readonly<Record<StorageKey, ExportPart | { never: string } | { readInto: ExportPart }>> = {
   [STORAGE_KEYS.agents]: "agents",
+  [STORAGE_KEYS.agentsBefore090]: { readInto: "agents" },
   [STORAGE_KEYS.lastKnobs]: "agents",
   [STORAGE_KEYS.mcpServers]: "mcpServers",
   [STORAGE_KEYS.preferences]: "settings",

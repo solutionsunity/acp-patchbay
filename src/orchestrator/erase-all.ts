@@ -51,6 +51,7 @@ const ERASED_BY: Readonly<
   Record<StorageKey, "agents" | "mcpServers" | "sessions" | Exclude<keyof EraseTargets, "decisionAudit" | "tempStashes"> | { kept: string }>
 > = {
   [STORAGE_KEYS.agents]: "agents",
+  [STORAGE_KEYS.agentsBefore090]: "agents",
   [STORAGE_KEYS.lastKnobs]: "agents",
   [STORAGE_KEYS.usedCapabilities]: "agents",
   [STORAGE_KEYS.authLocks]: "agents",

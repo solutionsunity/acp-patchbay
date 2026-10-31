@@ -108,8 +108,23 @@ const KEY = STORAGE_KEYS.agents;
 /** Two agents from one executable or one registry entry are told apart by
  * name: no two agents hold one. */
 export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
+  /** Every record goes — the earlier version's copy with them. */
+  override async wipe(): Promise<void> {
+    await super.wipe();
+    await this.machine.update(STORAGE_KEYS.agentsBefore090, undefined);
+  }
+
+  private readonly machine: KV;
+
   constructor(kv: KV) {
     super(kv, KEY, agentConfigSchema);
+    this.machine = kv;
+    // Once, at construction: the agents as an earlier version kept them are
+    // copied, never moved — a window still on that version keeps its own
+    // key, and writes there never reach this one. The migrations below take
+    // the copy to the current shape.
+    const earlier = kv.get<unknown>(STORAGE_KEYS.agentsBefore090);
+    if (kv.get<unknown>(KEY) === undefined && earlier !== undefined) void kv.update(KEY, earlier);
     // Once, at construction: records from when each agent carried a process
     // policy lose that field — an agent now has one process per window,
     // holding all its sessions, so nothing reads it. Only that key goes;

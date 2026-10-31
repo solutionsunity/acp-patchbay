@@ -438,9 +438,16 @@ store also moves every file already exported: an import reads the file
 through the same stores. Every key is spelled once, in the key table
 (`stores/storage-keys.ts` — the state keys and the secret families), which
 every store reads its own from; a test pins the spellings, since a renamed
-key reads as nothing. Each key has its fate in one table
-(`config-export.ts` `STORED_KEYS`) — the part that carries it, or why it never
-leaves — typed over the key table, so a key without a row does not build. The first exported file (2026-10-13) is kept
+key reads as nothing. A record whose stored shape changes moves to a new
+key, filled once from the old one and never written back to it: every window
+on the machine shares the store, one not yet reloaded after an update runs
+the version before, and that version writes back only the fields it knows —
+under one key, its next write would strip the new ones. The agents moved
+this way in 0.90 (`acpPatchbay.agents` → `acpPatchbay.agentConfigs`). Each
+key has its fate in one table (`config-export.ts` `STORED_KEYS`) — the part
+that carries it, why it never leaves, or, for an earlier version's key, the
+part an older file's entry is read into — typed over the key table, so a key
+without a row does not build. The first exported file (2026-10-13) is kept
 in the tests as written; a change that stops today's stores reading it whole
 fails the gate. The file names the version that wrote it, so an older
 patchbay importing a newer file can say it may hold what it doesn't know.

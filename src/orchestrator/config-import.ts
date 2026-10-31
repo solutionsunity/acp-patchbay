@@ -79,11 +79,12 @@ export function readConfiguration(text: string): ReadOutcome {
   const parts = new Set<ExportPart>();
   for (const [key, value] of Object.entries(state)) {
     const fate = Object.hasOwn(STORED_KEYS, key) ? STORED_KEYS[key as StorageKey] : undefined;
-    if (typeof fate !== "string") {
+    const part = typeof fate === "object" && "readInto" in fate ? fate.readInto : fate;
+    if (typeof part !== "string") {
       unread.push(`an entry this version doesn't carry (${key})`);
       continue;
     }
-    parts.add(fate);
+    parts.add(part);
     void kv.update(key, value);
   }
   if (record(secrets.agents) !== null) parts.add("agents");

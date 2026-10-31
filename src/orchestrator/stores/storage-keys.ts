@@ -7,9 +7,15 @@
 // reads as nothing, and what the user had under the old one is lost — so
 // each is spelled here once, and every store reads its own from here.
 
-/** The state keys, by what each holds. */
+/** The state keys, by what each holds. A record whose stored shape changes
+ * moves to a new key: every window on this machine shares the store, one
+ * not yet reloaded still runs the version before, and that version writes
+ * back only the fields it knows. */
 export const STORAGE_KEYS = {
-  agents: "acpPatchbay.agents",
+  agents: "acpPatchbay.agentConfigs",
+  /** The agents as 0.88 and before kept them — still written by a window
+   * on such a version. Read once, to fill `agents` where it is empty. */
+  agentsBefore090: "acpPatchbay.agents",
   lastKnobs: "acpPatchbay.lastKnobs",
   mcpServers: "acpPatchbay.integrations",
   preferences: "acpPatchbay.preferences",

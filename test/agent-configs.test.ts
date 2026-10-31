@@ -4,7 +4,8 @@
 // written before that field existed still parses — it simply carries no
 // archive facts and spawns its recorded command as is. A record from when
 // agents carried a process policy loses that field once, at load, and one
-// from when origin and link were one field is split once, at load.
+// from when origin and link were one field is split once, at load — copied
+// from the key that version kept them under, never moved off it.
 import { describe, expect, it, vi } from "vitest";
 import { AgentConfigStore } from "../src/orchestrator/stores/agent-configs";
 import { MemoryKV } from "../src/orchestrator/stores/kv";
@@ -104,6 +105,41 @@ describe("agent config store — an archive kept before the recipe", () => {
     const update = vi.spyOn(kv, "update");
     new AgentConfigStore(kv);
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+// Every window on a machine shares its store, and one not yet reloaded
+// after an update still runs the version before — which writes back only
+// the fields it knows. The current shape lives under its own key, so an
+// older window's writes can strip nothing from it.
+describe("agent config store — the key an earlier version still writes", () => {
+  const { origin: _o, link: _l, previous: _p, ...unsplit } = base;
+  const earlier = [
+    { id: "kilo", ...unsplit, name: "Kilo", registrySource: { registryId: "kilo", distributionKind: "npx", pinnedVersion: "2.0.0" } },
+  ];
+
+  it("copies the earlier records once, in the current shape, and leaves the earlier key as it was", async () => {
+    const kv = new MemoryKV();
+    await kv.update(STORAGE_KEYS.agentsBefore090, earlier);
+    const store = new AgentConfigStore(kv);
+    expect(store.get("kilo" as PatchbayAgentId)).toMatchObject({ origin: "kilo", link: { pinnedVersion: "2.0.0" } });
+    expect(kv.get(STORAGE_KEYS.agentsBefore090)).toEqual(earlier);
+  });
+
+  it("an older window's write afterwards — its records stripped of what it doesn't know — reaches nothing here", async () => {
+    const kv = new MemoryKV();
+    await kv.update(STORAGE_KEYS.agentsBefore090, earlier);
+    new AgentConfigStore(kv);
+    await kv.update(STORAGE_KEYS.agentsBefore090, [{ ...earlier[0], registrySource: null, lastSeenVersion: "2.0.0" }]);
+    expect(new AgentConfigStore(kv).get("kilo" as PatchbayAgentId)).toMatchObject({ origin: "kilo", link: { pinnedVersion: "2.0.0" } });
+  });
+
+  it("erasing every record erases the earlier copy too", async () => {
+    const kv = new MemoryKV();
+    await kv.update(STORAGE_KEYS.agentsBefore090, earlier);
+    await new AgentConfigStore(kv).wipe();
+    expect(kv.get(STORAGE_KEYS.agents)).toBeUndefined();
+    expect(kv.get(STORAGE_KEYS.agentsBefore090)).toBeUndefined();
   });
 });
 

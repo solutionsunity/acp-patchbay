@@ -10,7 +10,8 @@ import { SECRET_FAMILIES, STORAGE_KEYS } from "../src/orchestrator/stores/storag
 describe("storage keys", () => {
   it("every state key is spelled as it is stored", () => {
     expect(STORAGE_KEYS).toEqual({
-      agents: "acpPatchbay.agents",
+      agents: "acpPatchbay.agentConfigs",
+      agentsBefore090: "acpPatchbay.agents",
       lastKnobs: "acpPatchbay.lastKnobs",
       mcpServers: "acpPatchbay.integrations",
       preferences: "acpPatchbay.preferences",

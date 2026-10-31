@@ -23,6 +23,7 @@ const marked = (set: string, unset: string) => (raw: unknown) => (raw === undefi
  * this workspace (workspaceState) — and what its detail counts. */
 const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; detail: (raw: unknown) => string }> = {
   [STORAGE_KEYS.agents]: { label: "Agent configs", scope: "machine", detail: counted("agent") },
+  [STORAGE_KEYS.agentsBefore090]: { label: "Agent configs — as 0.88 kept them", scope: "machine", detail: counted("agent") },
   [STORAGE_KEYS.lastKnobs]: { label: "Composer knobs (last used)", scope: "machine", detail: counted("agent record") },
   [STORAGE_KEYS.mcpServers]: { label: "MCP server configs", scope: "machine", detail: counted("server") },
   [STORAGE_KEYS.preferences]: { label: "Preferences", scope: "machine", detail: counted("preference set") },
