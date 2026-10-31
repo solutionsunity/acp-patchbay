@@ -7,6 +7,7 @@ import {
   matrixFromDeclared,
   rowsProvenBy,
 } from "../src/orchestrator/capabilities";
+import type { AuthEvidence } from "../src/orchestrator/auth-evidence";
 import { terminalAuthOf } from "../src/orchestrator/readers/initialize";
 import { CapabilityTracker } from "../src/orchestrator/capability-tracker";
 import type { AgentPool } from "../src/orchestrator/pool";
@@ -155,6 +156,14 @@ describe("rowsProvenBy — the one used-proof table", () => {
       priorSessionCount: 0, declared: { ...declared, authMethods: [] },
     });
     expect(withoutMethods).toEqual([]);
+  });
+
+  it("a lock cleared proves auth only on an affirmative auth action", () => {
+    const cleared = (evidence: AuthEvidence) => rowsProvenBy({ via: "lockCleared", evidence });
+    expect(cleared({ kind: "loginOk" })).toEqual(["auth"]);
+    expect(cleared({ kind: "rpcOk", method: "authenticate", startedAt: "t" })).toEqual(["auth"]);
+    expect(cleared({ kind: "rpcOk", method: "session/prompt", startedAt: "t" })).toEqual([]);
+    expect(cleared({ kind: "rpcOk", method: "session/new", startedAt: "t" })).toEqual([]);
   });
 
   it("a logout round trip proves auth.logout and nothing else", () => {

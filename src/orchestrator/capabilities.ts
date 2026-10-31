@@ -8,6 +8,7 @@
 // below, consulted at pool.ts's wire chokepoints.
 import { methods, type ClientCapabilities, type PromptRequest } from "@agentclientprotocol/sdk";
 import type { CapabilityMatrix, CapabilityRowId, DeclaredCapabilities } from "../shared/protocol";
+import type { AuthEvidence } from "./auth-evidence";
 import { clientMetaWire } from "./meta";
 
 /**
@@ -145,7 +146,8 @@ export function matrixFromDeclared(declared: DeclaredCapabilities): CapabilityMa
 // Marking a row used is centralized: pool.ts
 // observes wire facts at three chokepoints — an agent RPC resolving, an
 // incoming client request handled, a session/update kind tag arriving — and
-// asks `rowsProvenBy` which rows each fact proves. No row name ever appears
+// the auth authority reports a lock it cleared; each asks `rowsProvenBy`
+// which rows the fact proves. No row name ever appears
 // at a call site: adding a CapabilityRowId forces an entry here (the Record
 // is exhaustive) and nowhere else. An empty entry means no wire path pool.ts
 // can observe yet — the comment beside it says why.
@@ -179,6 +181,13 @@ export type CapabilityProof =
       /** A session/update notification arrived with this kind tag. */
       via: "sessionUpdate";
       updateKind: string;
+    }
+  | {
+      /** The auth authority cleared a lock on this evidence (with this
+       * method, for an RPC's). */
+      via: "lockCleared";
+      by: AuthEvidence["kind"];
+      method?: string;
     };
 
 /** The capability is about the *field*, not any one method — proven the
@@ -252,18 +261,20 @@ const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly CapabilityPro
   // The auth *path* firing is the proof — an authenticate round trip on an
   // agent that actually declares methods. session/new succeeding is
   // deliberately NOT a proof: lazy-auth agents pass it while logged out,
-  // so it would mark a path that never fired. The row's second proof
-  // source is off-table by necessity: the auth authority clearing a lock
-  // through an affirmative auth action (the agents store's
-  // noteAuthEvidence — an authenticate round-trip, or a terminal login
-  // exiting 0) is auth demonstrably working, and the store marks the row
-  // there.
+  // so it would mark a path that never fired. A lock cleared by an
+  // affirmative auth action — an authenticate round trip, or a terminal
+  // login exiting 0 — is auth demonstrably working too. Other clears (a
+  // completed prompt, a same-method contradiction) honestly end the lock
+  // but never exercised patchbay's auth path: a transient -32000 healing
+  // itself must not mark the row used.
   auth: [
     {
       via: "agentRequest",
       method: methods.agent.authenticate,
       when: (_params, prior) => (prior.declared?.authMethods.length ?? 0) > 0,
     },
+    { via: "lockCleared", by: "loginOk" },
+    { via: "lockCleared", by: "rpcOk", method: methods.agent.authenticate },
   ],
   "auth.logout": [{ via: "agentRequest", method: methods.agent.logout }],
 };
@@ -274,8 +285,9 @@ const CAPABILITY_PROOFS: Readonly<Record<CapabilityRowId, readonly CapabilityPro
  * lock clearing on an agent with empty authMethods — Auggie's shape). The
  * persisted-cache restore consults this: every other row's cached
  * used/suspect is honored only while the fresh connect still makes the
- * claim, or a feature would gate on a capability the new connect never
- * declared. */
+ * claim — a path proven on a connect that offered it says nothing of one
+ * that doesn't, and the matrix would show it used beside a claim that's
+ * gone. */
 export const USED_MAY_OUTRUN_CLAIM: ReadonlySet<CapabilityRowId> = new Set<CapabilityRowId>([
   "resources.subscribe",
   "usage",
@@ -283,7 +295,8 @@ export const USED_MAY_OUTRUN_CLAIM: ReadonlySet<CapabilityRowId> = new Set<Capab
   "auth",
 ]);
 
-/** One wire fact, as observed by a pool.ts chokepoint. */
+/** One wire fact, as observed by a pool.ts chokepoint — or a lock the auth
+ * authority cleared, with the evidence it cleared it on. */
 export type WireFact =
   | {
       via: "agentRequest";
@@ -293,7 +306,8 @@ export type WireFact =
       declared: DeclaredCapabilities | null;
     }
   | { via: "clientRequest"; method: string }
-  | { via: "sessionUpdate"; updateKind: string };
+  | { via: "sessionUpdate"; updateKind: string }
+  | { via: "lockCleared"; evidence: AuthEvidence };
 
 /** The rows this fact proves used — pure, so it's testable without a pool. */
 export function rowsProvenBy(fact: WireFact): CapabilityRowId[] {
@@ -318,6 +332,13 @@ export function rowsProvenBy(fact: WireFact): CapabilityRowId[] {
           return (
             proof.updateKind === (fact as Extract<WireFact, { via: "sessionUpdate" }>).updateKind
           );
+        case "lockCleared": {
+          const { evidence } = fact as Extract<WireFact, { via: "lockCleared" }>;
+          return (
+            proof.by === evidence.kind &&
+            (proof.method === undefined || ("method" in evidence && evidence.method === proof.method))
+          );
+        }
       }
     });
     if (proven) rows.push(row);

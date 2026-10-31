@@ -17,7 +17,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { methods } from "@agentclientprotocol/sdk";
 import { processUp,
   type AgentConfigView,
   type AgentStatus,
@@ -41,6 +40,7 @@ import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
 import { agentErrorText } from "./readers/agent-error";
 import type { TerminalAuth } from "./readers/initialize";
+import { rowsProvenBy } from "./capabilities";
 import type { CapabilityTracker } from "./capability-tracker";
 import { checkPathDivergence } from "./launcher-health";
 import { nullLogger, type Logger } from "./logger";
@@ -327,18 +327,7 @@ export class AgentsStore implements ConnectionOperations {
         this.log.error(`${patchbayAgentId}: auth-lock remove failed — ${err.message}`);
       });
       this.publish(patchbayAgentId);
-      // The auth row's off-table proof source (recorded at
-      // CAPABILITY_PROOFS.auth) — deliberately only the affirmative auth
-      // actions: an authenticate round-trip or a terminal login exiting 0.
-      // Other clears (a completed prompt, a same-method contradiction)
-      // honestly end the lock but never exercised patchbay's auth path —
-      // a transient -32000 healing itself must not mark the row used.
-      if (
-        evidence.kind === "loginOk" ||
-        (evidence.kind === "rpcOk" && evidence.method === methods.agent.authenticate)
-      ) {
-        this.noteEvidence(patchbayAgentId, "auth", "used");
-      }
+      for (const row of rowsProvenBy({ via: "lockCleared", evidence })) this.noteEvidence(patchbayAgentId, row, "used");
       // Words held at the turn-start door were waiting for exactly this:
       // an idle session has no coming turn end to drain them. The lock is
       // already cleared in memory (FileKV swaps synchronously), so the

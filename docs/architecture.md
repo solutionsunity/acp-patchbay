@@ -663,8 +663,8 @@ Marking a row used is centralized in one **proof table**
 (`CAPABILITY_PROOFS`, capabilities.ts) — the single place that knows which wire
 fact proves which row. `pool.ts` — the sole channel that talks to an agent on
 the wire — consults it at three chokepoints: an outgoing agent RPC resolving
-(`session/new` → `auth`, and → `concurrentSessions` when the connection already
-served a session; `logout` → `auth.logout` — declared from
+(`authenticate` → `auth` when the agent declares methods; `session/new` →
+`concurrentSessions` when the connection already served a session; `logout` → `auth.logout` — declared from
 `agentCapabilities.auth.logout`; the agents store refuses a logout the agent
 doesn't declare, and the card offers Log out on the same reading
 (`src/shared/agent-offers.ts`), so the spec's "Clients MUST NOT call it"
@@ -674,6 +674,9 @@ holds at the writer;
 `embeddedContext` when the prompt actually carried that block type), an
 incoming client request handled (`fs/read_text_file`, `fs/write_text_file`,
 `terminal/create`, `elicitation/create`), and a `session/update` kind tag arriving (`usage_update` → `usage`).
+One source sits off the wire: the auth authority reports a lock it cleared,
+with the evidence it cleared it on, to the same table (`lockCleared` → `auth`
+on the affirmative actions below).
 The same table serves both verdicts: a fact riding a successful call marks its
 rows used; the same fact riding a failed call marks them suspect. For an
 incoming client request, success means patchbay answered: a deliberate refusal
@@ -767,7 +770,8 @@ wire fact means for auth.
   autoConnect cannot launder a witnessed logout. Not a cache of readable
   reality — the wire has no auth query; the witnessed event is the only
   record there is. Cleared with the agent's config, wiped by erase-all.
-- The matrix `auth` row is proven only by the affirmative auth actions: an
+- The matrix `auth` row is proven only by the affirmative auth actions (the
+  proof table's `lockCleared` entries, reported by the writer): an
   `authenticate` round-trip (declared methods only) or a terminal login
   exiting 0. Other clears — a completed prompt, a same-method contradiction
   — honestly end the lock without marking the row: clearing ≠ proving, and

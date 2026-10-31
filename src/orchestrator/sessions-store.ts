@@ -514,7 +514,7 @@ export class SessionsStore {
     if (declared.loadSession !== true) return;
     const sessionId = this.known.get(patchbaySessionId)?.sessionId;
     if (sessionId === undefined) return;
-    this.dropLiveSession(patchbaySessionId, session);
+    this.dropLiveSession(patchbaySessionId);
     try {
       await this.pool.closeSession(patchbayAgentId, sessionId);
       this.log.info(`session ${patchbaySessionId}: released (${reason})`);
@@ -1017,9 +1017,9 @@ export class SessionsStore {
    * tokens its attaches minted: the subprocesses holding them ended with
    * it. */
   invalidateAgent(patchbayAgentId: PatchbayAgentId): void {
-    for (const [patchbaySessionId, session] of this.sessions) {
+    for (const patchbaySessionId of this.sessions.keys()) {
       if (this.agentOfLive(patchbaySessionId) !== patchbayAgentId) continue;
-      this.dropLiveSession(patchbaySessionId, session);
+      this.dropLiveSession(patchbaySessionId);
     }
     for (const [token, grant] of this.tokens) {
       if (grant.patchbayAgentId === patchbayAgentId) this.tokens.delete(token);
@@ -1037,7 +1037,9 @@ export class SessionsStore {
    * continuity row, untouched: held words (only the user discards words —
    * Stop, the row's ×, a delete or close; the drain's running-agent gate
    * holds them until a reattach can send), chips, draft, roots, knobs. */
-  private dropLiveSession(patchbaySessionId: PatchbaySessionId, session: LiveSession): void {
+  private dropLiveSession(patchbaySessionId: PatchbaySessionId): void {
+    const session = this.sessions.get(patchbaySessionId);
+    if (session === undefined) return;
     if (session.turn !== null) {
       this.stream.sweep(patchbaySessionId, session);
       this.stream.seal(patchbaySessionId, session);
@@ -1267,8 +1269,7 @@ export class SessionsStore {
     // for nothing and yanking it would be hostile.
     this.hooks.emit({ kind: "transcriptReset", patchbaySessionId });
     this.stream.forget(patchbaySessionId);
-    const dying = this.sessions.get(patchbaySessionId);
-    if (dying !== undefined) this.dropLiveSession(patchbaySessionId, dying);
+    this.dropLiveSession(patchbaySessionId);
     await this.ensureAttached(patchbaySessionId, signal);
   }
 
@@ -1293,7 +1294,7 @@ export class SessionsStore {
       // A failed load must not leave a phantom attachment — callers decide
       // the fallback (the next ladder rung, or an honest failure), and a lingering
       // map entry would make every later prompt hit a session that isn't there.
-      this.sessions.delete(patchbaySessionId);
+      this.dropLiveSession(patchbaySessionId);
       throw err;
     }
     // pool.ts's loadSession already marked "session.load" used the instant
@@ -1357,7 +1358,7 @@ export class SessionsStore {
         await this.reseedAfterAttach(patchbaySessionId, patchbayAgentId, remembered, signal);
         return { attached: true };
       } catch (err) {
-        this.sessions.delete(patchbaySessionId);
+        this.dropLiveSession(patchbaySessionId);
         if (signal.aborted) throw err;
         error = err as Error;
         this.log.info(`session ${patchbaySessionId}: resume failed — ${error.message}`);
@@ -1798,8 +1799,7 @@ export class SessionsStore {
       this.log.info(`session ${patchbaySessionId}: roots re-applied via session/resume`);
     } catch (err) {
       // An involuntary detach like any other.
-      const dying = this.sessions.get(patchbaySessionId);
-      if (dying !== undefined) this.dropLiveSession(patchbaySessionId, dying);
+      this.dropLiveSession(patchbaySessionId);
       this.log.info(
         `session ${patchbaySessionId}: root re-apply failed (${agentErrorText(err)}) — detached; next prompt re-enters the continuation ladder`,
       );

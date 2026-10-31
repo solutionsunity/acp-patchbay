@@ -46,6 +46,21 @@ describe("source boundaries", () => {
     expect(hits(files, new RegExp(`^(?!\\s*(//|\\*)).*["'\`](${vendors.join("|")})["'\`]`))).toEqual([]);
   });
 
+  // Which fact proves which capability row is the proof table's to say: a
+  // caller reports what it saw and marks the rows the table names, never a
+  // row it chose.
+  it("no caller marks a capability row by name", () => {
+    expect(hits(filesUnder(SRC, /\.tsx?$/), /(noteEvidence|onCapabilityEvidence)\??\.?\([^,]+,\s*["'`]/)).toEqual([]);
+  });
+
+  // A session's attachment leaves through one of two doors — dropped while
+  // the session stays known (its open turn swept and sealed first), or
+  // forgotten for good — so no rollback or teardown path deletes it bare
+  // and leaves a turn's open blocks behind.
+  it("a live attachment is deleted only by its two teardown helpers", () => {
+    expect(hits([join(SRC, "orchestrator", "sessions-store.ts")], /this\.sessions\.delete\(/)).toHaveLength(2);
+  });
+
   // Secrets live in SecretStorage alone. VS Code's two other stores sync or
   // persist in plain sight — settings.json syncs, global and workspace state
   // are plain files — so they are reached only where patchbay's storage is
