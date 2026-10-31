@@ -14,18 +14,20 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { filesUnder } from "./support/source-files";
 
-const WEBVIEW_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "webview");
-const UI = join(WEBVIEW_ROOT, "components", "ui");
+// The whole source tree, not the webviews alone: a page built anywhere is
+// a page, and holds to the same rules.
+const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const UI = join(SRC_ROOT, "webview", "components", "ui");
 
 
 /** App files: everything outside the shared overlay layer. */
-const appFiles = (ext: RegExp) => filesUnder(WEBVIEW_ROOT, ext).filter((path) => !path.startsWith(UI));
+const appFiles = (ext: RegExp) => filesUnder(SRC_ROOT, ext).filter((path) => !path.startsWith(UI));
 
 const hits = (ext: RegExp, pattern: RegExp) =>
   appFiles(ext).flatMap((path) =>
     readFileSync(path, "utf8")
       .split("\n")
-      .flatMap((line, i) => (pattern.test(line) ? [`${relative(WEBVIEW_ROOT, path)}:${i + 1}: ${line.trim()}`] : [])),
+      .flatMap((line, i) => (pattern.test(line) ? [`${relative(SRC_ROOT, path)}:${i + 1}: ${line.trim()}`] : [])),
   );
 
 describe("overlay surfaces", () => {
@@ -49,7 +51,7 @@ describe("overlay surfaces", () => {
     const reveals = appFiles(/\.css$/).flatMap((path) =>
       [...readFileSync(path, "utf8").matchAll(/([^{}]*:hover\s+[^{}]+)\{([^}]*)\}/g)]
         .filter((m) => /\b(?:display|visibility)\s*:/.test(m[2]!))
-        .map((m) => `${relative(WEBVIEW_ROOT, path)}: ${m[1]!.trim()}`),
+        .map((m) => `${relative(SRC_ROOT, path)}: ${m[1]!.trim()}`),
     );
     expect(reveals, "a hover-only reveal is a tooltip the keyboard can't reach: use Tooltip").toEqual([]);
   });

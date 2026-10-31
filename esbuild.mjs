@@ -91,7 +91,7 @@ const katexFontTrim = {
   },
 };
 
-/** @param {"agent-view" | "settings"} name @returns {import("esbuild").BuildOptions} */
+/** @param {"agent-view" | "settings" | "diagram"} name @returns {import("esbuild").BuildOptions} */
 const webview = (name) => ({
   ...base,
   entryPoints: [`src/webview/${name}/index.tsx`],
@@ -141,6 +141,7 @@ const configs = [
   extensionHost,
   webview("agent-view"),
   webview("settings"),
+  webview("diagram"),
   mermaidBundle,
   mcpServer,
   mcpBridge,

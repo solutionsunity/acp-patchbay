@@ -27,7 +27,7 @@ import { agentErrorText } from "./readers/agent-error";
 import { Cancelled } from "./queue";
 import type { ExportPart } from "../shared/protocol";
 import { normalizeRootPath } from "./sessions-store";
-import { nonce } from "./webview-host";
+import { openDiagramPanel } from "./webview-host";
 import {
   resolveDistribution,
 } from "./stores/acp-registry";
@@ -65,10 +65,14 @@ export class OrchestratorHost {
   private wireChannel: vscode.OutputChannel | null = null;
   private wireStatusItem: vscode.StatusBarItem | null = null;
   private wireStatusTimer: ReturnType<typeof setInterval> | null = null;
+  /** Where this extension's built pages live — what a panel opened later
+   * loads its bundle from. */
+  private readonly extensionUri: vscode.Uri;
   constructor(
     context: vscode.ExtensionContext,
     private readonly log: vscode.LogOutputChannel,
   ) {
+    this.extensionUri = context.extensionUri;
 
     // Machine scope lives in a file this extension owns (file-kv.ts), not
     // in globalState: state.vscdb is editor-owned, shared by every
@@ -439,68 +443,9 @@ export class OrchestratorHost {
 
   /** A rendered mermaid SVG, opened as an editor-area panel — the agent
    * view's column is narrow (even the in-chat fullscreen stops at it); the
-   * files area is where a diagram can breathe. Pan/zoom is hand-rolled
-   * vanilla (wheel = zoom around cursor, drag = pan, double-click = reset):
-   * CSP allows exactly one nonce'd inline script for it — a deliberate,
-   * recorded widening of this panel's previous no-script posture, still
-   * default-src 'none' and the SVG is mermaid's sanitized output. */
+   * files area is where a diagram can breathe. */
   private openDiagram(svg: string): void {
-    const panel = vscode.window.createWebviewPanel(
-      "acpPatchbay.diagram",
-      "Diagram",
-      vscode.ViewColumn.Active,
-      { enableScripts: true },
-    );
-    const n = nonce();
-    panel.webview.html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${n}'; img-src data:;">
-  <style>
-    body { margin: 0; height: 100vh; overflow: hidden; cursor: grab; }
-    body.dragging { cursor: grabbing; }
-    #stage { height: 100%; display: grid; place-items: center; }
-    #wrap { transform-origin: 0 0; }
-    svg { max-width: 95vw; max-height: 95vh; height: auto; display: block; }
-  </style>
-</head>
-<body>
-  <div id="stage"><div id="wrap">${svg}</div></div>
-  <script nonce="${n}">
-    "use strict";
-    const wrap = document.getElementById("wrap");
-    let scale = 1, x = 0, y = 0, drag = null;
-    const apply = () => { wrap.style.transform = \`translate(\${x}px, \${y}px) scale(\${scale})\`; };
-    window.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const next = Math.min(10, Math.max(0.2, scale * factor));
-      // keep the point under the cursor fixed while scaling
-      x = e.clientX - (e.clientX - x) * (next / scale);
-      y = e.clientY - (e.clientY - y) * (next / scale);
-      scale = next;
-      apply();
-    }, { passive: false });
-    window.addEventListener("pointerdown", (e) => {
-      drag = { x: e.clientX, y: e.clientY };
-      document.body.classList.add("dragging");
-    });
-    window.addEventListener("pointermove", (e) => {
-      if (drag === null) return;
-      x += e.clientX - drag.x;
-      y += e.clientY - drag.y;
-      drag = { x: e.clientX, y: e.clientY };
-      apply();
-    });
-    const end = () => { drag = null; document.body.classList.remove("dragging"); };
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-    window.addEventListener("dblclick", () => { scale = 1; x = 0; y = 0; apply(); });
-  </script>
-</body>
-</html>`;
+    openDiagramPanel(this.extensionUri, svg);
   }
 
   /** One stash text → one temp file with a real URI, for vscode.diff — both

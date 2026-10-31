@@ -2924,6 +2924,12 @@ export interface DataInventoryRow {
   detail: string;
 }
 
+/** A diagram opened in the editor area: the rendered SVG, nothing more —
+ * the page shows it and takes no action back. */
+export interface DiagramState {
+  svg: string;
+}
+
 export const initialSettingsState: SettingsState = {
   section: "agents",
   agents: [],

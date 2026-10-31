@@ -103,7 +103,7 @@ reload or a close.
 
 ## UI layer
 
-Two webviews and one near-empty native settings page:
+Two webviews, a diagram page, and one near-empty native settings page:
 
 1. **Agent View** — the single blend (the Features doc). Its layout is the owed
    design deliverable; what architecture fixes now is its information boundary: it knows
@@ -113,7 +113,12 @@ Two webviews and one near-empty native settings page:
 2. **Settings** — agents and launch config, capability matrix, MCP servers,
    routing, permission rules. Structured data, low frequency, same render-only
    contract.
-3. **VS Code native settings** — flat scalars only, deliberately near-empty.
+3. **Diagram** — a chat's diagram opened in the editor area, where it has room:
+   the rendered SVG under the same pan and zoom as in chat, on a channel of
+   its own that holds the SVG and takes no action back. Built and opened like
+   every other page — the shared component layer, the theme bridge, the one
+   panel factory and its CSP, no inline script.
+4. **VS Code native settings** — flat scalars only, deliberately near-empty.
    Never credentials: `settings.json` syncs.
 
 Native surfaces — the status bar item (active session, connection health, usage),
@@ -124,7 +129,7 @@ command palette entries — are direct orchestrator consumers: same state, no we
 > its own webview because it is genuinely a different activity, not because panels
 > are cheap.
 
-How both webviews are *built* — one shared component layer (shadcn/Radix on
+How every webview is *built* — one shared component layer (shadcn/Radix on
 React, Codicons, a single VS Code-theme bridge) and the chat transcript
 rendering pipeline (Streamdown markdown, the ordered block model, tool-call
 cards) — is decided in

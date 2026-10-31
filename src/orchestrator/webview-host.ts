@@ -29,19 +29,19 @@
 //   which is fine — nonce was already the only script source.
 import * as vscode from "vscode";
 import { count } from "../shared/count";
-import type { ViewToHost } from "../shared/protocol";
+import type { DiagramState, ViewToHost } from "../shared/protocol";
 import { ATTACHMENTS_DIR } from "./attachments";
-import type { ChannelEndpoint } from "./channel";
+import { ChannelHost, type ChannelEndpoint } from "./channel";
 import type { SurfaceReport } from "./orchestrator";
 import type { PatchbaySessionId } from "../shared/ids";
 
-type Bundle = "agent-view" | "settings";
+type Bundle = "agent-view" | "settings" | "diagram";
 
 /** How an agent-view surface, by the id its host gave it, tells the
  * orchestrator it opened, became visible or hidden, or closed (null). */
 export type SurfaceReporter = (surface: string, report: SurfaceReport | null) => void;
 
-export function nonce(): string {
+function nonce(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -204,6 +204,19 @@ function boundPanel(
     for (const d of disposables) d.dispose();
   });
   return panel;
+}
+
+/** A rendered diagram opened in the editor area — a render-only page like
+ * every other, on a channel of its own that holds the one SVG and takes no
+ * action back. Mermaid's output is sanitized (strict security level). */
+export function openDiagramPanel(extensionUri: vscode.Uri, svg: string): void {
+  const channel = new ChannelHost<DiagramState, never>(
+    { svg },
+    (state) => state,
+    () => null,
+    () => {},
+  );
+  boundPanel("acpPatchbay.diagram", "Diagram", channel, extensionUri, "diagram");
 }
 
 /** Detached agent-view surfaces (editor-area WebviewPanels, floatable into

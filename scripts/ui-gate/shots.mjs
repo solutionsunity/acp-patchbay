@@ -1123,6 +1123,15 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] the network card says what its switches don't cover`, (await networkCard.textContent()).replace(/\s+/g, " ").includes("what an agent sends is up to the agent's own settings"));
   await networkCard.screenshot({ path: `${OUT}/settings-network-${theme}.png` });
   await p.close();
+
+  // ── the diagram opened in the editor area: a page like every other, the
+  // SVG it was given under the shared pan and zoom ──
+  p = await page(browser, theme, { width: 800, height: 600 });
+  await renderView(p, "diagram", { svg: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect id="drawn" width="200" height="100" fill="currentColor"/></svg>' });
+  check(`[${theme}] the diagram page shows the SVG it was given`, await p.waitForSelector("svg #drawn", { timeout: 3000 }).then(() => true, () => false));
+  check(`[${theme}] the diagram page has the zoom rail`, (await p.locator('button[title="Reset zoom and pan"]').count()) === 1);
+  await p.screenshot({ path: `${OUT}/diagram-${theme}.png` });
+  await p.close();
 }
 
 // ── the composer takes the keyboard (#55): when a chat opens for typing,
