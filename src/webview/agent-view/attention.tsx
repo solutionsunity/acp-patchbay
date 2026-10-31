@@ -8,7 +8,7 @@
 // holds all three counts, so there is one overlay and nothing to race.
 import { useState } from "react";
 import type { AgentSummary, SessionSummary } from "../../shared/protocol";
-import type { Elsewhere, SessionMark } from "../../shared/attention";
+import { SESSION_MARKS, type Elsewhere, type SessionMark } from "../../shared/attention";
 import { useActions } from "../shared/actions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -18,8 +18,6 @@ const MARK_TITLE: Record<SessionMark, string> = {
   unseen: "Finished since you last saw it",
 };
 
-// Most urgent first — the order of the counts and of the list's groups.
-const ORDER: readonly SessionMark[] = ["waiting", "unseen", "running"];
 
 /** The session mark's dot — one vocabulary for the drawer rows and the
  * header: amber waits on you and green runs (both pulse — something is
@@ -43,7 +41,8 @@ export function AttentionIndicators(props: {
 }) {
   const send = useActions();
   const [open, setOpen] = useState(false);
-  const marks = ORDER.filter((m) => props.elsewhere[m].length > 0);
+  // most urgent first — the order of the counts and of the list's groups
+  const marks = SESSION_MARKS.filter((m) => props.elsewhere[m].length > 0);
   if (marks.length === 0) return null;
   const summary = marks.map((m) => `${props.elsewhere[m].length} ${MARK_TITLE[m].toLowerCase()}`).join(" · ");
   return (

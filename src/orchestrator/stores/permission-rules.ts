@@ -13,12 +13,12 @@
 // — the machine layer never rides it. Within a layer, list order decides
 // nothing: deny beats ask beats allow.
 import { z } from "zod";
-import type { CommandRuleView, WriteEntry } from "../../shared/protocol";
+import { RULE_VERDICTS, type CommandRuleView, type WriteEntry } from "../../shared/protocol";
 import type { KV, StoredEntry } from "./kv";
 import { readWriteEntries } from "./write-scope";
 import { STORAGE_KEYS } from "./storage-keys";
 
-const ruleVerdictSchema = z.enum(["allow", "ask", "deny"]);
+const ruleVerdictSchema = z.enum(RULE_VERDICTS);
 export type RuleVerdict = z.infer<typeof ruleVerdictSchema>;
 
 /** As Settings shows it (CommandRuleView): a pattern over a command's

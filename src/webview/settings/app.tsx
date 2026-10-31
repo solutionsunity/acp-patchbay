@@ -57,6 +57,9 @@ const NAV_GROUPS = [
   items: ReadonlyArray<{ id: SettingsSectionId; icon: string; label: string }>;
 }>;
 
+// Every section is in the nav: one missing from it doesn't build.
+void (true satisfies [Exclude<SettingsSectionId, (typeof NAV_GROUPS)[number]["items"][number]["id"]>] extends [never] ? true : never);
+
 export function App({ state }: { state: SettingsState }) {
   const send = useActions();
   const section = state.section;

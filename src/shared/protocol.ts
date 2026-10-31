@@ -52,10 +52,8 @@ export type SettingsSectionId =
   | "audit"
   | "data";
 
-/** What an export carries, picked by the user: the agents (with their
- * composer knobs and env values), the MCP servers (with their env values
- * and header keys), the settings (preferences, and the machine-wide
- * command rules, file-write places and saved roots). */
+/** What an export carries, picked by the user — each part's stored keys
+ * are named by the export's own key table. */
 export type ExportPart = "agents" | "mcpServers" | "settings";
 
 /** An imported item against this machine's: not here yet, the same as
@@ -2729,11 +2727,17 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
 
 // ── settings channel ─────────────────────────────────────────────────────────
 
+/** A command rule's verdicts, the one that wins first — a deny outranks an
+ * ask, an ask an allow. Every order shown and every severity compared reads
+ * this list. */
+export const RULE_VERDICTS = ["deny", "ask", "allow"] as const;
+export type RuleVerdictView = (typeof RULE_VERDICTS)[number];
+
 /** A command rule: a pattern over a command's whole text, `*` matching
  * anything, or one word anywhere in a command, `*` matching within the
  * word. A word only denies or asks. */
 export type CommandRuleView =
-  | { kind: "command"; pattern: string; verdict: "allow" | "ask" | "deny" }
+  | { kind: "command"; pattern: string; verdict: RuleVerdictView }
   | { kind: "word"; pattern: string; verdict: "ask" | "deny" };
 
 /** What the Commands page's tester runs a typed line as: the program and
@@ -2753,7 +2757,7 @@ export interface RuleMatchView {
  * that matched and lost. */
 export interface CommandVerdictView {
   text: string;
-  verdict: "allow" | "ask" | "deny";
+  verdict: RuleVerdictView;
   by: RuleMatchView | null;
   also: readonly RuleMatchView[];
 }
@@ -2762,7 +2766,7 @@ export interface CommandVerdictView {
  * commands can't be seen from its text — each asks — and the line's own
  * verdict, the most severe of them. */
 export interface CommandJudgementView {
-  verdict: "allow" | "ask" | "deny";
+  verdict: RuleVerdictView;
   commands: readonly CommandVerdictView[];
   unreadable: readonly { text: string; reason: string }[];
 }
@@ -3067,24 +3071,8 @@ export function reduceSettings(
   }
 }
 
-const SETTINGS_ONLY_KINDS = new Set([
-  "permissionRulesChanged",
-  "auditTailChanged",
-  "mcpCatalogLoaded",
-  "mcpServersChanged",
-  "agentConfigsChanged",
-  "sessionStatsChanged",
-  "agentKnobsObserved",
-  "agentKnobsReleased",
-  "agentQuestion",
-  "wireLogChanged",
-  "dataInventoryChanged",
-  "configImportChanged",
-  "commandJudged",
-  "sectionChanged",
-]);
-
-export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) => {
-  if (SETTINGS_ONLY_KINDS.has(prev.kind) || SETTINGS_ONLY_KINDS.has(next.kind)) return null;
-  return coalesceAgentViewEvent(prev as AgentViewEvent, next as AgentViewEvent);
-};
+/** The Settings channel merges what the agent view merges, and nothing
+ * else: the agent-view rule names only its own kinds, so a kind only
+ * Settings carries never matches one. */
+export const coalesceSettingsEvent: CoalesceHook<SettingsEvent> = (prev, next) =>
+  coalesceAgentViewEvent(prev as AgentViewEvent, next as AgentViewEvent);

@@ -8,7 +8,7 @@
 // verb per page, one subject per rules page.
 import { type ReactNode, useEffect, useState } from "react";
 import { matchLabel, ruleLabel } from "../../shared/command-rules";
-import type { CommandJudgementView, CommandRuleView, RuleMatchView, SettingsState, TesterShell } from "../../shared/protocol";
+import { RULE_VERDICTS, type CommandJudgementView, type CommandRuleView, type RuleMatchView, type SettingsState, type TesterShell } from "../../shared/protocol";
 import { Icon } from "../shared/icon";
 import { ruleCounts, sortedRules } from "./command-rules-view";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ type Layer = RuleMatchView["layer"];
 type Draft = RuleMatchView;
 
 const EXAMPLE: Readonly<Record<CommandRuleView["kind"], string>> = { command: "kubectl get *", word: "sudo" };
-const COLUMNS = ["deny", "ask", "allow", "total"] as const;
+const COLUMNS = [...RULE_VERDICTS, "total"] as const;
 
 /** How many rules a layer holds, by kind and verdict. */
 function RuleCountsGrid({ rules }: { rules: readonly CommandRuleView[] }) {

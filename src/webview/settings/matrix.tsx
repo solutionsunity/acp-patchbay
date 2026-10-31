@@ -11,33 +11,35 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const MATRIX_ROWS: Array<{ id: CapabilityRowId; label: string }> = [
-  { id: "fs.readTextFile", label: "fs.readTextFile" },
-  { id: "fs.writeTextFile", label: "fs.writeTextFile" },
-  { id: "terminal", label: "terminal" },
-  { id: "elicitation", label: "elicitation" },
-  { id: "resources.subscribe", label: "resources.subscribe" },
-  { id: "prompt.image", label: "prompt.image" },
-  { id: "prompt.audio", label: "prompt.audio" },
-  { id: "prompt.embeddedContext", label: "prompt.embeddedContext" },
+/** Every capability row as the matrix shows it, in its order — each row
+ * named here, or the table doesn't build. */
+const MATRIX_ROWS = {
+  "fs.readTextFile": "fs.readTextFile",
+  "fs.writeTextFile": "fs.writeTextFile",
+  terminal: "terminal",
+  elicitation: "elicitation",
+  "resources.subscribe": "resources.subscribe",
+  "prompt.image": "prompt.image",
+  "prompt.audio": "prompt.audio",
+  "prompt.embeddedContext": "prompt.embeddedContext",
   // session.* in lifecycle order: enumerate → reopen (load, else resume) →
   // branch → release → remove.
-  { id: "session.list", label: "session.list" },
-  { id: "session.load", label: "session.load" },
-  { id: "session.resume", label: "session.resume" },
-  { id: "session.fork", label: "session.fork" },
-  { id: "session.close", label: "session.close" },
-  { id: "session.delete", label: "session.delete" },
+  "session.list": "session.list",
+  "session.load": "session.load",
+  "session.resume": "session.resume",
+  "session.fork": "session.fork",
+  "session.close": "session.close",
+  "session.delete": "session.delete",
   // …plus the one session-scope field that rides those lifecycle requests
   // rather than being a step itself.
-  { id: "session.additionalDirectories", label: "session.additionalDirectories" },
-  { id: "mcp.http", label: "mcp.http" },
-  { id: "mcp.sse", label: "mcp.sse" },
-  { id: "usage", label: "usage reporting" },
-  { id: "concurrentSessions", label: "concurrent sessions" },
-  { id: "auth", label: "auth" },
-  { id: "auth.logout", label: "auth.logout" },
-];
+  "session.additionalDirectories": "session.additionalDirectories",
+  "mcp.http": "mcp.http",
+  "mcp.sse": "mcp.sse",
+  usage: "usage reporting",
+  concurrentSessions: "concurrent sessions",
+  auth: "auth",
+  "auth.logout": "auth.logout",
+} as const satisfies Record<CapabilityRowId, string>;
 
 const STATE_ICON = {
   used: "pass-filled",
@@ -151,14 +153,14 @@ export function MatrixSection({ state }: { state: SettingsState }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {MATRIX_ROWS.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="cap">{row.label}</TableCell>
+                {(Object.entries(MATRIX_ROWS) as [CapabilityRowId, string][]).map(([id, label]) => (
+                  <TableRow key={id}>
+                    <TableCell className="cap">{label}</TableCell>
                     {agents.map((a) => {
-                      const cell = a.capabilities?.[row.id];
+                      const cell = a.capabilities?.[id];
                       const st = capabilityState(cell);
                       const icon = STATE_ICON[st];
-                      const consequence = ROW_CONSEQUENCE[row.id];
+                      const consequence = ROW_CONSEQUENCE[id];
                       const tooltip = consequence !== undefined ? `${STATE_TEXT[st]} · ${consequence}` : STATE_TEXT[st];
                       return (
                         <TableCell key={a.id} className="text-center">

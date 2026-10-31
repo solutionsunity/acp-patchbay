@@ -203,7 +203,7 @@ contract: **This machine** (Agents · Capability matrix · MCP Servers · Prefer
 per-workspace list beside its machine one), **Trust** (Edits · Commands · Audit · Data —
 the one trust surface: the contract, the evidence, what's held and the way out; one
 verb per page, and one subject per rules page — edits and commands are different
-mechanisms that grow apart). Groups don't collapse: ten items don't earn the
+mechanisms that grow apart). Groups don't collapse: a nav this short doesn't earn the
 interaction.
 Nav footer restates the credential rule: SecretStorage only.
 
@@ -376,6 +376,12 @@ the stored truth — the page never assumes its own write landed:
   `ungrouped, whole title` (its title whole while the card is closed),
   `uncollapsed` (the card open). A kind with no row stays grouped; a click
   opens or closes any card either way.
+- **Detached windows** — whether a session, or the whole Agent View, can open
+  in its own floating window (default on). Off hides the ways in; windows
+  already open stay open.
+- **Attachments** — the size cap per image or file entering the composer
+  (default 10 MB); anything over it is refused with a message, never
+  trimmed.
 - **Network** — one switch per call patchbay makes on its own, for something
   extra: *check for agent updates automatically* (default on) — the registry
   reads that exist for update notices; off, the registry is read only when

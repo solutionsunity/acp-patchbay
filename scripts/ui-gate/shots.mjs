@@ -1701,7 +1701,11 @@ for (const theme of Object.keys(THEMES)) {
   p = await page(browser, theme0, { width: 520, height: 800 });
   await renderView(p, "settings", st);
   await p.waitForSelector(".section h1");
-  for (const section of ["Agents", "Capability matrix", "MCP Servers", "Preferences", "Saved roots", "Import/Export", "Edits", "Commands", "Audit", "Data"]) {
+  // every section the nav renders — the compiler holds the nav to the
+  // section list
+  const sections = await p.$$eval(".nav .it", (items) => items.map((it) => it.textContent.trim()));
+  check("[narrow] the nav renders its sections", sections.length > 0);
+  for (const section of sections) {
     await p.click(`.nav .it:has-text("${section}")`);
     await p.waitForFunction((name) => document.querySelector(".section h1")?.textContent === name, section, { timeout: 3000 }).catch(() => {});
     // a section that failed to render shows no controls at all — never a pass

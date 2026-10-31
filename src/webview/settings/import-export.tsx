@@ -29,21 +29,15 @@ export function ImportExportSection(props: {
   onDismissImport(importId: number): void;
 }) {
   const { state } = props;
-  const [picked, setPicked] = useState<ReadonlySet<ExportPart>>(new Set(["agents", "mcpServers", "settings"]));
-  const parts: readonly { id: ExportPart; detail: string }[] = [
-    {
-      id: "agents",
-      detail: `${count(state.agentConfigs.length, "agent")}, with their env values and composer choices`,
-    },
-    {
-      id: "mcpServers",
-      detail: `${count(state.mcpServers.length, "server")}, with their env values and API keys — a server signed in with OAuth needs a fresh connect`,
-    },
-    {
-      id: "settings",
-      detail: `preferences, ${count(state.machineCommandRules.length, "machine-wide command rule")}, the machine-wide file writes, ${count(state.savedRoots.machine.length, "machine-wide saved root")}`,
-    },
-  ];
+  // Every part, each with what it carries counted — a part without its
+  // line doesn't build.
+  const details: Record<ExportPart, string> = {
+    agents: `${count(state.agentConfigs.length, "agent")}, with their env values and composer choices`,
+    mcpServers: `${count(state.mcpServers.length, "server")}, with their env values and API keys — a server signed in with OAuth needs a fresh connect`,
+    settings: `preferences, ${count(state.machineCommandRules.length, "machine-wide command rule")}, the machine-wide file writes, ${count(state.savedRoots.machine.length, "machine-wide saved root")}`,
+  };
+  const parts = (Object.entries(details) as [ExportPart, string][]).map(([id, detail]) => ({ id, detail }));
+  const [picked, setPicked] = useState<ReadonlySet<ExportPart>>(new Set(parts.map((p) => p.id)));
   const toggle = (part: ExportPart, on: boolean) =>
     setPicked((current) => {
       const next = new Set(current);

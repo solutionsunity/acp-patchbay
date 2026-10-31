@@ -687,11 +687,11 @@ flowchart LR
 ```
 
 Rows (`CapabilityRowId`, protocol.ts) are **hand-picked** against the ACP spec's
-declared capability surface, not derived automatically: `fs.readTextFile` /
-`writeTextFile`, `terminal`, `elicitation`, `resources.subscribe`,
-`promptCapabilities.image` / `audio` / `embeddedContext`, `session.fork` /
-`load` / `resume` / `additionalDirectories`, `mcp.http` / `sse`, usage/context reporting,
-concurrent-session behavior. A new ACP capability needs a row added here before it can show up
+declared capability surface, not derived automatically — the client's own
+offers (file system, terminal, elicitation), the prompt's content kinds, the
+session lifecycle, MCP transports, auth, usage reporting and concurrent
+sessions. A new row is named in the union, and the proof table and the matrix's
+row table don't build until it has its entry in each. A new ACP capability needs a row added before it can show up
 at all — a deliberate scope decision (ACP's capability surface is still
 settling, and rows need human-curated meaning and a check strategy anyway, so a
 schema-driven dynamic list wouldn't remove the manual step), not a limitation.

@@ -14,7 +14,7 @@
  * Enforced by test/z-ladder.test.ts. The rungs:
  *   10     floating controls inside content (chat-jump, mermaid toolbar
  *          and zoom rail, the composer's resize grip)
- *   30     composer autocomplete (.pop)
+ *   30     composer autocomplete (.pop), a Settings card while dragged
  *   46     toast
  *   50+    RESERVED — portal band, never authored here
  * The rungs are a closed set (test/z-ladder.test.ts): everything that

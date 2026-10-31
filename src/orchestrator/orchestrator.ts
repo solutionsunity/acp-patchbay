@@ -50,6 +50,7 @@ import { ClientHost, clientRequestHooks } from "./client-host";
 import { readConfiguration, type ConfigurationRead } from "./config-import";
 import { exportConfiguration, type ConfigurationFile } from "./config-export";
 import { applyImport, type ImportOutcome } from "./config-import-apply";
+import { storedRows } from "./stores/inventory";
 import { localConfiguration, planImport, type ImportPlan } from "./config-import-plan";
 import { commandFound } from "./spawn-resolve";
 import { eraseAllData } from "./erase-all";
@@ -236,6 +237,9 @@ export class Orchestrator {
    * constant; every consumer reads this field, none re-derives it. */
   readonly workspaceCwd: string;
   private readonly binaryCacheDir: string;
+  /** The two places VS Code keeps what patchbay stores — read raw only by
+   * the Data page's inventory. */
+  private readonly kvs: { machine: KV; workspace: KV };
   readonly clientHost: ClientHost;
   /** The socket the subprocesses an agent spawns from a session's
    * mcpServers entries ask through. */
@@ -270,6 +274,7 @@ export class Orchestrator {
     this.workspaceCwd = place.workspaceCwd;
     this.binaryCacheDir = join(place.globalStoragePath, "bin-cache");
     const machineKV = place.machineKV;
+    this.kvs = { machine: machineKV, workspace: place.workspaceKV };
     this.permissionRules = new PermissionRulesStore(place.workspaceKV);
     this.machinePermissionRules = new MachineRulesStore(machineKV);
     this.machineWriteScope = new MachineWriteScopeStore(machineKV);
@@ -1235,41 +1240,14 @@ export class Orchestrator {
     for (const i of mcpServerConfigs) {
       if ((await this.mcpServerTokens.get(i.id)) !== null) tokenCount++;
     }
-    const rules = this.permissionRules.get();
-    const machineRules = this.machinePermissionRules.get();
     const rows: DataInventoryRow[] = [
-      { id: "agent-configs", label: "Agent configs", placement: "globalStorage file", detail: count(agentConfigs.length, "agent") },
-      { id: "mcp-server-configs", label: "MCP server configs", placement: "globalStorage file", detail: count(mcpServerConfigs.length, "server") },
-      { id: "used-capabilities", label: "Used-capability cache", placement: "globalStorage file", detail: count(this.usedCapabilities.list().length, "agent record") },
-      { id: "machine-rules", label: "Command rules — this machine", placement: "globalStorage file", detail: count(machineRules.commandRules.length, "rule") },
-      { id: "machine-write-scope", label: "File writes — this machine", placement: "globalStorage file", detail: count(this.machineWriteScope.get().length, "place set") },
-      { id: "spawn-registry", label: "Spawn registry", placement: "globalStorage file", detail: count(this.spawnRegistry.list().length, "process record") },
-      {
-        id: "preferences",
-        label: "Preferences",
-        placement: "globalStorage file",
-        detail: (() => {
-          const p = this.preferences.get();
-          const idle = p.idleCloseMinutes <= 0 ? "never" : `${p.idleCloseMinutes} min`;
-          const stats = [p.statsToolCalls, p.statsContext, p.statsPlanUsage].filter(Boolean).length;
-          return `sound ${p.soundOnDone ? "on" : "off"} · knobs: ${p.knobSource === "last-session" ? "last used" : "agent defaults"} · idle release ${idle} · composer stats ${stats}/3 shown`;
-        })(),
-      },
-      { id: "composer-knobs", label: "Composer knobs (last used)", placement: "globalStorage file", detail: count(this.composerKnobs.count(), "agent record") },
+      ...storedRows({ machine: (key) => this.kvs.machine.get(key), workspace: (key) => this.kvs.workspace.get(key) }),
       {
         id: "secrets",
         label: "Credentials & env values",
         placement: "SecretStorage",
         detail: `${count(agentEnvCount + mcpServerEnvCount, "env value")} · ${count(tokenCount, "OAuth token")}`,
       },
-      {
-        id: "workspace-rules",
-        label: "Command rules & file writes — this workspace",
-        placement: "workspaceState",
-        detail: `${count(rules.commandRules.length, "rule")} · ${count(rules.writeScope.length, "file-write override")}`,
-      },
-      { id: "machine-saved-roots", label: "Saved roots — every workspace", placement: "globalStorage file", detail: count(this.machineSavedRoots.list().length, "folder") },
-      { id: "workspace-saved-roots", label: "Saved roots — this workspace", placement: "workspaceState", detail: count(this.workspaceSavedRoots.list().length, "folder") },
       { id: "decision-audit", label: "Decision audit", placement: "workspace storage", detail: count(await this.decisionAudit.count(), "entry") },
     ];
     this.settings.emit({ kind: "dataInventoryChanged", rows });

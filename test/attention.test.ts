@@ -99,7 +99,7 @@ describe("open asks — what a session is blocked on", () => {
 });
 
 describe("session marks — most urgent first", () => {
-  it("waiting outranks running outranks unseen", () => {
+  it("waiting outranks unseen outranks running — one order, the header's and the mark's", () => {
     const s = replay([
       created("a"),
       { kind: "sessionBusyChanged", patchbaySessionId: "a" as PatchbaySessionId, busy: ["prompt"] },
@@ -109,6 +109,9 @@ describe("session marks — most urgent first", () => {
     expect(mark()).toBe("waiting");
     const running = replay([{ kind: "elicitationResolved", patchbaySessionId: "a" as PatchbaySessionId, patchbayAskId: "q1" as PatchbayAskId, outcome: "accepted" }], s);
     expect(sessionMark(running, running.sessions[0]!)).toBe("running");
+    // a result not yet seen asks for the user; a turn running doesn't (#135)
+    const both = { ...running, sessions: [{ ...running.sessions[0]!, unseen: true }] };
+    expect(sessionMark(both, both.sessions[0]!)).toBe("unseen");
   });
 });
 

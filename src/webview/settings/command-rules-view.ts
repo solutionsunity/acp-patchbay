@@ -3,12 +3,12 @@
 
 // What the Commands page derives from a layer's rules: the order they show
 // in, and how many of each there are.
-import type { CommandRuleView } from "../../shared/protocol";
+import { RULE_VERDICTS, type CommandRuleView } from "../../shared/protocol";
 
 type Verdict = CommandRuleView["verdict"];
 type Kind = CommandRuleView["kind"];
 
-const VERDICTS: readonly Verdict[] = ["deny", "ask", "allow"];
+const VERDICTS: readonly Verdict[] = RULE_VERDICTS;
 const KINDS: readonly Kind[] = ["command", "word"];
 
 /** Deny first, then ask, then allow — the order verdicts win in, since the

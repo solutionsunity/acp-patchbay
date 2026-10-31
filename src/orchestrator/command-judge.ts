@@ -8,7 +8,7 @@
 // ask beats allow. The line takes the most severe verdict of its commands;
 // a part whose commands can't be seen asks, and so does a line that runs
 // nothing — never a silent allow.
-import type { CommandJudgementView, CommandVerdictView, RuleMatchView } from "../shared/protocol";
+import { RULE_VERDICTS, type CommandJudgementView, type CommandVerdictView, type RuleMatchView } from "../shared/protocol";
 import type { CommandRule, RuleVerdict } from "./stores/permission-rules";
 import { programName, type ReadCommand, type ShellReading } from "./shell-reading";
 
@@ -17,7 +17,8 @@ export interface RuleLayers {
   machine: readonly CommandRule[];
 }
 
-const SEVERITY: Readonly<Record<RuleVerdict, number>> = { allow: 0, ask: 1, deny: 2 };
+/** How severe a verdict is: the later in the winning order, the milder. */
+const severity = (verdict: RuleVerdict): number => RULE_VERDICTS.length - RULE_VERDICTS.indexOf(verdict);
 
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
@@ -40,13 +41,13 @@ function judgeCommand(command: ReadCommand, layers: RuleLayers): CommandVerdictV
   const all = [...matched("workspace"), ...matched("machine")];
   const deciding = all.filter((m) => m.layer === all[0]?.layer);
   if (deciding.length === 0) return { text: command.text, verdict: "ask", by: null, also: [] };
-  const by = deciding.reduce((a, b) => (SEVERITY[b.rule.verdict] > SEVERITY[a.rule.verdict] ? b : a));
+  const by = deciding.reduce((a, b) => (severity(b.rule.verdict) > severity(a.rule.verdict) ? b : a));
   return { text: command.text, verdict: by.rule.verdict, by, also: all.filter((m) => m !== by) };
 }
 
 export function judgeCommands(reading: ShellReading, layers: RuleLayers): CommandJudgementView {
   const commands = reading.commands.map((c) => judgeCommand(c, layers));
-  const worst = commands.reduce<RuleVerdict>((v, c) => (SEVERITY[c.verdict] > SEVERITY[v] ? c.verdict : v), "allow");
+  const worst = commands.reduce<RuleVerdict>((v, c) => (severity(c.verdict) > severity(v) ? c.verdict : v), "allow");
   const verdict = worst === "deny" ? "deny" : reading.unreadable.length > 0 || commands.length === 0 ? "ask" : worst;
   return { verdict, commands, unreadable: reading.unreadable };
 }
