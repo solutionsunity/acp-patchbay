@@ -114,7 +114,9 @@ Two webviews, a diagram page, and one near-empty native settings page:
    routing, permission rules. Structured data, low frequency, same render-only
    contract.
 3. **Diagram** — a chat's diagram opened in the editor area, where it has room:
-   the rendered SVG under the same pan and zoom as in chat, on a channel of
+   the rendered SVG fitted to the window, under the shared pan and zoom in
+   the page's own range (a fifth to ten times, about the pointer,
+   double-click to the start — chat zooms in even steps), on a channel of
    its own that holds the SVG and takes no action back. Built and opened like
    every other page — the shared component layer, the theme bridge, the one
    panel factory and its CSP, no inline script.

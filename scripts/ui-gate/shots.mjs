@@ -1132,6 +1132,28 @@ for (const theme of Object.keys(THEMES)) {
   check(`[${theme}] the diagram page has the zoom rail`, (await p.locator('button[title="Reset zoom and pan"]').count()) === 1);
   await p.screenshot({ path: `${OUT}/diagram-${theme}.png` });
   await p.close();
+
+  // the page is there to read a large diagram: a tall one opens whole,
+  // the wheel zooms well past the chat's 3× about the pointer, and a
+  // double-click goes back to the start
+  p = await page(browser, theme, { width: 800, height: 600 });
+  await renderView(p, "diagram", { svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 2000" width="100%"><rect id="tall" width="100" height="2000" fill="currentColor"/></svg>' });
+  await p.waitForSelector("svg #tall", { timeout: 3000 });
+  const tall = await p.locator("svg:has(#tall)").boundingBox();
+  check(`[${theme}] a tall diagram opens fitted to the page`, tall !== null && tall.y >= 0 && tall.y + tall.height <= 600);
+  const stage = p.locator('[role="application"]');
+  const at = { x: 600, y: 150 };
+  await p.mouse.move(at.x, at.y);
+  for (let i = 0; i < 20; i++) await p.mouse.wheel(0, -100);
+  const scaleOf = () => stage.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a);
+  check(`[${theme}] the page zooms past the chat's 3×`, (await scaleOf()) > 6);
+  const after = await p.locator("svg:has(#tall)").boundingBox();
+  // the point under the pointer stayed put: its share of the drawing is the same
+  const share = (box) => (at.y - box.y) / box.height;
+  check(`[${theme}] the page zooms about the pointer`, tall !== null && after !== null && Math.abs(share(after) - share(tall)) < 0.01);
+  await p.mouse.dblclick(at.x, at.y);
+  check(`[${theme}] a double-click takes the page back to the start`, (await scaleOf()) === 1);
+  await p.close();
 }
 
 // ── the composer takes the keyboard (#55): when a chat opens for typing,

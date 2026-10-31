@@ -109,7 +109,7 @@ function FullscreenButton({ svg }: { svg: string }) {
         className="inset-0 flex h-full w-full max-w-none max-h-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none border-0 bg-background/95 p-4"
       >
         <DialogTitle className="sr-only">Diagram</DialogTitle>
-        <PanZoom fullscreen>
+        <PanZoom surface="fullscreen">
           {/* mermaid sanitizes its output (securityLevel strict, the default) */}
           <div dangerouslySetInnerHTML={{ __html: svg }} />
         </PanZoom>
