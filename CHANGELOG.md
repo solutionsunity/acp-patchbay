@@ -47,7 +47,9 @@
   has had its first prompt, so the chip no longer says "live" for one whose
   transcript hasn't loaded yet. Restart asks before cutting off open
   conversations, like Stop. Log out is never sent to an agent that doesn't
-  offer it. (#135)
+  offer it. An agent's one-line summary of its capabilities counts a
+  suspect one, as the matrix does. Saving an agent's form after the agent
+  was removed — in another window, say — no longer adds it back. (#135)
 - **A crashed agent's card says why, every time.** The last lines an agent
   writes before it dies can reach Patchbay just after its exit does, and
   the card then showed the crash without them. They now join the card

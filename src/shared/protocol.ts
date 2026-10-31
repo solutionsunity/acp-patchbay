@@ -929,10 +929,9 @@ export interface SessionSummary {
   forkedFrom?: PatchbaySessionId;
 }
 
-/** What a session's lines can hold: the attachment line's open (an attach,
- * the ladder), reload, roots (re-applied to the agent), knob (a set), release
- * (idle), close — and the turn line's prompt, which reads stopping once told
- * to stop while its agent still owes the answer that ends it. */
+/** What a session's lines can hold: the turn line's prompt — which reads
+ * stopping once told to stop while its agent still owes the answer that
+ * ends it — and, every other member, the attachment line's work. */
 export type SessionWork = "open" | "reload" | "roots" | "knob" | "release" | "fork" | "close" | "delete" | "prompt" | "stopping";
 
 /** A turn underway on the session — running, or waiting for its session to
