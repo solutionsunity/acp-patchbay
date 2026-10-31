@@ -22,7 +22,9 @@ const agent = (id: string, over: Record<string, unknown> = {}) => ({
   args: [],
   autoConnect: false,
   defaults: {},
-  registrySource: null,
+  origin: null,
+  link: null,
+  previous: null,
   lastSeenVersion: null,
   ...over,
 });
@@ -43,7 +45,11 @@ describe("reading a configuration file", () => {
     expect(r.patchbayVersion).toBe("0.86.0");
     expect(r.exportedAt).toBe("2026-10-13T12:00:00.000Z");
     expect(r.agents.map((a) => a.id)).toEqual(["claude", "6f1c2a9e-3b7d-4e21-9a5f-0c8d2e4b7a13", "bare"]);
-    expect(r.agents[1]?.registrySource).toMatchObject({ distributionKind: "binary", distribution: { cmd: "./kimi" } });
+    // written before origin and link were two fields: each record split
+    expect(r.agents.map((a) => a.origin)).toEqual(["claude-acp", "kimi", null]);
+    expect(r.agents[0]?.link).toEqual({ distributionKind: "npx", pinnedVersion: "0.31.0" });
+    expect(r.agents[1]?.link).toMatchObject({ distributionKind: "binary", pinnedVersion: "0.3.1", distribution: { cmd: "./kimi" } });
+    expect(r.agents[2]?.link).toBeNull();
     expect(r.knobs).toEqual({ claude: { mode: "plan" } });
     expect(r.mcpServers.map((s) => [s.id, s.source.kind])).toEqual([
       ["keyed", "custom-http"],

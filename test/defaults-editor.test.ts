@@ -67,7 +67,7 @@ async function harness(opts: { defaults?: Record<string, KnobSeed>; latched?: st
   for (const [patchbayAgentId, seed] of Object.entries(opts.defaults ?? {})) {
     await h.saveAgent(fakeConfig(patchbayAgentId as PatchbayAgentId, {}, { defaults: seed }));
   }
-  if (opts.latched !== undefined) await h.saveAgent(fakeConfig(opts.latched as PatchbayAgentId, {}, { registrySource: { registryId: "auggie", distributionKind: "npx", pinnedVersion: "1.0.0" } }));
+  if (opts.latched !== undefined) await h.saveAgent(fakeConfig(opts.latched as PatchbayAgentId, {}, { origin: "auggie", link: { distributionKind: "npx", pinnedVersion: "1.0.0" } }));
   const events = h.settings.events;
   /** The latest surface published for an agent. */
   const lastView = (patchbayAgentId: PatchbayAgentId) => {
@@ -88,7 +88,14 @@ async function harness(opts: { defaults?: Record<string, KnobSeed>; latched?: st
    * the store, as in the window. */
   const saveDefaults = async (patchbayAgentId: PatchbayAgentId, seed: KnobSeed) => {
     const config = o.agents.config(patchbayAgentId)!;
-    await o.agents.save({ ...config, args: [...config.args], env: {}, defaults: seed });
+    await o.agents.save({
+      ...config,
+      args: [...config.args],
+      env: {},
+      defaults: seed,
+      link: null,
+      previousVersion: config.previous?.pinnedVersion ?? null,
+    });
   };
   return { pool: o.pool, editor: o.defaultsEditor, events, offered, lastView, connected, saveDefaults, paths: h.paths };
 }

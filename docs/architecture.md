@@ -435,18 +435,19 @@ flowchart TD
   downloading when this version isn't cached — always confirmed first, and
   held to the archive's SHA-256 when its registry entry publishes one
   (optional per target in the registry format). The digest is pinned with
-  the version at Add and replaced whole at Upgrade, because the registry
+  the version and replaced whole with it, because the registry
   lists only each agent's latest version — and for the same reason every
   registry agent keeps the recipe it was added or upgraded from, exactly
   as the registry published it for this platform: npx/uvx's package, args
   and env, or the binary target's archive, cmd, args, env and digest.
-  Written whole at Add, Upgrade and an import's re-resolve, never edited;
+  Written whole with the link it belongs to, never edited;
   an agent stored while only the archive was kept has its args and env
   unknown, never assumed empty. The recipe's env seeds the agent's env at
-  Add and never again: the env is the user's, so an Upgrade leaves it as
-  it is and says what the registry changed in it between the two recipes
-  (against the user's own env, values unshown, when the old recipe's is
-  unknown). The registry is read right before
+  Add and never again: the env is the user's, so a move of the version
+  leaves it as it is and says what differs between the two recipes'
+  env (against the user's own env, values unshown, when there is no old
+  recipe — an edited agent's Reset, a record from before recipes were
+  kept). The registry is read right before
   the download; its word wins while it still lists that version, the pinned
   copy after it moves on — and the prompt says only what is known: checked,
   none published, or the registry couldn't be read. It is checked on the downloaded bytes before anything
@@ -486,37 +487,70 @@ flowchart TD
   managed runtime changes which interpreter runs, never where the agent
   keeps sessions, auth, or config, so terminal and patchbay copies stay
   one history.
+- **An agent's version** — one model, three facts and nothing between
+  them. An agent added from the registry has an **origin** (the registry
+  id, kept for good) and a **link** (the pinned version and the
+  registry's recipe for it); an edited agent has its origin only; a custom
+  command has neither. The facts: the link's recipe, the registry's latest
+  (the CDN serves only `latest`), and the version the agent reports in
+  `initialize` (`lastSeenVersion`). A version between pin and latest is
+  unknown — a version list from npm or PyPI would be a guessed recipe.
+  The pin and the report are two naming schemes (a pinned `0.36.0` reports
+  `0.36.0 (commit 7c61e5bb)`), so they are shown side by side and never
+  compared. **One version chip**, shared by the Settings card and the
+  Agent View's agent chip: the pin for a registry agent, the report
+  otherwise, both in its tooltip; while an update exists the same chip is
+  the upgrade (`0.36.0 → 0.37.0`).
 - **Agent updates** — one fact, worked out where it is read
-  (agent-updates.ts): a registry config whose pinned version trails the
-  registry's, unless the running agent already reported the registry's
-  version (the wire outranks the pin). Never stored: it rides each agent's
-  row, re-sent whenever a registry read or a config write moves it; the
-  Settings card, the Agent View's agent chip and the notice all read it,
-  none derives it. A
+  (agent-updates.ts): a linked config whose pinned version isn't the
+  registry's latest. Nothing else bears on it — what the agent reports is
+  another scheme. Never stored: it rides each agent's row, re-sent
+  whenever a registry read or a config write moves it; the version chip
+  and the notice read it, none derives it. A
   registry read landing (never the cached copy loaded at start) announces
-  each newer version once per window. Upgrade is always the user's click, through the one upgrade
-  path: it reads the registry and re-resolves the version like a first
-  add — before anything stops, so a registry that no longer lists the agent leaves it
-  running — and asks before a stop that would disconnect open
+  each newer version once per window. A version moves only by the user's
+  click, through **one path** for its three moves — Upgrade (the chip),
+  and Reset to ACP registry and Back to previous (the card's menu). A
+  registry move reads the registry (an essential read: the user started
+  it) and resolves the version like a first add — before anything stops,
+  so a registry that no longer lists the agent leaves it running and says
+  so — and every move asks before a stop that would disconnect open
   conversations. The new launch starts before it is saved, and is saved
   only once the new version answered `initialize`: one that doesn't start
-  (an install the user's registry policy refuses, a crash) leaves the pin
-  as it was, says why, and reconnects the old version if it was running; a
-  Stop cancels it the same way, without the reconnect. A Save doesn't wait
-  behind an upgrade, so the upgrade's save bears only on the launch it was
-  resolved from — a launch edited while the new version started keeps the
-  edit. A registry agent whose command line the user edits
-  leaves the registry for good: Save takes a line only when one was typed
+  (an install the user's registry policy refuses, a crash) leaves the
+  agent as it was, says why, and reconnects the old version if it was
+  running; a Stop cancels it the same way, without the reconnect. A Save
+  doesn't wait behind a move, so the move's save bears only on the launch
+  it was resolved from — a launch edited while the new version started
+  keeps the edit. The env is never written by a move: what the new
+  recipe's env sets differently is said, as above.
+  **Back to previous** is a one-level undo: Upgrade keeps the link it
+  replaces (when its recipe rebuilds the launch), so going back is exact —
+  the npx/uvx line, or the binary's archive checked against the digest
+  kept with it; a source that stopped serving it fails visibly. Going back
+  clears it, as does an edit, and the next Upgrade replaces it; after it,
+  the chip offers the latest again. Registry history isn't kept — it is
+  the registry repo's git log, not a contract; revisit if the registry
+  publishes version history or a user asks for a specific version. An
+  import drops a binary's way back: it names another machine's build.
+  A registry agent whose command line the user edits
+  stops following the registry: Save takes a line only when one was typed
   (a knob or toggle save never rewrites the command), and a changed line
-  drops the link — no update is offered, no Upgrade writes the registry's
-  line over the one typed, a binary has no download phase. Name, env and
-  defaults keep it. An agent edited while an edit still kept its link is
-  found by its recipe — an npx/uvx line that isn't the recipe's, a binary
-  command that isn't the archive's executable under any cache root — and
-  made custom before any agent starts, and before an import re-resolves
-  it. The way back is adding it from the registry again — a deliberate
-  scope decision: a custom agent is the user's, and a reset path earns its
-  place only once a need for one shows.
+  drops the link and the way back — no update is offered, no Upgrade
+  writes the registry's line over the one typed, a binary has no download
+  phase. Its origin, name, env and defaults stay. An agent edited while an
+  edit still kept its link is found by its recipe — an npx/uvx line that
+  isn't the recipe's, a binary command that isn't the archive's executable
+  under any cache root — and unlinked before any agent starts, and before
+  an import re-resolves it. **Reset to ACP registry** is its way back
+  (decided 2026-10-29, #129, superseding "the way back is adding it again;
+  a reset path earns its place only once a need shows" — the need showed,
+  and what made a reset look impossible was rebuilding an old line, which
+  it never does): the registry's current entry for its origin, through the
+  same path. An
+  agent edited before origin and link were two fields lost its origin with
+  the edit and stays custom — never guessed back from its config id, which
+  can predate the registry's naming; its way back is adding it again.
 - **Agent operations take turns** — one line per agent, a repeat joining,
   Stop and Remove cutting in, and one question before a connection ends:
   [the stores architecture](store-architecture.md#agents).
@@ -1279,12 +1313,15 @@ mechanism — MCP servers routed to agents:
 - **The agent list is NOT shipped data**: the official ACP registry is the one
   agent source (identity, launch, icon, live-fetched + disk-cached), and the
   registry store is its one holder — nothing else keeps a copy — and the
-  one way to the registry. It is read at the moments it matters (startup,
-  a new session, Settings opening — for update notices alone, so optional
-  and switched by *check for agent updates automatically*; never on a
-  clock) and always right before anything acts on it or shows it to be
-  acted on (opening the registry search, an Add, an Upgrade, an import, a
-  download, a refresh — essential), one read at a time,
+  one way to the registry. It is read at named moments, never on a clock,
+  and the moments are one list (`shared/registry-reads.ts`): those that
+  exist for update notices alone name the switch that turns them off
+  (*check for agent updates automatically*), and every other is the
+  user's own act on the registry, read right before it acts on what the
+  registry says — essential. The store takes each read's class and log
+  line from that list, and Preferences › Network says the reads from it,
+  so a moment added there is read, logged and told with no other edit.
+  One read at a time,
   conditionally by its ETag (an unchanged registry costs a
   bodiless 304). Between reads the copy is shown with the date it was last
   confirmed. The disk cache holds

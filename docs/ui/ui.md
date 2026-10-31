@@ -225,12 +225,16 @@ mode, `Add from list` in custom mode). A
 registry agent already added is listed with `— added`; adding it again adds a
 second agent under a numbered name.
 
-Per-agent card: the amber `⬆ version` upgrade chip beside the name while the
-registry has a newer version than the pin — the same chip as the Agent View's,
-indicator and action in one; while an upgrade runs it reads `upgrading to
-{version}…` with a spinner and takes no click · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
+Per-agent card: the version chip beside the name — the same chip as the Agent
+View's: the pinned version for a registry agent, the reported one otherwise
+(muted, cut to fit, both in its tooltip); the amber `⬆ pinned → latest`
+upgrade while the registry has a newer version, indicator and action in one;
+while a move of the version runs it reads `upgrading to {version}…` (or
+`resetting…`, `going back…`) with a spinner and takes no click · `⋯` menu,
+present only with an item: `Reset to ACP registry` (an edited agent from the
+registry) and `Back to previous ({version})` (after an Upgrade) · launch command (mono) · `✎ Edit` (launch config + env) · `Remove`
 (spins and takes no click while the agent is being removed) — no dialog of
-its own: Stop, Upgrade, Remove and Log out put the host's one question, a
+its own: every operation that ends the agent's connection puts the host's one question, a
 modal with the open conversations and running turns they would cut off,
 and only when there are any; Remove always asks, since it also forgets the
 agent · default knobs render **exactly what the agent
@@ -374,13 +378,12 @@ the stored truth — the page never assumes its own write landed:
   opens or closes any card either way.
 - **Network** — one switch per call patchbay makes on its own, for something
   extra: *check for agent updates automatically* (default on) — the registry
-  reads at window start, a new session and Settings opening, which exist for
-  update notices; off, the registry is read only when the user acts on it
-  (opening the registry search, Refresh registry, an Add, an Upgrade, an
-  import).
+  reads that exist for update notices; off, the registry is read only when
+  the user acts on it. The card names both sets of reads, composed from the
+  one list of read moments — never a copy of it.
   One sentence beside the switches says what they don't cover: what the user
-  does still reaches the network (an Add or Upgrade, a runtime download, an
-  MCP server's sign-in or check), and what an agent sends is the agent's own
+  does still reaches the network (examples: a runtime download, an MCP
+  server's sign-in or check), and what an agent sends is the agent's own
   settings'.
 
 ### Saved roots

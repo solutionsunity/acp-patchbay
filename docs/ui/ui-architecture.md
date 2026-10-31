@@ -177,7 +177,7 @@ So the rule:
   derivation function** — a pure function (e.g. `settings/card-controls.ts`'s
   `agentCardControls`) taking the state slices and returning the complete controls
   contract: an entry per control with `show`/`disabled`/whatever that control's
-  JSX needs. The line is **provenance, not complexity**: a trivial `upgrade !==
+  JSX needs. The line is **provenance, not complexity**: a trivial `version !==
   null` still goes through the derivation, because thresholds that depend on
   counting conditions erode — the next condition gets bolted onto the inline
   predicate instead of graduated into the pattern. With the derivation in place,

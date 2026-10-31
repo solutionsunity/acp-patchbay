@@ -655,7 +655,7 @@ export class Orchestrator {
       {
         changed: (patchbayAgentId) => this.agents.publish(patchbayAgentId),
         probeRoot: (patchbayAgentId) => this.agents.probeRoot(patchbayAgentId),
-        registryIdOf: (patchbayAgentId) => this.agents.config(patchbayAgentId)?.registrySource?.registryId ?? null,
+        registryIdOf: (patchbayAgentId) => this.agents.linkedRegistryId(patchbayAgentId),
       },
       log,
     );

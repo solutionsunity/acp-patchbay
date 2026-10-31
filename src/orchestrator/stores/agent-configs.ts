@@ -28,30 +28,30 @@ const agentDefaultsSchema = z.object({
 
 const envSchema = z.record(z.string(), z.string());
 
-/** Present only when this config was created from the official ACP agent
- * registry — the pinned version drives the update fact (the upgrade chip)
- * and is what gets re-resolved on Upgrade. Absent for custom commands.
+/** A registry agent's link: the version it is pinned to — what the update
+ * fact compares against the registry's latest — and the registry's recipe
+ * for it. Linked to the registry entry its agent's `origin` names.
  *
  * `distribution`: the registry's recipe for the pinned version on this
  * machine's platform, exactly as the registry published it — kept because
  * the registry lists only each agent's latest version, so once it moves on
  * this copy is the only record of what the agent was added or upgraded
- * from. Written whole at Add, Upgrade and an import's re-resolve, never
- * edited. Absent on records written before it was kept. A `binary` one
- * carries the archive a connect (re)acquires the executable from, and the
- * archive's `sha256` when one was published — the copy a re-download is
- * checked against once the registry has moved on. Its `args` and `env` are
- * absent on records written while only the archive was kept — unknown,
- * never assumed empty. */
-const registryLinkSchema = { registryId: z.string().min(1), pinnedVersion: z.string().min(1) };
-const agentRegistrySourceSchema = z.discriminatedUnion("distributionKind", [
+ * from. Written whole with the link it belongs to, whenever a link is
+ * written; never edited. Absent on records written before it was kept. A `binary`
+ * one carries the archive a connect (re)acquires the executable from, and
+ * the archive's `sha256` when one was published — the copy a re-download
+ * is checked against once the registry has moved on. Its `args` and `env`
+ * are absent on records written while only the archive was kept —
+ * unknown, never assumed empty. */
+const pinnedVersion = { pinnedVersion: z.string().min(1) };
+const agentLinkSchema = z.discriminatedUnion("distributionKind", [
   z.object({
-    ...registryLinkSchema,
+    ...pinnedVersion,
     distributionKind: z.enum(["npx", "uvx"]),
     distribution: z.object({ package: z.string().min(1), args: z.array(z.string()), env: envSchema }).optional(),
   }),
   z.object({
-    ...registryLinkSchema,
+    ...pinnedVersion,
     distributionKind: z.literal("binary"),
     distribution: z
       .object({
@@ -78,15 +78,30 @@ export const agentConfigSchema = z.object({
    * `acpPatchbay.defaultAgent` setting, whose only semantic this generalizes. */
   autoConnect: z.boolean().default(false),
   defaults: agentDefaultsSchema.default({}),
-  registrySource: agentRegistrySourceSchema.nullable().default(null),
+  /** The ACP registry entry the agent was added from — kept through an
+   * edit of its command, the way back to the registry (Reset). Null for an
+   * agent added as a custom command. */
+  origin: z.string().min(1).nullable().default(null),
+  /** Null once the command was edited: what was typed is what runs, and no
+   * Upgrade writes the registry's line over it. Never set without an
+   * `origin`. */
+  link: agentLinkSchema.nullable().default(null),
+  /** The link an Upgrade replaced — one level back, an exact rollback since
+   * it holds the old recipe whole. Cleared once used, by an edit, and
+   * replaced by the next Upgrade. Kept only when its recipe rebuilds the
+   * launch. */
+  previous: agentLinkSchema.nullable().default(null),
   /** `agentInfo.version` last captured at connect — the version-keyed
    * used-capability cache (capability-tracker.ts) is seeded against
-   * this, not against `registrySource.pinnedVersion`: reality (the version
-   * that actually answered `initialize`) is the source of truth, the pinned
-   * version is only what we asked for. */
+   * this, not against `link.pinnedVersion`: reality (the version that
+   * actually answered `initialize`) is the source of truth, the pinned
+   * version is only what we asked for. The two are different naming
+   * schemes (a registry `0.36.0` may report `0.36.0 (commit 7c61e5bb)`),
+   * so they are shown side by side, never compared. */
   lastSeenVersion: z.string().nullable().default(null),
 });
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
+export type AgentLink = z.infer<typeof agentLinkSchema>;
 
 const KEY = STORAGE_KEYS.agents;
 
@@ -158,6 +173,29 @@ export class AgentConfigStore extends NamedRecordStore<AgentConfig> {
           const { binary, ...source } = r.registrySource;
           const { archiveUrl, ...rest } = binary;
           return { ...r, registrySource: { ...source, distribution: { archive: archiveUrl, ...rest } } };
+        }),
+      );
+    }
+    // Once, at construction: `registrySource` held two facts in one field —
+    // where the agent came from and the version it is pinned to — so an
+    // edit, dropping the pin, dropped the origin with it. Split into
+    // `origin` (its registry id) and `link` (the rest). An agent edited
+    // before the split has no source left: it stays custom — never guessed
+    // back from its id, which can predate the registry's naming.
+    const sourced = kv.get<unknown>(KEY);
+    const withSource = (r: unknown): r is { registrySource: unknown } =>
+      typeof r === "object" && r !== null && "registrySource" in r;
+    if (Array.isArray(sourced) && sourced.some(withSource)) {
+      void kv.update(
+        KEY,
+        sourced.map((r: unknown) => {
+          if (!withSource(r)) return r;
+          const { registrySource, ...rest } = r;
+          if (typeof registrySource !== "object" || registrySource === null || !("registryId" in registrySource)) {
+            return { ...rest, origin: null, link: null };
+          }
+          const { registryId, ...link } = registrySource;
+          return { ...rest, origin: registryId, link };
         }),
       );
     }

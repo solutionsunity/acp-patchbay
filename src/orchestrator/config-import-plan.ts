@@ -131,18 +131,18 @@ const fateOf = (local: unknown, differs: readonly string[]): ImportItemFate =>
 
 /** An agent as it would run on any machine: a downloaded binary's command
  * is a path into the machine's own cache, and its archive that machine's
- * build — neither travels, so neither is compared. */
+ * build — neither travels, so neither is compared. Its way back is the undo
+ * of an upgrade, not configuration: never a difference either. */
 function portableAgent(agent: AgentConfig, env: Env, knobs: KnobSeed | undefined) {
-  const source = agent.registrySource;
-  const binary = source?.distributionKind === "binary";
+  const { link } = agent;
   return {
     name: agent.name,
-    command: binary ? null : agent.command,
+    command: link?.distributionKind === "binary" ? null : agent.command,
     args: agent.args,
     autoConnect: agent.autoConnect,
     defaults: agent.defaults,
-    registrySource:
-      source === null ? null : { registryId: source.registryId, distributionKind: source.distributionKind, pinnedVersion: source.pinnedVersion },
+    origin: agent.origin,
+    link: link === null ? null : { distributionKind: link.distributionKind, pinnedVersion: link.pinnedVersion },
     env,
     knobs: knobs ?? null,
   };
@@ -154,7 +154,8 @@ const AGENT_LABELS = {
   args: "arguments",
   autoConnect: "connect on window open",
   defaults: "defaults",
-  registrySource: "registry version",
+  origin: "registry entry",
+  link: "registry version",
   env: "env values",
   knobs: "composer choices",
 } as const;
@@ -196,8 +197,8 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
     const fate = fateOf(mine, differs);
     const flags: string[] = [];
     if (fate !== "unchanged") {
-      if (agent.registrySource?.distributionKind === "binary") flags.push("downloaded again for this machine at its first connect");
-      else if (agent.registrySource === null && !checks.commandFound(agent.command)) flags.push(`${agent.command} isn't found on this machine`);
+      if (agent.link?.distributionKind === "binary") flags.push("downloaded again for this machine at its first connect");
+      else if (agent.link === null && !checks.commandFound(agent.command)) flags.push(`${agent.command} isn't found on this machine`);
     }
     items.push({ id: `agent:${agent.id}`, part: "agents", kind: "agent", label: agent.name, fate, differs, flags });
   }

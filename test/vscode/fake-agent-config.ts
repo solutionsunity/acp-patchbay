@@ -21,7 +21,7 @@ export function fakeAgentConfig(
   name: string,
   fakeAgentPath: string,
   script: FakeAgentScript,
-  registrySource: AgentConfigView["registrySource"] = null,
+  registry: Pick<AgentConfigView, "origin" | "link"> = { origin: null, link: null },
 ): AgentConfigView {
   return {
     id: "" as PatchbayAgentId,
@@ -31,7 +31,8 @@ export function fakeAgentConfig(
     env: { FAKE_AGENT_SCRIPT: JSON.stringify(script), FAKE_AGENT_STORE: fakeAgentStore(label) },
     autoConnect: false,
     defaults: {},
-    registrySource,
+    ...registry,
+    previousVersion: null,
     lastSeenVersion: null,
   };
 }

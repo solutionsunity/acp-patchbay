@@ -32,6 +32,14 @@ function stubStore() {
       if (consent !== undefined) consents.push(consent);
       return op("upgrade", signal);
     },
+    reset: (_patchbayAgentId, signal, consent) => {
+      if (consent !== undefined) consents.push(consent);
+      return op("reset", signal);
+    },
+    goBack: (_patchbayAgentId, signal, consent) => {
+      if (consent !== undefined) consents.push(consent);
+      return op("goBack", signal);
+    },
     login: (_patchbayAgentId, methodId, signal) => op(`login:${methodId}`, signal),
     logout: () => op("logout"),
     stop: () => op("stop"),
@@ -234,6 +242,8 @@ describe("the one question before a connection ends", () => {
     const none = { conversations: 0, turns: 0 };
     expect(endQuestion("stop", "Claude", none)).toBeNull();
     expect(endQuestion("upgrade", "Claude", none)).toBeNull();
+    expect(endQuestion("reset", "Claude", none)).toBeNull();
+    expect(endQuestion("goBack", "Claude", none)).toBeNull();
     expect(endQuestion("logout", "Claude", none)).toBeNull();
     expect(endQuestion("import", "patchbay", none)).toBeNull();
     expect(endQuestion("remove", "Claude", none)).toEqual({
@@ -247,6 +257,14 @@ describe("the one question before a connection ends", () => {
     const cut = "2 open conversations — 1 still running and will be cut off";
     expect(endQuestion("stop", "Claude", work)).toEqual({ message: `Stop Claude? It disconnects ${cut}.`, choice: "Stop" });
     expect(endQuestion("upgrade", "Claude", work)?.message).toBe(`Upgrade Claude? It restarts the agent, disconnecting ${cut}.`);
+    expect(endQuestion("reset", "Claude", work)).toEqual({
+      message: `Reset Claude to the ACP registry? It restarts the agent, disconnecting ${cut}.`,
+      choice: "Reset",
+    });
+    expect(endQuestion("goBack", "Claude", work)).toEqual({
+      message: `Take Claude back to its previous version? It restarts the agent, disconnecting ${cut}.`,
+      choice: "Go back",
+    });
     expect(endQuestion("logout", "Claude", work)).toEqual({
       message: `Log out of Claude? It signs the agent out and stops it, disconnecting ${cut}.`,
       choice: "Log out",
@@ -334,5 +352,30 @@ describe("the one question before a connection ends", () => {
     expect(await agreed).toBe(true);
     finish("upgrade");
     await upgrade;
+  });
+
+  it("Reset and Back hand the store their go-ahead the same way, each with its own question", async () => {
+    const user = asking();
+    const { gates, consents, finish } = gated(user.asks);
+    const reset = gates.reset("a" as PatchbayAgentId);
+    const back = gates.goBack("a" as PatchbayAgentId);
+    await tick();
+    expect(user.asked).toEqual([]);
+    const resetAgreed = consents[0]!();
+    await tick();
+    expect(user.asked[0]).toMatch(/^Reset Agent a to the ACP registry\? It restarts the agent/);
+    user.answer(false);
+    expect(await resetAgreed).toBe(false);
+    finish("reset");
+    await reset;
+    // Back took its turn behind Reset on the agent's line
+    await tick();
+    const backAgreed = consents[1]!();
+    await tick();
+    expect(user.asked[1]).toMatch(/^Take Agent a back to its previous version\?/);
+    user.answer(true);
+    expect(await backAgreed).toBe(true);
+    finish("goBack");
+    await back;
   });
 });

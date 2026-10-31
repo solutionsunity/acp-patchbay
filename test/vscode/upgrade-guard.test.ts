@@ -37,7 +37,7 @@ suite("upgrade guard", () => {
           "Upgrade Guard Fake",
           fakeAgentPath(),
           { turn: [{ type: "chunk", text: "ok" }] },
-          { registryId: REGISTRY_ID, distributionKind: "npx", pinnedVersion: "1.0.0" },
+          { origin: REGISTRY_ID, link: { distributionKind: "npx", pinnedVersion: "1.0.0" } },
         ),
       );
       await pb.connect(patchbayAgentId);

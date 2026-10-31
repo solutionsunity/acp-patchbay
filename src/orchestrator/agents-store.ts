@@ -18,24 +18,27 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk";
-import type {
-  AgentConfigView,
-  AgentStatus,
-  AgentSummary,
-  AgentUpdate,
-  AgentViewEvent,
-  AgentWork,
-  CapabilityMatrix,
-  CapabilityRowId,
-  ConnectAgentSource,
-  KnobSeed,
-  PreferencesView,
-  SettingsEvent,
+import {
+  type AgentConfigView,
+  type AgentStatus,
+  type AgentSummary,
+  type AgentUpdate,
+  type AgentViewEvent,
+  type AgentWork,
+  type CapabilityMatrix,
+  type CapabilityRowId,
+  type ConnectAgentSource,
+  type KnobSeed,
+  type PreferencesView,
+  type SettingsEvent,
+  type VersionMove,
+  isVersionMove,
 } from "../shared/protocol";
 import { formatCommandLine, parseCommandLine, sameCommandLine } from "../shared/command-line";
 import { unlessAborted } from "./abort";
 import { agentUpdates } from "./agent-updates";
 import { applyAuthEvidence, type AuthEvidence } from "./auth-evidence";
+import { agentErrorText } from "./readers/agent-error";
 import type { TerminalAuth } from "./readers/initialize";
 import type { CapabilityTracker } from "./capability-tracker";
 import { checkPathDivergence } from "./launcher-health";
@@ -43,8 +46,9 @@ import { nullLogger, type Logger } from "./logger";
 import type { TerminalAuthRecipe } from "./meta";
 import type { AgentPool, LaunchSpec } from "./pool";
 import { mergeEnv, resolveExecutableWin32 } from "./spawn-resolve";
-import { type AcpRegistryStore, packageLaunch, type RegistryAgent, type RegistryReadMoment, resolveDistribution } from "./stores/acp-registry";
-import type { AgentConfig, AgentConfigStore } from "./stores/agent-configs";
+import { type AcpRegistryStore, packageLaunch, type RegistryAgent, resolveDistribution } from "./stores/acp-registry";
+import type { RegistryReadMoment } from "../shared/registry-reads";
+import type { AgentConfig, AgentConfigStore, AgentLink } from "./stores/agent-configs";
 import type { AuthLockStore } from "./stores/auth-locks";
 import { isResolvedBinaryPath, resolvedBinaryPath } from "./stores/binary-installer";
 import type { ComposerKnobsStore } from "./stores/composer-knobs";
@@ -107,6 +111,8 @@ export interface ConnectionOperations {
   connect(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void>;
   restart(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal): Promise<void>;
   upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
+  reset(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
+  goBack(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void>;
   login(patchbayAgentId: PatchbayAgentId, methodId: string, signal?: AbortSignal): Promise<void>;
   logout(patchbayAgentId: PatchbayAgentId): Promise<void>;
   stop(patchbayAgentId: PatchbayAgentId): Promise<void>;
@@ -164,8 +170,15 @@ export class AgentsStore implements ConnectionOperations {
     return this.deps.tracker.matrix(patchbayAgentId);
   }
 
+  /** The registry entry the agent runs as: its origin while linked — an
+   * edited command is the user's own, never taken for the registry's. */
+  linkedRegistryId(patchbayAgentId: PatchbayAgentId): string | null {
+    const config = this.config(patchbayAgentId);
+    return config?.link == null ? null : config.origin;
+  }
+
   /** The update fact, worked out now — the registry's version against each
-   * config's pin and the version that last answered (agent-updates.ts). */
+   * config's pin (agent-updates.ts). */
   updates(): ReadonlyMap<PatchbayAgentId, AgentUpdate> {
     return agentUpdates(this.deps.registry.current().agents, this.deps.configs.list());
   }
@@ -227,7 +240,9 @@ export class AgentsStore implements ConnectionOperations {
         env: await this.deps.env.get(c.id),
         autoConnect: c.autoConnect,
         defaults: c.defaults.options ?? {},
-        registrySource: c.registrySource,
+        origin: c.origin,
+        link: c.link === null ? null : { distributionKind: c.link.distributionKind, pinnedVersion: c.link.pinnedVersion },
+        previousVersion: c.previous?.pinnedVersion ?? null,
         lastSeenVersion: c.lastSeenVersion,
       })),
     );
@@ -367,7 +382,7 @@ export class AgentsStore implements ConnectionOperations {
    * `initialize`. */
   private async spawn(spec: LaunchSpec, signal?: AbortSignal): Promise<void> {
     await this.deps.pool.connect(spec, { signal });
-    void this.warnOnPathDivergence(spec, this.config(spec.patchbayAgentId)?.registrySource?.registryId ?? null);
+    void this.warnOnPathDivergence(spec, this.linkedRegistryId(spec.patchbayAgentId));
   }
 
   /** Intentional stop — reads as "stopped", never "crashed". */
@@ -404,47 +419,85 @@ export class AgentsStore implements ConnectionOperations {
     return { ...spec, env: mergeEnv(spec.env, await this.deps.env.get(config.id)) };
   }
 
-  /** Re-resolves the registry's current (possibly newer) pinned version and
-   * reconnects — the same launch a first Add takes, so the version-keyed
+  /** A linked agent on the registry's current (possibly newer) version. The
+   * link it replaces is kept as the one way back. */
+  upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
+    return this.move(patchbayAgentId, "upgrade", signal, consent);
+  }
+
+  /** An edited agent linked again, to the registry's current entry for the
+   * one it was added from — its edited command replaced by the registry's. */
+  reset(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
+    return this.move(patchbayAgentId, "reset", signal, consent);
+  }
+
+  /** An upgraded agent back on the link the Upgrade replaced — exactly, from
+   * the recipe kept with it; a binary's archive is checked against the
+   * digest kept with it, and a source that stopped serving it fails the
+   * launch for all to see. */
+  goBack(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
+    return this.move(patchbayAgentId, "goBack", signal, consent);
+  }
+
+  /** The one path an agent's version moves by — Upgrade, Reset and Back
+   * alike — taking the same launch a first Add takes, so the version-keyed
    * used-capability cache and the launch phase's download confirmation
-   * both apply exactly as they would for a brand-new agent. Resolved from a
-   * fresh read before anything stops — never from the copy an update chip
-   * was shown from: a registry that no longer lists the agent, or lists
-   * nothing this platform can run, leaves it as it is. A running agent is
-   * stopped only on `consent`, asked at that moment — the caller's
-   * question, so it is never asked for an upgrade that can't happen.
+   * both apply exactly as they would for a brand-new agent. A registry
+   * link is resolved from a fresh read before anything stops — never from
+   * the copy a chip or a menu was shown from: a registry that no longer
+   * lists the agent, or lists nothing this platform can run, leaves it as
+   * it is, said once. A running agent is stopped only on `consent`, asked
+   * at that moment — the caller's question, so it is never asked for a move
+   * that can't happen.
    *
    * The new version becomes the agent's only once it has started: it is
    * launched unsaved, and saved once it answered `initialize`. One that
    * doesn't start leaves the agent on the version it had — said once, with
    * why, and running again if it was running before. Stopped before it
-   * started, the upgrade is cancelled: the version stays, nothing restarts. */
-  async upgrade(patchbayAgentId: PatchbayAgentId, signal?: AbortSignal, consent?: () => Promise<boolean>): Promise<void> {
+   * started, the move is cancelled: the version stays, nothing restarts. */
+  private async move(
+    patchbayAgentId: PatchbayAgentId,
+    move: VersionMove,
+    signal?: AbortSignal,
+    consent?: () => Promise<boolean>,
+  ): Promise<void> {
     const config = this.config(patchbayAgentId);
-    const launch = config === undefined ? null : await this.freshLaunch(config, "upgrade");
-    if (config === undefined || launch === null) return;
+    if (config === undefined || !MOVABLE[move](config)) return;
+    const link = move === "goBack" ? config.previous : await this.freshLink(config, move);
+    if (link === null) {
+      this.hooks.warn(`${config.name}: the ACP registry lists nothing this machine can run for it — it stays as it is.`);
+      return;
+    }
+    const moved = this.relinked(config, link, move === "upgrade" ? this.previousAfterUpgrade(config, link) : null);
+    if (moved === null) return;
     const wasRunning = this.deps.pool.get(patchbayAgentId)?.status === "running";
     if (wasRunning) {
       if (consent !== undefined && !(await consent())) return;
       await this.deps.pool.stop(patchbayAgentId);
     }
     signal?.throwIfAborted();
-    const upgraded = upgradedConfig(config, launch);
     try {
-      await this.spawn(await this.launchOf(upgraded), signal);
+      await this.spawn(await this.launchOf(moved), signal);
     } catch (err) {
       // the pool already put how the launch ended — its crash and reason,
       // or a stop — on the row
       if (signal?.aborted) return;
-      const from = config.registrySource?.pinnedVersion;
-      const to = upgraded.registrySource?.pinnedVersion;
       this.hooks.warn(
-        `${config.name}: the upgrade to ${to} didn't start — ${err instanceof Error ? err.message : String(err)}. It stays on ${from}.`,
+        `${config.name}: ${MOVE_PHRASE[move](link.pinnedVersion)} didn't start — ${agentErrorText(err)}. It stays on ${config.link?.pinnedVersion ?? "its own command"}.`,
       );
       if (wasRunning) await this.connect(patchbayAgentId, signal).catch(() => {});
       return;
     }
-    await this.saveUpgrade(config, upgraded);
+    await this.saveMove(config, moved);
+  }
+
+  /** The way back an Upgrade leaves: the link it replaces — when that is a
+   * different version and its recipe rebuilds the launch; an upgrade to the
+   * version already pinned keeps the way back it had. */
+  private previousAfterUpgrade(config: AgentConfig, next: AgentLink): AgentLink | null {
+    const current = config.link;
+    if (current === null || current.pinnedVersion === next.pinnedVersion) return config.previous;
+    return config.origin !== null && this.linkLaunch(config.origin, current) !== null ? current : null;
   }
 
   /** An imported agent this machine downloads: its launch and pin
@@ -453,14 +506,15 @@ export class AgentsStore implements ConnectionOperations {
    * False when the registry serves nothing this platform runs; the agent
    * then stays as the file had it. */
   async resolveHere(patchbayAgentId: PatchbayAgentId): Promise<boolean> {
-    // An edited agent's command is its own, on any machine: it is made
-    // custom, never re-resolved over.
+    // An edited agent's command is its own, on any machine: it is
+    // unlinked, never re-resolved over.
     const imported = this.config(patchbayAgentId);
-    if (imported !== undefined && (await this.relink(imported)) && this.config(patchbayAgentId)?.registrySource === null) return true;
+    if (imported !== undefined && (await this.relink(imported)) && this.config(patchbayAgentId)?.link === null) return true;
     const config = this.config(patchbayAgentId);
-    const launch = config === undefined ? null : await this.freshLaunch(config, "import");
-    if (config === undefined || launch === null) return false;
-    await this.saveUpgrade(config, upgradedConfig(config, launch));
+    const link = config === undefined ? null : await this.freshLink(config, "import");
+    const moved = config === undefined || link === null ? null : this.relinked(config, link, config.previous);
+    if (config === undefined || moved === null) return false;
+    await this.saveMove(config, moved);
     return true;
   }
 
@@ -477,54 +531,49 @@ export class AgentsStore implements ConnectionOperations {
    * still lists the pinned version — otherwise its next Upgrade writes it.
    * And an agent whose command isn't its recipe's was edited while an edit
    * still kept the link, which let the registry's launch run over the
-   * command typed: it is made custom. A binary's command is the archive's
-   * executable under whatever cache root it was written with. True when
-   * the record moved. */
+   * command typed: it is unlinked, keeping its origin. A binary's command
+   * is the archive's executable under whatever cache root it was written
+   * with. True when the record moved. */
   private async relink(config: AgentConfig): Promise<boolean> {
-    const source = config.registrySource;
-    if (source === null) return false;
-    const listed = this.deps.registry
-      .current()
-      .agents.find((a) => a.id === source.registryId && a.version === source.pinnedVersion);
+    const { origin, link } = config;
+    if (origin === null || link === null) return false;
+    const listed = this.deps.registry.current().agents.find((a) => a.id === origin && a.version === link.pinnedVersion);
     const resolved = listed === undefined ? undefined : resolveDistribution(listed);
-    let linked: AgentConfig["registrySource"];
+    let linked: AgentLink;
     let edited: boolean;
-    if (source.distributionKind === "binary") {
+    if (link.distributionKind === "binary") {
       const published = resolved !== undefined && "kind" in resolved && resolved.kind === "binary" ? resolved.published : undefined;
-      const recipe = source.distribution?.args === undefined && published !== undefined ? keptRecipe(published) : source.distribution;
-      linked = { ...source, distribution: recipe };
+      const recipe = link.distribution?.args === undefined && published !== undefined ? keptRecipe(published) : link.distribution;
+      linked = { ...link, distribution: recipe };
       edited =
         recipe !== undefined &&
-        (!isResolvedBinaryPath(config.command, source.registryId, source.pinnedVersion, recipe.cmd) ||
+        (!isResolvedBinaryPath(config.command, origin, link.pinnedVersion, recipe.cmd) ||
           (recipe.args !== undefined && !sameCommandLine(config, { command: config.command, args: recipe.args })));
     } else {
-      const published = resolved !== undefined && "kind" in resolved && resolved.kind === source.distributionKind ? resolved.published : undefined;
-      const recipe = source.distribution ?? (published === undefined ? undefined : keptRecipe(published));
-      linked = { ...source, distribution: recipe };
-      edited = recipe !== undefined && !sameCommandLine(config, packageLaunch(source.distributionKind, recipe));
+      const published = resolved !== undefined && "kind" in resolved && resolved.kind === link.distributionKind ? resolved.published : undefined;
+      const recipe = link.distribution ?? (published === undefined ? undefined : keptRecipe(published));
+      linked = { ...link, distribution: recipe };
+      edited = recipe !== undefined && !sameCommandLine(config, packageLaunch(link.distributionKind, recipe));
     }
     if (edited) {
-      await this.deps.configs.upsert({ ...config, registrySource: null });
-      this.log.info(`${config.id}: its command was edited before an edit made it custom — now a custom agent`);
+      await this.deps.configs.upsert({ ...config, link: null, previous: null });
+      this.log.info(`${config.id}: its command was edited while an edit kept its link — it no longer follows the ACP registry`);
       return true;
     }
-    if (linked.distribution === source.distribution) return false;
-    await this.deps.configs.upsert({ ...config, registrySource: linked });
+    if (linked.distribution === link.distribution) return false;
+    await this.deps.configs.upsert({ ...config, link: linked });
     return true;
   }
 
-  /** A registry agent's launch from a fresh read of the registry — never
-   * from a copy shown earlier. Null when the registry no longer lists it, or
-   * lists nothing this platform can run. */
-  private async freshLaunch(
-    config: AgentConfig,
-    moment: RegistryReadMoment,
-  ): Promise<{ spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null> {
-    const registryId = config.registrySource?.registryId;
-    if (registryId === undefined) return null;
+  /** The registry's link for the agent's origin from a fresh read of the
+   * registry — never from a copy shown earlier. Null when the registry no
+   * longer lists it, or lists nothing this platform can run. */
+  private async freshLink(config: AgentConfig, moment: RegistryReadMoment): Promise<AgentLink | null> {
+    const { origin } = config;
+    if (origin === null) return null;
     await this.deps.registry.read(moment);
-    const listed = this.deps.registry.current().agents.find((a) => a.id === registryId);
-    return listed === undefined ? null : this.registryLaunch(listed, config.id);
+    const listed = this.deps.registry.current().agents.find((a) => a.id === origin);
+    return listed === undefined ? null : registryLink(listed);
   }
 
   /** Remove is stop + forget ("add, edit, and remove agents") —
@@ -562,14 +611,15 @@ export class AgentsStore implements ConnectionOperations {
     if ("patchbayAgentId" in source) return this.config(source.patchbayAgentId)?.id;
     const patchbayAgentId = mintPatchbayAgentId();
     let spec: LaunchSpec;
-    let registrySource: AgentConfig["registrySource"] = null;
+    let linked: { origin: string; link: AgentLink } | null = null;
     if ("registryId" in source) {
       await this.deps.registry.read("add");
       const agent = this.deps.registry.current().agents.find((a) => a.id === source.registryId);
-      if (agent === undefined) return undefined;
-      const resolved = this.registryLaunch(agent, patchbayAgentId);
-      if (resolved === null) return undefined; // can't run on this platform
-      ({ spec, registrySource } = resolved);
+      const link = agent === undefined ? null : registryLink(agent);
+      const launch = link === null ? null : this.linkLaunch(source.registryId, link);
+      if (agent === undefined || link === null || launch === null) return undefined; // can't run on this platform
+      spec = { patchbayAgentId, name: agent.name, ...launch, cwd: this.deps.workspaceCwd };
+      linked = { origin: agent.id, link };
     } else {
       const parsed = parseCommandLine(source.command);
       if (parsed === null) return undefined;
@@ -582,7 +632,7 @@ export class AgentsStore implements ConnectionOperations {
         cwd: this.deps.workspaceCwd,
       };
     }
-    await this.add(spec, registrySource);
+    await this.add(spec, linked);
     return patchbayAgentId;
   }
 
@@ -592,10 +642,10 @@ export class AgentsStore implements ConnectionOperations {
    * changed it — parsing is logic, done here by the same quote-aware house
    * parser custom Add uses, never a naive split. Without one the stored
    * command stays: a save from a knob or a toggle carries a copy of it
-   * back, never an edit. A changed line on a registry agent makes it a
-   * custom agent for good — what was typed is what runs, and no Upgrade
-   * may write the registry's line over it. `config.env` is the form's full
-   * desired set — what is in the box is what gets stored, to SecretStorage
+   * back, never an edit. A changed line on a registry agent unlinks it —
+   * what was typed is what runs, and no Upgrade may write the registry's
+   * line over it; only the user's Reset links it again. `config.env` is the
+   * form's full desired set — what is in the box is what gets stored, to SecretStorage
    * only (stores/secret-env.ts). A config for an agent the store doesn't
    * hold is added under an id the store mints, and a name no other agent
    * holds — a view never chooses an agent's id. */
@@ -610,9 +660,10 @@ export class AgentsStore implements ConnectionOperations {
     const edited = prior !== undefined && typed !== undefined && !sameCommandLine(prior, typed);
     const patchbayAgentId = prior?.id ?? mintPatchbayAgentId();
     // Identity/wire facts never round-trip through the form: the webview's
-    // copies of `lastSeenVersion` and `registrySource` are patch-lag stale
+    // copies of `lastSeenVersion`, `origin` and `link` are patch-lag stale
     // the moment a connect or an Upgrade lands mid-edit — the store's own
-    // values are the truth the form has no business carrying back.
+    // values are the truth the form has no business carrying back; the
+    // view's copy speaks only for an agent the store doesn't hold yet.
     const record: AgentConfig = {
       id: patchbayAgentId,
       name: config.name,
@@ -621,10 +672,12 @@ export class AgentsStore implements ConnectionOperations {
       autoConnect: config.autoConnect,
       // The view's seed is stored as the defaults' `options`.
       defaults: { options: { ...config.defaults } },
-      registrySource: edited ? null : (prior?.registrySource ?? config.registrySource),
+      origin: prior !== undefined ? prior.origin : config.origin,
+      link: edited ? null : prior !== undefined ? prior.link : config.link,
+      previous: edited || prior === undefined ? null : prior.previous,
       lastSeenVersion: prior?.lastSeenVersion ?? config.lastSeenVersion,
     };
-    if (edited && prior?.registrySource) this.log.info(`${prior.id}: its command was edited — now a custom agent`);
+    if (edited && prior?.link) this.log.info(`${prior.id}: its command was edited — it no longer follows the ACP registry`);
     try {
       if (prior === undefined) await this.deps.configs.add(record);
       else await this.deps.configs.upsert(record);
@@ -725,7 +778,7 @@ export class AgentsStore implements ConnectionOperations {
     const legacy = !unfolded
       ? undefined
       : (this.config(legacyDefault as PatchbayAgentId) ??
-        this.deps.configs.list().find((c) => c.registrySource?.registryId === legacyDefault));
+        this.deps.configs.list().find((c) => c.origin === legacyDefault));
     if (legacy !== undefined) {
       if (!legacy.autoConnect) {
         await this.deps.configs.upsert({ ...legacy, autoConnect: true });
@@ -795,12 +848,22 @@ export class AgentsStore implements ConnectionOperations {
       capabilitiesResetAt: live?.initializedAt ?? undefined,
       protocolVersion: live?.initialize?.protocolVersion,
       authMethods: live?.declared?.authMethods ?? [],
+      version: {
+        ...(config.link === null ? {} : { pinned: config.link.pinnedVersion }),
+        ...(config.lastSeenVersion === null ? {} : { reported: config.lastSeenVersion }),
+      },
       update,
-      busy: this.deps
-        .busy(config.id)
-        .map((kind) =>
-          kind === "upgrade" ? { kind, to: update?.to ?? config.registrySource?.pinnedVersion } : { kind },
-        ),
+      busy: this.deps.busy(config.id).map((kind) => {
+        if (!isVersionMove(kind)) return { kind };
+        // the version it moves to while known, the new pin once saved
+        const to =
+          kind === "upgrade"
+            ? update?.to
+            : kind === "goBack"
+              ? config.previous?.pinnedVersion
+              : this.deps.registry.current().agents.find((a) => a.id === config.origin)?.version;
+        return { kind, to: to ?? config.link?.pinnedVersion };
+      }),
     };
   }
 
@@ -813,7 +876,7 @@ export class AgentsStore implements ConnectionOperations {
    * facts ride along so a connect after a cache wipe re-acquires it as a
    * launch phase instead of dying on a missing file. */
   private specFromConfig(agent: AgentConfig): LaunchSpec {
-    const source = agent.registrySource;
+    const { origin, link } = agent;
     return {
       patchbayAgentId: agent.id,
       name: agent.name,
@@ -822,68 +885,45 @@ export class AgentsStore implements ConnectionOperations {
       env: {},
       cwd: this.deps.workspaceCwd,
       defaults: agent.defaults.options ?? {},
-      ...(source?.distributionKind === "binary" && source.distribution !== undefined
-        ? { binary: archiveFacts(source.registryId, source.pinnedVersion, source.distribution) }
+      ...(origin !== null && link?.distributionKind === "binary" && link.distribution !== undefined
+        ? { binary: archiveFacts(origin, link.pinnedVersion, link.distribution) }
         : {}),
     };
   }
 
-  /** Resolves a registry agent's declared distribution into a spawnable
-   * spec — no I/O: npx/uvx are ecosystem-managed installs (spawning them
-   * *is* installing), and a `binary` distribution rides the spec as archive
-   * facts for the connect's launch phase to acquire, on the card, behind
-   * the download confirmation. `command` for a binary is the cached path
-   * the phase will resolve to — deterministic, so the config is honest
-   * before anything is downloaded. The registry's recipe it was resolved
-   * from is kept whole beside it, in `registrySource`. Null when the agent
-   * can't run on this platform (the reason is already on the picker row). */
-  private registryLaunch(
-    agent: RegistryAgent,
-    patchbayAgentId: PatchbayAgentId,
-  ): { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] } | null {
-    const launch = resolveDistribution(agent);
-    const cwd = this.deps.workspaceCwd;
-    if ("error" in launch) return null;
-    switch (launch.kind) {
-      case "npx":
-      case "uvx":
-        return {
-          spec: { patchbayAgentId, name: agent.name, command: launch.command, args: [...launch.args], env: { ...launch.env }, cwd },
-          registrySource: {
-            registryId: agent.id,
-            distributionKind: launch.kind,
-            pinnedVersion: agent.version,
-            distribution: keptRecipe(launch.published),
-          },
-        };
-      case "binary": {
-        const target = launch.published;
-        return {
-          spec: {
-            patchbayAgentId,
-            name: agent.name,
-            command: resolvedBinaryPath(this.deps.binaryCacheDir, agent.id, agent.version, target.cmd),
-            args: [...target.args],
-            env: { ...target.env },
-            cwd,
-            binary: archiveFacts(agent.id, agent.version, target),
-          },
-          registrySource: {
-            registryId: agent.id,
-            distributionKind: "binary",
-            pinnedVersion: agent.version,
-            distribution: keptRecipe(target),
-          },
-        };
-      }
+  /** The launch a link's recipe stands for — its command line and the env
+   * it sets; no I/O: npx/uvx are ecosystem-managed installs (spawning them
+   * *is* installing), and a `binary` one is the cached path the connect's
+   * launch phase acquires it to, on the card, behind the download
+   * confirmation — deterministic, so the config is honest before anything
+   * is downloaded. Null when the recipe is unknown (a record stored before
+   * it was kept): the launch can't be rebuilt from it. */
+  private linkLaunch(origin: string, link: AgentLink): { command: string; args: string[]; env: Record<string, string> } | null {
+    if (link.distributionKind === "binary") {
+      const recipe = link.distribution;
+      if (recipe?.args === undefined) return null;
+      return {
+        command: resolvedBinaryPath(this.deps.binaryCacheDir, origin, link.pinnedVersion, recipe.cmd),
+        args: [...recipe.args],
+        env: { ...recipe.env },
+      };
     }
+    const recipe = link.distribution;
+    return recipe === undefined ? null : { ...packageLaunch(link.distributionKind, recipe), env: { ...recipe.env } };
+  }
+
+  /** The agent on another link — its launch rebuilt from the link's recipe,
+   * its own facts as they are. Null when the recipe can't rebuild it. */
+  private relinked(config: AgentConfig, link: AgentLink, previous: AgentLink | null): AgentConfig | null {
+    const launch = config.origin === null ? null : this.linkLaunch(config.origin, link);
+    return launch === null ? null : { ...config, command: launch.command, args: launch.args, link, previous };
   }
 
   /** Saves a new agent as a global config — "add" and "connect" are one
    * action (adding an agent means it's activated — checked spawnable, ready
    * to start conversations on), not two decoupled steps a user could leave
    * half-done. It takes a name no other agent holds. */
-  private async add(spec: LaunchSpec, registrySource: AgentConfig["registrySource"]): Promise<void> {
+  private async add(spec: LaunchSpec, linked: { origin: string; link: AgentLink } | null): Promise<void> {
     // The env is the user's from here on: a registry recipe's env seeds it,
     // once — nothing writes it after (see `noteEnvChange`).
     if (Object.keys(spec.env).length > 0) await this.deps.env.set(spec.patchbayAgentId, { ...spec.env });
@@ -894,37 +934,40 @@ export class AgentsStore implements ConnectionOperations {
       args: [...spec.args],
       autoConnect: false,
       defaults: {},
-      registrySource,
+      origin: linked?.origin ?? null,
+      link: linked?.link ?? null,
+      previous: null,
       lastSeenVersion: null,
     });
     await this.publishAll();
   }
 
-  /** Upgrade's save: the registry's new launch, pin and recipe replace the
-   * old ones on the agent as it stands now; its own facts — its name, env,
+  /** A move's save: the new launch, link and way back replace the old
+   * ones on the agent as it stands now; its own facts — its name, env,
    * auto-connect, defaults, the version that last answered — stay as they
    * are. It bears only on the launch it was resolved from: a Save doesn't
-   * wait for an upgrade, so an agent whose launch was edited while the new
+   * wait for a move, so an agent whose launch was edited while the new
    * version started keeps the edit — the newer word — and one removed
    * meanwhile stays removed. */
-  private async saveUpgrade(from: AgentConfig, upgraded: AgentConfig): Promise<void> {
+  private async saveMove(from: AgentConfig, moved: AgentConfig): Promise<void> {
     const now = this.config(from.id);
-    if (now === undefined || !sameLaunch(now, from)) return;
-    await this.deps.configs.upsert({ ...now, command: upgraded.command, args: upgraded.args, registrySource: upgraded.registrySource });
-    await this.noteEnvChange(now, upgraded.registrySource);
+    if (now === undefined || moved.link === null || !sameLaunch(now, from)) return;
+    await this.deps.configs.upsert({ ...now, command: moved.command, args: moved.args, link: moved.link, previous: moved.previous });
+    await this.noteEnvChange(now, moved.link);
     await this.publishAll();
   }
 
-  /** The env is the user's: Add seeds it from the registry's recipe, and an
-   * Upgrade never writes it. What the registry changed in its env between
-   * the agent's old recipe and its new one is said instead — keys it now
-   * sets or sets differently, and keys it no longer sets — for the user to
-   * take or leave. An agent stored before its recipe was kept has no old
-   * env to compare: the new one is read against the user's own env, whose
-   * values are never shown — they may be secrets. */
-  private async noteEnvChange(config: AgentConfig, next: AgentConfig["registrySource"]): Promise<void> {
-    const before = config.registrySource?.distribution?.env;
-    const after = next?.distribution?.env ?? {};
+  /** The env is the user's: Add seeds it from the registry's recipe, and a
+   * move never writes it. What differs between the env of the agent's old
+   * recipe and its new one is said instead — keys it now sets or sets
+   * differently, and keys it no longer sets — for the user to take or
+   * leave. An agent with no old recipe — edited before a Reset, or stored
+   * before its recipe was kept — has no old env to compare: the new one is
+   * read against the user's own env, whose values are never shown — they
+   * may be secrets. */
+  private async noteEnvChange(config: AgentConfig, next: AgentLink): Promise<void> {
+    const before = config.link?.distribution?.env;
+    const after = next.distribution?.env ?? {};
     const base = before ?? (await this.deps.env.get(config.id));
     const changes = [
       ...Object.entries(after).flatMap(([key, value]) =>
@@ -938,7 +981,7 @@ export class AgentsStore implements ConnectionOperations {
     ];
     if (changes.length === 0) return;
     this.hooks.warn(
-      `${config.name} ${next?.pinnedVersion ?? ""}: the ACP registry changed its env — ${changes.join("; ")}. Your env is unchanged; edit it in Settings › Agents to take any of this.`,
+      `${config.name} ${next.pinnedVersion}: the ACP registry's env for this version differs — ${changes.join("; ")}. Your env is unchanged; edit it in Settings › Agents to take any of this.`,
     );
   }
 
@@ -1065,23 +1108,36 @@ export class AgentsStore implements ConnectionOperations {
   }
 }
 
-/** The agent as a re-resolve would leave it: the registry's launch, pin
- * and recipe over its own facts. */
-function upgradedConfig(
-  config: AgentConfig,
-  launch: { spec: LaunchSpec; registrySource: AgentConfig["registrySource"] },
-): AgentConfig {
-  return { ...config, command: launch.spec.command, args: [...launch.spec.args], registrySource: launch.registrySource };
+/** What an agent's own facts allow of each move: Upgrade a linked agent,
+ * Reset an edited one, Back one that has a way back. */
+const MOVABLE: Record<VersionMove, (config: AgentConfig) => boolean> = {
+  upgrade: (c) => c.origin !== null && c.link !== null,
+  reset: (c) => c.origin !== null && c.link === null,
+  goBack: (c) => c.origin !== null && c.previous !== null,
+};
+
+/** How a move names itself when it didn't start. */
+const MOVE_PHRASE: Record<VersionMove, (to: string) => string> = {
+  upgrade: (to) => `the upgrade to ${to}`,
+  reset: (to) => `the reset to the ACP registry's ${to}`,
+  goBack: (to) => `going back to ${to}`,
+};
+
+/** The registry's entry as a link: its version, and its recipe for this
+ * platform kept whole. Null when nothing here runs it (the reason is
+ * already on the picker row). */
+function registryLink(agent: RegistryAgent): AgentLink | null {
+  const resolved = resolveDistribution(agent);
+  if ("error" in resolved) return null;
+  return resolved.kind === "binary"
+    ? { distributionKind: "binary", pinnedVersion: agent.version, distribution: keptRecipe(resolved.published) }
+    : { distributionKind: resolved.kind, pinnedVersion: agent.version, distribution: keptRecipe(resolved.published) };
 }
 
 /** Whether two configs launch the same thing: the same line from the same
- * registry pin (or both custom). */
+ * registry pin (or both unlinked). */
 function sameLaunch(a: AgentConfig, b: AgentConfig): boolean {
-  return (
-    sameCommandLine(a, b) &&
-    a.registrySource?.registryId === b.registrySource?.registryId &&
-    a.registrySource?.pinnedVersion === b.registrySource?.pinnedVersion
-  );
+  return sameCommandLine(a, b) && a.origin === b.origin && a.link?.pinnedVersion === b.link?.pinnedVersion;
 }
 
 /** A registry binary's archive as the launch phase takes it: where it is

@@ -141,13 +141,15 @@ whose name is taken gets a number ("Gemini CLI 2"), picked in the same write
 as the add, and an edit to a name another agent holds is refused.
 
 An agent runs one process per window, holding all its sessions, so a row has
-exactly one connection. **Operations:** connect, stop, restart, upgrade,
-remove, save, reorder, log in, log out. Add and startup are the
+exactly one connection. **Operations:** every change to an agent is the
+store's — each operation on its connection through that operation's gate
+(the gates' table names them), and saving and reordering. Add and startup are the
 orchestrator's features over them: the store saves (or reads what to open),
 and the connect — the free check with it — passes the gates.
 
-**One line per agent.** Connect, restart, upgrade, log in (per method) and
-log out wait their turn. A request for one the row already holds
+**One line per agent.** Every operation on an agent's connection waits its
+turn (a login, per method) except the two that cut in, below; the gates'
+table names each operation's way. A request for one the row already holds
 joins it — a chat started while the agent auto-connects shares that connect,
 a second Upgrade shares the first's question and restart — and a connect
 whose turn finds the agent running is already done. Agents never wait on each
@@ -169,14 +171,15 @@ whose variable it can't resolve with no event at all — so a login recipe
 carrying the pattern is refused before it runs, saying why. The window's end
 and erase cut every agent's work the same way.
 
-**One question before a connection ends.** Stop, Upgrade, Remove and Log out
-follow one rule, the gates': nothing in hand, the operation runs; work in hand
+**One question before a connection ends.** Every operation that ends the
+agent's connection follows one rule, the gates': nothing in hand, the operation runs; work in hand
 — open conversations and running turns, counted at that moment — one question
 with the counts, asked at the operation, so every door gets the same one.
 Remove always asks, since it also forgets the agent. Stop and Remove ask
 before they cut in, so nothing is cut while the question is open; Log out asks
-when its turn comes; Upgrade asks only when it would stop a running agent,
-once the registry has shown it can upgrade at all.
+when its turn comes; a move of the agent's version asks only when it would
+stop a running agent, once the registry (or the kept way back) has shown
+there is something to move to.
 
 **A connection's end reaches its sessions.** Every way a connection ends — a
 Stop, a crash, an upgrade's restart — detaches the sessions that rode it,
@@ -186,7 +189,7 @@ state: the pool's entry, the tracker's marks, a chat pane on it.
 
 **Busy, in the views.** The Settings card dims the controls that would only
 wait (never Stop) and spins Stop or Remove while its own operation
-runs; the upgrade chip reads `upgrading to x.y.z…`; the chat pane says what the
+runs; the version chip reads `upgrading to x.y.z…`; the chat pane says what the
 agent is busy with while a chat waits on it, and closes when a Stop or Remove
 ends that chat's connect.
 
@@ -407,7 +410,7 @@ ask; the store holds it.
 | Last-connected stamp | `workspaceState` | The agents still running at shutdown, with the stamp's time. The next activate consumes it — read and cleared, spent either way — and honors it only within 60 s: deactivate fires the same for a reload and a quit, so the stamp's age tells them apart. Stale or absent, only the agents set to connect on window open start |
 | Last-open pointer | `workspaceState` | The session the Agent View returns to on the next activate, named by its agent and the agent's own id for it. Looked up in what the startup connects' own `session/list` syncs brought back, as soon as its own agent's connect has settled — another agent's slow start never holds it back: found, it opens; not found, the view lands on its default screen, whatever the reason. A miss never clears it — not found is not gone: a failed connect must not erase where a later window could return |
 | Decision audit | JSONL in workspace storage | Append-only; what happened in patchbay belongs to patchbay. Written by the asks store when an ask ends, before the agent hears the answer; a question is never recorded. An entry about a session names it by its pair — the agent and the agent's `sessionId` — which a later window can still match |
-| ACP registry | A copy of the last read in the extension's `globalStorage` directory, with the date it was last confirmed | A dated reading of an outside source: loaded at start, shown with its date while a read is out or failing, replaced whole by every read that lands; Add and Upgrade read the registry first, acting on the copy only when the registry can't be reached; a copy in an older shape reads as none |
+| ACP registry | A copy of the last read in the extension's `globalStorage` directory, with the date it was last confirmed | A dated reading of an outside source: loaded at start, shown with its date while a read is out or failing, replaced whole by every read that lands; every act on the registry's word reads it first, acting on the copy only when the registry can't be reached; a copy in an older shape reads as none |
 | Files a session was given — pasted or picked images, dropped files | The session's own folder in the extension's `globalStorage` directory, under its agent and workspace (`stores/session-files.ts`) | Kept as long as the session lives: its staged chips name them, and an agent may follow a link to one in any later turn — so never the OS temp directory, which a reboot can empty. They leave with the session (deleted, gone from its agent's list, its agent removed) and stay through a close and move with it when a never-prompted session is minted again. A folder's name is a short hash of its ids: no id an agent mints can steer a path, or stretch one past what a Windows path holds |
 | Image previews | The attachments stash, a temp directory | Ephemeral: the OS owns cleanup, and a preview whose file is gone degrades to a label chip |
 | Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers) | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. Export (Settings › Import/Export) writes what the user typed into the file they name — their copy, owner-readable, never a store of patchbay's; an OAuth token never leaves. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |

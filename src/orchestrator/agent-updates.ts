@@ -10,30 +10,26 @@ import type { PatchbayAgentId } from "../shared/ids";
 
 interface ConfigFacts {
   id: PatchbayAgentId;
-  registrySource: { registryId: string; pinnedVersion: string } | null;
-  lastSeenVersion: string | null;
+  origin: string | null;
+  link: { pinnedVersion: string } | null;
 }
 
 /** Registry version vs. what each config is pinned to — an entry only where
- * there is something newer. Linked through the config's own
- * registrySource.registryId — never the config id, which may predate the
- * registry naming. Custom commands have nothing to compare. */
+ * there is something newer. Linked through the config's own origin — never
+ * the config id, which may predate the registry naming. The version the
+ * agent reports is a different naming scheme and is never compared: only
+ * the pin is in the registry's. Custom and edited commands have no pin to
+ * compare. */
 export function agentUpdates(
   registry: readonly { id: string; version: string }[],
   configs: readonly ConfigFacts[],
 ): ReadonlyMap<PatchbayAgentId, AgentUpdate> {
   const updates = new Map<PatchbayAgentId, AgentUpdate>();
-  for (const config of configs) {
-    const source = config.registrySource;
-    if (source === null) continue;
-    const latest = registry.find((r) => r.id === source.registryId)?.version;
-    if (latest === undefined || latest === source.pinnedVersion) continue;
-    // The wire's own fact outranks the pinned ask: a connection that already
-    // reported the registry's latest (a launcher serving a newer build than
-    // the pin) has no upgrade to offer — offering one would let the pin lie
-    // about reality.
-    if (config.lastSeenVersion === latest) continue;
-    updates.set(config.id, { from: source.pinnedVersion, to: latest });
+  for (const { id, origin, link } of configs) {
+    if (origin === null || link === null) continue;
+    const latest = registry.find((r) => r.id === origin)?.version;
+    if (latest === undefined || latest === link.pinnedVersion) continue;
+    updates.set(id, { from: link.pinnedVersion, to: latest });
   }
   return updates;
 }

@@ -36,17 +36,24 @@ deliverable.
 - A newer version of a registry agent reaches the user without a visit to
   Settings — while its automatic check is on (Preferences › Network, on by
   default): a notification when patchbay learns of it, with Upgrade one click
-  away (several at once: pick which), and an upgrade chip on the agent's name
-  above the chat while one of its sessions is the one open. Nothing upgrades on its
+  away (several at once: pick which), and the agent's version chip — on its
+  name above the chat while one of its sessions is the one open, and on its
+  Settings card — turns into the upgrade. Nothing upgrades on its
   own, and an upgrade that would interrupt open conversations asks first —
   once: Upgrade again while one runs and it is the same upgrade, shown on
   the chip as `upgrading to x.y.z…`. The new version becomes the agent's only
   once it has started: one that doesn't start leaves the agent on the version
   it had — running again if it was — and says why; Stop cancels an upgrade
   the same way.
-- Editing a registry agent's command makes it a custom agent: what was typed
-  is what runs, and its upgrades are the user's from then on — the form
-  says so before Save.
+- Every agent shows its version on one chip: the registry version it is
+  pinned to, or — for a custom command, or one whose command was edited —
+  what it reports itself as; both in the tooltip.
+- An upgrade can be undone: Back to previous, in the agent card's menu,
+  runs exactly the version the last upgrade replaced.
+- Editing a registry agent's command stops it following the registry: what
+  was typed is what runs, and its upgrades are the user's — the form says so
+  before Save. Reset to ACP registry, in the card's menu, links it again to
+  the registry's current version, the user's env kept.
 - An agent's env is the user's: the registry's values seed it when the agent
   is added, and an upgrade never changes it — it says what the registry now
   sets differently, for the user to take or leave.
@@ -61,9 +68,9 @@ deliverable.
   process is never the user's chore: it starts when a session needs it and
   stays warm for the next one. Stop and Remove end whatever the agent is
   doing, a launch still downloading included, and nothing asked of it
-  meanwhile runs after them. Before Stop, Upgrade, Remove or Log out cuts
-  off open conversations, one question says how many, and how many turns
-  are still running; Remove always asks first. A conversation its agent's
+  meanwhile runs after them. Before anything that ends the agent's
+  connection cuts off open conversations, one question says how many, and
+  how many turns are still running; Remove always asks first. A conversation its agent's
   stop disconnected reopens where it was — its knobs, roots and held
   prompts intact, and context attached to it meanwhile waits for its next
   message.

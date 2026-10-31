@@ -5,9 +5,9 @@
 // — THE agent source; patchbay's own per-agent curation lives in code
 // tables, meta.ts META_EXTENSIONS being the standing one. Cached to disk (globalStorageUri —
 // per-machine, never synced) so a cold start or an offline CDN still has
-// agents to show. Read at the moments the registry matters
-// (`RegistryReadMoment`), never on a clock — and always right before
-// anything acts on what it says: a cheap conditional read, a 304 when
+// agents to show. Read at the moments the registry matters (the one list
+// in shared/registry-reads.ts), never on a clock — and always right
+// before anything acts on what it says: a cheap conditional read, a 304 when
 // nothing changed. Between reads the copy is shown with the date it was
 // last confirmed; it stands in for the registry only while the registry
 // can't answer.
@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { count } from "../../shared/count";
 import type { PreferencesView, RegistryAgentView } from "../../shared/protocol";
+import { type RegistryReadMoment, REGISTRY_READS } from "../../shared/registry-reads";
 import { type Logger, nullLogger } from "../logger";
 import { describeNetFailure, type NetClass, readBytes, readJson, switchedOn } from "../net";
 import { platformOf, registryTarget } from "../platform";
@@ -211,32 +212,13 @@ export function binaryDigestFor(
   return listed ?? pinned;
 }
 
-/** The moments the registry is read — the one list. A moment is added
- * here, and every site that reads names one. */
-export type RegistryReadMoment =
-  | "startup"
-  | "new-session"
-  | "settings"
-  | "browse"
-  | "add"
-  | "upgrade"
-  | "import"
-  | "download"
-  | "manual";
-
-/** Each moment's log text and its class. The moments that exist only for
- * update notices are optional: nothing the user is doing waits on them. */
-const MOMENTS: Record<RegistryReadMoment, { text: string; class: NetClass }> = {
-  startup: { text: "startup", class: { optional: "checkAgentUpdates" } },
-  "new-session": { text: "new session", class: { optional: "checkAgentUpdates" } },
-  settings: { text: "Settings opened", class: { optional: "checkAgentUpdates" } },
-  browse: { text: "registry search opened", class: "essential" },
-  add: { text: "before an add", class: "essential" },
-  upgrade: { text: "before an upgrade", class: "essential" },
-  import: { text: "before an import", class: "essential" },
-  download: { text: "before a download", class: "essential" },
-  manual: { text: "refresh requested", class: "essential" },
-};
+/** A moment's network class: one that names a switch exists only for
+ * update notices, so it is optional — nothing the user is doing waits on
+ * it; every other is the user's own act. */
+function classOf(moment: RegistryReadMoment): NetClass {
+  const read = REGISTRY_READS[moment];
+  return "switch" in read ? { optional: read.switch } : "essential";
+}
 
 /** How a read ended: the registry confirmed current (fetched or
  * unchanged), or the reason it couldn't be. */
@@ -281,20 +263,21 @@ export class AcpRegistryStore {
    * moments share one read (named by the first). An optional moment whose
    * switch is off reads nothing: the copy stays as last confirmed. */
   read(moment: RegistryReadMoment): Promise<RegistryRead> {
-    if (!switchedOn(MOMENTS[moment].class, this.preferences())) {
+    const why = classOf(moment);
+    if (!switchedOn(why, this.preferences())) {
       return Promise.resolve({ ok: false, at: new Date().toISOString(), reason: "switched off in Preferences" });
     }
-    this.inflight ??= this.doRead(MOMENTS[moment]).finally(() => {
+    this.inflight ??= this.doRead(REGISTRY_READS[moment].said, why).finally(() => {
       this.inflight = null;
     });
     return this.inflight;
   }
 
-  private async doRead({ text: moment, class: why }: (typeof MOMENTS)[RegistryReadMoment]): Promise<RegistryRead> {
+  private async doRead(when: string, why: NetClass): Promise<RegistryRead> {
     const at = new Date().toISOString();
     const fail = (reason: string): RegistryRead => {
       this.log.warn(
-        `ACP registry: read failed (${moment}) — ${reason}; keeping the copy from ${this.cache.fetchedAt || "never"}`,
+        `ACP registry: read failed (${when}) — ${reason}; keeping the copy from ${this.cache.fetchedAt || "never"}`,
       );
       return { ok: false, at, reason };
     };
@@ -304,7 +287,7 @@ export class AcpRegistryStore {
       if (read.value === "unchanged") {
         this.cache = { ...this.cache, fetchedAt: at };
         await this.writeCacheFile();
-        this.log.info(`ACP registry: up to date — ${count(this.cache.agents.length, "agent")} (${moment})`);
+        this.log.info(`ACP registry: up to date — ${count(this.cache.agents.length, "agent")} (${when})`);
         this.onUpdated(); // confirmed current: "last checked" moves with it
         return { ok: true, at };
       }
@@ -315,7 +298,7 @@ export class AcpRegistryStore {
       this.etag = read.value.etag;
       this.adopt(reading, at);
       await this.writeCacheFile();
-      this.log.info(`ACP registry: fetched — ${count(reading.agents.length, "agent")} (${moment})`);
+      this.log.info(`ACP registry: fetched — ${count(reading.agents.length, "agent")} (${when})`);
       this.onUpdated();
       return { ok: true, at };
     } catch (err) {

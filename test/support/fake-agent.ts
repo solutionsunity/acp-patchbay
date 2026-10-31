@@ -37,7 +37,9 @@ export function fakeConfig(patchbayAgentId: string, script: FakeAgentScript, ove
     env: { FAKE_AGENT_SCRIPT: JSON.stringify(script) },
     autoConnect: false,
     defaults: {},
-    registrySource: null,
+    origin: null,
+    link: null,
+    previousVersion: null,
     lastSeenVersion: null,
     ...over,
   };

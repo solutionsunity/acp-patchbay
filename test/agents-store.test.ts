@@ -73,24 +73,30 @@ async function openConversation(h: Harness, patchbayAgentId: PatchbayAgentId): P
  * machine with no network: npx fails at once, as it would there. */
 const OFFLINE = { npm_config_offline: "true" };
 
+/** A registry agent's origin and link, as the Settings view carries them. */
+const linked = (origin: string, pinnedVersion: string) => ({ origin, link: { distributionKind: "npx" as const, pinnedVersion } });
+
 /** The shape of an id patchbay mints. */
 const MINTED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** A registry entry: one npx agent, its recipe setting `env` when given. */
+type Listed = { id: string; version: string; env?: Record<string, string> };
+
 /** A registry file, one npx agent per entry. */
-const registryFile = (agents: { id: string; version: string }[]) => ({
+const registryFile = (agents: Listed[]) => ({
   version: "1.0.0",
-  agents: agents.map((a) => ({ ...a, name: a.id, distribution: { npx: { package: `${a.id}@${a.version}` } } })),
+  agents: agents.map(({ env, ...a }) => ({ ...a, name: a.id, distribution: { npx: { package: `${a.id}@${a.version}`, ...(env === undefined ? {} : { env }) } } })),
 });
 
 /** What the CDN serves from now on. */
-function serveRegistry(...agents: { id: string; version: string }[]): void {
+function serveRegistry(...agents: Listed[]): void {
   vi.stubGlobal("fetch", async () =>
     new Response(JSON.stringify(registryFile(agents)), { headers: { "content-type": "application/json" } }),
   );
 }
 
 /** The registry's copy on disk, loaded into the store. */
-async function cacheRegistry(h: Harness, ...agents: { id: string; version: string }[]): Promise<void> {
+async function cacheRegistry(h: Harness, ...agents: Listed[]): Promise<void> {
   await mkdir(join(h.paths.globalStorage, "registry"), { recursive: true });
   await writeFile(
     join(h.paths.globalStorage, "registry", "acp-registry-cache.json"),
@@ -100,7 +106,7 @@ async function cacheRegistry(h: Harness, ...agents: { id: string; version: strin
 }
 
 /** The registry as both its copy and the CDN hold it. */
-async function seedRegistry(h: Harness, ...agents: { id: string; version: string }[]): Promise<void> {
+async function seedRegistry(h: Harness, ...agents: Listed[]): Promise<void> {
   serveRegistry(...agents);
   await cacheRegistry(h, ...agents);
 }
@@ -110,7 +116,7 @@ async function seedRegistry(h: Harness, ...agents: { id: string; version: string
 async function upgradable(h: Harness, listed = [{ id: "reg", version: "2.0.0" }]): Promise<void> {
   await seedRegistry(h, ...listed);
   await h.saveAgent(
-    fakeConfig("reg", {}, { env: { ...OFFLINE, FAKE_AGENT_SCRIPT: "{}" }, registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+    fakeConfig("reg", {}, { env: { ...OFFLINE, FAKE_AGENT_SCRIPT: "{}" }, ...linked("reg", "1.0.0") }),
   );
   await h.gates.connect("reg" as PatchbayAgentId);
 }
@@ -315,7 +321,7 @@ describe("agents store", () => {
     await seedRegistry(h, { id: "reg", version: "1.0.0" });
     const added = [await h.agents.saveFrom({ registryId: "reg" }), await h.agents.saveFrom({ registryId: "reg" })];
     expect(added[1]).not.toBe(added[0]);
-    expect(added.map((id) => h.agents.config(id!)?.registrySource?.registryId)).toEqual(["reg", "reg"]);
+    expect(added.map((id) => h.agents.config(id!)?.origin)).toEqual(["reg", "reg"]);
     expect(added.map((id) => h.agents.name(id!))).toEqual(["reg", "reg 2"]);
   });
 
@@ -346,11 +352,11 @@ describe("agents store", () => {
     await cacheRegistry(h, { id: "reg", version: "2.0.0" }); // the copy
     serveRegistry({ id: "reg", version: "3.0.0" }); // the registry moved on since
     const added = await h.agents.saveFrom({ registryId: "reg" });
-    expect(h.agents.config(added!)?.registrySource?.pinnedVersion).toBe("3.0.0");
+    expect(h.agents.config(added!)?.link?.pinnedVersion).toBe("3.0.0");
 
     // the store now holds 3.0.0 — what an update chip would show
     await h.saveAgent(
-      fakeConfig("old", {}, { env: OFFLINE, registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+      fakeConfig("old", {}, { env: OFFLINE, ...linked("reg", "1.0.0") }),
     );
     serveRegistry({ id: "reg", version: "4.0.0" });
     await h.gates.upgrade("old" as PatchbayAgentId);
@@ -369,45 +375,55 @@ describe("agents store", () => {
     serve("1.0.0", { npx: { package: "reg@1.0.0", args: ["--acp"], env: { REG_FLAG: "1" } } });
     await h.deps.registry.load();
     const added = await h.agents.saveFrom({ registryId: "reg" });
-    expect(h.agents.config(added!)?.registrySource).toEqual({
-      registryId: "reg",
-      distributionKind: "npx",
-      pinnedVersion: "1.0.0",
-      distribution: { package: "reg@1.0.0", args: ["--acp"], env: { REG_FLAG: "1" } },
+    expect(h.agents.config(added!)).toMatchObject({
+      origin: "reg",
+      link: { distributionKind: "npx", pinnedVersion: "1.0.0", distribution: { package: "reg@1.0.0", args: ["--acp"], env: { REG_FLAG: "1" } } },
     });
 
     const target = { archive: "https://example.test/reg-2.0.0.tar.gz", cmd: "./reg", args: ["acp"], env: { REG_HOME: "x" }, sha256: "ab".repeat(32) };
     serve("2.0.0", { binary: { [registryTarget(platformOf()!)]: target } });
+    // a way back the record holds stays: re-resolving moves no version
+    const previous = { distributionKind: "npx" as const, pinnedVersion: "0.9.0" };
+    await h.deps.configs.upsert({ ...h.agents.config(added!)!, previous });
     await h.agents.resolveHere(added!);
-    expect(h.agents.config(added!)?.registrySource).toEqual({
-      registryId: "reg",
-      distributionKind: "binary",
-      pinnedVersion: "2.0.0",
-      distribution: target,
-    });
+    expect(h.agents.config(added!)?.previous).toEqual(previous);
+    expect(h.agents.config(added!)).toMatchObject({ origin: "reg", link: { distributionKind: "binary", pinnedVersion: "2.0.0", distribution: target } });
   });
 
-  it("a changed line makes a registry agent custom; a save without one keeps the stored command — a spaced path with no args included", async () => {
+  it("a changed line unlinks a registry agent, its origin kept; a save without one keeps the stored command — a spaced path with no args included", async () => {
     const h = harness();
     await seedRegistry(h, { id: "reg", version: "2.0.0" });
-    const registrySource = { registryId: "reg", distributionKind: "npx" as const, pinnedVersion: "1.0.0" };
+    const registry = linked("reg", "1.0.0");
     const spaced = join(dir, "Program Files", "agent");
-    await h.saveAgent(fakeConfig("mine", {}, { command: spaced, args: [], registrySource }));
+    await h.saveAgent(fakeConfig("mine", {}, { command: spaced, args: [], ...registry }));
 
     // a knob or toggle save carries the stored command back — never an edit
     await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [], name: "Work profile", autoConnect: true }));
-    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: [], registrySource });
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: [], ...registry });
     expect(h.row("mine" as PatchbayAgentId)?.update).toEqual({ from: "1.0.0", to: "2.0.0" });
     // the line typed as it was keeps the link
     await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [] }), formatCommandLine(spaced, []));
-    expect(h.agents.config("mine" as PatchbayAgentId)?.registrySource).toMatchObject(registrySource);
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject(registry);
 
     await h.agents.save(fakeConfig("mine", {}, { command: spaced, args: [] }), `"${spaced}" --own`);
-    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: ["--own"], registrySource: null });
+    expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({ command: spaced, args: ["--own"], origin: "reg", link: null });
     expect(h.row("mine" as PatchbayAgentId)?.update).toBeUndefined();
   });
 
-  it("a registry agent stored before its recipe gets it from the registry's copy, and one edited back then is made custom", async () => {
+  // #129: the update was suppressed while the agent reported the registry's
+  // latest — a comparison across two naming schemes (a pin's `0.36.0`, a
+  // report's `0.36.0 (commit 7c61e5bb)`), guarding a drift never observed.
+  it("the update is the pin against the registry's latest only — what the agent reports is never compared (#129)", async () => {
+    const h = harness();
+    await seedRegistry(h, { id: "reg", version: "2.0.0" });
+    await h.saveAgent(fakeConfig("reports", {}, { ...linked("reg", "1.0.0"), lastSeenVersion: "2.0.0" }));
+    expect(h.row("reports" as PatchbayAgentId)).toMatchObject({
+      update: { from: "1.0.0", to: "2.0.0" },
+      version: { pinned: "1.0.0", reported: "2.0.0" },
+    });
+  });
+
+  it("a registry agent stored before its recipe gets it from the registry's copy, and one edited back then is unlinked, its origin kept", async () => {
     const h = harness();
     const target = { archive: "https://example.test/bin-1.0.0.tar.gz", cmd: "./bin", args: ["acp"], env: {} };
     vi.stubGlobal("fetch", async () => new Response("offline", { status: 503 }));
@@ -429,34 +445,37 @@ describe("agents store", () => {
       }),
     );
     await h.deps.registry.load();
-    const npx = (id: string, version: string) => ({ registryId: id, distributionKind: "npx" as const, pinnedVersion: version });
-    const binary = { registryId: "bin", distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: target.archive, cmd: "./bin" } };
+    const npx = linked;
+    const binary = { origin: "bin", link: { distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: target.archive, cmd: "./bin" } } };
     const cached = (root: string) => join(root, "bin", "1.0.0", "bin");
-    await h.saveAgent(fakeConfig("pkg-kept", {}, { command: "npx", args: ["-y", "pkg@1.0.0", "--acp"], registrySource: npx("pkg", "1.0.0") }));
-    await h.saveAgent(fakeConfig("pkg-edited", {}, { command: "pkg", args: ["--acp"], registrySource: npx("pkg", "1.0.0") }));
-    await h.saveAgent(fakeConfig("moved-edited", {}, { command: "moved", args: [], registrySource: npx("moved", "1.0.0") }));
+    await h.saveAgent(fakeConfig("pkg-kept", {}, { command: "npx", args: ["-y", "pkg@1.0.0", "--acp"], ...npx("pkg", "1.0.0") }));
+    await h.saveAgent(fakeConfig("pkg-edited", {}, { command: "pkg", args: ["--acp"], ...npx("pkg", "1.0.0") }));
+    await h.saveAgent(fakeConfig("moved-edited", {}, { command: "moved", args: [], ...npx("moved", "1.0.0") }));
     // a cache root from before the extension's storage moved
-    await h.saveAgent(fakeConfig("bin-kept", {}, { command: cached("/old/root/bin-cache"), args: ["acp"], registrySource: binary }));
-    await h.saveAgent(fakeConfig("bin-edited", {}, { command: "C:\\Users\\me\\tools\\bin.exe", args: ["acp"], registrySource: binary }));
+    await h.saveAgent(fakeConfig("bin-kept", {}, { command: cached("/old/root/bin-cache"), args: ["acp"], ...binary }));
+    await h.saveAgent(fakeConfig("bin-edited", {}, { command: "C:\\Users\\me\\tools\\bin.exe", args: ["acp"], ...binary }));
 
     await h.agents.relinkAll();
-    const source = (id: string) => h.agents.config(id as PatchbayAgentId)?.registrySource;
-    expect(source("pkg-kept")).toEqual({ ...npx("pkg", "1.0.0"), distribution: { package: "pkg@1.0.0", args: ["--acp"], env: {} } });
-    expect(source("pkg-edited")).toBeNull();
+    const source = (id: string) => {
+      const config = h.agents.config(id as PatchbayAgentId);
+      return { origin: config?.origin, link: config?.link };
+    };
+    expect(source("pkg-kept")).toEqual({ origin: "pkg", link: { ...npx("pkg", "1.0.0").link, distribution: { package: "pkg@1.0.0", args: ["--acp"], env: {} } } });
+    expect(source("pkg-edited")).toEqual({ origin: "pkg", link: null });
     // the registry lists another version now: nothing to know it by — its next Upgrade writes the recipe
     expect(source("moved-edited")).toEqual(npx("moved", "1.0.0"));
-    expect(source("bin-kept")).toEqual({ ...binary, distribution: target });
-    expect(source("bin-edited")).toBeNull();
+    expect(source("bin-kept")).toEqual({ origin: "bin", link: { ...binary.link, distribution: target } });
+    expect(source("bin-edited")).toEqual({ origin: "bin", link: null });
     expect(h.agents.config("bin-edited" as PatchbayAgentId)?.command).toBe("C:\\Users\\me\\tools\\bin.exe");
   });
 
-  it("an imported agent edited on its own machine is made custom, never re-resolved over", async () => {
+  it("an imported agent edited on its own machine is unlinked, never re-resolved over", async () => {
     const h = harness();
     serveRegistry({ id: "reg", version: "2.0.0" });
-    const registrySource = { registryId: "reg", distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: "https://example.test/reg.tar.gz", cmd: "reg" } };
-    await h.saveAgent(fakeConfig("edited", {}, { command: "/home/me/tools/reg", registrySource }));
+    const link = { distributionKind: "binary" as const, pinnedVersion: "1.0.0", distribution: { archive: "https://example.test/reg.tar.gz", cmd: "reg" } };
+    await h.saveAgent(fakeConfig("edited", {}, { command: "/home/me/tools/reg", origin: "reg", link }));
     expect(await h.agents.resolveHere("edited" as PatchbayAgentId)).toBe(true);
-    expect(h.agents.config("edited" as PatchbayAgentId)).toMatchObject({ command: "/home/me/tools/reg", registrySource: null });
+    expect(h.agents.config("edited" as PatchbayAgentId)).toMatchObject({ command: "/home/me/tools/reg", origin: "reg", link: null });
   });
 
   it("the env is the user's: Add seeds it from the recipe, an Upgrade never writes it and says what the registry changed", async () => {
@@ -478,16 +497,16 @@ describe("agents store", () => {
     serve("2.0.0", { MODEL: "b", AUTO_UPDATE: "0", NEW: "x" });
     await h.agents.resolveHere(added);
     expect(await h.deps.env.get(added)).toEqual(mine);
-    expect(h.agents.config(added)?.registrySource?.distribution).toMatchObject({ env: { MODEL: "b", AUTO_UPDATE: "0", NEW: "x" } });
+    expect(h.agents.config(added)?.link?.distribution).toMatchObject({ env: { MODEL: "b", AUTO_UPDATE: "0", NEW: "x" } });
     expect(h.warnings()).toEqual([
-      "reg 2.0.0: the ACP registry changed its env — now sets MODEL=b (was a); now sets NEW=x; no longer sets GONE. Your env is unchanged; edit it in Settings › Agents to take any of this.",
+      "reg 2.0.0: the ACP registry's env for this version differs — now sets MODEL=b (was a); now sets NEW=x; no longer sets GONE. Your env is unchanged; edit it in Settings › Agents to take any of this.",
     ]);
   });
 
   it("an agent stored before its recipe hears the new env against its own — its values never shown", async () => {
     const h = harness();
     await h.saveAgent(
-      fakeConfig("old", {}, { name: "Old", env: { TOKEN: "secret" }, registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }),
+      fakeConfig("old", {}, { name: "Old", env: { TOKEN: "secret" }, ...linked("reg", "1.0.0") }),
     );
     vi.stubGlobal("fetch", async () =>
       new Response(
@@ -499,23 +518,24 @@ describe("agents store", () => {
     await h.agents.resolveHere("old" as PatchbayAgentId);
     expect(await h.deps.env.get("old" as PatchbayAgentId)).toEqual({ TOKEN: "secret" });
     expect(h.warnings()).toEqual([
-      "Old 2.0.0: the ACP registry changed its env — now sets TOKEN=public (yours differs); now sets MODE=acp. Your env is unchanged; edit it in Settings › Agents to take any of this.",
+      "Old 2.0.0: the ACP registry's env for this version differs — now sets TOKEN=public (yours differs); now sets MODE=acp. Your env is unchanged; edit it in Settings › Agents to take any of this.",
     ]);
   });
 
   it("an imported agent is resolved for this machine from a fresh registry read — or, unlisted, stays as the file had it", async () => {
     const h = harness();
     serveRegistry({ id: "reg", version: "2.0.0" });
-    await h.saveAgent(fakeConfig("reg", {}, { registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" } }));
-    await h.saveAgent(fakeConfig("gone", {}, { registrySource: { registryId: "unlisted", distributionKind: "npx", pinnedVersion: "1.0.0" } }));
+    await h.saveAgent(fakeConfig("reg", {}, linked("reg", "1.0.0")));
+    await h.saveAgent(fakeConfig("gone", {}, linked("unlisted", "1.0.0")));
 
     expect(await h.agents.resolveHere("reg" as PatchbayAgentId)).toBe(true);
     expect(h.agents.config("reg" as PatchbayAgentId)).toMatchObject({
       command: "npx",
-      registrySource: { registryId: "reg", pinnedVersion: "2.0.0" },
+      origin: "reg",
+      link: { pinnedVersion: "2.0.0" },
     });
     expect(await h.agents.resolveHere("gone" as PatchbayAgentId)).toBe(false);
-    expect(h.agents.config("gone" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.agents.config("gone" as PatchbayAgentId)?.link?.pinnedVersion).toBe("1.0.0");
     // Resolving never connects: the import's restart does.
     expect(h.pool.get("reg" as PatchbayAgentId)).toBeUndefined();
   });
@@ -539,7 +559,7 @@ describe("agents store", () => {
     await seedRegistry(h, { id: "reg", version: "2.0.0" });
     const config = fakeConfig("mine", {}, {
       env: OFFLINE,
-      registrySource: { registryId: "reg", distributionKind: "npx", pinnedVersion: "1.0.0" },
+      ...linked("reg", "1.0.0"),
     });
     await h.saveAgent(config);
 
@@ -547,7 +567,9 @@ describe("agents store", () => {
     expect(h.agents.config("mine" as PatchbayAgentId)).toMatchObject({
       command: config.command,
       args: config.args,
-      registrySource: { registryId: "reg", pinnedVersion: "1.0.0" },
+      origin: "reg",
+      link: { pinnedVersion: "1.0.0" },
+      previous: null,
     });
     expect(h.row("mine" as PatchbayAgentId)).toMatchObject({ status: "crashed", update: { from: "1.0.0", to: "2.0.0" } });
     expect(h.warnings()).toEqual([expect.stringMatching(/^Fake mine: the upgrade to 2\.0\.0 didn't start — .+\. It stays on 1\.0\.0\.$/)]);
@@ -557,7 +579,7 @@ describe("agents store", () => {
     const h = harness();
     await upgradable(h);
     await h.gates.upgrade("reg" as PatchbayAgentId);
-    expect(h.agents.config("reg" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.agents.config("reg" as PatchbayAgentId)?.link?.pinnedVersion).toBe("1.0.0");
     expect(h.row("reg" as PatchbayAgentId)?.status).toBe("running");
     expect(h.warnings()).toEqual([expect.stringContaining("the upgrade to 2.0.0 didn't start")]);
     await h.gates.stopAll();
@@ -632,6 +654,32 @@ describe("the gates", () => {
     expect(h.row("reg" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [], update: { from: "1.0.0", to: "2.0.0" } });
   });
 
+  it("a held Reset or Back names the version it moves to on the row — declined, the agent runs as it was (#129)", async () => {
+    const user = asking();
+    const h = harness({ ports: { confirm: user.confirm } });
+    await seedRegistry(h, { id: "reg", version: "2.0.0" });
+    await h.saveAgent(fakeConfig("ed", {}, { origin: "reg", link: null }));
+    await h.saveAgent(fakeConfig("up", {}, linked("reg", "2.0.0")));
+    const previous = { distributionKind: "npx" as const, pinnedVersion: "1.0.0", distribution: { package: "reg@1.0.0", args: [], env: {} } };
+    await h.deps.configs.upsert({ ...h.agents.config("up" as PatchbayAgentId)!, previous });
+    for (const id of ["ed", "up"] as PatchbayAgentId[]) {
+      await h.gates.connect(id);
+      await openConversation(h, id);
+    }
+
+    const reset = h.gates.reset("ed" as PatchbayAgentId);
+    const back = h.gates.goBack("up" as PatchbayAgentId);
+    await vi.waitFor(() => expect(user.asked).toHaveLength(2), SETTLE);
+    expect(h.row("ed" as PatchbayAgentId)?.busy).toEqual([{ kind: "reset", to: "2.0.0" }]);
+    expect(h.row("up" as PatchbayAgentId)?.busy).toEqual([{ kind: "goBack", to: "1.0.0" }]);
+    user.answer("Reset", false);
+    user.answer("Take", false);
+    await Promise.all([reset, back]);
+    expect(h.row("ed" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
+    expect(h.agents.config("up" as PatchbayAgentId)).toMatchObject({ link: { pinnedVersion: "2.0.0" }, previous });
+    await h.gates.stopAll();
+  });
+
   it("Stop never waits its turn, and an upgrade it stopped goes no further — the agent keeps its version", async () => {
     const user = asking();
     const h = harness({ ports: { confirm: user.confirm } });
@@ -654,7 +702,7 @@ describe("the gates", () => {
     // stop, it saves no new pin and starts nothing.
     user.answer("Upgrade", true);
     await stop;
-    expect(h.agents.config("reg" as PatchbayAgentId)?.registrySource?.pinnedVersion).toBe("1.0.0");
+    expect(h.agents.config("reg" as PatchbayAgentId)?.link?.pinnedVersion).toBe("1.0.0");
     expect(h.row("reg" as PatchbayAgentId)).toMatchObject({ status: "stopped", busy: [] });
   });
 
@@ -706,7 +754,7 @@ describe("the gates", () => {
     await seedRegistry(h, { id: "patchbay-fake-agent", version: "1.0.0" });
     const config = fakeConfig(id, {}, {
       env: downloaded(id).env,
-      registrySource: { registryId: "patchbay-fake-agent", distributionKind: "npx", pinnedVersion: "0.9.0" },
+      ...linked("patchbay-fake-agent", "0.9.0"),
       ...over,
     });
     await h.saveAgent(config);
@@ -722,12 +770,26 @@ describe("the gates", () => {
       autoConnect: true,
       defaults: { options: { model: "fast" } },
       command: "npx",
-      registrySource: { registryId: "patchbay-fake-agent", pinnedVersion: "1.0.0" },
+      origin: "patchbay-fake-agent",
+      link: { pinnedVersion: "1.0.0" },
     });
     expect(h.deps.configs.list()).toHaveLength(1);
     expect(h.row("up" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
     expect(h.warnings()).toEqual([]);
     await h.gates.stopAll();
+  }, 120_000);
+
+  // An agent's error is read by its one reader: the reason an agent gives
+  // rides its `data`, and the bare message ("Internal error") says nothing.
+  it("a move that doesn't start says the agent's own reason — its error read whole (#129)", async () => {
+    const h = harness();
+    const reason = "process exited with code 1";
+    await upgradableTo100(h, "rejects", {
+      env: { ...downloaded("rejects").env, FAKE_AGENT_SCRIPT: JSON.stringify({ rejectInitialize: { code: -32603, message: "Internal error", data: reason } }) },
+    });
+    await h.gates.upgrade("rejects" as PatchbayAgentId);
+    expect(h.warnings()).toEqual([expect.stringContaining(`didn't start — Internal error — ${reason}. It stays on 0.9.0.`)]);
+    expect(h.agents.config("rejects" as PatchbayAgentId)?.link?.pinnedVersion).toBe("0.9.0");
   }, 120_000);
 
   // A Save doesn't wait its turn behind an Upgrade: one landing while the new
@@ -746,10 +808,92 @@ describe("the gates", () => {
     expect(h.agents.config("raced" as PatchbayAgentId)).toMatchObject({
       command: config.command,
       args: [...config.args, "--edited"],
-      registrySource: null,
+      link: null,
     });
     await h.gates.stopAll();
   }, 120_000);
+
+  // #129: an upgrade couldn't be undone — the link it replaced was gone.
+  // The old link here is the 0.9.0 pin with its recipe kept; the one package
+  // the test registry serves stands in for both versions' packages.
+  const kept = { package: "patchbay-fake-agent@1.0.0", args: [], env: {} };
+  const keptLink = { distributionKind: "npx" as const, pinnedVersion: "0.9.0", distribution: kept };
+
+  it("an Upgrade keeps the link it replaced; Back to previous runs it exactly, clears it, and the update is on offer again (#129)", async () => {
+    const h = harness();
+    await upgradableTo100(h, "undo", { link: keptLink });
+    await h.gates.upgrade("undo" as PatchbayAgentId);
+    expect(h.agents.config("undo" as PatchbayAgentId)).toMatchObject({ link: { pinnedVersion: "1.0.0" }, previous: keptLink });
+    expect(h.state().agents.find((a) => a.id === "undo")?.version).toEqual({ pinned: "1.0.0", reported: expect.any(String) });
+
+    await h.gates.goBack("undo" as PatchbayAgentId);
+    expect(h.agents.config("undo" as PatchbayAgentId)).toMatchObject({
+      command: "npx",
+      args: ["-y", kept.package],
+      origin: "patchbay-fake-agent",
+      link: keptLink,
+      previous: null,
+    });
+    expect(h.row("undo" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [], update: { from: "0.9.0", to: "1.0.0" } });
+    expect(h.warnings()).toEqual([]);
+    await h.gates.stopAll();
+  }, 120_000);
+
+  it("an edited command clears the way back with the link — an edited agent goes back to the registry only by Reset (#129)", async () => {
+    const h = harness();
+    const config = await upgradableTo100(h, "edit", { link: keptLink });
+    await h.deps.configs.upsert({ ...h.agents.config("edit" as PatchbayAgentId)!, previous: keptLink });
+    await h.agents.save(config, formatCommandLine(config.command, [...config.args, "--own"]));
+    expect(h.agents.config("edit" as PatchbayAgentId)).toMatchObject({ origin: "patchbay-fake-agent", link: null, previous: null });
+    // nothing to go back to: the operation does nothing, says nothing
+    await h.gates.goBack("edit" as PatchbayAgentId);
+    expect(h.agents.config("edit" as PatchbayAgentId)?.args).toEqual([...config.args, "--own"]);
+    expect(h.warnings()).toEqual([]);
+  });
+
+  it("Reset links an edited agent to the registry's current entry — its env stays the user's, what the recipe sets differently is said (#129)", async () => {
+    const h = harness();
+    await seedRegistry(h, { id: "patchbay-fake-agent", version: "1.0.0", env: { FAKE_AGENT_SCRIPT: "registry's", MODE: "acp" } });
+    // edited: its origin kept, its own command running
+    const config = fakeConfig("edited", {}, { env: downloaded("edited").env, origin: "patchbay-fake-agent", link: null });
+    await h.saveAgent(config);
+    await h.gates.reset("edited" as PatchbayAgentId);
+    expect(h.agents.config("edited" as PatchbayAgentId)).toMatchObject({
+      command: "npx",
+      args: ["-y", "patchbay-fake-agent@1.0.0"],
+      origin: "patchbay-fake-agent",
+      link: { pinnedVersion: "1.0.0" },
+      previous: null,
+    });
+    expect(h.row("edited" as PatchbayAgentId)).toMatchObject({ status: "running", busy: [] });
+    expect(await h.deps.env.get("edited" as PatchbayAgentId)).toEqual(config.env);
+    expect(h.warnings()).toEqual([
+      "Fake edited 1.0.0: the ACP registry's env for this version differs — now sets FAKE_AGENT_SCRIPT=registry's (yours differs); now sets MODE=acp. Your env is unchanged; edit it in Settings › Agents to take any of this.",
+    ]);
+    await h.gates.stopAll();
+  }, 120_000);
+
+  // Reset and Back run through Upgrade's own path, its #125 rule with it.
+  it("a Back whose version doesn't start leaves the agent where it was, its way back kept, and says why (#129)", async () => {
+    const h = harness();
+    await seedRegistry(h, { id: "reg", version: "2.0.0" });
+    await h.saveAgent(fakeConfig("back", {}, { env: OFFLINE, ...linked("reg", "2.0.0") }));
+    const previous = { distributionKind: "npx" as const, pinnedVersion: "1.0.0", distribution: { package: "reg@1.0.0", args: [], env: {} } };
+    const before = { ...h.agents.config("back" as PatchbayAgentId)!, previous };
+    await h.deps.configs.upsert(before);
+    await h.gates.goBack("back" as PatchbayAgentId);
+    expect(h.agents.config("back" as PatchbayAgentId)).toEqual(before);
+    expect(h.warnings()).toEqual([expect.stringMatching(/^Fake back: going back to 1\.0\.0 didn't start — .+\. It stays on 2\.0\.0\.$/)]);
+  }, 120_000);
+
+  it("a Reset the registry can't serve leaves the agent as it is and says so (#129)", async () => {
+    const h = harness();
+    await seedRegistry(h, { id: "other", version: "1.0.0" });
+    await h.saveAgent(fakeConfig("orphan", {}, { origin: "gone", link: null }));
+    await h.gates.reset("orphan" as PatchbayAgentId);
+    expect(h.agents.config("orphan" as PatchbayAgentId)).toMatchObject({ origin: "gone", link: null, command: process.execPath });
+    expect(h.warnings()).toEqual(["Fake orphan: the ACP registry lists nothing this machine can run for it — it stays as it is."]);
+  });
 
   // #126: on a machine with no Node of its own, the connect ran the agent on
   // the managed runtime while its Log in ran the configured launch — whose

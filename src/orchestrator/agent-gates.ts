@@ -29,6 +29,8 @@ const GATES = {
   connect: "waits",
   restart: "waits",
   upgrade: "waits",
+  reset: "waits",
+  goBack: "waits",
   login: "waits",
   logout: "waits",
   stop: "cuts in",
@@ -36,7 +38,7 @@ const GATES = {
 } as const satisfies Record<AgentOperation, "waits" | "cuts in">;
 
 /** The operations that end an agent's connection. */
-type Ending = "stop" | "upgrade" | "logout" | "remove" | "import";
+type Ending = "stop" | "upgrade" | "reset" | "goBack" | "logout" | "remove" | "import";
 
 /** The one question before a connection ends: nothing in hand, it just runs
  * — null; work in hand, it says what will be cut off. Remove always asks:
@@ -55,6 +57,14 @@ export function endQuestion(
     case "upgrade":
       return inHand
         ? { message: `Upgrade ${name}? It restarts the agent, disconnecting ${open}.`, choice: "Upgrade" }
+        : null;
+    case "reset":
+      return inHand
+        ? { message: `Reset ${name} to the ACP registry? It restarts the agent, disconnecting ${open}.`, choice: "Reset" }
+        : null;
+    case "goBack":
+      return inHand
+        ? { message: `Take ${name} back to its previous version? It restarts the agent, disconnecting ${open}.`, choice: "Go back" }
         : null;
     case "logout":
       return inHand
@@ -100,6 +110,20 @@ export class AgentGates implements ConnectionOperations {
   upgrade(patchbayAgentId: PatchbayAgentId): Promise<void> {
     return this.pass("upgrade", patchbayAgentId, (signal) =>
       this.agents.upgrade(patchbayAgentId, signal, () => this.agreed("upgrade", patchbayAgentId)),
+    );
+  }
+
+  /** Asks like Upgrade: once the registry has shown there is something to
+   * reset to. */
+  reset(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("reset", patchbayAgentId, (signal) =>
+      this.agents.reset(patchbayAgentId, signal, () => this.agreed("reset", patchbayAgentId)),
+    );
+  }
+
+  goBack(patchbayAgentId: PatchbayAgentId): Promise<void> {
+    return this.pass("goBack", patchbayAgentId, (signal) =>
+      this.agents.goBack(patchbayAgentId, signal, () => this.agreed("goBack", patchbayAgentId)),
     );
   }
 

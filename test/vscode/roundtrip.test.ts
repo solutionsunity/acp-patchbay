@@ -77,7 +77,7 @@ suite("snapshot/patch round-trip through real webviews", () => {
     // rows a real Log in and an Upgrade send while the queue holds them —
     // this exercises the real bundled AgentsSection JS, not just the pure
     // reducer, catching anything a plain reducer test can't (a render-time
-    // throw in a busy control or the upgrade chip).
+    // throw in a busy control or the version chip).
     ch.emit(upsert("dummy-busy", { needsAuth: true }));
     ch.flushNow();
     await ch.waitForApplied(ch.revision);

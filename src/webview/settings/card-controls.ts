@@ -8,7 +8,7 @@
 // unit-tested — in this one place instead of drifting across inline
 // predicates, which is how the logout regressions happened.
 import type { AgentConfigView, AgentSummary, AgentWork, AuthMethodView } from "../../shared/protocol";
-import { upgradeOffer, type UpgradeOffer } from "../shared/agent-work";
+import { versionChip, type VersionChip } from "../shared/agent-work";
 
 export interface AgentCardInputs {
   /** The orchestrator's row — its matrix, auth methods, update fact and
@@ -27,10 +27,17 @@ export interface AgentCardControls {
   /** Never disabled — it cuts in on whatever the agent's queue holds. */
   stop: { show: boolean; busy: boolean };
   connect: { show: boolean };
-  /** Non-null when the registry is ahead of the pinned version, or while an
-   * upgrade runs — drives the upgrade chip, which is both the indicator and
-   * the action. Never auto-applied. */
-  upgrade: UpgradeOffer | null;
+  /** The version chip — the agent's version, the upgrade itself while the
+   * registry is ahead of the pin (never auto-applied), or the move under
+   * way. Null while no version is known. */
+  version: VersionChip | null;
+  /** The card's menu: Reset to the ACP registry for an edited agent that
+   * came from it, Back to the version the last Upgrade replaced. Dimmed
+   * while the queue holds work they would only wait behind. */
+  reset: { show: boolean; disabled: boolean };
+  goBack: { show: boolean; to: string | null; disabled: boolean };
+  /** The menu itself — there only while it holds an item. */
+  menu: { show: boolean };
   edit: { show: boolean };
   remove: { show: boolean; busy: boolean };
 }
@@ -63,6 +70,11 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
   // Something to stop: the process, its launch, or work its queue holds.
   const live = running || status === "reconnecting" || working;
   const needsAuth = agent?.needsAuth === true;
+  // An edited agent that came from the registry has a way back to it; an
+  // upgraded one, to the version its upgrade replaced. A courtesy over the
+  // agents store's own rule for each move, which holds whatever is clicked.
+  const resettable = config !== undefined && config.origin !== null && config.link === null;
+  const previousVersion = config?.previousVersion ?? null;
 
   return {
     // Running-gated: authenticate is an RPC on the live connection, so a
@@ -83,7 +95,10 @@ export function agentCardControls(inputs: AgentCardInputs): AgentCardControls {
     // Connect only while there is nothing to stop.
     stop: { show: live, busy: holds("stop") },
     connect: { show: !live && config !== undefined },
-    upgrade: upgradeOffer(agent),
+    version: versionChip(agent),
+    reset: { show: resettable, disabled: working },
+    goBack: { show: previousVersion !== null, to: previousVersion, disabled: working },
+    menu: { show: resettable || previousVersion !== null },
     edit: { show: true },
     remove: { show: config !== undefined, busy: holds("remove") },
   };

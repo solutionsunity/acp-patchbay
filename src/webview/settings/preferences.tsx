@@ -9,12 +9,17 @@
 import type { ReactNode } from "react";
 import type { PreferencesView, SettingsState, ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER, TOOL_DISPLAY_ROUTES } from "../../shared/tool-display";
+import { registryReadsSaid } from "../../shared/registry-reads";
 import { playChime } from "../shared/chime-sound";
 import { Icon } from "../shared/icon";
 import { Field, Toggle } from "./controls";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+/** When the registry is read, said from the one list of its moments — the
+ * Network card's account can't drift from what is read. */
+const updateReads = registryReadsSaid("checkAgentUpdates");
 
 /** The one preference-card shape (every card renders through it): first row
  * is the title with its value control(s) on the right, second row is the
@@ -242,12 +247,11 @@ export function PreferencesSection(props: {
 
       <PrefCard
         title="Network"
-        help="Agent updates: patchbay reads the ACP registry when the window starts, a new session starts and
-        Settings opens, to tell you when an agent has a newer version. Off, it reads the registry only
-        when you act — opening the registry search, Refresh registry, an Add, an Upgrade, an import. The switches here cover only the
-        calls patchbay makes on its own: what you do yourself still reaches the network (adding or
-        upgrading an agent, a runtime download, an MCP server's sign-in or check), and what an agent
-        sends is up to the agent's own settings."
+        help={`Agent updates: patchbay reads the ACP registry when ${updateReads.switched}, to tell you
+        when an agent has a newer version. Off, it reads the registry only when you act — ${updateReads.acted}.
+        The switches here cover only the calls patchbay makes on its own: what you do yourself still
+        reaches the network (such as a runtime download, or an MCP server's sign-in or check), and what
+        an agent sends is up to the agent's own settings.`}
       >
         <Toggle
           checked={prefs.checkAgentUpdates}

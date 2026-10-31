@@ -47,7 +47,9 @@ async function machine() {
     args: ["@agentclientprotocol/claude-agent-acp@0.31.0"],
     autoConnect: true,
     defaults: { options: { model: "opus" } },
-    registrySource: { registryId: "claude-acp", distributionKind: "npx", pinnedVersion: "0.31.0" },
+    origin: "claude-acp",
+    link: { distributionKind: "npx", pinnedVersion: "0.31.0" },
+    previous: null,
     lastSeenVersion: "0.31.0",
   });
   // A binary download: its command is a path into this machine's cache.
@@ -58,8 +60,9 @@ async function machine() {
     args: ["acp"],
     autoConnect: false,
     defaults: {},
-    registrySource: {
-      registryId: "kimi",
+    origin: "kimi",
+    previous: null,
+    link: {
       distributionKind: "binary",
       pinnedVersion: "0.3.1",
       distribution: { archive: "https://example.test/kimi-0.3.1-linux-x64.tar.gz", cmd: "./kimi", args: ["acp"], env: {}, sha256: "ab".repeat(32) },
@@ -73,7 +76,9 @@ async function machine() {
     args: [],
     autoConnect: false,
     defaults: {},
-    registrySource: null,
+    origin: null,
+    link: null,
+    previous: null,
     lastSeenVersion: null,
   });
   await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-1" });

@@ -84,6 +84,25 @@ describe("landing an import", () => {
     expect(m.stores.machineSavedRoots.list()).toEqual(["/home/me/notes"]);
   });
 
+  // #129: a way back names a recipe — a downloaded one names the exporting
+  // machine's build, never this one's.
+  it("a downloaded way back stays on the machine it names; a package's travels", async () => {
+    const read = await golden();
+    const binaryBack = { distributionKind: "binary" as const, pinnedVersion: "0.3.0", distribution: { archive: "https://example.test/kimi-0.3.0-linux-x64.tar.gz", cmd: "./kimi" } };
+    const npxBack = { distributionKind: "npx" as const, pinnedVersion: "0.30.0", distribution: { package: "@agentclientprotocol/claude-agent-acp@0.30.0", args: [], env: {} } };
+    const carried = {
+      ...read,
+      agents: read.agents.map((a) =>
+        a.id === "claude" ? { ...a, previous: npxBack } : a.link?.distributionKind === "binary" ? { ...a, previous: binaryBack } : a,
+      ),
+    };
+    const m = machine();
+    const plan = planImport(carried, await m.local(), here);
+    await applyImport(carried, plan, new Set(plan.items.map((i) => i.id)), m.targets);
+    expect(m.stores.agentConfigs.get("claude" as PatchbayAgentId)?.previous).toEqual(npxBack);
+    expect(m.stores.agentConfigs.get("6f1c2a9e-3b7d-4e21-9a5f-0c8d2e4b7a13" as PatchbayAgentId)?.previous).toBeNull();
+  });
+
   it("only what is ticked lands — and an unchanged item is never rewritten", async () => {
     const read = await golden();
     const m = machine();

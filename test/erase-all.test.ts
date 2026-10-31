@@ -67,7 +67,7 @@ describe("eraseAllData", () => {
     const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
 
     // A lived-in install.
-    await agentConfigs.upsert({ id: "claude" as PatchbayAgentId, name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, registrySource: null, lastSeenVersion: "1.0.0" });
+    await agentConfigs.upsert({ id: "claude" as PatchbayAgentId, name: "Claude", command: "claude-code-acp", args: [], autoConnect: true, defaults: {}, origin: null, link: null, previous: null, lastSeenVersion: "1.0.0" });
     await agentEnv.set("claude", { ANTHROPIC_API_KEY: "sk-secret" });
     await mcpServerConfigs.upsert({ id: "github" as PatchbayMcpServerId, name: "GitHub", source: { kind: "catalog", catalogId: "github", authMode: "header" }, routing: "auto", active: true, transport: "auto" });
     await mcpServerEnv.set("github", { GITHUB_PAT: "ghp-secret" });

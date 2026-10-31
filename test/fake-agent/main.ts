@@ -131,6 +131,9 @@ export interface FakeAgentScript {
   /** session/resume rejects and drops the session — the corpse-leaving
    * variant on the resume rung (roots re-apply failure). */
   failResume?: boolean;
+  /** initialize is rejected with this error — an agent that can't start,
+   * its reason in `data` as agents put it ("process exited with code 1"). */
+  rejectInitialize?: { code: number; message: string; data?: unknown };
   /** The process dies this many ms after initialize — a connection death
    * under whatever sessions exist by then, prompted or not. */
   exitAfterMs?: number;
@@ -696,6 +699,10 @@ const app = acp
   .onRequest("initialize", (ctx): acp.InitializeResponse => {
     clientCapabilities = ctx.params.clientCapabilities ?? null;
     clientInfo = ctx.params.clientInfo ?? null;
+    if (script.rejectInitialize !== undefined) {
+      const { code, message, data } = script.rejectInitialize;
+      throw new acp.RequestError(code, message, data);
+    }
     if (script.exitAfterMs !== undefined) setTimeout(() => process.exit(1), script.exitAfterMs);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,

@@ -23,7 +23,20 @@
   to tell you about newer agent versions. Preferences › Network › *check
   for agent updates automatically* (on by default) turns those reads off;
   the registry is then read only when you act on it — opening the registry
-  search, Refresh registry, an Add, an Upgrade, an import. (#128)
+  search or adding an agent, say — and the Network card names every such
+  moment. (#128)
+- **One version chip per agent, and an upgrade you can undo.** Every agent
+  card, and the agent above the chat, shows its version: the registry
+  version it is pinned to, or — for a custom command, or one whose command
+  you edited — what the agent reports, with both in the tooltip. While a
+  newer version exists the same chip is the upgrade (`0.36.0 → 0.37.0`);
+  it no longer hides when the running agent reports the newest version,
+  since that report is named differently from the registry's. The card's ⋯
+  menu adds **Back to previous**, which runs exactly the version the last
+  upgrade replaced, and **Reset to ACP registry** for an agent whose
+  command you edited: it now remembers where it came from and links to the
+  registry's current version again, your env kept. An agent edited before
+  this release didn't keep that and stays custom. (#129)
 
 ## 0.88.4 — 2026-10-26
 

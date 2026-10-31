@@ -186,7 +186,9 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
       args: [...config.args],
       autoConnect: config.autoConnect,
       defaults: { options: { ...config.defaults } },
-      registrySource: config.registrySource,
+      origin: config.origin,
+      link: config.link,
+      previous: null,
       lastSeenVersion: config.lastSeenVersion,
     });
     orchestrator.agents.publish(config.id);

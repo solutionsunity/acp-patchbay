@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "./support/teardown";
 import type { Logger } from "../src/orchestrator/logger";
 import { DEFAULT_PREFERENCES } from "../src/shared/protocol";
+import { REGISTRY_READS, type RegistryReadMoment, registryReadsSaid } from "../src/shared/registry-reads";
 import { platformOf, registryTarget } from "../src/orchestrator/platform";
 import {
   AcpRegistryStore,
@@ -208,7 +209,7 @@ describe("AcpRegistryStore", () => {
     expect(store.current().agents).toBe(before.agents);
     expect(updates).toBe(2); // confirmed current is news too — the "last checked" line moves
     // the Patchbay log says each read happened, good news included
-    expect(infos).toEqual(["ACP registry: fetched — 1 agent (refresh requested)", "ACP registry: up to date — 1 agent (refresh requested)"]);
+    expect(infos).toEqual(["ACP registry: fetched — 1 agent (Refresh registry)", "ACP registry: up to date — 1 agent (Refresh registry)"]);
   });
 
   it("a failed read is recorded and logged, and the copy it has stays", async () => {
@@ -221,7 +222,7 @@ describe("AcpRegistryStore", () => {
     const outcome = await store.read("manual");
     expect(outcome).toMatchObject({ ok: false, reason: expect.stringContaining("network error") });
     expect(store.current().agents.map((a) => a.id)).toEqual(["bin-agent"]);
-    expect(lines.some((l) => l.startsWith("ACP registry: read failed (refresh requested) — network error"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("ACP registry: read failed (Refresh registry) — network error"))).toBe(true);
   });
 
   it("the update-notice moments read only while their switch is on; a moment the user acts in always reads", async () => {
@@ -230,17 +231,26 @@ describe("AcpRegistryStore", () => {
     vi.stubGlobal("fetch", fetchSpy);
     let prefs = { ...DEFAULT_PREFERENCES, checkAgentUpdates: false };
     const store = new AcpRegistryStore(dir, () => {}, () => prefs);
-    for (const moment of ["startup", "new-session", "settings"] as const) {
-      expect((await store.read(moment)).ok).toBe(false);
-    }
+    const moments = Object.entries(REGISTRY_READS) as [RegistryReadMoment, (typeof REGISTRY_READS)[RegistryReadMoment]][];
+    const switched = moments.filter(([, read]) => "switch" in read).map(([moment]) => moment);
+    const acted = moments.filter(([, read]) => !("switch" in read)).map(([moment]) => moment);
+    expect(switched).toEqual(["startup", "new-session", "settings"]);
+    for (const moment of switched) expect((await store.read(moment)).ok).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
-    for (const moment of ["browse", "add", "upgrade", "import", "download", "manual"] as const) {
-      expect((await store.read(moment)).ok).toBe(true);
-    }
-    expect(fetchSpy).toHaveBeenCalledTimes(6);
+    for (const moment of acted) expect((await store.read(moment)).ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(acted.length);
     prefs = { ...prefs, checkAgentUpdates: true }; // read at each moment, never captured
     expect((await store.read("startup")).ok).toBe(true);
-    expect(fetchSpy).toHaveBeenCalledTimes(7);
+    expect(fetchSpy).toHaveBeenCalledTimes(acted.length + 1);
+  });
+
+  // Preferences › Network says when the registry is read from the same list
+  // the store reads at: a moment added there is said with no other edit.
+  it("the Network card's account of the reads is the moments list, said", () => {
+    expect(registryReadsSaid("checkAgentUpdates")).toEqual({
+      switched: "the window starts, a new session starts, and Settings opens",
+      acted: "opening the registry search, Refresh registry, an Add, an Upgrade, a Reset to the registry, an import, and downloading an agent",
+    });
   });
 
   it("caches the registry as received — a later read parses it whole, digests included", async () => {

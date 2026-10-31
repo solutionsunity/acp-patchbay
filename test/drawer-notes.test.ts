@@ -29,7 +29,7 @@ function agent(
   status: AgentSummary["status"],
   capabilities?: AgentSummary["capabilities"],
 ): AgentSummary {
-  return { id: id as PatchbayAgentId, name: id, status, needsAuth: false, authMethods: [], busy: [], capabilities };
+  return { id: id as PatchbayAgentId, name: id, status, needsAuth: false, authMethods: [], version: {}, busy: [], capabilities };
 }
 
 describe("sessions drawer — agents whose history cannot be shown", () => {

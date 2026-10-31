@@ -664,9 +664,12 @@ for (const theme of Object.keys(THEMES)) {
     `[${theme}] the header counts the other sessions by mark`,
     (await attention.innerText()).replace(/\s+/g, " ").trim() === "1 1 1",
   );
+  const headerUpgrade = p.locator('.agent-chip button[aria-label="Upgrade Claude Code to 1.2.0"]');
   check(
-    `[${theme}] the agent chip offers the upgrade to the newer version`,
-    (await p.locator('.agent-chip button[aria-label="Upgrade Claude Code to 1.2.0"]').count()) === 1,
+    `[${theme}] the agent chip's version chip is the upgrade while there is one — pinned → latest, both versions in its tooltip`,
+    (await headerUpgrade.count()) === 1 &&
+      (await headerUpgrade.innerText()).trim() === "1.0.0 → 1.2.0" &&
+      (await headerUpgrade.getAttribute("title")) === "Upgrade Claude Code to 1.2.0 — pinned 1.0.0 (ACP registry) · reports 1.0.0",
   );
   await p.locator(".hdr").screenshot({ path: `${OUT}/header-attention-${theme}.png` });
   await attention.click();
@@ -740,7 +743,7 @@ for (const theme of Object.keys(THEMES)) {
   await p.keyboard.type("old words");
   // The row as the host sends it while the connect runs, then once it's done.
   const fakeRow = (over) => ({
-    id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [],
+    id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], version: { pinned: "1.0.0", reported: "1.0.0" }, busy: [],
     update: { from: "1.0.0", to: "1.2.0" }, ...over,
   });
   await p.evaluate(
@@ -930,10 +933,30 @@ for (const theme of Object.keys(THEMES)) {
   await renderView(p, "settings", settingsState());
   await p.waitForSelector(".section h1");
   check(
-    `[${theme}] a card with an update shows its upgrade chip — the indicator is the action`,
+    `[${theme}] a card with an update: its version chip is the upgrade — the indicator is the action`,
     (await p.locator('button[aria-label="Upgrade Claude Code to 1.0.0"]').count()) === 1,
   );
+  // #129: an edited agent shows what it reported — cut to the chip, whole
+  // in its tooltip — and its menu offers the way back to the registry
+  const reported = p.locator('span[title="Augment: reports 0.36.0 (commit 7c61e5bb)"]');
+  check(
+    `[${theme}] a version without a pin shows what the agent reported, cut to the chip, whole in its tooltip`,
+    (await reported.count()) === 1 && (await reported.evaluate((el) => el.scrollWidth > el.clientWidth || el.clientWidth <= 160)),
+  );
   await p.screenshot({ path: `${OUT}/settings-${theme}.png` });
+  const cardOf = (name) => p.locator(".card", { has: p.locator(".nm", { hasText: name }) });
+  await cardOf("Augment").getByRole("button", { name: "More" }).click();
+  const resetItem = p.getByRole("menuitem", { name: "Reset to ACP registry" });
+  await resetItem.waitFor({ timeout: 3000 });
+  check(`[${theme}] an edited agent's menu offers Reset to ACP registry, and only that`, (await p.getByRole("menuitem").count()) === 1);
+  await p.screenshot({ path: `${OUT}/settings-card-menu-${theme}.png` });
+  await resetItem.click();
+  check(`[${theme}] Reset sends its action`, await p.evaluate(() => window.__actions.some((a) => a.kind === "resetAgent" && a.patchbayAgentId === "aug")));
+  await cardOf("Claude Code").getByRole("button", { name: "More" }).click();
+  const backItem = p.getByRole("menuitem", { name: "Back to previous (0.8.0)" });
+  check(`[${theme}] an upgraded agent's menu offers Back to previous, naming the version`, await backItem.waitFor({ timeout: 3000 }).then(() => true, () => false));
+  await backItem.click();
+  check(`[${theme}] Back to previous sends its action`, await p.evaluate(() => window.__actions.some((a) => a.kind === "goBackAgent" && a.patchbayAgentId === "claude")));
   // While the agent's queue holds an upgrade the chip says so and takes no
   // click (#68) — then the row goes back to idle for the steps below.
   const claudeRow = settingsState().agents.find((a) => a.id === "claude");
@@ -952,9 +975,9 @@ for (const theme of Object.keys(THEMES)) {
     (await stopping.isEnabled()) && (await stopping.locator(".codicon-modifier-spin").count()) === 1,
   );
   await upsert({ ...claudeRow, status: "stopped", busy: [{ kind: "remove" }] });
-  const removing = p.locator('button[aria-label="Remove"] .codicon-modifier-spin');
-  await removing.waitFor({ timeout: 3000 });
-  check(`[${theme}] a Remove under way: Remove spins and takes no click`, await p.locator('button[aria-label="Remove"]').isDisabled());
+  const claudeRemove = cardOf("Claude Code").locator('button[aria-label="Remove"]');
+  await claudeRemove.locator(".codicon-modifier-spin").waitFor({ timeout: 3000 });
+  check(`[${theme}] a Remove under way: Remove spins and takes no click`, await claudeRemove.isDisabled());
   await upsert(claudeRow);
   // A question no session owns — a login's page to open (#81) — shows on
   // its agent's card, answers through the same action as in chat, and

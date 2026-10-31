@@ -888,6 +888,12 @@ export class OrchestratorHost {
       case "upgradeAgent":
         void this.orchestrator.gates.upgrade(action.patchbayAgentId).catch(this.orchestrator.logCatch(`upgrade ${action.patchbayAgentId}`));
         break;
+      case "resetAgent":
+        void this.orchestrator.gates.reset(action.patchbayAgentId).catch(this.orchestrator.logCatch(`reset ${action.patchbayAgentId}`));
+        break;
+      case "goBackAgent":
+        void this.orchestrator.gates.goBack(action.patchbayAgentId).catch(this.orchestrator.logCatch(`go back ${action.patchbayAgentId}`));
+        break;
       case "refreshRegistry":
         void this.orchestrator.acpRegistry.read("manual");
         break;

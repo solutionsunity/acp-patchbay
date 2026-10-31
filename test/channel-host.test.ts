@@ -38,7 +38,7 @@ function makeHost() {
 
 const upsert = (id: string): AgentViewEvent => ({
   kind: "agentUpserted",
-  agent: { id: id as PatchbayAgentId, name: id, status: "running", needsAuth: false, authMethods: [], busy: [] },
+  agent: { id: id as PatchbayAgentId, name: id, status: "running", needsAuth: false, authMethods: [], version: {}, busy: [] },
 });
 
 describe("ChannelHost", () => {
@@ -59,7 +59,7 @@ describe("ChannelHost", () => {
       rev: 1,
       state: {
         ...initialAgentViewState,
-        agents: [{ id: "claude", name: "claude", status: "running", needsAuth: false, authMethods: [], busy: [] }],
+        agents: [{ id: "claude", name: "claude", status: "running", needsAuth: false, authMethods: [], version: {}, busy: [] }],
       },
     });
   });

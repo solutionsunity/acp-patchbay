@@ -3,22 +3,52 @@
 
 // How a view reads what an agent is busy with — the row's `busy`, the
 // operations its queue holds. One reading for every surface that shows it:
-// the upgrade chip (Agent View header, Settings card) and the chat pane
+// the version chip (Agent View header, Settings card) and the chat pane
 // while a chat waits on its agent.
-import type { AgentSummary, AgentWork, ChatConnectView } from "../../shared/protocol";
+import { isVersionMove, type AgentSummary, type AgentWork, type ChatConnectView, type VersionMove } from "../../shared/protocol";
 
-/** The upgrade chip: the newer version on offer, or the upgrade the
- * agent's queue holds, named by the version it installs. */
-export type UpgradeOffer = { upgrading: false; from: string; to: string } | { upgrading: true; to?: string };
+type VersionWork = Extract<AgentWork, { kind: VersionMove }>;
 
-/** The chip's state, or null when there is neither an update nor an
- * upgrade under way. An upgrade under way outranks the offer — once the
- * upgrade has saved the new pin the offer is gone, and the chip still says
- * what is happening. */
-export function upgradeOffer(agent: AgentSummary | undefined): UpgradeOffer | null {
-  const upgrading = agent?.busy.find((w) => w.kind === "upgrade");
-  if (upgrading !== undefined) return { upgrading: true, to: upgrading.to };
-  return agent?.update !== undefined ? { upgrading: false, ...agent.update } : null;
+/** The version chip: the agent's version as a read-out, the upgrade itself
+ * while the registry has a newer one, or the move its queue holds. `title`
+ * says both versions the agent has — the pin and what it reported. */
+export type VersionChip =
+  | { kind: "version"; shown: string; title: string }
+  | { kind: "update"; from: string; to: string; title: string }
+  | { kind: "moving"; text: string };
+
+/** The chip's state, or null while nothing of the agent's version is known
+ * (a custom command not yet connected). Registry agents show their pin —
+ * the scheme an update is measured in — and others what they reported. A
+ * move under way outranks the offer — once it has saved the new pin the
+ * offer is gone, and the chip still says what is happening. */
+export function versionChip(agent: AgentSummary | undefined): VersionChip | null {
+  if (agent === undefined) return null;
+  const moving = agent.busy.find((w): w is VersionWork => isVersionMove(w.kind));
+  if (moving !== undefined) return { kind: "moving", text: movingText(moving) };
+  const { pinned, reported } = agent.version;
+  const shown = pinned ?? reported;
+  if (shown === undefined) return null;
+  const versions = [
+    ...(pinned === undefined ? [] : [`pinned ${pinned} (ACP registry)`]),
+    reported === undefined ? "reports its version once connected" : `reports ${reported}`,
+  ].join(" · ");
+  if (agent.update !== undefined) {
+    return { kind: "update", ...agent.update, title: `Upgrade ${agent.name} to ${agent.update.to} — ${versions}` };
+  }
+  return { kind: "version", shown, title: `${agent.name}: ${versions}` };
+}
+
+function movingText(work: VersionWork): string {
+  const to = work.to !== undefined ? ` to ${work.to}` : "";
+  switch (work.kind) {
+    case "upgrade":
+      return `upgrading${to}…`;
+    case "reset":
+      return `resetting${to}…`;
+    case "goBack":
+      return `going back${to}…`;
+  }
 }
 
 /** The in-progress pane's line: while the chat waits on its agent, what
@@ -47,6 +77,10 @@ function workLine(work: AgentWork, name: string): string {
       return `Restarting ${name}…`;
     case "upgrade":
       return work.to !== undefined ? `Upgrading ${name} to ${work.to}…` : `Upgrading ${name}…`;
+    case "reset":
+      return work.to !== undefined ? `Resetting ${name} to the ACP registry's ${work.to}…` : `Resetting ${name} to the ACP registry…`;
+    case "goBack":
+      return work.to !== undefined ? `Taking ${name} back to ${work.to}…` : `Taking ${name} back…`;
     case "login":
       return `Logging in to ${name}…`;
     case "logout":

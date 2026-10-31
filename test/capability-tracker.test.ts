@@ -176,7 +176,7 @@ describe("CapabilityTracker", () => {
     const { pool, tracker, agents, probes, saveAgent } = harness();
     // The latch's curated entry names the registry entry "auggie"; the agent
     // added from it has an id of its own.
-    await saveAgent(fakeConfig("latched" as PatchbayAgentId, {}, { registrySource: { registryId: "auggie", distributionKind: "npx", pinnedVersion: "1.0.0" } }));
+    await saveAgent(fakeConfig("latched" as PatchbayAgentId, {}, { origin: "auggie", link: { distributionKind: "npx", pinnedVersion: "1.0.0" } }));
     // A probe's first step asks for its root, in the same call that decides
     // to run it — so a probe that started is counted where it was decided.
     const started = vi.spyOn(agents, "probeRoot");

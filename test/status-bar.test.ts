@@ -20,7 +20,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1" as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "Fix the bug", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
         activePatchbaySessionId: "s1" as PatchbaySessionId,
-        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
+        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], version: {}, busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) Fix the bug");
@@ -32,7 +32,7 @@ describe("statusBarContent", () => {
       state({
         sessions: [{ id: "s1" as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
         activePatchbaySessionId: "s1" as PatchbaySessionId,
-        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [], busy: [] }],
+        agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "crashed", needsAuth: false, authMethods: [], version: {}, busy: [] }],
       }),
     );
     expect(content.text).toBe("$(plug) $(error) T");
@@ -42,7 +42,7 @@ describe("statusBarContent", () => {
     const base = state({
       sessions: [{ id: "s1" as PatchbaySessionId, patchbayAgentId: "a1" as PatchbayAgentId, title: "T", busy: [], updatedAt: "2026-07-09T00:00:00Z" }],
       activePatchbaySessionId: "s1" as PatchbaySessionId,
-      agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] }],
+      agents: [{ id: "a1" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], version: {}, busy: [] }],
     });
     expect(statusBarContent(base).text).toBe("$(plug) T");
 

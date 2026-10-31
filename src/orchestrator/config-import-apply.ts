@@ -5,7 +5,8 @@
 // on the id the plan matched it to. A taken item replaces what is here
 // whole — its env values, key and composer choices with it — keeping only
 // what this machine knows of it on its own: the version an agent last
-// answered with, and an OAuth sign-in to the same server. Nothing the file
+// answered with, and an OAuth sign-in to the same server. A downloaded
+// agent's way back stays behind with the build it names. Nothing the file
 // doesn't name is touched. An item that fails is said, and the rest land.
 import { isDeepStrictEqual } from "node:util";
 import { writeLocationLabel, type KnobSeed, type PreferencesView, type WriteEntry } from "../shared/protocol";
@@ -78,7 +79,9 @@ export async function applyImport(
     const id = (plan.agentIds.get(agent.id) ?? agent.id) as PatchbayAgentId;
     await land(agent.name, async () => {
       const mine = targets.agentConfigs.get(id);
-      const record: AgentConfig = { ...agent, id, lastSeenVersion: mine?.lastSeenVersion ?? null };
+      // A binary way back is the exporting machine's build: it stays there.
+      const previous = agent.previous?.distributionKind === "binary" ? null : agent.previous;
+      const record: AgentConfig = { ...agent, id, previous, lastSeenVersion: mine?.lastSeenVersion ?? null };
       let named = record.name;
       if (mine === undefined) named = await targets.agentConfigs.add(record);
       else await targets.agentConfigs.upsert(record);
@@ -86,7 +89,7 @@ export async function applyImport(
       const knobs = read.knobs[agent.id];
       if (knobs === undefined) await targets.composerKnobs.remove(id);
       else await targets.composerKnobs.record(id, knobs);
-      if (agent.registrySource?.distributionKind === "binary" && !(await targets.resolveHere(id))) {
+      if (agent.link?.distributionKind === "binary" && !(await targets.resolveHere(id))) {
         return "the registry has no download of it for this machine — it stays as the file had it";
       }
       if (named !== record.name) return `added as "${named}" — the name was taken here`;

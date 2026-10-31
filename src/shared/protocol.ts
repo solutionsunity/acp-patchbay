@@ -214,6 +214,11 @@ export type Action =
    * "Clients MUST NOT call it" otherwise holds by construction. */
   | { kind: "logoutAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "upgradeAgent"; patchbayAgentId: PatchbayAgentId }
+  /** An edited agent back on the ACP registry's current entry for the one
+   * it was added from. */
+  | { kind: "resetAgent"; patchbayAgentId: PatchbayAgentId }
+  /** Back to the version the last Upgrade replaced. */
+  | { kind: "goBackAgent"; patchbayAgentId: PatchbayAgentId }
   | { kind: "refreshRegistry" }
   /** The user opened the registry search — the list they are about to
    * read is read fresh. */
@@ -431,8 +436,7 @@ export type PromptPart =
 // scoping — binding to workspaces (not repos) may return later as an
 // opt-in; today global-only keeps one honest visibility rule. ──────────────
 
-export interface AgentRegistrySourceView {
-  registryId: string;
+export interface AgentLinkView {
   distributionKind: "npx" | "uvx" | "binary";
   pinnedVersion: string;
 }
@@ -453,10 +457,17 @@ export interface AgentConfigView {
    * config-option id, or knobs.ts's MODE_KNOB_ID on the modes-fallback
    * surface) — never by semantic category, which ACP defines as UX-only. */
   defaults: KnobSeed;
-  /** Present only for agents added from the official ACP registry — links
-   * the card to its registry row. The update comparison reads the store's
-   * copy orchestrator-side and arrives here as `updates`. */
-  registrySource: AgentRegistrySourceView | null;
+  /** The ACP registry entry the agent was added from, kept through an edit
+   * of its command — the card's registry row, and Reset's way back. Null
+   * for an agent added as a custom command. */
+  origin: string | null;
+  /** The registry version the agent is pinned to — null for a custom
+   * command, and once its command was edited. The update comparison reads
+   * the store's copy orchestrator-side and arrives on the row. */
+  link: AgentLinkView | null;
+  /** The version Back to previous returns to — the one the last Upgrade
+   * replaced; null when there is none. */
+  previousVersion: string | null;
   /** `agentInfo.version` last captured at connect — what the used-
    * capability cache is actually keyed against (reality over the pinned
    * ask); null until connected at least once. */
@@ -698,8 +709,11 @@ export interface AgentSummary {
   /** Declared auth methods — the Log-in button's source (the runnable kinds
    * are AuthMethodView's docstring); empty until it has connected. */
   authMethods: readonly AuthMethodView[];
-  /** A newer registry version than the agent's pin — the upgrade chip,
-   * never applied on its own; absent when there is none. */
+  /** What is known of the agent's version — the version chip. */
+  version: AgentVersion;
+  /** A newer registry version than the agent's pin — the version chip
+   * turns into the upgrade, never applied on its own; absent when there is
+   * none. */
   update?: AgentUpdate;
   /** What the agent's queue holds for it: the operation running first,
    * then the ones waiting their turn — empty while it is idle. The views'
@@ -707,13 +721,30 @@ export interface AgentSummary {
   busy: readonly AgentWork[];
 }
 
+/** An agent's version as two facts in two naming schemes — shown side by
+ * side, never compared: a registry's `0.36.0` may report itself as
+ * `0.36.0 (commit 7c61e5bb)`. */
+export interface AgentVersion {
+  /** The registry version its link pins — what an update is measured
+   * against. Registry agents only. */
+  pinned?: string;
+  /** What it reported in `initialize` at its last connect. */
+  reported?: string;
+}
+
+/** The operations that move an agent's version: Upgrade, Reset to the ACP
+ * registry, Back to previous. */
+const VERSION_MOVES = ["upgrade", "reset", "goBack"] as const;
+export type VersionMove = (typeof VERSION_MOVES)[number];
+export const isVersionMove = (kind: string): kind is VersionMove => (VERSION_MOVES as readonly string[]).includes(kind);
+
 /** One operation an agent's queue holds, as the views show it. */
 export type AgentWork =
   | { kind: "connect" | "restart" | "login" | "logout" | "stop" | "remove" }
   | {
-      kind: "upgrade";
-      /** The version it installs: the registry's while the update is on
-       * offer, the new pin once the upgrade has saved it. */
+      kind: VersionMove;
+      /** The version it installs, while known: the one it moves to, then
+       * the new pin once saved. */
       to?: string;
     };
 

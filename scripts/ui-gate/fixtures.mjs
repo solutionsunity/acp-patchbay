@@ -192,10 +192,11 @@ export const preferences = {
 export function agentViewState({ live }) {
   return {
     // `silent` declared no session/list — the sessions drawer must say so
-    // fake's agent has a newer version — the agent chip's upgrade chip (#37)
+    // fake's agent has a newer version — the agent chip's version chip is
+    // the upgrade (#37, #129)
     agents: [
-      { id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [], update: { from: "1.0.0", to: "1.2.0" } },
-      { id: "silent", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], busy: [], capabilities: unlistedMatrix },
+      { id: "fake", name: "Claude Code", status: "running", needsAuth: false, authMethods: [], version: { pinned: "1.0.0", reported: "1.0.0" }, busy: [], update: { from: "1.0.0", to: "1.2.0" } },
+      { id: "silent", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], version: {}, busy: [], capabilities: unlistedMatrix },
     ],
     // s2: newer activity + unseen — must sort above the active s1 and show
     // the blue dot in the sessions drawer. s3 waits on a question, s4 runs:
@@ -266,7 +267,8 @@ export function settingsState() {
       {
         id: "claude", name: "Claude Code", status: "running", command: "claude-code-acp", needsAuth: false,
         authMethods: [], busy: [], protocolVersion: 1,
-        // the card's upgrade chip (#37)
+        // the card's version chip, the upgrade while there is one (#37, #129)
+        version: { pinned: "0.9.0", reported: "0.9.0" },
         update: { from: "0.9.0", to: "1.0.0" },
         capabilities: {
           "fs.readTextFile": { declared: true, used: true },
@@ -279,7 +281,8 @@ export function settingsState() {
           auth: { declared: true, used: true },
         },
       },
-      { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], busy: [] },
+      // edited: its own command, what it reported in its own scheme (#129)
+      { id: "aug", name: "Augment", status: "stopped", needsAuth: false, authMethods: [], version: { reported: "0.36.0 (commit 7c61e5bb)" }, busy: [] },
     ],
     registryAgents: [
       { id: "claude", name: "Claude Code", description: "Anthropic", icon: null, version: "1.0.0", unavailableReason: null },
@@ -309,10 +312,18 @@ export function settingsState() {
         ],
       },
     }],
-    agentConfigs: [{
-      id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
-      env: { API_KEY: "sk-fixture" }, defaults: {}, registrySource: null, lastSeenVersion: null,
-    }],
+    agentConfigs: [
+      {
+        id: "claude", name: "Claude Code", command: "claude-code-acp", args: [],
+        env: { API_KEY: "sk-fixture" }, defaults: {},
+        // upgraded once: a way back is kept (#129)
+        origin: "claude", link: { distributionKind: "npx", pinnedVersion: "0.9.0" }, previousVersion: "0.8.0", lastSeenVersion: "0.9.0",
+      },
+      {
+        id: "aug", name: "Augment", command: "auggie", args: ["--acp", "--own"], env: {}, defaults: {},
+        origin: "aug", link: null, previousVersion: null, lastSeenVersion: "0.36.0 (commit 7c61e5bb)",
+      },
+    ],
     sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "",
     wireLog: { active: false, until: null }, dataInventory: null, configImport: null, commandTest: null,
     preferences,

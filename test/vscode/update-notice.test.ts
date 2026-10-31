@@ -28,7 +28,9 @@ const config = (registryId: string, pinnedVersion: string): AgentConfigView => (
   env: {},
   autoConnect: false,
   defaults: {},
-  registrySource: { registryId, distributionKind: "npx", pinnedVersion },
+  origin: registryId,
+  link: { distributionKind: "npx", pinnedVersion },
+  previousVersion: null,
   lastSeenVersion: null,
 });
 

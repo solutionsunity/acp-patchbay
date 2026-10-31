@@ -18,8 +18,8 @@ import {
 } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbayAskId, PatchbaySessionId } from "../src/shared/ids";
 
-const claude: AgentSummary = { id: "claude" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], busy: [] };
-const gemini: AgentSummary = { id: "gemini" as PatchbayAgentId, name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], busy: [] };
+const claude: AgentSummary = { id: "claude" as PatchbayAgentId, name: "Claude Code", status: "running", needsAuth: false, authMethods: [], version: {}, busy: [] };
+const gemini: AgentSummary = { id: "gemini" as PatchbayAgentId, name: "Gemini CLI", status: "stopped", needsAuth: false, authMethods: [], version: {}, busy: [] };
 
 const events: AgentViewEvent[] = [
   { kind: "agentUpserted", agent: claude },

@@ -96,12 +96,12 @@ describe("an import's plan", () => {
 
   it("a downloaded agent's cache path and archive are this machine's own — never a difference", async () => {
     const read = await golden();
-    const theirs = read.agents.find((a) => a.registrySource?.distributionKind === "binary")!;
+    const theirs = read.agents.find((a) => a.link?.distributionKind === "binary")!;
     const mine: AgentConfig = {
       ...theirs,
       command: "C:\\Users\\me\\AppData\\Roaming\\Code\\User\\globalStorage\\solutionsunity.acp-patchbay\\bin-cache\\kimi\\0.3.1\\kimi.exe",
-      registrySource: {
-        ...theirs.registrySource!,
+      link: {
+        ...theirs.link!,
         distributionKind: "binary",
         distribution: { archive: "https://example.test/kimi-0.3.1-windows-x64.zip", cmd: "kimi.exe", args: ["acp"], env: {} },
       },

@@ -34,10 +34,10 @@ const undrivable: AuthMethodView = { id: "key", name: "API key", description: nu
 const typedTerminal: AuthMethodView = { id: "cli", name: "CLI login", description: null, kind: "terminal" };
 
 function summary(over: Partial<AgentSummary> = {}): AgentSummary {
-  return { id: "a1" as PatchbayAgentId, name: "Agent", status: "running", needsAuth: false, authMethods: [], busy: [], ...over };
+  return { id: "a1" as PatchbayAgentId, name: "Agent", status: "running", needsAuth: false, authMethods: [], version: {}, busy: [], ...over };
 }
 
-const config = { id: "a1", registrySource: null } as unknown as AgentConfigView;
+const config = { id: "a1", origin: null, link: null, previousVersion: null } as unknown as AgentConfigView;
 
 /** The card's inputs — the row's matrix, auth methods, update fact and
  * busy state given flat, for brevity, and folded into the row. */
@@ -190,24 +190,47 @@ describe("agentCardControls", () => {
     expect(c.edit.show).toBe(true);
   });
 
-  it("upgrade: shows the orchestrator's update fact, and nothing without one", () => {
-    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" } })).upgrade).toEqual({
-      upgrading: false,
+  it("version: the chip is the orchestrator's update fact while there is one", () => {
+    const pinned = summary({ version: { pinned: "1.0.0" } });
+    expect(agentCardControls(inputs({ agent: pinned, update: { from: "1.0.0", to: "1.2.0" } })).version).toMatchObject({
+      kind: "update",
       from: "1.0.0",
       to: "1.2.0",
     });
-    expect(agentCardControls(inputs()).upgrade).toBeNull();
+    expect(agentCardControls(inputs({ agent: pinned })).version).toMatchObject({ kind: "version", shown: "1.0.0" });
+    expect(agentCardControls(inputs()).version).toBeNull();
   });
 
   // Once the upgrade saves the new pin the update fact is gone — the chip
   // keeps saying what is happening, from the queue.
-  it("upgrade: an upgrade the queue holds outranks the offer, and outlives it", () => {
+  it("version: an upgrade the queue holds outranks the offer, and outlives it", () => {
     const busy: AgentWork[] = [{ kind: "upgrade", to: "1.2.0" }];
-    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" }, busy })).upgrade).toEqual({
-      upgrading: true,
-      to: "1.2.0",
-    });
-    expect(agentCardControls(inputs({ busy })).upgrade).toEqual({ upgrading: true, to: "1.2.0" });
+    const moving = { kind: "moving", text: "upgrading to 1.2.0…" };
+    expect(agentCardControls(inputs({ update: { from: "1.0.0", to: "1.2.0" }, busy })).version).toEqual(moving);
+    expect(agentCardControls(inputs({ busy })).version).toEqual(moving);
+  });
+
+  // The card's menu: what the agent's own facts allow, dimmed while its
+  // queue holds work the move would only wait behind.
+  it("menu: Reset for an edited agent from the registry, Back while a way back is kept", () => {
+    const of = (over: Partial<AgentConfigView>) => ({ ...config, ...over });
+    const link = { distributionKind: "npx" as const, pinnedVersion: "1.2.0" };
+    const edited = agentCardControls(inputs({ config: of({ origin: "reg" }) }));
+    expect(edited.reset).toEqual({ show: true, disabled: false });
+    expect(edited.goBack.show).toBe(false);
+    expect(edited.menu.show).toBe(true);
+    // linked: Upgrade is its way forward, never Reset
+    expect(agentCardControls(inputs({ config: of({ origin: "reg", link }) })).reset.show).toBe(false);
+    // custom: nothing to reset to, nothing to go back to — no menu at all
+    expect(agentCardControls(inputs()).reset.show).toBe(false);
+    expect(agentCardControls(inputs()).menu.show).toBe(false);
+    const upgraded = agentCardControls(inputs({ config: of({ origin: "reg", link, previousVersion: "1.0.0" }) }));
+    expect(upgraded.goBack).toEqual({ show: true, to: "1.0.0", disabled: false });
+    const working = agentCardControls(inputs({ config: of({ origin: "reg", link, previousVersion: "1.0.0" }), busy: [{ kind: "connect" }] }));
+    expect(working.goBack.disabled).toBe(true);
+    // a transient agent (no config) has neither
+    const transient = agentCardControls(inputs({ config: undefined }));
+    expect([transient.reset.show, transient.goBack.show, transient.menu.show]).toEqual([false, false, false]);
   });
 
   // The invariant no inline predicate ever enforced: across the whole

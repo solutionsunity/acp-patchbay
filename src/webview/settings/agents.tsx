@@ -13,13 +13,14 @@ import { capabilityOneLiner } from "../shared/capability-format";
 import { Icon } from "../shared/icon";
 import { optionText } from "../shared/option-label";
 import { ElicitationCard } from "../shared/question-card";
-import { UpgradeChip } from "../shared/upgrade-chip";
+import { VersionChip } from "../shared/version-chip";
 import { Field, Toggle } from "./controls";
 import { formatEnvLines, parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -70,9 +71,10 @@ function AgentConfigForm(props: {
           onInput={(e) => setCommand((e.target as HTMLInputElement).value)}
         />
       </Field>
-      {commandChanged && props.initial.registrySource !== null && (
+      {commandChanged && props.initial.link !== null && (
         <div className="note m-0 basis-full">
-          a changed command makes this a custom agent — it stops following the ACP registry, and its upgrades are yours
+          a changed command stops following the ACP registry — what you type is what runs, and its upgrades are yours
+          until you reset it to the registry from the card's menu
         </div>
       )}
       <Field label="auto-connect" hint="connect this agent when the window opens">
@@ -117,7 +119,9 @@ function configFor(state: SettingsState, agent: AgentSummary): AgentConfigView {
     env: {},
     autoConnect: false,
     defaults: {},
-    registrySource: null,
+    origin: null,
+    link: null,
+    previousVersion: null,
     lastSeenVersion: null,
   };
 }
@@ -253,7 +257,7 @@ function AddAgentRow(props: {
   onRefreshRegistry(): void;
   onBrowseRegistry(): void;
 }) {
-  const added = new Set(props.state.agentConfigs.flatMap((c) => (c.registrySource === null ? [] : [c.registrySource.registryId])));
+  const added = new Set(props.state.agentConfigs.flatMap((c) => (c.origin === null ? [] : [c.origin])));
   const registryCount = props.state.registryAgents.length;
   const [mode, setMode] = useState<"registry" | "custom">("registry");
   const [registryQuery, setRegistryQuery] = useState("");
@@ -510,6 +514,8 @@ export function AgentsSection(props: {
   onAuthenticate(patchbayAgentId: PatchbayAgentId, methodId: string): void;
   onLogout(patchbayAgentId: PatchbayAgentId): void;
   onUpgrade(patchbayAgentId: PatchbayAgentId): void;
+  onReset(patchbayAgentId: PatchbayAgentId): void;
+  onGoBack(patchbayAgentId: PatchbayAgentId): void;
   onRefreshRegistry(): void;
   onBrowseRegistry(): void;
   onReorder(patchbayAgentIds: PatchbayAgentId[]): void;
@@ -519,6 +525,12 @@ export function AgentsSection(props: {
 }) {
   const { state } = props;
   const [editing, setEditing] = useState<PatchbayAgentId | null>(null); // the agent being edited
+  // The cards' menus are siblings: one open at a time, and a close clears
+  // only its own — a cross-card click's dismiss can land after the other's
+  // open, and must not stomp it.
+  const [menuOpen, setMenuOpen] = useState<PatchbayAgentId | null>(null);
+  const menuChange = (patchbayAgentId: PatchbayAgentId) => (open: boolean) =>
+    setMenuOpen((current) => (open ? patchbayAgentId : current === patchbayAgentId ? null : current));
   // Card body (command line, capabilities, knobs) is collapsed by default —
   // the header row carries status and actions; the gear opens the rest.
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
@@ -604,8 +616,8 @@ export function AgentsSection(props: {
           const config = state.agentConfigs.find((c) => c.id === patchbayAgentId);
           const effectiveConfig = config ?? (a === undefined ? undefined : configFor(state, a));
           if (effectiveConfig === undefined) return null;
-          // Registry row for this config: its registrySource is the link.
-          const registry = state.registryAgents.find((r) => r.id === config?.registrySource?.registryId);
+          // Registry row for this config: the entry it came from.
+          const registry = state.registryAgents.find((r) => r.id === config?.origin);
           const knobs = state.agentKnobs[patchbayAgentId];
           // No summary at all = the orchestrator never saw this config — the
           // honest unknown is "untested", never a claimed "stopped".
@@ -657,10 +669,10 @@ export function AgentsSection(props: {
                     <span className={`dot ${status}`} />
                     <AgentIcon icon={registry?.icon} />
                     <span className="nm min-w-0">{a?.name ?? effectiveConfig.name}</span>
-                    {controls.upgrade !== null && (
-                      <UpgradeChip
+                    {controls.version !== null && (
+                      <VersionChip
                         agentName={a?.name ?? effectiveConfig.name}
-                        offer={controls.upgrade}
+                        chip={controls.version}
                         onUpgrade={() => props.onUpgrade(patchbayAgentId)}
                       />
                     )}
@@ -712,6 +724,35 @@ export function AgentsSection(props: {
                       >
                         <Icon name={controls.remove.busy ? "loading" : "trash"} spin={controls.remove.busy} />
                       </Button>
+                    )}
+                    {controls.menu.show && (
+                      <DropdownMenu open={menuOpen === patchbayAgentId} onOpenChange={menuChange(patchbayAgentId)}>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="icon" className="size-8" title="More" aria-label="More">
+                            <Icon name="ellipsis" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {controls.reset.show && (
+                            <DropdownMenuItem
+                              disabled={controls.reset.disabled}
+                              title="Replace the edited command with the ACP registry's current version of this agent — your env stays"
+                              onSelect={() => props.onReset(patchbayAgentId)}
+                            >
+                              Reset to ACP registry
+                            </DropdownMenuItem>
+                          )}
+                          {controls.goBack.show && (
+                            <DropdownMenuItem
+                              disabled={controls.goBack.disabled}
+                              title="Run the version the last upgrade replaced, exactly as it was"
+                              onSelect={() => props.onGoBack(patchbayAgentId)}
+                            >
+                              Back to previous ({controls.goBack.to})
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                     <Button
                       variant="outline" size="icon" className="size-8"
