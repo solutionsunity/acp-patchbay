@@ -76,7 +76,13 @@ const http = (url: string, headers: Record<string, string> = {}): McpDraft => ({
 
 function harness(
   catalog: CatalogEntry[],
-  opts: { userAgent?: OAuthUserAgent; kv?: MemoryKV; secrets?: MemorySecrets; agentEnv?: Record<string, string> } = {},
+  opts: {
+    userAgent?: OAuthUserAgent;
+    kv?: MemoryKV;
+    secrets?: MemorySecrets;
+    /** The agents by id, each with its own configured env. */
+    agents?: Record<string, Record<string, string>>;
+  } = {},
 ) {
   const events: SettingsEvent[] = [];
   const configs = new McpServerConfigStore(opts.kv ?? new MemoryKV());
@@ -116,7 +122,10 @@ function harness(
     },
     WORKSPACE_CWD,
     HERE,
-    async () => opts.agentEnv ?? {},
+    {
+      ids: () => Object.keys(opts.agents ?? {}) as PatchbayAgentId[],
+      env: async (patchbayAgentId) => opts.agents?.[patchbayAgentId] ?? {},
+    },
     opts.userAgent ?? fakeUserAgent(),
     undefined,
     (target, signal) => probeFn(target, signal),
@@ -703,10 +712,10 @@ describe("McpServersStore — ${VAR} references, filled where the server is hand
   });
 
   it("stored as typed, filled at hand-off from the host's env and the agent's own — never stored filled in", async () => {
-    // checked on this host; handed over with the agent's own env on top
-    const h = harness([], { agentEnv: { [KEY]: "from-agent" } });
+    const h = harness([], { agents: { "agent-a": { [KEY]: "from-agent" } } });
     const local = await h.add("Local", stdio("srv", ["--key=${" + KEY + "}"], { TOKEN: "${env:" + KEY + "}", MODE: "${PATCHBAY_TEST_MODE:-quiet}" }));
-    expect(h.probed[0]).toMatchObject({ args: ["--key=from-host"], env: { TOKEN: "from-host", MODE: "quiet" } });
+    // checked as the hand-off to its agent fills it: the agent's env over the host's
+    expect(h.probed[0]).toMatchObject({ args: ["--key=from-agent"], env: { TOKEN: "from-agent", MODE: "quiet" } });
     const remote = await h.add("Remote", http("https://example.test/${" + KEY + "}/mcp", { Authorization: "Bearer ${" + KEY + "}" }));
     expect(h.configs.get(local)?.source).toMatchObject({ args: ["--key=${" + KEY + "}"] });
     expect(await h.envStore.get(local)).toEqual({ TOKEN: "${env:" + KEY + "}", MODE: "${PATCHBAY_TEST_MODE:-quiet}" });
@@ -722,16 +731,34 @@ describe("McpServersStore — ${VAR} references, filled where the server is hand
       url: "https://example.test/from-agent/mcp",
       headers: [{ name: "Authorization", value: "Bearer from-agent" }],
     });
+    // another agent, without its own: the host's value
+    expect((await configuredFor(h, "agent-b" as PatchbayAgentId)).servers[0]).toMatchObject({ args: ["--key=from-host"] });
     // the copy keeps the references
     expect(await h.manager.exportJson(remote)).toContain("${" + KEY + "}");
   });
 
-  it("a variable unset with no default withholds that server alone, and says which variable", async () => {
-    const h = harness([], { agentEnv: { ONLY_AGENT_A: "x" } });
-    await expect(h.add("Needs it", stdio("srv", [], { TOKEN: "${ONLY_AGENT_A}" }))).rejects.toThrow(/ONLY_AGENT_A/);
+  it("a variable only an agent's env sets passes the check of a server routed to that agent — never one routed elsewhere", async () => {
+    const h = harness([], { agents: { "agent-a": { ONLY_AGENT_A: "x" }, "agent-b": {} } });
+    const needs = await h.add("Needs it", stdio("srv", [], { TOKEN: "${ONLY_AGENT_A}" }));
+    expect(h.probed.at(-1)).toMatchObject({ env: { TOKEN: "x" } });
+    await expect(
+      h.add("Elsewhere", stdio("srv", [], { TOKEN: "${ONLY_AGENT_A}" }), { routing: ["agent-b" as PatchbayAgentId], workspaces: "auto" }),
+    ).rejects.toThrow(/\$\{ONLY_AGENT_A\} is not set/);
+    // a later check of the stored server fills it the same way
+    await h.gates.probe(needs);
+    expect(h.probed.at(-1)).toMatchObject({ env: { TOKEN: "x" } });
+    // handed over: agent-a gets it; agent-b, whose env doesn't fill it, doesn't — and is told
+    expect((await configuredFor(h, "agent-a" as PatchbayAgentId)).servers.map((s) => s.name)).toEqual(["Needs_it"]);
+    const forB = await configuredFor(h, "agent-b" as PatchbayAgentId);
+    expect(forB.servers).toEqual([]);
+    expect(forB.withheld).toEqual(['MCP server "Needs_it" wasn\'t given to the agent: ${ONLY_AGENT_A} is not set, and has no default.']);
+  });
+
+  it("a variable no environment sets fails the add, and withholds a server stored with it", async () => {
+    const h = harness([], { agents: { "agent-a": {} } });
+    await expect(h.add("Nowhere", stdio("srv", ["${PATCHBAY_TEST_NOWHERE}"]))).rejects.toThrow(/\$\{PATCHBAY_TEST_NOWHERE\} is not set/);
+    expect(h.configs.list()).toEqual([]);
     await h.add("Plain", stdio("srv"));
-    // checked on this host, where the variable isn't — the agent's env has it
-    expect(h.configs.list()).toHaveLength(1);
     await h.configs.upsert({
       id: "needs" as PatchbayMcpServerId,
       name: "Needs_it",

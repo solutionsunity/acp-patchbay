@@ -53,7 +53,7 @@ function readEntry(raw: unknown): { draft: McpDraft } | { error: string } {
   if (type === "stdio") return { draft: { type, command: e.command ?? "", args: e.args ?? [], env: e.env ?? {} } };
   if (type === "http") return { draft: { type, url: e.url ?? "", headers: e.headers ?? {} } };
   if (type === "sse") {
-    return { error: 'type "sse" is the transport MCP retired — patchbay connects over Streamable HTTP: use the server\'s HTTP endpoint as type "http"' };
+    return { error: 'type "sse" is the transport MCP deprecated — patchbay connects over Streamable HTTP: use the server\'s HTTP endpoint as type "http"' };
   }
   if (type === undefined) return { error: "neither a command nor a url" };
   return { error: `type "${type}" is none patchbay knows — "stdio" or "http"` };

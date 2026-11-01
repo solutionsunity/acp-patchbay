@@ -16,8 +16,11 @@
   `headers`, read from `servers` too — so pasted `headers` are kept (they
   were dropped before), and `${VAR}`, `${VAR:-default}` and `${env:VAR}`
   are filled in from the agent's environment when the server is handed
-  over, never stored filled in; `${input:…}` and `${workspaceFolder}` are
-  refused with the reason, and `type: "sse"` too. A custom server's key
+  over, and so when an add is checked — a variable only an agent's env sets
+  passes the check of a server given to that agent — never stored filled
+  in; `${input:…}` and `${workspaceFolder}` are refused with the reason,
+  and so is `type: "sse"`, the transport MCP deprecated — before, it was
+  taken as a plain URL and failed at first use. A custom server's key
   moves into the header it was sent in, and an exported file from an
   earlier version reads the same way. (#130)
 - **MCP servers and saved roots can be on in some workspaces.** Each MCP

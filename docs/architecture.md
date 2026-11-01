@@ -1387,11 +1387,12 @@ mechanism — MCP servers routed to agents:
   the env and header values live in SecretStorage. `${NAME}`,
   `${NAME:-default}` and `${env:NAME}` are kept as typed and filled where the
   server is handed over — from the extension host's environment (the
-  workspace machine's in a remote window) and the agent's own env — and
-  where an add is checked, from the host's; never stored filled in. A
+  workspace machine's in a remote window) with the agent's own env over it
+  — and where an add is checked, the same way, as the hand-off to the first
+  of its agents whose env fills every variable; never stored filled in. A
   server with a variable unset and no default isn't given, and the session
   says which variable. VS Code's own variables (`${input:…}`,
-  `${workspaceFolder}`) and the transport MCP retired (`type: "sse"`) are
+  `${workspaceFolder}`) and the transport MCP deprecated (`type: "sse"`) are
   refused at add with the reason. *(Supersedes the custom server's own auth
   fields, 2026-11-01, #130.)* Out of scope, by decision: reading VS Code's
   own `mcp.json` files as a source, and the `oauth` object that pins a

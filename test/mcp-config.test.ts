@@ -40,7 +40,7 @@ describe("the config other clients write", () => {
     );
     expect(read.entries.map((e) => e.name)).toEqual(["ok"]);
     expect(read.errors.map((e) => [e.name, e.reason])).toEqual([
-      ["sse", expect.stringMatching(/retired.*type "http"/)],
+      ["sse", expect.stringMatching(/deprecated.*type "http"/)],
       ["odd", expect.stringMatching(/"websocket" is none patchbay knows/)],
       ["neither", "neither a command nor a url"],
       ["bad", expect.stringMatching(/wrong kind/)],
@@ -131,7 +131,7 @@ describe("the add card's form", () => {
     expect(cards.map((c) => [c.key, c.name, c.view, c.jsonErrors])).toEqual([
       ["c", "a", "stdio", []],
       [expect.any(String), "b", "http", []],
-      [expect.any(String), "c", "json", [expect.stringMatching(/retired/)]],
+      [expect.any(String), "c", "json", [expect.stringMatching(/deprecated/)]],
     ]);
     expect(JSON.parse(cards[2]!.json)).toEqual({ mcpServers: { c: { type: "sse", url: "https://c.test" } } });
   });

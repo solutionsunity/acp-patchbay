@@ -341,7 +341,7 @@ export class Orchestrator {
       },
       this.workspaceCwd,
       this.workspace,
-      (patchbayAgentId) => this.agentEnv.get(patchbayAgentId),
+      { ids: () => this.agentConfigs.list().map((c) => c.id), env: (patchbayAgentId) => this.agentEnv.get(patchbayAgentId) },
       {
         redirectUri: () => this.ports.redirectUri(),
         authorize: async (authorizationUrl, state, signal) => {

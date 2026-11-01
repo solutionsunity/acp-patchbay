@@ -283,9 +283,10 @@ export class McpServersStore {
     /** The workspace this window has open — null with none: a server is
      * given to a session only where it is on. */
     private readonly here: WorkspaceId | null,
-    /** An agent's own configured env — with this host's, what a server's
-     * `${VAR}` references are filled from when it is handed to the agent. */
-    private readonly agentEnv: (patchbayAgentId: PatchbayAgentId) => Promise<Env>,
+    /** The agents, in their order, and each one's own configured env —
+     * with this host's, what a server's `${VAR}` references are filled from
+     * when it is handed to the agent, and when an add is checked. */
+    private readonly agents: { ids(): readonly PatchbayAgentId[]; env(patchbayAgentId: PatchbayAgentId): Promise<Env> },
     /** Browser/redirect step for OAuth connects — the orchestrator wires
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
@@ -423,23 +424,41 @@ export class McpServersStore {
     }
   }
 
-  /** A custom draft's check: its variables filled from this host's
-   * environment, then the handshake — a stdio server's only where it would
-   * be on, never running its command in a workspace it is off in: there,
-   * unchecked (null). */
+  /** The environment a server's `${VAR}` references are filled from when it
+   * is handed to an agent: this host's, the agent's own env over it. */
+  private async handOffEnv(patchbayAgentId: PatchbayAgentId): Promise<Readonly<Record<string, string | undefined>>> {
+    return { ...process.env, ...(await this.agents.env(patchbayAgentId)) };
+  }
+
+  /** The environment patchbay's own check of a server fills it from: a
+   * hand-off's to one of the agents it is routed to — the first whose
+   * environment fills every variable; with none routed, or none filling
+   * them, this host's alone, which names what stays unset. */
+  private async checkEnv(draft: McpDraft, routing: McpServerRoutingView): Promise<Readonly<Record<string, string | undefined>>> {
+    for (const patchbayAgentId of this.agents.ids().filter((id) => reaches(routing, id))) {
+      const env = await this.handOffEnv(patchbayAgentId);
+      if ("draft" in expandDraft(draft, env)) return env;
+    }
+    return process.env;
+  }
+
+  /** A custom draft's check: its variables filled as its hand-off fills
+   * them, then the handshake — a stdio server's only where it would be on,
+   * never running its command in a workspace it is off in: there, unchecked
+   * (null). */
   private async checkDraft(
     draft: McpDraft,
-    workspaces: Reach<WorkspaceId>,
+    reach: { routing: McpServerRoutingView; workspaces: Reach<WorkspaceId> },
     bearer: string | null,
     signal: AbortSignal | undefined,
   ): Promise<ProbeOutcome | null> {
     const problem = draftProblem(draft);
     if (problem !== null) throw new Error(problem);
-    const filled = expandDraft(draft, process.env);
+    const filled = expandDraft(draft, await this.checkEnv(draft, reach.routing));
     if ("unset" in filled) throw new Error(unsetSaid(filled.unset));
     const d = filled.draft;
     if (d.type === "stdio") {
-      if (!reaches(workspaces, this.here)) return null;
+      if (!reaches(reach.workspaces, this.here)) return null;
       return this.check({ kind: "stdio", command: d.command, args: d.args, env: d.env, cwd: this.workspaceCwd }, signal);
     }
     const headers = bearer === null ? d.headers : { ...d.headers, Authorization: `Bearer ${bearer}` };
@@ -721,7 +740,7 @@ export class McpServersStore {
       McpServerConfigStore.admitName(name);
       const d = normalized(draft);
       const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
-      const outcome = await this.checkDraft(d, reach.workspaces, token?.accessToken ?? null, signal);
+      const outcome = await this.checkDraft(d, reach, token?.accessToken ?? null, signal);
       const patchbayMcpServerId = mintPatchbayMcpServerId();
       await this.keepSecrets(patchbayMcpServerId, d, token);
       const given = await this.configs.add({
@@ -759,7 +778,7 @@ export class McpServersStore {
           : null;
       const token = signIn && d.type === "http" ? await this.signIn(d.url, signal) : null;
       const bearer = token?.accessToken ?? kept?.accessToken ?? null;
-      const outcome = await this.checkDraft(d, existing.workspaces, bearer, signal);
+      const outcome = await this.checkDraft(d, existing, bearer, signal);
       // Removed while it was checked: it stays removed.
       const now = this.configs.get(patchbayMcpServerId);
       if (now === undefined) throw new Error("the server was removed");
@@ -919,7 +938,7 @@ export class McpServersStore {
   }
 
   /** The probe's connection recipe for one server — same resolution as
-   * mcpServersFor (the server's draft filled from this host's environment,
+   * mcpServersFor (the server's draft filled as its add's check fills it,
    * a curated entry's URL and header, a fresh token), pointed at
    * patchbay's own MCP client instead of an agent's. */
   private editorProbeTarget(): ProbeTarget {
@@ -934,7 +953,8 @@ export class McpServersStore {
   }
 
   private async probeTargetFor(config: McpServerConfig): Promise<ProbeTarget | null> {
-    const live = await this.liveDraft(config, process.env);
+    const draft = await this.draftOf(config);
+    const live = await this.liveDraft(config, draft === undefined ? process.env : await this.checkEnv(draft, config.routing));
     if (live === null) return null;
     if ("unset" in live) throw new Error(unsetSaid(live.unset));
     const d = live.draft;
@@ -990,7 +1010,7 @@ export class McpServersStore {
   async headersFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId, own = false): Promise<Env | null> {
     const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined || !(own || this.givenTo(config, patchbayAgentId))) return null;
-    const live = await this.liveDraft(config, { ...process.env, ...(await this.agentEnv(patchbayAgentId)) });
+    const live = await this.liveDraft(config, await this.handOffEnv(patchbayAgentId));
     return live !== null && "draft" in live && live.draft.type === "http" ? { ...live.draft.headers } : null;
   }
 
@@ -1074,7 +1094,7 @@ export class McpServersStore {
     const servers: McpServer[] = [editorServer(this.wire, contextToken)];
     const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
     const withheld: string[] = [];
-    const env = { ...process.env, ...(await this.agentEnv(patchbayAgentId)) };
+    const env = await this.handOffEnv(patchbayAgentId);
     for (const config of this.configs.list()) {
       if (!this.givenTo(config, patchbayAgentId) && !own.includes(config.id)) continue;
       // Env and header values read from SecretStorage at the moment of
