@@ -248,7 +248,9 @@ input:focus {
 }
 
 /* A narrow editor stacks the label over its control: the label column
-   would leave the control too little room to show itself. */
+   would leave the control too little room to show itself — and the
+   actions and notes that line up under the controls start at the edge
+   with them. */
 @media (max-width: 600px) {
   .field {
     grid-template-columns: minmax(0, 1fr);
@@ -256,6 +258,10 @@ input:focus {
   .field > .lbl {
     text-align: left;
     padding-top: 0;
+  }
+  .form-actions,
+  .connect-form > .note {
+    margin-left: 0 !important;
   }
 }
 
@@ -452,6 +458,7 @@ td.cap {
 
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-left: 148px;
 }
