@@ -14,8 +14,9 @@ import * as vscode from "vscode";
 import {
   type Action,
   type ConnectAgentSource,
-  type SavedRootScope,
+  type SaveScope,
 } from "../shared/protocol";
+import type { WorkspaceId } from "../shared/workspace";
 import { askNotice } from "../shared/ask-notice";
 import { type OpenAsk } from "../shared/attention";
 import { chipId, fileChipLabel, pickedFileForm } from "./attachments";
@@ -116,6 +117,9 @@ export class OrchestratorHost {
         globalStoragePath: context.globalStorageUri.fsPath,
         storagePath: context.storageUri?.fsPath ?? null,
         workspaceCwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
+        // The workspace file of a multi-root workspace, else its folder —
+        // its URI whole, the remote host with it.
+        workspace: ((vscode.workspace.workspaceFile ?? vscode.workspace.workspaceFolders?.[0]?.uri)?.toString() ?? null) as WorkspaceId | null,
         scripts: {
           editorServer: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-server.js").fsPath,
           bridge: vscode.Uri.joinPath(context.extensionUri, "out", "mcp-bridge.js").fsPath,
@@ -181,9 +185,6 @@ export class OrchestratorHost {
         // from reality, and every live session's additional directories are
         // re-applied so the agent's list moves with it.
         this.orchestrator.agentView.emit({ kind: "workspaceRootsChanged", roots: workspaceRootsView() });
-        // the first folder in, or the last out, opens or closes this
-        // workspace's saved list
-        this.orchestrator.publishSavedRoots();
         void this.orchestrator.sessionGates.reapplyWorkspaceRoots().catch(this.orchestrator.logCatch("reapply workspace roots"));
       }),
     );
@@ -912,19 +913,27 @@ export class OrchestratorHost {
       // A connect's failure is the store's to hold and show; the log has it
       // already.
       case "connectCatalogKey":
-        void this.orchestrator.mcpServerGates.connectWithKey(action.catalogId, action.name, action.token, action.url).catch(() => {});
+        void this.orchestrator.mcpServerGates
+          .connectWithKey(action.catalogId, action.name, action.token, action.url, action.workspaces)
+          .catch(() => {});
         break;
       case "connectCatalogOAuth":
-        void this.orchestrator.mcpServerGates.connectOAuth(action.catalogId, action.name, action.url).catch(() => {});
+        void this.orchestrator.mcpServerGates
+          .connectOAuth(action.catalogId, action.name, action.url, action.workspaces)
+          .catch(() => {});
         break;
       case "addCustomMcpServer":
-        void this.orchestrator.mcpServerGates.addCustom(action.name, action.source, action.routing).catch(() => {});
+        void this.orchestrator.mcpServerGates
+          .addCustom(action.name, action.source, action.routing, action.workspaces)
+          .catch(() => {});
         break;
       case "importMcpServersJson":
         void this.orchestrator.mcpServerGates.importJson(action.json).catch(this.orchestrator.logCatch("import MCP servers"));
         break;
       case "addImportedMcpServers":
-        void this.orchestrator.mcpServerGates.addImported(action.importId, action.names).catch(this.orchestrator.logCatch("add imported MCP servers"));
+        void this.orchestrator.mcpServerGates
+          .addImported(action.importId, action.names, action.workspaces)
+          .catch(this.orchestrator.logCatch("add imported MCP servers"));
         break;
       case "cancelMcpServersImport":
         void this.orchestrator.mcpServers.cancelImport(action.importId);
@@ -935,11 +944,11 @@ export class OrchestratorHost {
       case "cancelMcpServerConnect":
         void this.orchestrator.mcpServerGates.cancel(action.key).catch(this.orchestrator.logCatch(`cancel ${action.key}`));
         break;
-      case "setMcpServerActive":
-        // Switched on, it is probed at once: the user just acted on it.
+      case "setMcpServerWorkspaces":
+        // Switched on here, it is probed at once: the user just acted on it.
         void this.orchestrator.mcpServers
-          .setActive(action.patchbayMcpServerId, action.active)
-          .then(() => (action.active ? this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId) : undefined))
+          .setWorkspaces(action.patchbayMcpServerId, action.workspaces)
+          .then((switchedOn) => (switchedOn ? this.orchestrator.mcpServerGates.probe(action.patchbayMcpServerId) : undefined))
           .catch(this.orchestrator.logCatch(`switch ${action.patchbayMcpServerId}`));
         break;
       case "removeMcpServer":
@@ -993,13 +1002,21 @@ export class OrchestratorHost {
         void this.addContextRoot(action.patchbaySessionId);
         break;
       case "saveRoot":
-        void this.saveRoot(action.scope, action.path).catch(this.orchestrator.logCatch("saveRoot"));
+        void this.saveRoot({ scope: action.scope }, action.path).catch(this.orchestrator.logCatch("saveRoot"));
         break;
       case "pickSavedRoot":
-        void this.pickSavedRoot(action.scope, action.replacing).catch(this.orchestrator.logCatch("pickSavedRoot"));
+        void this.pickSavedRoot({ scope: action.scope }).catch(this.orchestrator.logCatch("pickSavedRoot"));
+        break;
+      case "replaceSavedRoot":
+        void this.pickSavedRoot({ replacing: action.path }).catch(this.orchestrator.logCatch("replaceSavedRoot"));
+        break;
+      case "setSavedRootWorkspaces":
+        void this.orchestrator.savedRoots
+          .setWorkspaces(action.path, action.workspaces)
+          .then(() => this.orchestrator.publishSavedRoots(), this.orchestrator.logCatch("setSavedRootWorkspaces"));
         break;
       case "unsaveRoot":
-        void this.orchestrator.savedRootsIn(action.scope)
+        void this.orchestrator.savedRoots
           .remove(action.path)
           .then(() => this.orchestrator.publishSavedRoots(), this.orchestrator.logCatch("unsaveRoot"));
         break;
@@ -1101,22 +1118,26 @@ export class OrchestratorHost {
    * is stored is an absolute path to a folder that exists: a relative one
    * resolves against the workspace here, once, so every later session
    * reads the same folder; anything that isn't a folder is refused, said. */
-  private async saveRoot(scope: SavedRootScope, path: string, replacing?: string): Promise<void> {
-    if (scope === "workspace" && this.orchestrator.savedRootsView().workspace === null) return;
+  private async saveRoot(target: { scope: SaveScope } | { replacing: string }, path: string): Promise<void> {
+    // "This workspace" in a window with none has nowhere to save to.
+    const where = "replacing" in target ? null : target.scope === "everywhere" ? "auto" : this.orchestrator.workspace;
+    if ("scope" in target && where === null) return;
     const absolute = normalizeRootPath(isAbsolute(path) ? path : resolve(this.orchestrator.workspaceCwd, path));
     if (!isFolder(absolute)) {
       void vscode.window.showWarningMessage(`Not saved: ${absolute} is not a folder on this machine.`);
       return;
     }
-    const store = this.orchestrator.savedRootsIn(scope);
-    await (replacing === undefined ? store.add(absolute) : store.replace(replacing, absolute));
+    const store = this.orchestrator.savedRoots;
+    if ("replacing" in target) await store.replace(target.replacing, absolute);
+    else if (where !== null) await store.save(absolute, where);
     this.orchestrator.publishSavedRoots();
   }
 
   /** Settings' add, or its edit of one entry: the picker opens where that
    * entry points while the folder still exists — a gone one opens at the
    * picker's default, the user is finding its new home. */
-  private async pickSavedRoot(scope: SavedRootScope, replacing?: string): Promise<void> {
+  private async pickSavedRoot(target: { scope: SaveScope } | { replacing: string }): Promise<void> {
+    const replacing = "replacing" in target ? target.replacing : undefined;
     const picked = await vscode.window.showOpenDialog({
       canSelectFolders: true,
       canSelectFiles: false,
@@ -1126,7 +1147,7 @@ export class OrchestratorHost {
     });
     const uri = picked?.[0];
     if (uri === undefined) return;
-    await this.saveRoot(scope, uri.fsPath, replacing);
+    await this.saveRoot(target, uri.fsPath);
   }
 
   /** "Attach file" picker — the host-side byte producer: the file already

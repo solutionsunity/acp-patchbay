@@ -23,9 +23,11 @@ import {
   type WriteLocation,
 } from "../shared/protocol";
 import type { ConfigurationRead } from "./config-import";
+import type { PatchbayAgentId } from "../shared/ids";
 import type { AgentConfig } from "./stores/agent-configs";
 import { authTypeOf, type McpServerConfig } from "./stores/mcp-server-configs";
 import { ruleLabel } from "../shared/command-rules";
+import type { SavedRoot } from "./stores/saved-roots";
 import { type CommandRule, sameRule } from "./stores/permission-rules";
 import { writeScopeRows } from "./stores/write-scope";
 
@@ -49,7 +51,7 @@ export interface LocalConfiguration {
   preferences: PreferencesView;
   machineCommandRules: readonly CommandRule[];
   machineWriteScope: readonly WriteEntry[];
-  machineSavedRoots: readonly string[];
+  savedRoots: readonly SavedRoot[];
 }
 
 /** Where this machine's side of a plan is read from. */
@@ -64,7 +66,7 @@ export interface LocalSources {
   preferences: { get(): PreferencesView };
   machineRules: { get(): { commandRules: CommandRule[] } };
   machineWriteScope: { get(): WriteEntry[] };
-  machineSavedRoots: { list(): string[] };
+  savedRoots: { list(): SavedRoot[] };
 }
 
 /** This machine's side of a plan, read fresh. */
@@ -87,7 +89,7 @@ export async function localConfiguration(sources: LocalSources): Promise<LocalCo
     preferences: sources.preferences.get(),
     machineCommandRules: sources.machineRules.get().commandRules,
     machineWriteScope: sources.machineWriteScope.get(),
-    machineSavedRoots: sources.machineSavedRoots.list(),
+    savedRoots: sources.savedRoots.list(),
   };
 }
 
@@ -164,7 +166,7 @@ const SERVER_LABELS = {
   name: "name",
   source: "connection",
   routing: "which agents get it",
-  active: "on or off",
+  workspaces: "where it is on",
   transport: "transport",
   env: "env values",
   key: "API key",
@@ -173,13 +175,13 @@ const SERVER_LABELS = {
 /** A server's routing names agents by id: the file's ids become the ids
  * those agents land on here. */
 export function routingOn(routing: McpServerConfig["routing"], agentIds: ReadonlyMap<string, string>): McpServerConfig["routing"] {
-  const on = (ids: readonly string[]) => ids.map((id) => agentIds.get(id) ?? id);
+  const on = (ids: readonly PatchbayAgentId[]) => ids.map((id) => (agentIds.get(id) ?? id) as PatchbayAgentId);
   if (routing === "auto") return routing;
-  if (Array.isArray(routing)) return on(routing);
-  return { except: on(routing.except) };
+  return "except" in routing ? { except: on(routing.except) } : on(routing);
 }
 
 export const writeLocationItemId = (location: WriteLocation) => `writeLocation:${writeLocationKey(location)}`;
+export const savedRootItemId = (path: string) => `savedRoot:${path}`;
 export const commandRuleItemId = (rule: CommandRule) => `commandRule:${rule.kind}:${rule.pattern}`;
 
 export function planImport(read: ConfigurationRead, local: LocalConfiguration, checks: PlanChecks): ImportPlan {
@@ -212,7 +214,7 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
       name: s.name,
       source: s.source,
       routing,
-      active: s.active,
+      workspaces: s.workspaces,
       transport: s.transport,
       env: held?.env ?? {},
       key: held?.key ?? null,
@@ -269,16 +271,17 @@ export function planImport(read: ConfigurationRead, local: LocalConfiguration, c
     });
   }
 
-  for (const root of read.machineSavedRoots) {
-    const here = local.machineSavedRoots.includes(root);
+  for (const root of read.savedRoots) {
+    const here = local.savedRoots.find((r) => r.path === root.path);
+    const differs = here === undefined || isDeepStrictEqual(here.workspaces, root.workspaces) ? [] : ["where it is saved"];
     items.push({
-      id: `savedRoot:${root}`,
+      id: savedRootItemId(root.path),
       part: "settings",
       kind: "savedRoot",
-      label: root,
-      fate: here ? "unchanged" : "new",
-      differs: [],
-      flags: here || checks.pathExists(root) ? [] : ["doesn't exist on this machine"],
+      label: root.path,
+      fate: fateOf(here, differs),
+      differs,
+      flags: here !== undefined || checks.pathExists(root.path) ? [] : ["doesn't exist on this machine"],
     });
   }
 

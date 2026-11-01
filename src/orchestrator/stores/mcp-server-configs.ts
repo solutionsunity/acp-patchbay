@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Solutions Unity
 
-// MCP servers are developer-env, not code-env: global to this machine,
-// same as agent-configs.ts. Deliberately global-only — the MCP incident
-// (a production-access MCP server silently following a user between repos)
-// is guarded by configs never riding a repo: a credential moves only by
-// its owner's explicit Copy and paste, never by opening a folder. Binding
-// to workspaces (not repos) may return later as an opt-in. SecretStorage
-// (mcp-server-tokens.ts) keys credentials globally by server id.
+// MCP servers are developer-env, not code-env: their records are global to
+// this machine, same as agent-configs.ts, and visible in every window — but
+// each is on only in the workspaces it is scoped to. The MCP incident (a
+// production-access server silently following a user between repos) is
+// guarded twice: configs never ride a repo — a credential moves only by its
+// owner's explicit Copy and paste, never by opening a folder — and a new
+// server is on only where it was added. SecretStorage (mcp-server-tokens.ts)
+// keys credentials globally by server id.
 import { z } from "zod";
 import { addedMcpServerName, mcpServerName } from "../../shared/names";
 import { NamedRecordStore } from "./global-record-store";
 import type { KV } from "./kv";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../../shared/ids";
+import { forget } from "../../shared/reach";
+import type { WorkspaceId } from "../../shared/workspace";
+import { reachSchema } from "./reach-schema";
 import { savedId } from "./saved-id";
 import { STORAGE_KEYS } from "./storage-keys";
 
@@ -66,14 +70,14 @@ export const mcpServerConfigSchema = z.object({
    * explicit id list pins exactly which agents receive it; `{ except }` is
    * every agent minus the listed — the user's routing, never
    * all-or-nothing. */
-  routing: z
-    .union([z.literal("auto"), z.array(z.string()), z.object({ except: z.array(z.string()) })])
-    .default("auto"),
-  /** Inactive = configured with its credential intact, but excluded from
-   * every agent's mcpServers — the mute switch, not a disconnect.
-   * Disconnect is the full clear (config + credential + env); a curated
-   * entry then simply reappears in the catalog, ready for a fresh connect. */
-  active: z.boolean().default(true),
+  routing: reachSchema<PatchbayAgentId>().default("auto"),
+  /** The workspaces the server is on in — every one, these, or every one
+   * but these — beside which agents it reaches; a session gets it only
+   * where both say so. Off in a workspace = configured with its credential
+   * intact, given to no session there. Disconnect is the full clear
+   * (config + credential + env); a curated entry then simply reappears in
+   * the catalog, ready for a fresh connect. */
+  workspaces: reachSchema<WorkspaceId>(),
   /** How an http-backed server reaches agents that declare mcp.http:
    * "auto" passes the URL through and the agent's own MCP client connects
    * (prompt.image mechanics — the declared path gets exercised); "bridge"
@@ -91,7 +95,24 @@ const KEY = STORAGE_KEYS.mcpServers;
  * keep, never the built-in editor server's, and never two of one. */
 export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   constructor(kv: KV) {
+    // Once, before anything reads the records: the servers as an earlier
+    // version kept them are copied, never moved — a window still on that
+    // version keeps its own key — so every migration below runs on the
+    // copy. Each was switched on or off for every workspace: on becomes
+    // every workspace, off none.
+    const earlier = kv.get<unknown>(STORAGE_KEYS.mcpServersBefore090);
+    if (kv.get<unknown>(KEY) === undefined && Array.isArray(earlier)) {
+      void kv.update(
+        KEY,
+        earlier.map((r: unknown) => {
+          if (typeof r !== "object" || r === null) return r;
+          const { active, ...rest } = r as { active?: unknown };
+          return { ...rest, workspaces: active === false ? [] : "auto" };
+        }),
+      );
+    }
     super(kv, KEY, mcpServerConfigSchema);
+    this.machine = kv;
     // Once, at construction: a server connected from the catalog before the
     // catalog was named so is stored as `{ kind: "registry", registryId }` —
     // rewritten as `{ kind: "catalog", catalogId }`, every other field as
@@ -117,6 +138,14 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
     }
   }
 
+  private readonly machine: KV;
+
+  /** Every record goes — the earlier version's copy with them. */
+  override async wipe(): Promise<void> {
+    await super.wipe();
+    await this.machine.update(STORAGE_KEYS.mcpServersBefore090, undefined);
+  }
+
   /** Throws for a name that cuts to nothing — refused by every add, and
    * asked first by a connect that stores a credential before its add. */
   static admitName(name: string): void {
@@ -135,12 +164,6 @@ export class McpServerConfigStore extends NamedRecordStore<McpServerConfig> {
   /** A removed agent leaves every reach list that names it, in one write —
    * an "only" list it alone was on then reaches no one, as chosen. */
   async forgetAgent(patchbayAgentId: PatchbayAgentId): Promise<void> {
-    await this.rewrite((current) =>
-      current.map((v) => {
-        if (v.routing === "auto") return v;
-        if (Array.isArray(v.routing)) return { ...v, routing: v.routing.filter((id) => id !== patchbayAgentId) };
-        return { ...v, routing: { except: v.routing.except.filter((id) => id !== patchbayAgentId) } };
-      }),
-    );
+    await this.rewrite((current) => current.map((v) => ({ ...v, routing: forget(v.routing, patchbayAgentId) })));
   }
 }

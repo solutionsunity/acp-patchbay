@@ -7,6 +7,8 @@
 // same reducers to its canonical state, so a snapshot is always replay-consistent.
 
 import type { PatchbayAgentId, PatchbayAskId, PatchbayMcpServerId, PatchbaySessionId } from "./ids";
+import type { Reach } from "./reach";
+import type { WorkspaceId } from "./workspace";
 
 // ── envelope ─────────────────────────────────────────────────────────────────
 
@@ -96,25 +98,22 @@ export type ConfigImportView =
   | { id: number; stage: "applying"; fileName: string }
   | { id: number; stage: "applied"; fileName: string; landed: number; failures: readonly string[] };
 
-/** Where a saved root lives: "workspace" — this workspace only
- * (workspaceState, never the repo), the default; "machine" — every
- * workspace on this machine. */
-export type SavedRootScope = "workspace" | "machine";
+/** What a Save makes stick: "workspace" — this workspace joins the ones it
+ * is saved for, the default; "everywhere" — every workspace. */
+export type SaveScope = "workspace" | "everywhere";
 
-/** The folders every new session starts with, beyond the workspace's own.
- * `workspace` is null in a window with no folder open: there is no
- * workspace to save to. `missing` names the saved folders gone from disk
- * as of the last read — each needs the user's action (restore or remove);
- * sessions skip them meanwhile. */
+/** The folders new sessions start with, beyond the workspace's own — each
+ * with the workspaces it is saved for, in the user's order. `missing` names
+ * the saved folders gone from disk as of the last read — each needs the
+ * user's action (restore or remove); sessions skip them meanwhile. */
 export interface SavedRootsView {
-  workspace: readonly string[] | null;
-  machine: readonly string[];
+  entries: readonly { path: string; workspaces: Reach<WorkspaceId> }[];
   missing: readonly string[];
 }
 
-const NO_SAVED_ROOTS: SavedRootsView = { workspace: null, machine: [], missing: [] };
+const NO_SAVED_ROOTS: SavedRootsView = { entries: [], missing: [] };
 
-/** What both saving surfaces say where `workspace` is null. */
+/** What every saving surface says in a window with no workspace open. */
 export const NO_WORKSPACE_TO_SAVE = "No folder open — there is no workspace to save to.";
 
 export type Action =
@@ -266,8 +265,8 @@ export type Action =
    * fallback; the orchestrator's knob processor (knobs.ts) routes it. */
   | { kind: "setSessionKnob"; patchbaySessionId: PatchbaySessionId; knobId: string; value: string | boolean }
   /** `name` is the one the server goes to agents under — final once added. */
-  | { kind: "connectCatalogKey"; catalogId: string; name: string; token: string; url?: string }
-  | { kind: "connectCatalogOAuth"; catalogId: string; name: string; url?: string }
+  | { kind: "connectCatalogKey"; catalogId: string; name: string; token: string; url?: string; workspaces: Reach<WorkspaceId> }
+  | { kind: "connectCatalogOAuth"; catalogId: string; name: string; url?: string; workspaces: Reach<WorkspaceId> }
   /** The id is minted orchestrator-side — the storage/SecretStorage key,
    * an internal concern the user never names; the name is cut to what
    * agents keep, and one another server holds gets a number. */
@@ -276,6 +275,7 @@ export type Action =
       name: string;
       source: McpServerSourceView;
       routing: McpServerRoutingView;
+      workspaces: Reach<WorkspaceId>;
     }
   /** The well-known `{"mcpServers": {...}}` JSON (Claude Desktop / Cursor /
    * VS Code shape) — parsed orchestrator-side into a review
@@ -283,7 +283,7 @@ export type Action =
   | { kind: "importMcpServersJson"; json: string }
   /** The review answered: each entry added as a custom server under the
    * name at its index. */
-  | { kind: "addImportedMcpServers"; importId: number; names: readonly string[] }
+  | { kind: "addImportedMcpServers"; importId: number; names: readonly string[]; workspaces: Reach<WorkspaceId> }
   | { kind: "cancelMcpServersImport"; importId: number }
   /** Replaces one custom server's config from its edited mcpServers entry
    * JSON — env (and a header key) stored exactly as written. */
@@ -294,10 +294,11 @@ export type Action =
   | { kind: "cancelMcpServerConnect"; key: string }
   /** Disconnect and remove are the same act — the full clear (config +
    * credential + env): the server is gone, curated or custom; its catalog
-   * entry stays, ready to connect again. The non-destructive option is the
-   * active toggle below. */
+   * entry stays, ready to connect again. The non-destructive option is
+   * switching it off where it is on, below. */
   | { kind: "removeMcpServer"; patchbayMcpServerId: PatchbayMcpServerId }
-  | { kind: "setMcpServerActive"; patchbayMcpServerId: PatchbayMcpServerId; active: boolean }
+  /** The workspaces a server is on in — Settings' choice, which lasts. */
+  | { kind: "setMcpServerWorkspaces"; patchbayMcpServerId: PatchbayMcpServerId; workspaces: Reach<WorkspaceId> }
   | { kind: "setMcpServerRouting"; patchbayMcpServerId: PatchbayMcpServerId; routing: McpServerRoutingView }
   /** Pins an http-backed server to patchbay's stdio bridge ("bridge")
    * or lets declaring agents connect directly ("auto") — the escape hatch
@@ -339,14 +340,17 @@ export type Action =
   | { kind: "reorderMcpServers"; patchbayMcpServerIds: readonly PatchbayMcpServerId[] }
   | { kind: "addContextRoot"; patchbaySessionId: PatchbaySessionId }
   | { kind: "removeContextRoot"; patchbaySessionId: PatchbaySessionId; path: string }
-  /** Saved roots — the folders every new session starts with. `saveRoot`
-   * is the roots chip's shortcut for a root already on the session;
-   * `pickSavedRoot` is Settings' add — or, with `replacing`, its edit of
-   * that entry in place — through the native folder picker; removal lives
-   * in Settings alone. */
-  | { kind: "saveRoot"; path: string; scope: SavedRootScope }
-  | { kind: "pickSavedRoot"; scope: SavedRootScope; replacing?: string }
-  | { kind: "unsaveRoot"; path: string; scope: SavedRootScope }
+  /** Saved roots — the folders new sessions start with. `saveRoot` is the
+   * roots chip's shortcut for a root already on the session; `pickSavedRoot`
+   * is Settings' add, and `replaceSavedRoot` its change of one entry's
+   * folder in place, where it is saved kept — both through the native
+   * folder picker; where a folder is saved, and removing it, live in
+   * Settings alone. */
+  | { kind: "saveRoot"; path: string; scope: SaveScope }
+  | { kind: "pickSavedRoot"; scope: SaveScope }
+  | { kind: "replaceSavedRoot"; path: string }
+  | { kind: "setSavedRootWorkspaces"; path: string; workspaces: Reach<WorkspaceId> }
+  | { kind: "unsaveRoot"; path: string }
   /** Byte-carrying attachment adds, both produced by the composer's one
    * ingress processor (composer/ingress.ts) — validated, size-capped, and
    * (for images) normalized there, so the orchestrator never receives bytes
@@ -481,7 +485,7 @@ export interface AgentConfigView {
  * motive was control-plane consent, which the permission broker already
  * carries for every request_permission-routing agent; the conflation
  * structurally excluded the whole SDK-CLI class from auto forever.)* */
-export type McpServerRoutingView = "auto" | readonly string[] | { readonly except: readonly string[] };
+export type McpServerRoutingView = Reach<PatchbayAgentId>;
 
 /** Payload for `addCustomMcpServer` — the "any MCP server, command or URL,
  * with auth" escape hatch. Curated servers go through
@@ -528,9 +532,11 @@ export interface McpServerView {
    * config (a shared config carries no
    * credential; connecting is always this user's own explicit act). */
   connected: boolean;
-  /** The mute switch: inactive keeps config + credential but the server is
-   * excluded from every agent's mcpServers until toggled back. */
-  active: boolean;
+  /** The workspaces it is on in. Off in a workspace keeps config +
+   * credential; no session there gets the server. */
+  workspaces: Reach<WorkspaceId>;
+  /** On in this window's workspace — the store's reading of `workspaces`. */
+  onHere: boolean;
   routing: McpServerRoutingView;
   /** "auto" = agents declaring mcp.http connect directly (URL passed
    * through); "bridge" = pinned to patchbay's stdio bridge. Absent meaning
@@ -1699,8 +1705,11 @@ export interface AgentViewState {
    * cwd baseline. Fixed and non-removable in the UI; shown so the roots chip
    * reflects reality instead of counting only the user-added extras. */
   workspaceRoots: readonly string[];
-  /** The saved roots, both scopes — the chip names a saved row's scope
-   * and offers the save on the rest. */
+  /** The workspace this window has open — null with none. A constant of the
+   * window, set with its first snapshot. */
+  workspace: WorkspaceId | null;
+  /** The saved roots, with where each is saved — the chip names the save of
+   * a row saved for this workspace and offers it on the rest. */
   savedRoots: SavedRootsView;
   /** Live IDE selection — the ghost chip's presence signal (appears
    * only while the IDE has a selection). Position only; never the text. */
@@ -1844,6 +1853,7 @@ export const initialAgentViewState: AgentViewState = {
   drafts: {},
   workspaceRoots: [],
   savedRoots: NO_SAVED_ROOTS,
+  workspace: null,
   liveSelection: null,
   openEditors: [],
   workspaceFiles: { query: "", files: [], dirs: [] },
@@ -2911,6 +2921,9 @@ export interface SettingsState {
   preferences: PreferencesView;
   /** Saved roots page snapshot — same event as the agent view's copy. */
   savedRoots: SavedRootsView;
+  /** The workspace this window has open — null with none: "this
+   * workspace" in every scope control. A constant of the window. */
+  workspace: WorkspaceId | null;
   /** The import under way on the Import/Export page; null when none. */
   configImport: ConfigImportView | null;
   /** The tester's last answer, for the line it judged. */
@@ -2957,6 +2970,7 @@ export const initialSettingsState: SettingsState = {
   commandTest: null,
   preferences: DEFAULT_PREFERENCES,
   savedRoots: NO_SAVED_ROOTS,
+  workspace: null,
 };
 
 export type SettingsEvent =

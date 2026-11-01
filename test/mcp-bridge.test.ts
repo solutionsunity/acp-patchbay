@@ -201,7 +201,7 @@ async function withRemote(
   const id = await o.mcpServerGates.addCustom(
     server.name,
     header === undefined ? { kind: "custom-http", url: remote.url, authType: "none" } : { kind: "custom-http", url: remote.url, authType: "header", ...header },
-    "auto",
+    "auto", "auto",
   );
   return { orchestrator: o, id, pool: o.pool, sessions: o.sessions, gates: o.sessionGates, state: h.agentView.state, stores: h.stores };
 }

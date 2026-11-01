@@ -1676,7 +1676,7 @@ for (const theme of Object.keys(THEMES)) {
   av.sessions = av.sessions.map((x) => ({ ...x, title: `${x.title} ${LONG}` }));
   av.workspaceRoots = [`/ws/${LONG}`];
   av.contextRoots = { s1: [longPath] };
-  av.savedRoots = { workspace: [], machine: [], missing: [] };
+  av.savedRoots = { entries: [], missing: [] };
   av.sessionKnobs = {
     s1: [
       {
@@ -1728,7 +1728,13 @@ for (const theme of Object.keys(THEMES)) {
   st.agents = st.agents.map((a) => ({ ...a, name: `${a.name} ${LONG}`, command: longPath }));
   st.agentConfigs = st.agentConfigs.map((c) => ({ ...c, name: `${c.name} ${LONG}`, command: longPath }));
   st.commandRules = [{ kind: "command", pattern: `npm run ${LONG}`, verdict: "allow" }];
-  st.savedRoots = { workspace: [longPath], machine: [`/srv/${LONG}`], missing: [] };
+  st.savedRoots = {
+    entries: [
+      { path: longPath, workspaces: ["file:///ws"] },
+      { path: `/srv/${LONG}`, workspaces: "auto" },
+    ],
+    missing: [],
+  };
   p = await page(browser, theme0, { width: 520, height: 800 });
   await renderView(p, "settings", st);
   await p.waitForSelector(".section h1");

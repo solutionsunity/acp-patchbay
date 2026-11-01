@@ -23,6 +23,7 @@ import { SecretEnvStore } from "../src/orchestrator/stores/secret-env";
 import { PRODUCT } from "../src/shared/product";
 import type { ExportPart } from "../src/shared/protocol";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
+import type { WorkspaceId } from "../src/shared/workspace";
 import { SECRET_FAMILIES, STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 
 async function machine() {
@@ -33,9 +34,8 @@ async function machine() {
   const mcpServerConfigs = new McpServerConfigStore(kv);
   const preferences = new PreferencesStore(kv);
   const machineRules = new MachineRulesStore(kv);
-  const machineRoots = new SavedRootsStore(kv, "machine");
+  const savedRoots = new SavedRootsStore(kv);
   const machineWriteScope = new MachineWriteScopeStore(kv);
-  const workspaceRoots = new SavedRootsStore(new MemoryKV(), "workspace");
   const agentEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.agent);
   const mcpServerEnv = new SecretEnvStore(secrets, SECRET_FAMILIES.mcpServer);
   const keys: Record<string, string> = { keyed: "secret-abc", context7: "ctx-key" };
@@ -89,23 +89,23 @@ async function machine() {
     name: "Keyed",
     source: { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "Authorization", valuePrefix: "Bearer " },
     routing: "auto",
-    active: true,
+    workspaces: "auto",
     transport: "auto",
   });
   await mcpServerConfigs.add({
     id: "local" as PatchbayMcpServerId,
     name: "Local",
     source: { kind: "custom-stdio", command: "tool", args: ["--stdio"] },
-    routing: ["claude"],
-    active: false,
+    routing: ["claude" as PatchbayAgentId],
+    workspaces: [],
     transport: "auto",
   });
   await mcpServerConfigs.add({
     id: "context7" as PatchbayMcpServerId,
     name: "Context7",
     source: { kind: "catalog", catalogId: "context7", authMode: "header" },
-    routing: { except: ["bare"] },
-    active: true,
+    routing: { except: ["bare" as PatchbayAgentId] },
+    workspaces: ["file:///home/me/project" as WorkspaceId],
     transport: "bridge",
   });
   // Signed in with OAuth: nothing of its sign-in leaves.
@@ -114,7 +114,7 @@ async function machine() {
     name: "GitHub",
     source: { kind: "catalog", catalogId: "github", authMode: "oauth" },
     routing: "auto",
-    active: true,
+    workspaces: "auto",
     transport: "auto",
   });
   await mcpServerEnv.set("local", { TOKEN: "t-1" });
@@ -124,11 +124,11 @@ async function machine() {
     { kind: "command", pattern: "rm -rf *", verdict: "deny" },
   ]);
   await machineWriteScope.set([{ location: { kind: "path", path: "/home/me/.hermes" }, on: true }]);
-  await machineRoots.add("/home/me/notes");
-  await workspaceRoots.add("/home/me/workspace-only");
+  await savedRoots.save("/home/me/notes", "auto");
+  await savedRoots.save("/home/me/workspace-only", "file:///home/me/project" as WorkspaceId);
 
   const sources: ExportSources = {
-    entries: [agentConfigs, composerKnobs, mcpServerConfigs, preferences, machineRules, machineWriteScope, machineRoots],
+    entries: [agentConfigs, composerKnobs, mcpServerConfigs, preferences, machineRules, machineWriteScope, savedRoots],
     agents: {
       ids: () => agentConfigs.list().map((c) => c.id),
       env: (id) => agentEnv.get(id),
@@ -160,7 +160,7 @@ describe("configuration export", () => {
       [STORAGE_KEYS.preferences]: kv.get(STORAGE_KEYS.preferences),
       [STORAGE_KEYS.machineCommandRules]: kv.get(STORAGE_KEYS.machineCommandRules),
       [STORAGE_KEYS.machineWriteScope]: kv.get(STORAGE_KEYS.machineWriteScope),
-      [STORAGE_KEYS.machineSavedRoots]: kv.get(STORAGE_KEYS.machineSavedRoots),
+      [STORAGE_KEYS.savedRoots]: kv.get(STORAGE_KEYS.savedRoots),
     });
     // A record with nothing secret stored has no row.
     expect(file.secrets).toEqual({
@@ -183,14 +183,17 @@ describe("configuration export", () => {
       STORAGE_KEYS.preferences,
       STORAGE_KEYS.machineCommandRules,
       STORAGE_KEYS.machineWriteScope,
-      STORAGE_KEYS.machineSavedRoots,
+      STORAGE_KEYS.savedRoots,
     ]);
     expect(settings.secrets).toEqual({});
   });
 
-  it("never carries the workspace's own saved roots", async () => {
-    const file = await exported("agents", "mcpServers", "settings");
-    expect(JSON.stringify(file)).not.toContain("workspace-only");
+  it("carries every saved root with the workspaces it is saved for", async () => {
+    const file = await exported("settings");
+    expect(file.state[STORAGE_KEYS.savedRoots]).toEqual([
+      { path: "/home/me/notes", workspaces: "auto" },
+      { path: "/home/me/workspace-only", workspaces: ["file:///home/me/project"] },
+    ]);
   });
 
   it("an entry never written is left out, not carried empty", async () => {
@@ -198,7 +201,7 @@ describe("configuration export", () => {
     const file = await exportConfiguration(
       new Set<ExportPart>(["settings"]),
       {
-        entries: [new PreferencesStore(empty), new MachineRulesStore(empty), new MachineWriteScopeStore(empty), new SavedRootsStore(empty, "machine")],
+        entries: [new PreferencesStore(empty), new MachineRulesStore(empty), new MachineWriteScopeStore(empty), new SavedRootsStore(empty)],
         agents: { ids: () => [], env: async () => ({}) },
         mcpServers: { ids: () => [], env: async () => ({}), headerKey: async () => undefined },
       },
@@ -235,7 +238,7 @@ describe("the Export card's Settings part", () => {
       [STORAGE_KEYS.preferences]: "preferences",
       [STORAGE_KEYS.machineCommandRules]: "command rule",
       [STORAGE_KEYS.machineWriteScope]: "file writes",
-      [STORAGE_KEYS.machineSavedRoots]: "saved root",
+      [STORAGE_KEYS.savedRoots]: "saved root",
     };
     const carried = Object.entries(STORED_KEYS).flatMap(([key, fate]) => (fate === "settings" ? [key] : []));
     expect(Object.keys(said).sort()).toEqual(carried.sort());

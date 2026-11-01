@@ -38,6 +38,8 @@ import { authTypeOf, McpServerConfigStore, type McpServerConfig, type McpServerS
 import { isConnectable, type CatalogEntry } from "./stores/mcp-catalog";
 import type { SecretEnvStore } from "./stores/secret-env";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
+import { ownReach, reaches, type Reach } from "../shared/reach";
+import type { WorkspaceId } from "../shared/workspace";
 import { agentErrorText } from "./readers/agent-error";
 
 export interface McpServersStoreHooks {
@@ -173,13 +175,6 @@ const mcpServersEntrySchema = z.union([
   }),
 ]);
 
-/** Own the routing arrays on store writes — the view's readonly arrays stay
- * the webview's (protocol.ts: three reaches — auto / id list / except). */
-function cloneRouting(routing: McpServerRoutingView): "auto" | string[] | { except: string[] } {
-  if (routing === "auto") return "auto";
-  return Array.isArray(routing) ? [...routing] : { except: [...(routing as { except: readonly string[] }).except] };
-}
-
 /** True with a minute of margin — refresh slightly before expiry rather
  * than reacting to a 401 whenever avoidable. */
 function isExpired(token: StoredToken): boolean {
@@ -197,18 +192,6 @@ function refreshable(
 
 function expiresAtFrom(expiresIn: number | undefined): string | undefined {
   return expiresIn !== undefined ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined;
-}
-
-/** Whether a server reaches an agent's sessions: switched on, and routed to
- * it ("auto" = every agent; an id list pins exactly; "except" = every
- * agent minus the listed). Muted means configured, credential intact, not
- * routed. */
-function reaches(config: McpServerConfig, patchbayAgentId: PatchbayAgentId): boolean {
-  if (!config.active) return false;
-  if (config.routing === "auto") return true;
-  return Array.isArray(config.routing)
-    ? config.routing.includes(patchbayAgentId)
-    : !config.routing.except.includes(patchbayAgentId);
 }
 
 /** Whether "connected" requires a stored credential: every server that
@@ -287,6 +270,9 @@ export class McpServersStore {
      * spawned stdio servers inherit. The probe runs custom-stdio servers
      * here so it reports the same reality the agent's own spawn will. */
     private readonly workspaceCwd: string,
+    /** The workspace this window has open — null with none: a server is
+     * given to a session only where it is on. */
+    private readonly here: WorkspaceId | null,
     /** Browser/redirect step for OAuth connects — the orchestrator wires
      * registerUriHandler + asExternalUri; tests wire a fake. Absent →
      * OAuth connects fail labeled (header connects unaffected). */
@@ -298,6 +284,18 @@ export class McpServersStore {
      * tests fake the handshake instead of hitting network/spawning. */
     private readonly probeFn: ProbeFn = probeMcpServer,
   ) {}
+
+  /** Whether the server is on in this window's workspace. */
+  private onHere(config: McpServerConfig): boolean {
+    return reaches(config.workspaces, this.here);
+  }
+
+  /** Whether a server reaches an agent's sessions in this window: on in its
+   * workspace, and routed to the agent. Off means configured, credential
+   * intact, given to no session here. */
+  private givenTo(config: McpServerConfig, patchbayAgentId: PatchbayAgentId): boolean {
+    return this.onHere(config) && reaches(config.routing, patchbayAgentId);
+  }
 
   /** Latest probe per server id — session-lived, never persisted: a
    * tool list is a point-in-time read of the server, so a fresh window
@@ -436,7 +434,8 @@ export class McpServersStore {
         catalogId: source.kind === "catalog" ? source.catalogId : undefined,
         command: source.kind === "catalog" ? undefined : customLine(source),
         connected,
-        active: config.active,
+        workspaces: config.workspaces,
+        onHere: this.onHere(config),
         routing: config.routing,
         transport: config.transport,
         probe: this.probes.get(config.id),
@@ -529,7 +528,8 @@ export class McpServersStore {
     catalogId: string,
     name: string,
     token: string,
-    url?: string,
+    url: string | undefined,
+    workspaces: Reach<WorkspaceId>,
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
@@ -551,7 +551,7 @@ export class McpServersStore {
           ...(entry.userUrl ? { url: endpoint.url } : {}),
         },
         routing: "auto",
-        active: true,
+        workspaces: ownReach(workspaces),
         transport: "auto",
       });
       this.log.info(`${patchbayMcpServerId}: ${given} connected with key (endpoint ${loggableUrl(endpoint.url)})`);
@@ -564,7 +564,13 @@ export class McpServersStore {
    * Failure (gated DCR, non-compliant server, denied consent) is immediate
    * and labeled; an abandoned tab waits until the connect is cancelled.
    * Stored under the name the user gave it. Returns the server's id. */
-  connectCatalogOAuth(catalogId: string, name: string, url?: string, signal?: AbortSignal): Promise<PatchbayMcpServerId> {
+  connectCatalogOAuth(
+    catalogId: string,
+    name: string,
+    url: string | undefined,
+    workspaces: Reach<WorkspaceId>,
+    signal?: AbortSignal,
+  ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.catalog(catalogId), signal, async () => {
       McpServerConfigStore.admitName(name);
       const entry = this.entryFor(catalogId);
@@ -592,7 +598,7 @@ export class McpServersStore {
           ...(entry.userUrl ? { url: endpoint.url } : {}),
         },
         routing: "auto",
-        active: true,
+        workspaces: ownReach(workspaces),
         transport: "auto",
       });
       this.log.info(`${patchbayMcpServerId}: ${given} connected via OAuth`);
@@ -610,6 +616,7 @@ export class McpServersStore {
     name: string,
     source: McpServerSourceView,
     routing: McpServerRoutingView,
+    workspaces: Reach<WorkspaceId>,
     signal?: AbortSignal,
   ): Promise<PatchbayMcpServerId> {
     return this.attempt(connectKey.custom(name), signal, async () => {
@@ -653,8 +660,8 @@ export class McpServersStore {
         id: patchbayMcpServerId,
         name,
         source: configSource,
-        routing: cloneRouting(routing),
-        active: true,
+        routing: ownReach(routing),
+        workspaces: ownReach(workspaces),
         transport: "auto",
       });
       this.log.info(`${patchbayMcpServerId}: custom ${configSource.kind} ${given} added`);
@@ -822,8 +829,8 @@ export class McpServersStore {
 
   /** Disconnect *is* remove — the full clear (credential + env + config):
    * the server is gone, curated or custom; its catalog entry stays there to
-   * connect again. The non-destructive option is `setActive(false)`, which
-   * keeps everything and only unroutes. */
+   * connect again. The non-destructive option is switching it off where it
+   * is on (`setWorkspaces`), which keeps everything. */
   async remove(patchbayMcpServerId: PatchbayMcpServerId): Promise<void> {
     if (patchbayMcpServerId === EDITOR_SERVER.id) return; // built in: never removed
     this.probes.delete(patchbayMcpServerId);
@@ -840,11 +847,15 @@ export class McpServersStore {
     await this.refresh();
   }
 
-  async setActive(patchbayMcpServerId: PatchbayMcpServerId, active: boolean): Promise<void> {
+  /** Where the server is on. Returns whether it was switched on in this
+   * window's workspace by it — off before, on now. */
+  async setWorkspaces(patchbayMcpServerId: PatchbayMcpServerId, workspaces: Reach<WorkspaceId>): Promise<boolean> {
     const existing = this.configs.get(patchbayMcpServerId);
-    if (existing === undefined) return;
-    await this.configs.upsert({ ...existing, active });
+    if (existing === undefined) return false;
+    const next = { ...existing, workspaces: ownReach(workspaces) };
+    await this.configs.upsert(next);
     await this.refresh();
+    return !this.onHere(existing) && this.onHere(next);
   }
 
   /** Settings drag-drop — persist the dropped order and republish. Order
@@ -869,9 +880,10 @@ export class McpServersStore {
 
   /** Runs the connect-time tool probe and caches the outcome on the card
    * (protocol.ts McpServerProbeView — provider-side truth, timestamped).
-   * Explicit-trigger only (connect, power-on, refresh button, the page of
-   * the built-in servers opened): probing a custom-stdio server executes
-   * its command, and even http shouldn't fire on background sweeps —
+   * Explicit-trigger only (connect, switched on here, refresh button, the
+   * page of the built-in servers opened): probing a custom-stdio server
+   * executes its command — and only where the server is on — and even http
+   * shouldn't fire on background sweeps —
    * reality is read when the user acts on it. The
    * built-in editor server is probed the same way, through the launch every
    * agent is handed — under a token no attach minted, which the handshake
@@ -879,6 +891,12 @@ export class McpServersStore {
   async probe(patchbayMcpServerId: PatchbayMcpServerId, signal?: AbortSignal): Promise<void> {
     const config = this.configs.get(patchbayMcpServerId);
     if (config === undefined && patchbayMcpServerId !== EDITOR_SERVER.id) return;
+    // A server's command runs only where the server is on: off in this
+    // workspace, it is never started in this workspace's folder.
+    if (config?.source.kind === "custom-stdio" && !this.onHere(config)) {
+      this.probes.delete(patchbayMcpServerId);
+      return;
+    }
     let target: ProbeTarget | null = null;
     try {
       target = config !== undefined ? await this.probeTargetFor(config) : this.editorProbeTarget();
@@ -952,18 +970,18 @@ export class McpServersStore {
     if (existing === undefined) return;
     await this.configs.upsert({
       ...existing,
-      routing: cloneRouting(routing),
+      routing: ownReach(routing),
     });
     await this.refresh();
   }
 
   /** A server's credential for the bridge serving it to `patchbayAgentId` — only
-   * while the server is still connected, switched on and routed to that
-   * agent: muting, re-routing or removing it reaches a running bridge at
-   * its next request. */
+   * while the server is still connected, on in this workspace and routed to
+   * that agent: switching it off, re-routing or removing it reaches a
+   * running bridge at its next request. */
   async credentialFor(patchbayMcpServerId: PatchbayMcpServerId, patchbayAgentId: PatchbayAgentId): Promise<{ accessToken: string } | null> {
     const config = this.configs.get(patchbayMcpServerId);
-    if (config === undefined || !reaches(config, patchbayAgentId)) return null;
+    if (config === undefined || !this.givenTo(config, patchbayAgentId)) return null;
     return this.freshToken(patchbayMcpServerId);
   }
 
@@ -1039,7 +1057,7 @@ export class McpServersStore {
     const servers: McpServer[] = [editorServer(this.wire, contextToken)];
     const given: AttachedServer[] = [{ id: EDITOR_SERVER.id, delivery: "stdio" }];
     for (const config of this.configs.list()) {
-      if (!reaches(config, patchbayAgentId)) continue;
+      if (!this.givenTo(config, patchbayAgentId)) continue;
 
       const source = config.source;
       if (source.kind === "custom-stdio") {

@@ -25,18 +25,21 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { rootHolders, rootSaving, type RootsControls } from "./roots-controls";
 import type { PatchbaySessionId } from "../../../shared/ids";
+import type { WorkspaceId } from "../../../shared/workspace";
 
 export function RootsChip({
   patchbaySessionId,
   roots,
   workspaceRoots,
   savedRoots,
+  here,
   controls,
 }: {
   patchbaySessionId: PatchbaySessionId;
   roots: readonly string[];
   workspaceRoots: readonly string[];
   savedRoots: SavedRootsView;
+  here: WorkspaceId | null;
   controls: RootsControls;
 }) {
   const send = useActions();
@@ -62,7 +65,7 @@ export function RootsChip({
           <div className="flex items-center gap-2 px-2 py-1 text-sm" key={r}>
             <code className="min-w-0 flex-1">{r}</code>
             <span className="text-muted-foreground">{rootHolders(controls.agent, false)}</span>
-            <SaveControl path={r} saved={savedRoots} />
+            <SaveControl path={r} saved={savedRoots} here={here} />
             <Button
               variant="ghost"
               size="sm"
@@ -111,11 +114,11 @@ export function RootsChip({
   );
 }
 
-/** Saved: the list that holds it, read-only here. Unsaved: one Save menu,
- * this workspace first (the default scope). */
-function SaveControl({ path, saved }: { path: string; saved: SavedRootsView }) {
+/** Saved for this workspace: where it is saved, read-only here. Unsaved:
+ * one Save menu, this workspace first (the default scope). */
+function SaveControl({ path, saved, here }: { path: string; saved: SavedRootsView; here: WorkspaceId | null }) {
   const send = useActions();
-  const state = rootSaving(path, saved);
+  const state = rootSaving(path, saved, here);
   if (state.kind === "saved") return <span className="text-muted-foreground">{state.label}</span>;
   return (
     <DropdownMenu>
@@ -132,7 +135,7 @@ function SaveControl({ path, saved }: { path: string; saved: SavedRootsView }) {
         >
           Save for this workspace
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => send({ kind: "saveRoot", path, scope: "machine" })}>
+        <DropdownMenuItem onSelect={() => send({ kind: "saveRoot", path, scope: "everywhere" })}>
           Save for every workspace
         </DropdownMenuItem>
       </DropdownMenuContent>

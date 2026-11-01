@@ -30,6 +30,7 @@ import {
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import { MachineWriteScopeStore, withWriteEntry, writeScopeRows } from "../src/orchestrator/stores/write-scope";
 import type { PatchbayAgentId } from "../src/shared/ids";
+import type { WorkspaceId } from "../src/shared/workspace";
 import { STORAGE_KEYS, SECRET_FAMILIES } from "../src/orchestrator/stores/storage-keys";
 
 describe("LastConnectedStore — reload-continuation stamp", () => {
@@ -326,42 +327,97 @@ describe("ComposerKnobsStore", () => {
   });
 });
 
-describe("SavedRootsStore — the roots every new session starts with", () => {
-  it("adds a path once, removes it, and keeps each scope apart even over one store", async () => {
-    const kv = new MemoryKV();
-    const workspace = new SavedRootsStore(kv, "workspace");
-    const machine = new SavedRootsStore(kv, "machine");
-    await workspace.add("/src/lib");
-    await workspace.add("/src/lib");
-    await machine.add("/src/odoo");
-    expect(workspace.list()).toEqual(["/src/lib"]);
-    expect(machine.list()).toEqual(["/src/odoo"]);
-    await workspace.remove("/src/lib");
-    expect(workspace.list()).toEqual([]);
-    expect(machine.list()).toEqual(["/src/odoo"]);
-    await machine.wipe();
-    expect(machine.list()).toEqual([]);
+describe("SavedRootsStore — the roots new sessions start with", () => {
+  const WS1 = "file:///ws/one" as WorkspaceId;
+  const WS2 = "vscode-remote://ssh-remote%2Bbox/srv/two" as WorkspaceId;
+
+  it("saves a folder for a workspace, adds the next one to it, and saves it everywhere on its word", async () => {
+    const store = new SavedRootsStore(new MemoryKV());
+    await store.save("/src/lib", WS1);
+    await store.save("/src/lib", WS1);
+    await store.save("/src/lib", WS2);
+    await store.save("/src/odoo", "auto");
+    expect(store.list()).toEqual([
+      { path: "/src/lib", workspaces: [WS1, WS2] },
+      { path: "/src/odoo", workspaces: "auto" },
+    ]);
+    expect(store.pathsFor(WS1)).toEqual(["/src/lib", "/src/odoo"]);
+    expect(store.pathsFor("file:///ws/three" as WorkspaceId)).toEqual(["/src/odoo"]);
+    // A window with no workspace: only what is saved everywhere.
+    expect(store.pathsFor(null)).toEqual(["/src/odoo"]);
+    await store.setWorkspaces("/src/odoo", { except: [WS1] });
+    expect(store.pathsFor(WS1)).toEqual(["/src/lib"]);
+    await store.remove("/src/lib");
+    expect(store.pathsFor(WS1)).toEqual([]);
+    await store.wipe();
+    expect(store.list()).toEqual([]);
   });
 
-  it("replace keeps the saved order; a replacement already saved just drops the old entry", async () => {
-    const store = new SavedRootsStore(new MemoryKV(), "workspace");
-    await store.add("/a");
-    await store.add("/b");
-    await store.add("/c");
+  it("replace keeps the saved order and where it is saved; a replacement already saved just drops the old entry", async () => {
+    const store = new SavedRootsStore(new MemoryKV());
+    await store.save("/a", WS1);
+    await store.save("/b", "auto");
+    await store.save("/c", WS2);
     await store.replace("/b", "/b2");
-    expect(store.list()).toEqual(["/a", "/b2", "/c"]);
+    expect(store.list()).toEqual([
+      { path: "/a", workspaces: [WS1] },
+      { path: "/b2", workspaces: "auto" },
+      { path: "/c", workspaces: [WS2] },
+    ]);
     await store.replace("/a", "/c");
-    expect(store.list()).toEqual(["/b2", "/c"]);
+    expect(store.list().map((e) => e.path)).toEqual(["/b2", "/c"]);
   });
 
-  it("a stored entry that isn't a path is skipped; a stored value that isn't a list holds none", () => {
+  it("an entry that isn't a saved root is skipped; a stored value that isn't a list holds none", () => {
     const kv = new MemoryKV();
-    void kv.update(STORAGE_KEYS.machineSavedRoots, ["/a", 3, "", null, "/b"]);
-    expect(new SavedRootsStore(kv, "machine").list()).toEqual(["/a", "/b"]);
+    void kv.update(STORAGE_KEYS.savedRoots, [{ path: "/a", workspaces: "auto" }, 3, { path: "" }, { path: "/x", workspaces: 7 }]);
+    expect(new SavedRootsStore(kv).list()).toEqual([{ path: "/a", workspaces: "auto" }]);
     for (const junk of ["/a", 42, { path: "/a" }, null]) {
-      void kv.update(STORAGE_KEYS.machineSavedRoots, junk);
-      expect(new SavedRootsStore(kv, "machine").list()).toEqual([]);
+      void kv.update(STORAGE_KEYS.savedRoots, junk);
+      expect(new SavedRootsStore(kv).list()).toEqual([]);
     }
+  });
+
+  it("the folders 0.88 saved for every workspace are copied once, each saved everywhere — their key left as it was", () => {
+    const kv = new MemoryKV();
+    void kv.update(STORAGE_KEYS.savedRootsBefore090, ["/a", 3, "/b"]);
+    expect(new SavedRootsStore(kv).list()).toEqual([
+      { path: "/a", workspaces: "auto" },
+      { path: "/b", workspaces: "auto" },
+    ]);
+    expect(kv.get(STORAGE_KEYS.savedRootsBefore090)).toEqual(["/a", 3, "/b"]);
+    // Copied once: what this version keeps is never filled from it again.
+    void kv.update(STORAGE_KEYS.savedRoots, []);
+    expect(new SavedRootsStore(kv).list()).toEqual([]);
+  });
+
+  it("a workspace's own folders move into the list for it at its first open — saved there, then gone from its workspaceState", async () => {
+    const kv = new MemoryKV();
+    const workspaceKV = new MemoryKV();
+    void kv.update(STORAGE_KEYS.savedRootsBefore090, ["/shared"]);
+    void workspaceKV.update(STORAGE_KEYS.workspaceSavedRootsBefore090, ["/mine", "/shared", 5]);
+    const store = new SavedRootsStore(kv, { id: WS1, kv: workspaceKV });
+    await Promise.resolve();
+    expect(store.list()).toEqual([
+      { path: "/shared", workspaces: "auto" },
+      { path: "/mine", workspaces: [WS1] },
+    ]);
+    expect(workspaceKV.get(STORAGE_KEYS.workspaceSavedRootsBefore090)).toBeUndefined();
+    // Another workspace's window never sees this one's own folders.
+    expect(store.pathsFor(WS2)).toEqual(["/shared"]);
+  });
+
+  it("the erase takes the earlier versions' copies too — this workspace's included", async () => {
+    const kv = new MemoryKV();
+    const workspaceKV = new MemoryKV();
+    const store = new SavedRootsStore(kv, { id: WS1, kv: workspaceKV });
+    await store.save("/a", WS1);
+    void kv.update(STORAGE_KEYS.savedRootsBefore090, ["/old"]);
+    void workspaceKV.update(STORAGE_KEYS.workspaceSavedRootsBefore090, ["/older"]);
+    await store.wipe();
+    expect(kv.get(STORAGE_KEYS.savedRoots)).toBeUndefined();
+    expect(kv.get(STORAGE_KEYS.savedRootsBefore090)).toBeUndefined();
+    expect(workspaceKV.get(STORAGE_KEYS.workspaceSavedRootsBefore090)).toBeUndefined();
   });
 });
 

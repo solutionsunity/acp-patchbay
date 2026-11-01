@@ -28,7 +28,6 @@ import {
   type DataInventoryRow,
   type ElicitationAnswer,
   type RuleMatchView,
-  type SavedRootScope,
   type SavedRootsView,
   type SettingsEvent,
   type SettingsSectionId,
@@ -107,6 +106,7 @@ import type { Logger } from "./logger";
 import type { OAuthUserAgent } from "./mcp-oauth";
 import type { SecretsLike } from "./stores/mcp-server-tokens";
 import type { WireLogSink } from "./wire-log";
+import type { WorkspaceId } from "../shared/workspace";
 
 /** What the download prompt says of the check — only what is known: held
  * to a published digest, nothing published, or the registry unreadable. */
@@ -125,13 +125,15 @@ const PERMISSION_UNTITLED = "Permission request";
 export interface OrchestratorPlace {
   /** This machine's settings and records — shared by every window. */
   machineKV: KV;
-  /** This workspace's own — its rules, its saved roots, its last session. */
+  /** This workspace's own — its rules, its last session. */
   workspaceKV: KV;
   secrets: SecretsLike;
   globalStoragePath: string;
   /** The workspace's own storage folder; null in a window with none. */
   storagePath: string | null;
   workspaceCwd: string;
+  /** The workspace this window has open — null with none. */
+  workspace: WorkspaceId | null;
   /** The bundled scripts an agent spawns as MCP servers. */
   scripts: { editorServer: string; bridge: string };
   /** The folder holding the bash grammar the command rules read lines
@@ -199,8 +201,7 @@ export class Orchestrator {
   readonly permissionRules: PermissionRulesStore;
   readonly machinePermissionRules: MachineRulesStore;
   readonly machineWriteScope: MachineWriteScopeStore;
-  readonly workspaceSavedRoots: SavedRootsStore;
-  readonly machineSavedRoots: SavedRootsStore;
+  readonly savedRoots: SavedRootsStore;
   readonly preferences: PreferencesStore;
   private readonly composerKnobs: ComposerKnobsStore;
   private readonly sessionContinuity: SessionContinuityStore;
@@ -236,6 +237,10 @@ export class Orchestrator {
    * the extension host when the first folder changes, so it is a process
    * constant; every consumer reads this field, none re-derives it. */
   readonly workspaceCwd: string;
+  /** The workspace this window has open — null with none: where MCP
+   * servers and saved roots are on is read against it. A process constant,
+   * like the cwd. */
+  readonly workspace: WorkspaceId | null;
   private readonly binaryCacheDir: string;
   /** The two places VS Code keeps what patchbay stores — read raw only by
    * the Data page's inventory. */
@@ -272,23 +277,25 @@ export class Orchestrator {
     private readonly log: Logger,
   ) {
     this.workspaceCwd = place.workspaceCwd;
+    this.workspace = place.workspace;
     this.binaryCacheDir = join(place.globalStoragePath, "bin-cache");
     const machineKV = place.machineKV;
     this.kvs = { machine: machineKV, workspace: place.workspaceKV };
     this.permissionRules = new PermissionRulesStore(place.workspaceKV);
     this.machinePermissionRules = new MachineRulesStore(machineKV);
     this.machineWriteScope = new MachineWriteScopeStore(machineKV);
-    this.workspaceSavedRoots = new SavedRootsStore(place.workspaceKV, "workspace");
-    this.machineSavedRoots = new SavedRootsStore(machineKV, "machine");
+    this.savedRoots = new SavedRootsStore(
+      machineKV,
+      place.workspace === null ? null : { id: place.workspace, kv: place.workspaceKV },
+    );
     this.decisionAudit = new DecisionAuditStore(place.storagePath);
     this.lastConnected = new LastConnectedStore(place.workspaceKV);
     this.defaultAgentFold = new DefaultAgentFoldStore(machineKV);
     this.lastActiveSession = new LastActiveSessionStore(place.workspaceKV);
     // Agents and MCP servers are developer-env, not code-env: global to
-    // this machine, never a repo-committed file. Deliberately global-only —
-    // workspace binding may return later as an opt-in (see
-    // stores/mcp-server-configs.ts's header for the incident that shaped
-    // this).
+    // this machine, never a repo-committed file. An MCP server is on only in
+    // the workspaces it is scoped to (stores/mcp-server-configs.ts's header
+    // names the incident that shaped this).
     this.agentConfigs = new AgentConfigStore(machineKV);
     this.mcpServerConfigs = new McpServerConfigStore(machineKV);
     this.preferences = new PreferencesStore(machineKV);
@@ -324,6 +331,7 @@ export class Orchestrator {
         crossing: (value) => this.wireLog.registerSecret(value),
       },
       this.workspaceCwd,
+      this.workspace,
       {
         redirectUri: () => this.ports.redirectUri(),
         authorize: async (authorizationUrl, state, signal) => {
@@ -350,6 +358,7 @@ export class Orchestrator {
         // session to come back to — startupSettled clears it either way.
         restoring: this.lastActiveSession.stored(),
         workspaceRoots: workspaceRootsView(),
+        workspace: this.workspace,
         savedRoots: this.savedRootsView(),
         preferences: this.preferences.get(),
       },
@@ -367,6 +376,7 @@ export class Orchestrator {
         mcpCatalog: this.mcpServers.catalogViews(),
         preferences: this.preferences.get(),
         savedRoots: this.savedRootsView(),
+        workspace: this.workspace,
       },
       reduceSettings,
       coalesceSettingsEvent,
@@ -574,10 +584,7 @@ export class Orchestrator {
           for (const token of this.sessions.tokensOf(patchbaySessionId)) this.ipcHost.notifyRootsChanged(token);
         },
         workspaceRoots: workspaceRootsView,
-        savedRoots: () => {
-          const saved = this.savedRootsView();
-          return [...(saved.workspace ?? []), ...saved.machine];
-        },
+        savedRoots: () => this.savedRoots.pathsFor(this.workspace),
         rootExists: isFolder,
         // a skipped saved root earns its mark in Settings now, not at the
         // page's next unrelated refresh
@@ -814,7 +821,7 @@ export class Orchestrator {
         this.preferences,
         this.machinePermissionRules,
         this.machineWriteScope,
-        this.machineSavedRoots,
+        this.savedRoots,
       ],
       agents: {
         ids: () => this.agentConfigs.list().map((c) => c.id),
@@ -860,8 +867,7 @@ export class Orchestrator {
       lastConnected: this.lastConnected,
       defaultAgentFold: this.defaultAgentFold,
       preferences: this.preferences,
-      workspaceSavedRoots: this.workspaceSavedRoots,
-      machineSavedRoots: this.machineSavedRoots,
+      savedRoots: this.savedRoots,
       tempStashes: {
         wipe: async () => {
           await rm(ATTACHMENTS_DIR, { recursive: true, force: true });
@@ -936,7 +942,7 @@ export class Orchestrator {
         preferences: this.preferences,
         machineRules: this.machinePermissionRules,
         machineWriteScope: this.machineWriteScope,
-        machineSavedRoots: this.machineSavedRoots,
+        savedRoots: this.savedRoots,
       });
     } catch (err) {
       // Whatever landed before it stopped stays, and the restart still runs.
@@ -964,7 +970,7 @@ export class Orchestrator {
       preferences: this.preferences,
       machineRules: this.machinePermissionRules,
       machineWriteScope: this.machineWriteScope,
-      machineSavedRoots: this.machineSavedRoots,
+      savedRoots: this.savedRoots,
     });
     return planImport(read, local, { commandFound: (command) => commandFound(command), pathExists: (path) => existsSync(path) });
   }
@@ -1284,18 +1290,11 @@ export class Orchestrator {
     return this.ports.confirm(message, "Download");
   }
 
-  /** The saved roots as both channels show them: this workspace's list
-   * exists only while a folder is open — an empty window has no workspace
-   * to save to. */
+  /** The saved roots as both channels show them, each with where it is
+   * saved. */
   savedRootsView(): SavedRootsView {
-    const workspaceOpen = this.ports.workspaceRoots().length > 0;
-    const workspace = workspaceOpen ? this.workspaceSavedRoots.list() : null;
-    const machine = this.machineSavedRoots.list();
-    return {
-      workspace,
-      machine,
-      missing: [...new Set([...(workspace ?? []), ...machine])].filter((p) => !isFolder(p)),
-    };
+    const entries = this.savedRoots.list();
+    return { entries, missing: entries.map((e) => e.path).filter((p) => !isFolder(p)) };
   }
 
   /** Settings moves to a section. Opening MCP Servers reads what
@@ -1305,10 +1304,6 @@ export class Orchestrator {
     this.settings.emit({ kind: "sectionChanged", section });
     if (section === "mcpServers")
       void this.mcpServerGates.checkBuiltin().catch(this.logCatch("check the built-in MCP servers"));
-  }
-
-  savedRootsIn(scope: SavedRootScope): SavedRootsStore {
-    return scope === "workspace" ? this.workspaceSavedRoots : this.machineSavedRoots;
   }
 
   publishSavedRoots(): void {

@@ -7,6 +7,7 @@
 // same truth the writer holds.
 import { describe, expect, it } from "vitest";
 import { rootHolders, rootSaving, rootsControls } from "../src/webview/agent-view/composer/roots-controls";
+import type { WorkspaceId } from "../src/shared/workspace";
 
 describe("rootsControls", () => {
   it("not advertised: the agent never gets a root, the servers do — the note points at @", () => {
@@ -52,24 +53,36 @@ describe("rootsControls", () => {
   });
 });
 
-// Saved roots (issue #32): a user-added row either names the list that
-// already holds it — managed in Settings, no control here — or offers the
-// save; "this workspace" exists only where a folder is open.
+// Saved roots (#32, #70): a user-added row saved for this workspace names
+// where it is saved — managed in Settings, no control here — or offers the
+// save; "this workspace" exists only where one is open, and saving a folder
+// saved only elsewhere adds this workspace.
 describe("rootSaving", () => {
-  const saved = { workspace: ["/src/lib", "/src/both"], machine: ["/src/odoo", "/src/both"], missing: [] };
+  const HERE = "file:///ws/here" as WorkspaceId;
+  const OTHER = "file:///ws/other" as WorkspaceId;
+  const saved = {
+    entries: [
+      { path: "/src/lib", workspaces: [HERE] },
+      { path: "/src/odoo", workspaces: "auto" as const },
+      { path: "/src/two", workspaces: [HERE, OTHER] },
+      { path: "/src/not-here", workspaces: { except: [HERE] } },
+      { path: "/src/there", workspaces: [OTHER] },
+    ],
+    missing: [],
+  };
 
-  it("a saved root names its scope — this workspace first when both hold it", () => {
-    expect(rootSaving("/src/lib", saved)).toEqual({ kind: "saved", label: "saved · this workspace" });
-    expect(rootSaving("/src/odoo", saved)).toEqual({ kind: "saved", label: "saved · every workspace" });
-    expect(rootSaving("/src/both", saved)).toEqual({ kind: "saved", label: "saved · this workspace" });
+  it("a root saved for this workspace says where it is saved", () => {
+    expect(rootSaving("/src/lib", saved, HERE)).toEqual({ kind: "saved", label: "saved · this workspace" });
+    expect(rootSaving("/src/odoo", saved, HERE)).toEqual({ kind: "saved", label: "saved · every workspace" });
+    expect(rootSaving("/src/two", saved, HERE)).toEqual({ kind: "saved", label: "saved · this and 1 other workspace" });
   });
 
-  it("an unsaved root offers the save; this workspace only where a folder is open", () => {
-    expect(rootSaving("/elsewhere", saved)).toEqual({ kind: "unsaved", workspaceOpen: true });
-    expect(rootSaving("/elsewhere", { workspace: null, machine: [], missing: [] })).toEqual({ kind: "unsaved", workspaceOpen: false });
-    expect(rootSaving("/src/odoo", { workspace: null, machine: ["/src/odoo"], missing: [] })).toEqual({
-      kind: "saved",
-      label: "saved · every workspace",
-    });
+  it("an unsaved root offers the save — as does one saved only elsewhere; this workspace only where one is open", () => {
+    expect(rootSaving("/elsewhere", saved, HERE)).toEqual({ kind: "unsaved", workspaceOpen: true });
+    expect(rootSaving("/src/not-here", saved, HERE)).toEqual({ kind: "unsaved", workspaceOpen: true });
+    expect(rootSaving("/src/there", saved, HERE)).toEqual({ kind: "unsaved", workspaceOpen: true });
+    expect(rootSaving("/elsewhere", saved, null)).toEqual({ kind: "unsaved", workspaceOpen: false });
+    expect(rootSaving("/src/odoo", saved, null)).toEqual({ kind: "saved", label: "saved · every workspace" });
+    expect(rootSaving("/src/not-here", saved, null)).toEqual({ kind: "saved", label: "saved · every workspace but 1 other" });
   });
 });

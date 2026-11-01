@@ -46,7 +46,7 @@ async function machine(resolves = true) {
     preferences: new PreferencesStore(kv),
     machineRules: new MachineRulesStore(kv),
     machineWriteScope: new MachineWriteScopeStore(kv),
-    machineSavedRoots: new SavedRootsStore(kv, "machine"),
+    savedRoots: new SavedRootsStore(kv),
   };
   const targets: ImportTargets = {
     agents: {
@@ -57,7 +57,7 @@ async function machine(resolves = true) {
     preferences: stores.preferences,
     machineRules: stores.machineRules,
     machineWriteScope: stores.machineWriteScope,
-    machineSavedRoots: stores.machineSavedRoots,
+    savedRoots: stores.savedRoots,
   };
   const local = () =>
     localConfiguration({
@@ -93,7 +93,7 @@ describe("landing an import", () => {
     expect(await m.stores.mcpServerEnv.get("local")).toEqual({ TOKEN: "t-1" });
     expect(m.stores.preferences.get()).toMatchObject({ knobSource: "last-session", idleCloseMinutes: 45 });
     expect(m.stores.machineRules.get().commandRules).toEqual(read.machineCommandRules);
-    expect(m.stores.machineSavedRoots.list()).toEqual(["/home/me/notes"]);
+    expect(m.stores.savedRoots.list()).toEqual([{ path: "/home/me/notes", workspaces: "auto" }]);
   });
 
   // #129: a way back names a recipe — a downloaded one names the exporting
@@ -146,13 +146,13 @@ describe("landing an import", () => {
     const claude = read.agents.find((a) => a.id === "claude")!;
     const github = read.mcpServers.find((s) => s.id === "github")!;
     await m.stores.agentConfigs.add({ ...claude, id: "local-claude" as PatchbayAgentId });
-    await m.stores.mcpServerConfigs.add({ ...github, active: false });
+    await m.stores.mcpServerConfigs.add({ ...github, workspaces: [] });
     await m.stores.mcpServerTokens.set("github" as PatchbayMcpServerId, { accessToken: "signed-in-here" });
     const plan = planImport(read, await m.local(), here);
     await applyImport(read, plan, new Set(["mcpServer:local", "mcpServer:github"]), m.targets);
 
     expect(m.stores.mcpServerConfigs.get("local" as PatchbayMcpServerId)?.routing).toEqual(["local-claude"]);
-    expect(m.stores.mcpServerConfigs.get("github" as PatchbayMcpServerId)?.active).toBe(true);
+    expect(m.stores.mcpServerConfigs.get("github" as PatchbayMcpServerId)?.workspaces).toBe("auto");
     expect((await m.stores.mcpServerTokens.get("github" as PatchbayMcpServerId))?.accessToken).toBe("signed-in-here");
   });
 

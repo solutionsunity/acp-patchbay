@@ -228,6 +228,7 @@ export function agentViewState({ live }) {
     sessionUsage: {},
     contextChips: { s1: [longSelectionChip] }, sessionKnobs: { s1: [] }, promptQueue: { s1: [longQueuedPrompt] }, drafts: {},
     contextRoots: { s1: [] }, workspaceRoots: ["/ws"], liveSelection: null,
+    workspace: "file:///ws", savedRoots: { entries: [], missing: [] },
     openEditors: [{ file: "/ws/src/app.ts", dirty: false }, { file: "/ws/src/api.ts", dirty: true }],
     workspaceFiles: { query: "", files: [], dirs: [] },
     preferences,
@@ -333,6 +334,6 @@ export function settingsState() {
     ],
     sessionsActiveToday: 7, agentKnobs: {}, agentQuestions: {}, registryFetchedAt: "",
     wireLog: { active: false, until: null }, dataInventory: null, configImport: null, commandTest: null,
-    preferences,
+    preferences, workspace: "file:///ws", savedRoots: { entries: [], missing: [] },
   };
 }

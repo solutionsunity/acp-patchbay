@@ -17,11 +17,18 @@ export const STORAGE_KEYS = {
    * on such a version. Read once, to fill `agents` where it is empty. */
   agentsBefore090: "acpPatchbay.agents",
   lastKnobs: "acpPatchbay.lastKnobs",
-  mcpServers: "acpPatchbay.integrations",
+  mcpServers: "acpPatchbay.mcpServers",
+  /** The MCP servers as 0.88 and before kept them, each switched on or off
+   * everywhere — still written by a window on such a version. Read once, to
+   * fill `mcpServers` where it is empty. */
+  mcpServersBefore090: "acpPatchbay.integrations",
   preferences: "acpPatchbay.preferences",
   machineCommandRules: "acpPatchbay.machineCommandRules",
   machineWriteScope: "acpPatchbay.machineWriteScope",
-  machineSavedRoots: "acpPatchbay.machineSavedRoots",
+  savedRoots: "acpPatchbay.savedRootList",
+  /** The folders 0.88 and before saved for every workspace — read once, to
+   * fill `savedRoots` where it is empty. */
+  savedRootsBefore090: "acpPatchbay.machineSavedRoots",
   usedCapabilities: "acpPatchbay.usedCapabilities",
   authLocks: "acpPatchbay.authLocks",
   sessionContinuity: "acpPatchbay.sessionContinuity",
@@ -29,7 +36,10 @@ export const STORAGE_KEYS = {
   defaultAgentFolded: "acpPatchbay.defaultAgentFolded",
   legacyStateRecovery: "acpPatchbay.legacyStateRecovery",
   permissionRules: "acpPatchbay.permissionRules",
-  savedRoots: "acpPatchbay.savedRoots",
+  /** A workspace's own saved folders, as 0.88 and before kept them in its
+   * workspaceState — moved into `savedRoots`, for that workspace, the first
+   * time it opens on a later version. */
+  workspaceSavedRootsBefore090: "acpPatchbay.savedRoots",
   lastConnected: "acpPatchbay.lastConnected",
   lastActiveSession: "acpPatchbay.lastActiveSession",
 } as const;

@@ -15,6 +15,8 @@ import type { McpServerRoutingView, McpServerSourceView, McpServerWork } from ".
 import { connectKey, type McpServerLineOperations } from "./mcp-servers-store";
 import type { Queue } from "./queue";
 import type { PatchbayMcpServerId } from "../shared/ids";
+import type { Reach } from "../shared/reach";
+import type { WorkspaceId } from "../shared/workspace";
 
 export class McpServerGates {
   constructor(
@@ -30,27 +32,38 @@ export class McpServerGates {
 
   /** A curated entry connected with a pasted key under the name the user
    * gave it, then probed. Settles with the new server's id. */
-  connectWithKey(catalogId: string, name: string, token: string, url?: string): Promise<PatchbayMcpServerId> {
+  connectWithKey(
+    catalogId: string,
+    name: string,
+    token: string,
+    url: string | undefined,
+    workspaces: Reach<WorkspaceId>,
+  ): Promise<PatchbayMcpServerId> {
     return this.connected(
       this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-        this.store.connectCatalogWithKey(catalogId, name, token, url, signal),
+        this.store.connectCatalogWithKey(catalogId, name, token, url, workspaces, signal),
       ),
     );
   }
 
   /** A curated entry connected through its browser OAuth flow under the
    * name the user gave it. Settles with the new server's id. */
-  connectOAuth(catalogId: string, name: string, url?: string): Promise<PatchbayMcpServerId> {
+  connectOAuth(catalogId: string, name: string, url: string | undefined, workspaces: Reach<WorkspaceId>): Promise<PatchbayMcpServerId> {
     return this.connectLine.run(connectKey.catalog(catalogId), "connect", (signal) =>
-      this.store.connectCatalogOAuth(catalogId, name, url, signal),
+      this.store.connectCatalogOAuth(catalogId, name, url, workspaces, signal),
     );
   }
 
   /** A custom server added, then probed. Settles with its id. */
-  addCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): Promise<PatchbayMcpServerId> {
+  addCustom(
+    name: string,
+    source: McpServerSourceView,
+    routing: McpServerRoutingView,
+    workspaces: Reach<WorkspaceId>,
+  ): Promise<PatchbayMcpServerId> {
     return this.connected(
       this.connectLine.run(connectKey.custom(name), "connect", (signal) =>
-        this.store.addCustom(name, source, routing, signal),
+        this.store.addCustom(name, source, routing, workspaces, signal),
       ),
     );
   }
@@ -64,9 +77,9 @@ export class McpServerGates {
   /** The reviewed entries, each added in turn under the name the user gave
    * it (`names` in the review's order); one that fails is held as its
    * failure and the rest go on. */
-  async addImported(importId: number, names: readonly string[]): Promise<void> {
+  async addImported(importId: number, names: readonly string[], workspaces: Reach<WorkspaceId>): Promise<void> {
     for (const [i, { name, source }] of (await this.store.takeImport(importId)).entries()) {
-      await this.addCustom(names[i] ?? name, source, "auto").catch(() => {});
+      await this.addCustom(names[i] ?? name, source, "auto", workspaces).catch(() => {});
     }
   }
 

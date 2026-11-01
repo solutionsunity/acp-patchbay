@@ -126,8 +126,8 @@ export function App({ state }: { state: SettingsState }) {
           <RootsSection
             state={state}
             onAdd={(scope) => send({ kind: "pickSavedRoot", scope })}
-            onEdit={(replacing, scope) => send({ kind: "pickSavedRoot", scope, replacing })}
-            onRemove={(path, scope) => send({ kind: "unsaveRoot", path, scope })}
+            onEdit={(path) => send({ kind: "replaceSavedRoot", path })}
+            onRemove={(path) => send({ kind: "unsaveRoot", path })}
           />
         )}
         {section === "importExport" && (
@@ -142,17 +142,17 @@ export function App({ state }: { state: SettingsState }) {
         {section === "mcpServers" && (
           <McpServersSection
             state={state}
-            onConnectKey={(catalogId, name, token, url) =>
-              send({ kind: "connectCatalogKey", catalogId, name, token, url })
+            onConnectKey={(catalogId, name, token, url, workspaces) =>
+              send({ kind: "connectCatalogKey", catalogId, name, token, url, workspaces })
             }
-            onConnectOAuth={(catalogId, name, url) =>
-              send({ kind: "connectCatalogOAuth", catalogId, name, url })
+            onConnectOAuth={(catalogId, name, url, workspaces) =>
+              send({ kind: "connectCatalogOAuth", catalogId, name, url, workspaces })
             }
-            onAddCustom={(name, source, routing) =>
-              send({ kind: "addCustomMcpServer", name, source, routing })
+            onAddCustom={(name, source, routing, workspaces) =>
+              send({ kind: "addCustomMcpServer", name, source, routing, workspaces })
             }
             onImportJson={(json) => send({ kind: "importMcpServersJson", json })}
-            onAddImported={(importId, names) => send({ kind: "addImportedMcpServers", importId, names })}
+            onAddImported={(importId, names, workspaces) => send({ kind: "addImportedMcpServers", importId, names, workspaces })}
             onCancelImport={(importId) => send({ kind: "cancelMcpServersImport", importId })}
             onUpdateJson={(patchbayMcpServerId, json) =>
               send({ kind: "updateMcpServerJson", patchbayMcpServerId, json })
@@ -160,8 +160,8 @@ export function App({ state }: { state: SettingsState }) {
             onCancelConnect={(key) =>
               send({ kind: "cancelMcpServerConnect", key })
             }
-            onSetActive={(patchbayMcpServerId, active) =>
-              send({ kind: "setMcpServerActive", patchbayMcpServerId, active })
+            onSetWorkspaces={(patchbayMcpServerId, workspaces) =>
+              send({ kind: "setMcpServerWorkspaces", patchbayMcpServerId, workspaces })
             }
             onRemove={(patchbayMcpServerId) => send({ kind: "removeMcpServer", patchbayMcpServerId })}
             onSetRouting={(patchbayMcpServerId, routing) =>

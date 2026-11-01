@@ -34,7 +34,7 @@ export function ImportExportSection(props: {
   const details: Record<ExportPart, string> = {
     agents: `${count(state.agentConfigs.length, "agent")}, with their env values and composer choices`,
     mcpServers: `${count(state.mcpServers.length, "server")}, with their env values and API keys — a server signed in with OAuth needs a fresh connect`,
-    settings: `preferences, ${count(state.machineCommandRules.length, "machine-wide command rule")}, the machine-wide file writes, ${count(state.savedRoots.machine.length, "machine-wide saved root")}`,
+    settings: `preferences, ${count(state.machineCommandRules.length, "machine-wide command rule")}, the machine-wide file writes, ${count(state.savedRoots.entries.length, "saved root")} and where each is saved`,
   };
   const parts = (Object.entries(details) as [ExportPart, string][]).map(([id, detail]) => ({ id, detail }));
   const [picked, setPicked] = useState<ReadonlySet<ExportPart>>(new Set(parts.map((p) => p.id)));

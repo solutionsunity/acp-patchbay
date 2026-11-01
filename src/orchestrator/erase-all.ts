@@ -35,8 +35,7 @@ export interface EraseTargets {
   defaultAgentFold: Wipeable;
   lastActiveSession: Wipeable;
   preferences: Wipeable;
-  workspaceSavedRoots: Wipeable;
-  machineSavedRoots: Wipeable;
+  savedRoots: Wipeable;
   /** The preview and diff temp stashes: image previews and diff
    * snapshots are user content — "deletes everything patchbay ever
    * stored" includes them, not just the rows that referenced them. */
@@ -56,15 +55,17 @@ const ERASED_BY: Readonly<
   [STORAGE_KEYS.usedCapabilities]: "agents",
   [STORAGE_KEYS.authLocks]: "agents",
   [STORAGE_KEYS.mcpServers]: "mcpServers",
+  [STORAGE_KEYS.mcpServersBefore090]: "mcpServers",
   [STORAGE_KEYS.sessionContinuity]: "sessions",
   [STORAGE_KEYS.preferences]: "preferences",
   [STORAGE_KEYS.machineCommandRules]: "machineRules",
   [STORAGE_KEYS.machineWriteScope]: "machineWriteScope",
-  [STORAGE_KEYS.machineSavedRoots]: "machineSavedRoots",
+  [STORAGE_KEYS.savedRoots]: "savedRoots",
+  [STORAGE_KEYS.savedRootsBefore090]: "savedRoots",
   [STORAGE_KEYS.spawnRegistry]: "spawnRegistry",
   [STORAGE_KEYS.defaultAgentFolded]: "defaultAgentFold",
   [STORAGE_KEYS.permissionRules]: "permissionRules",
-  [STORAGE_KEYS.savedRoots]: "workspaceSavedRoots",
+  [STORAGE_KEYS.workspaceSavedRootsBefore090]: "savedRoots",
   [STORAGE_KEYS.lastConnected]: "lastConnected",
   [STORAGE_KEYS.lastActiveSession]: "lastActiveSession",
   [STORAGE_KEYS.legacyStateRecovery]: {

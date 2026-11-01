@@ -192,6 +192,7 @@ export function App({
         contextRoots={active !== null ? (state.contextRoots[active.id] ?? []) : []}
         workspaceRoots={state.workspaceRoots}
         savedRoots={state.savedRoots}
+        workspace={state.workspace}
         rootsControls={rootsControls({
           advertised: activeMatrix?.["session.additionalDirectories"]?.declared === true,
           resumeDeclared: activeMatrix?.["session.resume"]?.declared === true,

@@ -26,10 +26,12 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
   [STORAGE_KEYS.agentsBefore090]: { label: "Agent configs — as 0.88 kept them", scope: "machine", detail: counted("agent") },
   [STORAGE_KEYS.lastKnobs]: { label: "Composer knobs (last used)", scope: "machine", detail: counted("agent record") },
   [STORAGE_KEYS.mcpServers]: { label: "MCP server configs", scope: "machine", detail: counted("server") },
+  [STORAGE_KEYS.mcpServersBefore090]: { label: "MCP server configs — as 0.88 kept them", scope: "machine", detail: counted("server") },
   [STORAGE_KEYS.preferences]: { label: "Preferences", scope: "machine", detail: counted("preference set") },
   [STORAGE_KEYS.machineCommandRules]: { label: "Command rules — this machine", scope: "machine", detail: counted("rule") },
   [STORAGE_KEYS.machineWriteScope]: { label: "File writes — this machine", scope: "machine", detail: counted("place set") },
-  [STORAGE_KEYS.machineSavedRoots]: { label: "Saved roots — every workspace", scope: "machine", detail: counted("folder") },
+  [STORAGE_KEYS.savedRoots]: { label: "Saved roots", scope: "machine", detail: counted("folder") },
+  [STORAGE_KEYS.savedRootsBefore090]: { label: "Saved roots — as 0.88 kept them", scope: "machine", detail: counted("folder") },
   [STORAGE_KEYS.usedCapabilities]: { label: "Used-capability cache", scope: "machine", detail: counted("agent record") },
   [STORAGE_KEYS.authLocks]: { label: "Sign-outs witnessed", scope: "machine", detail: counted("agent") },
   [STORAGE_KEYS.sessionContinuity]: { label: "Sessions' saved state", scope: "machine", detail: counted("session") },
@@ -48,7 +50,11 @@ const ROWS: Record<StorageKey, { label: string; scope: "machine" | "workspace"; 
       return `${count(size(rules.commandRules), "rule")} · ${count(size(rules.writeScope), "file-write override")}`;
     },
   },
-  [STORAGE_KEYS.savedRoots]: { label: "Saved roots — this workspace", scope: "workspace", detail: counted("folder") },
+  [STORAGE_KEYS.workspaceSavedRootsBefore090]: {
+    label: "Saved roots — this workspace, as 0.88 kept them",
+    scope: "workspace",
+    detail: counted("folder"),
+  },
   [STORAGE_KEYS.lastConnected]: { label: "Agents running at the last close", scope: "workspace", detail: counted("agent") },
   [STORAGE_KEYS.lastActiveSession]: { label: "Last open session", scope: "workspace", detail: marked("one", "none") },
 };

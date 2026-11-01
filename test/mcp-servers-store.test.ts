@@ -22,6 +22,7 @@ import type { McpImportReviewView, McpServerConnectView, McpServerWork, Settings
 import type { OAuthUserAgent } from "../src/orchestrator/mcp-oauth";
 import { FakeOAuthProvider, fakeUserAgent } from "./support/fake-oauth-provider";
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../src/shared/ids";
+import type { WorkspaceId } from "../src/shared/workspace";
 import { SECRET_FAMILIES, STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 
 let provider: FakeOAuthProvider;
@@ -61,6 +62,8 @@ function envOf(server: import("@agentclientprotocol/sdk").McpServer): Record<str
 /** The directory the orchestrator launches agents in — the probe must run
  * custom-stdio servers in the same one. */
 const WORKSPACE_CWD = "/workspace/project";
+/** The workspace the window has open. */
+const HERE = "file:///workspace/project" as WorkspaceId;
 
 function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } = {}) {
   const events: SettingsEvent[] = [];
@@ -100,6 +103,7 @@ function harness(catalog: CatalogEntry[], opts: { userAgent?: OAuthUserAgent } =
       crossing: (value) => crossed.push(value),
     },
     WORKSPACE_CWD,
+    HERE,
     opts.userAgent ?? fakeUserAgent(),
     undefined,
     (target, signal) => probeFn(target, signal),
@@ -150,9 +154,31 @@ function failure(key: string, reason: RegExp) {
 }
 
 describe("McpServerConfigStore — saved records", () => {
+  it("the servers 0.88 kept are copied once to their own key — on everywhere stays on everywhere, off goes off everywhere", async () => {
+    const kv = new MemoryKV();
+    const stdio = { kind: "custom-stdio", command: "srv", args: [] };
+    const before = [
+      { id: "on", name: "On", source: stdio, routing: "auto", active: true, transport: "auto" },
+      { id: "off", name: "Off", source: stdio, routing: "auto", active: false, transport: "auto" },
+      { id: "unsaid", name: "Unsaid", source: stdio },
+    ];
+    await kv.update(STORAGE_KEYS.mcpServersBefore090, before);
+    expect(new McpServerConfigStore(kv).list().map((c) => [c.id, c.workspaces])).toEqual([
+      ["on", "auto"],
+      ["off", []],
+      ["unsaid", "auto"],
+    ]);
+    // A window still on 0.88 keeps its own copy, as it wrote it.
+    expect(kv.get(STORAGE_KEYS.mcpServersBefore090)).toEqual(before);
+    expect(JSON.stringify(kv.get(STORAGE_KEYS.mcpServers))).not.toContain("active");
+    // Copied once: a list this version keeps is never filled from it again.
+    await kv.update(STORAGE_KEYS.mcpServers, []);
+    expect(new McpServerConfigStore(kv).list()).toEqual([]);
+  });
+
   it("a server stored from the catalog under its old name reads as a catalog server — nothing dropped", async () => {
     const kv = new MemoryKV();
-    await kv.update(STORAGE_KEYS.mcpServers, [
+    await kv.update(STORAGE_KEYS.mcpServersBefore090, [
       { id: "old", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "oauth" } },
       { id: "own", name: "Mine", source: { kind: "custom-stdio", command: "srv", args: [] } },
     ]);
@@ -168,7 +194,7 @@ describe("McpServerConfigStore — saved records", () => {
   it("a name stored before names were cut to what agents keep is rewritten once, as agents already read it; one that then collides, or is the built-in's, gets a number", async () => {
     const kv = new MemoryKV();
     const stdio = { kind: "custom-stdio", command: "srv", args: [] };
-    await kv.update(STORAGE_KEYS.mcpServers, [
+    await kv.update(STORAGE_KEYS.mcpServersBefore090, [
       { id: "a", name: "GitHub 2", source: stdio },
       { id: "b", name: "My Files", source: stdio },
       { id: "c", name: "My_Files", source: stdio },
@@ -196,7 +222,7 @@ describe("McpServerConfigStore — saved records", () => {
 describe("McpServersStore — key connect (the v1 floor)", () => {
   it("stores the pasted key and upserts the config entry with authMode header", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "pasted-key-1");
+    const id = await h.gates.connectWithKey("svc", "Service", "pasted-key-1", undefined, "auto");
 
     expect((await h.tokens.get(id))?.accessToken).toBe("pasted-key-1");
     // the connect probed the server before it settled; published once
@@ -211,7 +237,8 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
         catalogId: "svc",
         command: undefined,
         connected: true,
-        active: true,
+        workspaces: "auto",
+        onHere: true,
         routing: "auto",
         transport: "auto",
         probe: {
@@ -237,10 +264,10 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
 
   it("a per-account entry (userUrl) requires the user's endpoint and persists it", async () => {
     const h = harness([entry({ url: "", userUrl: true })]);
-    await expect(h.gates.connectWithKey("svc", "Service", "k")).rejects.toThrow(/endpoint URL/);
+    await expect(h.gates.connectWithKey("svc", "Service", "k", undefined, "auto")).rejects.toThrow(/endpoint URL/);
     expect(await published(h)).toEqual([failure("catalog:svc", /endpoint URL/)]);
 
-    const id = await h.gates.connectWithKey("svc", "Service", "k", "https://mine.example.test/mcp");
+    const id = await h.gates.connectWithKey("svc", "Service", "k", "https://mine.example.test/mcp", "auto");
     expect(h.configs.get(id)?.source).toMatchObject({
       url: "https://mine.example.test/mcp",
     });
@@ -250,7 +277,7 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
 
   it("refuses on an entry with no key mode", async () => {
     const h = harness([entry({ auth: { header: null, oauth: false } })]);
-    await expect(h.gates.connectWithKey("svc", "Service", "k")).rejects.toThrow(/no API-key mode/);
+    await expect(h.gates.connectWithKey("svc", "Service", "k", undefined, "auto")).rejects.toThrow(/no API-key mode/);
     expect(await published(h)).toEqual([failure("catalog:svc", /no API-key mode/)]);
     expect(h.storedKeys).toEqual([]);
   });
@@ -259,7 +286,7 @@ describe("McpServersStore — key connect (the v1 floor)", () => {
 describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)", () => {
   it("connects with only the entry's URL and captures refresh context alongside the token", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectOAuth("svc", "Service");
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, "auto");
 
     const stored = await h.tokens.get(id);
     expect(stored).toMatchObject({
@@ -274,14 +301,14 @@ describe("McpServersStore — OAuth connect (MCP-spec, discovery + DCR + PKCE)",
   it("gated DCR fails labeled — pitfall §2, pointing at the key path", async () => {
     provider.gateDcr = true;
     const h = harness([entry()]);
-    await expect(h.gates.connectOAuth("svc", "Service")).rejects.toThrow(/API-key path/);
+    await expect(h.gates.connectOAuth("svc", "Service", undefined, "auto")).rejects.toThrow(/API-key path/);
     expect(await published(h)).toEqual([failure("catalog:svc", /API-key path/)]);
     expect(h.storedKeys).toEqual([]);
   });
 
   it("refuses on an entry without an OAuth mode", async () => {
     const h = harness([entry({ auth: { header: { headerName: "Authorization", valuePrefix: "Bearer ", hint: "", keyUrl: "" }, oauth: false } })]);
-    await expect(h.gates.connectOAuth("svc", "Service")).rejects.toThrow(/no OAuth mode/);
+    await expect(h.gates.connectOAuth("svc", "Service", undefined, "auto")).rejects.toThrow(/no OAuth mode/);
     expect(await published(h)).toEqual([failure("catalog:svc", /no OAuth mode/)]);
   });
 });
@@ -292,7 +319,7 @@ describe("McpServersStore — custom escape hatch", () => {
     const id = await h.gates.addCustom(
       "Local Tool",
       { kind: "custom-stdio", command: "echo", args: ["hi"], env: {} },
-      "auto",
+      "auto", "auto",
     );
     await h.manager.refresh();
     const changed = lastEvent(h.events, "mcpServersChanged");
@@ -315,7 +342,7 @@ describe("McpServersStore — custom escape hatch", () => {
         valuePrefix: "",
         token: "secret-abc",
       },
-      "auto",
+      "auto", "auto",
     );
     expect((await h.tokens.get(id))?.accessToken).toBe("secret-abc");
     const serialized = JSON.stringify(h.configs.list());
@@ -328,7 +355,7 @@ describe("McpServersStore — custom escape hatch", () => {
     const id = await h.gates.addCustom(
       "My OAuth",
       { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" },
-      "auto",
+      "auto", "auto",
     );
     expect((await h.tokens.get(id))?.accessToken).toBe("access-1");
   });
@@ -338,10 +365,10 @@ describe("McpServersStore — custom escape hatch", () => {
     const header = await h.gates.addCustom(
       "Keyed",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
-      "auto",
+      "auto", "auto",
     );
-    const oauth = await h.gates.addCustom("Signed in", { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" }, "auto");
-    const stdio = await h.gates.addCustom("Local", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    const oauth = await h.gates.addCustom("Signed in", { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" }, "auto", "auto");
+    const stdio = await h.gates.addCustom("Local", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto", "auto");
 
     expect(await h.manager.headerKey(header)).toBe("secret-abc");
     expect((await h.tokens.get(oauth))?.accessToken).toBe("access-1");
@@ -352,7 +379,7 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("disconnect is remove — the full clear; the catalog entry stays", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "static-key");
+    const id = await h.gates.connectWithKey("svc", "Service", "static-key", undefined, "auto");
     expect(h.configs.get(id)).toBeDefined();
 
     await h.gates.remove(id);
@@ -362,28 +389,62 @@ describe("McpServersStore — custom escape hatch", () => {
     expect(h.manager.catalogViews().some((r) => r.id === "svc")).toBe(true);
   });
 
-  it("inactive keeps config and credential but reaches no agent until toggled back", async () => {
+  it("off in this workspace keeps config and credential but reaches no agent here until switched back", async () => {
     const h = harness([]);
     const id = await h.gates.addCustom(
       "Mute Me",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "secret-abc" },
-      ["agent-a"],
+      ["agent-a" as PatchbayAgentId], "auto",
     );
     expect((await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers).toHaveLength(1);
 
-    await h.manager.setActive(id, false);
+    expect(await h.manager.setWorkspaces(id, ["file:///elsewhere" as WorkspaceId])).toBe(false);
     expect((await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers).toEqual([]);
-    expect(await h.tokens.get(id)).not.toBeNull(); // credential intact — muted, not disconnected
+    expect(await h.tokens.get(id)).not.toBeNull(); // credential intact — off here, not disconnected
 
-    await h.manager.setActive(id, true);
+    expect(await h.manager.setWorkspaces(id, { except: ["file:///elsewhere" as WorkspaceId] })).toBe(true);
     expect((await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers).toHaveLength(1);
+  });
+
+  it("a session gets a server only where it is on — in this workspace and routed to the agent, both", async () => {
+    const h = harness([]);
+    const stdio = { kind: "custom-stdio", command: "srv", args: [], env: {} } as const;
+    await h.gates.addCustom("Here", stdio, "auto", [HERE]);
+    await h.gates.addCustom("There", stdio, "auto", ["file:///elsewhere" as WorkspaceId]);
+    await h.gates.addCustom("Not here", stdio, "auto", { except: [HERE] });
+    await h.gates.addCustom("Here, other agent", stdio, ["agent-b" as PatchbayAgentId], [HERE]);
+    expect((await configuredFor(h, "agent-a" as PatchbayAgentId)).servers.map((s) => s.name)).toEqual(["Here"]);
+    const changed = lastEvent(h.events, "mcpServersChanged");
+    expect(changed?.kind === "mcpServersChanged" && changed.servers.map((s) => [s.name, s.onHere])).toEqual([
+      ["Here", true],
+      ["There", false],
+      ["Not_here", false],
+      ["Here__other_agent", true],
+    ]);
+  });
+
+  it("a stdio server's command never runs where the server is off — not at its add, not on a probe", async () => {
+    const h = harness([]);
+    const id = await h.gates.addCustom("Elsewhere", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto", [
+      "file:///elsewhere" as WorkspaceId,
+    ]);
+    await h.gates.probe(id);
+    expect(h.probed).toEqual([]);
+    // Switched on here: the user's act, and only now does it run.
+    expect(await h.manager.setWorkspaces(id, [HERE])).toBe(true);
+    await h.gates.probe(id);
+    expect(h.probed).toEqual([expect.objectContaining({ kind: "stdio", command: "srv", cwd: WORKSPACE_CWD })]);
+    // A remote server is no command of this workspace's: it is read anywhere.
+    const remote = await h.gates.addCustom("Remote", { kind: "custom-http", url: "https://example.test/mcp", authType: "none" }, "auto", []);
+    expect(h.probed.at(-1)).toEqual(expect.objectContaining({ kind: "http", url: "https://example.test/mcp" }));
+    expect(remote).toBeDefined();
   });
 
   it("a failed custom OAuth add stores nothing — no stranded credential-less record", async () => {
     const h = harness([]);
     provider.denyConsent = true; // user rejects in the browser
     await expect(
-      h.gates.addCustom("OAuth Fail", { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" }, "auto"),
+      h.gates.addCustom("OAuth Fail", { kind: "custom-http", url: provider.mcpUrl, authType: "oauth" }, "auto", "auto"),
     ).rejects.toThrow();
     expect(h.configs.list()).toEqual([]);
     expect(h.storedKeys).toEqual([]);
@@ -393,7 +454,7 @@ describe("McpServersStore — custom escape hatch", () => {
   it("a blank key on a custom header add fails labeled, storing nothing", async () => {
     const h = harness([]);
     await expect(
-      h.gates.addCustom("No Key", { kind: "custom-http", url: "https://example.test/mcp", authType: "header" }, "auto"),
+      h.gates.addCustom("No Key", { kind: "custom-http", url: "https://example.test/mcp", authType: "header" }, "auto", "auto"),
     ).rejects.toThrow(/key is empty/);
     expect(h.configs.list()).toEqual([]);
     expect(h.storedKeys).toEqual([]);
@@ -402,7 +463,7 @@ describe("McpServersStore — custom escape hatch", () => {
 
   it("remove deletes both the token and the config entry", async () => {
     const h = harness([]);
-    const id = await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    const id = await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto", "auto");
     await h.gates.remove(id);
     expect(h.configs.list()).toEqual([]);
   });
@@ -411,13 +472,13 @@ describe("McpServersStore — custom escape hatch", () => {
 describe("McpServersStore — routing and mcpServers", () => {
   it("auto reaches every agent; an explicit list pins exactly; except narrows", async () => {
     const h = harness([]);
-    await h.gates.addCustom("Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Auto Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto", "auto");
     await h.gates.addCustom("Pinned Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, [
-      "agent-b",
-    ]);
+      "agent-b" as PatchbayAgentId,
+    ], "auto");
     await h.gates.addCustom("Except Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, {
-      except: ["agent-a"],
-    });
+      except: ["agent-a" as PatchbayAgentId],
+    }, "auto");
 
     const agentA = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
     expect(agentA.map((s) => s.name)).toEqual(["Auto_Tool"]);
@@ -434,7 +495,7 @@ describe("McpServersStore — routing and mcpServers", () => {
         auth: { header: { headerName: "X-Goog-Api-Key", valuePrefix: "", hint: "", keyUrl: "" }, oauth: false },
       }),
     ]);
-    await h.gates.connectWithKey("stitch", "Stitch", "goog-key");
+    await h.gates.connectWithKey("stitch", "Stitch", "goog-key", undefined, "auto");
 
     const servers = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
     expect(servers).toHaveLength(1);
@@ -451,7 +512,7 @@ describe("McpServersStore — routing and mcpServers", () => {
         auth: { header: { headerName: "X-Custom", valuePrefix: "", hint: "", keyUrl: "" }, oauth: true },
       }),
     ]);
-    await h.gates.connectOAuth("svc", "Service");
+    await h.gates.connectOAuth("svc", "Service", undefined, "auto");
 
     const servers = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
     const env = envOf(servers[0]!);
@@ -461,7 +522,7 @@ describe("McpServersStore — routing and mcpServers", () => {
 
   it("a per-account entry's user-supplied URL is what reaches the bridge", async () => {
     const h = harness([entry({ id: "acct", url: "", userUrl: true })]);
-    await h.gates.connectWithKey("acct", "Service", "k", "https://mine.example.test/mcp");
+    await h.gates.connectWithKey("acct", "Service", "k", "https://mine.example.test/mcp", "auto");
     const servers = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
     const env = envOf(servers[0]!);
     expect(env.ACP_PATCHBAY_MCP_SERVER_URL).toBe("https://mine.example.test/mcp");
@@ -475,7 +536,7 @@ describe("McpServersStore — routing and mcpServers", () => {
       name: "Service",
       source: { kind: "catalog", catalogId: "svc", authMode: "header" },
       routing: "auto",
-      active: true,
+      workspaces: "auto",
       transport: "auto",
     });
     const servers = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
@@ -484,9 +545,9 @@ describe("McpServersStore — routing and mcpServers", () => {
 
   it("setRouting persists a new explicit agent list", async () => {
     const h = harness([]);
-    const id = await h.gates.addCustom("T1", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
-    await h.manager.setRouting(id, ["agent-x"]);
-    expect(h.configs.get(id)?.routing).toEqual(["agent-x"]);
+    const id = await h.gates.addCustom("T1", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto", "auto");
+    await h.manager.setRouting(id, ["agent-x" as PatchbayAgentId]);
+    expect(h.configs.get(id)?.routing).toEqual(["agent-x" as PatchbayAgentId]);
   });
 
   it("a custom-stdio command line is parsed quote-aware, never stored as one executable string", async () => {
@@ -494,7 +555,7 @@ describe("McpServersStore — routing and mcpServers", () => {
     const id = await h.gates.addCustom(
       "Srv",
       { kind: "custom-stdio", command: 'npx some-server --root "/tmp/my dir"', args: [], env: {} },
-      "auto",
+      "auto", "auto",
     );
     const stored = h.configs.get(id)!;
     expect(stored.source).toMatchObject({
@@ -512,7 +573,7 @@ describe("McpServersStore — routing and mcpServers", () => {
     const id = await h.gates.addCustom(
       "Keyed",
       { kind: "custom-stdio", command: "srv", args: [], env: { SRV_API_KEY: "sk-secret" } },
-      "auto",
+      "auto", "auto",
     );
     // config record carries no env at all
     expect("env" in (h.configs.get(id)!.source as object)).toBe(false);
@@ -529,7 +590,7 @@ describe("McpServersStore — routing and mcpServers", () => {
   it("an unterminated quote in a custom-stdio line fails labeled, storing nothing", async () => {
     const h = harness([]);
     await expect(
-      h.gates.addCustom("Bad", { kind: "custom-stdio", command: 'npx "broken', args: [], env: {} }, "auto"),
+      h.gates.addCustom("Bad", { kind: "custom-stdio", command: 'npx "broken', args: [], env: {} }, "auto", "auto"),
     ).rejects.toThrow(/quote/);
     expect(h.configs.list()).toEqual([]);
     expect(await published(h)).toEqual([failure("custom:Bad", /quote/)]);
@@ -539,7 +600,7 @@ describe("McpServersStore — routing and mcpServers", () => {
 describe("McpServersStore — http passthrough (prompt.image mechanics)", () => {
   it("an agent declaring mcp.http gets a type:http entry with the credential in headers", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "key-9");
+    const id = await h.gates.connectWithKey("svc", "Service", "key-9", undefined, "auto");
 
     const { servers, given } = await configuredFor(h, "agent-a" as PatchbayAgentId, true);
     expect(servers).toEqual([
@@ -555,7 +616,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("transport 'bridge' pins the stdio bridge even for a declaring agent (the escape hatch)", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "key-9");
+    const id = await h.gates.connectWithKey("svc", "Service", "key-9", undefined, "auto");
     await h.manager.setTransport(id, "bridge");
 
     const { servers, given } = await configuredFor(h, "agent-a" as PatchbayAgentId, true);
@@ -568,7 +629,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("a non-declaring agent rides the bridge regardless of transport 'auto'", async () => {
     const h = harness([entry()]);
-    await h.gates.connectWithKey("svc", "Service", "key-9");
+    await h.gates.connectWithKey("svc", "Service", "key-9", undefined, "auto");
 
     const servers = (await configuredFor(h, "agent-a" as PatchbayAgentId, false)).servers;
     expect(servers).toHaveLength(1);
@@ -577,7 +638,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 
   it("custom-stdio is handed through as-is either way", async () => {
     const h = harness([]);
-    const id = await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto");
+    const id = await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "echo", args: [], env: {} }, "auto", "auto");
 
     const { servers, given } = await configuredFor(h, "agent-a" as PatchbayAgentId, true);
     expect(servers).toHaveLength(1);
@@ -589,7 +650,7 @@ describe("McpServersStore — http passthrough (prompt.image mechanics)", () => 
 describe("McpServersStore — one composition of a session's set", () => {
   it("opens with the built-in editor server, carries the attach's token, and registers every crossing value for redaction", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "key-9");
+    const id = await h.gates.connectWithKey("svc", "Service", "key-9", undefined, "auto");
     const { servers, given } = await h.manager.mcpServersFor("agent-a" as PatchbayAgentId, "ctx-7", true);
     expect(servers[0]).toEqual({
       name: "patchbay",
@@ -610,7 +671,7 @@ describe("McpServersStore — one composition of a session's set", () => {
 
   it("every server patchbay runs itself carries ELECTRON_RUN_AS_NODE — an agent that filters its environment would launch the editor", async () => {
     const h = harness([entry()]);
-    await h.gates.connectWithKey("svc", "Service", "key-9");
+    await h.gates.connectWithKey("svc", "Service", "key-9", undefined, "auto");
     const { servers } = await h.manager.mcpServersFor("agent-a" as PatchbayAgentId, "ctx-7", false);
     const own = servers.filter((s) => "command" in s && s.command === process.execPath);
     expect(own.map((s) => s.name)).toEqual(["patchbay", "Service"]);
@@ -619,7 +680,7 @@ describe("McpServersStore — one composition of a session's set", () => {
 
   it("no configured server takes the built-in's name", async () => {
     const h = harness([]);
-    await h.gates.addCustom("patchbay", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
+    await h.gates.addCustom("patchbay", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto", "auto");
     expect(h.configs.list().map((c) => c.name)).toEqual(["patchbay-2"]);
   });
 });
@@ -627,7 +688,7 @@ describe("McpServersStore — one composition of a session's set", () => {
 describe("McpServersStore — connect-time tool probe", () => {
   it("connect kicks a probe with the resolved endpoint and fresh credential", async () => {
     const h = harness([entry()]);
-    await h.gates.connectWithKey("svc", "Service", "key-7");
+    await h.gates.connectWithKey("svc", "Service", "key-7", undefined, "auto");
 
     expect(h.probed).toEqual([
       {
@@ -643,7 +704,7 @@ describe("McpServersStore — connect-time tool probe", () => {
     await h.gates.addCustom(
       "Local Tool",
       { kind: "custom-stdio", command: "echo", args: ["hi"], env: { MY_KEY: "v1" } },
-      "auto",
+      "auto", "auto",
     );
 
     expect(h.probed).toEqual([
@@ -656,7 +717,7 @@ describe("McpServersStore — connect-time tool probe", () => {
     h.setProbeFn(async () => {
       throw new Error("Connection closed");
     });
-    await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Local Tool", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto", "auto");
     await h.manager.refresh();
 
     const failed = lastEvent(h.events, "mcpServersChanged");
@@ -674,7 +735,7 @@ describe("McpServersStore — connect-time tool probe", () => {
       h.probed.push(target);
       return { serverName: "fake-server", serverVersion: "1.0", tools: [] };
     });
-    const id = await h.gates.connectWithKey("svc", "Service", "key-7");
+    const id = await h.gates.connectWithKey("svc", "Service", "key-7", undefined, "auto");
     await h.manager.refresh();
 
     const failed = lastEvent(h.events, "mcpServersChanged");
@@ -776,7 +837,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     ]);
     expect(await published(h)).toEqual([failure("import:broken", /neither a command entry nor a url entry/)]);
 
-    await h.gates.addImported(pending!.id, ["files", "remote"]);
+    await h.gates.addImported(pending!.id, ["files", "remote"], "auto");
     expect(named(h, "files")?.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
@@ -806,7 +867,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
         },
       }),
     );
-    await h.gates.addImported((await review(h))!.id, ["keyed", "bearer", "chosen"]);
+    await h.gates.addImported((await review(h))!.id, ["keyed", "bearer", "chosen"], "auto");
     expect(named(h, "keyed")?.source).toMatchObject({ headerName: "X-Api-Key", valuePrefix: "" });
     expect(named(h, "bearer")?.source).toMatchObject({ headerName: "Authorization", valuePrefix: "Bearer " });
     expect(named(h, "chosen")?.source).toMatchObject({ headerName: "X-Api-Key", valuePrefix: "Token " });
@@ -818,7 +879,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     await h.gates.importJson(doc("first"));
     const stale = (await review(h))!.id;
     await h.gates.importJson(doc("second"));
-    await h.gates.addImported(stale, ["first"]);
+    await h.gates.addImported(stale, ["first"], "auto");
     expect(h.configs.list()).toEqual([]);
     expect((await review(h))?.entries.map((e) => e.name)).toEqual(["second"]);
 
@@ -829,8 +890,8 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("a name another server holds gets a number — nothing is overwritten, and no agent sees two of one name", async () => {
     const h = harness([]);
-    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
-    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
+    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto", "auto");
+    await h.gates.addCustom("Tool", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto", "auto");
     expect(named(h, "Tool")?.source).toMatchObject({ command: "a" });
     expect(named(h, "Tool-2")?.source).toMatchObject({ command: "b" });
     const { servers } = await configuredFor(h, "agent-a" as PatchbayAgentId, false);
@@ -839,8 +900,8 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("a name goes to agents as they would keep it — two names an agent would merge are two names here", async () => {
     const h = harness([]);
-    await h.gates.addCustom("my server", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto");
-    await h.gates.addCustom("my_server", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto");
+    await h.gates.addCustom("my server", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto", "auto");
+    await h.gates.addCustom("my_server", { kind: "custom-stdio", command: "b", args: [], env: {} }, "auto", "auto");
     const { servers } = await configuredFor(h, "agent-a" as PatchbayAgentId, false);
     expect(servers.map((sv) => sv.name)).toEqual(["my_server", "my_server-2"]);
   });
@@ -848,15 +909,15 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
   it("a blank name is refused — nothing is stored", async () => {
     const h = harness([]);
     await expect(
-      h.gates.addCustom("   ", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto"),
+      h.gates.addCustom("   ", { kind: "custom-stdio", command: "a", args: [], env: {} }, "auto", "auto"),
     ).rejects.toThrow(/name is empty/);
     expect(h.configs.list()).toEqual([]);
   });
 
   it("a curated entry connects more than once — two accounts, two servers, each its own (#58)", async () => {
     const h = harness([entry()]);
-    const first = await h.gates.connectWithKey("svc", "Service", "key-work");
-    const second = await h.gates.connectWithKey("svc", "Service", "key-home");
+    const first = await h.gates.connectWithKey("svc", "Service", "key-work", undefined, "auto");
+    const second = await h.gates.connectWithKey("svc", "Service", "key-home", undefined, "auto");
     expect(first).not.toBe(second);
     expect([h.configs.get(first)?.name, h.configs.get(second)?.name]).toEqual(["Service", "Service-2"]);
     expect([(await h.tokens.get(first))?.accessToken, (await h.tokens.get(second))?.accessToken]).toEqual([
@@ -869,8 +930,8 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("a curated connect stores the name the user gave it, as agents keep it", async () => {
     const h = harness([entry()]);
-    const key = await h.gates.connectWithKey("svc", "Service work", "key-work");
-    const oauth = await h.gates.connectOAuth("svc", "service-home");
+    const key = await h.gates.connectWithKey("svc", "Service work", "key-work", undefined, "auto");
+    const oauth = await h.gates.connectOAuth("svc", "service-home", undefined, "auto");
     expect([h.configs.get(key)?.name, h.configs.get(oauth)?.name]).toEqual(["Service_work", "service-home"]);
   });
 
@@ -879,14 +940,14 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     const filesId = await h.gates.addCustom(
       "My Files",
       { kind: "custom-stdio", command: "npx", args: ["-y", "files-server"], env: { FILES_KEY: "sk-1" } },
-      "auto",
+      "auto", "auto",
     );
     const remoteId = await h.gates.addCustom(
       "Remote",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k" },
-      "auto",
+      "auto", "auto",
     );
-    const curatedId = await h.gates.connectWithKey("svc", "Service", "pasted-key-1");
+    const curatedId = await h.gates.connectWithKey("svc", "Service", "pasted-key-1", undefined, "auto");
 
     const files = JSON.parse((await h.manager.exportJson(filesId))!);
     expect(files).toEqual({
@@ -909,7 +970,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     const fresh = harness([]);
     await fresh.gates.importJson(JSON.stringify(files));
     const pending = (await review(fresh))!;
-    await fresh.gates.addImported(pending.id, pending.entries.map((e) => e.name));
+    await fresh.gates.addImported(pending.id, pending.entries.map((e) => e.name), "auto");
     expect(named(fresh, "My_Files")?.source).toMatchObject({
       kind: "custom-stdio",
       command: "npx",
@@ -921,7 +982,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("an OAuth-minted token never rides editJson or Copy — only what the owner typed does (issue #12)", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectOAuth("svc", "Service");
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, "auto");
     const json = (await h.manager.exportJson(id))!;
     expect(JSON.parse(json).mcpServers.Service).toEqual({ url: provider.mcpUrl, authType: "oauth" });
     expect(json).not.toContain((await h.tokens.get(id))!.accessToken);
@@ -934,7 +995,7 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     const id = await h.gates.addCustom(
       "Remote",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", token: "k1" },
-      "auto",
+      "auto", "auto",
     );
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
@@ -953,12 +1014,12 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     const id = await h.gates.addCustom(
       "Files",
       { kind: "custom-stdio", command: "files-server", args: [], env: { FILES_KEY: "sk-1" } },
-      "auto",
+      "auto", "auto",
     );
     const keyed = await h.gates.addCustom(
       "Remote",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", token: "k1" },
-      "auto",
+      "auto", "auto",
     );
     await h.manager.eraseAll();
     expect(h.configs.list()).toEqual([]);
@@ -971,12 +1032,12 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
     const editable = await h.gates.addCustom(
       "Editable",
       { kind: "custom-stdio", command: "srv", args: ["--x"], env: { KEEP: "old", GONE: "bye", SWAP: "1" } },
-      "auto",
+      "auto", "auto",
     );
     const keyed = await h.gates.addCustom(
       "Keyed",
       { kind: "custom-http", url: "https://example.test/mcp", authType: "header", headerName: "X-Key", valuePrefix: "", token: "k1" },
-      "auto",
+      "auto", "auto",
     );
     await h.manager.refresh();
     const views = lastEvent(h.events, "mcpServersChanged");
@@ -1009,9 +1070,9 @@ describe("McpServersStore — JSON import and edit (the well-known mcpServers sh
 
   it("an agent's removal leaves every reach list that named it", async () => {
     const h = harness([]);
-    const pinned = await h.gates.addCustom("Pinned", { kind: "custom-stdio", command: "a", args: [], env: {} }, ["agent-a", "agent-b"]);
-    const except = await h.gates.addCustom("Except", { kind: "custom-stdio", command: "b", args: [], env: {} }, { except: ["agent-a"] });
-    const auto = await h.gates.addCustom("Auto", { kind: "custom-stdio", command: "c", args: [], env: {} }, "auto");
+    const pinned = await h.gates.addCustom("Pinned", { kind: "custom-stdio", command: "a", args: [], env: {} }, ["agent-a" as PatchbayAgentId, "agent-b" as PatchbayAgentId], "auto");
+    const except = await h.gates.addCustom("Except", { kind: "custom-stdio", command: "b", args: [], env: {} }, { except: ["agent-a" as PatchbayAgentId] }, "auto");
+    const auto = await h.gates.addCustom("Auto", { kind: "custom-stdio", command: "c", args: [], env: {} }, "auto", "auto");
     await h.manager.forgetAgent("agent-a" as PatchbayAgentId);
     expect(h.configs.get(pinned)?.routing).toEqual(["agent-b"]);
     expect(h.configs.get(except)?.routing).toEqual({ except: [] });
@@ -1028,7 +1089,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
 
   it("a connect out shows running; told to stop, it stores nothing and leaves no failure", async () => {
     const h = harness([entry()], { userAgent: silentTab });
-    const flow = h.gates.connectOAuth("svc", "Service").catch((err: unknown) => err);
+    const flow = h.gates.connectOAuth("svc", "Service", undefined, "auto").catch((err: unknown) => err);
     expect(await published(h)).toEqual([expect.objectContaining({ key: "catalog:svc", kind: "catalog", subject: "svc", status: "running" })]);
 
     await h.gates.cancel("catalog:svc");
@@ -1049,7 +1110,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
         },
       },
     });
-    const flow = h.gates.connectOAuth("svc", "Service").catch((err: unknown) => err);
+    const flow = h.gates.connectOAuth("svc", "Service", undefined, "auto").catch((err: unknown) => err);
     await vi.waitFor(() => expect(waitSignal).toBeDefined(), SETTLE);
     expect(waitSignal?.aborted).toBe(false);
     await h.gates.cancel("catalog:svc");
@@ -1060,8 +1121,8 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
   it("a second Connect while a card's browser flow is out is that flow — one tab, one outcome", async () => {
     let tabs = 0;
     const h = harness([entry()], { userAgent: { ...silentTab, authorize: () => (tabs++, new Promise(() => {})) } });
-    const first = h.gates.connectOAuth("svc", "Service").catch((err: unknown) => err);
-    const second = h.gates.connectOAuth("svc", "Service").catch((err: unknown) => err);
+    const first = h.gates.connectOAuth("svc", "Service", undefined, "auto").catch((err: unknown) => err);
+    const second = h.gates.connectOAuth("svc", "Service", undefined, "auto").catch((err: unknown) => err);
     await vi.waitFor(() => expect(tabs).toBeGreaterThan(0), SETTLE);
     await h.gates.cancel("catalog:svc");
     expect(await first).toMatchObject({ by: "cancel" });
@@ -1071,7 +1132,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
 
   it("a failure is held until dismissed", async () => {
     const h = harness([entry({ auth: { header: null, oauth: false } })]);
-    await h.gates.connectWithKey("svc", "Service", "k").catch(() => {});
+    await h.gates.connectWithKey("svc", "Service", "k", undefined, "auto").catch(() => {});
     expect(await published(h)).toEqual([failure("catalog:svc", /no API-key mode/)]);
     await h.gates.cancel("catalog:svc");
     expect(await published(h)).toEqual([]);
@@ -1079,7 +1140,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
 
   it("a probe on the line is the server's busy state; a second probe joins it", async () => {
     const h = harness([]);
-    const slow = await h.gates.addCustom("Slow", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    const slow = await h.gates.addCustom("Slow", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto", "auto");
     let release!: () => void;
     let probes = 0;
     h.setProbeFn(() => {
@@ -1101,7 +1162,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
 
   it("Remove cuts in: a probe still running is told to stop, keeps no outcome, and the server is gone", async () => {
     const h = harness([]);
-    const hung = await h.gates.addCustom("Hung", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto");
+    const hung = await h.gates.addCustom("Hung", { kind: "custom-stdio", command: "srv", args: [], env: {} }, "auto", "auto");
     let started = false;
     let told = false;
     h.setProbeFn((_target, signal) => {
@@ -1124,7 +1185,7 @@ describe("McpServersStore — the lines: a connect, a probe, a remove", () => {
 describe("McpServersStore — a bridge's credential", () => {
   it("refreshes a near-expiry OAuth token with the captured context", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectOAuth("svc", "Service");
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, "auto");
     // age the token into the refresh margin
     const stored = (await h.tokens.get(id))!;
     await h.tokens.set(id, { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
@@ -1136,7 +1197,7 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("asked at once by several, a near-expiry credential spends its refresh token once", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectOAuth("svc", "Service");
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, "auto");
     const stored = (await h.tokens.get(id))!;
     await h.tokens.set(id, { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
 
@@ -1151,7 +1212,7 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("a refresh that lands after the server was removed stores nothing", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectOAuth("svc", "Service");
+    const id = await h.gates.connectOAuth("svc", "Service", undefined, "auto");
     const stored = (await h.tokens.get(id))!;
     await h.tokens.set(id, { ...stored, expiresAt: new Date(Date.now() + 1000).toISOString() });
     const asked = h.manager.credentialFor(id, "agent-a" as PatchbayAgentId);
@@ -1162,7 +1223,7 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("returns a static key as-is — nothing to refresh, no expiry on our side", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "static-key");
+    const id = await h.gates.connectWithKey("svc", "Service", "static-key", undefined, "auto");
     expect((await h.manager.credentialFor(id, "agent-a" as PatchbayAgentId))?.accessToken).toBe("static-key");
   });
 
@@ -1173,17 +1234,17 @@ describe("McpServersStore — a bridge's credential", () => {
 
   it("answers only while the server reaches the agent — muting, re-routing or removing it reaches a running bridge (#72)", async () => {
     const h = harness([entry()]);
-    const id = await h.gates.connectWithKey("svc", "Service", "static-key");
+    const id = await h.gates.connectWithKey("svc", "Service", "static-key", undefined, "auto");
     expect((await h.manager.credentialFor(id, "agent-a" as PatchbayAgentId))?.accessToken).toBe("static-key");
 
-    await h.manager.setRouting(id, ["agent-b"]);
+    await h.manager.setRouting(id, ["agent-b" as PatchbayAgentId]);
     expect(await h.manager.credentialFor(id, "agent-a" as PatchbayAgentId)).toBeNull();
     expect((await h.manager.credentialFor(id, "agent-b" as PatchbayAgentId))?.accessToken).toBe("static-key");
 
-    await h.manager.setActive(id, false);
+    await h.manager.setWorkspaces(id, []);
     expect(await h.manager.credentialFor(id, "agent-b" as PatchbayAgentId)).toBeNull();
 
-    await h.manager.setActive(id, true);
+    await h.manager.setWorkspaces(id, "auto");
     await h.gates.remove(id);
     expect(await h.manager.credentialFor(id, "agent-b" as PatchbayAgentId)).toBeNull();
     expect(await h.manager.credentialFor("no-such-server" as PatchbayMcpServerId, "agent-b" as PatchbayAgentId)).toBeNull();

@@ -65,7 +65,15 @@ describe("reading a configuration file", () => {
       { kind: "command", pattern: "git status", verdict: "allow" },
       { kind: "command", pattern: "rm -rf *", verdict: "deny" },
     ]);
-    expect(r.machineSavedRoots).toEqual(["/home/me/notes"]);
+    // Written when a server was on or off everywhere, and a root saved for
+    // every workspace: each reads as the scope it was.
+    expect(r.mcpServers.map((s) => [s.id, s.workspaces])).toEqual([
+      ["keyed", "auto"],
+      ["local", []],
+      ["context7", "auto"],
+      ["github", "auto"],
+    ]);
+    expect(r.savedRoots).toEqual([{ path: "/home/me/notes", workspaces: "auto" }]);
     expect(r.secrets).toEqual({
       agents: { claude: { ANTHROPIC_API_KEY: "sk-1" } },
       mcpServers: { keyed: { env: {}, key: "secret-abc" }, local: { env: { TOKEN: "t-1" } }, context7: { env: {}, key: "ctx-key" } },
@@ -95,7 +103,7 @@ describe("reading a configuration file", () => {
   });
 
   it("a file from a newer patchbay reads, marked newer; one naming no version is never newer", () => {
-    const base = { patchbay: "configuration", state: { [STORAGE_KEYS.machineSavedRoots]: ["/a"] } };
+    const base = { patchbay: "configuration", state: { [STORAGE_KEYS.savedRootsBefore090]: ["/a"] } };
     expect(read({ ...base, patchbayVersion: "99.0.0" }).newer).toBe(true);
     expect(read({ ...base, patchbayVersion: PRODUCT.version }).newer).toBe(false);
     expect(read({ ...base, patchbayVersion: "0.1.0" }).newer).toBe(false);
@@ -108,7 +116,7 @@ describe("reading a configuration file", () => {
       patchbay: "configuration",
       state: {
         [STORAGE_KEYS.agentsBefore090]: [agent("a", { defaults: { mode: "plan" }, processPolicy: "per-session" })],
-        [STORAGE_KEYS.mcpServers]: [
+        [STORAGE_KEYS.mcpServersBefore090]: [
           { id: "s", name: "GitHub", source: { kind: "registry", registryId: "github", authMode: "oauth" }, routing: "auto", active: true, transport: "auto" },
         ],
         [STORAGE_KEYS.preferences]: { composerStats: false },
@@ -130,7 +138,7 @@ describe("reading a configuration file", () => {
         [STORAGE_KEYS.preferences]: { soundOnDone: true, knobSource: "sometimes", laterPreference: 1 },
         [STORAGE_KEYS.machineCommandRules]: [{ pattern: "ls", verdict: "allow" }, { pattern: "x", verdict: "maybe" }],
         [STORAGE_KEYS.machineWriteScope]: [{ location: { kind: "temp" }, on: true }, { location: { kind: "path", path: "rel" }, on: true }],
-        [STORAGE_KEYS.machineSavedRoots]: ["/a", 7],
+        [STORAGE_KEYS.savedRootsBefore090]: ["/a", 7],
         "acpPatchbay.laterThing": { x: 1 },
         [STORAGE_KEYS.usedCapabilities]: [],
       },
@@ -144,7 +152,7 @@ describe("reading a configuration file", () => {
     expect(r.preferences).toEqual({ soundOnDone: true });
     expect(r.machineCommandRules).toEqual([{ kind: "command", pattern: "ls", verdict: "allow" }]);
     expect(r.machineWriteScope).toEqual([{ location: { kind: "temp" }, on: true }]);
-    expect(r.machineSavedRoots).toEqual(["/a"]);
+    expect(r.savedRoots).toEqual([{ path: "/a", workspaces: "auto" }]);
     expect(r.secrets).toEqual({ agents: { a: { K: "v" } }, mcpServers: {} });
     expect(r.unread).toEqual([
       "an entry this version doesn't carry (acpPatchbay.laterThing)",

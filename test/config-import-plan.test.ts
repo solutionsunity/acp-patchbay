@@ -27,7 +27,7 @@ const empty: LocalConfiguration = {
   preferences: DEFAULT_PREFERENCES,
   machineCommandRules: [],
   machineWriteScope: [],
-  machineSavedRoots: [],
+  savedRoots: [],
 };
 
 // Everything found and present, unless a test says otherwise.
@@ -117,23 +117,23 @@ describe("an import's plan", () => {
     const plan = planImport(read, {
       ...empty,
       agents: [{ ...claude, id: "local-claude" as PatchbayAgentId }],
-      mcpServers: [{ ...local, id: "here" as PatchbayMcpServerId, routing: ["local-claude"] } satisfies McpServerConfig],
+      mcpServers: [{ ...local, id: "here" as PatchbayMcpServerId, routing: ["local-claude" as PatchbayAgentId] } satisfies McpServerConfig],
       serverSecrets: { here: { env: { TOKEN: "t-1" } } },
     }, here);
     expect(of(plan, "mcpServer:local")).toMatchObject({ fate: "unchanged" });
     expect(plan.serverIds.get("local")).toBe("here");
   });
 
-  it("a header server's key and a server's switch are compared; an OAuth sign-in never is", async () => {
+  it("a header server's key and where a server is on are compared; an OAuth sign-in never is", async () => {
     const read = await golden();
     const keyed = read.mcpServers.find((s) => s.id === "keyed")!;
     const github = read.mcpServers.find((s) => s.id === "github")!;
     const plan = planImport(read, {
       ...empty,
-      mcpServers: [{ ...keyed, active: false }, github],
+      mcpServers: [{ ...keyed, workspaces: [] }, github],
       serverSecrets: { keyed: { env: {}, key: "older-key" } },
     }, here);
-    expect(of(plan, "mcpServer:keyed").differs).toEqual(["on or off", "API key"]);
+    expect(of(plan, "mcpServer:keyed").differs).toEqual(["where it is on", "API key"]);
     expect(of(plan, "mcpServer:github")).toMatchObject({ fate: "unchanged", flags: [] });
   });
 
@@ -143,7 +143,7 @@ describe("an import's plan", () => {
       ...empty,
       preferences: { ...DEFAULT_PREFERENCES, soundOnDone: false, knobSource: "last-session", idleCloseMinutes: 45 },
       machineCommandRules: [{ kind: "command", pattern: "git status", verdict: "ask" }, { kind: "command", pattern: "ls", verdict: "allow" }],
-      machineSavedRoots: ["/home/me/notes"],
+      savedRoots: [{ path: "/home/me/notes", workspaces: "auto" }],
     }, { ...here, pathExists: () => false });
     expect(of(plan, "preferences")).toMatchObject({ fate: "unchanged", differs: [] });
     expect(of(plan, "commandRule:command:git status")).toMatchObject({ fate: "differs", differs: ["ask here, allow in the file"] });

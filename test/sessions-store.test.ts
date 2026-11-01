@@ -1754,9 +1754,9 @@ describe("SessionsStore", () => {
     const kv = new MemoryKV();
     const store = new SessionContinuityStore(kv);
     const h = harness({ machineKV: kv, workspaceRoots: [cwd, at("/repo/second")] });
-    // this workspace's list, then the machine's — one root on both
-    for (const root of [at("/src/odoo"), cwd, at("/repo/second")]) await h.orchestrator.workspaceSavedRoots.add(root);
-    for (const root of [at("/src/lib"), at("/src/odoo")]) await h.orchestrator.machineSavedRoots.add(root);
+    // saved for this workspace, then for every one — one root both ways
+    for (const root of [at("/src/odoo"), cwd, at("/repo/second")]) await h.orchestrator.savedRoots.save(root, h.orchestrator.workspace!);
+    for (const root of [at("/src/lib"), at("/src/odoo")]) await h.orchestrator.savedRoots.save(root, "auto");
     // Resume deliberately not declared: nothing after birth re-applies in
     // place, so an echo that carries them proves session/new did. List +
     // load make the session's row durable.
@@ -1789,7 +1789,7 @@ describe("SessionsStore", () => {
 
   it("saved roots reach the servers of an agent that does not advertise the field — the field itself is never sent (issue #32)", async () => {
     const h = harness();
-    await h.orchestrator.workspaceSavedRoots.add(at("/src/odoo"));
+    await h.orchestrator.savedRoots.save(at("/src/odoo"), h.orchestrator.workspace!);
     await h.connect(
       spec({ declare: { sessionCapabilities: { resume: {} } }, turn: [{ type: "echoRoots" }] }, "sm32n"),
     );
@@ -1805,7 +1805,7 @@ describe("SessionsStore", () => {
   // folder that is gone, and says so in the session (issue #32).
   it("a saved root gone from disk: not seeded, not sent, not served — the session says which, and the saved list is told (issue #32)", async () => {
     const h = harness();
-    for (const root of [at("/src/odoo"), at("/src/gone")]) await h.orchestrator.workspaceSavedRoots.add(root);
+    for (const root of [at("/src/odoo"), at("/src/gone")]) await h.orchestrator.savedRoots.save(root, h.orchestrator.workspace!);
     await h.connect(spec({ declare: ROOTS_CAPS, turn: [{ type: "echoRoots" }] }, "sm32m"));
     const patchbaySessionId = await h.gates.create("sm32m" as PatchbayAgentId, "Fake Agent", cwd);
 
@@ -3390,7 +3390,7 @@ describe("context tokens — what the IPC socket admits (#72)", () => {
   async function composed() {
     const h = harness();
     const configs = h.stores.mcpServerConfigs;
-    const routed = { routing: "auto", active: true, transport: "auto" } as const;
+    const routed = { routing: "auto", workspaces: "auto", transport: "auto" } as const;
     await configs.upsert({ id: "remote" as PatchbayMcpServerId, name: "Remote", source: { kind: "custom-http", url: "http://127.0.0.1:9/mcp", authType: "none", headerName: "Authorization", valuePrefix: "Bearer " }, ...routed });
     await configs.upsert({ id: "local" as PatchbayMcpServerId, name: "Local", source: { kind: "custom-stdio", command: process.execPath, args: [] }, ...routed });
     const composing = vi.spyOn(h.orchestrator.mcpServers, "mcpServersFor");

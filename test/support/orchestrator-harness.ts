@@ -6,6 +6,7 @@
 // sent.
 import { readFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { vi } from "vitest";
 import { applyFileWrite } from "../../src/orchestrator/client-host";
 import { nullLogger } from "../../src/orchestrator/logger";
@@ -21,6 +22,7 @@ import { SecretEnvStore } from "../../src/orchestrator/stores/secret-env";
 import { SessionFilesStore } from "../../src/orchestrator/stores/session-files";
 import { SECRET_FAMILIES } from "../../src/orchestrator/stores/storage-keys";
 import type { PatchbayAgentId } from "../../src/shared/ids";
+import type { WorkspaceId } from "../../src/shared/workspace";
 import type { AgentConfigView, AgentViewEvent, AgentViewState, HostToView, SettingsEvent, SettingsState } from "../../src/shared/protocol";
 import { atTestEnd, stopsAtTestEnd } from "./teardown";
 import { SHELL_GRAMMAR } from "./shell-grammar";
@@ -81,6 +83,9 @@ export interface OrchestratorHarnessOptions {
   secrets?: MemorySecrets;
   /** The folder the window works in — absent, `cwd`. */
   workspace?: string;
+  /** The workspace the window has open — absent, the folder's URI; null,
+   * a window with no workspace. */
+  workspaceId?: WorkspaceId | null;
   workspaceRoots?: readonly string[];
   /** Replaces a port's stand-in. */
   ports?: Partial<OrchestratorPorts>;
@@ -183,6 +188,7 @@ export function orchestratorHarness(cwd: string, opts: OrchestratorHarnessOption
       globalStoragePath: paths.globalStorage,
       storagePath: paths.workspaceStorage,
       workspaceCwd: workspace,
+      workspace: opts.workspaceId === undefined ? (pathToFileURL(workspace).href as WorkspaceId) : opts.workspaceId,
       ipcName: `patchbay-test-${process.pid}-${++orchestrators}`,
       scripts: {
         editorServer: join(process.cwd(), "out", "mcp-server.js"),

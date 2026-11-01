@@ -30,6 +30,10 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { PatchbayAgentId } from "../../shared/ids";
 import type { PatchbayMcpServerId } from "../../shared/ids";
+import { NO_WORKSPACE_TO_SAVE } from "../../shared/protocol";
+import { withOne, type Reach } from "../../shared/reach";
+import type { WorkspaceId } from "../../shared/workspace";
+import { whereSaid } from "../shared/where";
 
 /** A curated entry's vendor mark (mcp-catalog.ts's curated-only exception
  * to the Codicons rule — inline SVG, fill=currentColor, so it themes
@@ -98,12 +102,12 @@ function RoutingEditor(props: {
 }) {
   const mode: "auto" | "only" | "except" =
     props.routing === "auto" ? "auto" : Array.isArray(props.routing) ? "only" : "except";
-  const list: readonly string[] =
+  const list: readonly PatchbayAgentId[] =
     props.routing === "auto"
       ? []
       : Array.isArray(props.routing)
         ? props.routing
-        : (props.routing as { except: readonly string[] }).except;
+        : (props.routing as { except: readonly PatchbayAgentId[] }).except;
   const setMode = (m: "auto" | "only" | "except") => {
     if (m === mode) return;
     // A list never carries across modes — the same ids mean the opposite
@@ -464,16 +468,16 @@ function CatalogRow(props: {
 
 export function McpServersSection(props: {
   state: SettingsState;
-  onConnectKey(catalogId: string, name: string, token: string, url?: string): void;
-  onConnectOAuth(catalogId: string, name: string, url?: string): void;
-  onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView): void;
+  onConnectKey(catalogId: string, name: string, token: string, url: string | undefined, workspaces: Reach<WorkspaceId>): void;
+  onConnectOAuth(catalogId: string, name: string, url: string | undefined, workspaces: Reach<WorkspaceId>): void;
+  onAddCustom(name: string, source: McpServerSourceView, routing: McpServerRoutingView, workspaces: Reach<WorkspaceId>): void;
   onImportJson(json: string): void;
-  onAddImported(importId: number, names: readonly string[]): void;
+  onAddImported(importId: number, names: readonly string[], workspaces: Reach<WorkspaceId>): void;
   onCancelImport(importId: number): void;
   onUpdateJson(patchbayMcpServerId: PatchbayMcpServerId, json: string): void;
   /** `key` is the connect's own, off the published connect. */
   onCancelConnect(key: string): void;
-  onSetActive(patchbayMcpServerId: PatchbayMcpServerId, active: boolean): void;
+  onSetWorkspaces(patchbayMcpServerId: PatchbayMcpServerId, workspaces: Reach<WorkspaceId>): void;
   onRemove(patchbayMcpServerId: PatchbayMcpServerId): void;
   onSetRouting(patchbayMcpServerId: PatchbayMcpServerId, routing: McpServerRoutingView): void;
   onSetTransport(patchbayMcpServerId: PatchbayMcpServerId, transport: "auto" | "bridge"): void;
@@ -509,6 +513,9 @@ export function McpServersSection(props: {
   const [reviewNames, setReviewNames] = useState<{ id: number; names: readonly string[] } | null>(null);
 
   const taken = state.mcpServers.map((s) => s.name);
+  const here = state.workspace;
+  // A new server is on where it was added.
+  const newWorkspaces: Reach<WorkspaceId> = here === null ? "auto" : [here];
   const review = state.mcpImportReview;
   const namesInReview =
     review === null ? [] : reviewNames?.id === review.id ? reviewNames.names : review.entries.map((e) => e.name);
@@ -572,7 +579,7 @@ export function McpServersSection(props: {
             headerName: authType === "header" ? headerName.trim() : undefined,
             token: authType === "header" ? token : undefined,
           };
-    props.onAddCustom(name.trim(), source, "auto");
+    props.onAddCustom(name.trim(), source, "auto", newWorkspaces);
     setAdding(null);
     setName("");
     setCommand("");
@@ -593,8 +600,9 @@ export function McpServersSection(props: {
     <section className="section">
       <h1>MCP Servers</h1>
       <div className="sub">
-        Curated and custom are the same mechanism — MCP servers, routed per agent. Global to this
-        machine, never repo-committed; a copied config carries what you typed, never an OAuth token.
+        Curated and custom are the same mechanism — MCP servers, on in the workspaces you choose and
+        routed per agent. Kept on this machine, never repo-committed; a copied config carries what
+        you typed, never an OAuth token.
       </div>
 
       {/* Patchbay's own servers: read-only — what they serve and whether they
@@ -643,7 +651,7 @@ export function McpServersSection(props: {
                 <div className="card">
                   <div className="row flex-wrap">
                     {handle}
-                    <Dot status={server.connected && server.active ? "running" : "stopped"} />
+                    <Dot status={server.connected && server.onHere ? "running" : "stopped"} />
                     {catalogEntry !== undefined && <EntryIcon glyph={catalogEntry.brandIcon} />}
                     <span className="nm min-w-0">{server.name}</span>
                     <Badge className={server.sourceKind === "catalog" ? "border-brand/40 text-brand" : undefined}>
@@ -653,14 +661,19 @@ export function McpServersSection(props: {
                     {/* on/off is a state, not an act — a switch says so (a power
                         *button* read as "do something", not "currently on") */}
                     <Switch
-                      checked={server.active}
+                      checked={server.onHere}
+                      disabled={here === null}
                       title={
-                        server.active
-                          ? "on — switching off keeps the credential but the server reaches no agent until switched back"
-                          : "off — switch on to route this server again"
+                        here === null
+                          ? NO_WORKSPACE_TO_SAVE
+                          : server.onHere
+                            ? "on in this workspace — switching off keeps the credential, and no session here gets the server"
+                            : "off in this workspace — switch on to give it to new sessions here"
                       }
-                      aria-label={server.active ? "Switch off" : "Switch on"}
-                      onCheckedChange={(checked) => props.onSetActive(server.id, checked === true)}
+                      aria-label={server.onHere ? "Switch off in this workspace" : "Switch on in this workspace"}
+                      onCheckedChange={(checked) =>
+                        here !== null && props.onSetWorkspaces(server.id, withOne(server.workspaces, here, checked === true))
+                      }
                     />
                     <Button
                       variant="outline" size="icon" className="size-8"
@@ -696,7 +709,7 @@ export function McpServersSection(props: {
                   <ProbeStrip
                     probe={server.probe}
                     probing={server.busy.includes("probe")}
-                    probeable={server.connected && server.active}
+                    probeable={server.connected && server.onHere}
                     expanded={openTools[server.id] === true}
                     onToggleTools={() =>
                       setOpenTools({ ...openTools, [server.id]: openTools[server.id] !== true })
@@ -708,11 +721,10 @@ export function McpServersSection(props: {
                       {server.command}
                     </div>
                   )}
-                  {!server.active && (
-                    <div className="note mt-1.5">
-                      switched off — configured with its credential intact, reaching no agent
-                    </div>
-                  )}
+                  <div className="note mt-1.5">
+                    on in {whereSaid(server.workspaces, here)}
+                    {!server.onHere && " — configured with its credential intact, given to no session here"}
+                  </div>
                   {!detailsOpen ? null : server.editJson !== undefined && editingJsonId === server.id ? (
                     <div className="connect-form">
                       <Field label="server JSON" hint="the mcpServers entry for this server — saved as written">
@@ -968,7 +980,7 @@ export function McpServersSection(props: {
               <Button
                 size="sm"
                 disabled={namesInReview.some((n) => mcpServerName(n) === "")}
-                onClick={() => props.onAddImported(review.id, namesInReview)}
+                onClick={() => props.onAddImported(review.id, namesInReview, newWorkspaces)}
               >
                 Add all
               </Button>
@@ -1054,8 +1066,8 @@ export function McpServersSection(props: {
               taken={taken}
               expanded={expandedCatalogId === entry.id}
               onToggle={() => setExpandedCatalogId(expandedCatalogId === entry.id ? null : entry.id)}
-              onConnectKey={(name, token, url) => props.onConnectKey(entry.id, name, token, url)}
-              onConnectOAuth={(name, url) => props.onConnectOAuth(entry.id, name, url)}
+              onConnectKey={(name, token, url) => props.onConnectKey(entry.id, name, token, url, newWorkspaces)}
+              onConnectOAuth={(name, url) => props.onConnectOAuth(entry.id, name, url, newWorkspaces)}
               onCancelConnect={() => {
                 if (flow !== undefined) props.onCancelConnect(flow.key);
               }}

@@ -10,9 +10,10 @@ import { writeLocationLabel, type KnobSeed, type PreferencesView, type WriteEntr
 import type { PatchbayAgentId, PatchbayMcpServerId } from "../shared/ids";
 import type { ConfigurationRead } from "./config-import";
 import { ruleLabel } from "../shared/command-rules";
-import { commandRuleItemId, routingOn, writeLocationItemId, type ImportPlan } from "./config-import-plan";
+import { commandRuleItemId, routingOn, savedRootItemId, writeLocationItemId, type ImportPlan } from "./config-import-plan";
 import type { AgentConfig } from "./stores/agent-configs";
 import type { McpServerConfig } from "./stores/mcp-server-configs";
+import type { SavedRoot } from "./stores/saved-roots";
 import { type CommandRule, withRule } from "./stores/permission-rules";
 import { withWriteEntry } from "./stores/write-scope";
 import { agentErrorText } from "./readers/agent-error";
@@ -33,7 +34,7 @@ export interface ImportTargets {
   preferences: { set(patch: Partial<PreferencesView>): Promise<unknown> };
   machineRules: { get(): { commandRules: CommandRule[] }; set(rules: CommandRule[]): Promise<void> };
   machineWriteScope: { get(): WriteEntry[]; set(entries: readonly WriteEntry[]): Promise<void> };
-  machineSavedRoots: { add(path: string): Promise<void> };
+  savedRoots: { land(entry: SavedRoot): Promise<void> };
 }
 
 export interface ImportOutcome {
@@ -96,8 +97,8 @@ export async function applyImport(
     );
   }
 
-  for (const root of read.machineSavedRoots) {
-    if (taken(`savedRoot:${root}`)) await land(root, () => targets.machineSavedRoots.add(root));
+  for (const root of read.savedRoots) {
+    if (taken(savedRootItemId(root.path))) await land(root.path, () => targets.savedRoots.land(root));
   }
   return outcome;
 }

@@ -20,6 +20,7 @@ import { commandOf } from "../src/orchestrator/process-tree";
 import { SpawnRegistryStore } from "../src/orchestrator/stores/spawn-registry";
 import { SavedRootsStore } from "../src/orchestrator/stores/saved-roots";
 import type { PatchbayAgentId } from "../src/shared/ids";
+import type { WorkspaceId } from "../src/shared/workspace";
 import { STORAGE_KEYS } from "../src/orchestrator/stores/storage-keys";
 
 let dir: string;
@@ -41,8 +42,7 @@ describe("eraseAllData", () => {
     const defaultAgentFold = new DefaultAgentFoldStore(globalKv);
     const lastActiveSession = new LastActiveSessionStore(workspaceKv);
     const preferences = new PreferencesStore(globalKv);
-    const workspaceSavedRoots = new SavedRootsStore(workspaceKv, "workspace");
-    const machineSavedRoots = new SavedRootsStore(globalKv, "machine");
+    const savedRoots = new SavedRootsStore(globalKv, { id: "file:///ws" as WorkspaceId, kv: workspaceKv });
 
     // A lived-in install.
     // One of this window's own processes: another window's records stay
@@ -57,8 +57,8 @@ describe("eraseAllData", () => {
     await lastConnected.write(["claude" as PatchbayAgentId]);
     await lastActiveSession.set({ patchbayAgentId: "a" as PatchbayAgentId, sessionId: "s1" });
     await preferences.set({ soundOnDone: true, idleCloseMinutes: 15 });
-    await workspaceSavedRoots.add("/src/lib");
-    await machineSavedRoots.add("/src/odoo");
+    await savedRoots.save("/src/lib", "file:///ws" as WorkspaceId);
+    await savedRoots.save("/src/odoo", "auto");
     // the one key the erase keeps: the recovery would run again without it
     await globalKv.update(STORAGE_KEYS.legacyStateRecovery, { at: "2026-07-21T00:00:00Z", outcome: "done", recoveredKeys: [] });
     let stashWiped = false;
@@ -70,7 +70,7 @@ describe("eraseAllData", () => {
       agents: owner("agents"), mcpServers: owner("mcpServers"), sessions: owner("sessions"),
       spawnRegistry, permissionRules, machineRules, machineWriteScope,
       decisionAudit, lastConnected, defaultAgentFold, lastActiveSession,
-      preferences, workspaceSavedRoots, machineSavedRoots,
+      preferences, savedRoots,
       tempStashes: { wipe: async () => { stashWiped = true; } },
     });
 
@@ -86,8 +86,7 @@ describe("eraseAllData", () => {
     expect(await lastConnected.consume()).toEqual([]);
     expect(lastActiveSession.get()).toBeUndefined();
     expect(preferences.get()).toEqual(DEFAULT_PREFERENCES);
-    expect(workspaceSavedRoots.list()).toEqual([]);
-    expect(machineSavedRoots.list()).toEqual([]);
+    expect(savedRoots.list()).toEqual([]);
     await expect(stat(join(dir, "decision-audit.jsonl"))).rejects.toThrow();
   });
 });

@@ -20,7 +20,7 @@ import { MemoryKV } from "./stores/kv";
 import { McpServerConfigStore, type McpServerConfig } from "./stores/mcp-server-configs";
 import { MachineRulesStore, type CommandRule } from "./stores/permission-rules";
 import { PreferencesStore } from "./stores/preferences";
-import { SavedRootsStore } from "./stores/saved-roots";
+import { SavedRootsStore, type SavedRoot } from "./stores/saved-roots";
 import { MachineWriteScopeStore } from "./stores/write-scope";
 
 type Env = Record<string, string>;
@@ -40,7 +40,7 @@ export interface ConfigurationRead {
   preferences: Partial<PreferencesView>;
   machineCommandRules: readonly CommandRule[];
   machineWriteScope: readonly WriteEntry[];
-  machineSavedRoots: readonly string[];
+  savedRoots: readonly SavedRoot[];
   /** By the id of the record they belong to, as the file has it. */
   secrets: {
     agents: Readonly<Record<string, Env>>;
@@ -99,7 +99,7 @@ export function readConfiguration(text: string): ReadOutcome {
   const preferences = new PreferencesStore(kv).chosen();
   const machineCommandRules = new MachineRulesStore(kv).get().commandRules;
   const machineWriteScope = new MachineWriteScopeStore(kv).get();
-  const machineSavedRoots = new SavedRootsStore(kv, "machine").list();
+  const savedRoots = new SavedRootsStore(kv).list();
 
   // What an entry held against what read from it — a list's items, a
   // record's keys, any other value as one.
@@ -114,7 +114,7 @@ export function readConfiguration(text: string): ReadOutcome {
   short(STORAGE_KEYS.preferences, Object.keys(preferences).length, (n) => count(n, "preference"));
   short(STORAGE_KEYS.machineCommandRules, machineCommandRules.length, (n) => count(n, "command rule"));
   short(STORAGE_KEYS.machineWriteScope, machineWriteScope.length, (n) => count(n, "file-write place"));
-  short(STORAGE_KEYS.machineSavedRoots, machineSavedRoots.length, (n) => count(n, "saved root"));
+  short(STORAGE_KEYS.savedRoots, savedRoots.length, (n) => count(n, "saved root"));
 
   const agentSecrets: Record<string, Env> = {};
   for (const [id, row] of Object.entries(record(secrets.agents) ?? {})) {
@@ -144,7 +144,7 @@ export function readConfiguration(text: string): ReadOutcome {
       preferences,
       machineCommandRules,
       machineWriteScope,
-      machineSavedRoots,
+      savedRoots,
       secrets: { agents: agentSecrets, mcpServers: serverSecrets },
       unread,
     },

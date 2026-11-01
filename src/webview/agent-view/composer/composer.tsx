@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { AvailableCommand, SavedRootsView } from "../../../shared/protocol";
 import type { PatchbaySessionId } from "../../../shared/ids";
+import type { WorkspaceId } from "../../../shared/workspace";
 
 export function Composer(props: {
   agent: AgentSummary | null;
@@ -45,6 +46,8 @@ export function Composer(props: {
   contextRoots: readonly string[];
   workspaceRoots: readonly string[];
   savedRoots: SavedRootsView;
+  /** The window's workspace — null with none. */
+  workspace: WorkspaceId | null;
   /** The roots chip's gate (roots-controls.ts): whether shown roots reach
    * the agent, whether adding is live, and the one-line reason when not. */
   rootsControls: RootsControls;
@@ -193,6 +196,7 @@ export function Composer(props: {
               roots={props.contextRoots}
               workspaceRoots={props.workspaceRoots}
               savedRoots={props.savedRoots}
+              here={props.workspace}
               controls={props.rootsControls}
             />
           )}
