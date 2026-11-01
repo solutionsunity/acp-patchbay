@@ -163,8 +163,10 @@ deliverable.
   the session's MCP servers regardless. The chip says, per root, who holds
   it: the servers always; the agent now, at its next open, or never — never
   pretending. Folders the user always works with are saved once — for this
-  workspace (the default) or for every workspace — and every new session
-  starts with them; managed in Settings, with a one-click save from the chip.
+  workspace (the default), for every workspace, or for the ones they pick —
+  and every new session there starts with them; managed in Settings, where
+  any window shows and changes where each is saved, with a one-click save
+  from the chip.
   A session owns its list once started: saving shapes new sessions, never an
   open one. A root whose folder is gone is skipped whenever a session starts
   or reopens, and the session says so; a saved one is flagged in Settings as
@@ -227,16 +229,27 @@ deliverable.
 - User can connect GitHub by pasting a token — one field, no app setup — and
   disconnect as easily. Curated entries whose registration is open connect with
   one-click OAuth instead.
-- User can add any MCP server — command or URL, with auth — as a custom entry.
-- Two-state lifecycle: **active/inactive** toggles routing without touching the
-  credential (the mute switch); **disconnect is the full clear** — credential,
-  env, and config — identical to removing a custom server; the catalog entry
-  stays, ready to connect again. Nothing is stored until it can actually work: a
-  cancelled OAuth consent means nothing was added.
+- User adds a server from one card at the top of the page, as on the Agents
+  page: a curated entry picked from a search, or their own server as a
+  command, a URL, or JSON — two views of the same server, in the shape other
+  clients write (`mcpServers` with `type`, `command`, `args`, `env`, `url`,
+  `headers`). Pasting several servers opens a card for each. Editing a
+  server opens the same form.
+- Every add and edit is checked against the server before anything is
+  stored: a wrong key, a failing command or an unset variable leaves nothing
+  behind and the card open with the reason; a server that asks for a
+  sign-in gets a Sign in button. `${VAR}` references are filled in from the
+  agent's environment when the server is handed over, never stored filled
+  in.
+- Two-state lifecycle: **on or off in a workspace** without touching the
+  credential; **disconnect is the full clear** — credential, env, headers
+  and config — identical to removing a custom server; the catalog entry
+  stays, ready to connect again. Nothing is stored until it can actually
+  work: a cancelled OAuth consent means nothing was added.
 - A curated service can be connected more than once — two GitHub accounts are
   two servers, each under its own name.
-- A server's name is chosen once, when it is added — a curated connect, a custom
-  add, or an import's review — and never changes: agents keep the server's tools
+- A server's name is chosen once, when it is added — a curated connect or
+  your own server's card — and never changes: agents keep the server's tools
   and "always allow" rules under it. The form shows the name exactly as every
   agent will get it while it is typed: characters agents don't keep become `_`,
   and a name another server holds gets `-2`.
@@ -244,11 +257,16 @@ deliverable.
   choice, per agent, not all-or-nothing. Default ("auto"): a new server
   attaches to every agent; "only" pins an explicit list; "except" attaches to
   all minus the listed.
-- Servers are global to this machine and never ride a repo — a config moves
-  only by the owner's explicit Copy and paste, and nothing attaches by opening
-  a folder (a production-access server must never follow a user from one repo
-  into another). Binding MCP servers to specific workspaces is deliberately
-  not built until the need is demonstrated.
+- User decides where each server is on: every workspace, the ones they pick,
+  or every one but those — combined with which agents get it. A new server is
+  on in the workspace it was added in. Servers never ride a repo — a config
+  moves only by the owner's explicit Copy and paste, and nothing attaches by
+  opening a folder (a production-access server must never follow a user from
+  one repo into another). *(Supersedes "binding MCP servers to workspaces is
+  deliberately not built", 2026-11-01, #70.)*
+- User can give a server to one session only from the composer's MCP chip,
+  and Save it for this workspace or every one; a session's servers reach the
+  agent when it opens, so the chip offers to reopen it.
 
 ### Permissions
 

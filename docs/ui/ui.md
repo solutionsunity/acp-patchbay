@@ -133,7 +133,8 @@ Context row (above):
 
 | Control | Glyph | Behavior |
 |---|---|---|
-| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots. An added row also names its saved list ("saved · this workspace" / "saved · every workspace", read-only) or offers **Save** — a menu, this workspace first, disabled with no folder open; "Manage saved roots…" opens Settings › Saved roots, the one place a saved root is removed |
+| Roots chip | ⧉ n roots | session context roots (workspace folders + added external ones); lit when an external root is active; click → manage popover; roots pass via protocol — patchbay never indexes. Adding is always on: the session's MCP servers take a root at once. Each row names who holds it, from one gate — "agent + MCP" (the cwd always; every root where the agent takes it now), "MCP · agent at next open" (advertised, after the first turn, no `session/resume` but `session/load` — the note offers "Reopen now"), "MCP only" (the agent doesn't advertise the field, or can neither re-apply nor reopen); the note says why, and points at `@` for an agent that never takes roots. An added row saved for this workspace says where it is saved ("saved · this workspace", "saved · every workspace", "saved · this and 1 other workspace", read-only) or offers **Save** — a menu, this workspace first (adds this workspace to where it is saved), disabled with no workspace open; "Manage saved roots…" opens Settings › Saved roots, the one place a saved root is removed |
+| MCP chip | ▤ n MCP servers | the session's MCP servers, mirroring the roots chip: each the session's last open gave — `built-in`, or where it is saved ("saved · this workspace") — and those given to this session alone ("this session"), which take **Save** (the roots chip's menu: this workspace joins where the server is on, or every workspace) and a take-back; "+ Add for this session…" lists every configured server it hasn't. The agent gets MCP servers only when the session opens, so an add or a take-back waits ("this session · at next open", "until next open") and the note says so — offering "Reopen now" where the agent can load or resume, or saying a new session gets them. "Manage MCP servers…" opens Settings › MCP Servers |
 | Selection ghost chip | ⌖ dashed, lit | **the live-selection indicator**: appears only while the IDE has a selection; click solidifies it into context. Editor-side twin: right-click → add to context. These two are the whole selection story |
 | Context chips | 📄 ⌖ ⚠ 🖼 | attached files, solidified selection, diagnostics, images; × removes |
 | Adder | ＋ dashed | one popover: Files · Selection · Problems · Roots · Attach (image/file — never disabled; converts to the best form the agent accepts) |
@@ -199,8 +200,8 @@ readable without the Output panel.
 
 Left nav + cards, grouped in two non-collapsing headers that *are* the placement
 contract: **This machine** (Agents · Capability matrix · MCP Servers · Preferences
-· Saved roots · Import/Export — everything global to this machine, plus Saved roots' own
-per-workspace list beside its machine one), **Trust** (Edits · Commands · Audit · Data —
+· Saved roots · Import/Export — everything kept on this machine; MCP servers and
+saved roots say per item the workspaces they are on in), **Trust** (Edits · Commands · Audit · Data —
 the one trust surface: the contract, the evidence, what's held and the way out; one
 verb per page, and one subject per rules page — edits and commands are different
 mechanisms that grow apart). Groups don't collapse: a nav this short doesn't earn the
@@ -290,55 +291,74 @@ never on a schedule.
 strip (checked the first time the section opens in a window; refresh reads
 again). Nothing to switch, copy, route, or remove.
 
-Then the working set: **Connected servers** (dot · name ·
-`curated`/`custom-*` chip · **active toggle** · `Copy config` · `Disconnect` for
-curated / `Remove` for custom · mono command/URL · routing · `Edit JSON…` for
-custom entries — the mcpServers entry, env values and a header key shown as
-stored and saved as written; an OAuth token never appears), then **Add custom** (structured fields:
-name, command, args one-per-line, env `KEY=value` lines — the id is
-minted, never user-typed; or `Import JSON…` accepting the
-well-known `{"mcpServers": {...}}` shape, per-entry failures labeled, read into a
-review — one row per entry, its name editable — that `Add all` adds), then the
-**Curated catalog** last: a filter toolbar (search over name and description —
-what the row shows, never the caveat note · the `key`/`OAuth`/`local` chips as
-AND-combined toggles · `N of M` while narrowed; an emptied list offers
-`Clear filter`) over compact rows (the vendor's monochrome mark, which every
-entry has, in the row's own text color · name · mechanism chips · Docs · `Connect…`,
-with the entry's one-line description dim underneath, whole — never truncated,
-never behind a hover), one row expanding at a time into its connect form — key
-paste (with a `Get a key ↗` link to the issuing page) `— or —` OAuth `— or run it
-locally —` (each catalog entry with a verified official local stdio server
-prefills the custom form; nothing runs until the user adds it; an entry with
-no remote opens straight to `run it locally:`).
-Per-account services label the URL field as what it is: the account's MCP endpoint,
-used by both connect paths. Every entry stays in the catalog: connecting one again
-adds a second server (two accounts). Every add names its server once — the
-connect form's name field starts as the entry's name, the custom form's and each
-review row's as typed or imported — and shows the name as agents will get it
-(characters agents don't keep become `_`, a taken name gets `-N`), with the note
-that it can't be changed later: agents keep the server's tools and "always
-allow" rules under it. A pending browser flow
-shows `Cancel` — the browser is waited on as long as the user takes (an MFA
-prompt, a password reset, an approval step), and an abandoned tab is ended by
-Cancel, which clears with no outcome invented and drops the waiting callback,
-so a tab finished later changes nothing; failed notes carry `Dismiss`.
+**Adding is one card at the top, as on the Agents page.** Counter tiles
+(`servers` · `on here`) with the `add server` tile at the row's end; the tile
+opens one add card above the list — open by default with no servers. The
+curated catalog is a search picker in the card, not a list: each entry with
+its vendor's monochrome mark, its mechanism chips (`key` · `OAuth` ·
+`local`), `— added` once connected (connecting again adds a second server —
+two accounts); the search matches name and description, never the caveat
+note. A picked entry shows its details in the card — description, note,
+Docs, the name field, a per-account endpoint where the service has one, key
+paste (with a `Get a key ↗` link) `— or —` OAuth `— or run it locally —`;
+an entry with no remote opens straight to `run it locally:`. **Use local
+server** turns the card into your own server, prefilled; nothing runs until
+it is added.
 
-Lifecycle, two-state: **active/inactive** is the mute switch (config and credential
-intact, the server reaches no agent until toggled back); **Disconnect is the full
-clear** (credential + env + config — identical to removing a custom server; the
-catalog entry stays, ready to connect again). No third
-state: a custom OAuth add runs the browser flow *before* storing anything, so
-cancelled consent means nothing was added — never a stranded credential-less
-record.
+**Your own server** is a type: `command` (command · arguments one per line ·
+env `KEY=value` lines) or `URL` (URL · headers `Name: value` lines — a key
+goes here whole), only the selected type's fields shown — or `JSON`, another
+view of the same server, in the shape other clients write (`{"mcpServers":
+{name: {type, command, args, env}}}` or `{type, url, headers}`): typing it
+fills the type and fields, and the fields show in it, every field of the type
+present, an unfilled one empty. Pasting several servers opens a card for
+each, after this one, each its own add; one that doesn't read is a card
+saying why. An empty command or URL keeps `Add` off and says so. `${NAME}`
+references stay as typed.
 
-**Routing table**: servers × agents as toggles — auto = every agent, only = the
-ticked list, except = every agent minus the ticked. Routing is reach; consent rides
-the permission broker per tool call. Per-server `Copy config` — the explicit,
-visible act of copying the server as a `{"mcpServers": {name: entry}}` document,
-the shape `Import JSON…` reads back and other clients take. It carries what the
-owner typed — env values, a header key — and never an OAuth token; copy and paste
-are the owner's explicit acts. Servers are global to this machine. Binding to
-workspaces, not repos, may return later as an opt-in feature.
+Every add names its server once — the field starts as the entry's name, or
+as typed or pasted — and shows the name as agents will get it (characters
+agents don't keep become `_`, a taken name gets `-N`), with the note that it
+can't be changed later: agents keep the server's tools and "always allow"
+rules under it. Every add ends on **Who gets it**: the workspaces it is on
+in (this workspace preselected; in a window with no workspace nothing is,
+and the add waits for the pick), then the agents (all, preselected).
+
+**Checked before it is saved.** An add shows `Checking the server…` with
+`Cancel`; a refused key, a failing command or an unset variable stores
+nothing and keeps the card open with the reason (`Dismiss`); a server that
+asks for a sign-in gets `Sign in`, which runs its browser flow and adds
+again. The browser is waited on as long as the user takes, and Cancel ends
+an abandoned tab with no outcome invented. On success the card closes and
+the new server's card is brought into view.
+
+Then the working set, one card per server (dot · mark · name ·
+`curated`/`custom-*` chip · **switch: on in this workspace** · `Copy config`
+· `Disconnect` for curated / `Remove` for custom), the tool probe strip, and
+a line saying where it is on ("on in this and 1 other workspace" — and, off
+here, that it is configured with its credential intact and given to no
+session here). The gear opens its mono command/URL, **Edit…** for a custom
+server — the add card's form on the server as kept, env and header values as
+stored, its name final, checked before it is saved — **Who gets it** (the
+workspaces: this workspace and every workspace its scope names, by path and
+host, any of them unticked from any window; then the agents), and the
+bridge pin for a remote server.
+
+Lifecycle, two-state: **on or off in a workspace** (config and credential
+intact, given to no session there); **Disconnect is the full clear**
+(credential + env + headers + config — identical to removing a custom
+server; the catalog entry stays, ready to connect again). No third state:
+nothing is stored until the server answers.
+
+Per-server `Copy config` — the explicit, visible act of copying the server
+as a `{"mcpServers": {name: entry}}` document, the shape the add card's JSON
+reads and other clients take. It carries what the owner typed — env values,
+headers, `${NAME}` references as typed — and never an OAuth token; copy and
+paste are the owner's explicit acts. Records are kept on this machine and
+shown in every window; where each is on is per workspace. *(Supersedes
+"servers are global to this machine; binding to workspaces may return as an
+opt-in", 2026-11-01, #70; supersedes the separate custom form, Import JSON
+review, and catalog list, #130.)*
 
 ### Preferences
 
@@ -393,17 +413,22 @@ the stored truth — the page never assumes its own write landed:
 
 ### Saved roots
 
-The folders every new session starts with, beyond the workspace's own — two
-cards, one shape (list + change + remove + `Add folder…`; add and change both
-open the native folder picker, a change replacing its entry in place):
-*this workspace* (the default) and *every workspace*. With no folder open the
-workspace card says there is no workspace to save to. A saved folder gone
-from disk carries a warning mark — needs the user's action: restore, change, or
-remove;
-sessions skip it meanwhile, each with a notice in its chat. The page states the
-ownership rule: a session owns its list once started, so a change here reaches
-new sessions only, and removing a root from one session leaves these lists
-alone. The roots chip's Save writes the same lists.
+The folders new sessions start with, beyond the workspace's own — one list,
+each folder with where it is saved ("this workspace", "every workspace",
+"this and 1 other workspace", …): opening that opens the same workspace
+control a server's **Who gets it** has — this workspace and every one the
+folder names, by path and host, any of them unticked from any window, a
+workspace added from inside it. Each row: change (the native folder picker,
+replacing the entry in place, where it is saved kept) and remove. Two adds:
+`Add for this workspace…` (off with no workspace open, saying why) and `Add
+for every workspace…`. A saved folder gone from disk carries a warning mark
+— needs the user's action: restore, change, or remove; sessions skip it
+meanwhile, each with a notice in its chat. The page states the ownership
+rule: a session owns its list once started, so a change here reaches new
+sessions only, and removing a root from one session leaves this list alone.
+The roots chip's Save writes the same list. *(Supersedes the two cards —
+this workspace in workspaceState, every workspace in the machine store —
+2026-11-01, #70.)*
 
 ### Import/Export
 
@@ -411,8 +436,8 @@ This machine's configuration carried to a file. The **Export** card ticks
 three parts, each with what it carries counted: *Agents* (with their env values
 and composer choices), *MCP servers* (with their env values and API keys — an
 OAuth sign-in never leaves, so such a server needs a fresh connect), *Settings*
-(preferences, machine-wide command rules, file writes and saved roots). This
-workspace's own rules and saved roots stay with the workspace. A note says the
+(preferences, machine-wide command rules, file writes, and saved roots with
+where each is saved). This workspace's own rules stay with the workspace. A note says the
 file holds secrets in plain text; `Export…` (off with nothing ticked) opens the
 save dialog, and the file is written readable by its owner only — except one
 saved, from a remote window, to the machine the editor runs on (Windows, from

@@ -301,14 +301,16 @@ streams nothing.
 
 **The row.**
 
-- saved — the record (machine store); its credential and env (SecretStorage);
+- saved — the record (machine store), with who gets it: the workspaces it is
+  on in and the agents it is routed to; its credential, env and headers
+  (SecretStorage);
   the curated entry it was connected from, read through its catalog id —
   shipped data, fixed per build;
 - worked out on read — connected;
 - live, held by the store and published with the rows — each server's last
-  probe outcome, and the failure of the last attempt under each connect key (a
-  connect's, an add's, an import entry's, a save's), held until it is dismissed
-  or the same thing is tried again. The Settings view keeps no copy of either;
+  probe outcome, and the outcome of the last attempt under each connect key (a
+  curated connect's, an add card's, an edit's) — its failure, or the server
+  it stored — held until it is dismissed or the same thing is tried again. The Settings view keeps no copy of either;
 - busy — what the server's line holds, and the connects under way.
 
 **Ids and names.** A new server's id is minted (a UUID); a server stored
@@ -324,17 +326,19 @@ character becoming `_` as agents rewrite it themselves; a taken name gets `-N`
 and "patchbay" is the built-in editor server's. A name stored before the cut is
 rewritten once at load, to the form agents already used. Reach lists name
 agents by id; an agent's removal takes it off every list in one write.
+Workspace lists name workspaces by the URI VS Code opened; none is ever
+removed for being gone — a workspace leaves a scope only by the user's hand,
+from any window.
 
 **Operations:** connect a curated entry (a pasted key, or the browser OAuth
-flow), add a custom server, import (read into a review held in memory, its
-entries added under the names the user gives them), probe, remove — disconnect
-is remove:
-credential, env and record — and the saves: edit, reach, transport, order,
-mute.
+flow), add a custom server, edit one — each checked against the server before
+anything is stored, a sign-in run first where the server asked for one —
+probe, remove — disconnect is remove: credential, env, headers and record —
+and the saves: where it is on, reach, transport, order.
 
 **Lines.** A server's line holds its probe and its remove; the connect line
-holds the connects under way, one line per curated entry and one per custom
-name. A repeat joins: a second Connect on a card while its browser flow is out
+holds the adds under way — one line per curated entry, one per add card,
+one per server's edit. A repeat joins: a second Connect on a card while its browser flow is out
 is that flow, and a second probe of a server is the one running. Remove cuts
 in: a probe still running is told to stop and keeps no outcome, and the remove
 runs once it has unwound. Saves never wait.
@@ -411,7 +415,7 @@ ask; the store holds it.
 |---|---|---|
 | Agent configs and MCP-server records | Machine store — a patchbay-owned JSON file in the extension's `globalStorage` directory (`stores/file-kv.ts`), written atomically; on its first load it takes over what older versions kept in `globalState` and deletes it there | Developer-env, not code-env: global to this machine, never a repo-committed file; no credentials ever. The file is patchbay's own because the editor-owned `state.vscdb` was observed truncated to zero bytes by an unclean shutdown, taking every config with it |
 | Session continuity, preferences, last knob choices, auth locks, used-capability marks, spawned-process records, the old default-agent setting's folded value | Machine store | Facts nothing else can tell again, per machine |
-| Saved roots | `workspaceState` (this workspace) + machine store (every workspace) | Folders every new session starts with, read at session birth only; per user either way, never repo-shipped |
+| Saved roots | Machine store, one list | Folders new sessions start with, each with the workspaces it is saved for, read at session birth only; per user, never repo-shipped. Each workspace's own list from 0.88 and before (its `workspaceState`) moves in for it the first time it opens, then leaves its `workspaceState` |
 | Permission rules | `workspaceState` (workspace rules) + machine store (machine command rules) + built-in defaults | Workspace rules first, machine rules the floor, then ask; within a layer deny beats ask beats allow. Each rule is a command pattern or a word, named by its kind and pattern. Per user either way, never repo-shipped — a cloned repo must not arrive pre-authorized |
 | Last-connected stamp | `workspaceState` | The agents still running at shutdown, with the stamp's time. The next activate consumes it — read and cleared, spent either way — and honors it only within 60 s: deactivate fires the same for a reload and a quit, so the stamp's age tells them apart. Stale or absent, only the agents set to connect on window open start |
 | Last-open pointer | `workspaceState` | The session the Agent View returns to on the next activate, named by its agent and the agent's own id for it. Looked up in what the startup connects' own `session/list` syncs brought back, as soon as its own agent's connect has settled — another agent's slow start never holds it back: found, it opens; not found, the view lands on its default screen, whatever the reason. A miss never clears it — not found is not gone: a failed connect must not erase where a later window could return |
@@ -419,7 +423,7 @@ ask; the store holds it.
 | ACP registry | A copy of the last read in the extension's `globalStorage` directory, with the date it was last confirmed | A dated reading of an outside source: loaded at start, shown with its date while a read is out or failing, replaced whole by every read that lands; every act on the registry's word reads it first, acting on the copy only when the registry can't be reached; a copy in an older shape reads as none |
 | Files a session was given — pasted or picked images, dropped files | The session's own folder in the extension's `globalStorage` directory, under its agent and workspace (`stores/session-files.ts`) | Kept as long as the session lives: its staged chips name them, and an agent may follow a link to one in any later turn — so never the OS temp directory, which a reboot can empty. They leave with the session (deleted, gone from its agent's list, its agent removed) and stay through a close and move with it when a never-prompted session is minted again. A folder's name is a short hash of its ids: no id an agent mints can steer a path, or stretch one past what a Windows path holds |
 | Image previews | The attachments stash, a temp directory | Ephemeral: the OS owns cleanup, and a preview whose file is gone degrades to a label chip |
-| Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers) | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. Export (Settings › Import/Export) writes what the user typed into the file they name — their copy, owner-readable, never a store of patchbay's; an OAuth token never leaves. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |
+| Secrets — OAuth tokens, API keys, env values (agents and custom-stdio MCP servers), a custom remote MCP server's headers | `SecretStorage` | The only place: never settings, never state stores, never logs. Env values are how agents and stdio MCP servers commonly take API keys, so the whole env record is a secret at rest (`stores/secret-env.ts`); configs and records carry no env. Values are read when reality needs them — an agent's spawn, or an MCP attach, where the handoff to the agent is inherent: the agent spawns stdio servers itself — and shown back to their owner over the Settings channel (that webview exists only while Settings is open): the forms show what is stored and save what is in the box. What the user typed is readable — env values, a header API key; an OAuth token, minted by a flow, never reaches a webview. Export (Settings › Import/Export) writes what the user typed into the file they name — their copy, owner-readable, never a store of patchbay's; an OAuth token never leaves. How an HTTP MCP server's credential reaches the agent: [capability-conditional transport](architecture.md#mcp-servers) |
 
 **A saved shape changes by migration, once.** What a store reads in an
 older shape is rewritten in the new one — where the store is built, or,
@@ -443,7 +447,15 @@ key, filled once from the old one and never written back to it: every window
 on the machine shares the store, one not yet reloaded after an update runs
 the version before, and that version writes back only the fields it knows —
 under one key, its next write would strip the new ones. The agents moved
-this way in 0.90 (`acpPatchbay.agents` → `acpPatchbay.agentConfigs`). Each
+this way in 0.90 (`acpPatchbay.agents` → `acpPatchbay.agentConfigs`), and so
+did the MCP servers (`acpPatchbay.integrations` → `acpPatchbay.mcpServers`:
+on/off became the workspaces a server is on in, and a custom remote
+server's key became its headers — moved into SecretStorage once, the key
+left where an older window reads it) and the saved roots
+(`acpPatchbay.machineSavedRoots` → `acpPatchbay.savedRootList`, each with its
+workspaces). A field added to a session's continuity row is the accepted
+exception: an older window that rewrites the row drops it (a session's own
+MCP servers) — moving the row would split every session in two. Each
 key has its fate in one table (`config-export.ts` `STORED_KEYS`) — the part
 that carries it, why it never leaves, or, for an earlier version's key, the
 part an older file's entry is read into — typed over the key table, so a key
@@ -467,9 +479,12 @@ answered with, and an OAuth sign-in to an unchanged connection. A downloaded
 agent is resolved for this platform from a fresh registry read, and its way
 back is the exporting machine's build, so it stays there.
 
-Agents and MCP servers are deliberately global-only. The risk this guards —
-a production-access MCP server silently following a user between repos — is
-held where it lives: neither rides a repo, so nothing attaches by opening a
-folder; each moves only by its owner's explicit Copy and paste, carrying what
-the owner typed, never an OAuth token. Binding them to workspaces may come
-later as an opt-in; the extension point is visible, deliberately unfilled.
+~~Agents and MCP servers are deliberately global-only.~~ *(Superseded for MCP
+servers and saved roots 2026-11-01, #70: each is on in every workspace, the
+ones chosen, or every one but those, the scope kept in the machine store so
+any window shows and changes it; agents stay global.)* The risk this guards
+— a production-access MCP server silently following a user between repos —
+is held where it lives: nothing rides a repo, so nothing attaches by opening
+a folder; a new server is on only in the workspace it was added in; and each
+moves only by its owner's explicit Copy and paste, carrying what the owner
+typed, never an OAuth token.

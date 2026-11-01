@@ -15,10 +15,11 @@ implementation time, since vendors move.
   the ACP agent never takes part in an auth handshake. How the credential reaches
   the server is the delivery [the architecture doc](architecture.md) picks per
   attach: on the stdio-to-HTTP bridge (`mcp-bridge.js`) the agent never sees it —
-  the bridge fetches a current token from the orchestrator over IPC per request
-  and attaches it to outbound requests; an agent declaring `mcp.http` gets the
-  server passed through, with a fresh token in the session's own headers,
-  ephemeral per session. This document decides *how the orchestrator obtains
+  the bridge fetches the server's headers — a current token among them — from
+  the orchestrator over IPC per request and attaches them to outbound
+  requests; an agent declaring `mcp.http` gets the server passed through, with
+  its headers and a fresh token in the session's own headers, ephemeral per
+  session. This document decides *how the orchestrator obtains
   tokens*. (The bridge carries one more thing of patchbay's on the agent's
   behalf — the session's roots, as MCP's client-side `roots` capability; that
   mechanism is recorded with the local server in the architecture doc.)
@@ -28,18 +29,20 @@ implementation time, since vendors move.
 
 ## The two mechanisms
 
-### 1 · Static key in a header — `authType: "header"`
+### 1 · Static key in a header
 
 The user pastes a token (PAT / API key) from the vendor's own settings page;
-patchbay stores it in `McpServerTokenStore` (SecretStorage, global to the machine) and
-the bridge sends it on every request.
+patchbay keeps it in SecretStorage and the server is sent it on every request.
 
 - **Header name is per-server data, not hardcoded**: most services take
-  `Authorization: Bearer <key>`, but Stitch requires `X-Goog-Api-Key: <key>`. The
-  bearer-token case is the default; the catalog/custom schema carries a
-  `headerName` field (default `Authorization`). A custom server's prefix, unless
-  one was given, is `Bearer ` on an `Authorization` header and nothing on any
-  other — one rule for the form and JSON alike, kept by the MCP servers store.
+  `Authorization: Bearer <key>`, but Stitch requires `X-Goog-Api-Key: <key>`. A
+  curated entry's catalog data names its header and prefix, and its key is
+  stored alone (`McpServerTokenStore`). A custom server is kept the way other
+  clients write one — `{type: "http", url, headers}` — so its key is a header
+  like any other, written whole (`Authorization: Bearer <key>`), any number of
+  them, the values in SecretStorage beside a stdio server's env. *(Supersedes
+  the custom server's own `authType`/`headerName`/`valuePrefix`, 2026-11-01,
+  #130: a field set of our own meant a pasted `headers` block was dropped.)*
 - Zero OAuth surface: no popups, no redirects, no browser, no remote-environment
   failure modes. Works identically in local VS Code, SSH remote, WSL, code-server,
   Codespaces.
@@ -47,10 +50,14 @@ the bridge sends it on every request.
   static-key path wherever one exists. OAuth is an upgrade where open, never a
   prerequisite.
 
-### 2 · MCP-spec OAuth 2.1 with Dynamic Client Registration — `authType: "oauth"`
+### 2 · MCP-spec OAuth 2.1 with Dynamic Client Registration
 
 The MCP Authorization spec's own flow, for servers whose DCR is genuinely open (no
-pre-provisioned credentials of any kind):
+pre-provisioned credentials of any kind). A curated entry offers it where its
+vendor opens it; a custom server is never asked to choose it up front — a
+remote server that turns patchbay's check away with a 401 is offered **Sign in**,
+the spec's own discovery from there, and the server records only that it
+signed in:
 
 1. Discover protected-resource metadata:
    `{origin}/.well-known/oauth-protected-resource{/path}` (RFC 9728), or the
@@ -156,20 +163,22 @@ restate it. Policy for what an entry is:
 4. **`vscode.authentication.getSession('github', …)` stays unused for MCP
    servers.** It would grant a GitHub token with zero setup, but the session
    is account/profile-scoped — the same credential silently available in every
-   workspace. The reason first recorded, per-workspace credentials, does not
-   hold today: MCP servers and their credentials are global to the machine,
-   and scoping them by workspace is the open design of #70. The decision
-   stands until that design re-derives it.
+   workspace. Re-derived with #70 (2026-11-01): a server is now on only in
+   the workspaces chosen, but its credential is still its own, wherever it
+   is on; a profile-wide GitHub session would be one credential behind
+   every server that took it. The decision stands; #73 is where taking it
+   is weighed.
 5. **Discovery order matters**: `oauth-protected-resource` first (RFC 9728), then
    the authorization server's metadata — the reverse (what VS Code currently does,
    see §3) breaks against spec-correct servers.
 
 ## Implementation — where each piece lives
 
-1. Header auth generalized: `headerName` + `valuePrefix` in both the catalog
-   schema (`stores/mcp-catalog.ts`) and the custom-http config shape
-   (`stores/mcp-server-configs.ts`); the bridge reads them from
-   `ACP_PATCHBAY_AUTH_HEADER`/`_PREFIX` (`mcp/bridge-main.ts`).
+1. Header auth: a curated entry's `headerName` + `valuePrefix` are catalog
+   data (`stores/mcp-catalog.ts`); a custom server's headers are its own, in
+   the convention's shape (`shared/mcp-config.ts`), stored in SecretStorage.
+   The bridge asks for a server's headers per request
+   (`getMcpServerHeaders`, `mcp/bridge-main.ts`).
 2. `src/orchestrator/mcp-oauth.ts`: discovery (RFC 9728 → 8414) → DCR (RFC 7591) →
    Authorization Code + PKCE; redirect via an injected `OAuthUserAgent` — the
    orchestrator implements it with `registerUriHandler` (extension.ts) +

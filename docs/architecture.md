@@ -41,13 +41,14 @@ Terms are contracts — one meaning each, held everywhere (docs, code, UI copy):
   observed firing on the wire.
 - **Brokered** — routed through the permission broker.
 - **MCP server** — the *record*: a configured MCP-server connection (curated or
-  custom) with its credential, env, routing, and active state — a row of the
+  custom) with its credential, env and headers, routing, and the workspaces it
+  is on in — a row of the
   MCP-servers store (`McpServerConfig` stored, `McpServerView` on screen). Not
   the ACP SDK's `McpServer`, which is the *wire entry* an attach composes from
   a record into a session's `mcpServers` — two different things, told apart by
-  their type names. Lifecycle is two-state: active/inactive (the mute switch — everything kept,
-  nothing routed) and disconnect = full clear (credential + env + config; the
-  catalog entry stays). One catalog entry can be connected more than once —
+  their type names. Lifecycle is two-state: on or off in a workspace (its
+  scope — everything kept, nothing given there) and disconnect = full clear
+  (credential + env + headers + config; the catalog entry stays). One catalog entry can be connected more than once —
   two accounts, two servers, each with a minted id and a name of its own: the
   name rides the wire as the server's name, so no two servers share one, and
   it is given once, at the add, cut to the characters agents keep — they build
@@ -1188,9 +1189,10 @@ The differentiator (the PRD's current-release scope), shipped complete:
   states per row who holds it: the servers always; the agent now, at the next
   open, or never. Workspace folders are read from reality at each composition, never
   stored; only user-added roots persist. A folder added or removed at runtime
-  re-applies to every live session. **Saved roots** (Settings, two scopes:
-  this workspace in `workspaceState`, every workspace in the machine store)
-  seed a session at birth — composed into its `session/new` list, minus the
+  re-applies to every live session. **Saved roots** (Settings: one list in
+  the machine store, each folder saved for every workspace, these, or every
+  one but these — the scope grammar of MCP servers, § MCP servers) seed a
+  session at birth in a workspace they are saved for — composed into its `session/new` list, minus the
   cwd, the workspace folders, and duplicates, then recorded as its own
   user-added roots, so an agent with no re-apply rung still takes them. A
   preference, not a session fact: the store is read at birth and never
@@ -1374,7 +1376,33 @@ mechanism — MCP servers routed to agents:
   patchbay's own per-agent curation lives in code tables where every other house
   knowledge does — `META_EXTENSIONS` (meta.ts), knob quirks (knobs.ts). The
   custom-command escape hatch covers anything the registry omits.
-- **Custom escape hatch**: add any MCP server (command or URL, with auth).
+- **Your own server, in the shape other clients write.** The MCP spec defines
+  no client config; the convention clients share is a map of named entries —
+  `mcpServers` (Claude Code's `.mcp.json`, Copilot CLI) or `servers` (VS
+  Code's `mcp.json`) — each `{type: "stdio", command, args, env}` or `{type:
+  "http", url, headers}`. Patchbay reads both maps and writes `mcpServers`,
+  the type always, every field of the type (an unfilled list empty), from one
+  module the add card's live JSON view and the store both use
+  (`shared/mcp-config.ts`); a record keeps the command and args or the URL,
+  the env and header values live in SecretStorage. `${NAME}`,
+  `${NAME:-default}` and `${env:NAME}` are kept as typed and filled where the
+  server is handed over — from the extension host's environment (the
+  workspace machine's in a remote window) and the agent's own env — and
+  where an add is checked, from the host's; never stored filled in. A
+  server with a variable unset and no default isn't given, and the session
+  says which variable. VS Code's own variables (`${input:…}`,
+  `${workspaceFolder}`) and the transport MCP retired (`type: "sse"`) are
+  refused at add with the reason. *(Supersedes the custom server's own auth
+  fields, 2026-11-01, #130.)* Out of scope, by decision: reading VS Code's
+  own `mcp.json` files as a source, and the `oauth` object that pins a
+  pre-registered client (#73 is its extension point).
+- **Every add is checked before it is stored** — patchbay's own handshake
+  (below) against the draft, not a stored record: a refused key, a failing
+  command or an unset variable stores nothing and the add card keeps the
+  reason; a remote server that answers 401 is offered its sign-in (MCP's own
+  discovery), and the add runs again signed in. An edit is checked the same
+  way. A stdio server added where it is off is not checked here — its
+  command never runs in a workspace it is off in — and is stored unchecked.
 - **Capability-conditional transport**: an agent declaring `mcp.http` gets the
   remote server passed through as a real `type: "http"` entry — its own MCP
   client connects, upstream-maintained transport, the declared path actually
@@ -1425,11 +1453,34 @@ flowchart TD
   under a context token no attach minted: initialize and tools/list never reach
   the IPC socket, so the probe proves the spawn and the tool list, and a tool
   call under that token would be refused. Its version is the extension's.
-- **Routing is the user's, per agent.** "auto" (default) = every agent; an
-  explicit id list pins exactly; "except" = every agent minus the listed. Routing
-  is reach, not consent: which servers an agent receives is separate from whether
-  a given tool call is allowed — consent rides the permission broker per call,
-  for every request_permission-routing agent.
+- **Who gets it: workspaces, then agents, both.** Two selections in one
+  grammar (`shared/reach.ts`) — every one, these, or every one but these —
+  combined with AND: the workspaces a server is on in, and the agents it is
+  routed to. Routing is reach, not consent: which servers an agent receives
+  is separate from whether a given tool call is allowed — consent rides the
+  permission broker per call, for every request_permission-routing agent.
+  A workspace is named by the URI VS Code opened — the `.code-workspace` file,
+  else the folder, the remote host included — a storage key fixed once
+  (`shared/workspace.ts`); a window with no workspace is reached only by
+  every workspace and every-but. Records stay global and visible in every
+  window; scope decides only what new sessions start with, and lives in the
+  machine store so any window shows and changes it: a workspace joins a
+  scope from inside it (a new server is on where it was added — in a window
+  with none, the add preselects nothing and the user picks), and any window
+  takes one out. No list of workspaces is kept beside the scopes. An
+  untitled multi-root workspace's URI changes when it is saved, and its
+  scopes don't follow — a deliberate scope decision. *(Supersedes
+  global-only, 2026-11-01, #70; the incident it guarded — a
+  production-access server following a user between repos — is held by a
+  new server being on only where it was added.)* The stdio tool probe runs
+  only where its server is on.
+- **A session's own servers — the MCP chip.** Beside the roots chip, the
+  chip shows what the session's last open gave and adds a configured server
+  to that session alone, kept on its continuity row and sent at its every
+  open, wherever the server is on and whoever it is routed to; its Save
+  makes it stick for this workspace or every one. ACP hands `mcpServers`
+  only on `session/new`, `load` and `resume`, so a change waits for the next
+  open, which the chip offers where the agent can load or resume.
 - **MCP-server operations take turns too** — a line per server, a connect
   line, and the credential's own refresh rule:
   [the stores architecture](store-architecture.md#mcp-servers).
