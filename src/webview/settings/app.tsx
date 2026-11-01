@@ -128,6 +128,7 @@ export function App({ state }: { state: SettingsState }) {
             onAdd={(scope) => send({ kind: "pickSavedRoot", scope })}
             onEdit={(path) => send({ kind: "replaceSavedRoot", path })}
             onRemove={(path) => send({ kind: "unsaveRoot", path })}
+            onSetWorkspaces={(path, workspaces) => send({ kind: "setSavedRootWorkspaces", path, workspaces })}
           />
         )}
         {section === "importExport" && (

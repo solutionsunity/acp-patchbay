@@ -5,9 +5,13 @@
 // own — one list, each folder with the workspaces it is saved for. The one
 // place to manage them; the roots chip's Save is a shortcut into the same
 // list.
+import { useState } from "react";
 import { NO_WORKSPACE_TO_SAVE, type SaveScope, type SettingsState } from "../../shared/protocol";
+import type { Reach } from "../../shared/reach";
+import type { WorkspaceId } from "../../shared/workspace";
 import { Icon } from "../shared/icon";
 import { whereSaid } from "../shared/where";
+import { WorkspaceScope } from "./scope-control";
 import { Button } from "@/components/ui/button";
 
 export function RootsSection(props: {
@@ -15,8 +19,11 @@ export function RootsSection(props: {
   onAdd(scope: SaveScope): void;
   onEdit(path: string): void;
   onRemove(path: string): void;
+  onSetWorkspaces(path: string, workspaces: Reach<WorkspaceId>): void;
 }) {
   const { savedRoots, workspace } = props.state;
+  // Which folder's workspaces are open below it — render state only.
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <section className="section">
       <h1>Saved roots</h1>
@@ -30,37 +37,57 @@ export function RootsSection(props: {
       <div className="card">
         {savedRoots.entries.length === 0 && <div className="note mx-0 mt-0 mb-2">No saved roots.</div>}
         {savedRoots.entries.map(({ path, workspaces }) => (
-          <div className="rule" key={path}>
-            <code>{path}</code>
-            <span className="note m-0">{whereSaid(workspaces, workspace)}</span>
-            {savedRoots.missing.includes(path) && (
-              <span
-                className="st-s"
-                title="Folder not found — needs your action: restore it, or change or remove it here. New sessions skip it meanwhile."
-                aria-label={`Saved root ${path} not found`}
+          <div key={path}>
+            <div className="rule">
+              <code>{path}</code>
+              <button
+                type="button"
+                className="note m-0 cursor-pointer border-0 bg-transparent p-0 hover:underline"
+                aria-expanded={open === path}
+                title="where it is saved — change it"
+                onClick={() => setOpen(open === path ? null : path)}
               >
-                <Icon name="warning" />
+                {whereSaid(workspaces, workspace)}
+              </button>
+              {savedRoots.missing.includes(path) && (
+                <span
+                  className="st-s"
+                  title="Folder not found — needs your action: restore it, or change or remove it here. New sessions skip it meanwhile."
+                  aria-label={`Saved root ${path} not found`}
+                >
+                  <Icon name="warning" />
+                </span>
+              )}
+              <span
+                className="e edit"
+                role="button"
+                tabIndex={0}
+                title="Change folder"
+                aria-label={`Change saved root ${path}`}
+                onClick={() => props.onEdit(path)}
+              >
+                <Icon name="edit" />
               </span>
+              <span
+                className="e"
+                role="button"
+                tabIndex={0}
+                aria-label={`Remove saved root ${path}`}
+                onClick={() => props.onRemove(path)}
+              >
+                <Icon name="close" />
+              </span>
+            </div>
+            {open === path && (
+              <div className="mb-2 ml-2.5">
+                <WorkspaceScope
+                  of="this folder"
+                  here={workspace}
+                  workspaces={workspaces}
+                  onChange={(next) => props.onSetWorkspaces(path, next)}
+                />
+              </div>
             )}
-            <span
-              className="e edit"
-              role="button"
-              tabIndex={0}
-              title="Change folder"
-              aria-label={`Change saved root ${path}`}
-              onClick={() => props.onEdit(path)}
-            >
-              <Icon name="edit" />
-            </span>
-            <span
-              className="e"
-              role="button"
-              tabIndex={0}
-              aria-label={`Remove saved root ${path}`}
-              onClick={() => props.onRemove(path)}
-            >
-              <Icon name="close" />
-            </span>
           </div>
         ))}
         <div className="row mt-2.5 gap-2">

@@ -1732,9 +1732,18 @@ for (const theme of Object.keys(THEMES)) {
     entries: [
       { path: longPath, workspaces: ["file:///ws"] },
       { path: `/srv/${LONG}`, workspaces: "auto" },
+      { path: "/srv/shared", workspaces: [`vscode-remote://ssh-remote%2Bbox/srv/${LONG}`] },
     ],
     missing: [],
   };
+  // a server on here and in one other workspace, routed to one agent
+  st.mcpServers = [
+    {
+      id: "srv1", name: "Files", sourceKind: "custom-stdio", command: "npx -y files-server", connected: true,
+      workspaces: ["file:///ws", `vscode-remote://ssh-remote%2Bbox/srv/${LONG}`], onHere: true,
+      routing: [st.agents[0].id], transport: "auto", busy: [],
+    },
+  ];
   p = await page(browser, theme0, { width: 520, height: 800 });
   await renderView(p, "settings", st);
   await p.waitForSelector(".section h1");
@@ -1755,6 +1764,39 @@ for (const theme of Object.keys(THEMES)) {
   await p.click('.nav .it:has-text("Preferences")');
   await opened(p, '.section [role="combobox"]', "select-content", "a preference's options");
   await p.keyboard.press("Escape");
+
+  // ── where a server and a saved root are on: read and changed from any window (#70) ──
+  await p.click('.nav .it:has-text("Saved roots")');
+  await p.click('.section button[aria-expanded]:has-text("1 other workspace")');
+  const rootScope = p.locator('.section [role="radiogroup"]');
+  check(
+    "[narrow] a saved root's workspaces name this one and the other by its path and host",
+    (await rootScope.locator("label", { hasText: "this workspace" }).count()) === 1 &&
+      (await rootScope.locator("label", { hasText: "· ssh-remote+box" }).count()) === 1,
+  );
+  await rootScope.locator("label", { hasText: "· ssh-remote+box" }).locator('[role="checkbox"]').click();
+  const unsaved = await p.evaluate(() => window.__actions.at(-1));
+  check(
+    "[narrow] another workspace is taken out from this window",
+    unsaved?.kind === "setSavedRootWorkspaces" && unsaved.path === "/srv/shared" && JSON.stringify(unsaved.workspaces) === "[]",
+  );
+  await sweep(p, "settings › a saved root's workspaces");
+  await p.click('.nav .it:has-text("MCP Servers")');
+  const files = p.locator(".card", { has: p.locator('.nm:text-is("Files")') });
+  await files.waitFor();
+  check("[narrow] a server card says where it is on", (await files.locator(".note", { hasText: "on in this and 1 other workspace" }).count()) === 1);
+  await files.locator('button[aria-label="Settings"]').click();
+  const who = files.locator("h3:text-is('Who gets it')");
+  const groups = files.locator('[role="radiogroup"]');
+  check(
+    "[narrow] who gets it: the workspaces first, then the agents",
+    (await who.count()) === 1 &&
+      (await groups.count()) === 2 &&
+      (await groups.nth(0).locator("text=only these workspaces").count()) === 1 &&
+      (await groups.nth(1).locator("text=only these agents").count()) === 1,
+  );
+  await sweep(p, "settings › a server's who gets it");
+  await p.screenshot({ path: `${OUT}/narrow-settings-who-gets-it.png`, fullPage: true });
 
   // ── Import/Export: export sends the parts still ticked; none ticked, nothing to send ──
   await p.click('.nav .it:has-text("Import/Export")');

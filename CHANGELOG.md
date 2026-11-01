@@ -4,14 +4,17 @@
 
 - **MCP servers and saved roots can be on in some workspaces.** Each MCP
   server and each saved root is on in every workspace, in the ones you
-  pick, or in every one but those; an MCP server's card switch turns it on
-  or off in this workspace only. A server's stdio command is never run in a
-  workspace where the server is off, not even to check its tools. What you
-  had carries over: a server that was on is on everywhere, one that was off
-  is off everywhere, and a root saved for every workspace stays so. A
-  workspace's own saved roots move into the one list the first time it
-  opens, still saved for that workspace, so any window's Settings can show
-  them, and an export now carries them. (#70)
+  pick, or in every one but those. A server's card switch turns it on or
+  off in this workspace only, and its settings show who gets it — the
+  workspaces first, then the agents. Settings › Saved roots and each
+  server's card say where it is on, and any window can take any workspace
+  out; a workspace is added from inside it. A server's stdio command is
+  never run in a workspace where the server is off, not even to check its
+  tools. What you had carries over: a server that was on is on everywhere,
+  one that was off is off everywhere, and a root saved for every workspace
+  stays so. A workspace's own saved roots move into the one list the first
+  time it opens, still saved for that workspace, so any window's Settings
+  can show them, and an export now carries them. (#70)
 - **The turn-end chime plays where you are.** It now plays from the Agent
   View, so in a WSL, SSH or container window it reaches the machine you sit
   at; before, it played on the remote machine, or through Windows from WSL

@@ -17,6 +17,7 @@ import { addedMcpServerName, mcpServerName } from "../../shared/names";
 import { Icon } from "../shared/icon";
 import { filterCatalog, MECHANISMS, mechanismsOf, type Mechanism } from "./catalog-filter";
 import { ConfirmButton, Field } from "./controls";
+import { AgentScope, WorkspaceScope } from "./scope-control";
 import { parseEnvLines } from "./parse-env";
 import { SortableItem, SortableList } from "./sortable";
 import { Badge, badgeVariants } from "@/components/ui/badge";
@@ -24,11 +25,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { PatchbayAgentId } from "../../shared/ids";
 import type { PatchbayMcpServerId } from "../../shared/ids";
 import { NO_WORKSPACE_TO_SAVE } from "../../shared/protocol";
 import { withOne, type Reach } from "../../shared/reach";
@@ -88,75 +87,25 @@ function MechanismToggle(props: { mechanism: Mechanism; pressed: boolean; onTogg
   );
 }
 
-/** The three reaches (protocol.ts — the fidelity gate is superseded; auto
- * means every agent), stated as the three sentences they are — one mode per
- * line, the agent tick-list indented under whichever list mode is active,
- * never an undifferentiated wrap of radios and checkboxes:
- *   auto    — every agent;
- *   only    — exactly the ticked agents;
- *   except  — every agent minus the ticked ones. */
-function RoutingEditor(props: {
+/** Who gets a server: the workspaces it is on in, then the agents it is
+ * routed to — a session gets it where both say so. */
+function WhoGetsIt(props: {
+  of: string;
+  here: WorkspaceId | null;
+  workspaces: Reach<WorkspaceId>;
+  onWorkspaces(workspaces: Reach<WorkspaceId>): void;
   agents: SettingsState["agents"];
   routing: McpServerRoutingView;
-  onChange(routing: McpServerRoutingView): void;
+  onRouting(routing: McpServerRoutingView): void;
 }) {
-  const mode: "auto" | "only" | "except" =
-    props.routing === "auto" ? "auto" : Array.isArray(props.routing) ? "only" : "except";
-  const list: readonly PatchbayAgentId[] =
-    props.routing === "auto"
-      ? []
-      : Array.isArray(props.routing)
-        ? props.routing
-        : (props.routing as { except: readonly PatchbayAgentId[] }).except;
-  const setMode = (m: "auto" | "only" | "except") => {
-    if (m === mode) return;
-    // A list never carries across modes — the same ids mean the opposite
-    // thing in "only" vs "except".
-    props.onChange(m === "auto" ? "auto" : m === "only" ? [] : { except: [] });
-  };
-  const tickList = (onTick: (patchbayAgentId: PatchbayAgentId, checked: boolean) => void) => (
-    <div className="ml-6 flex flex-wrap gap-x-2.5 gap-y-1">
-      {props.agents.map((a) => (
-        <label key={a.id} className="flex items-center gap-1.5">
-          <Checkbox checked={list.includes(a.id)} onCheckedChange={() => onTick(a.id, list.includes(a.id))} />
-          {a.name}
-        </label>
-      ))}
-    </div>
-  );
   return (
-    <div className="flex flex-col gap-1.5">
-      <span
-        className="lbl text-[10.5px] tracking-[0.04em] uppercase text-muted-foreground"
-        title="which agents receive this server in their sessions"
-      >
-        reaches
-      </span>
-      <RadioGroup className="flex flex-col gap-1" value={mode} onValueChange={(v) => setMode(v as "auto" | "only" | "except")}>
-        <label
-          className="flex items-center gap-1.5"
-          title="attaches to every agent, current and future — tool calls still pass the permission broker per agent"
-        >
-          <RadioGroupItem value="auto" /> all agents (auto)
-        </label>
-        <label className="flex items-center gap-1.5" title="an explicit list — exactly the agents you tick">
-          <RadioGroupItem value="only" /> only these agents
-        </label>
-        {mode === "only" &&
-          tickList((patchbayAgentId, checked) =>
-            props.onChange(checked ? list.filter((id) => id !== patchbayAgentId) : [...list, patchbayAgentId]),
-          )}
-        <label
-          className="flex items-center gap-1.5"
-          title="every agent minus the ticked ones — new agents attach until excluded"
-        >
-          <RadioGroupItem value="except" /> all agents except these
-        </label>
-        {mode === "except" &&
-          tickList((patchbayAgentId, checked) =>
-            props.onChange({ except: checked ? list.filter((id) => id !== patchbayAgentId) : [...list, patchbayAgentId] }),
-          )}
-      </RadioGroup>
+    <div className="mt-2 flex flex-col gap-1.5">
+      <h3 className="m-0 text-[12px] font-semibold" title="a session gets the server where both say so">
+        Who gets it
+      </h3>
+      <WorkspaceScope of={props.of} here={props.here} workspaces={props.workspaces} onChange={props.onWorkspaces} />
+      <span className="note m-0">and</span>
+      <AgentScope agents={props.agents} routing={props.routing} onChange={props.onRouting} />
     </div>
   );
 }
@@ -774,13 +723,15 @@ export function McpServersSection(props: {
                       </div>
                     ))}
                   {detailsOpen && (
-                    <div className="mt-2">
-                      <RoutingEditor
-                        agents={state.agents}
-                        routing={server.routing}
-                        onChange={(routing) => props.onSetRouting(server.id, routing)}
-                      />
-                    </div>
+                    <WhoGetsIt
+                      of="this server"
+                      here={here}
+                      workspaces={server.workspaces}
+                      onWorkspaces={(workspaces) => props.onSetWorkspaces(server.id, workspaces)}
+                      agents={state.agents}
+                      routing={server.routing}
+                      onRouting={(routing) => props.onSetRouting(server.id, routing)}
+                    />
                   )}
                   {detailsOpen && server.sourceKind !== "custom-stdio" && (
                     <label
