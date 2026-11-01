@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Claude's plan usage shows its percentage.** Claude Code sends a
+  window's percentage at the top of its reading only once a warning
+  threshold is crossed, so under it the plan gauge had a label and no
+  number. Each window's percentage now comes from the per-window readings
+  in the same message; one Patchbay can't read is left out, never guessed.
+  A window run past its cap reads past 100% (it read as 1%). (#117)
 - **Adding an MCP server is one card at the top, checked before it's
   saved.** As on the Agents page, the add tile opens one card: pick a
   curated server from a search, or add your own as a command, a URL, or

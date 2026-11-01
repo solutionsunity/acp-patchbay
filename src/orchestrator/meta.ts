@@ -45,11 +45,27 @@ export type TerminalAuthRecipe = z.infer<typeof terminalAuthRecipeSchema>;
  * plain usage updates). Schema kept to the fields patchbay renders; zod
  * strips the rest (overage/credits detail — adopt when a feature needs
  * them). An unknown `status` value fails the parse and degrades to absent:
- * a gauge patchbay can't classify is not shown, never guessed. */
+ * a gauge patchbay can't classify is not shown, never guessed.
+ *
+ * The top-level fields describe the window limiting right now, and carry
+ * `utilization` only once that window is past a warning threshold — under
+ * it the reading has no number at all. `unifiedWindows` (CLI 2.1.312,
+ * observed live 2026-11-01; marked internal in the CLI's own schema) holds
+ * every tracked window's reading on every change: utilization as a
+ * fraction of the cap (it can run past 1), reset in epoch seconds, the
+ * window's own status. Each window is read on its own; an unreadable one,
+ * or the whole field vanishing, leaves the top-level reading as it was. */
+const rateLimitStatusSchema = z.enum(["allowed", "allowed_warning", "rejected"]);
 const rateLimitInfoSchema = z.object({
-  status: z.enum(["allowed", "allowed_warning", "rejected"]),
+  status: rateLimitStatusSchema,
   rateLimitType: z.string().optional(),
   utilization: z.number().optional(),
+  resetsAt: z.number().optional(),
+  unifiedWindows: z.record(z.string(), z.unknown()).optional().catch(undefined),
+});
+const rateLimitWindowSchema = z.object({
+  status: rateLimitStatusSchema,
+  utilization: z.number(),
   resetsAt: z.number().optional(),
 });
 
@@ -154,28 +170,49 @@ export function agentTerminalOf(meta: unknown): AgentTerminalReading | null {
   };
 }
 
-/** usageUpdate-site processor: `_meta["_claude/rateLimit"]` → the neutral
- * plan-usage shape (shared/protocol.ts PlanUsageInfo — the webview renders
- * it with no idea which vendor key fed it). Normalizations, each from a
- * verified fact, none a guess:
- * - status → ok/warning/limited (three-state gauge color);
- * - `resetsAt` epoch → ISO; seconds vs milliseconds disambiguated by
- *   magnitude (the two encodings are cleanly separable for any real date —
- *   1e11 sits at year 5138 in seconds and 1973 in ms);
- * - `utilization` passes through raw — its unit (fraction vs percent) is
- *   not derivable from the SDK types; the renderer owns the display rule. */
-export function planUsageOf(meta: unknown): PlanUsageInfo | null {
-  const entry = META_EXTENSIONS.usageUpdate["_claude/rateLimit"];
-  const parsed = entry.schema.safeParse(payloadOf(meta, "_claude/rateLimit"));
-  if (!parsed.success) return null;
-  const { status, rateLimitType, utilization, resetsAt } = parsed.data;
+function planReading(
+  status: z.infer<typeof rateLimitStatusSchema>,
+  window: string | undefined,
+  utilization: number | undefined,
+  resetsAt: number | undefined,
+): PlanUsageInfo {
   return {
     status: status === "allowed" ? "ok" : status === "allowed_warning" ? "warning" : "limited",
-    window: rateLimitType,
+    window,
     utilization,
     resetsAt:
       resetsAt === undefined
         ? undefined
         : new Date(resetsAt > 1e11 ? resetsAt : resetsAt * 1000).toISOString(),
   };
+}
+
+/** usageUpdate-site processor: `_meta["_claude/rateLimit"]` → the neutral
+ * plan-usage shape, one reading per window it reports, keyed by window tag
+ * (shared/protocol.ts PlanUsageInfo — the webview renders it with no idea
+ * which vendor key fed it). Normalizations, each from a verified fact, none
+ * a guess:
+ * - status → ok/warning/limited (three-state gauge color);
+ * - `resetsAt` epoch → ISO; seconds vs milliseconds disambiguated by
+ *   magnitude (the two encodings are cleanly separable for any real date —
+ *   1e11 sits at year 5138 in seconds and 1973 in ms);
+ * - `utilization` passes through as the fraction it is;
+ * - the limiting window takes the top-level status — the one that says
+ *   whether requests are refused — and its own window's numbers where the
+ *   top level leaves them out. */
+export function planUsageOf(meta: unknown): Readonly<Record<string, PlanUsageInfo>> | null {
+  const entry = META_EXTENSIONS.usageUpdate["_claude/rateLimit"];
+  const parsed = entry.schema.safeParse(payloadOf(meta, "_claude/rateLimit"));
+  if (!parsed.success) return null;
+  const { status, rateLimitType, utilization, resetsAt, unifiedWindows } = parsed.data;
+  const readings: Record<string, PlanUsageInfo> = {};
+  let own: z.infer<typeof rateLimitWindowSchema> | undefined;
+  for (const [window, raw] of Object.entries(unifiedWindows ?? {})) {
+    const w = rateLimitWindowSchema.safeParse(raw);
+    if (!w.success) continue;
+    readings[window] = planReading(w.data.status, window, w.data.utilization, w.data.resetsAt);
+    if (window === rateLimitType) own = w.data;
+  }
+  readings[rateLimitType ?? ""] = planReading(status, rateLimitType, utilization ?? own?.utilization, resetsAt ?? own?.resetsAt);
+  return readings;
 }

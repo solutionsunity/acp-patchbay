@@ -328,11 +328,19 @@
     }
   ],
   "usage": {
-    "used": 1800,
+    "used": 1900,
     "size": 200000,
     "cost": {
       "amount": 0.42,
       "currency": "USD"
+    },
+    "plan": {
+      "seven_day": {
+        "status": "ok",
+        "window": "seven_day",
+        "utilization": 0.57,
+        "resetsAt": "<time>"
+      }
     }
   },
   "knobs": [

@@ -142,6 +142,23 @@ const CORPUS: SessionUpdate[] = [
   },
   { sessionUpdate: "usage_update", used: 1200, size: 200000, cost: { amount: 0.42, currency: "USD" } },
   { sessionUpdate: "usage_update", used: 1800, size: 200000 },
+  // a plan reading, as claude-agent-acp 0.99.1 forwards Claude Code's
+  {
+    sessionUpdate: "usage_update",
+    used: 1900,
+    size: 200000,
+    _meta: {
+      "_claude/rateLimit": {
+        status: "allowed",
+        resetsAt: 1793732400,
+        rateLimitType: "seven_day",
+        overageStatus: "rejected",
+        overageDisabledReason: "out_of_credits",
+        isUsingOverage: false,
+        unifiedWindows: { seven_day: { utilization: 0.57, resetsAt: 1793732400, status: "allowed" } },
+      },
+    },
+  },
   { sessionUpdate: "session_info_update", title: "Corpus session" },
   {
     sessionUpdate: "config_option_update",

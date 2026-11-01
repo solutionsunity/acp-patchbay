@@ -501,21 +501,23 @@ describe("sessionBusyChanged (what a session's lines hold — its busy state)", 
 
 describe("state-truth regressions — weak evidence never overwrites strong", () => {
   it("usageReported coalesce: a plain tick never erases a standing plan reading", () => {
+    const fiveHour = { status: "limited" as const, window: "five_hour", utilization: 0.9, resetsAt: undefined };
     const withPlan: AgentViewEvent = {
       kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 10, size: 100, cost: undefined,
-      plan: { status: "limited", window: "five_hour", utilization: 0.9, resetsAt: undefined },
+      plan: { five_hour: fiveHour },
     };
     const plainTick: AgentViewEvent = {
       kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 12, size: 100, cost: undefined, plan: undefined,
     };
-    const merged = coalesceAgentViewEvent(withPlan, plainTick);
-    expect(merged).toMatchObject({ used: 12, plan: { window: "five_hour" } });
-    // Different windows are parallel axes — both must reach the reducer.
+    expect(coalesceAgentViewEvent(withPlan, plainTick)).toMatchObject({ used: 12, plan: { five_hour: fiveHour } });
+    // Different windows are parallel axes — both survive, as the reducer
+    // would keep them.
+    const weekly = { status: "ok" as const, window: "weekly", utilization: 0.2, resetsAt: undefined };
     const otherWindow: AgentViewEvent = {
       kind: "usageReported", patchbaySessionId: "s1" as PatchbaySessionId, used: 13, size: 100, cost: undefined,
-      plan: { status: "ok", window: "weekly", utilization: 0.2, resetsAt: undefined },
+      plan: { weekly },
     };
-    expect(coalesceAgentViewEvent(withPlan, otherWindow)).toBeNull();
+    expect(coalesceAgentViewEvent(withPlan, otherWindow)).toMatchObject({ used: 13, plan: { five_hour: fiveHour, weekly } });
   });
 });
 

@@ -586,7 +586,7 @@ for (const theme of Object.keys(THEMES)) {
   // control and no switch reaches it ──
   await p.evaluate(() =>
     window.__patch([
-      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
+      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { five_hour: { status: "ok", window: "five_hour", utilization: 0.4 } } },
     ]),
   );
   // patches land asynchronously (postMessage) — wait for the wanted shape
@@ -1293,7 +1293,7 @@ for (const theme of Object.keys(THEMES)) {
   // the token gauge's tooltip
   await p.evaluate(() =>
     window.__patch([
-      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { status: "ok", window: "five_hour", utilization: 0.4 } },
+      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { five_hour: { status: "ok", window: "five_hour", utilization: 0.4 } } },
     ]),
   );
   const gauge = await p.waitForSelector(".composer-stats .gauge", { timeout: 3000 });

@@ -47,21 +47,52 @@ describe("planUsageOf (usageUpdate site: _claude/rateLimit)", () => {
         },
       }),
     ).toEqual({
-      status: "warning",
-      window: "five_hour",
-      utilization: 0.82,
-      resetsAt: new Date(1_784_000_000 * 1000).toISOString(),
+      five_hour: {
+        status: "warning",
+        window: "five_hour",
+        utilization: 0.82,
+        resetsAt: new Date(1_784_000_000 * 1000).toISOString(),
+      },
     });
   });
 
   it("disambiguates a milliseconds epoch by magnitude", () => {
     const ms = 1_784_000_000_000;
     expect(planUsageOf({ "_claude/rateLimit": { status: "allowed", resetsAt: ms } })).toEqual({
-      status: "ok",
-      window: undefined,
-      utilization: undefined,
-      resetsAt: new Date(ms).toISOString(),
+      "": { status: "ok", window: undefined, utilization: undefined, resetsAt: new Date(ms).toISOString() },
     });
+  });
+
+  // As Claude Code 2.1.312 sent it, 2026-11-01: under a warning threshold
+  // the top level carries no utilization; the windows' own readings do.
+  it("takes every window's reading from unifiedWindows — the limiting one keeps the top-level status", () => {
+    expect(
+      planUsageOf({
+        "_claude/rateLimit": {
+          status: "allowed",
+          resetsAt: 1793732400,
+          rateLimitType: "seven_day",
+          overageStatus: "rejected",
+          overageDisabledReason: "out_of_credits",
+          isUsingOverage: false,
+          unifiedWindows: {
+            seven_day: { utilization: 0.57, resetsAt: 1793732400, status: "allowed" },
+            five_hour: { utilization: 1.2, resetsAt: 1793700000, status: "rejected" },
+          },
+        },
+      }),
+    ).toEqual({
+      seven_day: { status: "ok", window: "seven_day", utilization: 0.57, resetsAt: new Date(1793732400 * 1000).toISOString() },
+      five_hour: { status: "limited", window: "five_hour", utilization: 1.2, resetsAt: new Date(1793700000 * 1000).toISOString() },
+    });
+  });
+
+  it("an unreadable window, or unifiedWindows in a shape it doesn't take, leaves the top-level reading", () => {
+    const top = { status: "allowed", rateLimitType: "seven_day" };
+    const alone = { seven_day: { status: "ok", window: "seven_day", utilization: undefined, resetsAt: undefined } };
+    expect(planUsageOf({ "_claude/rateLimit": { ...top, unifiedWindows: "soon" } })).toEqual(alone);
+    expect(planUsageOf({ "_claude/rateLimit": { ...top, unifiedWindows: { seven_day: { utilization: "57%" } } } })).toEqual(alone);
+    expect(planUsageOf({ "_claude/rateLimit": { ...top, unifiedWindows: { five_hour: { utilization: 0.1 } } } })).toEqual(alone); // no status: not classified
   });
 
   it("maps rejected to limited; extra vendor fields are stripped, not fatal", () => {
@@ -69,7 +100,7 @@ describe("planUsageOf (usageUpdate site: _claude/rateLimit)", () => {
       planUsageOf({
         "_claude/rateLimit": { status: "rejected", overageStatus: "rejected", isUsingOverage: false },
       }),
-    ).toMatchObject({ status: "limited" });
+    ).toMatchObject({ "": { status: "limited" } });
   });
 
   it("degrades to absent on malformed payloads — including an unknown status", () => {

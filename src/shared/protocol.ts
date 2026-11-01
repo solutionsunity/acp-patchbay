@@ -1803,9 +1803,8 @@ export interface PlanUsageInfo {
   /** Vendor window tag (e.g. "five_hour", "seven_day_opus") — label-mapped
    * in the UI, never gating anything. Absent when the agent didn't say. */
   window?: string;
-  /** Raw utilization as reported; unit unverified upstream (fraction vs
-   * percent), so the renderer owns the display rule (≤1 reads as a
-   * fraction). */
+  /** The fraction of the window used — 1 is the cap, and usage can run
+   * past it. Absent when the agent didn't say. */
   utilization?: number;
   /** ISO timestamp of the window reset, when reported. */
   resetsAt?: string;
@@ -2078,8 +2077,9 @@ export type AgentViewEvent =
       size: number;
       /** Absent when the agent didn't say — the standing cost stays. */
       cost?: { amount: number; currency: string };
-      /** Present only on the updates that carry a fresh plan reading. */
-      plan?: PlanUsageInfo;
+      /** Present only on the updates that carry a fresh plan reading — one
+       * per window it reports, keyed as UsageInfo.plan is. */
+      plan?: Readonly<Record<string, PlanUsageInfo>>;
     }
   /** Full replace — what the registry store holds changed: its copy loaded
    * at start, or a read landed. `fetchedAt` dates it. */
@@ -2283,6 +2283,17 @@ function patchBlock<B extends ChatBlock>(
     patchbaySessionId,
     blocks.map((b, j) => (j === i ? updated : b)),
   );
+}
+
+/** Plan windows are parallel axes: a fresh reading lands under its own
+ * window, every other window's standing reading survives. The reducer and
+ * the coalescer both merge by it, so collapsing two updates in transport
+ * keeps what reducing them one by one would. */
+function mergedPlan(
+  standing: Readonly<Record<string, PlanUsageInfo>> | undefined,
+  fresh: Readonly<Record<string, PlanUsageInfo>> | undefined,
+): Readonly<Record<string, PlanUsageInfo>> | undefined {
+  return standing === undefined || fresh === undefined ? (fresh ?? standing) : { ...standing, ...fresh };
 }
 
 export function reduceAgentView(
@@ -2518,15 +2529,10 @@ export function reduceAgentView(
         commandsBySession: { ...state.commandsBySession, [event.patchbaySessionId]: event.commands },
       };
     case "usageReported": {
-      // A fresh reading lands under its own window key; every other
-      // window's standing reading survives (parallel axes). What an update
-      // leaves out — a plan reading, the cost — stays as it was.
+      // What an update leaves out — a plan reading, the cost — stays as
+      // it was.
       const prior = state.sessionUsage[event.patchbaySessionId];
-      const priorPlan = prior?.plan;
-      const plan =
-        event.plan === undefined
-          ? priorPlan
-          : { ...priorPlan, [event.plan.window ?? ""]: event.plan };
+      const plan = mergedPlan(prior?.plan, event.plan);
       return {
         ...state,
         sessionUsage: {
@@ -2743,14 +2749,8 @@ export const coalesceAgentViewEvent: CoalesceHook<AgentViewEvent> = (prev, next)
     prev.patchbaySessionId === next.patchbaySessionId
   ) {
     const cost = next.cost ?? prev.cost;
-    const merged = cost === undefined ? next : { ...next, cost };
-    if (next.plan === undefined) {
-      return prev.plan === undefined ? merged : { ...merged, plan: prev.plan };
-    }
-    // Different windows are parallel axes — both readings must reach the
-    // reducer's per-window merge; don't coalesce.
-    if (prev.plan === undefined || prev.plan.window === next.plan.window) return merged;
-    return null;
+    const plan = mergedPlan(prev.plan, next.plan);
+    return { ...next, ...(cost !== undefined ? { cost } : {}), ...(plan !== undefined ? { plan } : {}) };
   }
   // Editor context changes on every cursor move — only the latest matters.
   if (prev.kind === "editorContextChanged" && next.kind === "editorContextChanged") {

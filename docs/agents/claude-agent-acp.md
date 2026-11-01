@@ -96,7 +96,19 @@ github.com/agentclientprotocol/claude-agent-acp (public issues).
   typed stays a normal user bubble. Likely generic across bridge-based
   harnesses, not vendor-gated.
 - `_claude/rateLimit` on `usage_update` is adopted — the plan-usage gauge
-  (`meta.ts` usageUpdate site).
+  (`meta.ts` usageUpdate site). Its top-level fields describe the window
+  limiting right now and carry `utilization` only past a warning threshold;
+  under it the reading has no number. Claude Code 2.1.312 (in 0.99.1) adds
+  `unifiedWindows` — every tracked window's `utilization` (a fraction, can
+  pass 1), `resetsAt` and `status`, sent whenever a window's rounded
+  percentage moves; the CLI's schema marks it internal. Read per window,
+  degrade-to-absent (observed live 2026-11-01: `seven_day` only, no
+  `five_hour`).
+- `rate_limit_event` is forwarded only once the turn has an assistant
+  message (`lastAssistantTotalUsage`, reset per turn); Claude Code sends the
+  turn's first event before it, so that reading is dropped and the gauge
+  catches up at the next change (0.99.1, read from dist 2026-11-01; not
+  reported upstream).
 - Observed `_meta` conventions (unadopted — adopt via meta.ts when needed):
   `_claude/sdkMessage`, `_claude/askUserQuestionOption`; the terminal-output
   `_meta` channel, which the bridge uses only for a client that declares

@@ -31,12 +31,8 @@ function windowLabel(reading: PlanUsageInfo): string {
   return reading.window === undefined ? "plan" : (WINDOW_LABELS[reading.window] ?? reading.window);
 }
 
-/** ≤1 reads as a fraction — the unit is unverified upstream
- * (protocol.ts PlanUsageInfo). */
 function pctOf(reading: PlanUsageInfo): number | null {
-  return reading.utilization === undefined
-    ? null
-    : Math.round(reading.utilization <= 1 ? reading.utilization * 100 : reading.utilization);
+  return reading.utilization === undefined ? null : Math.round(reading.utilization * 100);
 }
 
 function lineOf(reading: PlanUsageInfo): string {

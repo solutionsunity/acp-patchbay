@@ -25,7 +25,7 @@ export type SessionUpdateFact =
   | { kind: "plan"; entries: readonly PlanEntry[] }
   | { kind: "commands"; commands: readonly AvailableCommand[] }
   /** A context reading. `cost` absent = the agent didn't say this time. */
-  | { kind: "usage"; used: number; size: number; cost?: { amount: number; currency: string }; plan?: PlanUsageInfo }
+  | { kind: "usage"; used: number; size: number; cost?: { amount: number; currency: string }; plan?: Readonly<Record<string, PlanUsageInfo>> }
   | { kind: "info"; title?: string; updatedAt?: string }
   | { kind: "mode"; currentModeId: string }
   /** The whole config surface, in the knob normalizer's hands (knobs.ts
