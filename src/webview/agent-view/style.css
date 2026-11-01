@@ -124,10 +124,10 @@ body {
 
 
 /* usage gauge — rendered only where usage reporting is used */
-/* Sized to its ring (16px): the box was 26px from its header days, which
-   top-pinned the svg and stretched the stats strip below the other counters. */
+/* As tall as its ring (16px): the box was 26px from its header days, which
+   top-pinned the svg and stretched the stats strip below the other counters.
+   Its width follows the numbers beside the ring, when shown. */
 .gauge {
-  width: 16px;
   height: 16px;
 }
 

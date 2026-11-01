@@ -9,7 +9,7 @@
 // on every read, so a version that adds a preference never invalidates an
 // older stored object and an absent key is honestly "the default".
 import { z } from "zod";
-import { DEFAULT_PREFERENCES, type PreferencesView, type ToolCallDisplay } from "../../shared/protocol";
+import { DEFAULT_PREFERENCES, type GaugeDisplay, type PreferencesView, type ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER } from "../../shared/tool-display";
 import type { KV, StoredEntry } from "./kv";
 import { STORAGE_KEYS } from "./storage-keys";
@@ -19,6 +19,10 @@ const KEY = STORAGE_KEYS.preferences;
 /** Every knob source — a source added to the view is a missing key here. */
 const KNOB_SOURCES: Readonly<Record<PreferencesView["knobSource"], true>> = { "agent-default": true, "last-session": true };
 
+/** Every way a gauge shows — a display added to the type is a missing key here. */
+const GAUGE_DISPLAYS: Readonly<Record<GaugeDisplay, true>> = { off: true, on: true, details: true };
+const gaugeDisplay = z.custom<GaugeDisplay>((v) => typeof v === "string" && Object.hasOwn(GAUGE_DISPLAYS, v));
+
 /** One schema per preference — a preference added to the view is a
  * missing entry here until it has one. */
 const PREFERENCE_SCHEMAS: { [K in keyof PreferencesView]: z.ZodType<PreferencesView[K]> } = {
@@ -26,8 +30,9 @@ const PREFERENCE_SCHEMAS: { [K in keyof PreferencesView]: z.ZodType<PreferencesV
   knobSource: z.custom<PreferencesView["knobSource"]>((v) => typeof v === "string" && Object.hasOwn(KNOB_SOURCES, v)),
   idleCloseMinutes: z.number().finite(),
   statsToolCalls: z.boolean(),
-  statsContext: z.boolean(),
-  statsPlanUsage: z.boolean(),
+  statsContextGauge: gaugeDisplay,
+  statsPlanGauge: gaugeDisplay,
+  statsCost: z.boolean(),
   detachWindows: z.boolean(),
   attachmentMaxMB: z.number().finite(),
   openThinking: z.boolean(),
@@ -48,19 +53,35 @@ function readStored(stored: unknown): Partial<PreferencesView> {
 }
 
 /** A stored record in any shape a released version wrote, brought to the
- * current one. Three transitions so far: `composerStats` (one switch over
+ * current one. Four transitions so far: `composerStats` (one switch over
  * the whole strip) split into a switch per read-out — a stored "hidden"
  * hides all of them, so nobody's strip reappears on upgrade; then
  * `statsPrompts` retired, the prompt count having moved to the read-out
  * strip's prompts chip, which has no switch; then `doneSound` retired, the
  * chime moving from the system's sounds to one the Agent View makes, with
- * nothing to pick. */
-const RETIRED = ["composerStats", "statsPrompts", "doneSound"] as const;
+ * nothing to pick; then the two gauge switches, `statsContext` and
+ * `statsPlanUsage`, became a display each — shown takes the details, the
+ * view they had, hidden stays hidden — and the cost, which lived in the
+ * context gauge's tooltip, became its own read-out, shown where that gauge
+ * was. The gauges take new keys, so a version that knows only the
+ * switches never misreads a display as one; what it writes back carries
+ * its switches alone, which the next start brings over again. */
+const RETIRED = ["composerStats", "statsPrompts", "doneSound", "statsContext", "statsPlanUsage"] as const;
 
 function migrate(stored: Record<string, unknown>): Partial<PreferencesView> {
-  const { composerStats, statsPrompts: _prompts, doneSound: _sound, ...rest } = stored;
-  const split = composerStats === false ? { statsToolCalls: false, statsContext: false, statsPlanUsage: false } : {};
-  return { ...split, ...(rest as Partial<PreferencesView>) };
+  const { composerStats, statsPrompts: _prompts, doneSound: _sound, statsContext, statsPlanUsage, ...rest } = stored;
+  // A switch as it stood: its own value, else hidden with the whole strip,
+  // else never set — left for the default.
+  const was = (on: unknown) => (typeof on === "boolean" ? on : composerStats === false ? false : undefined);
+  const display = (on: boolean): GaugeDisplay => (on ? "details" : "off");
+  const context = was(statsContext);
+  const plan = was(statsPlanUsage);
+  return {
+    ...(composerStats === false ? { statsToolCalls: false } : {}),
+    ...(context !== undefined ? { statsContextGauge: display(context), statsCost: context } : {}),
+    ...(plan !== undefined ? { statsPlanGauge: display(plan) } : {}),
+    ...(rest as Partial<PreferencesView>),
+  };
 }
 
 export class PreferencesStore implements StoredEntry {

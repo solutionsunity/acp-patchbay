@@ -189,7 +189,7 @@ const unlistedMatrix = matrixOf({ "session.load": { declared: true, used: false 
 /** Complete stored-preferences object, as every snapshot carries. */
 export const preferences = {
   soundOnDone: true, knobSource: "agent-default", idleCloseMinutes: 60,
-  statsToolCalls: true, statsContext: true, statsPlanUsage: true,
+  statsToolCalls: true, statsContextGauge: "details", statsPlanGauge: "details", statsCost: true,
   detachWindows: true, attachmentMaxMB: 10, openThinking: false, executeCalls: "grouped",
   checkAgentUpdates: true,
 };

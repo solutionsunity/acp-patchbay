@@ -563,8 +563,9 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
       ...DEFAULT_PREFERENCES,
       soundOnDone: false,
       statsToolCalls: false,
-      statsContext: false,
-      statsPlanUsage: false,
+      statsContextGauge: "off",
+      statsPlanGauge: "off",
+      statsCost: false,
     });
     expect(hidden.get(STORAGE_KEYS.preferences)).not.toHaveProperty("composerStats");
 
@@ -579,9 +580,33 @@ describe("PreferencesStore — machine-scoped behavior defaults", () => {
 
   it("a stored statsPrompts is retired — the prompt count moved to the prompts chip", () => {
     const kv = new MemoryKV();
-    void kv.update(STORAGE_KEYS.preferences, { statsPrompts: false, statsContext: false });
-    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, statsContext: false });
-    expect(kv.get(STORAGE_KEYS.preferences)).toEqual({ statsContext: false });
+    void kv.update(STORAGE_KEYS.preferences, { statsPrompts: false, statsToolCalls: false });
+    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, statsToolCalls: false });
+    expect(kv.get(STORAGE_KEYS.preferences)).toEqual({ statsToolCalls: false });
+  });
+
+  it("the gauge switches become a display each — shown takes the details, hidden stays hidden — and the cost takes the context switch", () => {
+    const kv = new MemoryKV();
+    void kv.update(STORAGE_KEYS.preferences, { statsContext: false, statsPlanUsage: true });
+    expect(new PreferencesStore(kv).get()).toEqual({ ...DEFAULT_PREFERENCES, statsContextGauge: "off", statsCost: false, statsPlanGauge: "details" });
+    expect(kv.get(STORAGE_KEYS.preferences)).toEqual({ statsContextGauge: "off", statsCost: false, statsPlanGauge: "details" });
+
+    // A switch never set stays unset — its read-outs keep their defaults.
+    const planOnly = new MemoryKV();
+    void planOnly.update(STORAGE_KEYS.preferences, { statsPlanUsage: false });
+    new PreferencesStore(planOnly);
+    expect(planOnly.get(STORAGE_KEYS.preferences)).toEqual({ statsPlanGauge: "off" });
+
+    // A switch beats the whole-strip one, as it always did.
+    const both = new MemoryKV();
+    void both.update(STORAGE_KEYS.preferences, { composerStats: false, statsContext: true });
+    expect(new PreferencesStore(both).get()).toMatchObject({ statsToolCalls: false, statsContextGauge: "details", statsCost: true, statsPlanGauge: "off" });
+  });
+
+  it("switches an older window writes back beside a display never overwrite the display", () => {
+    const kv = new MemoryKV();
+    void kv.update(STORAGE_KEYS.preferences, { statsContextGauge: "on", statsContext: false });
+    expect(new PreferencesStore(kv).get()).toMatchObject({ statsContextGauge: "on", statsCost: false });
   });
 
   it("a stored doneSound is retired — the chime has no sound to pick; the switch keeps its word", () => {

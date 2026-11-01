@@ -582,29 +582,40 @@ for (const theme of Object.keys(THEMES)) {
   await p.keyboard.press("Control+z");
   check(`[${theme}] Undo takes a reuse back out`, await p.waitForFunction(() => document.querySelector(".prompt-editor").textContent === "", null, { timeout: 3000 }).then(() => true, () => false));
 
-  // ── one switch per read-out: each hides on its own; the files chip is a
-  // control and no switch reaches it ──
-  await p.evaluate(() =>
+  // ── one preference per read-out: each hides on its own, a gauge's
+  // details on their own; the files chip is a control and no switch
+  // reaches it ──
+  const resetsAt = "2026-11-05T14:00:00.000Z";
+  await p.evaluate((resetsAt) =>
     window.__patch([
-      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, plan: { five_hour: { status: "ok", window: "five_hour", utilization: 0.4 } } },
-    ]),
+      { kind: "usageReported", patchbaySessionId: "s1", used: 50000, size: 200000, cost: { amount: 0.42, currency: "USD" }, plan: { seven_day: { status: "ok", window: "seven_day", utilization: 0.57, resetsAt } } },
+    ]), resetsAt,
   );
   // patches land asynchronously (postMessage) — wait for the wanted shape
   const readoutsAre = (want) =>
     p.waitForFunction(
       (w) => {
-        const n = (sel) => document.querySelectorAll(`.composer-stats ${sel}`).length;
-        return JSON.stringify({ tools: n(".codicon-tools"), context: n(".gauge"), plan: n(".codicon-pulse") }) === w;
+        const one = (sel) => document.querySelector(`.composer-stats ${sel}`)?.textContent.replace(/\s+/g, " ").trim() ?? null;
+        return JSON.stringify({ tools: one(".codicon-tools") !== null, context: one(".gauge"), cost: one(".cost"), plan: one(".plan-gauge") }) === w;
       },
       JSON.stringify(want),
       { timeout: 3000 },
     ).then(() => true, () => false);
+  const resetsInline = await p.evaluate((iso) => `resets ${new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}`, resetsAt);
   const prefsWith = (patch) => p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: prefs }]), { ...preferences, ...patch });
-  check(`[${theme}] all three read-outs show by default`, await readoutsAre({ tools: 1, context: 1, plan: 1 }));
-  await prefsWith({ statsContext: false });
-  check(`[${theme}] hiding context leaves tool calls + plan usage`, await readoutsAre({ tools: 1, context: 0, plan: 1 }));
-  await prefsWith({ statsToolCalls: false, statsContext: false, statsPlanUsage: false });
-  check(`[${theme}] all read-outs hidden`, await readoutsAre({ tools: 0, context: 0, plan: 0 }));
+  check(
+    `[${theme}] every read-out shows by default, the gauges with details`,
+    await readoutsAre({ tools: true, context: "50K / 200K", cost: "$0.42", plan: `7d 57% · ${resetsInline}` }),
+  );
+  await p.locator(".composer-stats").screenshot({ path: `${OUT}/composer-stats-details-${theme}.png` });
+  await prefsWith({ statsContextGauge: "on", statsPlanGauge: "on" });
+  check(`[${theme}] without details a gauge is the ring, the plan chip its window and percentage`, await readoutsAre({ tools: true, context: "", cost: "$0.42", plan: "7d 57%" }));
+  await prefsWith({ statsContextGauge: "off" });
+  check(`[${theme}] hiding context leaves the cost — its own read-out now`, await readoutsAre({ tools: true, context: null, cost: "$0.42", plan: `7d 57% · ${resetsInline}` }));
+  await prefsWith({ statsCost: false });
+  check(`[${theme}] hiding the cost leaves the context gauge`, await readoutsAre({ tools: true, context: "50K / 200K", cost: null, plan: `7d 57% · ${resetsInline}` }));
+  await prefsWith({ statsToolCalls: false, statsContextGauge: "off", statsPlanGauge: "off", statsCost: false });
+  check(`[${theme}] all read-outs hidden`, await readoutsAre({ tools: false, context: null, cost: null, plan: null }));
   check(`[${theme}] nothing to read out renders no strip at all`, (await p.$(".composer-stats")) === null);
   check(`[${theme}] the prompts and files chips survive every read-out hidden`, (await p.$(".readout-strip .chip.prompts")) !== null && (await p.$(".readout-strip .chip.files")) !== null);
   await prefsWith({});
@@ -1140,14 +1151,30 @@ for (const theme of Object.keys(THEMES)) {
   await p.screenshot({ path: `${OUT}/settings-dialog-${theme}.png` });
   await p.keyboard.press("Escape");
 
-  // ── settings: composer stats, one switch per read-out ──
+  // ── settings: composer stats, one preference per read-out ──
   await p.click('.nav .it:has-text("Preferences")');
   await p.waitForSelector('h2:text-is("Composer stats")');
   const statsCard = p.locator(".card", { has: p.locator('h2:text-is("Composer stats")') });
-  check(`[${theme}] composer stats card carries three switches`, (await statsCard.locator('[role="switch"]').count()) === 3);
+  check(
+    `[${theme}] composer stats card carries a switch per read-out and details for each gauge`,
+    (await statsCard.locator('[role="switch"]').count()) === 4 && (await statsCard.locator('[role="checkbox"]').count()) === 2,
+  );
+  const patched = () => p.evaluate(() => window.__actions.at(-1));
   await statsCard.locator("label", { hasText: "context window" }).locator('[role="switch"]').click();
-  const sent = await p.evaluate(() => window.__actions.at(-1));
-  check(`[${theme}] a read-out switch patches only its own key`, JSON.stringify(sent) === JSON.stringify({ kind: "setPreferences", patch: { statsContext: false } }));
+  check(`[${theme}] hiding a gauge patches only its own key`, JSON.stringify(await patched()) === JSON.stringify({ kind: "setPreferences", patch: { statsContextGauge: "off" } }));
+  const contextDetails = statsCard.locator('[role="checkbox"]').first();
+  await contextDetails.click();
+  check(`[${theme}] details on a shown gauge drop to the gauge alone`, JSON.stringify(await patched()) === JSON.stringify({ kind: "setPreferences", patch: { statsContextGauge: "on" } }));
+  await statsCard.locator("label", { hasText: "cost" }).locator('[role="switch"]').click();
+  check(`[${theme}] the cost has its own switch`, JSON.stringify(await patched()) === JSON.stringify({ kind: "setPreferences", patch: { statsCost: false } }));
+  await p.evaluate((prefs) => window.__patch([{ kind: "preferencesChanged", preferences: prefs }]), { ...preferences, statsContextGauge: "off" });
+  check(
+    `[${theme}] a hidden gauge's details are greyed out and unticked`,
+    await p.waitForFunction(() => {
+      const box = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent === "Composer stats")?.querySelector('[role="checkbox"]');
+      return box?.hasAttribute("disabled") && box.getAttribute("data-state") === "unchecked";
+    }, null, { timeout: 3000 }).then(() => true, () => false),
+  );
   await statsCard.screenshot({ path: `${OUT}/settings-composer-stats-${theme}.png` });
 
   // ── settings: the network switches, and what they don't cover ──
@@ -1301,6 +1328,15 @@ for (const theme of Object.keys(THEMES)) {
   await gauge.focus();
   const tip = await p.waitForSelector('[data-slot="tooltip-content"]', { timeout: 3000 }).then((el) => el.textContent(), () => "");
   check(`the keyboard reaches the token gauge's tooltip ("${tip}")`, tip.includes("50,000 / 200,000 tokens"));
+  await p.keyboard.press("Escape");
+  // the plan gauge's: the same shared tooltip, every window on its own line
+  const planGauge = await p.waitForSelector(".composer-stats .plan-gauge", { timeout: 3000 });
+  check("the plan gauge carries no native title beside its tooltip", (await planGauge.getAttribute("title")) === null);
+  await planGauge.focus();
+  const planTip = await p
+    .waitForFunction(() => document.querySelector('[data-slot="tooltip-content"]')?.textContent.includes("Plan usage"), null, { timeout: 3000 })
+    .then(() => p.$eval('[data-slot="tooltip-content"]', (el) => el.innerText), () => "");
+  check(`the keyboard reaches the plan gauge's tooltip ("${planTip}")`, planTip.startsWith("Plan usage\n5h 40%"));
   await p.keyboard.press("Escape");
 
   // the sessions drawer
@@ -1735,10 +1771,31 @@ for (const theme of Object.keys(THEMES)) {
       },
     ],
   };
+  // every read-out shown, each as wide as it gets
+  av.sessionUsage = {
+    s1: {
+      used: 184321,
+      size: 1000000,
+      cost: { amount: 1234.56, currency: "USD" },
+      plan: { seven_day_overage_included: { status: "warning", window: "seven_day_overage_included", utilization: 0.84, resetsAt: "2026-11-05T14:00:00.000Z" } },
+    },
+  };
+  /** Every read-out of the strip inside the panel, none on top of another. */
+  const stripFits = async (p, where) => {
+    const strip = await p.evaluate(() => {
+      const W = document.documentElement.clientWidth;
+      const items = [...(document.querySelector(".composer-stats")?.children ?? [])].map((el) => el.getBoundingClientRect());
+      const overlap = items.some((a, i) => items.slice(i + 1).some((b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1));
+      return { n: items.length, inside: items.every((r) => r.left >= -1 && r.right <= W + 1), overlap };
+    });
+    check(`[narrow] ${where}: every read-out in view, none over another (${JSON.stringify(strip)})`, strip.n === 4 && strip.inside && !strip.overlap);
+  };
   let p = await page(browser, theme0, { width: 260, height: 800 });
   await renderView(p, "agent-view", av);
   await p.waitForSelector(".prompt-editor");
   await sweep(p, "agent view");
+  await stripFits(p, "agent view");
+  await p.locator(".input-foot").screenshot({ path: `${OUT}/narrow-composer-stats.png` });
   await opened(p, '.ctx-chip:has-text("root")', "popover-content", "roots popover");
   await opened(p, '[data-slot="popover-content"] button:has-text("Save")', "dropdown-menu-content", "a root's Save menu");
   await p.keyboard.press("Escape");
@@ -1785,6 +1842,7 @@ for (const theme of Object.keys(THEMES)) {
   await renderView(p, "agent-view", av);
   await p.waitForSelector(".prompt-editor");
   await sweep(p, "agent view at 340px");
+  await stripFits(p, "agent view at 340px");
   await p.close();
 
   // Settings in a narrow editor

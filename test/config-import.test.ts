@@ -132,7 +132,7 @@ describe("reading a configuration file", () => {
     expect(r.agents[0]?.defaults).toEqual({ options: { [MODE_KNOB_ID]: "plan" } });
     expect(r.agents[0]).not.toHaveProperty("processPolicy");
     expect(r.mcpServers[0]?.source).toEqual({ kind: "catalog", catalogId: "github", authMode: "oauth" });
-    expect(r.preferences).toEqual({ statsToolCalls: false, statsContext: false, statsPlanUsage: false });
+    expect(r.preferences).toEqual({ statsToolCalls: false, statsContextGauge: "off", statsPlanGauge: "off", statsCost: false });
   });
 
   it("names what it holds that didn't read — never dropped in silence — and reads the rest", () => {

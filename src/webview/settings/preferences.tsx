@@ -7,13 +7,14 @@
 // answers with the complete object, so a write that didn't land never shows
 // as landed).
 import type { ReactNode } from "react";
-import type { PreferencesView, SettingsState, ToolCallDisplay } from "../../shared/protocol";
+import type { GaugeDisplay, PreferencesView, SettingsState, ToolCallDisplay } from "../../shared/protocol";
 import { DISPLAY_LADDER, TOOL_DISPLAY_ROUTES } from "../../shared/tool-display";
 import { registryReadsSaid } from "../../shared/registry-reads";
 import { playChime } from "../shared/chime-sound";
 import { Icon } from "../shared/icon";
 import { Field, Toggle } from "./controls";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -35,6 +36,26 @@ function PrefCard(props: { title: string; help: string; children: ReactNode }) {
       </div>
       <div className="note mx-0 mb-0 mt-1.5">{props.help}</div>
     </div>
+  );
+}
+
+/** A gauge's one display as two controls, a row of the read-outs' grid:
+ * shown or hidden, and — only while shown — its numbers inline. Shown
+ * again, it comes back with its numbers. */
+function GaugeControl(props: { display: GaugeDisplay; label: string; onChange(display: GaugeDisplay): void }) {
+  const shown = props.display !== "off";
+  return (
+    <>
+      <Toggle checked={shown} label={props.label} onChange={(on) => props.onChange(on ? "details" : "off")} />
+      <label className={`flex items-center gap-1.5 text-[12px]${shown ? " cursor-pointer" : " opacity-50"}`}>
+        <Checkbox
+          checked={props.display === "details"}
+          disabled={!shown}
+          onCheckedChange={(on) => props.onChange(on === true ? "details" : "on")}
+        />
+        details
+      </label>
+    </>
   );
 }
 
@@ -103,25 +124,37 @@ export function PreferencesSection(props: {
       <PrefCard
         title="Composer stats"
         help="Read-outs at the composer's foot, each shown or hidden on its own: this session's
-        tool-call count, the context-window gauge and the plan-usage gauge (the gauges only when
-        the agent reports them). Pure display — hiding one changes nothing else. The prompts and
-        edited-files chips above the composer are ways in, not read-outs, and always show."
+        tool-call count, the context-window gauge, the session's cost and the plan-usage gauge (the
+        gauges and the cost only when the agent reports them). With details, the context gauge shows
+        its tokens used of the window beside the ring, and the plan gauge when its window resets.
+        Pure display — hiding one changes nothing else. The prompts and edited-files chips above
+        the composer are ways in, not read-outs, and always show."
       >
-        <Toggle
-          checked={prefs.statsToolCalls}
-          label="tool calls"
-          onChange={(statsToolCalls) => props.onSet({ statsToolCalls })}
-        />
-        <Toggle
-          checked={prefs.statsContext}
-          label="context window"
-          onChange={(statsContext) => props.onSet({ statsContext })}
-        />
-        <Toggle
-          checked={prefs.statsPlanUsage}
-          label="plan usage"
-          onChange={(statsPlanUsage) => props.onSet({ statsPlanUsage })}
-        />
+        {/* One row per read-out, a gauge's details beside its switch. */}
+        <div className="grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1.5">
+          <Toggle
+            checked={prefs.statsToolCalls}
+            label="tool calls"
+            onChange={(statsToolCalls) => props.onSet({ statsToolCalls })}
+          />
+          <span />
+          <GaugeControl
+            display={prefs.statsContextGauge}
+            label="context window"
+            onChange={(statsContextGauge) => props.onSet({ statsContextGauge })}
+          />
+          <Toggle
+            checked={prefs.statsCost}
+            label="cost"
+            onChange={(statsCost) => props.onSet({ statsCost })}
+          />
+          <span />
+          <GaugeControl
+            display={prefs.statsPlanGauge}
+            label="plan usage"
+            onChange={(statsPlanGauge) => props.onSet({ statsPlanGauge })}
+          />
+        </div>
       </PrefCard>
 
       <PrefCard

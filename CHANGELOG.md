@@ -8,6 +8,16 @@
   number. Each window's percentage now comes from the per-window readings
   in the same message; one Patchbay can't read is left out, never guessed.
   A window run past its cap reads past 100% (it read as 1%). (#117)
+- **The composer's read-outs show their numbers.** The context gauge and
+  the plan-usage gauge can each be hidden, shown, or shown with details:
+  the context window's tokens used of its size beside the ring
+  (`184.3K / 1M`), the plan window's reset beside its percentage
+  (`7d 57% · resets Thu 14:00`). The session's cost is its own read-out
+  (`$0.42`), shown when the agent reports one — it was in the context
+  gauge's tooltip. The plan gauge's tooltip is the shared one, so the
+  keyboard reaches it. Everything shows by default, the gauges with
+  details; a gauge you had hidden stays hidden, and the cost stays hidden
+  if the context gauge was. (#117)
 - **Adding an MCP server is one card at the top, checked before it's
   saved.** As on the Agents page, the add tile opens one card: pick a
   curated server from a search, or add your own as a command, a URL, or

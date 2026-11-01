@@ -1597,6 +1597,11 @@ export function chatPaneShows(
  * card. tool-display.ts routes each kind to the preference that holds it. */
 export type ToolCallDisplay = "grouped" | "ungrouped-truncated" | "ungrouped-untruncated" | "uncollapsed";
 
+/** How a composer gauge shows: hidden, the gauge alone, or the gauge with
+ * its numbers inline. One value, not two switches — details while hidden
+ * means nothing. */
+export type GaugeDisplay = "off" | "on" | "details";
+
 /** Machine-scoped behavior defaults (stores/preferences.ts — machine store,
  * non-sensitive). Read fresh orchestrator-side at each point of use
  * (store-truth); this view exists so the Preferences page can render and
@@ -1615,14 +1620,18 @@ export interface PreferencesView {
   /** Idle-release timer (sessions-store `idle`, condition 5) in
    * minutes; 0 disables the reaper entirely. */
   idleCloseMinutes: number;
-  /** The composer's session-stats strip, one switch per read-out — pure
-   * render furniture, so hiding any of them loses nothing. Flat keys, not a
-   * nested record: the store merges one level deep, so each member keeps its
-   * own default. The read-out strip's chips (prompts, edited files) are
-   * ways in, not read-outs, and have no switch. */
+  /** The composer's session-stats strip, one preference per read-out —
+   * pure render furniture, so hiding any of them loses nothing. Flat keys,
+   * not a nested record: the store merges one level deep, so each member
+   * keeps its own default. The read-out strip's chips (prompts, edited
+   * files) are ways in, not read-outs, and have no switch. */
   statsToolCalls: boolean;
-  statsContext: boolean;
-  statsPlanUsage: boolean;
+  /** The context ring, and with details its numbers beside it. */
+  statsContextGauge: GaugeDisplay;
+  /** The plan-usage chip, and with details its window's reset. */
+  statsPlanGauge: GaugeDisplay;
+  /** The session's cost so far, when the agent reports one. */
+  statsCost: boolean;
   /** Detached windows (AgentPanelHost): the session menu's "Open in new
    * window" and the whole-view detach command. Off hides the entry points;
    * panels already open stay open — the pref gates opening, not existence. */
@@ -1652,8 +1661,9 @@ export const DEFAULT_PREFERENCES: PreferencesView = {
   knobSource: "agent-default",
   idleCloseMinutes: 60,
   statsToolCalls: true,
-  statsContext: true,
-  statsPlanUsage: true,
+  statsContextGauge: "details",
+  statsPlanGauge: "details",
+  statsCost: true,
   detachWindows: true,
   attachmentMaxMB: 10,
   openThinking: false,

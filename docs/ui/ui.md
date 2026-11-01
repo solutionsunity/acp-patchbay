@@ -158,7 +158,7 @@ Action row (below):
 | Control | Glyph | Behavior |
 |---|---|---|
 | Model / Mode / Effort | ◈ ⚙ ⚡ pills | **only the knobs this agent offers** — an unoffered knob does not render; a change shows ⏳ until the agent's state confirms; display never optimistic. Each option's description shows under it in the list; options sharing a name carry their description in the label (`Sonnet · Deep`), so the pill tells them apart — the Settings defaults list too |
-| Stats strip | 🛠 count + ring + plan usage | the one read-out in the dials row: the whole-session tool-call count, the context gauge — ring, orange arc = `used/size`, live mid-turn; hover or keyboard focus: context tokens + session cost — and the plan-usage gauge (the most severe plan window, labeled; hover: every window). Gauges are **absent** (not grayed) until the agent reports them; the count hides at zero. The prompt count is the read-out strip's prompts chip — one number, one surface. Each of the three has its own switch (Preferences › Composer stats, all shown by default) |
+| Stats strip | 🛠 count + ring + cost + plan usage | the one read-out in the dials row: the whole-session tool-call count; the context gauge — ring, orange arc = `used/size`, live mid-turn, with details `used / size` beside it (compact, `184.3K / 1M`); the session's cost so far (`$0.42`, only when the agent reports `usage_update.cost`); and the plan-usage gauge — the most severe plan window, labeled, with its percentage, with details when it resets (`7d 57% · resets Thu 14:00`). Hover or keyboard focus on any of them: the shared tooltip — context tokens in full, the cost, every plan window with its full reset. Gauges and cost are **absent** (not grayed) until the agent reports them; the count hides at zero. Each read-out stays whole; a strip wider than its room wraps between them. The prompt count is the read-out strip's prompts chip — one number, one surface. Each read-out has its own preference (Preferences › Composer stats) |
 | Send / Stop | ↑ / ■ | send prompt / stop the turn underway — mid-stream, or still waiting for its session to attach. A stopped turn waits for its agent's answer, the button spinning ("Stopping"); pressed again, it ends the turn here |
 
 ### 6 · Drawers
@@ -380,9 +380,13 @@ the stored truth — the page never assumes its own write landed:
   read fresh every sweep, applies without reconnect. The card restates the close
   guards: replayable history only, never the open session, an unseen result, or a
   turn in flight.
-- **Composer stats** — one switch per read-out: tool calls, context window,
-  plan usage (all shown by default). Pure render furniture: hiding one changes
-  nothing else. The prompts and files chips are not among them — they are
+- **Composer stats** — one preference per read-out, a row each: tool calls
+  and cost are switches; the context window and plan usage are one stored
+  display each (`off | on | details`), shown as a switch and a details
+  checkbox, greyed while the gauge is hidden — never two booleans, since
+  details on a hidden gauge means nothing. Default: everything shown, the
+  gauges with details. Pure render furniture: hiding one changes nothing
+  else. The prompts and files chips are not among them — they are
   ways in, not read-outs, and live in the read-out strip.
 - **Thinking** — whether a thought opens on its own while it streams (default
   off: one row, `Thinking…` and its newest line). It folds once the turn moves
